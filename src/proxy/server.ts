@@ -25,7 +25,8 @@ export function createProxy(options: ProxyOptions): http.Server {
       return;
     }
 
-    const targetUrl = `${options.apiUrl}${req.url}`;
+    const path = req.url?.replace(/^\/api/, '') || '';
+    const targetUrl = `${options.apiUrl}${path}`;
     let body = '';
 
     req.on('data', (chunk: Buffer) => {
