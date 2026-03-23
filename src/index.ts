@@ -4,15 +4,17 @@ import { setupCommand } from './commands/setup.js';
 import { startCommand } from './commands/start.js';
 import { balanceCommand } from './commands/balance.js';
 import { modelsCommand } from './commands/models.js';
+import { configCommand } from './commands/config.js';
 
 const program = new Command();
 
 program
   .name('brcc')
   .description(
-    'BlockRun Claude Code — run Claude Code with any model, pay with USDC'
+    'BlockRun Claude Code — run Claude Code with any model, pay with USDC.\n\n' +
+      'Use /model inside Claude Code to switch between models on the fly.'
   )
-  .version('0.1.0');
+  .version('0.5.0');
 
 program
   .command('setup [chain]')
@@ -23,7 +25,10 @@ program
   .command('start')
   .description('Start proxy and launch Claude Code')
   .option('-p, --port <port>', 'Proxy port', '8402')
-  .option('-m, --model <model>', 'Model to use (e.g. openai/gpt-5.4, nvidia/gpt-oss-120b)')
+  .option(
+    '-m, --model <model>',
+    'Default model (e.g. openai/gpt-5.4, anthropic/claude-sonnet-4.6)'
+  )
   .option('--no-launch', 'Start proxy only, do not launch Claude Code')
   .action(startCommand);
 
@@ -36,5 +41,13 @@ program
   .command('balance')
   .description('Check wallet USDC balance')
   .action(balanceCommand);
+
+program
+  .command('config <action> [key] [value]')
+  .description(
+    'Manage brcc config (set, get, unset, list)\n' +
+      'Keys: default-model, sonnet-model, opus-model, haiku-model, smart-routing'
+  )
+  .action(configCommand);
 
 program.parse();
