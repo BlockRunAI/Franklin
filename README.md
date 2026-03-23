@@ -88,7 +88,7 @@ Installs Node.js (if needed) + Claude Code + brcc + creates wallet.
 curl -fsSL https://claude.ai/install.sh | bash
 
 # 2. Install brcc (use sudo on Linux)
-npm install -g @blockrun/cc
+sudo npm install -g @blockrun/cc  # use sudo on Linux
 
 # 3. Create wallet
 brcc setup base      # Base chain (Coinbase L2)
