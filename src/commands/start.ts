@@ -38,7 +38,7 @@ export async function startCommand(options: StartOptions) {
     console.log(`Proxy:   ${chalk.cyan(`http://localhost:${port}`)}`);
     console.log(`Backend: ${chalk.dim(apiUrl)}\n`);
 
-    const server = createProxy({ port, apiUrl, chain: 'solana' });
+    const server = createProxy({ port, apiUrl, chain: 'solana', modelOverride: model });
     launchServer(server, port, shouldLaunch, model);
   } else {
     const wallet = getOrCreateWallet();
@@ -62,7 +62,7 @@ export async function startCommand(options: StartOptions) {
     console.log(`Proxy:   ${chalk.cyan(`http://localhost:${port}`)}`);
     console.log(`Backend: ${chalk.dim(apiUrl)}\n`);
 
-    const server = createProxy({ port, apiUrl, chain: 'base' });
+    const server = createProxy({ port, apiUrl, chain: 'base', modelOverride: model });
     launchServer(server, port, shouldLaunch, model);
   }
 }

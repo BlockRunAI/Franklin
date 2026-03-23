@@ -15,6 +15,7 @@ export interface ProxyOptions {
   port: number;
   apiUrl: string;
   chain?: Chain;
+  modelOverride?: string;
 }
 
 export function createProxy(options: ProxyOptions): http.Server {
@@ -54,6 +55,16 @@ export function createProxy(options: ProxyOptions): http.Server {
 
     req.on('end', async () => {
       try {
+        if (options.modelOverride && body) {
+          try {
+            const parsed = JSON.parse(body);
+            if (parsed.model) {
+              parsed.model = options.modelOverride;
+              body = JSON.stringify(parsed);
+            }
+          } catch { /* not JSON, pass through */ }
+        }
+
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
         };
