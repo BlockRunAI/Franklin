@@ -73,12 +73,16 @@ function launchServer(
     if (shouldLaunch) {
       console.log('Starting Claude Code...\n');
 
-      const claude = spawn('claude', [], {
+      const cleanEnv = { ...process.env };
+      delete cleanEnv.CLAUDE_ACCESS_TOKEN;
+      delete cleanEnv.CLAUDE_OAUTH_TOKEN;
+
+      const claude = spawn('claude', ['--api-key-auth'], {
         stdio: 'inherit',
         env: {
-          ...process.env,
+          ...cleanEnv,
           ANTHROPIC_BASE_URL: `http://localhost:${port}/api`,
-          ANTHROPIC_API_KEY: 'brcc',
+          ANTHROPIC_API_KEY: 'sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000',
         },
       });
 
@@ -108,7 +112,7 @@ function launchServer(
           `  export ANTHROPIC_BASE_URL=http://localhost:${port}/api`
         )
       );
-      console.log(chalk.bold(`  export ANTHROPIC_API_KEY=brcc`));
+      console.log(chalk.bold(`  export ANTHROPIC_API_KEY=sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000`));
       console.log(
         `\nThen run ${chalk.bold('claude')} in another terminal.`
       );
