@@ -33,8 +33,21 @@ Claude Code  -->  brcc (local proxy)  -->  BlockRun API  -->  Any model
 
 ## Quick Start
 
+### One-line install (Linux/macOS)
+
 ```bash
-# Install
+curl -fsSL https://raw.githubusercontent.com/BlockRunAI/brcc/main/install.sh | bash
+```
+
+Installs Node.js (if missing) + Claude Code + brcc + creates wallet.
+
+### Manual install
+
+```bash
+# Prerequisites: Node.js 20+ and Claude Code
+curl -fsSL https://claude.ai/install.sh | bash
+
+# Install brcc (use sudo on Linux)
 npm install -g @blockrun/cc
 
 # Create a wallet (one time)
@@ -81,14 +94,21 @@ That's it. Claude Code opens with access to 40+ models, no rate limits.
 
 Creates a wallet and shows the address for funding.
 
+```bash
+brcc setup          # Default: Base chain
+brcc setup base     # Explicit Base (Coinbase L2)
+brcc setup solana   # Solana chain
 ```
-$ brcc setup
+
+```
+$ brcc setup base
 Wallet created!
 Address: 0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8
 Send USDC on Base to this address to fund your account.
+Chain: base — saved to ~/.blockrun/
 ```
 
-Your wallet is saved to `~/.blockrun/` and shared with all BlockRun tools.
+Your wallet is saved to `~/.blockrun/` and shared with all BlockRun tools (Python SDK, TS SDK, ClawRouter).
 
 ### `brcc start`
 
@@ -107,9 +127,56 @@ Starting Claude Code...
 
 Options:
 ```bash
-brcc start              # Start proxy + launch Claude Code
-brcc start --no-launch  # Proxy only (for manual Claude Code setup)
-brcc start -p 9000      # Custom port
+brcc start                              # Default model (Sonnet 4.6)
+brcc start --model nvidia/gpt-oss-120b  # Free model
+brcc start --model openai/gpt-5.4      # GPT-5.4
+brcc start --model deepseek/deepseek-chat  # Budget option
+brcc start --no-launch                  # Proxy only
+brcc start -p 9000                      # Custom port
+```
+
+Inside Claude Code, use `/model` to switch between Sonnet, Opus, and Haiku — each maps to the BlockRun model you configured.
+
+### `brcc models`
+
+List all available models with pricing.
+
+```
+$ brcc models
+Available Models
+
+Free Models (no USDC needed)
+──────────────────────────────────────────────────────────────────────
+  nvidia/gpt-oss-120b
+  nvidia/gpt-oss-20b
+
+Paid Models
+──────────────────────────────────────────────────────────────────────
+  Model                               Input        Output
+  deepseek/deepseek-chat              $0.28/M      $0.42/M
+  anthropic/claude-haiku-4.5          $1.00/M      $5.00/M
+  openai/gpt-5.4                      $2.50/M      $15.00/M
+  anthropic/claude-sonnet-4.6         $3.00/M      $15.00/M
+  anthropic/claude-opus-4.6           $5.00/M      $25.00/M
+  ...
+```
+
+### `brcc config`
+
+Customize model mappings for Claude Code's `/model` picker.
+
+```bash
+# Map Claude Code's "Haiku" to a cheap model
+brcc config set haiku-model deepseek/deepseek-chat
+
+# Map "Sonnet" to GPT-5.4
+brcc config set sonnet-model openai/gpt-5.4
+
+# Set default model
+brcc config set default-model nvidia/gpt-oss-120b
+
+# View all settings
+brcc config list
 ```
 
 ### `brcc balance`
