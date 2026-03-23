@@ -16,6 +16,11 @@ export interface ProxyOptions {
   apiUrl: string;
   chain?: Chain;
   modelOverride?: string;
+  debug?: boolean;
+}
+
+function debug(options: ProxyOptions, ...args: unknown[]) {
+  if (options.debug) console.log('[brcc]', ...args);
 }
 
 const DEFAULT_MAX_TOKENS = 4096;
@@ -76,7 +81,7 @@ export function createProxy(options: ProxyOptions): http.Server {
               }
 
               if (original !== parsed.max_tokens) {
-                console.log(`[brcc] max_tokens: ${original} → ${parsed.max_tokens} (last output: ${lastOutputTokens || 'none'})`);
+                debug(options, `max_tokens: ${original} → ${parsed.max_tokens} (last output: ${lastOutputTokens || 'none'})`);
               }
             }
             body = JSON.stringify(parsed);
@@ -147,7 +152,7 @@ export function createProxy(options: ProxyOptions): http.Server {
                   const match = lastChunkText.match(/"output_tokens"\s*:\s*(\d+)/);
                   if (match) {
                     lastOutputTokens = parseInt(match[1], 10);
-                    console.log(`[brcc] recorded output_tokens: ${lastOutputTokens} (stream)`);
+                    debug(options, `recorded output_tokens: ${lastOutputTokens} (stream)`);
                   }
                 }
                 res.end();
@@ -166,7 +171,7 @@ export function createProxy(options: ProxyOptions): http.Server {
             const parsed = JSON.parse(text);
             if (parsed.usage?.output_tokens) {
               lastOutputTokens = parsed.usage.output_tokens;
-              console.log(`[brcc] recorded output_tokens: ${lastOutputTokens}`);
+              debug(options, `recorded output_tokens: ${lastOutputTokens}`);
             }
           } catch { /* not JSON */ }
           res.end(text);
