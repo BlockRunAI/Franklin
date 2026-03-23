@@ -37,8 +37,44 @@ function debug(options: ProxyOptions, ...args: unknown[]) {
 const DEFAULT_MAX_TOKENS = 4096;
 let lastOutputTokens = 0;
 
+// Model shortcuts for quick switching
+const MODEL_SHORTCUTS: Record<string, string> = {
+  'gpt': 'openai/gpt-5.4',
+  'gpt5': 'openai/gpt-5.4',
+  'gpt-5': 'openai/gpt-5.4',
+  'gpt-5.4': 'openai/gpt-5.4',
+  'sonnet': 'anthropic/claude-sonnet-4.6',
+  'claude': 'anthropic/claude-sonnet-4.6',
+  'opus': 'anthropic/claude-opus-4.6',
+  'haiku': 'anthropic/claude-haiku-4.5',
+  'deepseek': 'deepseek/deepseek-chat',
+  'gemini': 'google/gemini-2.5-pro',
+  'grok': 'xai/grok-3',
+  'free': 'nvidia/gpt-oss-120b',
+  'mini': 'openai/gpt-5-mini',
+  'glm': 'zai/glm-5',
+};
+
+function detectModelSwitch(parsed: { messages?: Array<{ role: string; content: string | unknown }> }): string | null {
+  if (!parsed.messages || parsed.messages.length === 0) return null;
+  const last = parsed.messages[parsed.messages.length - 1];
+  if (last.role !== 'user' || typeof last.content !== 'string') return null;
+
+  const content = last.content.trim().toLowerCase();
+  const match = content.match(/^use\s+(.+)$/);
+  if (!match) return null;
+
+  const modelInput = match[1].trim();
+  // Check shortcuts first
+  if (MODEL_SHORTCUTS[modelInput]) return MODEL_SHORTCUTS[modelInput];
+  // If it contains a slash, treat as full model ID
+  if (modelInput.includes('/')) return modelInput;
+  return null;
+}
+
 export function createProxy(options: ProxyOptions): http.Server {
   const chain = options.chain || 'base';
+  let currentModel: string | null = options.modelOverride || null;
 
   let baseWallet: { privateKey: string; address: string } | null = null;
   let solanaWallet: { privateKey: string; address: string } | null = null;
@@ -77,8 +113,30 @@ export function createProxy(options: ProxyOptions): http.Server {
         if (body) {
           try {
             const parsed = JSON.parse(body);
-            if (options.modelOverride && parsed.model) {
-              parsed.model = options.modelOverride;
+
+            // Intercept "use <model>" commands for in-session model switching
+            const switchCmd = detectModelSwitch(parsed);
+            if (switchCmd) {
+              currentModel = switchCmd;
+              debug(options, `model switched to: ${currentModel}`);
+              const fakeResponse = {
+                id: `msg_brcc_${Date.now()}`,
+                type: 'message',
+                role: 'assistant',
+                model: currentModel,
+                content: [{ type: 'text', text: `Switched to **${currentModel}**. All subsequent requests will use this model.` }],
+                stop_reason: 'end_turn',
+                stop_sequence: null,
+                usage: { input_tokens: 0, output_tokens: 10 },
+              };
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(fakeResponse));
+              return;
+            }
+
+            // Apply model override
+            if ((currentModel || options.modelOverride) && parsed.model) {
+              parsed.model = currentModel || options.modelOverride!;
             }
             if (parsed.max_tokens) {
               const original = parsed.max_tokens;
