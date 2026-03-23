@@ -55,12 +55,21 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   'glm': 'zai/glm-5',
 };
 
-function detectModelSwitch(parsed: { messages?: Array<{ role: string; content: string | unknown }> }): string | null {
+function detectModelSwitch(parsed: { messages?: Array<{ role: string; content: string | unknown[] | unknown }> }): string | null {
   if (!parsed.messages || parsed.messages.length === 0) return null;
   const last = parsed.messages[parsed.messages.length - 1];
-  if (last.role !== 'user' || typeof last.content !== 'string') return null;
+  if (last.role !== 'user') return null;
 
-  const content = last.content.trim().toLowerCase();
+  let content = '';
+  if (typeof last.content === 'string') {
+    content = last.content;
+  } else if (Array.isArray(last.content)) {
+    const textBlock = (last.content as Array<{ type: string; text?: string }>).find(b => b.type === 'text' && b.text);
+    if (textBlock && textBlock.text) content = textBlock.text;
+  }
+  if (!content) return null;
+
+  content = content.trim().toLowerCase();
   const match = content.match(/^use\s+(.+)$/);
   if (!match) return null;
 
@@ -115,6 +124,10 @@ export function createProxy(options: ProxyOptions): http.Server {
             const parsed = JSON.parse(body);
 
             // Intercept "use <model>" commands for in-session model switching
+            if (parsed.messages) {
+              const last = parsed.messages[parsed.messages.length - 1];
+              debug(options, `last msg role=${last?.role} content-type=${typeof last?.content} content=${JSON.stringify(last?.content).slice(0, 200)}`);
+            }
             const switchCmd = detectModelSwitch(parsed);
             if (switchCmd) {
               currentModel = switchCmd;
