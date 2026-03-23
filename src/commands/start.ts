@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import chalk from 'chalk';
-import { getOrCreateWallet } from '@blockrun/llm';
+import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { createProxy } from '../proxy/server.js';
-import { DEFAULT_API_URL, DEFAULT_PROXY_PORT } from '../config.js';
+import { loadChain, API_URLS, DEFAULT_PROXY_PORT } from '../config.js';
 
 interface StartOptions {
   port?: string;
@@ -10,26 +10,63 @@ interface StartOptions {
 }
 
 export async function startCommand(options: StartOptions) {
-  const wallet = getOrCreateWallet();
-  if (wallet.isNew) {
-    console.log(chalk.yellow('No wallet found — created a new one.'));
-    console.log(`Address: ${chalk.cyan(wallet.address)}`);
-    console.log(
-      `\nSend USDC on Base to this address, then run ${chalk.bold('brcc start')} again.\n`
-    );
-    return;
+  const chain = loadChain();
+  const apiUrl = API_URLS[chain];
+
+  if (chain === 'solana') {
+    const wallet = await getOrCreateSolanaWallet();
+    if (wallet.isNew) {
+      console.log(
+        chalk.yellow('No Solana wallet found — created a new one.')
+      );
+      console.log(`Address: ${chalk.cyan(wallet.address)}`);
+      console.log(
+        `\nSend USDC on Solana to this address, then run ${chalk.bold('brcc start')} again.\n`
+      );
+      return;
+    }
+
+    const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
+    const shouldLaunch = options.launch !== false;
+
+    console.log(chalk.bold('brcc — BlockRun Claude Code\n'));
+    console.log(`Chain:   ${chalk.magenta('solana')}`);
+    console.log(`Wallet:  ${chalk.cyan(wallet.address)}`);
+    console.log(`Proxy:   ${chalk.cyan(`http://localhost:${port}`)}`);
+    console.log(`Backend: ${chalk.dim(apiUrl)}\n`);
+
+    const server = createProxy({ port, apiUrl, chain: 'solana' });
+    launchServer(server, port, shouldLaunch);
+  } else {
+    const wallet = getOrCreateWallet();
+    if (wallet.isNew) {
+      console.log(chalk.yellow('No wallet found — created a new one.'));
+      console.log(`Address: ${chalk.cyan(wallet.address)}`);
+      console.log(
+        `\nSend USDC on Base to this address, then run ${chalk.bold('brcc start')} again.\n`
+      );
+      return;
+    }
+
+    const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
+    const shouldLaunch = options.launch !== false;
+
+    console.log(chalk.bold('brcc — BlockRun Claude Code\n'));
+    console.log(`Chain:   ${chalk.magenta('base')}`);
+    console.log(`Wallet:  ${chalk.cyan(wallet.address)}`);
+    console.log(`Proxy:   ${chalk.cyan(`http://localhost:${port}`)}`);
+    console.log(`Backend: ${chalk.dim(apiUrl)}\n`);
+
+    const server = createProxy({ port, apiUrl, chain: 'base' });
+    launchServer(server, port, shouldLaunch);
   }
+}
 
-  const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
-  const shouldLaunch = options.launch !== false;
-
-  console.log(chalk.bold('brcc — BlockRun Claude Code\n'));
-  console.log(`Wallet:  ${chalk.cyan(wallet.address)}`);
-  console.log(`Proxy:   ${chalk.cyan(`http://localhost:${port}`)}`);
-  console.log(`Backend: ${chalk.dim(DEFAULT_API_URL)}\n`);
-
-  const server = createProxy({ port, apiUrl: DEFAULT_API_URL });
-
+function launchServer(
+  server: ReturnType<typeof createProxy>,
+  port: number,
+  shouldLaunch: boolean
+) {
   server.listen(port, () => {
     console.log(chalk.green(`Proxy running on port ${port}\n`));
 

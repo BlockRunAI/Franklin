@@ -14,9 +14,9 @@ program
   .version('0.1.0');
 
 program
-  .command('setup')
-  .description('Create a new wallet for payments')
-  .action(setupCommand);
+  .command('setup [chain]')
+  .description('Create a new wallet for payments (base or solana)')
+  .action((chain) => setupCommand(chain));
 
 program
   .command('start')
