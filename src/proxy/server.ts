@@ -55,13 +55,19 @@ export function createProxy(options: ProxyOptions): http.Server {
 
     req.on('end', async () => {
       try {
-        if (options.modelOverride && body) {
+        if (body) {
           try {
             const parsed = JSON.parse(body);
-            if (parsed.model) {
+            if (options.modelOverride && parsed.model) {
               parsed.model = options.modelOverride;
-              body = JSON.stringify(parsed);
             }
+            if (parsed.max_tokens && parsed.max_tokens > 8192) {
+              const model = parsed.model || '';
+              if (model.includes('deepseek') || model.includes('haiku')) {
+                parsed.max_tokens = 8192;
+              }
+            }
+            body = JSON.stringify(parsed);
           } catch { /* not JSON, pass through */ }
         }
 
