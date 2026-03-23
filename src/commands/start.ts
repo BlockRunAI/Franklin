@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { createProxy } from '../proxy/server.js';
 import { loadChain, API_URLS, DEFAULT_PROXY_PORT } from '../config.js';
+import { loadConfig } from './config.js';
 
 interface StartOptions {
   port?: string;
@@ -83,6 +84,11 @@ function launchServer(
       delete cleanEnv.CLAUDE_ACCESS_TOKEN;
       delete cleanEnv.CLAUDE_OAUTH_TOKEN;
 
+      const config = loadConfig();
+      const sonnetModel = config['sonnet-model'] || 'anthropic/claude-sonnet-4.6';
+      const opusModel = config['opus-model'] || 'anthropic/claude-opus-4.6';
+      const haikuModel = config['haiku-model'] || 'anthropic/claude-haiku-4.5';
+
       const claudeArgs: string[] = [];
       if (model) claudeArgs.push('--model', model);
 
@@ -92,6 +98,10 @@ function launchServer(
           ...cleanEnv,
           ANTHROPIC_BASE_URL: `http://localhost:${port}/api`,
           ANTHROPIC_API_KEY: 'sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000',
+          ANTHROPIC_DEFAULT_SONNET_MODEL: sonnetModel,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: opusModel,
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: haikuModel,
+          ...(model ? { ANTHROPIC_MODEL: model } : {}),
         },
       });
 
