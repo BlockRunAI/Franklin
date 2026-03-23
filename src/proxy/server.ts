@@ -119,6 +119,7 @@ export function createProxy(options: ProxyOptions): http.Server {
 
     req.on('end', async () => {
       try {
+        debug(options, `request: ${req.method} ${req.url} currentModel=${currentModel || 'none'}`);
         if (body) {
           try {
             const parsed = JSON.parse(body);
