@@ -259,11 +259,8 @@ Typical cost: **$0.001–$0.05 per interaction**. $5 lasts most developers a wee
 
 ## FAQ
 
-**Is this legal?**
-Yes. brcc is a proxy that connects Claude Code to BlockRun's API. No Anthropic services are used. [OpenRouter](https://openrouter.ai) does the same thing.
-
 **Do I need an Anthropic account?**
-No. brcc bypasses Anthropic entirely.
+No. brcc connects Claude Code to BlockRun instead of Anthropic.
 
 **Is my wallet safe?**
 Your private key is stored locally (`~/.blockrun/.session`, chmod 600). It's only used for local signing — never transmitted.
