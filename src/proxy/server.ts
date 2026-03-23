@@ -19,8 +19,19 @@ export interface ProxyOptions {
   debug?: boolean;
 }
 
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+
+const LOG_FILE = path.join(os.homedir(), '.blockrun', 'brcc-debug.log');
+
 function debug(options: ProxyOptions, ...args: unknown[]) {
-  if (options.debug) console.error('[brcc]', ...args);
+  if (!options.debug) return;
+  const msg = `[${new Date().toISOString()}] ${args.map(String).join(' ')}\n`;
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    fs.appendFileSync(LOG_FILE, msg);
+  } catch { /* ignore */ }
 }
 
 const DEFAULT_MAX_TOKENS = 4096;
