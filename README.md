@@ -5,7 +5,7 @@
 Hitting usage limits? Account disabled? Can't verify your phone? brcc fixes all of that.
 
 ```bash
-npm install -g brcc
+npm install -g @blockrun/cc
 brcc start
 ```
 
@@ -35,7 +35,7 @@ Claude Code  -->  brcc (local proxy)  -->  BlockRun API  -->  Any model
 
 ```bash
 # Install
-npm install -g brcc
+npm install -g @blockrun/cc
 
 # Create a wallet (one time)
 brcc setup
