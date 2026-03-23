@@ -1,22 +1,20 @@
 import http from 'node:http';
-import { Keypair } from '@solana/web3.js';
-import { X402Client } from 'x402-solana';
-import { createWalletAdapter } from '../wallet/manager.js';
-import { SOLANA_RPC_URL } from '../config.js';
+import {
+  getOrCreateWallet,
+  createPaymentPayload,
+  parsePaymentRequired,
+  extractPaymentDetails,
+} from '@blockrun/llm';
 
 export interface ProxyOptions {
   port: number;
-  keypair: Keypair;
   apiUrl: string;
 }
 
 export function createProxy(options: ProxyOptions): http.Server {
-  const wallet = createWalletAdapter(options.keypair);
-  const client = new X402Client({
-    wallet,
-    network: 'solana',
-    rpcUrl: SOLANA_RPC_URL,
-  });
+  const wallet = getOrCreateWallet();
+  const privateKey = wallet.privateKey as `0x${string}`;
+  const fromAddress = wallet.address;
 
   const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
@@ -35,7 +33,9 @@ export function createProxy(options: ProxyOptions): http.Server {
 
     req.on('end', async () => {
       try {
-        const headers: Record<string, string> = {};
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
         for (const [key, value] of Object.entries(req.headers)) {
           if (
             key.toLowerCase() !== 'host' &&
@@ -46,11 +46,23 @@ export function createProxy(options: ProxyOptions): http.Server {
           }
         }
 
-        const response = await client.fetch(targetUrl, {
+        let response = await fetch(targetUrl, {
           method: req.method || 'POST',
           headers,
           body: body || undefined,
         });
+
+        if (response.status === 402) {
+          response = await handlePayment(
+            response,
+            targetUrl,
+            req.method || 'POST',
+            headers,
+            body,
+            privateKey,
+            fromAddress
+          );
+        }
 
         const responseHeaders: Record<string, string> = {};
         response.headers.forEach((v, k) => {
@@ -88,4 +100,58 @@ export function createProxy(options: ProxyOptions): http.Server {
   });
 
   return server;
+}
+
+async function handlePayment(
+  response: Response,
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: string,
+  privateKey: `0x${string}`,
+  fromAddress: string
+): Promise<Response> {
+  let paymentHeader = response.headers.get('payment-required');
+
+  if (!paymentHeader) {
+    try {
+      const respBody = (await response.json()) as Record<string, unknown>;
+      if (respBody.x402 || respBody.accepts) {
+        paymentHeader = btoa(JSON.stringify(respBody));
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }
+
+  if (!paymentHeader) {
+    throw new Error('402 response but no payment requirements found');
+  }
+
+  const paymentRequired = parsePaymentRequired(paymentHeader);
+  const details = extractPaymentDetails(paymentRequired);
+
+  const paymentPayload = await createPaymentPayload(
+    privateKey,
+    fromAddress,
+    details.recipient,
+    details.amount,
+    details.network || 'eip155:8453',
+    {
+      resourceUrl: details.resource?.url || url,
+      resourceDescription:
+        details.resource?.description || 'BlockRun AI API call',
+      maxTimeoutSeconds: details.maxTimeoutSeconds || 300,
+      extra: details.extra,
+    }
+  );
+
+  return fetch(url, {
+    method,
+    headers: {
+      ...headers,
+      'PAYMENT-SIGNATURE': paymentPayload,
+    },
+    body: body || undefined,
+  });
 }
