@@ -83,7 +83,7 @@ function launchServer(
       delete cleanEnv.CLAUDE_ACCESS_TOKEN;
       delete cleanEnv.CLAUDE_OAUTH_TOKEN;
 
-      const claudeArgs = ['--api-key-auth'];
+      const claudeArgs: string[] = [];
       if (model) claudeArgs.push('--model', model);
 
       const claude = spawn('claude', claudeArgs, {
