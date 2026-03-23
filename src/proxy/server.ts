@@ -18,6 +18,9 @@ export interface ProxyOptions {
   modelOverride?: string;
 }
 
+const DEFAULT_MAX_TOKENS = 4096;
+let lastOutputTokens = 0;
+
 export function createProxy(options: ProxyOptions): http.Server {
   const chain = options.chain || 'base';
 
@@ -62,11 +65,18 @@ export function createProxy(options: ProxyOptions): http.Server {
               parsed.model = options.modelOverride;
             }
             if (parsed.max_tokens) {
+              const original = parsed.max_tokens;
               const model = (parsed.model || '').toLowerCase();
-              if (model.includes('deepseek') || model.includes('haiku') || model.includes('gpt-oss')) {
-                parsed.max_tokens = Math.min(parsed.max_tokens, 8192);
+              const modelCap = (model.includes('deepseek') || model.includes('haiku') || model.includes('gpt-oss')) ? 8192 : 16384;
+
+              if (lastOutputTokens > 0) {
+                parsed.max_tokens = Math.min(lastOutputTokens, modelCap);
               } else {
-                parsed.max_tokens = Math.min(parsed.max_tokens, 16384);
+                parsed.max_tokens = Math.min(parsed.max_tokens, DEFAULT_MAX_TOKENS, modelCap);
+              }
+
+              if (original !== parsed.max_tokens) {
+                console.log(`[brcc] max_tokens: ${original} → ${parsed.max_tokens} (last output: ${lastOutputTokens || 'none'})`);
               }
             }
             body = JSON.stringify(parsed);
@@ -122,21 +132,44 @@ export function createProxy(options: ProxyOptions): http.Server {
         });
         res.writeHead(response.status, responseHeaders);
 
+        const isStreaming = responseHeaders['content-type']?.includes('text/event-stream');
+
         if (response.body) {
           const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let lastChunkText = '';
+
           const pump = async () => {
             while (true) {
               const { done, value } = await reader.read();
               if (done) {
+                if (isStreaming && lastChunkText) {
+                  const match = lastChunkText.match(/"output_tokens"\s*:\s*(\d+)/);
+                  if (match) {
+                    lastOutputTokens = parseInt(match[1], 10);
+                    console.log(`[brcc] recorded output_tokens: ${lastOutputTokens} (stream)`);
+                  }
+                }
                 res.end();
                 break;
+              }
+              if (isStreaming) {
+                lastChunkText = decoder.decode(value, { stream: true });
               }
               res.write(value);
             }
           };
           pump().catch(() => res.end());
         } else {
-          res.end(await response.text());
+          const text = await response.text();
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed.usage?.output_tokens) {
+              lastOutputTokens = parsed.usage.output_tokens;
+              console.log(`[brcc] recorded output_tokens: ${lastOutputTokens}`);
+            }
+          } catch { /* not JSON */ }
+          res.end(text);
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Proxy error';
