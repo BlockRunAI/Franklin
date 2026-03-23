@@ -1,18 +1,50 @@
 {
   "name": "brcc",
   "version": "0.2.0",
-  "description": "BlockRun Claude Code — run Claude Code with any model, pay with USDC",
+  "description": "Run Claude Code with any model — no rate limits, no account locks, no phone verification. Pay per use with USDC.",
   "type": "module",
-  "bin": { "brcc": "./dist/index.js" },
+  "bin": {
+    "brcc": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js"
   },
+  "keywords": [
+    "claude-code",
+    "ai",
+    "llm",
+    "gpt",
+    "gemini",
+    "deepseek",
+    "anthropic",
+    "openai",
+    "x402",
+    "usdc",
+    "crypto",
+    "pay-per-use",
+    "no-rate-limit",
+    "blockrun"
+  ],
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BlockRunAI/brcc"
+  },
+  "homepage": "https://blockrun.ai",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@blockrun/llm": "file:../blockrun-llm-ts",
-    "commander": "^13.0.0",
-    "chalk": "^5.4.0"
+    "chalk": "^5.4.0",
+    "commander": "^13.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
