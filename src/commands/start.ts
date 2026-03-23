@@ -6,6 +6,7 @@ import { loadChain, API_URLS, DEFAULT_PROXY_PORT } from '../config.js';
 
 interface StartOptions {
   port?: string;
+  model?: string;
   launch?: boolean;
 }
 
@@ -29,14 +30,16 @@ export async function startCommand(options: StartOptions) {
     const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
     const shouldLaunch = options.launch !== false;
 
+    const model = options.model;
     console.log(chalk.bold('brcc — BlockRun Claude Code\n'));
     console.log(`Chain:   ${chalk.magenta('solana')}`);
     console.log(`Wallet:  ${chalk.cyan(wallet.address)}`);
+    if (model) console.log(`Model:   ${chalk.green(model)}`);
     console.log(`Proxy:   ${chalk.cyan(`http://localhost:${port}`)}`);
     console.log(`Backend: ${chalk.dim(apiUrl)}\n`);
 
     const server = createProxy({ port, apiUrl, chain: 'solana' });
-    launchServer(server, port, shouldLaunch);
+    launchServer(server, port, shouldLaunch, model);
   } else {
     const wallet = getOrCreateWallet();
     if (wallet.isNew) {
@@ -51,21 +54,24 @@ export async function startCommand(options: StartOptions) {
     const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
     const shouldLaunch = options.launch !== false;
 
+    const model = options.model;
     console.log(chalk.bold('brcc — BlockRun Claude Code\n'));
     console.log(`Chain:   ${chalk.magenta('base')}`);
     console.log(`Wallet:  ${chalk.cyan(wallet.address)}`);
+    if (model) console.log(`Model:   ${chalk.green(model)}`);
     console.log(`Proxy:   ${chalk.cyan(`http://localhost:${port}`)}`);
     console.log(`Backend: ${chalk.dim(apiUrl)}\n`);
 
     const server = createProxy({ port, apiUrl, chain: 'base' });
-    launchServer(server, port, shouldLaunch);
+    launchServer(server, port, shouldLaunch, model);
   }
 }
 
 function launchServer(
   server: ReturnType<typeof createProxy>,
   port: number,
-  shouldLaunch: boolean
+  shouldLaunch: boolean,
+  model?: string
 ) {
   server.listen(port, () => {
     console.log(chalk.green(`Proxy running on port ${port}\n`));
@@ -77,7 +83,10 @@ function launchServer(
       delete cleanEnv.CLAUDE_ACCESS_TOKEN;
       delete cleanEnv.CLAUDE_OAUTH_TOKEN;
 
-      const claude = spawn('claude', ['--api-key-auth'], {
+      const claudeArgs = ['--api-key-auth'];
+      if (model) claudeArgs.push('--model', model);
+
+      const claude = spawn('claude', claudeArgs, {
         stdio: 'inherit',
         env: {
           ...cleanEnv,
