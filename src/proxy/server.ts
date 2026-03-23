@@ -20,7 +20,7 @@ export interface ProxyOptions {
 }
 
 function debug(options: ProxyOptions, ...args: unknown[]) {
-  if (options.debug) console.log('[brcc]', ...args);
+  if (options.debug) console.error('[brcc]', ...args);
 }
 
 const DEFAULT_MAX_TOKENS = 4096;
@@ -74,11 +74,12 @@ export function createProxy(options: ProxyOptions): http.Server {
               const model = (parsed.model || '').toLowerCase();
               const modelCap = (model.includes('deepseek') || model.includes('haiku') || model.includes('gpt-oss')) ? 8192 : 16384;
 
-              if (lastOutputTokens > 0) {
-                parsed.max_tokens = Math.min(lastOutputTokens, modelCap);
-              } else {
-                parsed.max_tokens = Math.min(parsed.max_tokens, DEFAULT_MAX_TOKENS, modelCap);
-              }
+              // Use max of (last output × 2, default 4096) capped by model limit
+              // This ensures short replies don't starve the next request
+              const adaptive = lastOutputTokens > 0
+                ? Math.max(lastOutputTokens * 2, DEFAULT_MAX_TOKENS)
+                : DEFAULT_MAX_TOKENS;
+              parsed.max_tokens = Math.min(adaptive, modelCap);
 
               if (original !== parsed.max_tokens) {
                 debug(options, `max_tokens: ${original} → ${parsed.max_tokens} (last output: ${lastOutputTokens || 'none'})`);
