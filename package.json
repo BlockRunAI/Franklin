@@ -1,6 +1,6 @@
 {
   "name": "brcc",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BlockRun Claude Code — run Claude Code with any model, pay with USDC",
   "type": "module",
   "bin": { "brcc": "./dist/index.js" },
@@ -10,9 +10,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@solana/web3.js": "^1.98.0",
-    "@solana/spl-token": "^0.4.0",
-    "x402-solana": "^2.0.0",
+    "@blockrun/llm": "file:../blockrun-llm-ts",
     "commander": "^13.0.0",
     "chalk": "^5.4.0"
   },

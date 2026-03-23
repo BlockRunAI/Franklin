@@ -1,10 +1,6 @@
 import { spawn } from 'node:child_process';
 import chalk from 'chalk';
-import {
-  walletExists,
-  loadWallet,
-  getPublicKey,
-} from '../wallet/manager.js';
+import { getOrCreateWallet } from '@blockrun/llm';
 import { createProxy } from '../proxy/server.js';
 import { DEFAULT_API_URL, DEFAULT_PROXY_PORT } from '../config.js';
 
@@ -14,22 +10,25 @@ interface StartOptions {
 }
 
 export async function startCommand(options: StartOptions) {
-  if (!(await walletExists())) {
-    console.log(chalk.red('No wallet found. Run `brcc setup` first.'));
-    process.exit(1);
+  const wallet = getOrCreateWallet();
+  if (wallet.isNew) {
+    console.log(chalk.yellow('No wallet found — created a new one.'));
+    console.log(`Address: ${chalk.cyan(wallet.address)}`);
+    console.log(
+      `\nSend USDC on Base to this address, then run ${chalk.bold('brcc start')} again.\n`
+    );
+    return;
   }
 
   const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
   const shouldLaunch = options.launch !== false;
-  const keypair = await loadWallet();
-  const pubkey = await getPublicKey();
 
   console.log(chalk.bold('brcc — BlockRun Claude Code\n'));
-  console.log(`Wallet:  ${chalk.cyan(pubkey)}`);
+  console.log(`Wallet:  ${chalk.cyan(wallet.address)}`);
   console.log(`Proxy:   ${chalk.cyan(`http://localhost:${port}`)}`);
   console.log(`Backend: ${chalk.dim(DEFAULT_API_URL)}\n`);
 
-  const server = createProxy({ port, keypair, apiUrl: DEFAULT_API_URL });
+  const server = createProxy({ port, apiUrl: DEFAULT_API_URL });
 
   server.listen(port, () => {
     console.log(chalk.green(`Proxy running on port ${port}\n`));
@@ -48,7 +47,9 @@ export async function startCommand(options: StartOptions) {
 
       claude.on('error', (err) => {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-          console.log(chalk.red('\nClaude Code not found. Install it first:'));
+          console.log(
+            chalk.red('\nClaude Code not found. Install it first:')
+          );
           console.log(
             chalk.dim('  npm install -g @anthropic-ai/claude-code')
           );

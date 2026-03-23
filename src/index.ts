@@ -15,7 +15,7 @@ program
 
 program
   .command('setup')
-  .description('Generate a new Solana wallet for payments')
+  .description('Create a new wallet for payments')
   .action(setupCommand);
 
 program
