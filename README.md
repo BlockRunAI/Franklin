@@ -262,12 +262,6 @@ Typical cost: **$0.001–$0.05 per interaction**. $5 lasts most developers a wee
 **Do I need an Anthropic account?**
 No. brcc connects Claude Code to BlockRun instead of Anthropic.
 
-**Is my wallet safe?**
-Your private key is stored locally (`~/.blockrun/.session`, chmod 600). It's only used for local signing — never transmitted.
-
-**What if BlockRun goes down?**
-Your funds are yours on-chain. USDC is always withdrawable.
-
 **Can I use non-Claude models?**
 Yes. GPT-5, Gemini, DeepSeek, Grok, and 30+ others work through Claude Code via brcc.
 
