@@ -2,15 +2,29 @@ import {
   getOrCreateWallet,
   scanWallets,
   getWalletAddress,
+  getOrCreateSolanaWallet,
+  scanSolanaWallets,
 } from '@blockrun/llm';
+import { loadChain } from '../config.js';
 
 export function walletExists(): boolean {
-  const wallets = scanWallets();
-  return wallets.length > 0;
+  const chain = loadChain();
+  if (chain === 'solana') {
+    return scanSolanaWallets().length > 0;
+  }
+  return scanWallets().length > 0;
 }
 
 export function setupWallet(): { address: string; isNew: boolean } {
   const { address, isNew } = getOrCreateWallet();
+  return { address, isNew };
+}
+
+export async function setupSolanaWallet(): Promise<{
+  address: string;
+  isNew: boolean;
+}> {
+  const { address, isNew } = await getOrCreateSolanaWallet();
   return { address, isNew };
 }
 
