@@ -49,7 +49,7 @@ The result:
 **brcc** ([github.com/BlockRunAI/brcc](https://github.com/BlockRunAI/brcc)) takes a different approach: you pay for exactly what you use. No subscriptions. No limits. No accounts.
 
 ```bash
-npm install -g @blockrun/cc
+sudo npm install -g @blockrun/cc  # use sudo on Linux
 brcc setup base
 brcc start
 ```
@@ -117,7 +117,7 @@ And you get a bonus: **access to every other model too.** Need GPT-5 for reasoni
 curl -fsSL https://raw.githubusercontent.com/BlockRunAI/brcc/main/install.sh | bash
 
 # Or manual
-npm install -g @blockrun/cc
+sudo npm install -g @blockrun/cc  # use sudo on Linux
 brcc setup base
 brcc start --model nvidia/gpt-oss-120b  # Free model to test
 ```
