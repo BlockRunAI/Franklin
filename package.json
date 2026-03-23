@@ -42,7 +42,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@blockrun/llm": "file:../blockrun-llm-ts",
+    "@blockrun/llm": "^1.4.2",
     "chalk": "^5.4.0",
     "commander": "^13.0.0"
   },
