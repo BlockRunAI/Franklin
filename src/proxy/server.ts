@@ -61,10 +61,12 @@ export function createProxy(options: ProxyOptions): http.Server {
             if (options.modelOverride && parsed.model) {
               parsed.model = options.modelOverride;
             }
-            if (parsed.max_tokens && parsed.max_tokens > 8192) {
-              const model = parsed.model || '';
-              if (model.includes('deepseek') || model.includes('haiku')) {
-                parsed.max_tokens = 8192;
+            if (parsed.max_tokens) {
+              const model = (parsed.model || '').toLowerCase();
+              if (model.includes('deepseek') || model.includes('haiku') || model.includes('gpt-oss')) {
+                parsed.max_tokens = Math.min(parsed.max_tokens, 8192);
+              } else {
+                parsed.max_tokens = Math.min(parsed.max_tokens, 16384);
               }
             }
             body = JSON.stringify(parsed);
