@@ -246,6 +246,58 @@ async function handleSolanaPayment(
 // Shared helpers
 // ======================================================================
 
+// ======================================================================
+// Request classification (smart routing infrastructure)
+// ======================================================================
+
+type RequestCategory = 'simple' | 'code' | 'default';
+
+interface ClassifiedRequest {
+  category: RequestCategory;
+  suggestedModel?: string;
+}
+
+export function classifyRequest(body: string): ClassifiedRequest {
+  try {
+    const parsed = JSON.parse(body);
+    const messages = parsed.messages;
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return { category: 'default' };
+    }
+
+    const lastMessage = messages[messages.length - 1];
+    let content = '';
+    if (typeof lastMessage.content === 'string') {
+      content = lastMessage.content;
+    } else if (Array.isArray(lastMessage.content)) {
+      content = lastMessage.content
+        .filter(
+          (b: { type: string; text?: string }) => b.type === 'text' && b.text
+        )
+        .map((b: { text: string }) => b.text)
+        .join('\n');
+    }
+
+    if (content.includes('```') || content.includes('function ') ||
+        content.includes('class ') || content.includes('import ') ||
+        content.includes('def ') || content.includes('const ')) {
+      return { category: 'code' };
+    }
+
+    if (content.length < 100) {
+      return { category: 'simple' };
+    }
+
+    return { category: 'default' };
+  } catch {
+    return { category: 'default' };
+  }
+}
+
+// ======================================================================
+// Shared helpers
+// ======================================================================
+
 async function extractPaymentHeader(
   response: Response
 ): Promise<string | null> {
