@@ -30,6 +30,7 @@ program
     'Default model (e.g. openai/gpt-5.4, anthropic/claude-sonnet-4.6)'
   )
   .option('--no-launch', 'Start proxy only, do not launch Claude Code')
+  .option('--debug', 'Enable debug logging')
   .action(startCommand);
 
 program
