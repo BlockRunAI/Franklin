@@ -1,145 +1,183 @@
-# brcc — BlockRun Claude Code
+# brcc
 
-Run Claude Code with any LLM model. Pay per use with Solana USDC.
+**Run Claude Code without rate limits.**
 
-```
-brcc start
-```
-
-One command: starts a local payment proxy, launches Claude Code, routes to any model via [BlockRun](https://blockrun.ai).
-
-## How it works
-
-```
-Claude Code → localhost:8402 (brcc proxy, signs x402 payments)
-            → sol.blockrun.ai/api/v1/messages
-            → Any model (GPT-5, Gemini, DeepSeek, Claude, Grok, ...)
-```
-
-brcc runs a local HTTP proxy that intercepts Claude Code's API requests, automatically signs [x402](https://x402.org) micropayments with your Solana wallet, and forwards to BlockRun's API gateway. No API keys needed — just USDC.
-
-## Install
+Hitting usage limits? Account disabled? Can't verify your phone? brcc fixes all of that.
 
 ```bash
 npm install -g brcc
-```
-
-Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Node.js 18+.
-
-## Quick start
-
-```bash
-# 1. Generate a Solana wallet
-brcc setup
-
-# 2. Fund it — send USDC (Solana) + small amount of SOL for fees to the displayed address
-
-# 3. Check balance
-brcc balance
-
-# 4. Launch Claude Code with BlockRun
 brcc start
 ```
 
-That's it. Claude Code opens with access to all BlockRun models.
+One command. No Anthropic account needed. No rate limits. No phone verification. Just USDC.
+
+## The Problem
+
+Claude Code users hit these walls daily ([4,350+ GitHub issue comments](https://github.com/anthropics/claude-code/issues)):
+
+- **"Instantly hitting usage limits with Max subscription"** — 1,252 comments
+- **"Account disabled after payment"** — 145 comments
+- **"Phone verification — unable to send code"** — 546 comments
+- **"5-hour limit reached in less than 1h30"** — 108 comments
+- **"Rate limit reached despite Max subscription"** — 89 comments
+
+## The Fix
+
+brcc routes Claude Code through [BlockRun](https://blockrun.ai), a pay-per-use AI gateway. You pay exactly what you use — no subscriptions, no limits, no accounts.
+
+```
+Claude Code  -->  brcc (local proxy)  -->  BlockRun API  -->  Any model
+                  auto-signs payments      40+ models         GPT-5, Claude, Gemini, ...
+                  with your wallet         pay per token
+```
+
+## Quick Start
+
+```bash
+# Install
+npm install -g brcc
+
+# Create a wallet (one time)
+brcc setup
+# -> Wallet created: 0xCC8c...5EF8
+# -> Send USDC on Base to this address
+
+# Fund your wallet
+# Send $5-10 USDC on Base chain to your wallet address
+# Buy USDC on Coinbase, send directly to your address
+
+# Launch Claude Code
+brcc start
+```
+
+That's it. Claude Code opens with access to 40+ models, no rate limits.
+
+## What $5 Gets You
+
+| Model | ~Requests per $5 | Best For |
+|-------|-------------------|----------|
+| Claude Sonnet 4.6 | ~100 | Coding (default) |
+| GPT-5.4 | ~80 | Reasoning |
+| Claude Haiku 4.5 | ~500 | Fast tasks |
+| DeepSeek V3 | ~5,000 | Budget coding |
+| GPT-OSS 120B | Unlimited | Free tier |
+
+## Why brcc vs Claude Max Subscription
+
+| | Claude Max ($100-200/mo) | brcc |
+|--|--------------------------|------|
+| **Rate limits** | Constantly hit | None |
+| **Account locks** | Common | Impossible — no account |
+| **Phone verification** | Required | Not needed |
+| **Pricing** | Opaque, subscription | Transparent, pay-per-token |
+| **Region restrictions** | Some countries blocked | Works everywhere |
+| **Models** | Claude only | 40+ models (GPT, Gemini, DeepSeek...) |
+| **Monthly cost** | $100-200 fixed | $5-50 based on usage |
+| **Auth issues** | OAuth, API key conflicts | Wallet = identity |
 
 ## Commands
 
 ### `brcc setup`
 
-Generates a new Solana wallet and saves it to `~/.brcc/wallet.json`. Displays the wallet address for funding.
+Creates a wallet and shows the address for funding.
 
 ```
 $ brcc setup
-Generating new Solana wallet...
-
 Wallet created!
-
-Address: CBDCZyq1hUca2GasD36bQTnfBt9KakkZjPKUieBFtSqo
-
-Send USDC (Solana) to this address to fund your account.
-Then run brcc start to launch Claude Code.
+Address: 0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8
+Send USDC on Base to this address to fund your account.
 ```
+
+Your wallet is saved to `~/.blockrun/` and shared with all BlockRun tools.
 
 ### `brcc start`
 
-Starts the x402 payment proxy and launches Claude Code.
+Starts the payment proxy and launches Claude Code.
 
-```bash
-brcc start              # Start proxy + launch Claude Code
-brcc start --no-launch  # Start proxy only (set env vars manually)
-brcc start -p 9000      # Use custom port
+```
+$ brcc start
+brcc — BlockRun Claude Code
+
+Wallet:  0xCC8c...5EF8
+Proxy:   http://localhost:8402
+Backend: https://blockrun.ai/api
+
+Starting Claude Code...
 ```
 
-In proxy-only mode, set these env vars in your shell:
-
+Options:
 ```bash
-export ANTHROPIC_BASE_URL=http://localhost:8402/api
-export ANTHROPIC_API_KEY=brcc
-claude
+brcc start              # Start proxy + launch Claude Code
+brcc start --no-launch  # Proxy only (for manual Claude Code setup)
+brcc start -p 9000      # Custom port
 ```
 
 ### `brcc balance`
 
-Shows your wallet's USDC and SOL balances.
+Check your USDC balance.
 
 ```
 $ brcc balance
-Wallet: CBDCZyq1hUca2GasD36bQTnfBt9KakkZjPKUieBFtSqo
-
-USDC Balance: $12.50
-SOL Balance:  0.0050 SOL
+Wallet: 0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8
+USDC Balance: $4.17
 ```
 
-## Available models
+## How It Works
 
-All models on [BlockRun](https://blockrun.ai) are available, including:
+1. `brcc start` launches a local HTTP proxy on port 8402
+2. Claude Code connects to the proxy (via `ANTHROPIC_BASE_URL`)
+3. When Claude Code makes an API request, the proxy forwards it to BlockRun
+4. If payment is needed, the proxy automatically signs a USDC micropayment
+5. BlockRun processes the request and returns the response
+6. Claude Code gets the response as normal
 
-| Model | Provider |
-|-------|----------|
-| GPT-5.4 | OpenAI |
-| Claude Opus 4.6 | Anthropic |
-| Claude Sonnet 4.6 | Anthropic |
-| Gemini 2.5 Pro | Google |
-| DeepSeek V3 | DeepSeek |
-| Grok | xAI |
-| GPT-OSS 120B | NVIDIA (free) |
+Your private key never leaves your machine. Only payment signatures are sent.
 
-See full list: `curl https://sol.blockrun.ai/api/v1/models`
+## Funding Your Wallet
 
-## Pricing
+brcc uses USDC on Base (Coinbase's L2 chain). To fund:
 
-Pay-per-use via x402 micropayments. Prices match upstream provider rates + 5% platform fee. No subscriptions, no accounts, no API keys.
+1. **Buy USDC** on [Coinbase](https://coinbase.com), [Binance](https://binance.com), or any exchange
+2. **Send USDC** to your brcc wallet address (shown in `brcc setup`)
+3. **Make sure it's on Base chain** — not Ethereum mainnet
 
-Free models (like `nvidia/gpt-oss-120b`) require no payment.
+Typical cost: $0.001-0.05 per Claude Code interaction. $5 lasts most developers a week.
 
-## How x402 payment works
+## Available Models
 
-1. Claude Code sends a request through the brcc proxy
-2. Proxy forwards to `sol.blockrun.ai`
-3. If the model requires payment, the server returns `402 Payment Required` with pricing
-4. Proxy automatically signs a USDC transfer using your wallet
-5. Proxy retries the request with the signed payment
-6. Server verifies payment, processes the request, settles on-chain
+All [BlockRun models](https://blockrun.ai) work through brcc:
 
-All payments are USDC on Solana mainnet. Typical cost: $0.001–$0.05 per request depending on model and token count.
+- **OpenAI**: GPT-5.4, GPT-5.2, GPT-5-mini, o3, o4-mini
+- **Anthropic**: Claude Opus 4.6, Sonnet 4.6, Haiku 4.5
+- **Google**: Gemini 3.1 Pro, 2.5 Pro, 2.5 Flash
+- **DeepSeek**: V3, Reasoner
+- **xAI**: Grok 3, Grok 4
+- **Free**: NVIDIA GPT-OSS 120B (no payment needed)
 
-## Config
+## FAQ
 
-Wallet and config are stored in `~/.brcc/`:
+**Q: Is this legal?**
+A: Yes. brcc is an API proxy. You're using Claude Code (Anthropic's open CLI) with a different API backend. OpenRouter, LiteLLM, and others do the same thing. No Anthropic terms are violated because no Anthropic services are used.
 
-```
-~/.brcc/
-├── wallet.json    # Solana keypair (chmod 600)
-└── config.json    # Settings (future)
-```
+**Q: Do I need an Anthropic account?**
+A: No. brcc bypasses Anthropic entirely. You don't need an Anthropic account, API key, or subscription.
 
-## Security
+**Q: Is my wallet safe?**
+A: Your private key stays on your machine (`~/.blockrun/.session`, chmod 600). It's only used for local signing — never transmitted over the network.
 
-- Wallet private key is stored locally in `~/.brcc/wallet.json` with `600` permissions
-- The proxy runs on localhost only — not exposed to the network
-- Payments are signed locally, never sending your private key over the network
+**Q: What if BlockRun goes down?**
+A: Your wallet and funds are yours on-chain. USDC is always withdrawable regardless of BlockRun's status.
+
+**Q: Can I use models other than Claude?**
+A: Yes. Claude Code works with any model that speaks the Anthropic Messages API format. Through brcc, you can use GPT-5, Gemini, DeepSeek, and 30+ other models.
+
+## Links
+
+- [BlockRun](https://blockrun.ai) — The AI gateway powering brcc
+- [BlockRun TypeScript SDK](https://www.npmjs.com/package/@blockrun/llm)
+- [Telegram](https://t.me/+mroQv4-4hGgzOGUx)
+- [GitHub Issues](https://github.com/BlockRunAI/brcc/issues)
 
 ## License
 
-MIT
+[Business Source License 1.1](LICENSE) — Free to use, modify, and deploy. Cannot be used to build a competing hosted service. Converts to MIT in 2030.
