@@ -43,6 +43,9 @@
   },
   "dependencies": {
     "@blockrun/llm": "^1.4.2",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
     "chalk": "^5.4.0",
     "commander": "^13.0.0"
   },

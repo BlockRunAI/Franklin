@@ -1,20 +1,39 @@
 import http from 'node:http';
 import {
   getOrCreateWallet,
+  getOrCreateSolanaWallet,
   createPaymentPayload,
+  createSolanaPaymentPayload,
   parsePaymentRequired,
   extractPaymentDetails,
+  solanaKeyToBytes,
+  SOLANA_NETWORK,
 } from '@blockrun/llm';
+import type { Chain } from '../config.js';
 
 export interface ProxyOptions {
   port: number;
   apiUrl: string;
+  chain?: Chain;
 }
 
 export function createProxy(options: ProxyOptions): http.Server {
-  const wallet = getOrCreateWallet();
-  const privateKey = wallet.privateKey as `0x${string}`;
-  const fromAddress = wallet.address;
+  const chain = options.chain || 'base';
+
+  let baseWallet: { privateKey: string; address: string } | null = null;
+  let solanaWallet: { privateKey: string; address: string } | null = null;
+
+  if (chain === 'base') {
+    const w = getOrCreateWallet();
+    baseWallet = { privateKey: w.privateKey, address: w.address };
+  }
+
+  const initSolana = async () => {
+    if (chain === 'solana' && !solanaWallet) {
+      const w = await getOrCreateSolanaWallet();
+      solanaWallet = { privateKey: w.privateKey, address: w.address };
+    }
+  };
 
   const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
@@ -22,6 +41,8 @@ export function createProxy(options: ProxyOptions): http.Server {
       res.end();
       return;
     }
+
+    await initSolana();
 
     const path = req.url?.replace(/^\/api/, '') || '';
     const targetUrl = `${options.apiUrl}${path}`;
@@ -53,15 +74,27 @@ export function createProxy(options: ProxyOptions): http.Server {
         });
 
         if (response.status === 402) {
-          response = await handlePayment(
-            response,
-            targetUrl,
-            req.method || 'POST',
-            headers,
-            body,
-            privateKey,
-            fromAddress
-          );
+          if (chain === 'solana' && solanaWallet) {
+            response = await handleSolanaPayment(
+              response,
+              targetUrl,
+              req.method || 'POST',
+              headers,
+              body,
+              solanaWallet.privateKey,
+              solanaWallet.address
+            );
+          } else if (baseWallet) {
+            response = await handleBasePayment(
+              response,
+              targetUrl,
+              req.method || 'POST',
+              headers,
+              body,
+              baseWallet.privateKey as `0x${string}`,
+              baseWallet.address
+            );
+          }
         }
 
         const responseHeaders: Record<string, string> = {};
@@ -102,7 +135,11 @@ export function createProxy(options: ProxyOptions): http.Server {
   return server;
 }
 
-async function handlePayment(
+// ======================================================================
+// Base (EIP-712) payment handler
+// ======================================================================
+
+async function handleBasePayment(
   response: Response,
   url: string,
   method: string,
@@ -111,19 +148,7 @@ async function handlePayment(
   privateKey: `0x${string}`,
   fromAddress: string
 ): Promise<Response> {
-  let paymentHeader = response.headers.get('payment-required');
-
-  if (!paymentHeader) {
-    try {
-      const respBody = (await response.json()) as Record<string, unknown>;
-      if (respBody.x402 || respBody.accepts) {
-        paymentHeader = btoa(JSON.stringify(respBody));
-      }
-    } catch {
-      // ignore parse errors
-    }
-  }
-
+  const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
     throw new Error('402 response but no payment requirements found');
   }
@@ -154,4 +179,77 @@ async function handlePayment(
     },
     body: body || undefined,
   });
+}
+
+// ======================================================================
+// Solana payment handler
+// ======================================================================
+
+async function handleSolanaPayment(
+  response: Response,
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: string,
+  privateKey: string,
+  fromAddress: string
+): Promise<Response> {
+  const paymentHeader = await extractPaymentHeader(response);
+  if (!paymentHeader) {
+    throw new Error('402 response but no payment requirements found');
+  }
+
+  const paymentRequired = parsePaymentRequired(paymentHeader);
+  const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
+
+  const secretKey = await solanaKeyToBytes(privateKey);
+
+  const feePayer = details.extra?.feePayer || details.recipient;
+
+  const paymentPayload = await createSolanaPaymentPayload(
+    secretKey,
+    fromAddress,
+    details.recipient,
+    details.amount,
+    feePayer,
+    {
+      resourceUrl: details.resource?.url || url,
+      resourceDescription:
+        details.resource?.description || 'BlockRun AI API call',
+      maxTimeoutSeconds: details.maxTimeoutSeconds || 300,
+      extra: details.extra as Record<string, unknown> | undefined,
+    }
+  );
+
+  return fetch(url, {
+    method,
+    headers: {
+      ...headers,
+      'PAYMENT-SIGNATURE': paymentPayload,
+    },
+    body: body || undefined,
+  });
+}
+
+// ======================================================================
+// Shared helpers
+// ======================================================================
+
+async function extractPaymentHeader(
+  response: Response
+): Promise<string | null> {
+  let paymentHeader = response.headers.get('payment-required');
+
+  if (!paymentHeader) {
+    try {
+      const respBody = (await response.json()) as Record<string, unknown>;
+      if (respBody.x402 || respBody.accepts) {
+        paymentHeader = btoa(JSON.stringify(respBody));
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }
+
+  return paymentHeader;
 }
