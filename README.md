@@ -110,28 +110,35 @@ That's it. Claude Code opens with access to 40+ models, no rate limits.
 ### From the command line
 
 ```bash
-brcc start                                # Default: blockrun/auto (smart routing)
-brcc start --model blockrun/eco           # Cheapest capable model
-brcc start --model blockrun/premium       # Best quality (Claude/GPT-5)
+brcc start                                # Default: Claude Sonnet 4.6
 brcc start --model nvidia/gpt-oss-120b    # Free — no USDC needed
 brcc start --model deepseek/deepseek-chat # Budget coding ($0.28/M)
+brcc start --model openai/gpt-5.4         # GPT-5.4
 brcc start --model anthropic/claude-opus-4.6  # Most capable
 ```
 
-### Smart Routing Profiles
+### Smart Routing (with ClawRouter)
 
-| Profile | Strategy | Savings | Best For |
-|---------|----------|---------|----------|
-| `blockrun/auto` | Balanced (default) | 74-100% | General use |
-| `blockrun/eco` | Cheapest possible | 95-100% | Maximum savings |
-| `blockrun/premium` | Best quality | 0% | Mission-critical |
-| `blockrun/free` | Free tier only | 100% | Zero cost |
+If you have [ClawRouter](https://github.com/BlockRunAI/ClawRouter) running locally, you can use smart routing profiles:
+
+```bash
+# First, install and start ClawRouter
+curl -fsSL https://blockrun.ai/ClawRouter-update | bash
+openclaw gateway restart
+
+# Then use smart routing in brcc
+brcc start --model blockrun/auto     # Smart routing (74-100% savings)
+brcc start --model blockrun/eco      # Cheapest capable model
+brcc start --model blockrun/premium  # Best quality
+brcc start --model blockrun/free     # Free tier only
+```
 
 **In-session switching:**
 ```
 use auto      # Switch to smart routing
 use eco       # Switch to cheapest
-use premium   # Switch to best quality
+use sonnet    # Direct Claude Sonnet
+use deepseek  # Direct DeepSeek
 use free      # Switch to free models
 ```
 
