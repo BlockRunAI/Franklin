@@ -10,6 +10,13 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { Chain } from '../config.js';
+import { recordUsage } from '../stats/tracker.js';
+import {
+  fetchWithFallback,
+  buildFallbackChain,
+  DEFAULT_FALLBACK_CONFIG,
+  type FallbackConfig,
+} from './fallback.js';
 
 export interface ProxyOptions {
   port: number;
@@ -17,6 +24,7 @@ export interface ProxyOptions {
   chain?: Chain;
   modelOverride?: string;
   debug?: boolean;
+  fallbackEnabled?: boolean;
 }
 
 import fs from 'node:fs';
@@ -31,7 +39,14 @@ function debug(options: ProxyOptions, ...args: unknown[]) {
   try {
     fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
     fs.appendFileSync(LOG_FILE, msg);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
+}
+
+function log(...args: unknown[]) {
+  const msg = `[brcc] ${args.map(String).join(' ')}`;
+  console.log(msg);
 }
 
 const DEFAULT_MAX_TOKENS = 4096;
@@ -39,23 +54,52 @@ let lastOutputTokens = 0;
 
 // Model shortcuts for quick switching
 const MODEL_SHORTCUTS: Record<string, string> = {
-  'gpt': 'openai/gpt-5.4',
-  'gpt5': 'openai/gpt-5.4',
+  gpt: 'openai/gpt-5.4',
+  gpt5: 'openai/gpt-5.4',
   'gpt-5': 'openai/gpt-5.4',
   'gpt-5.4': 'openai/gpt-5.4',
-  'sonnet': 'anthropic/claude-sonnet-4.6',
-  'claude': 'anthropic/claude-sonnet-4.6',
-  'opus': 'anthropic/claude-opus-4.6',
-  'haiku': 'anthropic/claude-haiku-4.5',
-  'deepseek': 'deepseek/deepseek-chat',
-  'gemini': 'google/gemini-2.5-pro',
-  'grok': 'xai/grok-3',
-  'free': 'nvidia/gpt-oss-120b',
-  'mini': 'openai/gpt-5-mini',
-  'glm': 'zai/glm-5',
+  sonnet: 'anthropic/claude-sonnet-4.6',
+  claude: 'anthropic/claude-sonnet-4.6',
+  opus: 'anthropic/claude-opus-4.6',
+  haiku: 'anthropic/claude-haiku-4.5',
+  deepseek: 'deepseek/deepseek-chat',
+  gemini: 'google/gemini-2.5-pro',
+  grok: 'xai/grok-3',
+  free: 'nvidia/gpt-oss-120b',
+  mini: 'openai/gpt-5-mini',
+  glm: 'zai/glm-5',
 };
 
-function detectModelSwitch(parsed: { messages?: Array<{ role: string; content: string | unknown[] | unknown }> }): string | null {
+// Model pricing (per 1M tokens) - used for stats
+const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
+  'anthropic/claude-opus-4.6': { input: 5.0, output: 25.0 },
+  'anthropic/claude-haiku-4.5': { input: 1.0, output: 5.0 },
+  'openai/gpt-5.4': { input: 2.5, output: 15.0 },
+  'openai/gpt-5-mini': { input: 0.25, output: 2.0 },
+  'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
+  'deepseek/deepseek-chat': { input: 0.28, output: 0.42 },
+  'xai/grok-3': { input: 3.0, output: 15.0 },
+  'xai/grok-4-fast': { input: 0.2, output: 0.5 },
+  'nvidia/gpt-oss-120b': { input: 0, output: 0 },
+  'zai/glm-5': { input: 1.0, output: 3.2 },
+};
+
+function estimateCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number
+): number {
+  const pricing = MODEL_PRICING[model] || { input: 2.0, output: 10.0 };
+  return (
+    (inputTokens / 1_000_000) * pricing.input +
+    (outputTokens / 1_000_000) * pricing.output
+  );
+}
+
+function detectModelSwitch(parsed: {
+  messages?: Array<{ role: string; content: string | unknown[] | unknown }>;
+}): string | null {
   if (!parsed.messages || parsed.messages.length === 0) return null;
   const last = parsed.messages[parsed.messages.length - 1];
   if (last.role !== 'user') return null;
@@ -64,7 +108,9 @@ function detectModelSwitch(parsed: { messages?: Array<{ role: string; content: s
   if (typeof last.content === 'string') {
     content = last.content;
   } else if (Array.isArray(last.content)) {
-    const textBlock = (last.content as Array<{ type: string; text?: string }>).find(b => b.type === 'text' && b.text);
+    const textBlock = (
+      last.content as Array<{ type: string; text?: string }>
+    ).find((b) => b.type === 'text' && b.text);
     if (textBlock && textBlock.text) content = textBlock.text;
   }
   if (!content) return null;
@@ -84,6 +130,7 @@ function detectModelSwitch(parsed: { messages?: Array<{ role: string; content: s
 export function createProxy(options: ProxyOptions): http.Server {
   const chain = options.chain || 'base';
   let currentModel: string | null = options.modelOverride || null;
+  const fallbackEnabled = options.fallbackEnabled !== false; // Default true
 
   let baseWallet: { privateKey: string; address: string } | null = null;
   let solanaWallet: { privateKey: string; address: string } | null = null;
@@ -109,17 +156,24 @@ export function createProxy(options: ProxyOptions): http.Server {
 
     await initSolana();
 
-    const path = req.url?.replace(/^\/api/, '') || '';
-    const targetUrl = `${options.apiUrl}${path}`;
+    const requestPath = req.url?.replace(/^\/api/, '') || '';
+    const targetUrl = `${options.apiUrl}${requestPath}`;
     let body = '';
+    const requestStartTime = Date.now();
 
     req.on('data', (chunk: Buffer) => {
       body += chunk;
     });
 
     req.on('end', async () => {
+      let requestModel = currentModel || options.modelOverride || 'unknown';
+      let usedFallback = false;
+
       try {
-        debug(options, `request: ${req.method} ${req.url} currentModel=${currentModel || 'none'}`);
+        debug(
+          options,
+          `request: ${req.method} ${req.url} currentModel=${currentModel || 'none'}`
+        );
         if (body) {
           try {
             const parsed = JSON.parse(body);
@@ -127,7 +181,10 @@ export function createProxy(options: ProxyOptions): http.Server {
             // Intercept "use <model>" commands for in-session model switching
             if (parsed.messages) {
               const last = parsed.messages[parsed.messages.length - 1];
-              debug(options, `last msg role=${last?.role} content-type=${typeof last?.content} content=${JSON.stringify(last?.content).slice(0, 200)}`);
+              debug(
+                options,
+                `last msg role=${last?.role} content-type=${typeof last?.content} content=${JSON.stringify(last?.content).slice(0, 200)}`
+              );
             }
             const switchCmd = detectModelSwitch(parsed);
             if (switchCmd) {
@@ -138,7 +195,12 @@ export function createProxy(options: ProxyOptions): http.Server {
                 type: 'message',
                 role: 'assistant',
                 model: currentModel,
-                content: [{ type: 'text', text: `Switched to **${currentModel}**. All subsequent requests will use this model.` }],
+                content: [
+                  {
+                    type: 'text',
+                    text: `Switched to **${currentModel}**. All subsequent requests will use this model.`,
+                  },
+                ],
                 stop_reason: 'end_turn',
                 stop_sequence: null,
                 usage: { input_tokens: 0, output_tokens: 10 },
@@ -152,24 +214,37 @@ export function createProxy(options: ProxyOptions): http.Server {
             if ((currentModel || options.modelOverride) && parsed.model) {
               parsed.model = currentModel || options.modelOverride!;
             }
+            requestModel = parsed.model || requestModel;
+
             if (parsed.max_tokens) {
               const original = parsed.max_tokens;
               const model = (parsed.model || '').toLowerCase();
-              const modelCap = (model.includes('deepseek') || model.includes('haiku') || model.includes('gpt-oss')) ? 8192 : 16384;
+              const modelCap =
+                model.includes('deepseek') ||
+                model.includes('haiku') ||
+                model.includes('gpt-oss')
+                  ? 8192
+                  : 16384;
 
               // Use max of (last output × 2, default 4096) capped by model limit
               // This ensures short replies don't starve the next request
-              const adaptive = lastOutputTokens > 0
-                ? Math.max(lastOutputTokens * 2, DEFAULT_MAX_TOKENS)
-                : DEFAULT_MAX_TOKENS;
+              const adaptive =
+                lastOutputTokens > 0
+                  ? Math.max(lastOutputTokens * 2, DEFAULT_MAX_TOKENS)
+                  : DEFAULT_MAX_TOKENS;
               parsed.max_tokens = Math.min(adaptive, modelCap);
 
               if (original !== parsed.max_tokens) {
-                debug(options, `max_tokens: ${original} → ${parsed.max_tokens} (last output: ${lastOutputTokens || 'none'})`);
+                debug(
+                  options,
+                  `max_tokens: ${original} → ${parsed.max_tokens} (last output: ${lastOutputTokens || 'none'})`
+                );
               }
             }
             body = JSON.stringify(parsed);
-          } catch { /* not JSON, pass through */ }
+          } catch {
+            /* not JSON, pass through */
+          }
         }
 
         const headers: Record<string, string> = {
@@ -185,12 +260,48 @@ export function createProxy(options: ProxyOptions): http.Server {
           }
         }
 
-        let response = await fetch(targetUrl, {
+        // Build request init
+        const requestInit: RequestInit = {
           method: req.method || 'POST',
           headers,
           body: body || undefined,
-        });
+        };
 
+        let response: Response;
+        let finalModel = requestModel;
+
+        // Use fallback chain if enabled
+        if (fallbackEnabled && body && requestPath.includes('messages')) {
+          const fallbackConfig: FallbackConfig = {
+            ...DEFAULT_FALLBACK_CONFIG,
+            chain: buildFallbackChain(requestModel),
+          };
+
+          const result = await fetchWithFallback(
+            targetUrl,
+            requestInit,
+            body,
+            fallbackConfig,
+            (failedModel, status, nextModel) => {
+              log(
+                `⚠️  ${failedModel} returned ${status}, falling back to ${nextModel}`
+              );
+            }
+          );
+
+          response = result.response;
+          finalModel = result.modelUsed;
+          usedFallback = result.fallbackUsed;
+
+          if (usedFallback) {
+            log(`↺ Fallback successful: using ${finalModel}`);
+          }
+        } else {
+          // Direct fetch without fallback
+          response = await fetch(targetUrl, requestInit);
+        }
+
+        // Handle 402 payment
         if (response.status === 402) {
           if (chain === 'solana' && solanaWallet) {
             response = await handleSolanaPayment(
@@ -221,29 +332,60 @@ export function createProxy(options: ProxyOptions): http.Server {
         });
         res.writeHead(response.status, responseHeaders);
 
-        const isStreaming = responseHeaders['content-type']?.includes('text/event-stream');
+        const isStreaming =
+          responseHeaders['content-type']?.includes('text/event-stream');
 
         if (response.body) {
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
           let lastChunkText = '';
+          let fullResponse = '';
 
           const pump = async () => {
             while (true) {
               const { done, value } = await reader.read();
               if (done) {
+                // Record stats from streaming response
                 if (isStreaming && lastChunkText) {
-                  const match = lastChunkText.match(/"output_tokens"\s*:\s*(\d+)/);
-                  if (match) {
-                    lastOutputTokens = parseInt(match[1], 10);
-                    debug(options, `recorded output_tokens: ${lastOutputTokens} (stream)`);
+                  const outputMatch = lastChunkText.match(
+                    /"output_tokens"\s*:\s*(\d+)/
+                  );
+                  const inputMatch = fullResponse.match(
+                    /"input_tokens"\s*:\s*(\d+)/
+                  );
+                  if (outputMatch) {
+                    lastOutputTokens = parseInt(outputMatch[1], 10);
+                    const inputTokens = inputMatch
+                      ? parseInt(inputMatch[1], 10)
+                      : 0;
+                    const latencyMs = Date.now() - requestStartTime;
+                    const cost = estimateCost(
+                      finalModel,
+                      inputTokens,
+                      lastOutputTokens
+                    );
+
+                    recordUsage(
+                      finalModel,
+                      inputTokens,
+                      lastOutputTokens,
+                      cost,
+                      latencyMs,
+                      usedFallback
+                    );
+                    debug(
+                      options,
+                      `recorded: model=${finalModel} in=${inputTokens} out=${lastOutputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
+                    );
                   }
                 }
                 res.end();
                 break;
               }
               if (isStreaming) {
-                lastChunkText = decoder.decode(value, { stream: true });
+                const chunk = decoder.decode(value, { stream: true });
+                lastChunkText = chunk;
+                fullResponse += chunk;
               }
               res.write(value);
             }
@@ -255,13 +397,35 @@ export function createProxy(options: ProxyOptions): http.Server {
             const parsed = JSON.parse(text);
             if (parsed.usage?.output_tokens) {
               lastOutputTokens = parsed.usage.output_tokens;
-              debug(options, `recorded output_tokens: ${lastOutputTokens}`);
+              const inputTokens = parsed.usage?.input_tokens || 0;
+              const latencyMs = Date.now() - requestStartTime;
+              const cost = estimateCost(
+                finalModel,
+                inputTokens,
+                lastOutputTokens
+              );
+
+              recordUsage(
+                finalModel,
+                inputTokens,
+                lastOutputTokens,
+                cost,
+                latencyMs,
+                usedFallback
+              );
+              debug(
+                options,
+                `recorded: model=${finalModel} in=${inputTokens} out=${lastOutputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
+              );
             }
-          } catch { /* not JSON */ }
+          } catch {
+            /* not JSON */
+          }
           res.end(text);
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Proxy error';
+        log(`❌ Error: ${msg}`);
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -373,10 +537,6 @@ async function handleSolanaPayment(
 }
 
 // ======================================================================
-// Shared helpers
-// ======================================================================
-
-// ======================================================================
 // Request classification (smart routing infrastructure)
 // ======================================================================
 
@@ -408,9 +568,14 @@ export function classifyRequest(body: string): ClassifiedRequest {
         .join('\n');
     }
 
-    if (content.includes('```') || content.includes('function ') ||
-        content.includes('class ') || content.includes('import ') ||
-        content.includes('def ') || content.includes('const ')) {
+    if (
+      content.includes('```') ||
+      content.includes('function ') ||
+      content.includes('class ') ||
+      content.includes('import ') ||
+      content.includes('def ') ||
+      content.includes('const ')
+    ) {
       return { category: 'code' };
     }
 
