@@ -7,6 +7,17 @@ import { modelsCommand } from './commands/models.js';
 import { configCommand } from './commands/config.js';
 import { statsCommand } from './commands/stats.js';
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let version = '0.9.0';
+try {
+  const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf-8'));
+  version = pkg.version || version;
+} catch { /* use default */ }
+
 const program = new Command();
 
 program
@@ -15,7 +26,7 @@ program
     'BlockRun Claude Code — run Claude Code with any model, pay with USDC.\n\n' +
       'Use /model inside Claude Code to switch between models on the fly.'
   )
-  .version('0.9.0');
+  .version(version);
 
 program
   .command('setup [chain]')
