@@ -17,26 +17,12 @@ import {
   DEFAULT_FALLBACK_CONFIG,
   type FallbackConfig,
 } from './fallback.js';
-
-// ClawRouter local proxy for smart routing
-const CLAWROUTER_URL = 'http://localhost:8402';
-
-/**
- * Check if ClawRouter is running locally
- */
-async function isClawRouterRunning(): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 500);
-    const res = await fetch(`${CLAWROUTER_URL}/health`, {
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
+import {
+  routeRequest,
+  parseRoutingProfile,
+  getFallbackChain as getRouterFallbackChain,
+  type RoutingProfile,
+} from '../router/index.js';
 
 export interface ProxyOptions {
   port: number;
@@ -252,6 +238,37 @@ export function createProxy(options: ProxyOptions): http.Server {
               parsed.model = currentModel || options.modelOverride!;
             }
             requestModel = parsed.model || requestModel;
+
+            // Smart routing: if model is a routing profile, classify and route
+            const routingProfile = parseRoutingProfile(requestModel);
+            if (routingProfile) {
+              // Extract user prompt for classification
+              const userMessages = parsed.messages?.filter(
+                (m: { role: string }) => m.role === 'user'
+              ) || [];
+              const lastUserMsg = userMessages[userMessages.length - 1];
+              let promptText = '';
+              if (lastUserMsg) {
+                if (typeof lastUserMsg.content === 'string') {
+                  promptText = lastUserMsg.content;
+                } else if (Array.isArray(lastUserMsg.content)) {
+                  promptText = lastUserMsg.content
+                    .filter((b: { type: string }) => b.type === 'text')
+                    .map((b: { text: string }) => b.text)
+                    .join('\n');
+                }
+              }
+
+              // Route the request
+              const routing = routeRequest(promptText, routingProfile);
+              parsed.model = routing.model;
+              requestModel = routing.model;
+
+              log(
+                `🧠 Smart routing: ${routingProfile} → ${routing.tier} → ${routing.model} ` +
+                `(${(routing.savings * 100).toFixed(0)}% savings) [${routing.signals.join(', ')}]`
+              );
+            }
 
             if (parsed.max_tokens) {
               const original = parsed.max_tokens;
