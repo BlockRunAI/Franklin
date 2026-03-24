@@ -18,7 +18,7 @@ You're paying $200/month and still can't work.<br><br>
 [![npm downloads](https://img.shields.io/npm/dm/@blockrun/cc.svg?style=flat-square&color=blue)](https://npmjs.com/package/@blockrun/cc)
 [![GitHub stars](https://img.shields.io/github/stars/BlockRunAI/brcc?style=flat-square)](https://github.com/BlockRunAI/brcc)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-orange?style=flat-square)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 [![x402 Protocol](https://img.shields.io/badge/x402-Micropayments-purple?style=flat-square)](https://x402.org)
 [![Base Network](https://img.shields.io/badge/Base-USDC-0052FF?style=flat-square&logo=coinbase&logoColor=white)](https://base.org)
