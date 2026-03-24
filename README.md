@@ -382,4 +382,4 @@ Yes. GPT-5, Gemini, DeepSeek, Grok, and 30+ others work through Claude Code via 
 
 ## License
 
-[Business Source License 1.1](LICENSE) — Free to use, modify, and deploy. Cannot be used to build a competing hosted service. Converts to MIT in 2030.
+[MIT License](LICENSE)
