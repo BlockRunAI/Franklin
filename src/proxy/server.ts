@@ -145,10 +145,8 @@ function detectModelSwitch(parsed: {
   return null;
 }
 
-// Default model - use ClawRouter locally for smart routing
-// If ClawRouter is running on :8402, it handles blockrun/auto
-// Otherwise fall back to a reliable model
-const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
+// Default model - smart routing built-in
+const DEFAULT_MODEL = 'blockrun/auto';
 
 export function createProxy(options: ProxyOptions): http.Server {
   const chain = options.chain || 'base';
