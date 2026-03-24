@@ -1,4 +1,8 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import {
   getOrCreateWallet,
   getOrCreateSolanaWallet,
@@ -24,6 +28,19 @@ import {
   type RoutingProfile,
 } from '../router/index.js';
 
+// Get version from package.json
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let VERSION = '0.9.0';
+try {
+  const pkgPath = path.resolve(__dirname, '../../package.json');
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+  VERSION = pkg.version || VERSION;
+} catch { /* use default */ }
+
+// User-Agent for backend requests
+const USER_AGENT = `brcc/${VERSION}`;
+const X_BRCC_VERSION = VERSION;
+
 export interface ProxyOptions {
   port: number;
   apiUrl: string;
@@ -32,10 +49,6 @@ export interface ProxyOptions {
   debug?: boolean;
   fallbackEnabled?: boolean;
 }
-
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 
 const LOG_FILE = path.join(os.homedir(), '.blockrun', 'brcc-debug.log');
 
@@ -309,11 +322,14 @@ export function createProxy(options: ProxyOptions): http.Server {
 
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
+          'User-Agent': USER_AGENT,
+          'X-Brcc-Version': X_BRCC_VERSION,
         };
         for (const [key, value] of Object.entries(req.headers)) {
           if (
             key.toLowerCase() !== 'host' &&
             key.toLowerCase() !== 'content-length' &&
+            key.toLowerCase() !== 'user-agent' && // Don't forward client's user-agent
             value
           ) {
             headers[key] = Array.isArray(value) ? value[0] : value;
