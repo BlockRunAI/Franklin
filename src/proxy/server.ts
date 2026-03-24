@@ -413,6 +413,44 @@ export function createProxy(options: ProxyOptions): http.Server {
         response.headers.forEach((v, k) => {
           responseHeaders[k] = v;
         });
+
+        // Intercept error responses and ensure Anthropic-format errors
+        // so Claude Code doesn't fall back to showing a login page
+        if (response.status >= 400 && !responseHeaders['content-type']?.includes('text/event-stream')) {
+          let errorBody: string;
+          try {
+            const rawText = await response.text();
+            const parsed = JSON.parse(rawText);
+            // Already has Anthropic error shape? Pass through
+            if (parsed.type === 'error' && parsed.error) {
+              errorBody = rawText;
+            } else {
+              // Wrap in Anthropic error format
+              const errorMsg = parsed.error?.message || parsed.message || rawText.slice(0, 500);
+              errorBody = JSON.stringify({
+                type: 'error',
+                error: {
+                  type: response.status === 401 ? 'authentication_error'
+                    : response.status === 402 ? 'invalid_request_error'
+                    : response.status === 429 ? 'rate_limit_error'
+                    : response.status === 400 ? 'invalid_request_error'
+                    : 'api_error',
+                  message: `[${finalModel}] ${errorMsg}`,
+                },
+              });
+            }
+          } catch {
+            errorBody = JSON.stringify({
+              type: 'error',
+              error: { type: 'api_error', message: `Backend returned ${response.status}` },
+            });
+          }
+          res.writeHead(response.status, { 'Content-Type': 'application/json' });
+          res.end(errorBody);
+          log(`⚠️  ${response.status} from backend for ${finalModel}`);
+          return;
+        }
+
         res.writeHead(response.status, responseHeaders);
 
         const isStreaming =
