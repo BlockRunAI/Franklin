@@ -32,7 +32,7 @@
     "no-rate-limit",
     "blockrun"
   ],
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/BlockRunAI/brcc"
