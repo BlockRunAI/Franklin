@@ -265,10 +265,17 @@ export function routeRequest(
     'google/gemini-2.5-flash': 0.001,
     'google/gemini-2.5-flash-lite': 0.0003,
     'deepseek/deepseek-chat': 0.0004,
+    'deepseek/deepseek-reasoner': 0.003,
     'moonshot/kimi-k2.5': 0.002,
+    'google/gemini-2.5-pro': 0.006,
     'google/gemini-3.1-pro': 0.007,
+    'anthropic/claude-haiku-4.5': 0.003,
     'anthropic/claude-sonnet-4.6': 0.009,
     'anthropic/claude-opus-4.6': 0.015,
+    'openai/gpt-5.3-codex': 0.008,
+    'openai/gpt-5.4': 0.009,
+    'openai/o3': 0.012,
+    'openai/o4-mini': 0.006,
     'xai/grok-4-1-fast-reasoning': 0.0004,
   };
   const modelCost = modelCosts[model] ?? 0.005;
