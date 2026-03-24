@@ -422,15 +422,17 @@ export function createProxy(options: ProxyOptions): http.Server {
               const { done, value } = await reader.read();
               if (done) {
                 // Record stats from streaming response
-                if (isStreaming && lastChunkText) {
-                  const outputMatch = lastChunkText.match(
-                    /"output_tokens"\s*:\s*(\d+)/
-                  );
+                if (isStreaming && fullResponse) {
+                  // Search full response for the last output_tokens value
+                  const allOutputMatches = [...fullResponse.matchAll(
+                    /"output_tokens"\s*:\s*(\d+)/g
+                  )];
+                  const lastOutputMatch = allOutputMatches[allOutputMatches.length - 1];
                   const inputMatch = fullResponse.match(
                     /"input_tokens"\s*:\s*(\d+)/
                   );
-                  if (outputMatch) {
-                    lastOutputTokens = parseInt(outputMatch[1], 10);
+                  if (lastOutputMatch) {
+                    lastOutputTokens = parseInt(lastOutputMatch[1], 10);
                     const inputTokens = inputMatch
                       ? parseInt(inputMatch[1], 10)
                       : 0;
