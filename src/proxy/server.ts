@@ -54,6 +54,10 @@ let lastOutputTokens = 0;
 
 // Model shortcuts for quick switching
 const MODEL_SHORTCUTS: Record<string, string> = {
+  auto: 'blockrun/auto',
+  smart: 'blockrun/auto',
+  eco: 'blockrun/eco',
+  premium: 'blockrun/premium',
   gpt: 'openai/gpt-5.4',
   gpt5: 'openai/gpt-5.4',
   'gpt-5': 'openai/gpt-5.4',
@@ -72,17 +76,25 @@ const MODEL_SHORTCUTS: Record<string, string> = {
 
 // Model pricing (per 1M tokens) - used for stats
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  // Routing profiles (blended averages)
+  'blockrun/auto': { input: 0.8, output: 4.0 },
+  'blockrun/eco': { input: 0.2, output: 1.0 },
+  'blockrun/premium': { input: 3.0, output: 15.0 },
+  'blockrun/free': { input: 0, output: 0 },
+  // Individual models
   'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
   'anthropic/claude-opus-4.6': { input: 5.0, output: 25.0 },
   'anthropic/claude-haiku-4.5': { input: 1.0, output: 5.0 },
   'openai/gpt-5.4': { input: 2.5, output: 15.0 },
   'openai/gpt-5-mini': { input: 0.25, output: 2.0 },
   'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
+  'google/gemini-2.5-flash': { input: 0.3, output: 2.5 },
   'deepseek/deepseek-chat': { input: 0.28, output: 0.42 },
   'xai/grok-3': { input: 3.0, output: 15.0 },
   'xai/grok-4-fast': { input: 0.2, output: 0.5 },
   'nvidia/gpt-oss-120b': { input: 0, output: 0 },
   'zai/glm-5': { input: 1.0, output: 3.2 },
+  'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
 };
 
 function estimateCost(
@@ -127,9 +139,12 @@ function detectModelSwitch(parsed: {
   return null;
 }
 
+// Default to smart routing
+const DEFAULT_MODEL = 'blockrun/auto';
+
 export function createProxy(options: ProxyOptions): http.Server {
   const chain = options.chain || 'base';
-  let currentModel: string | null = options.modelOverride || null;
+  let currentModel: string | null = options.modelOverride || DEFAULT_MODEL;
   const fallbackEnabled = options.fallbackEnabled !== false; // Default true
 
   let baseWallet: { privateKey: string; address: string } | null = null;
