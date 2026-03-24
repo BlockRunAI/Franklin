@@ -118,22 +118,23 @@ function classifyRequest(prompt: string, tokenCount: number): ClassifyResult {
   const signals: string[] = [];
   let score = 0;
 
-  // Token count scoring
-  if (tokenCount < 50) {
-    score -= 0.3;
+  // Token count scoring (reduced weight - don't penalize short prompts too much)
+  if (tokenCount < 30) {
+    score -= 0.15;
     signals.push('short');
   } else if (tokenCount > 500) {
-    score += 0.3;
+    score += 0.2;
     signals.push('long');
   }
 
-  // Code detection (weight: 0.15)
+  // Code detection (weight: 0.20) - increased weight
   const codeMatches = countMatches(prompt, CODE_KEYWORDS);
   if (codeMatches >= 2) {
-    score += 0.4;
+    score += 0.5;
     signals.push('code');
   } else if (codeMatches >= 1) {
-    score += 0.2;
+    score += 0.25;
+    signals.push('code-light');
   }
 
   // Reasoning detection (weight: 0.18)
@@ -142,51 +143,71 @@ function classifyRequest(prompt: string, tokenCount: number): ClassifyResult {
     // Direct reasoning override
     return { tier: 'REASONING', confidence: 0.9, signals: [...signals, 'reasoning'] };
   } else if (reasoningMatches >= 1) {
-    score += 0.35;
+    score += 0.4;
     signals.push('reasoning-light');
   }
 
-  // Simple detection (weight: -0.12)
+  // Simple detection (weight: -0.12) - only trigger on strong simple signals
   const simpleMatches = countMatches(prompt, SIMPLE_KEYWORDS);
-  if (simpleMatches >= 1) {
+  if (simpleMatches >= 2) {
     score -= 0.4;
+    signals.push('simple');
+  } else if (simpleMatches >= 1 && codeMatches === 0 && tokenCount < 50) {
+    // Only mark as simple if no code and very short
+    score -= 0.25;
     signals.push('simple');
   }
 
-  // Technical complexity (weight: 0.10)
+  // Technical complexity (weight: 0.15) - increased
   const techMatches = countMatches(prompt, TECHNICAL_KEYWORDS);
   if (techMatches >= 2) {
-    score += 0.3;
+    score += 0.4;
     signals.push('technical');
+  } else if (techMatches >= 1) {
+    score += 0.2;
+    signals.push('technical-light');
   }
 
-  // Agentic detection (weight: 0.04)
+  // Agentic detection (weight: 0.10) - increased
   const agenticMatches = countMatches(prompt, AGENTIC_KEYWORDS);
   if (agenticMatches >= 3) {
-    score += 0.2;
+    score += 0.35;
     signals.push('agentic');
+  } else if (agenticMatches >= 2) {
+    score += 0.2;
+    signals.push('agentic-light');
   }
 
   // Multi-step patterns
   if (/first.*then|step \d|\d\.\s/i.test(prompt)) {
-    score += 0.15;
+    score += 0.2;
     signals.push('multi-step');
   }
 
   // Question complexity
   const questionCount = (prompt.match(/\?/g) || []).length;
   if (questionCount > 3) {
-    score += 0.1;
+    score += 0.15;
     signals.push(`${questionCount} questions`);
   }
 
-  // Map score to tier
+  // Imperative verbs (build, create, implement, etc.)
+  const imperativeMatches = countMatches(prompt, [
+    'build', 'create', 'implement', 'design', 'develop', 'write', 'make',
+    'generate', 'construct', '构建', '创建', '实现', '设计', '开发'
+  ]);
+  if (imperativeMatches >= 1) {
+    score += 0.15;
+    signals.push('imperative');
+  }
+
+  // Map score to tier (adjusted boundaries)
   let tier: Tier;
-  if (score < 0.0) {
+  if (score < -0.1) {
     tier = 'SIMPLE';
-  } else if (score < 0.3) {
+  } else if (score < 0.25) {
     tier = 'MEDIUM';
-  } else if (score < 0.5) {
+  } else if (score < 0.45) {
     tier = 'COMPLEX';
   } else {
     tier = 'REASONING';
