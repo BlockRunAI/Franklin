@@ -60,10 +60,12 @@ export async function modelsCommand() {
       `\n${chalk.dim(`${models.length} models available. Use:`)} ${chalk.bold('brcc start --model <model-id>')}`
     );
   } catch (err) {
-    console.log(
-      chalk.red(
-        `Error: ${err instanceof Error ? err.message : 'Failed to fetch models'}`
-      )
-    );
+    const msg = err instanceof Error ? err.message : 'unknown error';
+    if (msg.includes('fetch') || msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND')) {
+      console.log(chalk.red(`Cannot reach BlockRun API at ${apiUrl}`));
+      console.log(chalk.dim('Check your internet connection or try again later.'));
+    } else {
+      console.log(chalk.red(`Error: ${msg}`));
+    }
   }
 }
