@@ -109,11 +109,18 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
   'google/gemini-2.5-flash': { input: 0.3, output: 2.5 },
   'deepseek/deepseek-chat': { input: 0.28, output: 0.42 },
+  'deepseek/deepseek-reasoner': { input: 0.55, output: 2.19 },
   'xai/grok-3': { input: 3.0, output: 15.0 },
   'xai/grok-4-fast': { input: 0.2, output: 0.5 },
+  'xai/grok-4-1-fast-reasoning': { input: 0.2, output: 0.5 },
   'nvidia/gpt-oss-120b': { input: 0, output: 0 },
   'zai/glm-5': { input: 1.0, output: 3.2 },
   'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
+  'openai/gpt-5.3-codex': { input: 2.5, output: 10.0 },
+  'openai/o3': { input: 2.0, output: 8.0 },
+  'openai/o4-mini': { input: 1.1, output: 4.4 },
+  'google/gemini-2.5-flash-lite': { input: 0.08, output: 0.3 },
+  'google/gemini-3.1-pro': { input: 1.25, output: 10.0 },
 };
 
 function estimateCost(
@@ -414,8 +421,8 @@ export function createProxy(options: ProxyOptions): http.Server {
         if (response.body) {
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
-          let lastChunkText = '';
           let fullResponse = '';
+          const STREAM_CAP = 5_000_000; // 5MB cap on accumulated stream
 
           const pump = async () => {
             while (true) {
@@ -460,9 +467,8 @@ export function createProxy(options: ProxyOptions): http.Server {
                 res.end();
                 break;
               }
-              if (isStreaming) {
+              if (isStreaming && fullResponse.length < STREAM_CAP) {
                 const chunk = decoder.decode(value, { stream: true });
-                lastChunkText = chunk;
                 fullResponse += chunk;
               }
               res.write(value);
