@@ -110,36 +110,41 @@ That's it. Claude Code opens with access to 40+ models, no rate limits.
 ### From the command line
 
 ```bash
-brcc start                                # Default: Claude Sonnet 4.6
-brcc start --model nvidia/gpt-oss-120b    # Free — no USDC needed
-brcc start --model deepseek/deepseek-chat # Budget coding ($0.28/M)
-brcc start --model openai/gpt-5.4         # GPT-5.4
+brcc start                                # Default: smart routing (blockrun/auto)
+brcc start --model blockrun/eco           # Cheapest capable model
+brcc start --model blockrun/premium       # Best quality
+brcc start --model blockrun/free          # Free tier only
+brcc start --model deepseek/deepseek-chat # Direct model access
 brcc start --model anthropic/claude-opus-4.6  # Most capable
 ```
 
-### Smart Routing (with ClawRouter)
+### Smart Routing (Built-in)
 
-If you have [ClawRouter](https://github.com/BlockRunAI/ClawRouter) running locally, you can use smart routing profiles:
+brcc includes ClawRouter's 15-dimension classifier for automatic model selection:
 
-```bash
-# First, install and start ClawRouter
-curl -fsSL https://blockrun.ai/ClawRouter-update | bash
-openclaw gateway restart
+| Profile | Strategy | Savings | Best For |
+|---------|----------|---------|----------|
+| `blockrun/auto` | Balanced (default) | 74-100% | General use |
+| `blockrun/eco` | Cheapest possible | 95-100% | Maximum savings |
+| `blockrun/premium` | Best quality | 0% | Mission-critical |
+| `blockrun/free` | Free tier only | 100% | Zero cost |
 
-# Then use smart routing in brcc
-brcc start --model blockrun/auto     # Smart routing (74-100% savings)
-brcc start --model blockrun/eco      # Cheapest capable model
-brcc start --model blockrun/premium  # Best quality
-brcc start --model blockrun/free     # Free tier only
+**How it works:**
+```
+"What is 2+2?"              → SIMPLE   → gemini-flash    ($0.0002)
+"Write a React component"   → MEDIUM   → kimi-k2.5       ($0.002)
+"Design a microservice..."  → COMPLEX  → gemini-3.1-pro  ($0.007)
+"Prove this theorem..."     → REASONING → grok-4-fast    ($0.0004)
 ```
 
 **In-session switching:**
 ```
 use auto      # Switch to smart routing
 use eco       # Switch to cheapest
+use premium   # Switch to best quality
+use free      # Switch to free models
 use sonnet    # Direct Claude Sonnet
 use deepseek  # Direct DeepSeek
-use free      # Switch to free models
 ```
 
 ### Inside Claude Code
