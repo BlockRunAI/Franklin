@@ -172,6 +172,7 @@ Paid Models
 | `brcc start [--model <id>]` | Start proxy + launch Claude Code |
 | `brcc models` | List all models with pricing |
 | `brcc balance` | Check wallet USDC balance |
+| `brcc stats` | View usage statistics and savings |
 | `brcc config set <key> <value>` | Configure model mappings |
 | `brcc config list` | View current settings |
 
@@ -190,9 +191,53 @@ Your wallet is saved to `~/.blockrun/` and shared with all BlockRun tools.
 ```bash
 brcc start                              # Default model
 brcc start --model nvidia/gpt-oss-120b  # Free model
-brcc start --model openai/gpt-5.4      # Specific model
+brcc start --model openai/gpt-5.4       # Specific model
 brcc start --no-launch                  # Proxy only mode
+brcc start --no-fallback                # Disable auto-fallback
 brcc start -p 9000                      # Custom port
+```
+
+### `brcc stats`
+
+View your usage statistics and cost savings:
+
+```bash
+$ brcc stats
+
+📊 brcc Usage Statistics
+
+───────────────────────────────────────────────────────────
+
+  Overview (7 days)
+
+    Requests:       1,234
+    Total Cost:     $4.5672
+    Avg per Request: $0.003701
+    Input Tokens:   2,456,000
+    Output Tokens:  892,000
+    Fallbacks:      23 (1.9%)
+
+  By Model
+
+    anthropic/claude-sonnet-4.6
+      450 req · $2.1340 (46.7%) · 245ms avg
+    deepseek/deepseek-chat
+      620 req · $0.8901 (19.5%) · 180ms avg
+      ↳ 12 fallback recoveries
+    nvidia/gpt-oss-120b
+      164 req · $0.0000 (0%) · 320ms avg
+
+  💰 Savings vs Claude Opus
+
+    Opus equivalent: $34.62
+    Your actual cost: $4.57
+    Saved: $30.05 (86.8%)
+
+───────────────────────────────────────────────────────────
+  Run `brcc stats --clear` to reset statistics
+
+$ brcc stats --clear   # Reset all statistics
+$ brcc stats --json    # Output as JSON (for scripts)
 ```
 
 ### `brcc config`
@@ -203,6 +248,36 @@ brcc config set sonnet-model openai/gpt-5.4
 brcc config set opus-model anthropic/claude-opus-4.6
 brcc config set haiku-model deepseek/deepseek-chat
 brcc config list
+```
+
+---
+
+## Automatic Fallback
+
+When a model returns an error (429 rate limit, 500+ server error), brcc automatically retries with backup models. This ensures your work never stops.
+
+**Default fallback chain:**
+```
+anthropic/claude-sonnet-4.6
+    ↓ (if 429/500/502/503/504)
+google/gemini-2.5-pro
+    ↓
+deepseek/deepseek-chat
+    ↓
+xai/grok-4-fast
+    ↓
+nvidia/gpt-oss-120b (free, always available)
+```
+
+**How it looks:**
+```
+[brcc] ⚠️  anthropic/claude-sonnet-4.6 returned 429, falling back to google/gemini-2.5-pro
+[brcc] ↺ Fallback successful: using google/gemini-2.5-pro
+```
+
+To disable fallback:
+```bash
+brcc start --no-fallback
 ```
 
 ---
