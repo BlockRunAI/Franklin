@@ -39,8 +39,13 @@ export async function balanceCommand() {
         );
       }
     }
-  } catch {
-    console.log(chalk.red('No wallet found. Run `brcc setup` first.'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('ENOENT') || msg.includes('wallet') || msg.includes('key')) {
+      console.log(chalk.red('No wallet found. Run `brcc setup` first.'));
+    } else {
+      console.log(chalk.red(`Error checking balance: ${msg || 'unknown error'}`));
+    }
     process.exit(1);
   }
 }
