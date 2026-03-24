@@ -110,11 +110,29 @@ That's it. Claude Code opens with access to 40+ models, no rate limits.
 ### From the command line
 
 ```bash
-brcc start                                # Default (Claude Sonnet 4.6)
+brcc start                                # Default: blockrun/auto (smart routing)
+brcc start --model blockrun/eco           # Cheapest capable model
+brcc start --model blockrun/premium       # Best quality (Claude/GPT-5)
 brcc start --model nvidia/gpt-oss-120b    # Free — no USDC needed
-brcc start --model openai/gpt-5.4         # GPT-5.4
 brcc start --model deepseek/deepseek-chat # Budget coding ($0.28/M)
 brcc start --model anthropic/claude-opus-4.6  # Most capable
+```
+
+### Smart Routing Profiles
+
+| Profile | Strategy | Savings | Best For |
+|---------|----------|---------|----------|
+| `blockrun/auto` | Balanced (default) | 74-100% | General use |
+| `blockrun/eco` | Cheapest possible | 95-100% | Maximum savings |
+| `blockrun/premium` | Best quality | 0% | Mission-critical |
+| `blockrun/free` | Free tier only | 100% | Zero cost |
+
+**In-session switching:**
+```
+use auto      # Switch to smart routing
+use eco       # Switch to cheapest
+use premium   # Switch to best quality
+use free      # Switch to free models
 ```
 
 ### Inside Claude Code

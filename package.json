@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/cc",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "description": "Run Claude Code with any model — no rate limits, no account locks, no phone verification. Pay per use with USDC.",
   "type": "module",
   "bin": {
