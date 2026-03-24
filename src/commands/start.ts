@@ -18,6 +18,12 @@ export async function startCommand(options: StartOptions) {
   const apiUrl = API_URLS[chain];
   const fallbackEnabled = options.fallback !== false; // Default true
 
+  const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
+  if (isNaN(port) || port < 1 || port > 65535) {
+    console.log(chalk.red(`Invalid port: ${options.port}. Must be 1-65535.`));
+    process.exit(1);
+  }
+
   if (chain === 'solana') {
     const wallet = await getOrCreateSolanaWallet();
     if (wallet.isNew) {
@@ -31,7 +37,6 @@ export async function startCommand(options: StartOptions) {
       return;
     }
 
-    const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
     const shouldLaunch = options.launch !== false;
 
     const model = options.model;
@@ -63,7 +68,6 @@ export async function startCommand(options: StartOptions) {
       return;
     }
 
-    const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
     const shouldLaunch = options.launch !== false;
 
     const model = options.model;
