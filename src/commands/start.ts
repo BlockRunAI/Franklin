@@ -56,7 +56,7 @@ export async function startCommand(options: StartOptions) {
       debug: options.debug,
       fallbackEnabled,
     });
-    launchServer(server, port, shouldLaunch, model);
+    launchServer(server, port, shouldLaunch, model, options.debug);
   } else {
     const wallet = getOrCreateWallet();
     if (wallet.isNew) {
@@ -87,7 +87,7 @@ export async function startCommand(options: StartOptions) {
       debug: options.debug,
       fallbackEnabled,
     });
-    launchServer(server, port, shouldLaunch, model);
+    launchServer(server, port, shouldLaunch, model, options.debug);
   }
 }
 
@@ -95,11 +95,13 @@ function launchServer(
   server: ReturnType<typeof createProxy>,
   port: number,
   shouldLaunch: boolean,
-  model?: string
+  model?: string,
+  debug?: boolean
 ) {
   server.listen(port, () => {
     console.log(chalk.green(`✓ Proxy running on port ${port}`));
     console.log(chalk.dim(`  Usage tracking: ~/.blockrun/brcc-stats.json`));
+    if (debug) console.log(chalk.dim(`  Debug log:      ~/.blockrun/brcc-debug.log`));
     console.log(chalk.dim(`  Run 'brcc stats' to view statistics\n`));
 
     if (shouldLaunch) {
