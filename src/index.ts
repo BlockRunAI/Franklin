@@ -5,6 +5,7 @@ import { startCommand } from './commands/start.js';
 import { balanceCommand } from './commands/balance.js';
 import { modelsCommand } from './commands/models.js';
 import { configCommand } from './commands/config.js';
+import { statsCommand } from './commands/stats.js';
 
 const program = new Command();
 
@@ -14,7 +15,7 @@ program
     'BlockRun Claude Code — run Claude Code with any model, pay with USDC.\n\n' +
       'Use /model inside Claude Code to switch between models on the fly.'
   )
-  .version('0.5.0');
+  .version('0.9.0');
 
 program
   .command('setup [chain]')
@@ -30,6 +31,7 @@ program
     'Default model (e.g. openai/gpt-5.4, anthropic/claude-sonnet-4.6)'
   )
   .option('--no-launch', 'Start proxy only, do not launch Claude Code')
+  .option('--no-fallback', 'Disable automatic fallback to backup models')
   .option('--debug', 'Enable debug logging')
   .action(startCommand);
 
@@ -50,5 +52,12 @@ program
       'Keys: default-model, sonnet-model, opus-model, haiku-model, smart-routing'
   )
   .action(configCommand);
+
+program
+  .command('stats')
+  .description('Show usage statistics and cost savings')
+  .option('--clear', 'Clear all statistics')
+  .option('--json', 'Output in JSON format')
+  .action(statsCommand);
 
 program.parse();

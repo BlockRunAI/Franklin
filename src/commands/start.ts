@@ -9,12 +9,14 @@ interface StartOptions {
   port?: string;
   model?: string;
   launch?: boolean;
+  fallback?: boolean;
   debug?: boolean;
 }
 
 export async function startCommand(options: StartOptions) {
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
+  const fallbackEnabled = options.fallback !== false; // Default true
 
   if (chain === 'solana') {
     const wallet = await getOrCreateSolanaWallet();
@@ -34,13 +36,21 @@ export async function startCommand(options: StartOptions) {
 
     const model = options.model;
     console.log(chalk.bold('brcc — BlockRun Claude Code\n'));
-    console.log(`Chain:   ${chalk.magenta('solana')}`);
-    console.log(`Wallet:  ${chalk.cyan(wallet.address)}`);
-    if (model) console.log(`Model:   ${chalk.green(model)}`);
-    console.log(`Proxy:   ${chalk.cyan(`http://localhost:${port}`)}`);
-    console.log(`Backend: ${chalk.dim(apiUrl)}\n`);
+    console.log(`Chain:    ${chalk.magenta('solana')}`);
+    console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
+    if (model) console.log(`Model:    ${chalk.green(model)}`);
+    console.log(`Fallback: ${fallbackEnabled ? chalk.green('enabled') : chalk.yellow('disabled')}`);
+    console.log(`Proxy:    ${chalk.cyan(`http://localhost:${port}`)}`);
+    console.log(`Backend:  ${chalk.dim(apiUrl)}\n`);
 
-    const server = createProxy({ port, apiUrl, chain: 'solana', modelOverride: model, debug: options.debug });
+    const server = createProxy({
+      port,
+      apiUrl,
+      chain: 'solana',
+      modelOverride: model,
+      debug: options.debug,
+      fallbackEnabled,
+    });
     launchServer(server, port, shouldLaunch, model);
   } else {
     const wallet = getOrCreateWallet();
@@ -58,13 +68,21 @@ export async function startCommand(options: StartOptions) {
 
     const model = options.model;
     console.log(chalk.bold('brcc — BlockRun Claude Code\n'));
-    console.log(`Chain:   ${chalk.magenta('base')}`);
-    console.log(`Wallet:  ${chalk.cyan(wallet.address)}`);
-    if (model) console.log(`Model:   ${chalk.green(model)}`);
-    console.log(`Proxy:   ${chalk.cyan(`http://localhost:${port}`)}`);
-    console.log(`Backend: ${chalk.dim(apiUrl)}\n`);
+    console.log(`Chain:    ${chalk.magenta('base')}`);
+    console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
+    if (model) console.log(`Model:    ${chalk.green(model)}`);
+    console.log(`Fallback: ${fallbackEnabled ? chalk.green('enabled') : chalk.yellow('disabled')}`);
+    console.log(`Proxy:    ${chalk.cyan(`http://localhost:${port}`)}`);
+    console.log(`Backend:  ${chalk.dim(apiUrl)}\n`);
 
-    const server = createProxy({ port, apiUrl, chain: 'base', modelOverride: model, debug: options.debug });
+    const server = createProxy({
+      port,
+      apiUrl,
+      chain: 'base',
+      modelOverride: model,
+      debug: options.debug,
+      fallbackEnabled,
+    });
     launchServer(server, port, shouldLaunch, model);
   }
 }
@@ -76,7 +94,9 @@ function launchServer(
   model?: string
 ) {
   server.listen(port, () => {
-    console.log(chalk.green(`Proxy running on port ${port}\n`));
+    console.log(chalk.green(`✓ Proxy running on port ${port}`));
+    console.log(chalk.dim(`  Usage tracking: ~/.blockrun/brcc-stats.json`));
+    console.log(chalk.dim(`  Run 'brcc stats' to view statistics\n`));
 
     if (shouldLaunch) {
       console.log('Starting Claude Code...\n');
@@ -86,7 +106,8 @@ function launchServer(
       delete cleanEnv.CLAUDE_OAUTH_TOKEN;
 
       const config = loadConfig();
-      const sonnetModel = config['sonnet-model'] || 'anthropic/claude-sonnet-4.6';
+      const sonnetModel =
+        config['sonnet-model'] || 'anthropic/claude-sonnet-4.6';
       const opusModel = config['opus-model'] || 'anthropic/claude-opus-4.6';
       const haikuModel = config['haiku-model'] || 'anthropic/claude-haiku-4.5';
 
@@ -98,7 +119,8 @@ function launchServer(
         env: {
           ...cleanEnv,
           ANTHROPIC_BASE_URL: `http://localhost:${port}/api`,
-          ANTHROPIC_API_KEY: 'sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000',
+          ANTHROPIC_API_KEY:
+            'sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000',
           ANTHROPIC_DEFAULT_SONNET_MODEL: sonnetModel,
           ANTHROPIC_DEFAULT_OPUS_MODEL: opusModel,
           ANTHROPIC_DEFAULT_HAIKU_MODEL: haikuModel,
@@ -108,12 +130,8 @@ function launchServer(
 
       claude.on('error', (err) => {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-          console.log(
-            chalk.red('\nClaude Code not found. Install it first:')
-          );
-          console.log(
-            chalk.dim('  npm install -g @anthropic-ai/claude-code')
-          );
+          console.log(chalk.red('\nClaude Code not found. Install it first:'));
+          console.log(chalk.dim('  npm install -g @anthropic-ai/claude-code'));
         } else {
           console.error('Failed to start Claude Code:', err.message);
         }
@@ -128,14 +146,14 @@ function launchServer(
     } else {
       console.log('Proxy-only mode. Set this in your shell:\n');
       console.log(
+        chalk.bold(`  export ANTHROPIC_BASE_URL=http://localhost:${port}/api`)
+      );
+      console.log(
         chalk.bold(
-          `  export ANTHROPIC_BASE_URL=http://localhost:${port}/api`
+          `  export ANTHROPIC_API_KEY=sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000`
         )
       );
-      console.log(chalk.bold(`  export ANTHROPIC_API_KEY=sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000`));
-      console.log(
-        `\nThen run ${chalk.bold('claude')} in another terminal.`
-      );
+      console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
     }
   });
 
