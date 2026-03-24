@@ -231,11 +231,19 @@ export function createProxy(options: ProxyOptions): http.Server {
               return;
             }
 
-            // Apply model override
-            if ((currentModel || options.modelOverride) && parsed.model) {
-              parsed.model = currentModel || options.modelOverride!;
+            // Apply model override only if:
+            // 1. User specified --model on CLI (options.modelOverride)
+            // 2. User switched model in-session (currentModel set by "use X" command)
+            // 3. Request has no model specified
+            if (options.modelOverride && currentModel) {
+              // CLI --model flag: always use this
+              parsed.model = currentModel;
+            } else if (!parsed.model) {
+              // No model in request: use default
+              parsed.model = currentModel || DEFAULT_MODEL;
             }
-            requestModel = parsed.model || requestModel;
+            // Otherwise: use the model from the request as-is
+            requestModel = parsed.model || DEFAULT_MODEL;
 
             // Smart routing: if model is a routing profile, classify and route
             const routingProfile = parseRoutingProfile(requestModel);
