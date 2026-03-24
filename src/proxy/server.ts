@@ -289,7 +289,7 @@ export function createProxy(options: ProxyOptions): http.Server {
               );
             }
 
-            if (parsed.max_tokens) {
+            {
               const original = parsed.max_tokens;
               const model = (parsed.model || '').toLowerCase();
               const modelCap =
@@ -310,7 +310,7 @@ export function createProxy(options: ProxyOptions): http.Server {
               if (original !== parsed.max_tokens) {
                 debug(
                   options,
-                  `max_tokens: ${original} → ${parsed.max_tokens} (last output: ${lastOutputTokens || 'none'})`
+                  `max_tokens: ${original || 'unset'} → ${parsed.max_tokens} (last output: ${lastOutputTokens || 'none'})`
                 );
               }
             }
