@@ -18,6 +18,26 @@ import {
   type FallbackConfig,
 } from './fallback.js';
 
+// ClawRouter local proxy for smart routing
+const CLAWROUTER_URL = 'http://localhost:8402';
+
+/**
+ * Check if ClawRouter is running locally
+ */
+async function isClawRouterRunning(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 500);
+    const res = await fetch(`${CLAWROUTER_URL}/health`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export interface ProxyOptions {
   port: number;
   apiUrl: string;
@@ -139,8 +159,10 @@ function detectModelSwitch(parsed: {
   return null;
 }
 
-// Default to smart routing
-const DEFAULT_MODEL = 'blockrun/auto';
+// Default model - use ClawRouter locally for smart routing
+// If ClawRouter is running on :8402, it handles blockrun/auto
+// Otherwise fall back to a reliable model
+const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
 
 export function createProxy(options: ProxyOptions): http.Server {
   const chain = options.chain || 'base';
