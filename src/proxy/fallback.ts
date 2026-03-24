@@ -16,10 +16,9 @@ export interface FallbackConfig {
 
 export const DEFAULT_FALLBACK_CONFIG: FallbackConfig = {
   chain: [
-    'anthropic/claude-sonnet-4.6',
-    'google/gemini-2.5-pro',
-    'deepseek/deepseek-chat',
-    'xai/grok-4-fast',
+    'blockrun/auto', // Smart routing (default)
+    'blockrun/eco', // Cheapest capable model
+    'deepseek/deepseek-chat', // Direct fallback
     'nvidia/gpt-oss-120b', // Free model as ultimate fallback
   ],
   retryOn: [429, 500, 502, 503, 504, 529],
