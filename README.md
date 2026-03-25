@@ -76,7 +76,7 @@ brcc eliminates all of these problems:
 ### One-line install (Linux/macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/BlockRunAI/brcc/main/install.sh | bash
+curl -fsSL https://blockrun.ai/brcc-install | bash
 ```
 
 Installs Node.js (if needed) + Claude Code + brcc + creates wallet.
