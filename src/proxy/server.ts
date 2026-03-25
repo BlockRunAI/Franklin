@@ -73,24 +73,56 @@ let lastOutputTokens = 0;
 
 // Model shortcuts for quick switching
 const MODEL_SHORTCUTS: Record<string, string> = {
+  // Routing profiles
   auto: 'blockrun/auto',
   smart: 'blockrun/auto',
   eco: 'blockrun/eco',
   premium: 'blockrun/premium',
-  gpt: 'openai/gpt-5.4',
-  gpt5: 'openai/gpt-5.4',
-  'gpt-5': 'openai/gpt-5.4',
-  'gpt-5.4': 'openai/gpt-5.4',
+  // Anthropic
   sonnet: 'anthropic/claude-sonnet-4.6',
   claude: 'anthropic/claude-sonnet-4.6',
   opus: 'anthropic/claude-opus-4.6',
   haiku: 'anthropic/claude-haiku-4.5',
-  deepseek: 'deepseek/deepseek-chat',
-  gemini: 'google/gemini-2.5-pro',
-  grok: 'xai/grok-3',
-  free: 'nvidia/gpt-oss-120b',
+  // OpenAI
+  gpt: 'openai/gpt-5.4',
+  gpt5: 'openai/gpt-5.4',
+  'gpt-5': 'openai/gpt-5.4',
+  'gpt-5.4': 'openai/gpt-5.4',
+  'gpt-5.4-pro': 'openai/gpt-5.4-pro',
+  'gpt-5.3': 'openai/gpt-5.3',
+  'gpt-5.2': 'openai/gpt-5.2',
+  'gpt-5.2-pro': 'openai/gpt-5.2-pro',
+  'gpt-4.1': 'openai/gpt-4.1',
+  codex: 'openai/gpt-5.3-codex',
+  nano: 'openai/gpt-5-nano',
   mini: 'openai/gpt-5-mini',
+  o3: 'openai/o3',
+  o4: 'openai/o4-mini',
+  'o4-mini': 'openai/o4-mini',
+  o1: 'openai/o1',
+  // Google
+  gemini: 'google/gemini-2.5-pro',
+  flash: 'google/gemini-2.5-flash',
+  'gemini-3': 'google/gemini-3.1-pro',
+  // xAI
+  grok: 'xai/grok-3',
+  'grok-4': 'xai/grok-4-0709',
+  'grok-fast': 'xai/grok-4-1-fast-reasoning',
+  // DeepSeek
+  deepseek: 'deepseek/deepseek-chat',
+  r1: 'deepseek/deepseek-reasoner',
+  // Free models
+  free: 'nvidia/nemotron-ultra-253b',
+  nemotron: 'nvidia/nemotron-ultra-253b',
+  'deepseek-free': 'nvidia/deepseek-v3.2',
+  devstral: 'nvidia/devstral-2-123b',
+  'qwen-coder': 'nvidia/qwen3-coder-480b',
+  maverick: 'nvidia/llama-4-maverick',
+  // Minimax
+  minimax: 'minimax/minimax-m2.7',
+  // Others
   glm: 'zai/glm-5',
+  kimi: 'moonshot/kimi-k2.5',
 };
 
 // Model pricing (per 1M tokens) - used for stats
@@ -100,27 +132,68 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   'blockrun/eco': { input: 0.2, output: 1.0 },
   'blockrun/premium': { input: 3.0, output: 15.0 },
   'blockrun/free': { input: 0, output: 0 },
-  // Individual models
+  // FREE - NVIDIA models
+  'nvidia/gpt-oss-120b': { input: 0, output: 0 },
+  'nvidia/gpt-oss-20b': { input: 0, output: 0 },
+  'nvidia/nemotron-ultra-253b': { input: 0, output: 0 },
+  'nvidia/nemotron-3-super-120b': { input: 0, output: 0 },
+  'nvidia/nemotron-super-49b': { input: 0, output: 0 },
+  'nvidia/deepseek-v3.2': { input: 0, output: 0 },
+  'nvidia/mistral-large-3-675b': { input: 0, output: 0 },
+  'nvidia/qwen3-coder-480b': { input: 0, output: 0 },
+  'nvidia/devstral-2-123b': { input: 0, output: 0 },
+  'nvidia/glm-4.7': { input: 0, output: 0 },
+  'nvidia/llama-4-maverick': { input: 0, output: 0 },
+  // Anthropic
   'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
   'anthropic/claude-opus-4.6': { input: 5.0, output: 25.0 },
   'anthropic/claude-haiku-4.5': { input: 1.0, output: 5.0 },
-  'openai/gpt-5.4': { input: 2.5, output: 15.0 },
+  // OpenAI
+  'openai/gpt-5-nano': { input: 0.05, output: 0.4 },
+  'openai/gpt-4.1-nano': { input: 0.1, output: 0.4 },
+  'openai/gpt-4o-mini': { input: 0.15, output: 0.6 },
   'openai/gpt-5-mini': { input: 0.25, output: 2.0 },
-  'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
-  'google/gemini-2.5-flash': { input: 0.3, output: 2.5 },
-  'deepseek/deepseek-chat': { input: 0.28, output: 0.42 },
-  'deepseek/deepseek-reasoner': { input: 0.55, output: 2.19 },
-  'xai/grok-3': { input: 3.0, output: 15.0 },
-  'xai/grok-4-fast': { input: 0.2, output: 0.5 },
-  'xai/grok-4-1-fast-reasoning': { input: 0.2, output: 0.5 },
-  'nvidia/gpt-oss-120b': { input: 0, output: 0 },
-  'zai/glm-5': { input: 1.0, output: 3.2 },
-  'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
-  'openai/gpt-5.3-codex': { input: 2.5, output: 10.0 },
+  'openai/gpt-4.1-mini': { input: 0.4, output: 1.6 },
+  'openai/gpt-5.2': { input: 1.75, output: 14.0 },
+  'openai/gpt-5.3': { input: 1.75, output: 14.0 },
+  'openai/gpt-5.3-codex': { input: 1.75, output: 14.0 },
+  'openai/gpt-4.1': { input: 2.0, output: 8.0 },
   'openai/o3': { input: 2.0, output: 8.0 },
+  'openai/gpt-4o': { input: 2.5, output: 10.0 },
+  'openai/gpt-5.4': { input: 2.5, output: 15.0 },
+  'openai/o1-mini': { input: 1.1, output: 4.4 },
+  'openai/o3-mini': { input: 1.1, output: 4.4 },
   'openai/o4-mini': { input: 1.1, output: 4.4 },
-  'google/gemini-2.5-flash-lite': { input: 0.08, output: 0.3 },
-  'google/gemini-3.1-pro': { input: 1.25, output: 10.0 },
+  'openai/o1': { input: 15.0, output: 60.0 },
+  'openai/gpt-5.2-pro': { input: 21.0, output: 168.0 },
+  'openai/gpt-5.4-pro': { input: 30.0, output: 180.0 },
+  // Google
+  'google/gemini-2.5-flash-lite': { input: 0.1, output: 0.4 },
+  'google/gemini-2.5-flash': { input: 0.3, output: 2.5 },
+  'google/gemini-3-flash-preview': { input: 0.5, output: 3.0 },
+  'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
+  'google/gemini-3-pro-preview': { input: 2.0, output: 12.0 },
+  'google/gemini-3.1-pro': { input: 2.0, output: 12.0 },
+  // xAI
+  'xai/grok-4-fast': { input: 0.2, output: 0.5 },
+  'xai/grok-4-fast-reasoning': { input: 0.2, output: 0.5 },
+  'xai/grok-4-1-fast': { input: 0.2, output: 0.5 },
+  'xai/grok-4-1-fast-reasoning': { input: 0.2, output: 0.5 },
+  'xai/grok-4-0709': { input: 0.2, output: 1.5 },
+  'xai/grok-3-mini': { input: 0.3, output: 0.5 },
+  'xai/grok-2-vision': { input: 2.0, output: 10.0 },
+  'xai/grok-3': { input: 3.0, output: 15.0 },
+  // DeepSeek
+  'deepseek/deepseek-chat': { input: 0.28, output: 0.42 },
+  'deepseek/deepseek-reasoner': { input: 0.28, output: 0.42 },
+  // Minimax
+  'minimax/minimax-m2.7': { input: 0.3, output: 1.2 },
+  'minimax/minimax-m2.5': { input: 0.3, output: 1.2 },
+  // Others
+  'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
+  'nvidia/kimi-k2.5': { input: 0.55, output: 2.5 },
+  'zai/glm-5': { input: 1.0, output: 3.2 },
+  'zai/glm-5-turbo': { input: 1.2, output: 4.0 },
 };
 
 function estimateCost(

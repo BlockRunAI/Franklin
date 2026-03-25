@@ -19,7 +19,7 @@ export const DEFAULT_FALLBACK_CONFIG: FallbackConfig = {
     'blockrun/auto', // Smart routing (default)
     'blockrun/eco', // Cheapest capable model
     'deepseek/deepseek-chat', // Direct fallback
-    'nvidia/gpt-oss-120b', // Free model as ultimate fallback
+    'nvidia/nemotron-ultra-253b', // Free model as ultimate fallback
   ],
   retryOn: [429, 500, 502, 503, 504, 529],
   maxRetries: 5,
