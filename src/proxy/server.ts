@@ -324,18 +324,17 @@ export function createProxy(options: ProxyOptions): http.Server {
               return;
             }
 
-            // Apply model override only if:
-            // 1. User specified --model on CLI (options.modelOverride)
-            // 2. User switched model in-session (currentModel set by "use X" command)
-            // 3. Request has no model specified
-            if (options.modelOverride && currentModel) {
-              // CLI --model flag: always use this
+            // Model override logic:
+            // - Claude Code sends native Anthropic IDs (e.g. "claude-sonnet-4-6-20250514")
+            //   which don't contain "/" — these MUST be replaced with currentModel.
+            // - BlockRun model IDs always contain "/" (e.g. "blockrun/auto", "nvidia/nemotron-ultra-253b")
+            //   — these should be passed through as-is.
+            // - If --model CLI flag is set, always override regardless.
+            if (options.modelOverride) {
               parsed.model = currentModel;
-            } else if (!parsed.model) {
-              // No model in request: use default
+            } else if (!parsed.model || !parsed.model.includes('/')) {
               parsed.model = currentModel || DEFAULT_MODEL;
             }
-            // Otherwise: use the model from the request as-is
             requestModel = parsed.model || DEFAULT_MODEL;
 
             // Smart routing: if model is a routing profile, classify and route
