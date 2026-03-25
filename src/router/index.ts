@@ -19,11 +19,11 @@ export interface RoutingResult {
 const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
     primary: 'google/gemini-2.5-flash',
-    fallback: ['deepseek/deepseek-chat', 'nvidia/gpt-oss-120b'],
+    fallback: ['deepseek/deepseek-chat', 'nvidia/nemotron-ultra-253b'],
   },
   MEDIUM: {
     primary: 'moonshot/kimi-k2.5',
-    fallback: ['google/gemini-2.5-flash', 'deepseek/deepseek-chat'],
+    fallback: ['google/gemini-2.5-flash', 'minimax/minimax-m2.7'],
   },
   COMPLEX: {
     primary: 'google/gemini-3.1-pro',
@@ -37,20 +37,20 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
 
 const ECO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
-    primary: 'nvidia/gpt-oss-120b',
-    fallback: ['google/gemini-2.5-flash-lite'],
+    primary: 'nvidia/nemotron-ultra-253b',
+    fallback: ['nvidia/gpt-oss-120b', 'nvidia/deepseek-v3.2'],
   },
   MEDIUM: {
     primary: 'google/gemini-2.5-flash-lite',
-    fallback: ['nvidia/gpt-oss-120b'],
+    fallback: ['nvidia/nemotron-ultra-253b', 'nvidia/qwen3-coder-480b'],
   },
   COMPLEX: {
     primary: 'google/gemini-2.5-flash-lite',
-    fallback: ['deepseek/deepseek-chat'],
+    fallback: ['deepseek/deepseek-chat', 'nvidia/mistral-large-3-675b'],
   },
   REASONING: {
     primary: 'xai/grok-4-1-fast-reasoning',
-    fallback: ['deepseek/deepseek-reasoner'],
+    fallback: ['deepseek/deepseek-reasoner', 'nvidia/nemotron-ultra-253b'],
   },
 };
 
@@ -228,7 +228,7 @@ export function routeRequest(
   // Free profile - always use free model
   if (profile === 'free') {
     return {
-      model: 'nvidia/gpt-oss-120b',
+      model: 'nvidia/nemotron-ultra-253b',
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: ['free-profile'],
@@ -261,22 +261,48 @@ export function routeRequest(
   // Baseline: Claude Opus at $5/$25 per 1M tokens
   const OPUS_COST_PER_1K = 0.015; // rough average
   const modelCosts: Record<string, number> = {
+    // FREE
     'nvidia/gpt-oss-120b': 0,
-    'google/gemini-2.5-flash': 0.001,
+    'nvidia/gpt-oss-20b': 0,
+    'nvidia/nemotron-ultra-253b': 0,
+    'nvidia/nemotron-3-super-120b': 0,
+    'nvidia/nemotron-super-49b': 0,
+    'nvidia/deepseek-v3.2': 0,
+    'nvidia/mistral-large-3-675b': 0,
+    'nvidia/qwen3-coder-480b': 0,
+    'nvidia/devstral-2-123b': 0,
+    'nvidia/glm-4.7': 0,
+    'nvidia/llama-4-maverick': 0,
+    // Budget
+    'openai/gpt-5-nano': 0.0002,
+    'openai/gpt-4.1-nano': 0.0003,
     'google/gemini-2.5-flash-lite': 0.0003,
-    'deepseek/deepseek-chat': 0.0004,
-    'deepseek/deepseek-reasoner': 0.003,
-    'moonshot/kimi-k2.5': 0.002,
-    'google/gemini-2.5-pro': 0.006,
-    'google/gemini-3.1-pro': 0.007,
-    'anthropic/claude-haiku-4.5': 0.003,
-    'anthropic/claude-sonnet-4.6': 0.009,
-    'anthropic/claude-opus-4.6': 0.015,
-    'openai/gpt-5.3-codex': 0.008,
-    'openai/gpt-5.4': 0.009,
-    'openai/o3': 0.012,
-    'openai/o4-mini': 0.006,
+    'xai/grok-4-fast': 0.0004,
+    'xai/grok-4-1-fast': 0.0004,
     'xai/grok-4-1-fast-reasoning': 0.0004,
+    'deepseek/deepseek-chat': 0.0004,
+    'deepseek/deepseek-reasoner': 0.0004,
+    'minimax/minimax-m2.7': 0.0008,
+    'minimax/minimax-m2.5': 0.0008,
+    'google/gemini-2.5-flash': 0.0014,
+    'openai/gpt-5-mini': 0.0011,
+    'moonshot/kimi-k2.5': 0.0018,
+    // Mid-range
+    'anthropic/claude-haiku-4.5': 0.003,
+    'zai/glm-5': 0.0021,
+    'openai/o4-mini': 0.0028,
+    'google/gemini-2.5-pro': 0.0056,
+    'openai/gpt-5.3-codex': 0.0079,
+    'openai/gpt-5.2': 0.0079,
+    'openai/gpt-5.3': 0.0079,
+    'openai/gpt-4.1': 0.005,
+    'openai/o3': 0.005,
+    'google/gemini-3.1-pro': 0.007,
+    'openai/gpt-5.4': 0.0088,
+    // Premium
+    'anthropic/claude-sonnet-4.6': 0.009,
+    'xai/grok-3': 0.009,
+    'anthropic/claude-opus-4.6': 0.015,
   };
   const modelCost = modelCosts[model] ?? 0.005;
   const savings = Math.max(0, (OPUS_COST_PER_1K - modelCost) / OPUS_COST_PER_1K);
@@ -306,7 +332,7 @@ export function getFallbackChain(
       tierConfigs = PREMIUM_TIERS;
       break;
     case 'free':
-      return ['nvidia/gpt-oss-120b'];
+      return ['nvidia/nemotron-ultra-253b'];
     default:
       tierConfigs = AUTO_TIERS;
   }
