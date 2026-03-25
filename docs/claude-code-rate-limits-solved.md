@@ -54,7 +54,7 @@ brcc setup base
 brcc start
 ```
 
-Three commands. Claude Code opens. You have access to 40+ models. No rate limits.
+Three commands. Claude Code opens. You have access to 50+ models. No rate limits.
 
 ### How it works
 
@@ -62,7 +62,7 @@ brcc runs a local proxy between Claude Code and [BlockRun](https://blockrun.ai),
 
 ```
 Claude Code → brcc (localhost) → BlockRun → Any model
-                signs payment      40+ models
+                signs payment      50+ models
                 with your wallet   pay per token
 ```
 
@@ -119,7 +119,7 @@ curl -fsSL https://raw.githubusercontent.com/BlockRunAI/brcc/main/install.sh | b
 # Or manual
 sudo npm install -g @blockrun/cc  # use sudo on Linux
 brcc setup base
-brcc start --model nvidia/gpt-oss-120b  # Free model to test
+brcc start --model nvidia/nemotron-ultra-253b  # Free model to test
 ```
 
 Fund your wallet with $5 USDC on Base. That's enough for a week of heavy coding.

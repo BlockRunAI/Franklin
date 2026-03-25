@@ -10,7 +10,7 @@ You're paying $200/month and still can't work.<br><br>
 
 <img src="https://img.shields.io/badge/🚀_No_Rate_Limits-black?style=for-the-badge" alt="No rate limits">&nbsp;
 <img src="https://img.shields.io/badge/🔑_No_Account_Needed-blue?style=for-the-badge" alt="No account">&nbsp;
-<img src="https://img.shields.io/badge/🤖_40+_Models-yellow?style=for-the-badge" alt="40+ models">&nbsp;
+<img src="https://img.shields.io/badge/🤖_50+_Models-yellow?style=for-the-badge" alt="50+ models">&nbsp;
 <img src="https://img.shields.io/badge/💰_Pay_Per_Use-purple?style=for-the-badge" alt="Pay per use">&nbsp;
 <img src="https://img.shields.io/badge/⛓_Base_+_Solana-green?style=for-the-badge" alt="Base + Solana">
 
@@ -28,7 +28,7 @@ You're paying $200/month and still can't work.<br><br>
 
 </div>
 
-> **brcc** is a local proxy that lets you run Claude Code with any LLM model — GPT-5, Claude, Gemini, DeepSeek, Grok, and 40+ more — without rate limits, without an Anthropic account, and without phone verification. You pay per request with USDC via the [x402](https://x402.org) protocol. Your wallet is your identity. Your private key never leaves your machine.
+> **brcc** is a local proxy that lets you run Claude Code with any LLM model — GPT-5, Claude, Gemini, DeepSeek, Grok, and 50+ more — without rate limits, without an Anthropic account, and without phone verification. You pay per request with USDC via the [x402](https://x402.org) protocol. Your wallet is your identity. Your private key never leaves your machine.
 
 ---
 
@@ -62,7 +62,7 @@ brcc eliminates all of these problems:
 |--|---------------------|------------|----------|
 | **Rate limits** | Constantly hit | Per-model limits | **None** |
 | **Account required** | Yes + phone | Yes + email | **No** |
-| **Models** | Claude only | 200+ (manual select) | **40+ (auto or manual)** |
+| **Models** | Claude only | 200+ (manual select) | **50+ (auto or manual)** |
 | **Payment** | Credit card, subscription | Credit card, pre-pay | **USDC per-request** |
 | **Auth** | OAuth + API key conflicts | API key | **Wallet signature** |
 | **Pricing** | Opaque | Transparent | **Transparent** |
@@ -101,7 +101,7 @@ brcc setup solana    # Solana chain
 brcc start
 ```
 
-That's it. Claude Code opens with access to 40+ models, no rate limits.
+That's it. Claude Code opens with access to 50+ models, no rate limits.
 
 ---
 
@@ -144,7 +144,21 @@ use eco       # Switch to cheapest
 use premium   # Switch to best quality
 use free      # Switch to free models
 use sonnet    # Direct Claude Sonnet
-use deepseek  # Direct DeepSeek
+use gpt       # GPT-5.4
+use codex     # GPT-5.3 Codex
+use o3        # OpenAI o3
+use gemini    # Gemini 2.5 Pro
+use flash     # Gemini 2.5 Flash
+use grok      # Grok 3
+use grok-4    # Grok 4
+use deepseek  # DeepSeek Chat
+use r1        # DeepSeek Reasoner
+use minimax   # Minimax M2.7
+use kimi      # Kimi K2.5
+use free      # Nemotron Ultra 253B (free)
+use nemotron  # Nemotron Ultra 253B (free)
+use devstral  # Devstral 2 123B (free)
+use qwen-coder # Qwen3 Coder 480B (free)
 ```
 
 ### Inside Claude Code
@@ -165,18 +179,34 @@ $ brcc models
 
 Free Models (no USDC needed)
 ──────────────────────────────────────────────────────────────────────
+  nvidia/nemotron-ultra-253b
   nvidia/gpt-oss-120b
-  nvidia/gpt-oss-20b
+  nvidia/deepseek-v3.2
+  nvidia/mistral-large-3-675b
+  nvidia/qwen3-coder-480b
+  nvidia/devstral-2-123b
+  nvidia/llama-4-maverick
+  nvidia/glm-4.7
+  ... (11 free models)
 
 Paid Models
 ──────────────────────────────────────────────────────────────────────
   Model                               Input        Output
+  openai/gpt-5-nano                   $0.05/M      $0.40/M
+  xai/grok-4-1-fast-reasoning         $0.20/M      $0.50/M
   deepseek/deepseek-chat              $0.28/M      $0.42/M
+  minimax/minimax-m2.7                $0.30/M      $1.20/M
+  google/gemini-2.5-flash             $0.30/M      $2.50/M
+  moonshot/kimi-k2.5                  $0.60/M      $3.00/M
   anthropic/claude-haiku-4.5          $1.00/M      $5.00/M
+  openai/gpt-5.3-codex                $1.75/M      $14.00/M
+  google/gemini-2.5-pro               $1.25/M      $10.00/M
+  google/gemini-3.1-pro               $2.00/M      $12.00/M
   openai/gpt-5.4                      $2.50/M      $15.00/M
   anthropic/claude-sonnet-4.6         $3.00/M      $15.00/M
   anthropic/claude-opus-4.6           $5.00/M      $25.00/M
-  ... (31 models total)
+  openai/gpt-5.4-pro                  $30.00/M     $180.00/M
+  ... (50+ models total)
 ```
 
 ---
@@ -185,12 +215,16 @@ Paid Models
 
 | Model | ~Requests per $5 | Best For |
 |-------|-------------------|----------|
+| Nemotron Ultra 253B | **Unlimited** | Free tier |
+| Grok 4.1 Fast | ~3,500 | Fast reasoning (budget) |
 | DeepSeek V3 | ~5,000 | Budget coding |
+| Gemini 2.5 Flash | ~1,200 | Balanced speed/cost |
+| Kimi K2.5 | ~800 | Mid-range coding |
 | Claude Haiku 4.5 | ~500 | Fast tasks |
+| GPT-5.3 Codex | ~180 | Code generation |
 | Claude Sonnet 4.6 | ~100 | General coding |
 | GPT-5.4 | ~80 | Reasoning |
 | Claude Opus 4.6 | ~50 | Most capable |
-| GPT-OSS 120B | **Unlimited** | Free tier |
 
 ---
 
@@ -220,7 +254,7 @@ Your wallet is saved to `~/.blockrun/` and shared with all BlockRun tools.
 
 ```bash
 brcc start                              # Default model
-brcc start --model nvidia/gpt-oss-120b  # Free model
+brcc start --model nvidia/nemotron-ultra-253b  # Free model
 brcc start --model openai/gpt-5.4       # Specific model
 brcc start --no-launch                  # Proxy only mode
 brcc start --no-fallback                # Disable auto-fallback
@@ -254,7 +288,7 @@ $ brcc stats
     deepseek/deepseek-chat
       620 req · $0.8901 (19.5%) · 180ms avg
       ↳ 12 fallback recoveries
-    nvidia/gpt-oss-120b
+    nvidia/nemotron-ultra-253b
       164 req · $0.0000 (0%) · 320ms avg
 
   💰 Savings vs Claude Opus
@@ -273,7 +307,7 @@ $ brcc stats --json    # Output as JSON (for scripts)
 ### `brcc config`
 
 ```bash
-brcc config set default-model nvidia/gpt-oss-120b
+brcc config set default-model nvidia/nemotron-ultra-253b
 brcc config set sonnet-model openai/gpt-5.4
 brcc config set opus-model anthropic/claude-opus-4.6
 brcc config set haiku-model deepseek/deepseek-chat
@@ -288,15 +322,15 @@ When a model returns an error (429 rate limit, 500+ server error), brcc automati
 
 **Default fallback chain:**
 ```
-anthropic/claude-sonnet-4.6
+your-selected-model
     ↓ (if 429/500/502/503/504)
-google/gemini-2.5-pro
+blockrun/auto (smart routing)
+    ↓
+blockrun/eco (cheapest capable)
     ↓
 deepseek/deepseek-chat
     ↓
-xai/grok-4-fast
-    ↓
-nvidia/gpt-oss-120b (free, always available)
+nvidia/nemotron-ultra-253b (free, always available)
 ```
 
 **How it looks:**
@@ -336,7 +370,7 @@ brcc start --no-fallback
 │  BlockRun API (blockrun.ai or sol.blockrun.ai)              │
 │                                                              │
 │  Routes to: GPT-5 · Claude · Gemini · DeepSeek · Grok ·    │
-│             NVIDIA · MiniMax · Moonshot · 40+ models         │
+│             NVIDIA · MiniMax · Moonshot · 50+ models         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -368,7 +402,7 @@ Typical cost: **$0.001–$0.05 per interaction**. $5 lasts most developers a wee
 No. brcc connects Claude Code to BlockRun instead of Anthropic.
 
 **Can I use non-Claude models?**
-Yes. GPT-5, Gemini, DeepSeek, Grok, and 30+ others work through Claude Code via brcc.
+Yes. GPT-5, Gemini, DeepSeek, Grok, and 50+ others work through Claude Code via brcc.
 
 ---
 
