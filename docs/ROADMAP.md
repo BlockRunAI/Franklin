@@ -21,10 +21,10 @@ User runs: brcc start --model openai/gpt-5.4
 **Working:**
 - `brcc setup base|solana` — create wallet
 - `brcc start --model <model>` — start proxy + launch Claude Code
-- `brcc models` — list 40+ models with pricing
+- `brcc models` — list 50+ models with pricing
 - `brcc balance` — check USDC balance
 - Dual chain support (Base + Solana)
-- Free model (nvidia/gpt-oss-120b) tested end-to-end
+- Free model (nvidia/nemotron-ultra-253b) tested end-to-end
 
 **Limitations:**
 - Cannot switch models inside Claude Code — must restart with different `--model`
@@ -216,5 +216,5 @@ brcc start
   └── Launch Claude Code
         ├── ANTHROPIC_BASE_URL → proxy
         ├── Model env vars → BlockRun models
-        └── /model picker → all 40+ models
+        └── /model picker → all 50+ models
 ```
