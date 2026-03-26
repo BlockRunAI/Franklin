@@ -16,9 +16,8 @@ export interface FallbackConfig {
 
 export const DEFAULT_FALLBACK_CONFIG: FallbackConfig = {
   chain: [
-    'blockrun/auto', // Smart routing (default)
-    'blockrun/eco', // Cheapest capable model
-    'deepseek/deepseek-chat', // Direct fallback
+    'deepseek/deepseek-chat', // Direct fallback — cheap & reliable
+    'google/gemini-2.5-flash', // Fast & capable
     'nvidia/nemotron-ultra-253b', // Free model as ultimate fallback
   ],
   retryOn: [429, 500, 502, 503, 504, 529],
@@ -144,18 +143,33 @@ export function getCurrentModelFromChain(
   return config.chain[0];
 }
 
+/** Routing profiles that must never be sent to the backend directly */
+const ROUTING_PROFILES = new Set([
+  'blockrun/auto', 'blockrun/eco', 'blockrun/premium', 'blockrun/free',
+]);
+
 /**
- * Build fallback chain starting from a specific model
+ * Build fallback chain starting from a specific model.
+ * Filters out routing profiles (blockrun/auto etc.) since the backend
+ * doesn't recognize them — they must be resolved by the smart router first.
  */
 export function buildFallbackChain(
   startModel: string,
   config: FallbackConfig = DEFAULT_FALLBACK_CONFIG
 ): string[] {
-  const index = config.chain.indexOf(startModel);
+  // Never include routing profiles in the chain — they'd cause 400s
+  const safeChain = config.chain.filter(m => !ROUTING_PROFILES.has(m));
+
+  const index = safeChain.indexOf(startModel);
   if (index >= 0) {
-    // Start from this model and include all after it
-    return config.chain.slice(index);
+    return safeChain.slice(index);
   }
+
+  // If startModel is a routing profile, skip it and just use the safe chain
+  if (ROUTING_PROFILES.has(startModel)) {
+    return safeChain;
+  }
+
   // Model not in default chain - prepend it
-  return [startModel, ...config.chain];
+  return [startModel, ...safeChain];
 }
