@@ -171,8 +171,7 @@ function launchServer(
         env: {
           ...cleanEnv,
           ANTHROPIC_BASE_URL: `http://localhost:${port}/api`,
-          ANTHROPIC_API_KEY:
-            'sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000',
+          ANTHROPIC_AUTH_TOKEN: 'x402-proxy-handles-auth',
           ANTHROPIC_DEFAULT_SONNET_MODEL: sonnetModel,
           ANTHROPIC_DEFAULT_OPUS_MODEL: opusModel,
           ANTHROPIC_DEFAULT_HAIKU_MODEL: haikuModel,
