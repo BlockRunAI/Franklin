@@ -144,7 +144,7 @@ function launchServer(
         );
         console.log(
           chalk.bold(
-            `  export ANTHROPIC_API_KEY=sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000`
+            `  export ANTHROPIC_AUTH_TOKEN=x402-proxy-handles-auth`
           )
         );
         console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
@@ -187,7 +187,7 @@ function launchServer(
         );
         console.log(
           chalk.bold(
-            `  export ANTHROPIC_API_KEY=sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000`
+            `  export ANTHROPIC_AUTH_TOKEN=x402-proxy-handles-auth`
           )
         );
         console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
@@ -206,7 +206,7 @@ function launchServer(
       );
       console.log(
         chalk.bold(
-          `  export ANTHROPIC_API_KEY=sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000`
+          `  export ANTHROPIC_AUTH_TOKEN=x402-proxy-handles-auth`
         )
       );
       console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
