@@ -1,9 +1,37 @@
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { createProxy } from '../proxy/server.js';
 import { loadChain, API_URLS, DEFAULT_PROXY_PORT } from '../config.js';
 import { loadConfig } from './config.js';
+
+/** Find the claude binary, checking common install locations */
+function findClaude(): string | null {
+  try {
+    const which = execSync('which claude 2>/dev/null || where claude 2>/dev/null', {
+      encoding: 'utf-8',
+    }).trim();
+    if (which) return which.split('\n')[0];
+  } catch { /* not in PATH */ }
+
+  // Check common install locations
+  const os = process.platform;
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const candidates = [
+    `${home}/.local/bin/claude`,
+    `${home}/.npm-global/bin/claude`,
+    '/usr/local/bin/claude',
+    ...(os === 'win32' ? [`${process.env.APPDATA}\\npm\\claude.cmd`] : []),
+  ];
+
+  for (const p of candidates) {
+    try {
+      execSync(`"${p}" --version`, { encoding: 'utf-8', stdio: 'pipe' });
+      return p;
+    } catch { /* not here */ }
+  }
+  return null;
+}
 
 interface StartOptions {
   port?: string;
@@ -105,7 +133,25 @@ function launchServer(
     console.log(chalk.dim(`  Run 'brcc stats' to view statistics\n`));
 
     if (shouldLaunch) {
-      console.log('Starting Claude Code...\n');
+      const claudeBin = findClaude();
+      if (!claudeBin) {
+        console.log(chalk.red('\nClaude Code not found in PATH.'));
+        console.log(chalk.dim('  Install: npm install -g @anthropic-ai/claude-code'));
+        console.log(chalk.dim('  Or:      curl -fsSL https://claude.ai/install.sh | bash\n'));
+        console.log('You can still use the proxy manually:\n');
+        console.log(
+          chalk.bold(`  export ANTHROPIC_BASE_URL=http://localhost:${port}/api`)
+        );
+        console.log(
+          chalk.bold(
+            `  export ANTHROPIC_API_KEY=sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000`
+          )
+        );
+        console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
+        return;
+      }
+
+      console.log(`Starting Claude Code (${chalk.dim(claudeBin)})...\n`);
 
       const cleanEnv = { ...process.env };
       delete cleanEnv.CLAUDE_ACCESS_TOKEN;
@@ -120,7 +166,7 @@ function launchServer(
       const claudeArgs: string[] = [];
       if (model) claudeArgs.push('--model', model);
 
-      const claude = spawn('claude', claudeArgs, {
+      const claude = spawn(claudeBin, claudeArgs, {
         stdio: 'inherit',
         env: {
           ...cleanEnv,
@@ -135,12 +181,17 @@ function launchServer(
       });
 
       claude.on('error', (err) => {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-          console.log(chalk.red('\nClaude Code not found. Install it first:'));
-          console.log(chalk.dim('  npm install -g @anthropic-ai/claude-code'));
-        } else {
-          console.error('Failed to start Claude Code:', err.message);
-        }
+        console.error('Failed to start Claude Code:', err.message);
+        console.log('\nYou can still use the proxy manually:\n');
+        console.log(
+          chalk.bold(`  export ANTHROPIC_BASE_URL=http://localhost:${port}/api`)
+        );
+        console.log(
+          chalk.bold(
+            `  export ANTHROPIC_API_KEY=sk-ant-api03-brcc-proxy-00000000000000000000000000000000000000000000-00000000000000`
+          )
+        );
+        console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
         server.close();
         process.exit(1);
       });
