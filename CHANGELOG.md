@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.6 (2026-03-26)
+
+### Bug Fixes
+
+- **Login prompt fix**: Use `ANTHROPIC_AUTH_TOKEN` instead of `ANTHROPIC_API_KEY` to prevent Claude Code from showing login prompt when launched via `brcc start` (thanks @0xCheetah1, #2)
+- Consistent env var in all output messages (proxy-only mode, error fallback)
+
 ## 0.9.5 (2026-03-25)
 
 ### Bug Fixes
