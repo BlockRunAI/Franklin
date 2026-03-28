@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.8 (2026-03-28)
+
+### Bug Fixes
+
+- **Terminal distortion in `brcc logs`**: Strip ANSI escape sequences and carriage returns from log entries before writing to `~/.blockrun/brcc-debug.log`. Previously, spinner/progress output from Claude Code (e.g., `* Thinking…`) contained `\r` characters that caused cursor jumps and screen corruption when replayed by `brcc logs` or `brcc logs -f`
+
 ## 0.9.7 (2026-03-27)
 
 ### Features
