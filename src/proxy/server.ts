@@ -52,9 +52,15 @@ export interface ProxyOptions {
 
 const LOG_FILE = path.join(os.homedir(), '.blockrun', 'brcc-debug.log');
 
+// Strip ANSI escape codes so log file doesn't distort terminal on replay
+function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1B\[[0-9;]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B[()][A-B]|\r/g, '');
+}
+
 function debug(options: ProxyOptions, ...args: unknown[]) {
   if (!options.debug) return;
-  const msg = `[${new Date().toISOString()}] ${args.map(String).join(' ')}\n`;
+  const msg = `[${new Date().toISOString()}] ${stripAnsi(args.map(String).join(' '))}\n`;
   try {
     fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
     fs.appendFileSync(LOG_FILE, msg);
@@ -69,7 +75,7 @@ function log(...args: unknown[]) {
   // Always append to log file so `brcc logs` works without --debug
   try {
     fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${msg}\n`);
+    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${stripAnsi(msg)}\n`);
   } catch { /* ignore */ }
 }
 
