@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.svg" alt="brcc — BlockRun Claude Code" width="100%">
+</p>
+
 <div align="center">
 
 <h1>brcc — BlockRun Claude Code</h1>
