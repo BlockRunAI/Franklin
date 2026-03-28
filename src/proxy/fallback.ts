@@ -28,6 +28,8 @@ export const DEFAULT_FALLBACK_CONFIG: FallbackConfig = {
 export interface FallbackResult {
   response: Response;
   modelUsed: string;
+  /** The request body with the successful model substituted in */
+  bodyUsed: string;
   fallbackUsed: boolean;
   attemptsCount: number;
   failedModels: string[];
@@ -82,6 +84,7 @@ export async function fetchWithFallback(
         return {
           response,
           modelUsed: model,
+          bodyUsed: body,
           fallbackUsed: i > 0,
           attemptsCount: attempts,
           failedModels,

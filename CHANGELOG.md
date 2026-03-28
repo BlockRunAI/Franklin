@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.7 (2026-03-27)
+
+### Features
+
+- **`brcc logs` command**: View debug logs with `brcc logs`, tail with `-f`, show last N lines with `-n 100`, clear with `--clear`. Auto-rotates at 10MB to prevent disk bloat
+- **Always-on logging**: `[brcc]` messages now always written to `~/.blockrun/brcc-debug.log` (no need for `--debug` flag for basic logs)
+
+### Bug Fixes
+
+- **Fallback + payment mismatch**: When fallback switches to a different model and the backend returns 402 (payment required), the payment handler now uses the correct fallback model body instead of the original failed model body
+
 ## 0.9.6 (2026-03-26)
 
 ### Bug Fixes

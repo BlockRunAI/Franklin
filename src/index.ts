@@ -6,6 +6,7 @@ import { balanceCommand } from './commands/balance.js';
 import { modelsCommand } from './commands/models.js';
 import { configCommand } from './commands/config.js';
 import { statsCommand } from './commands/stats.js';
+import { logsCommand } from './commands/logs.js';
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -70,5 +71,13 @@ program
   .option('--clear', 'Clear all statistics')
   .option('--json', 'Output in JSON format')
   .action(statsCommand);
+
+program
+  .command('logs')
+  .description('View debug logs (start with --debug to enable logging)')
+  .option('-f, --follow', 'Follow log output in real time')
+  .option('-n, --lines <count>', 'Number of lines to show (default: 50)')
+  .option('--clear', 'Delete log file')
+  .action(logsCommand);
 
 program.parse();
