@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.9 (2026-03-28)
+
+### Bug Fixes
+
+- **Terminal distortion (root cause fix)**: Removed `console.log` from the proxy's runtime `log()` function. Claude Code is launched with `stdio: inherit`, so brcc and Claude Code share the same terminal. Printing to stdout while Claude Code's `* Thinking…` spinner writes `\r` to the same fd caused the garbled/overwritten display. Runtime messages now go to `~/.blockrun/brcc-debug.log` only — use `brcc logs` or `brcc logs -f` to monitor live
+
 ## 0.9.8 (2026-03-28)
 
 ### Bug Fixes
