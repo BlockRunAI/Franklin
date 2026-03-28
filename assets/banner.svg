@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#050d1a;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#0a1628;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#050d1a;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00d4ff;stop-opacity:0" />
+      <stop offset="50%" style="stop-color:#00d4ff;stop-opacity:0.15" />
+      <stop offset="100%" style="stop-color:#00d4ff;stop-opacity:0" />
+    </linearGradient>
+    <linearGradient id="titleGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7dd3fc;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glowFilter">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="400" fill="url(#bg)"/>
+
+  <!-- Horizontal glow line center -->
+  <rect x="0" y="170" width="1200" height="80" fill="url(#glow)" opacity="0.5"/>
+
+  <!-- Grid dots pattern left side -->
+  <g opacity="0.15" fill="#00d4ff">
+    <circle cx="60" cy="80" r="1.5"/><circle cx="120" cy="80" r="1.5"/><circle cx="180" cy="80" r="1.5"/><circle cx="240" cy="80" r="1.5"/>
+    <circle cx="60" cy="140" r="1.5"/><circle cx="120" cy="140" r="1.5"/><circle cx="180" cy="140" r="1.5"/><circle cx="240" cy="140" r="1.5"/>
+    <circle cx="60" cy="200" r="1.5"/><circle cx="120" cy="200" r="1.5"/><circle cx="180" cy="200" r="1.5"/><circle cx="240" cy="200" r="1.5"/>
+    <circle cx="60" cy="260" r="1.5"/><circle cx="120" cy="260" r="1.5"/><circle cx="180" cy="260" r="1.5"/><circle cx="240" cy="260" r="1.5"/>
+    <circle cx="60" cy="320" r="1.5"/><circle cx="120" cy="320" r="1.5"/><circle cx="180" cy="320" r="1.5"/><circle cx="240" cy="320" r="1.5"/>
+  </g>
+
+  <!-- Grid dots pattern right side -->
+  <g opacity="0.15" fill="#00d4ff">
+    <circle cx="960" cy="80" r="1.5"/><circle cx="1020" cy="80" r="1.5"/><circle cx="1080" cy="80" r="1.5"/><circle cx="1140" cy="80" r="1.5"/>
+    <circle cx="960" cy="140" r="1.5"/><circle cx="1020" cy="140" r="1.5"/><circle cx="1080" cy="140" r="1.5"/><circle cx="1140" cy="140" r="1.5"/>
+    <circle cx="960" cy="200" r="1.5"/><circle cx="1020" cy="200" r="1.5"/><circle cx="1080" cy="200" r="1.5"/><circle cx="1140" cy="200" r="1.5"/>
+    <circle cx="960" cy="260" r="1.5"/><circle cx="1020" cy="260" r="1.5"/><circle cx="1080" cy="260" r="1.5"/><circle cx="1140" cy="260" r="1.5"/>
+    <circle cx="960" cy="320" r="1.5"/><circle cx="1020" cy="320" r="1.5"/><circle cx="1080" cy="320" r="1.5"/><circle cx="1140" cy="320" r="1.5"/>
+  </g>
+
+  <!-- Circuit lines left -->
+  <g stroke="#00d4ff" stroke-width="1" fill="none" opacity="0.2">
+    <polyline points="0,200 80,200 100,180 160,180 180,200 260,200"/>
+    <polyline points="0,240 40,240 60,220 100,220"/>
+    <polyline points="0,160 50,160 70,140 140,140 160,160 200,160"/>
+    <circle cx="100" cy="180" r="3" fill="#00d4ff" opacity="0.6"/>
+    <circle cx="160" cy="180" r="3" fill="#00d4ff" opacity="0.6"/>
+  </g>
+
+  <!-- Circuit lines right -->
+  <g stroke="#00d4ff" stroke-width="1" fill="none" opacity="0.2">
+    <polyline points="1200,200 1120,200 1100,180 1040,180 1020,200 940,200"/>
+    <polyline points="1200,240 1160,240 1140,220 1100,220"/>
+    <polyline points="1200,160 1150,160 1130,140 1060,140 1040,160 1000,160"/>
+    <circle cx="1100" cy="180" r="3" fill="#00d4ff" opacity="0.6"/>
+    <circle cx="1040" cy="180" r="3" fill="#00d4ff" opacity="0.6"/>
+  </g>
+
+  <!-- Hexagon decoration left -->
+  <g opacity="0.12" stroke="#00d4ff" stroke-width="1" fill="none">
+    <polygon points="130,310 155,296 180,310 180,338 155,352 130,338"/>
+    <polygon points="50,130 68,120 86,130 86,150 68,160 50,150"/>
+  </g>
+
+  <!-- Hexagon decoration right -->
+  <g opacity="0.12" stroke="#00d4ff" stroke-width="1" fill="none">
+    <polygon points="1020,310 1045,296 1070,310 1070,338 1045,352 1020,338"/>
+    <polygon points="1114,130 1132,120 1150,130 1150,150 1132,160 1114,150"/>
+  </g>
+
+  <!-- Thin horizontal accent lines -->
+  <line x1="300" y1="140" x2="900" y2="140" stroke="#00d4ff" stroke-width="0.5" opacity="0.2"/>
+  <line x1="300" y1="268" x2="900" y2="268" stroke="#00d4ff" stroke-width="0.5" opacity="0.2"/>
+
+  <!-- Main title "brcc" -->
+  <text x="600" y="225"
+    font-family="'SF Mono', 'Fira Code', 'Courier New', monospace"
+    font-size="128"
+    font-weight="700"
+    letter-spacing="-2"
+    text-anchor="middle"
+    fill="url(#titleGrad)"
+    filter="url(#softGlow)">brcc</text>
+
+  <!-- Subtitle -->
+  <text x="600" y="280"
+    font-family="'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
+    font-size="18"
+    font-weight="400"
+    letter-spacing="6"
+    text-anchor="middle"
+    fill="#7dd3fc"
+    opacity="0.85">BLOCKRUN CLAUDE CODE</text>
+
+  <!-- Tagline -->
+  <text x="600" y="330"
+    font-family="'SF Pro Text', 'Helvetica Neue', Arial, sans-serif"
+    font-size="14"
+    font-weight="300"
+    letter-spacing="1"
+    text-anchor="middle"
+    fill="#94a3b8"
+    opacity="0.7">Any model · No limits · Pay what you use</text>
+
+  <!-- Accent dot separators in tagline area -->
+  <circle cx="600" cy="350" r="2" fill="#00d4ff" opacity="0.4"/>
+  <circle cx="580" cy="350" r="1.5" fill="#00d4ff" opacity="0.25"/>
+  <circle cx="620" cy="350" r="1.5" fill="#00d4ff" opacity="0.25"/>
+
+  <!-- Top/bottom border lines -->
+  <line x1="0" y1="1" x2="1200" y2="1" stroke="#00d4ff" stroke-width="1" opacity="0.15"/>
+  <line x1="0" y1="399" x2="1200" y2="399" stroke="#00d4ff" stroke-width="1" opacity="0.15"/>
+</svg>
