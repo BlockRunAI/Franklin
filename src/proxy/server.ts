@@ -71,8 +71,8 @@ function debug(options: ProxyOptions, ...args: unknown[]) {
 
 function log(...args: unknown[]) {
   const msg = `[brcc] ${args.map(String).join(' ')}`;
-  console.log(msg);
-  // Always append to log file so `brcc logs` works without --debug
+  // Do NOT print to stdout — Claude Code owns the terminal (stdio: inherit).
+  // Use `brcc logs` to read runtime messages.
   try {
     fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
     fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${stripAnsi(msg)}\n`);
