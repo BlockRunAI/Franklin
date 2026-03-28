@@ -66,6 +66,11 @@ function debug(options: ProxyOptions, ...args: unknown[]) {
 function log(...args: unknown[]) {
   const msg = `[brcc] ${args.map(String).join(' ')}`;
   console.log(msg);
+  // Always append to log file so `brcc logs` works without --debug
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${msg}\n`);
+  } catch { /* ignore */ }
 }
 
 const DEFAULT_MAX_TOKENS = 4096;
@@ -446,6 +451,8 @@ export function createProxy(options: ProxyOptions): http.Server {
 
           response = result.response;
           finalModel = result.modelUsed;
+          // Use the body with the correct fallback model for payment
+          body = result.bodyUsed;
           usedFallback = result.fallbackUsed;
 
           if (usedFallback) {
@@ -456,7 +463,7 @@ export function createProxy(options: ProxyOptions): http.Server {
           response = await fetch(targetUrl, requestInit);
         }
 
-        // Handle 402 payment
+        // Handle 402 payment — body now has the correct model after fallback
         if (response.status === 402) {
           if (chain === 'solana' && solanaWallet) {
             response = await handleSolanaPayment(
