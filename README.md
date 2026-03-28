@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="brcc — BlockRun Claude Code" width="100%">
+  <img src="assets/banner.png" alt="brcc — BlockRun Claude Code" width="100%">
 </p>
 
 <div align="center">
@@ -18,17 +18,29 @@ You're paying $200/month and still can't work.<br><br>
 <img src="https://img.shields.io/badge/💰_Pay_Per_Use-purple?style=for-the-badge" alt="Pay per use">&nbsp;
 <img src="https://img.shields.io/badge/⛓_Base_+_Solana-green?style=for-the-badge" alt="Base + Solana">
 
+<br><br>
+
 [![npm version](https://img.shields.io/npm/v/@blockrun/cc.svg?style=flat-square&color=cb3837)](https://npmjs.com/package/@blockrun/cc)
 [![npm downloads](https://img.shields.io/npm/dm/@blockrun/cc.svg?style=flat-square&color=blue)](https://npmjs.com/package/@blockrun/cc)
 [![GitHub stars](https://img.shields.io/github/stars/BlockRunAI/brcc?style=flat-square)](https://github.com/BlockRunAI/brcc)
+[![GitHub forks](https://img.shields.io/github/forks/BlockRunAI/brcc?style=flat-square&color=lightgray)](https://github.com/BlockRunAI/brcc/fork)
+[![GitHub issues](https://img.shields.io/github/issues/BlockRunAI/brcc?style=flat-square&color=orange)](https://github.com/BlockRunAI/brcc/issues)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![License: MIT](https://img.shields.io/badge/License-BUSL--1.1-orange?style=flat-square)](LICENSE)
+[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-orange?style=flat-square)](LICENSE)
 
 [![x402 Protocol](https://img.shields.io/badge/x402-Micropayments-purple?style=flat-square)](https://x402.org)
 [![Base Network](https://img.shields.io/badge/Base-USDC-0052FF?style=flat-square&logo=coinbase&logoColor=white)](https://base.org)
 [![Solana](https://img.shields.io/badge/Solana-USDC-9945FF?style=flat-square&logo=solana&logoColor=white)](https://solana.com)
-[![BlockRun](https://img.shields.io/badge/Powered_by-BlockRun-black?style=flat-square)](https://blockrun.ai)
+[![Powered by BlockRun](https://img.shields.io/badge/Powered_by-BlockRun.ai-FFD700?style=flat-square)](https://blockrun.ai)
 [![Telegram](https://img.shields.io/badge/Telegram-Community-26A5E4?style=flat-square&logo=telegram)](https://t.me/blockrunAI)
+[![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
+[![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat-square&logo=apple&logoColor=white)](https://github.com/BlockRunAI/brcc)
+[![Linux](https://img.shields.io/badge/Linux-supported-FCC624?style=flat-square&logo=linux&logoColor=black)](https://github.com/BlockRunAI/brcc)
+[![Claude Code](https://img.shields.io/badge/Works_with-Claude_Code-CC785C?style=flat-square)](https://claude.ai/code)
+[![OpenAI](https://img.shields.io/badge/GPT--5-supported-412991?style=flat-square&logo=openai&logoColor=white)](https://blockrun.ai)
+[![Google Gemini](https://img.shields.io/badge/Gemini-supported-4285F4?style=flat-square&logo=google&logoColor=white)](https://blockrun.ai)
+[![DeepSeek](https://img.shields.io/badge/DeepSeek-supported-00B4D8?style=flat-square)](https://blockrun.ai)
+[![xAI Grok](https://img.shields.io/badge/Grok-supported-1DA1F2?style=flat-square)](https://blockrun.ai)
 
 </div>
 
