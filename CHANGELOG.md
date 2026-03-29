@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.11 (2026-03-29)
+
+### Features
+
+- **Welcome banner**: `brcc start` now displays a gold ASCII art BRCC banner with tagline on launch, so users and onlookers can immediately see BlockRun is powering the session
+
 ## 0.9.10 (2026-03-29)
 
 ### Bug Fixes
