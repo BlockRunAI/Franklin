@@ -1,9 +1,20 @@
 import { spawn, execSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { createProxy } from '../proxy/server.js';
 import { loadChain, API_URLS, DEFAULT_PROXY_PORT } from '../config.js';
 import { loadConfig } from './config.js';
+import { printBanner } from '../banner.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let _version = '0.9.0';
+try {
+  const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8'));
+  _version = pkg.version || _version;
+} catch { /* use default */ }
 
 /** Find the claude binary, checking common install locations */
 function findClaude(): string | null {
@@ -68,7 +79,7 @@ export async function startCommand(options: StartOptions) {
     const shouldLaunch = options.launch !== false;
 
     const model = options.model;
-    console.log(chalk.bold('brcc — BlockRun Claude Code\n'));
+    printBanner(_version);
     console.log(`Chain:    ${chalk.magenta('solana')}`);
     console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
     if (model) console.log(`Model:    ${chalk.green(model)}`);
@@ -99,7 +110,7 @@ export async function startCommand(options: StartOptions) {
     const shouldLaunch = options.launch !== false;
 
     const model = options.model;
-    console.log(chalk.bold('brcc — BlockRun Claude Code\n'));
+    printBanner(_version);
     console.log(`Chain:    ${chalk.magenta('base')}`);
     console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
     if (model) console.log(`Model:    ${chalk.green(model)}`);
