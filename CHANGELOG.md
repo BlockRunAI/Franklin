@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.10 (2026-03-29)
+
+### Bug Fixes
+
+- **Terminal distortion (complete fix)**: `fallback.ts` was still using `console.error` for network error messages (e.g., `[fallback] anthropic/claude-sonnet-4.6 network error: fetch failed`), which printed to stderr — also inherited by Claude Code's terminal. All fallback error messages now go to the log file only. Combined with v0.9.9, brcc is now fully silent while Claude Code is running
+
 ## 0.9.9 (2026-03-28)
 
 ### Bug Fixes
