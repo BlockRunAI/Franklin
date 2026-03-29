@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.12 (2026-03-29)
+
+### Bug Fixes
+
+- **Banner display**: Removed leading blank line from ASCII art so the first visible line is the art itself, not an empty line
+
 ## 0.9.11 (2026-03-29)
 
 ### Features
