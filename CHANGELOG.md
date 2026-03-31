@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.13 (2026-03-30)
+
+### Features
+
+- **`brcc init`**: Permanently configure Claude Code to use brcc — writes `~/.claude/settings.json` and installs a macOS LaunchAgent so the proxy auto-starts on login. Run `claude` directly after init, no need to remember `brcc start`
+- **`brcc daemon start|stop|status`**: Run the proxy as a background process, detached from the terminal
+- **`brcc uninit`**: Remove brcc from Claude Code settings and uninstall the LaunchAgent
+
+### Bug Fixes
+
+- **Smart routing now default**: When no `--model` flag is specified, `blockrun/auto` is used automatically — every request is classified and routed to the optimal model instead of always paying for Sonnet
+- **Fixed OAuth token deletion**: Also deletes `CLAUDE_CODE_OAUTH_TOKEN` (the actual env var Claude Code uses) so proxy auth is exclusive with no conflicts
+- **Restored `src/proxy/sse-translator.ts`**: TypeScript source was missing (only compiled JS existed). Restored from compiled output — required for non-Anthropic models that return OpenAI-format SSE streams
+- **Version deduplication**: `start.ts` no longer re-reads `package.json` at runtime; version flows from `index.ts`
+
 ## 0.9.12 (2026-03-29)
 
 ### Bug Fixes
