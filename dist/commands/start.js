@@ -1,20 +1,10 @@
 import { spawn, execSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { createProxy } from '../proxy/server.js';
 import { loadChain, API_URLS, DEFAULT_PROXY_PORT } from '../config.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-let _version = '0.9.0';
-try {
-    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8'));
-    _version = pkg.version || _version;
-}
-catch { /* use default */ }
 /** Find the claude binary, checking common install locations */
 function findClaude() {
     try {
@@ -44,6 +34,7 @@ function findClaude() {
     return null;
 }
 export async function startCommand(options) {
+    const version = options.version ?? '0.9.0';
     const chain = loadChain();
     const apiUrl = API_URLS[chain];
     const fallbackEnabled = options.fallback !== false; // Default true
@@ -62,7 +53,7 @@ export async function startCommand(options) {
         }
         const shouldLaunch = options.launch !== false;
         const model = options.model;
-        printBanner(_version);
+        printBanner(version);
         console.log(`Chain:    ${chalk.magenta('solana')}`);
         console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
         if (model)
@@ -90,7 +81,7 @@ export async function startCommand(options) {
         }
         const shouldLaunch = options.launch !== false;
         const model = options.model;
-        printBanner(_version);
+        printBanner(version);
         console.log(`Chain:    ${chalk.magenta('base')}`);
         console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
         if (model)
@@ -130,25 +121,30 @@ function launchServer(server, port, shouldLaunch, model, debug) {
             }
             console.log(`Starting Claude Code (${chalk.dim(claudeBin)})...\n`);
             const cleanEnv = { ...process.env };
+            // Remove all Claude auth tokens so brcc's proxy handles auth exclusively
             delete cleanEnv.CLAUDE_ACCESS_TOKEN;
             delete cleanEnv.CLAUDE_OAUTH_TOKEN;
+            delete cleanEnv.CLAUDE_CODE_OAUTH_TOKEN;
             const config = loadConfig();
             const sonnetModel = config['sonnet-model'] || 'anthropic/claude-sonnet-4.6';
             const opusModel = config['opus-model'] || 'anthropic/claude-opus-4.6';
-            const haikuModel = config['haiku-model'] || 'anthropic/claude-haiku-4.5';
+            const haikuModel = config['haiku-model'] || 'anthropic/claude-haiku-4.5-20251001';
             const claudeArgs = [];
             if (model)
                 claudeArgs.push('--model', model);
+            // Default to smart routing (blockrun/auto) when no model specified —
+            // the proxy classifies each prompt and picks the optimal model.
+            const activeModel = model || config['default-model'] || 'blockrun/auto';
             const claude = spawn(claudeBin, claudeArgs, {
                 stdio: 'inherit',
                 env: {
                     ...cleanEnv,
                     ANTHROPIC_BASE_URL: `http://localhost:${port}/api`,
                     ANTHROPIC_AUTH_TOKEN: 'x402-proxy-handles-auth',
+                    ANTHROPIC_MODEL: activeModel,
                     ANTHROPIC_DEFAULT_SONNET_MODEL: sonnetModel,
                     ANTHROPIC_DEFAULT_OPUS_MODEL: opusModel,
                     ANTHROPIC_DEFAULT_HAIKU_MODEL: haikuModel,
-                    ...(model ? { ANTHROPIC_MODEL: model } : {}),
                 },
             });
             claude.on('error', (err) => {
