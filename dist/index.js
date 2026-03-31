@@ -7,6 +7,9 @@ import { modelsCommand } from './commands/models.js';
 import { configCommand } from './commands/config.js';
 import { statsCommand } from './commands/stats.js';
 import { logsCommand } from './commands/logs.js';
+import { daemonCommand } from './commands/daemon.js';
+import { initCommand } from './commands/init.js';
+import { uninitCommand } from './commands/uninit.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,11 +34,25 @@ program
     .command('start')
     .description('Start proxy and launch Claude Code')
     .option('-p, --port <port>', 'Proxy port', '8402')
-    .option('-m, --model <model>', 'Default model (e.g. openai/gpt-5.4, anthropic/claude-sonnet-4.6)')
+    .option('-m, --model <model>', 'Default model (e.g. openai/gpt-5.4, anthropic/claude-sonnet-4.6). Defaults to blockrun/auto (smart routing)')
     .option('--no-launch', 'Start proxy only, do not launch Claude Code')
     .option('--no-fallback', 'Disable automatic fallback to backup models')
     .option('--debug', 'Enable debug logging')
-    .action(startCommand);
+    .action((options) => startCommand({ ...options, version }));
+program
+    .command('init')
+    .description('Configure Claude Code to use brcc automatically (writes ~/.claude/settings.json + installs LaunchAgent on macOS)')
+    .option('-p, --port <port>', 'Proxy port', '8402')
+    .action((options) => initCommand(options));
+program
+    .command('uninit')
+    .description('Remove brcc configuration from Claude Code settings and uninstall LaunchAgent')
+    .action(() => uninitCommand());
+program
+    .command('daemon <action>')
+    .description('Manage brcc background proxy (start|stop|status)')
+    .option('-p, --port <port>', 'Proxy port', '8402')
+    .action((action, options) => daemonCommand(action, options));
 program
     .command('models')
     .description('List available models and pricing')

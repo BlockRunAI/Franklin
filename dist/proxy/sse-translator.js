@@ -28,7 +28,6 @@ export class SSETranslator {
      * Returns true if it contains OpenAI-style `choices[].delta` structure.
      */
     static isOpenAIFormat(chunk) {
-        // Look for OpenAI-specific patterns in the SSE data
         return (chunk.includes('"choices"') &&
             chunk.includes('"delta"') &&
             !chunk.includes('"content_block_'));
@@ -45,7 +44,6 @@ export class SSETranslator {
         const translated = [];
         for (const event of events) {
             if (event.data === '[DONE]') {
-                // Close any active blocks, then emit message_stop
                 translated.push(...this.closeActiveBlocks());
                 translated.push(this.formatSSE('message_delta', {
                     type: 'message_delta',
@@ -62,12 +60,14 @@ export class SSETranslator {
             catch {
                 continue;
             }
-            // Skip if this doesn't look like OpenAI format
-            if (!parsed.choices || parsed.choices.length === 0) {
+            // Skip if not OpenAI format
+            const choices = parsed.choices;
+            if (!choices || choices.length === 0) {
                 // Could be a usage-only event
-                if (parsed.usage) {
-                    this.state.inputTokens = parsed.usage.prompt_tokens || 0;
-                    this.state.outputTokens = parsed.usage.completion_tokens || 0;
+                const usage = parsed.usage;
+                if (usage) {
+                    this.state.inputTokens = usage.prompt_tokens ?? 0;
+                    this.state.outputTokens = usage.completion_tokens ?? 0;
                 }
                 continue;
             }
@@ -91,15 +91,13 @@ export class SSETranslator {
                 }));
                 translated.push(this.formatSSE('ping', { type: 'ping' }));
             }
-            const choice = parsed.choices[0];
+            const choice = choices[0];
             const delta = choice.delta;
             // ── Reasoning content → thinking block ──
             if (delta.reasoning_content) {
                 if (!this.state.thinkingBlockActive) {
-                    // Close text block if active
-                    if (this.state.textBlockActive) {
+                    if (this.state.textBlockActive)
                         translated.push(...this.closeTextBlock());
-                    }
                     this.state.thinkingBlockActive = true;
                     translated.push(this.formatSSE('content_block_start', {
                         type: 'content_block_start',
@@ -116,12 +114,9 @@ export class SSETranslator {
             }
             // ── Text content → text block ──
             if (delta.content) {
-                // Close thinking block if transitioning
-                if (this.state.thinkingBlockActive) {
+                if (this.state.thinkingBlockActive)
                     translated.push(...this.closeThinkingBlock());
-                }
                 if (!this.state.textBlockActive) {
-                    // Close any active tool calls first
                     translated.push(...this.closeToolCalls());
                     this.state.textBlockActive = true;
                     translated.push(this.formatSSE('content_block_start', {
@@ -138,19 +133,16 @@ export class SSETranslator {
                 this.state.outputTokens++;
             }
             // ── Tool calls → tool_use blocks ──
-            if (delta.tool_calls && delta.tool_calls.length > 0) {
-                // Close thinking/text blocks first
-                if (this.state.thinkingBlockActive) {
+            const toolCalls = delta.tool_calls;
+            if (toolCalls && toolCalls.length > 0) {
+                if (this.state.thinkingBlockActive)
                     translated.push(...this.closeThinkingBlock());
-                }
-                if (this.state.textBlockActive) {
+                if (this.state.textBlockActive)
                     translated.push(...this.closeTextBlock());
-                }
-                for (const tc of delta.tool_calls) {
+                for (const tc of toolCalls) {
                     const tcIndex = tc.index;
-                    if (tc.id && tc.function?.name) {
-                        // New tool call start
-                        // Close previous tool call at same index if exists
+                    const fn = tc.function;
+                    if (tc.id && fn?.name) {
                         if (this.state.activeToolCalls.has(tcIndex)) {
                             translated.push(this.formatSSE('content_block_stop', {
                                 type: 'content_block_stop',
@@ -158,40 +150,25 @@ export class SSETranslator {
                             }));
                             this.state.blockIndex++;
                         }
-                        const toolId = tc.id;
-                        const toolName = tc.function.name;
-                        this.state.activeToolCalls.set(tcIndex, { id: toolId, name: toolName });
+                        this.state.activeToolCalls.set(tcIndex, { id: tc.id, name: fn.name });
                         translated.push(this.formatSSE('content_block_start', {
                             type: 'content_block_start',
                             index: this.state.blockIndex,
-                            content_block: {
-                                type: 'tool_use',
-                                id: toolId,
-                                name: toolName,
-                                input: {},
-                            },
+                            content_block: { type: 'tool_use', id: tc.id, name: fn.name, input: {} },
                         }));
-                        // If there are initial arguments, send them
-                        if (tc.function.arguments) {
+                        if (fn.arguments) {
                             translated.push(this.formatSSE('content_block_delta', {
                                 type: 'content_block_delta',
                                 index: this.state.blockIndex,
-                                delta: {
-                                    type: 'input_json_delta',
-                                    partial_json: tc.function.arguments,
-                                },
+                                delta: { type: 'input_json_delta', partial_json: fn.arguments },
                             }));
                         }
                     }
-                    else if (tc.function?.arguments) {
-                        // Continuation of existing tool call - stream arguments
+                    else if (fn?.arguments) {
                         translated.push(this.formatSSE('content_block_delta', {
                             type: 'content_block_delta',
                             index: this.state.blockIndex,
-                            delta: {
-                                type: 'input_json_delta',
-                                partial_json: tc.function.arguments,
-                            },
+                            delta: { type: 'input_json_delta', partial_json: fn.arguments },
                         }));
                     }
                 }
@@ -230,17 +207,14 @@ export class SSETranslator {
                 dataLines.push(line.slice(6));
             }
             else if (line === '' && dataLines.length > 0) {
-                // End of event
                 events.push({ event: currentEvent, data: dataLines.join('\n') });
                 currentEvent = undefined;
                 dataLines = [];
                 consumed = lines.slice(0, i + 1).join('\n').length + 1;
             }
         }
-        // Keep unconsumed text in buffer
-        if (consumed > 0) {
+        if (consumed > 0)
             this.buffer = this.buffer.slice(consumed);
-        }
         return events;
     }
     formatSSE(event, data) {
@@ -287,10 +261,10 @@ export class SSETranslator {
         return events;
     }
     closeActiveBlocks() {
-        const events = [];
-        events.push(...this.closeThinkingBlock());
-        events.push(...this.closeTextBlock());
-        events.push(...this.closeToolCalls());
-        return events;
+        return [
+            ...this.closeThinkingBlock(),
+            ...this.closeTextBlock(),
+            ...this.closeToolCalls(),
+        ];
     }
 }
