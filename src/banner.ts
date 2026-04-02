@@ -12,7 +12,7 @@ const LOGO_ART = [
 export function printBanner(version: string) {
   console.log(chalk.hex('#00FF88')(LOGO_ART));
   console.log(
-    chalk.bold.white('  RunCode (formerly 0xcode)') +
+    chalk.bold.white('  RunCode') +
       chalk.dim('  ·  AI Coding Agent  ·  blockrun.ai  ·  v' + version)
   );
   console.log(
