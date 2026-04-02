@@ -8,7 +8,7 @@ const LAUNCH_AGENT_PLIST = path.join(
   os.homedir(),
   'Library',
   'LaunchAgents',
-  'ai.blockrun.brcc.plist'
+  'ai.blockrun.0xcode.plist'
 );
 
 export async function uninitCommand() {
@@ -21,7 +21,7 @@ export async function uninitCommand() {
       const env = settings.env as Record<string, string> | undefined;
 
       if (env) {
-        const brccKeys = [
+        const proxyKeys = [
           'ANTHROPIC_BASE_URL',
           'ANTHROPIC_AUTH_TOKEN',
           'ANTHROPIC_MODEL',
@@ -30,7 +30,7 @@ export async function uninitCommand() {
           'ANTHROPIC_DEFAULT_HAIKU_MODEL',
         ];
         let removed = false;
-        for (const k of brccKeys) {
+        for (const k of proxyKeys) {
           if (k in env) {
             delete env[k];
             removed = true;
@@ -39,7 +39,7 @@ export async function uninitCommand() {
         if (Object.keys(env).length === 0) delete settings.env;
         if (removed) {
           fs.writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify(settings, null, 2));
-          console.log(chalk.green(`✓ Removed brcc env from ${CLAUDE_SETTINGS_FILE}`));
+          console.log(chalk.green(`✓ Removed 0xcode env from ${CLAUDE_SETTINGS_FILE}`));
           changed = true;
         }
       }
@@ -60,11 +60,11 @@ export async function uninitCommand() {
   }
 
   if (!changed) {
-    console.log(chalk.dim('Nothing to uninit — brcc was not initialized.'));
+    console.log(chalk.dim('Nothing to uninit — 0xcode was not initialized.'));
   } else {
     console.log('');
-    console.log(chalk.bold('brcc uninitialized.'));
+    console.log(chalk.bold('0xcode uninitialized.'));
     console.log(`Claude Code will use its default Anthropic API settings again.`);
-    console.log(`Run ${chalk.bold('brcc daemon stop')} to stop any running proxy.`);
+    console.log(`Run ${chalk.bold('0xcode daemon stop')} to stop any running proxy.`);
   }
 }

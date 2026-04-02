@@ -57,7 +57,7 @@ export async function modelsCommand() {
     }
 
     console.log(
-      `\n${chalk.dim(`${models.length} models available. Use:`)} ${chalk.bold('brcc start --model <model-id>')}`
+      `\n${chalk.dim(`${models.length} models available. Use:`)} ${chalk.bold('0xcode start --model <model-id>')}`
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'unknown error';

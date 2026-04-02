@@ -1,435 +1,281 @@
 <p align="center">
-  <img src="assets/banner.png" alt="brcc — BlockRun Claude Code" width="100%">
+  <br>
+  <code>
+  ██████╗ ██╗  ██╗ ██████╗ ██████╗ ██████╗ ███████╗
+ ██╔═████╗╚██╗██╔╝██╔════╝██╔═══██╗██╔══██╗██╔════╝
+ ██║██╔██║ ╚███╔╝ ██║     ██║   ██║██║  ██║█████╗
+ ████╔╝██║ ██╔██╗ ██║     ██║   ██║██║  ██║██╔══╝
+ ╚██████╔╝██╔╝ ██╗╚██████╗╚██████╔╝██████╔╝███████╗
+  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+  </code>
 </p>
 
 <div align="center">
 
-<h1>brcc — BlockRun Claude Code</h1>
+<h1>0xcode</h1>
 
-<p>Claude Code hits rate limits. Accounts get locked. Phone verification fails.<br>
-You're paying $200/month and still can't work.<br><br>
-<strong>brcc removes all of that. Any model. No limits. Pay what you use.</strong></p>
+<p><strong>Open-source AI coding agent. 41+ models. Pay per use with USDC.</strong></p>
 
 <br>
 
-<img src="https://img.shields.io/badge/🚀_No_Rate_Limits-black?style=for-the-badge" alt="No rate limits">&nbsp;
-<img src="https://img.shields.io/badge/🔑_No_Account_Needed-blue?style=for-the-badge" alt="No account">&nbsp;
-<img src="https://img.shields.io/badge/🤖_50+_Models-yellow?style=for-the-badge" alt="50+ models">&nbsp;
-<img src="https://img.shields.io/badge/💰_Pay_Per_Use-purple?style=for-the-badge" alt="Pay per use">&nbsp;
-<img src="https://img.shields.io/badge/⛓_Base_+_Solana-green?style=for-the-badge" alt="Base + Solana">
-
-<br><br>
-
-[![npm version](https://img.shields.io/npm/v/@blockrun/cc.svg?style=flat-square&color=cb3837)](https://npmjs.com/package/@blockrun/cc)
-[![npm downloads](https://img.shields.io/npm/dm/@blockrun/cc.svg?style=flat-square&color=blue)](https://npmjs.com/package/@blockrun/cc)
-[![GitHub stars](https://img.shields.io/github/stars/BlockRunAI/brcc?style=flat-square)](https://github.com/BlockRunAI/brcc)
-[![GitHub forks](https://img.shields.io/github/forks/BlockRunAI/brcc?style=flat-square&color=lightgray)](https://github.com/BlockRunAI/brcc/fork)
-[![GitHub issues](https://img.shields.io/github/issues/BlockRunAI/brcc?style=flat-square&color=orange)](https://github.com/BlockRunAI/brcc/issues)
+[![npm version](https://img.shields.io/npm/v/@blockrun/0xcode.svg?style=flat-square&color=cb3837)](https://npmjs.com/package/@blockrun/0xcode)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-orange?style=flat-square)](LICENSE)
-
-[![x402 Protocol](https://img.shields.io/badge/x402-Micropayments-purple?style=flat-square)](https://x402.org)
-[![Base Network](https://img.shields.io/badge/Base-USDC-0052FF?style=flat-square&logo=coinbase&logoColor=white)](https://base.org)
-[![Solana](https://img.shields.io/badge/Solana-USDC-9945FF?style=flat-square&logo=solana&logoColor=white)](https://solana.com)
-[![Powered by BlockRun](https://img.shields.io/badge/Powered_by-BlockRun.ai-FFD700?style=flat-square)](https://blockrun.ai)
+[![x402](https://img.shields.io/badge/x402-Payments-purple?style=flat-square)](https://x402.org)
 [![Telegram](https://img.shields.io/badge/Telegram-Community-26A5E4?style=flat-square&logo=telegram)](https://t.me/blockrunAI)
-[![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
-[![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat-square&logo=apple&logoColor=white)](https://github.com/BlockRunAI/brcc)
-[![Linux](https://img.shields.io/badge/Linux-supported-FCC624?style=flat-square&logo=linux&logoColor=black)](https://github.com/BlockRunAI/brcc)
-[![Claude Code](https://img.shields.io/badge/Works_with-Claude_Code-CC785C?style=flat-square)](https://claude.ai/code)
-[![OpenAI](https://img.shields.io/badge/GPT--5-supported-412991?style=flat-square&logo=openai&logoColor=white)](https://blockrun.ai)
-[![Google Gemini](https://img.shields.io/badge/Gemini-supported-4285F4?style=flat-square&logo=google&logoColor=white)](https://blockrun.ai)
-[![DeepSeek](https://img.shields.io/badge/DeepSeek-supported-00B4D8?style=flat-square)](https://blockrun.ai)
-[![xAI Grok](https://img.shields.io/badge/Grok-supported-1DA1F2?style=flat-square)](https://blockrun.ai)
 
 </div>
 
-> **brcc** is a local proxy that lets you run Claude Code with any LLM model — GPT-5, Claude, Gemini, DeepSeek, Grok, and 50+ more — without rate limits, without an Anthropic account, and without phone verification. You pay per request with USDC via the [x402](https://x402.org) protocol. Your wallet is your identity. Your private key never leaves your machine.
-
 ---
 
-## Why brcc exists
-
-Claude Code users are frustrated. Over **4,350 GitHub issue comments** about the same problems:
-
-|  | Issue | Comments |
-|--|-------|----------|
-| 🔴 | ["Instantly hitting usage limits with Max subscription"](https://github.com/anthropics/claude-code/issues/16157) | 1,252 |
-| 🔴 | ["Phone verification — unable to send code"](https://github.com/anthropics/claude-code/issues/34229) | 546 |
-| 🔴 | ["Account disabled after payment"](https://github.com/anthropics/claude-code/issues/5088) | 145 |
-| 🔴 | ["5-hour limit reached in less than 1h30"](https://github.com/anthropics/claude-code/issues/6457) | 108 |
-| 🔴 | ["Rate limit reached despite Max subscription and only 16% usage"](https://github.com/anthropics/claude-code/issues/29579) | 89 |
-
-**Every one of these people is a potential brcc user.**
-
-brcc eliminates all of these problems:
-
-- **No rate limits** — pay per request, use as much as you want
-- **No account** — a wallet is generated locally, no signup
-- **No phone verification** — USDC is your authentication
-- **No region restrictions** — works everywhere, priced the same
-- **No billing surprises** — transparent per-token pricing
-
----
-
-## How it compares
-
-| | Claude Max ($200/mo) | OpenRouter | **brcc** |
-|--|---------------------|------------|----------|
-| **Rate limits** | Constantly hit | Per-model limits | **None** |
-| **Account required** | Yes + phone | Yes + email | **No** |
-| **Models** | Claude only | 200+ (manual select) | **50+ (auto or manual)** |
-| **Payment** | Credit card, subscription | Credit card, pre-pay | **USDC per-request** |
-| **Auth** | OAuth + API key conflicts | API key | **Wallet signature** |
-| **Pricing** | Opaque | Transparent | **Transparent** |
-| **Runs locally** | N/A | No | **Yes (proxy)** |
-| **Monthly cost** | $100-200 fixed | Varies | **$5-50 based on usage** |
-
----
+0xcode is a terminal-based AI coding agent that connects to 41+ LLM models through [BlockRun](https://blockrun.ai). It reads your code, edits files, runs commands, searches the web, and manages tasks — all from your terminal. You pay per request with USDC via the [x402](https://x402.org) protocol. No API keys, no accounts, no subscriptions.
 
 ## Quick Start
 
-### One-line install (Linux/macOS)
+```bash
+npm install -g @blockrun/0xcode
+0xcode setup base     # Create a wallet (one-time)
+0xcode                # Launch — picks model interactively
+```
+
+That's it. Fund the wallet address with USDC on Base, or use free models immediately.
+
+## Features
+
+### Agent Capabilities
+
+0xcode is a full coding agent with 10 built-in tools:
+
+| Tool | Description |
+|------|-------------|
+| **Read** | Read files with line numbers |
+| **Write** | Create or overwrite files |
+| **Edit** | Targeted find-and-replace edits |
+| **Bash** | Run shell commands with timeout |
+| **Glob** | Find files by pattern |
+| **Grep** | Search file contents (uses ripgrep) |
+| **WebSearch** | Search the web |
+| **WebFetch** | Fetch and read web pages |
+| **Agent** | Spawn sub-agents for parallel tasks |
+| **Task** | Track tasks within a session |
+
+### Model Selection
+
+Launch with the interactive model picker, or specify directly:
 
 ```bash
-curl -fsSL https://blockrun.ai/brcc-install | bash
+0xcode                          # Interactive picker
+0xcode -m sonnet                # Claude Sonnet 4.6
+0xcode -m gpt                   # GPT-5.4
+0xcode -m deepseek              # DeepSeek V3
+0xcode -m free                  # Nemotron Ultra 253B (free)
 ```
 
-Installs Node.js (if needed) + Claude Code + brcc + creates wallet.
+Switch models mid-session:
 
-### Manual install
+```
+/model              # Interactive picker
+/model flash        # Switch to Gemini 2.5 Flash
+/cost               # Check session cost
+```
+
+**30+ shortcuts:**
+
+| Shortcut | Model | Price (in/out per 1M) |
+|----------|-------|----------------------|
+| `sonnet` | Claude Sonnet 4.6 | $3 / $15 |
+| `opus` | Claude Opus 4.6 | $5 / $25 |
+| `gpt` | GPT-5.4 | $2.5 / $15 |
+| `gemini` | Gemini 2.5 Pro | $1.25 / $10 |
+| `flash` | Gemini 2.5 Flash | $0.15 / $0.6 |
+| `deepseek` | DeepSeek V3 | $0.28 / $0.42 |
+| `r1` | DeepSeek R1 | $0.28 / $0.42 |
+| `haiku` | Claude Haiku 4.5 | $0.8 / $4 |
+| `mini` | GPT-5 Mini | $0.25 / $2 |
+| `nano` | GPT-5 Nano | $0.05 / $0.4 |
+| `o3` | O3 | $2 / $8 |
+| `o4` | O4 Mini | $1.1 / $4.4 |
+| `grok` | Grok 3 | varies |
+| `free` | Nemotron Ultra 253B | FREE |
+| `devstral` | Devstral 2 123B | FREE |
+| `qwen-coder` | Qwen3 Coder 480B | FREE |
+| `maverick` | Llama 4 Maverick | FREE |
+
+### Token Optimization
+
+Seven layers of automatic optimization keep context usage low and costs down:
+
+1. **Thinking block stripping** — removes old reasoning from history
+2. **Tool result budgeting** — caps large outputs at 50K chars with preview
+3. **Microcompaction** — clears old tool results (keeps last 8)
+4. **Time-based cleanup** — clears stale results after 60min idle
+5. **Auto-compact** — summarizes history when approaching context limit
+6. **Adaptive max_tokens** — starts at 8K, escalates to 64K on demand
+7. **Prompt-too-long recovery** — auto-compacts and retries up to 3x
+
+### Permission System
+
+By default, read-only tools run automatically. Destructive tools (Write, Edit, Bash) prompt for permission:
+
+```
+  Permission required: Bash
+  Execute: rm -rf node_modules
+
+  Allow? [y]es / [n]o / [a]lways:
+```
+
+Use `--trust` to skip all prompts:
 
 ```bash
-# 1. Install Claude Code
-curl -fsSL https://claude.ai/install.sh | bash
-
-# 2. Install brcc (use sudo on Linux)
-sudo npm install -g @blockrun/cc  # use sudo on Linux
-
-# 3. Create wallet
-brcc setup base      # Base chain (Coinbase L2)
-# or
-brcc setup solana    # Solana chain
-
-# 4. Fund your wallet with USDC (or use free models without funding)
-
-# 5. Launch
-brcc start
+0xcode --trust
 ```
 
-That's it. Claude Code opens with access to 50+ models, no rate limits.
+Configure rules in `~/.blockrun/0xcode-permissions.json`:
 
----
+```json
+{
+  "allow": ["Bash(git *)"],
+  "deny": ["Bash(rm -rf *)"]
+}
+```
 
-## Choosing Models
+### Streaming Tool Execution
 
-### From the command line
+Concurrent-safe tools (Read, Glob, Grep) start executing while the model is still streaming. Sequential tools (Write, Edit, Bash) wait for the full response. This reduces latency on multi-tool turns.
+
+### Proxy Mode
+
+0xcode also includes a proxy mode for use with Claude Code or other tools:
 
 ```bash
-brcc start                                # Default: smart routing (blockrun/auto)
-brcc start --model blockrun/eco           # Cheapest capable model
-brcc start --model blockrun/premium       # Best quality
-brcc start --model blockrun/free          # Free tier only
-brcc start --model deepseek/deepseek-chat # Direct model access
-brcc start --model anthropic/claude-opus-4.6  # Most capable
+0xcode proxy                    # Start payment proxy on :8402
+0xcode proxy -m deepseek        # With default model
+0xcode init                     # Auto-configure Claude Code + LaunchAgent
 ```
 
-### Smart Routing (Built-in)
+## Architecture
 
-brcc includes ClawRouter's 15-dimension classifier for automatic model selection:
-
-| Profile | Strategy | Savings | Best For |
-|---------|----------|---------|----------|
-| `blockrun/auto` | Balanced (default) | 74-100% | General use |
-| `blockrun/eco` | Cheapest possible | 95-100% | Maximum savings |
-| `blockrun/premium` | Best quality | 0% | Mission-critical |
-| `blockrun/free` | Free tier only | 100% | Zero cost |
-
-**How it works:**
 ```
-"What is 2+2?"              → SIMPLE   → gemini-flash    ($0.0002)
-"Write a React component"   → MEDIUM   → kimi-k2.5       ($0.002)
-"Design a microservice..."  → COMPLEX  → gemini-3.1-pro  ($0.007)
-"Prove this theorem..."     → REASONING → grok-4-fast    ($0.0004)
+User input → 0xcode CLI
+  → Terminal UI (markdown rendering, model picker, spinners)
+  → Permission check (allow / deny / ask)
+  → Agent loop
+    → Token optimization pipeline
+    → BlockRun API (direct, with x402 payment)
+      → 41+ models (Claude, GPT, Gemini, DeepSeek, Grok, ...)
+    → Streaming tool execution
+    → Context compaction (when needed)
+  → Loop until task complete
 ```
 
-**In-session switching:**
 ```
-use auto      # Switch to smart routing
-use eco       # Switch to cheapest
-use premium   # Switch to best quality
-use free      # Switch to free models
-use sonnet    # Direct Claude Sonnet
-use gpt       # GPT-5.4
-use codex     # GPT-5.3 Codex
-use o3        # OpenAI o3
-use gemini    # Gemini 2.5 Pro
-use flash     # Gemini 2.5 Flash
-use grok      # Grok 3
-use grok-4    # Grok 4
-use deepseek  # DeepSeek Chat
-use r1        # DeepSeek Reasoner
-use minimax   # Minimax M2.7
-use kimi      # Kimi K2.5
-use free      # Nemotron Ultra 253B (free)
-use nemotron  # Nemotron Ultra 253B (free)
-use devstral  # Devstral 2 123B (free)
-use qwen-coder # Qwen3 Coder 480B (free)
+src/
+├── agent/                  # Core agent system
+│   ├── loop.ts             # Agent loop + interactive session
+│   ├── llm.ts              # API client + x402 payment + SSE parsing
+│   ├── types.ts            # Type definitions
+│   ├── context.ts          # System prompt assembly
+│   ├── tokens.ts           # Token estimation
+│   ├── compact.ts          # Auto-compaction
+│   ├── optimize.ts         # 5-layer token optimization
+│   ├── permissions.ts      # Tool permission system
+│   └── streaming-executor.ts # Parallel tool execution
+├── tools/                  # 10 built-in tools
+│   ├── read.ts, write.ts, edit.ts, bash.ts
+│   ├── glob.ts, grep.ts
+│   ├── webfetch.ts, websearch.ts
+│   ├── subagent.ts, task.ts
+│   └── index.ts
+├── ui/                     # Terminal interface
+│   ├── terminal.ts         # Streaming output + markdown
+│   └── model-picker.ts     # Interactive model selection
+├── proxy/                  # Proxy mode (for Claude Code)
+│   ├── server.ts           # HTTP proxy + payment handling
+│   ├── fallback.ts         # Auto-fallback chain
+│   └── sse-translator.ts   # OpenAI → Anthropic format
+├── router/                 # Smart routing engine
+│   └── index.ts
+├── commands/               # CLI commands
+├── config.ts               # Global configuration
+└── index.ts                # Entry point
 ```
-
-### Inside Claude Code
-
-Use `/model` to switch between Sonnet, Opus, and Haiku. Each maps to the BlockRun model you've configured:
-
-```bash
-# Customize what each /model option routes to
-brcc config set sonnet-model anthropic/claude-sonnet-4.6    # default
-brcc config set opus-model anthropic/claude-opus-4.6        # default
-brcc config set haiku-model deepseek/deepseek-chat          # cheap alternative
-```
-
-### List all models
-
-```bash
-$ brcc models
-
-Free Models (no USDC needed)
-──────────────────────────────────────────────────────────────────────
-  nvidia/nemotron-ultra-253b
-  nvidia/gpt-oss-120b
-  nvidia/deepseek-v3.2
-  nvidia/mistral-large-3-675b
-  nvidia/qwen3-coder-480b
-  nvidia/devstral-2-123b
-  nvidia/llama-4-maverick
-  nvidia/glm-4.7
-  ... (11 free models)
-
-Paid Models
-──────────────────────────────────────────────────────────────────────
-  Model                               Input        Output
-  openai/gpt-5-nano                   $0.05/M      $0.40/M
-  xai/grok-4-1-fast-reasoning         $0.20/M      $0.50/M
-  deepseek/deepseek-chat              $0.28/M      $0.42/M
-  minimax/minimax-m2.7                $0.30/M      $1.20/M
-  google/gemini-2.5-flash             $0.30/M      $2.50/M
-  moonshot/kimi-k2.5                  $0.60/M      $3.00/M
-  anthropic/claude-haiku-4.5          $1.00/M      $5.00/M
-  openai/gpt-5.3-codex                $1.75/M      $14.00/M
-  google/gemini-2.5-pro               $1.25/M      $10.00/M
-  google/gemini-3.1-pro               $2.00/M      $12.00/M
-  openai/gpt-5.4                      $2.50/M      $15.00/M
-  anthropic/claude-sonnet-4.6         $3.00/M      $15.00/M
-  anthropic/claude-opus-4.6           $5.00/M      $25.00/M
-  openai/gpt-5.4-pro                  $30.00/M     $180.00/M
-  ... (50+ models total)
-```
-
----
-
-## What $5 Gets You
-
-| Model | ~Requests per $5 | Best For |
-|-------|-------------------|----------|
-| Nemotron Ultra 253B | **Unlimited** | Free tier |
-| Grok 4.1 Fast | ~3,500 | Fast reasoning (budget) |
-| DeepSeek V3 | ~5,000 | Budget coding |
-| Gemini 2.5 Flash | ~1,200 | Balanced speed/cost |
-| Kimi K2.5 | ~800 | Mid-range coding |
-| Claude Haiku 4.5 | ~500 | Fast tasks |
-| GPT-5.3 Codex | ~180 | Code generation |
-| Claude Sonnet 4.6 | ~100 | General coding |
-| GPT-5.4 | ~80 | Reasoning |
-| Claude Opus 4.6 | ~50 | Most capable |
-
----
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `brcc setup [base\|solana]` | Create wallet for payments |
-| `brcc start [--model <id>]` | Start proxy + launch Claude Code |
-| `brcc models` | List all models with pricing |
-| `brcc balance` | Check wallet USDC balance |
-| `brcc stats` | View usage statistics and savings |
-| `brcc config set <key> <value>` | Configure model mappings |
-| `brcc config list` | View current settings |
+| `0xcode` | Start the agent (interactive model picker) |
+| `0xcode -m <model>` | Start with a specific model |
+| `0xcode --trust` | Start in trust mode (no permission prompts) |
+| `0xcode --debug` | Start with debug logging |
+| `0xcode setup [base\|solana]` | Create payment wallet |
+| `0xcode balance` | Check USDC balance |
+| `0xcode models` | List all models with pricing |
+| `0xcode stats` | View usage statistics and savings |
+| `0xcode config list` | View configuration |
+| `0xcode proxy` | Run as payment proxy for Claude Code |
 
-### `brcc setup`
+### Session Commands
 
-```bash
-brcc setup          # Default: Base chain
-brcc setup base     # Coinbase L2 — low fees, fast
-brcc setup solana   # Solana — also low fees, fast
-```
+| Command | Description |
+|---------|-------------|
+| `/model` | Interactive model picker |
+| `/model <name>` | Switch model (shortcut or full ID) |
+| `/models` | Same as `/model` |
+| `/cost` | Show session cost and savings |
+| `/help` | List all commands |
+| `/exit` | Quit |
 
-Your wallet is saved to `~/.blockrun/` and shared with all BlockRun tools.
+## Payment
 
-### `brcc start`
+0xcode uses the [x402](https://x402.org) protocol for pay-per-request payments with USDC stablecoins. No accounts, no API keys, no subscriptions.
 
-```bash
-brcc start                              # Default model
-brcc start --model nvidia/nemotron-ultra-253b  # Free model
-brcc start --model openai/gpt-5.4       # Specific model
-brcc start --no-launch                  # Proxy only mode
-brcc start --no-fallback                # Disable auto-fallback
-brcc start -p 9000                      # Custom port
-```
+**Supported chains:**
+- **Base** (default) — Coinbase L2, low fees
+- **Solana** — also low fees
 
-### `brcc stats`
-
-View your usage statistics and cost savings:
-
-```bash
-$ brcc stats
-
-📊 brcc Usage Statistics
-
-───────────────────────────────────────────────────────────
-
-  Overview (7 days)
-
-    Requests:       1,234
-    Total Cost:     $4.5672
-    Avg per Request: $0.003701
-    Input Tokens:   2,456,000
-    Output Tokens:  892,000
-    Fallbacks:      23 (1.9%)
-
-  By Model
-
-    anthropic/claude-sonnet-4.6
-      450 req · $2.1340 (46.7%) · 245ms avg
-    deepseek/deepseek-chat
-      620 req · $0.8901 (19.5%) · 180ms avg
-      ↳ 12 fallback recoveries
-    nvidia/nemotron-ultra-253b
-      164 req · $0.0000 (0%) · 320ms avg
-
-  💰 Savings vs Claude Opus
-
-    Opus equivalent: $34.62
-    Your actual cost: $4.57
-    Saved: $30.05 (86.8%)
-
-───────────────────────────────────────────────────────────
-  Run `brcc stats --clear` to reset statistics
-
-$ brcc stats --clear   # Reset all statistics
-$ brcc stats --json    # Output as JSON (for scripts)
-```
-
-### `brcc config`
+**Setup:**
 
 ```bash
-brcc config set default-model nvidia/nemotron-ultra-253b
-brcc config set sonnet-model openai/gpt-5.4
-brcc config set opus-model anthropic/claude-opus-4.6
-brcc config set haiku-model deepseek/deepseek-chat
-brcc config list
+0xcode setup base     # or: 0xcode setup solana
 ```
 
----
+Fund the wallet address with USDC. Free models work without funding.
 
-## Automatic Fallback
+**What does it cost?**
 
-When a model returns an error (429 rate limit, 500+ server error), brcc automatically retries with backup models. This ensures your work never stops.
+| Model | ~Cost per request |
+|-------|-------------------|
+| Free models (Nemotron, etc.) | $0 |
+| DeepSeek V3 | ~$0.001 |
+| Gemini Flash | ~$0.001 |
+| Claude Sonnet | ~$0.01 |
+| GPT-5.4 | ~$0.01 |
+| Claude Opus | ~$0.05 |
 
-**Default fallback chain:**
-```
-your-selected-model
-    ↓ (if 429/500/502/503/504)
-blockrun/auto (smart routing)
-    ↓
-blockrun/eco (cheapest capable)
-    ↓
-deepseek/deepseek-chat
-    ↓
-nvidia/nemotron-ultra-253b (free, always available)
-```
+Typical usage: **$5-20/month** for active development.
 
-**How it looks:**
-```
-[brcc] ⚠️  anthropic/claude-sonnet-4.6 returned 429, falling back to google/gemini-2.5-pro
-[brcc] ↺ Fallback successful: using google/gemini-2.5-pro
-```
+## Development
 
-To disable fallback:
 ```bash
-brcc start --no-fallback
+git clone https://github.com/BlockRunAI/brcc.git
+cd brcc
+npm install
+npm run build
+node dist/index.js --help
 ```
 
----
+## Contributing
 
-## How It Works
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Claude Code                                                 │
-│  (thinks it's talking to Anthropic)                         │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ Anthropic Messages API format
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│  brcc proxy (localhost:8402)                                 │
-│                                                              │
-│  1. Receives request from Claude Code                        │
-│  2. Replaces model name (if --model set)                    │
-│  3. Signs x402 USDC payment with your wallet                │
-│  4. Forwards to BlockRun API                                │
-│  5. Streams response back to Claude Code                    │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ + x402 payment signature
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│  BlockRun API (blockrun.ai or sol.blockrun.ai)              │
-│                                                              │
-│  Routes to: GPT-5 · Claude · Gemini · DeepSeek · Grok ·    │
-│             NVIDIA · MiniMax · Moonshot · 50+ models         │
-└─────────────────────────────────────────────────────────────┘
-```
-
-Your private key stays on your machine. Only payment signatures are sent.
-
----
-
-## Funding Your Wallet
-
-brcc uses USDC — a dollar-pegged stablecoin. No crypto volatility.
-
-**Base chain (default):**
-1. Buy USDC on [Coinbase](https://coinbase.com)
-2. Send to your brcc wallet address (shown in `brcc setup`)
-3. Make sure it's on **Base** network (not Ethereum mainnet)
-
-**Solana chain:**
-1. Buy USDC on any exchange
-2. Send to your brcc Solana address
-3. Send on **Solana** network
-
-Typical cost: **$0.001–$0.05 per interaction**. $5 lasts most developers a week.
-
----
-
-## FAQ
-
-**Do I need an Anthropic account?**
-No. brcc connects Claude Code to BlockRun instead of Anthropic.
-
-**Can I use non-Claude models?**
-Yes. GPT-5, Gemini, DeepSeek, Grok, and 50+ others work through Claude Code via brcc.
-
----
-
-## Links
-
-- [BlockRun](https://blockrun.ai) — The AI gateway powering brcc
-- [npm package](https://npmjs.com/package/@blockrun/cc)
-- [Roadmap](docs/ROADMAP.md)
-- [Telegram](https://t.me/blockrunAI)
-- [GitHub Issues](https://github.com/BlockRunAI/brcc/issues)
+Contributions are welcome. Please open an issue first to discuss what you'd like to change.
 
 ## License
 
-[Business Source License 1.1](LICENSE) — Free to use, modify, and deploy. Cannot be used to build a competing hosted service. Converts to MIT in 2036.
+[Apache License 2.0](LICENSE)
+
+## Links
+
+- [BlockRun](https://blockrun.ai) — The AI gateway
+- [x402 Protocol](https://x402.org) — Internet-native payments
+- [npm](https://npmjs.com/package/@blockrun/0xcode)
+- [Telegram](https://t.me/blockrunAI)

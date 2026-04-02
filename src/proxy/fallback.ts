@@ -1,5 +1,5 @@
 /**
- * Fallback chain for brcc
+ * Fallback chain for 0xcode
  * Automatically switches to backup models when primary fails (429, 5xx, etc.)
  */
 
@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const LOG_FILE = path.join(os.homedir(), '.blockrun', 'brcc-debug.log');
+const LOG_FILE = path.join(os.homedir(), '.blockrun', '0xcode-debug.log');
 
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1B\[[0-9;]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B[()][A-B]|\r/g;
@@ -126,7 +126,7 @@ export async function fetchWithFallback(
       if (nextModel && onFallback) {
         const errMsg = err instanceof Error ? err.message : 'Network error';
         onFallback(model, 0, nextModel);
-        appendLog(`[brcc] [fallback] ${model} network error: ${errMsg}`);
+        appendLog(`[0xcode] [fallback] ${model} network error: ${errMsg}`);
       }
 
       if (i < config.chain.length - 1) {

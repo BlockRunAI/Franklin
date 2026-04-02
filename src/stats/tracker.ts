@@ -1,5 +1,5 @@
 /**
- * Usage tracking for brcc
+ * Usage tracking for 0xcode
  * Records all requests with cost, tokens, and latency for stats display
  */
 
@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const STATS_FILE = path.join(os.homedir(), '.blockrun', 'brcc-stats.json');
+const STATS_FILE = path.join(os.homedir(), '.blockrun', '0xcode-stats.json');
 
 export interface UsageRecord {
   timestamp: number;

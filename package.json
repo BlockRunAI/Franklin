@@ -1,10 +1,10 @@
 {
-  "name": "@blockrun/cc",
-  "version": "0.9.13",
-  "description": "Run Claude Code with any model — no rate limits, no account locks, no phone verification. Pay per use with USDC.",
+  "name": "@blockrun/0xcode",
+  "version": "1.0.0",
+  "description": "0xcode — AI coding agent powered by 41+ models. Pay per use with USDC.",
   "type": "module",
   "bin": {
-    "brcc": "./dist/index.js"
+    "0xcode": "./dist/index.js"
   },
   "files": [
     "dist",
@@ -17,7 +17,8 @@
     "start": "node dist/index.js"
   },
   "keywords": [
-    "claude-code",
+    "0xcode",
+    "coding-agent",
     "ai",
     "llm",
     "gpt",
@@ -29,13 +30,12 @@
     "usdc",
     "crypto",
     "pay-per-use",
-    "no-rate-limit",
     "blockrun"
   ],
-  "license": "BUSL-1.1",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/BlockRunAI/brcc"
+    "url": "https://github.com/BlockRunAI/0xcode"
   },
   "homepage": "https://blockrun.ai",
   "engines": {

@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import { DEFAULT_PROXY_PORT } from '../config.js';
 const CLAUDE_SETTINGS_FILE = path.join(os.homedir(), '.claude', 'settings.json');
 const LAUNCH_AGENT_DIR = path.join(os.homedir(), 'Library', 'LaunchAgents');
-const LAUNCH_AGENT_PLIST = path.join(LAUNCH_AGENT_DIR, 'ai.blockrun.brcc.plist');
+const LAUNCH_AGENT_PLIST = path.join(LAUNCH_AGENT_DIR, 'ai.blockrun.0xcode.plist');
 export async function initCommand(options) {
     const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
     // ── 1. Write ~/.claude/settings.json ────────────────────────────────────
@@ -30,26 +30,25 @@ export async function initCommand(options) {
     console.log(chalk.green(`✓ Configured ${CLAUDE_SETTINGS_FILE}`));
     // ── 2. Install macOS LaunchAgent (auto-start on login) ─────────────────
     if (process.platform === 'darwin') {
-        let brccBin = '';
+        let oxcodeBin = '';
         try {
             const { execSync } = await import('node:child_process');
-            brccBin = execSync('which brcc', { encoding: 'utf-8' }).trim();
+            oxcodeBin = execSync('which 0xcode', { encoding: 'utf-8' }).trim();
         }
         catch {
-            console.log(chalk.yellow('  Warning: brcc not found in PATH — LaunchAgent not installed.'));
+            console.log(chalk.yellow('  Warning: 0xcode not found in PATH — LaunchAgent not installed.'));
         }
-        if (brccBin) {
+        if (oxcodeBin) {
             const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>ai.blockrun.brcc</string>
+  <string>ai.blockrun.0xcode</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${brccBin}</string>
-    <string>daemon</string>
-    <string>start</string>
+    <string>${oxcodeBin}</string>
+    <string>proxy</string>
     <string>--port</string>
     <string>${port}</string>
   </array>
@@ -58,9 +57,9 @@ export async function initCommand(options) {
   <key>KeepAlive</key>
   <false/>
   <key>StandardOutPath</key>
-  <string>${os.homedir()}/.blockrun/brcc-debug.log</string>
+  <string>${os.homedir()}/.blockrun/0xcode-debug.log</string>
   <key>StandardErrorPath</key>
-  <string>${os.homedir()}/.blockrun/brcc-debug.log</string>
+  <string>${os.homedir()}/.blockrun/0xcode-debug.log</string>
 </dict>
 </plist>`;
             fs.mkdirSync(LAUNCH_AGENT_DIR, { recursive: true });
@@ -68,7 +67,7 @@ export async function initCommand(options) {
             try {
                 const { execSync } = await import('node:child_process');
                 execSync(`launchctl load -w "${LAUNCH_AGENT_PLIST}"`, { stdio: 'pipe' });
-                console.log(chalk.green(`✓ LaunchAgent installed — brcc proxy starts automatically on login`));
+                console.log(chalk.green(`✓ LaunchAgent installed — 0xcode proxy starts automatically on login`));
             }
             catch {
                 console.log(chalk.dim(`  LaunchAgent written to ${LAUNCH_AGENT_PLIST}`));
@@ -78,10 +77,10 @@ export async function initCommand(options) {
     }
     // ── 3. Start daemon now ──────────────────────────────────────────────────
     console.log('');
-    console.log(chalk.bold('brcc initialized.'));
-    console.log(`Run ${chalk.bold('brcc daemon start')} to start the background proxy now.`);
-    console.log(`Then just run ${chalk.bold('claude')} — brcc handles everything automatically.`);
+    console.log(chalk.bold('0xcode initialized (proxy mode for Claude Code).'));
+    console.log(`Run ${chalk.bold('0xcode daemon start')} to start the background proxy now.`);
+    console.log(`Then just run ${chalk.bold('claude')} — 0xcode proxy handles payments automatically.`);
     console.log('');
+    console.log(chalk.dim('Or use 0xcode directly: 0xcode start'));
     console.log(chalk.dim('Note: Claude Code will ask you to trust the proxy URL once.'));
-    console.log(chalk.dim('      That is normal — accept it to continue.'));
 }

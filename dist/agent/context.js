@@ -1,0 +1,155 @@
+/**
+ * Context Manager for 0xcode
+ * Assembles system instructions, reads project config, injects environment info.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { execSync } from 'node:child_process';
+// ─── System Instructions Assembly ──────────────────────────────────────────
+const BASE_INSTRUCTIONS = `You are 0xcode, an AI coding agent that helps users with software engineering tasks.
+You have access to tools for reading, writing, editing files, running shell commands, and searching codebases.
+
+# Core Principles
+- Read before writing: always understand existing code before making changes.
+- Be precise: make minimal, targeted changes. Don't refactor code you weren't asked to touch.
+- Be safe: never introduce security vulnerabilities. Validate at system boundaries.
+- Be honest: if you're unsure, say so. Don't guess at implementation details.
+
+# Tool Usage
+- Use Read to examine files before editing them.
+- Use Edit for targeted changes (preferred over Write for existing files).
+- Use Write only for new files or complete rewrites.
+- Use Bash for shell commands, builds, and tests.
+- Use Glob to find files by pattern.
+- Use Grep to search file contents.
+
+# Communication
+- Be concise. Lead with the answer or action.
+- Show what you changed and why.
+- When blocked, explain what you tried and ask for guidance.`;
+/**
+ * Build the full system instructions array for a session.
+ */
+export function assembleInstructions(workingDir) {
+    const parts = [BASE_INSTRUCTIONS];
+    // Read 0XCODE.md or CLAUDE.md from the project
+    const projectConfig = readProjectConfig(workingDir);
+    if (projectConfig) {
+        parts.push(`# Project Instructions\n\n${projectConfig}`);
+    }
+    // Inject environment info
+    parts.push(buildEnvironmentSection(workingDir));
+    // Inject git context
+    const gitInfo = getGitContext(workingDir);
+    if (gitInfo) {
+        parts.push(`# Git Context\n\n${gitInfo}`);
+    }
+    return parts;
+}
+// ─── Project Config ────────────────────────────────────────────────────────
+/**
+ * Look for 0XCODE.md, then CLAUDE.md in the working directory and parents.
+ */
+function readProjectConfig(dir) {
+    const configNames = ['0XCODE.md', 'CLAUDE.md'];
+    let current = path.resolve(dir);
+    const root = path.parse(current).root;
+    while (current !== root) {
+        for (const name of configNames) {
+            const filePath = path.join(current, name);
+            try {
+                const content = fs.readFileSync(filePath, 'utf-8').trim();
+                if (content)
+                    return content;
+            }
+            catch {
+                // File doesn't exist, keep looking
+            }
+        }
+        const parent = path.dirname(current);
+        if (parent === current)
+            break;
+        current = parent;
+    }
+    return null;
+}
+// ─── Environment ───────────────────────────────────────────────────────────
+function buildEnvironmentSection(workingDir) {
+    const lines = ['# Environment'];
+    lines.push(`- Working directory: ${workingDir}`);
+    lines.push(`- Platform: ${process.platform}`);
+    lines.push(`- Node.js: ${process.version}`);
+    // Detect shell
+    const shell = process.env.SHELL || process.env.COMSPEC || 'unknown';
+    lines.push(`- Shell: ${path.basename(shell)}`);
+    // Date
+    lines.push(`- Date: ${new Date().toISOString().split('T')[0]}`);
+    return lines.join('\n');
+}
+// ─── Git Context ───────────────────────────────────────────────────────────
+function getGitContext(workingDir) {
+    try {
+        const isGit = execSync('git rev-parse --is-inside-work-tree', {
+            cwd: workingDir,
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+        }).trim();
+        if (isGit !== 'true')
+            return null;
+        const lines = [];
+        // Current branch
+        try {
+            const branch = execSync('git branch --show-current', {
+                cwd: workingDir,
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe'],
+            }).trim();
+            if (branch)
+                lines.push(`Branch: ${branch}`);
+        }
+        catch { /* detached HEAD or error */ }
+        // Git status (brief)
+        try {
+            const status = execSync('git status --short', {
+                cwd: workingDir,
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe'],
+            }).trim();
+            if (status) {
+                const fileCount = status.split('\n').length;
+                lines.push(`Changed files: ${fileCount}`);
+            }
+            else {
+                lines.push('Status: clean');
+            }
+        }
+        catch { /* ignore */ }
+        // Recent commits (last 5)
+        try {
+            const log = execSync('git log --oneline -5', {
+                cwd: workingDir,
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe'],
+            }).trim();
+            if (log) {
+                lines.push(`\nRecent commits:\n${log}`);
+            }
+        }
+        catch { /* ignore */ }
+        // Git user
+        try {
+            const user = execSync('git config user.name', {
+                cwd: workingDir,
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe'],
+            }).trim();
+            if (user)
+                lines.push(`User: ${user}`);
+        }
+        catch { /* ignore */ }
+        return lines.length > 0 ? lines.join('\n') : null;
+    }
+    catch {
+        return null;
+    }
+}
