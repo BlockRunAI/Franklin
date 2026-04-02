@@ -73,7 +73,7 @@ export class ModelClient {
     /**
      * Non-streaming completion for simple requests.
      */
-    async complete(request, signal, onToolReady) {
+    async complete(request, signal, onToolReady, onStreamDelta) {
         const collected = [];
         let usage = { inputTokens: 0, outputTokens: 0 };
         let stopReason = 'end_turn';
@@ -106,10 +106,16 @@ export class ModelClient {
                     if (!delta)
                         break;
                     if (delta.type === 'text_delta') {
-                        currentText += delta.text || '';
+                        const text = delta.text || '';
+                        currentText += text;
+                        if (text)
+                            onStreamDelta?.({ type: 'text', text });
                     }
                     else if (delta.type === 'thinking_delta') {
-                        currentThinking += delta.thinking || '';
+                        const text = delta.thinking || '';
+                        currentThinking += text;
+                        if (text)
+                            onStreamDelta?.({ type: 'thinking', text });
                     }
                     else if (delta.type === 'input_json_delta') {
                         currentToolInput += delta.partial_json || '';

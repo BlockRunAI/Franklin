@@ -138,7 +138,8 @@ export class ModelClient {
   async complete(
     request: ModelRequest,
     signal?: AbortSignal,
-    onToolReady?: (tool: CapabilityInvocation) => void
+    onToolReady?: (tool: CapabilityInvocation) => void,
+    onStreamDelta?: (delta: { type: 'text' | 'thinking'; text: string }) => void
   ): Promise<{ content: ContentPart[]; usage: CompletionUsage; stopReason: string }> {
     const collected: ContentPart[] = [];
     let usage: CompletionUsage = { inputTokens: 0, outputTokens: 0 };
@@ -171,9 +172,13 @@ export class ModelClient {
           const delta = chunk.payload['delta'] as Record<string, unknown> | undefined;
           if (!delta) break;
           if (delta.type === 'text_delta') {
-            currentText += (delta.text as string) || '';
+            const text = (delta.text as string) || '';
+            currentText += text;
+            if (text) onStreamDelta?.({ type: 'text', text });
           } else if (delta.type === 'thinking_delta') {
-            currentThinking += (delta.thinking as string) || '';
+            const text = (delta.thinking as string) || '';
+            currentThinking += text;
+            if (text) onStreamDelta?.({ type: 'thinking', text });
           } else if (delta.type === 'input_json_delta') {
             currentToolInput += (delta.partial_json as string) || '';
           }
