@@ -1,5 +1,5 @@
 /**
- * Streaming Tool Executor for 0xcode.
+ * Streaming Tool Executor for runcode.
  * Starts executing concurrent-safe tools while the model is still streaming.
  * Non-concurrent tools wait until the full response is received.
  */

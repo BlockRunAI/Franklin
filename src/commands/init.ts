@@ -6,7 +6,7 @@ import { DEFAULT_PROXY_PORT } from '../config.js';
 
 const CLAUDE_SETTINGS_FILE = path.join(os.homedir(), '.claude', 'settings.json');
 const LAUNCH_AGENT_DIR = path.join(os.homedir(), 'Library', 'LaunchAgents');
-const LAUNCH_AGENT_PLIST = path.join(LAUNCH_AGENT_DIR, 'ai.blockrun.0xcode.plist');
+const LAUNCH_AGENT_PLIST = path.join(LAUNCH_AGENT_DIR, 'ai.blockrun.runcode.plist');
 
 export async function initCommand(options: { port?: string }) {
   const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
@@ -35,24 +35,24 @@ export async function initCommand(options: { port?: string }) {
 
   // ── 2. Install macOS LaunchAgent (auto-start on login) ─────────────────
   if (process.platform === 'darwin') {
-    let oxcodeBin = '';
+    let runcodeBin = '';
     try {
       const { execSync } = await import('node:child_process');
-      oxcodeBin = execSync('which 0xcode', { encoding: 'utf-8' }).trim();
+      runcodeBin = execSync('which runcode', { encoding: 'utf-8' }).trim();
     } catch {
-      console.log(chalk.yellow('  Warning: 0xcode not found in PATH — LaunchAgent not installed.'));
+      console.log(chalk.yellow('  Warning: runcode not found in PATH — LaunchAgent not installed.'));
     }
 
-    if (oxcodeBin) {
+    if (runcodeBin) {
       const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>ai.blockrun.0xcode</string>
+  <string>ai.blockrun.runcode</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${oxcodeBin}</string>
+    <string>${runcodeBin}</string>
     <string>proxy</string>
     <string>--port</string>
     <string>${port}</string>
@@ -62,9 +62,9 @@ export async function initCommand(options: { port?: string }) {
   <key>KeepAlive</key>
   <false/>
   <key>StandardOutPath</key>
-  <string>${os.homedir()}/.blockrun/0xcode-debug.log</string>
+  <string>${os.homedir()}/.blockrun/runcode-debug.log</string>
   <key>StandardErrorPath</key>
-  <string>${os.homedir()}/.blockrun/0xcode-debug.log</string>
+  <string>${os.homedir()}/.blockrun/runcode-debug.log</string>
 </dict>
 </plist>`;
 
@@ -74,7 +74,7 @@ export async function initCommand(options: { port?: string }) {
       try {
         const { execSync } = await import('node:child_process');
         execSync(`launchctl load -w "${LAUNCH_AGENT_PLIST}"`, { stdio: 'pipe' });
-        console.log(chalk.green(`✓ LaunchAgent installed — 0xcode proxy starts automatically on login`));
+        console.log(chalk.green(`✓ LaunchAgent installed — runcode proxy starts automatically on login`));
       } catch {
         console.log(chalk.dim(`  LaunchAgent written to ${LAUNCH_AGENT_PLIST}`));
         console.log(chalk.dim(`  Load manually: launchctl load -w "${LAUNCH_AGENT_PLIST}"`));
@@ -84,10 +84,10 @@ export async function initCommand(options: { port?: string }) {
 
   // ── 3. Start daemon now ──────────────────────────────────────────────────
   console.log('');
-  console.log(chalk.bold('0xcode initialized (proxy mode for Claude Code).'));
-  console.log(`Run ${chalk.bold('0xcode daemon start')} to start the background proxy now.`);
-  console.log(`Then just run ${chalk.bold('claude')} — 0xcode proxy handles payments automatically.`);
+  console.log(chalk.bold('runcode initialized (proxy mode for Claude Code).'));
+  console.log(`Run ${chalk.bold('runcode daemon start')} to start the background proxy now.`);
+  console.log(`Then just run ${chalk.bold('claude')} — runcode proxy handles payments automatically.`);
   console.log('');
-  console.log(chalk.dim('Or use 0xcode directly: 0xcode start'));
+  console.log(chalk.dim('Or use runcode directly: runcode start'));
   console.log(chalk.dim('Note: Claude Code will ask you to trust the proxy URL once.'));
 }

@@ -14,7 +14,7 @@ import { webFetchCapability } from './webfetch.js';
 import { webSearchCapability } from './websearch.js';
 import { taskCapability } from './task.js';
 
-/** All capabilities available to the 0xcode agent (excluding sub-agent, which needs config). */
+/** All capabilities available to the runcode agent (excluding sub-agent, which needs config). */
 export const allCapabilities: CapabilityHandler[] = [
   readCapability,
   writeCapability,

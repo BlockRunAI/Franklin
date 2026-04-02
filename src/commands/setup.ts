@@ -53,7 +53,7 @@ export async function setupCommand(chainArg?: string) {
 
   saveChain(chain);
   console.log(
-    `Then run ${chalk.bold('0xcode start')} to begin.\n`
+    `Then run ${chalk.bold('runcode start')} to begin.\n`
   );
   console.log(chalk.dim(`Chain: ${chain} — saved to ~/.blockrun/`));
 }

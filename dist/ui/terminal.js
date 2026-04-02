@@ -1,5 +1,5 @@
 /**
- * Terminal UI for 0xcode
+ * Terminal UI for runcode
  * Raw terminal input/output with markdown rendering and diff display.
  * No heavy dependencies — just chalk and readline.
  */

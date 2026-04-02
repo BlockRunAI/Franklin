@@ -31,7 +31,7 @@ export class SSETranslator {
 
   constructor(model = 'unknown') {
     this.state = {
-      messageId: `msg_0xcode_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      messageId: `msg_runcode_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       model,
       blockIndex: 0,
       activeToolCalls: new Map(),

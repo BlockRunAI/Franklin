@@ -17,9 +17,9 @@ try {
 }
 catch { /* use default */ }
 // User-Agent for backend requests
-const USER_AGENT = `0xcode/${VERSION}`;
-const X_OXCODE_VERSION = VERSION;
-const LOG_FILE = path.join(os.homedir(), '.blockrun', '0xcode-debug.log');
+const USER_AGENT = `runcode/${VERSION}`;
+const X_RUNCODE_VERSION = VERSION;
+const LOG_FILE = path.join(os.homedir(), '.blockrun', 'runcode-debug.log');
 // Strip ANSI escape codes so log file doesn't distort terminal on replay
 function stripAnsi(str) {
     // eslint-disable-next-line no-control-regex
@@ -38,9 +38,9 @@ function debug(options, ...args) {
     }
 }
 function log(...args) {
-    const msg = `[0xcode] ${args.map(String).join(' ')}`;
+    const msg = `[runcode] ${args.map(String).join(' ')}`;
     // Do NOT print to stdout — Claude Code owns the terminal (stdio: inherit).
-    // Use `0xcode logs` to read runtime messages.
+    // Use `runcode logs` to read runtime messages.
     try {
         fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
         fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${stripAnsi(msg)}\n`);
@@ -257,7 +257,7 @@ export function createProxy(options) {
                             currentModel = switchCmd;
                             debug(options, `model switched to: ${currentModel}`);
                             const fakeResponse = {
-                                id: `msg_0xcode_${Date.now()}`,
+                                id: `msg_runcode_${Date.now()}`,
                                 type: 'message',
                                 role: 'assistant',
                                 model: currentModel,
@@ -340,7 +340,7 @@ export function createProxy(options) {
                 const headers = {
                     'Content-Type': 'application/json',
                     'User-Agent': USER_AGENT,
-                    'X-0xcode-Version': X_OXCODE_VERSION,
+                    'X-runcode-Version': X_RUNCODE_VERSION,
                 };
                 for (const [key, value] of Object.entries(req.headers)) {
                     if (key.toLowerCase() !== 'host' &&

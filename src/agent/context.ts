@@ -1,5 +1,5 @@
 /**
- * Context Manager for 0xcode
+ * Context Manager for runcode
  * Assembles system instructions, reads project config, injects environment info.
  */
 
@@ -9,7 +9,7 @@ import { execSync } from 'node:child_process';
 
 // ─── System Instructions Assembly ──────────────────────────────────────────
 
-const BASE_INSTRUCTIONS = `You are 0xcode, an AI coding agent that helps users with software engineering tasks.
+const BASE_INSTRUCTIONS = `You are runcode, an AI coding agent that helps users with software engineering tasks.
 You have access to tools for reading, writing, editing files, running shell commands, and searching codebases.
 
 # Core Principles
@@ -37,7 +37,7 @@ You have access to tools for reading, writing, editing files, running shell comm
 export function assembleInstructions(workingDir: string): string[] {
   const parts: string[] = [BASE_INSTRUCTIONS];
 
-  // Read 0XCODE.md or CLAUDE.md from the project
+  // Read RUNCODE.md or CLAUDE.md from the project
   const projectConfig = readProjectConfig(workingDir);
   if (projectConfig) {
     parts.push(`# Project Instructions\n\n${projectConfig}`);
@@ -58,10 +58,10 @@ export function assembleInstructions(workingDir: string): string[] {
 // ─── Project Config ────────────────────────────────────────────────────────
 
 /**
- * Look for 0XCODE.md, then CLAUDE.md in the working directory and parents.
+ * Look for RUNCODE.md, then CLAUDE.md in the working directory and parents.
  */
 function readProjectConfig(dir: string): string | null {
-  const configNames = ['0XCODE.md', 'CLAUDE.md'];
+  const configNames = ['RUNCODE.md', 'CLAUDE.md'];
   let current = path.resolve(dir);
   const root = path.parse(current).root;
 

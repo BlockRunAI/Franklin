@@ -1,5 +1,5 @@
 /**
- * Context compaction for 0xcode.
+ * Context compaction for runcode.
  * When conversation history approaches the context window limit,
  * summarize older messages and replace them with the summary.
  */
@@ -36,7 +36,7 @@ export async function autoCompactIfNeeded(history, model, client, debug) {
         return { history, compacted: false };
     }
     if (debug) {
-        console.error(`[0xcode] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}`);
+        console.error(`[runcode] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}`);
     }
     try {
         const compacted = await compactHistory(history, model, client, debug);
@@ -44,7 +44,7 @@ export async function autoCompactIfNeeded(history, model, client, debug) {
     }
     catch (err) {
         if (debug) {
-            console.error(`[0xcode] Compaction failed: ${err.message}`);
+            console.error(`[runcode] Compaction failed: ${err.message}`);
         }
         // Fallback: truncate oldest messages instead of crashing
         const truncated = emergencyTruncate(history, threshold);
@@ -67,7 +67,7 @@ async function compactHistory(history, model, client, debug) {
         return history;
     }
     if (debug) {
-        console.error(`[0xcode] Summarizing ${toSummarize.length} messages, keeping ${toKeep.length}`);
+        console.error(`[runcode] Summarizing ${toSummarize.length} messages, keeping ${toKeep.length}`);
     }
     // Build summary request
     const summaryMessages = [
@@ -107,7 +107,7 @@ async function compactHistory(history, model, client, debug) {
     ];
     if (debug) {
         const newTokens = estimateHistoryTokens(compacted);
-        console.error(`[0xcode] Compacted: ${estimateHistoryTokens(history)} → ${newTokens} tokens`);
+        console.error(`[runcode] Compacted: ${estimateHistoryTokens(history)} → ${newTokens} tokens`);
     }
     return compacted;
 }

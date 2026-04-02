@@ -1,5 +1,5 @@
 /**
- * Permission system for 0xcode.
+ * Permission system for runcode.
  * Controls which tools can execute automatically vs. require user approval.
  */
 import fs from 'node:fs';
@@ -87,7 +87,7 @@ export class PermissionManager {
     }
     // ─── Internal ──────────────────────────────────────────────────────────
     loadRules() {
-        const configPath = path.join(BLOCKRUN_DIR, '0xcode-permissions.json');
+        const configPath = path.join(BLOCKRUN_DIR, 'runcode-permissions.json');
         try {
             if (fs.existsSync(configPath)) {
                 const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));

@@ -1,5 +1,5 @@
 /**
- * Token optimization strategies for 0xcode.
+ * Token optimization strategies for runcode.
  *
  * Five layers of optimization to minimize token usage:
  * 1. Tool result size budgeting — cap large outputs, keep preview

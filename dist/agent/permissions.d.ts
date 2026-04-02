@@ -1,5 +1,5 @@
 /**
- * Permission system for 0xcode.
+ * Permission system for runcode.
  * Controls which tools can execute automatically vs. require user approval.
  */
 export type PermissionBehavior = 'allow' | 'deny' | 'ask';

@@ -1,5 +1,5 @@
 /**
- * Usage tracking for 0xcode
+ * Usage tracking for runcode
  * Records all requests with cost, tokens, and latency for stats display
  */
 export interface UsageRecord {

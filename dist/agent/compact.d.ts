@@ -1,5 +1,5 @@
 /**
- * Context compaction for 0xcode.
+ * Context compaction for runcode.
  * When conversation history approaches the context window limit,
  * summarize older messages and replace them with the summary.
  */

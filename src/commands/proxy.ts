@@ -39,7 +39,7 @@ export async function proxyCommand(options: ProxyOptions) {
       console.log(chalk.yellow('No Solana wallet found — created a new one.'));
       console.log(`Address: ${chalk.cyan(wallet.address)}`);
       console.log(
-        `\nSend USDC on Solana to this address, then run ${chalk.bold('0xcode proxy')} again.\n`
+        `\nSend USDC on Solana to this address, then run ${chalk.bold('runcode proxy')} again.\n`
       );
       return;
     }
@@ -68,7 +68,7 @@ export async function proxyCommand(options: ProxyOptions) {
       console.log(chalk.yellow('No wallet found — created a new one.'));
       console.log(`Address: ${chalk.cyan(wallet.address)}`);
       console.log(
-        `\nSend USDC on Base to this address, then run ${chalk.bold('0xcode proxy')} again.\n`
+        `\nSend USDC on Base to this address, then run ${chalk.bold('runcode proxy')} again.\n`
       );
       return;
     }
@@ -101,9 +101,9 @@ function launchProxy(
 ) {
   server.listen(port, () => {
     console.log(chalk.green(`✓ Proxy running on port ${port}`));
-    console.log(chalk.dim(`  Usage tracking: ~/.blockrun/0xcode-stats.json`));
-    if (debug) console.log(chalk.dim(`  Debug log:      ~/.blockrun/0xcode-debug.log`));
-    console.log(chalk.dim(`  Run '0xcode stats' to view statistics\n`));
+    console.log(chalk.dim(`  Usage tracking: ~/.blockrun/runcode-stats.json`));
+    if (debug) console.log(chalk.dim(`  Debug log:      ~/.blockrun/runcode-debug.log`));
+    console.log(chalk.dim(`  Run 'runcode stats' to view statistics\n`));
 
     console.log('Set this in your shell to use with Claude Code:\n');
     console.log(

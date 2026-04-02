@@ -1,5 +1,5 @@
 /**
- * 0xcode Agent Loop
+ * runcode Agent Loop
  * The core reasoning-action cycle: prompt → model → extract capabilities → execute → repeat.
  * Original implementation with different architecture from any reference codebase.
  */
@@ -348,7 +348,7 @@ export async function interactiveSession(
         history.length = 0;
         history.push(...compacted);
         if (config.debug) {
-          console.error(`[0xcode] History compacted: ~${estimateHistoryTokens(history)} tokens`);
+          console.error(`[runcode] History compacted: ~${estimateHistoryTokens(history)} tokens`);
         }
       }
 
@@ -390,7 +390,7 @@ export async function interactiveSession(
         if (errMsg.toLowerCase().includes('prompt is too long') && recoveryAttempts < 3) {
           recoveryAttempts++;
           if (config.debug) {
-            console.error(`[0xcode] Prompt too long — forcing compact (attempt ${recoveryAttempts})`);
+            console.error(`[runcode] Prompt too long — forcing compact (attempt ${recoveryAttempts})`);
           }
           // Force compaction by reducing history
           const { history: compactedAgain } =
@@ -411,7 +411,7 @@ export async function interactiveSession(
         model: config.model,
       });
 
-      // Record usage for stats tracking (0xcode stats command)
+      // Record usage for stats tracking (runcode stats command)
       // Rough cost estimate: use typical pricing if unknown
       const costEstimate = estimateCost(config.model, usage.inputTokens, usage.outputTokens);
       recordUsage(config.model, usage.inputTokens, usage.outputTokens, costEstimate, 0);
@@ -423,7 +423,7 @@ export async function interactiveSession(
           // First hit: escalate to 64K
           maxTokensOverride = ESCALATED_MAX_TOKENS;
           if (config.debug) {
-            console.error(`[0xcode] Max tokens hit — escalating to ${maxTokensOverride}`);
+            console.error(`[runcode] Max tokens hit — escalating to ${maxTokensOverride}`);
           }
         }
         // Append what we got + a continuation prompt
