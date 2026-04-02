@@ -33,16 +33,16 @@ const PICKER_MODELS = [
     { id: 'nvidia/qwen3-coder-480b', shortcut: 'qwen-coder', label: 'Qwen3 Coder 480B', price: 'FREE' },
     { id: 'nvidia/devstral-2-123b', shortcut: 'devstral', label: 'Devstral 2 123B', price: 'FREE' },
 ];
-function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain, onSubmit, onModelChange, onExit, }) {
+function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain, startWithPicker, onSubmit, onModelChange, onExit, }) {
     const { exit } = useApp();
     const [input, setInput] = useState('');
     const [streamText, setStreamText] = useState('');
     const [thinking, setThinking] = useState(false);
     const [waiting, setWaiting] = useState(false);
     const [tools, setTools] = useState(new Map());
-    const [currentModel, setCurrentModel] = useState(initialModel);
-    const [ready, setReady] = useState(true);
-    const [mode, setMode] = useState('input');
+    const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS[0].id);
+    const [ready, setReady] = useState(!startWithPicker);
+    const [mode, setMode] = useState(startWithPicker ? 'model-picker' : 'input');
     const [pickerIdx, setPickerIdx] = useState(0);
     const [statusMsg, setStatusMsg] = useState('');
     const [turnTokens, setTurnTokens] = useState({ input: 0, output: 0 });
@@ -69,10 +69,13 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
             onModelChange(selected.id);
             setStatusMsg(`Model → ${selected.label}`);
             setMode('input');
+            setReady(true); // Show input box after picking
             setTimeout(() => setStatusMsg(''), 3000);
         }
-        else if (key.escape)
+        else if (key.escape) {
             setMode('input');
+            setReady(true);
+        }
     });
     const handleSubmit = useCallback((value) => {
         const trimmed = value.trim();
@@ -213,7 +216,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
 export function launchInkUI(opts) {
     let resolveInput = null;
     let exiting = false;
-    const instance = render(_jsx(RunCodeApp, { initialModel: opts.model, workDir: opts.workDir, walletAddress: opts.walletAddress || 'not set — run: runcode setup', walletBalance: opts.walletBalance || 'unknown', chain: opts.chain || 'base', onSubmit: (value) => {
+    const instance = render(_jsx(RunCodeApp, { initialModel: opts.model, workDir: opts.workDir, walletAddress: opts.walletAddress || 'not set — run: runcode setup', walletBalance: opts.walletBalance || 'unknown', chain: opts.chain || 'base', startWithPicker: opts.showPicker, onSubmit: (value) => {
             if (resolveInput) {
                 resolveInput(value);
                 resolveInput = null;
