@@ -23,20 +23,15 @@ export async function startCommand(options: StartOptions) {
   const apiUrl = API_URLS[chain];
   const config = loadConfig();
 
-  // Resolve model — if TTY and no model specified, ink will show picker
+  // Resolve model — default to GLM-5 promo if nothing specified
   let model: string;
-  let needsPicker = false;
   const configModel = config['default-model'];
   if (options.model) {
     model = resolveModel(options.model);
   } else if (configModel) {
     model = configModel;
-  } else if (process.stdin.isTTY) {
-    // Don't pick here — let ink show the picker
-    model = ''; // placeholder, ink will set it
-    needsPicker = true;
   } else {
-    model = 'anthropic/claude-sonnet-4.6';
+    model = 'zai/glm-5'; // Default: GLM-5 promo ($0.001/call)
   }
 
   // Auto-create wallet if needed (no interruption — free models work without funding)
@@ -105,7 +100,7 @@ export async function startCommand(options: StartOptions) {
 
   // Use ink UI if TTY, fallback to basic readline for piped input
   if (process.stdin.isTTY) {
-    await runWithInkUI(agentConfig, model, workDir, version, walletInfo, needsPicker);
+    await runWithInkUI(agentConfig, model, workDir, version, walletInfo);
   } else {
     await runWithBasicUI(agentConfig, model, workDir);
   }
@@ -118,8 +113,7 @@ async function runWithInkUI(
   model: string,
   workDir: string,
   version: string,
-  walletInfo?: { address: string; balance: string; chain: string },
-  showPicker = false
+  walletInfo?: { address: string; balance: string; chain: string }
 ) {
   const ui = launchInkUI({
     model,
@@ -128,7 +122,6 @@ async function runWithInkUI(
     walletAddress: walletInfo?.address,
     walletBalance: walletInfo?.balance,
     chain: walletInfo?.chain,
-    showPicker,
     onModelChange: (newModel: string) => {
       agentConfig.model = newModel;
     },
