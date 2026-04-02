@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import chalk from 'chalk';
 import { BLOCKRUN_DIR } from '../config.js';
-const LOG_FILE = path.join(BLOCKRUN_DIR, 'brcc-debug.log');
+const LOG_FILE = path.join(BLOCKRUN_DIR, '0xcode-debug.log');
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB auto-rotate threshold
 export function logsCommand(options) {
     if (options.clear) {
@@ -16,8 +16,8 @@ export function logsCommand(options) {
         return;
     }
     if (!fs.existsSync(LOG_FILE)) {
-        console.log(chalk.dim('No logs yet. Start brcc with --debug to enable logging:'));
-        console.log(chalk.bold('  brcc start --debug'));
+        console.log(chalk.dim('No logs yet. Start 0xcode with --debug to enable logging:'));
+        console.log(chalk.bold('  0xcode start --debug'));
         return;
     }
     // Auto-rotate: if file is over threshold, keep only last half

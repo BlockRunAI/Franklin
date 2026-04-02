@@ -1,5 +1,5 @@
 /**
- * Usage tracking for brcc
+ * Usage tracking for 0xcode
  * Records all requests with cost, tokens, and latency for stats display
  */
 export interface UsageRecord {

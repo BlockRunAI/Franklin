@@ -1,5 +1,5 @@
 /**
- * Fallback chain for brcc
+ * Fallback chain for 0xcode
  * Automatically switches to backup models when primary fails (429, 5xx, etc.)
  */
 export interface FallbackConfig {

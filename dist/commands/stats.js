@@ -1,5 +1,5 @@
 /**
- * brcc stats command
+ * 0xcode stats command
  * Display usage statistics and cost savings
  */
 import chalk from 'chalk';
@@ -26,10 +26,10 @@ export function statsCommand(options) {
         return;
     }
     // Pretty output
-    console.log(chalk.bold('\n📊 brcc Usage Statistics\n'));
+    console.log(chalk.bold('\n📊 0xcode Usage Statistics\n'));
     console.log('─'.repeat(55));
     if (stats.totalRequests === 0) {
-        console.log(chalk.gray('\n  No requests recorded yet. Start using brcc!\n'));
+        console.log(chalk.gray('\n  No requests recorded yet. Start using 0xcode!\n'));
         console.log('─'.repeat(55) + '\n');
         return;
     }
@@ -90,5 +90,5 @@ export function statsCommand(options) {
         }
     }
     console.log('\n' + '─'.repeat(55));
-    console.log(chalk.gray('  Run `brcc stats --clear` to reset statistics\n'));
+    console.log(chalk.gray('  Run `0xcode stats --clear` to reset statistics\n'));
 }

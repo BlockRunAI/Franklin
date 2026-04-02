@@ -1,5 +1,5 @@
 /**
- * brcc stats command
+ * 0xcode stats command
  * Display usage statistics and cost savings
  */
 interface StatsOptions {

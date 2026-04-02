@@ -10,6 +10,7 @@ import { logsCommand } from './commands/logs.js';
 import { daemonCommand } from './commands/daemon.js';
 import { initCommand } from './commands/init.js';
 import { uninitCommand } from './commands/uninit.js';
+import { proxyCommand } from './commands/proxy.js';
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,10 +26,10 @@ try {
 const program = new Command();
 
 program
-  .name('brcc')
+  .name('0xcode')
   .description(
-    'BlockRun Claude Code — run Claude Code with any model, pay with USDC.\n\n' +
-      'Use /model inside Claude Code to switch between models on the fly.'
+    '0xcode — AI coding agent powered by 41+ models, pay with USDC.\n\n' +
+      'Use /model to switch between models on the fly.'
   )
   .version(version);
 
@@ -39,31 +40,41 @@ program
 
 program
   .command('start')
-  .description('Start proxy and launch Claude Code')
-  .option('-p, --port <port>', 'Proxy port', '8402')
+  .description('Start the 0xcode agent')
   .option(
     '-m, --model <model>',
-    'Default model (e.g. openai/gpt-5.4, anthropic/claude-sonnet-4.6). Defaults to blockrun/auto (smart routing)'
+    'Model to use (e.g. openai/gpt-5.4, anthropic/claude-sonnet-4.6). Default from config or claude-sonnet-4.6'
   )
-  .option('--no-launch', 'Start proxy only, do not launch Claude Code')
-  .option('--no-fallback', 'Disable automatic fallback to backup models')
   .option('--debug', 'Enable debug logging')
+  .option('--trust', 'Trust mode — skip permission prompts for all tools')
   .action((options) => startCommand({ ...options, version }));
 
 program
+  .command('proxy')
+  .description('Run payment proxy for Claude Code or other tools')
+  .option('-p, --port <port>', 'Proxy port', '8402')
+  .option(
+    '-m, --model <model>',
+    'Default model for proxied requests'
+  )
+  .option('--no-fallback', 'Disable automatic fallback to backup models')
+  .option('--debug', 'Enable debug logging')
+  .action((options) => proxyCommand({ ...options, version }));
+
+program
   .command('init')
-  .description('Configure Claude Code to use brcc automatically (writes ~/.claude/settings.json + installs LaunchAgent on macOS)')
+  .description('Configure 0xcode auto-start (writes ~/.claude/settings.json + installs LaunchAgent on macOS)')
   .option('-p, --port <port>', 'Proxy port', '8402')
   .action((options) => initCommand(options));
 
 program
   .command('uninit')
-  .description('Remove brcc configuration from Claude Code settings and uninstall LaunchAgent')
+  .description('Remove 0xcode configuration and uninstall LaunchAgent')
   .action(() => uninitCommand());
 
 program
   .command('daemon <action>')
-  .description('Manage brcc background proxy (start|stop|status)')
+  .description('Manage 0xcode background proxy (start|stop|status)')
   .option('-p, --port <port>', 'Proxy port', '8402')
   .action((action, options) => daemonCommand(action, options));
 
@@ -80,7 +91,7 @@ program
 program
   .command('config <action> [key] [value]')
   .description(
-    'Manage brcc config (set, get, unset, list)\n' +
+    'Manage 0xcode config (set, get, unset, list)\n' +
       'Keys: default-model, sonnet-model, opus-model, haiku-model, smart-routing'
   )
   .action(configCommand);
@@ -100,4 +111,22 @@ program
   .option('--clear', 'Delete log file')
   .action(logsCommand);
 
-program.parse();
+// Default action: if no subcommand given, run 'start'
+const args = process.argv.slice(2);
+const knownCommands = program.commands.map(c => c.name());
+const firstArg = args[0];
+
+if (!firstArg || (firstArg.startsWith('-') && firstArg !== '-h' && firstArg !== '--help' && firstArg !== '-V' && firstArg !== '--version')) {
+  // No subcommand or only flags — treat as 'start' with flags
+  const startOpts: Record<string, unknown> = { version };
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--trust') startOpts.trust = true;
+    else if (args[i] === '--debug') startOpts.debug = true;
+    else if ((args[i] === '-m' || args[i] === '--model') && args[i + 1]) {
+      startOpts.model = args[++i];
+    }
+  }
+  startCommand(startOpts as Parameters<typeof startCommand>[0]);
+} else {
+  program.parse();
+}

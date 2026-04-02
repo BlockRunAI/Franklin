@@ -1,230 +1,192 @@
-import { spawn, execSync } from 'node:child_process';
 import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
-import { createProxy } from '../proxy/server.js';
 import { loadChain, API_URLS, DEFAULT_PROXY_PORT } from '../config.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
-
-/** Find the claude binary, checking common install locations */
-function findClaude(): string | null {
-  try {
-    const which = execSync('which claude 2>/dev/null || where claude 2>/dev/null', {
-      encoding: 'utf-8',
-    }).trim();
-    if (which) return which.split('\n')[0];
-  } catch { /* not in PATH */ }
-
-  // Check common install locations
-  const os = process.platform;
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  const candidates = [
-    `${home}/.local/bin/claude`,
-    `${home}/.npm-global/bin/claude`,
-    '/usr/local/bin/claude',
-    ...(os === 'win32' ? [`${process.env.APPDATA}\\npm\\claude.cmd`] : []),
-  ];
-
-  for (const p of candidates) {
-    try {
-      execSync(`"${p}" --version`, { encoding: 'utf-8', stdio: 'pipe' });
-      return p;
-    } catch { /* not here */ }
-  }
-  return null;
-}
+import { assembleInstructions } from '../agent/context.js';
+import { interactiveSession } from '../agent/loop.js';
+import { allCapabilities, createSubAgentCapability } from '../tools/index.js';
+import { TerminalUI } from '../ui/terminal.js';
+import { pickModel, resolveModel } from '../ui/model-picker.js';
+import type { AgentConfig } from '../agent/types.js';
 
 interface StartOptions {
-  port?: string;
   model?: string;
-  launch?: boolean;
-  fallback?: boolean;
   debug?: boolean;
+  trust?: boolean;
   version?: string;
 }
 
 export async function startCommand(options: StartOptions) {
-  const version = options.version ?? '0.9.0';
+  const version = options.version ?? '1.0.0';
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
-  const fallbackEnabled = options.fallback !== false; // Default true
+  const config = loadConfig();
 
-  const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
-  if (isNaN(port) || port < 1 || port > 65535) {
-    console.log(chalk.red(`Invalid port: ${options.port}. Must be 1-65535.`));
-    process.exit(1);
+  // Resolve model — show picker if interactive and no model specified
+  let model: string;
+  let bannerShown = false;
+  const configModel = config['default-model'];
+  if (options.model) {
+    model = resolveModel(options.model);
+  } else if (configModel) {
+    model = configModel;
+  } else if (process.stdin.isTTY) {
+    // Interactive — show model picker
+    printBanner(version);
+    bannerShown = true;
+    const picked = await pickModel();
+    if (!picked) {
+      model = 'anthropic/claude-sonnet-4.6';
+    } else {
+      model = picked;
+    }
+  } else {
+    model = 'anthropic/claude-sonnet-4.6';
   }
 
+  // Ensure wallet exists
   if (chain === 'solana') {
     const wallet = await getOrCreateSolanaWallet();
     if (wallet.isNew) {
-      console.log(
-        chalk.yellow('No Solana wallet found — created a new one.')
-      );
+      console.log(chalk.yellow('No Solana wallet found — created a new one.'));
       console.log(`Address: ${chalk.cyan(wallet.address)}`);
       console.log(
-        `\nSend USDC on Solana to this address, then run ${chalk.bold('brcc start')} again.\n`
+        `\nSend USDC on Solana to this address, then run ${chalk.bold('0xcode start')} again.\n`
       );
       return;
     }
-
-    const shouldLaunch = options.launch !== false;
-
-    const model = options.model;
-    printBanner(version);
-    console.log(`Chain:    ${chalk.magenta('solana')}`);
-    console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
-    if (model) console.log(`Model:    ${chalk.green(model)}`);
-    console.log(`Fallback: ${fallbackEnabled ? chalk.green('enabled') : chalk.yellow('disabled')}`);
-    console.log(`Proxy:    ${chalk.cyan(`http://localhost:${port}`)}`);
-    console.log(`Backend:  ${chalk.dim(apiUrl)}\n`);
-
-    const server = createProxy({
-      port,
-      apiUrl,
-      chain: 'solana',
-      modelOverride: model,
-      debug: options.debug,
-      fallbackEnabled,
-    });
-    launchServer(server, port, shouldLaunch, model, options.debug);
   } else {
     const wallet = getOrCreateWallet();
     if (wallet.isNew) {
       console.log(chalk.yellow('No wallet found — created a new one.'));
       console.log(`Address: ${chalk.cyan(wallet.address)}`);
       console.log(
-        `\nSend USDC on Base to this address, then run ${chalk.bold('brcc start')} again.\n`
+        `\nSend USDC on Base to this address, then run ${chalk.bold('0xcode start')} again.\n`
       );
       return;
     }
-
-    const shouldLaunch = options.launch !== false;
-
-    const model = options.model;
-    printBanner(version);
-    console.log(`Chain:    ${chalk.magenta('base')}`);
-    console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
-    if (model) console.log(`Model:    ${chalk.green(model)}`);
-    console.log(`Fallback: ${fallbackEnabled ? chalk.green('enabled') : chalk.yellow('disabled')}`);
-    console.log(`Proxy:    ${chalk.cyan(`http://localhost:${port}`)}`);
-    console.log(`Backend:  ${chalk.dim(apiUrl)}\n`);
-
-    const server = createProxy({
-      port,
-      apiUrl,
-      chain: 'base',
-      modelOverride: model,
-      debug: options.debug,
-      fallbackEnabled,
-    });
-    launchServer(server, port, shouldLaunch, model, options.debug);
   }
+
+  // Print banner (skip if already shown during model pick)
+  if (!bannerShown) printBanner(version);
+
+  const workDir = process.cwd();
+  const ui = new TerminalUI();
+  ui.printWelcome(model, workDir);
+
+  // Assemble system instructions
+  const systemInstructions = assembleInstructions(workDir);
+
+  // Build capabilities including sub-agent
+  const subAgent = createSubAgentCapability(apiUrl, chain, allCapabilities);
+  const capabilities = [...allCapabilities, subAgent];
+
+  // Agent config
+  const agentConfig: AgentConfig = {
+    model,
+    apiUrl,
+    chain,
+    systemInstructions,
+    capabilities,
+    maxTurns: 100,
+    workingDir: workDir,
+    permissionMode: options.trust ? 'trust' : 'default',
+    debug: options.debug,
+  };
+
+  // Run interactive session
+  try {
+    await interactiveSession(
+      agentConfig,
+      async () => {
+        while (true) {
+          const input = await ui.promptUser();
+          if (input === null) return null;  // EOF
+          if (input === '') continue;       // empty → re-prompt
+          if (input.startsWith('/')) {
+            const result = await handleSlashCommand(input, agentConfig);
+            if (result === 'exit') return null;
+            if (result === null) continue;  // command handled → re-prompt
+            return result;                   // string → send to agent
+          }
+          return input;
+        }
+      },
+      (event) => ui.handleEvent(event)
+    );
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      // User interrupted
+    } else {
+      console.error(chalk.red(`\nError: ${(err as Error).message}`));
+    }
+  }
+
+  ui.printGoodbye();
 }
 
-function launchServer(
-  server: ReturnType<typeof createProxy>,
-  port: number,
-  shouldLaunch: boolean,
-  model?: string,
-  debug?: boolean
-) {
-  server.listen(port, () => {
-    console.log(chalk.green(`✓ Proxy running on port ${port}`));
-    console.log(chalk.dim(`  Usage tracking: ~/.blockrun/brcc-stats.json`));
-    if (debug) console.log(chalk.dim(`  Debug log:      ~/.blockrun/brcc-debug.log`));
-    console.log(chalk.dim(`  Run 'brcc stats' to view statistics\n`));
+// Slash commands return:
+//   string → send to agent
+//   null → re-prompt (command handled)
+//   'exit' → exit session
+type SlashResult = string | null | 'exit';
 
-    if (shouldLaunch) {
-      const claudeBin = findClaude();
-      if (!claudeBin) {
-        console.log(chalk.red('\nClaude Code not found in PATH.'));
-        console.log(chalk.dim('  Install: npm install -g @anthropic-ai/claude-code'));
-        console.log(chalk.dim('  Or:      curl -fsSL https://claude.ai/install.sh | bash\n'));
-        console.log('You can still use the proxy manually:\n');
-        console.log(
-          chalk.bold(`  export ANTHROPIC_BASE_URL=http://localhost:${port}/api`)
-        );
-        console.log(
-          chalk.bold(
-            `  export ANTHROPIC_AUTH_TOKEN=x402-proxy-handles-auth`
-          )
-        );
-        console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
-        return;
+async function handleSlashCommand(cmd: string, config: AgentConfig): Promise<SlashResult> {
+  const parts = cmd.trim().split(/\s+/);
+  const command = parts[0].toLowerCase();
+
+  switch (command) {
+    case '/exit':
+    case '/quit':
+      return 'exit';
+
+    case '/model': {
+      const newModel = parts[1];
+      if (newModel) {
+        // Direct switch via shortcut or full ID
+        config.model = resolveModel(newModel);
+        console.error(chalk.green(`  Model → ${config.model}`));
+        return null;
       }
-
-      console.log(`Starting Claude Code (${chalk.dim(claudeBin)})...\n`);
-
-      const cleanEnv = { ...process.env };
-      // Remove all Claude auth tokens so brcc's proxy handles auth exclusively
-      delete cleanEnv.CLAUDE_ACCESS_TOKEN;
-      delete cleanEnv.CLAUDE_OAUTH_TOKEN;
-      delete cleanEnv.CLAUDE_CODE_OAUTH_TOKEN;
-
-      const config = loadConfig();
-      const sonnetModel =
-        config['sonnet-model'] || 'anthropic/claude-sonnet-4.6';
-      const opusModel = config['opus-model'] || 'anthropic/claude-opus-4.6';
-      const haikuModel = config['haiku-model'] || 'anthropic/claude-haiku-4.5-20251001';
-
-      const claudeArgs: string[] = [];
-      if (model) claudeArgs.push('--model', model);
-
-      // Default to smart routing (blockrun/auto) when no model specified —
-      // the proxy classifies each prompt and picks the optimal model.
-      const activeModel = model || config['default-model'] || 'blockrun/auto';
-
-      const claude = spawn(claudeBin, claudeArgs, {
-        stdio: 'inherit',
-        env: {
-          ...cleanEnv,
-          ANTHROPIC_BASE_URL: `http://localhost:${port}/api`,
-          ANTHROPIC_AUTH_TOKEN: 'x402-proxy-handles-auth',
-          ANTHROPIC_MODEL: activeModel,
-          ANTHROPIC_DEFAULT_SONNET_MODEL: sonnetModel,
-          ANTHROPIC_DEFAULT_OPUS_MODEL: opusModel,
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: haikuModel,
-        },
-      });
-
-      claude.on('error', (err) => {
-        console.error('Failed to start Claude Code:', err.message);
-        console.log('\nYou can still use the proxy manually:\n');
-        console.log(
-          chalk.bold(`  export ANTHROPIC_BASE_URL=http://localhost:${port}/api`)
-        );
-        console.log(
-          chalk.bold(
-            `  export ANTHROPIC_AUTH_TOKEN=x402-proxy-handles-auth`
-          )
-        );
-        console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
-        server.close();
-        process.exit(1);
-      });
-
-      claude.on('exit', (code) => {
-        server.close();
-        process.exit(code ?? 0);
-      });
-    } else {
-      console.log('Proxy-only mode. Set this in your shell:\n');
-      console.log(
-        chalk.bold(`  export ANTHROPIC_BASE_URL=http://localhost:${port}/api`)
-      );
-      console.log(
-        chalk.bold(
-          `  export ANTHROPIC_AUTH_TOKEN=x402-proxy-handles-auth`
-        )
-      );
-      console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
+      // No arg — show interactive picker
+      const picked = await pickModel(config.model);
+      if (picked) {
+        config.model = picked;
+        console.error(chalk.green(`  Model → ${config.model}`));
+      }
+      return null;
     }
-  });
 
-  process.on('SIGINT', () => {
-    console.log('\nShutting down...');
-    server.close();
-    process.exit(0);
-  });
+    case '/models':
+      // Shortcut: same as /model with no args
+      const picked = await pickModel(config.model);
+      if (picked) {
+        config.model = picked;
+        console.error(chalk.green(`  Model → ${config.model}`));
+      }
+      return null;
+
+    case '/cost':
+    case '/usage': {
+      const { getStatsSummary } = await import('../stats/tracker.js');
+      const { stats, opusCost, saved } = getStatsSummary();
+      console.error(chalk.dim(`\n  Requests: ${stats.totalRequests} | Cost: $${stats.totalCostUsd.toFixed(4)} | Saved: $${saved.toFixed(2)} vs Opus\n`));
+      return null;
+    }
+
+    case '/help':
+      console.error(chalk.bold('\n  Commands:'));
+      console.error('  /model [name]  — switch model (interactive picker if no name)');
+      console.error('  /models        — browse all available models');
+      console.error('  /cost          — show session cost and savings');
+      console.error('  /exit          — quit');
+      console.error('  /help          — this help\n');
+      console.error(chalk.dim('  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4\n'));
+      return null;
+
+    default:
+      console.error(chalk.yellow(`  Unknown command: ${command}. Try /help`));
+      return null;
+  }
 }
