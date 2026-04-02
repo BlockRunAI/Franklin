@@ -1,18 +1,34 @@
 import chalk from 'chalk';
 
-const LOGO_ART = [
-  ' ██████╗ ██╗   ██╗███╗   ██╗ ██████╗ ██████╗ ██████╗ ███████╗',
-  ' ██╔══██╗██║   ██║████╗  ██║██╔════╝██╔═══██╗██╔══██╗██╔════╝',
-  ' ██████╔╝██║   ██║██╔██╗ ██║██║     ██║   ██║██║  ██║█████╗  ',
-  ' ██╔══██╗██║   ██║██║╚██╗██║██║     ██║   ██║██║  ██║██╔══╝  ',
-  ' ██║  ██║╚██████╔╝██║ ╚████║╚██████╗╚██████╔╝██████╔╝███████╗',
-  ' ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
-].join('\n');
+// "Run" and "Code" split for two-tone rendering
+const RUN_ART = [
+  ' ██████╗ ██╗   ██╗███╗   ██╗',
+  ' ██╔══██╗██║   ██║████╗  ██║',
+  ' ██████╔╝██║   ██║██╔██╗ ██║',
+  ' ██╔══██╗██║   ██║██║╚██╗██║',
+  ' ██║  ██║╚██████╔╝██║ ╚████║',
+  ' ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝',
+];
+
+const CODE_ART = [
+  ' ██████╗ ██████╗ ██████╗ ███████╗',
+  '██╔════╝██╔═══██╗██╔══██╗██╔════╝',
+  '██║     ██║   ██║██║  ██║█████╗  ',
+  '██║     ██║   ██║██║  ██║██╔══╝  ',
+  '╚██████╗╚██████╔╝██████╔╝███████╗',
+  ' ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
+];
 
 export function printBanner(version: string) {
-  console.log(chalk.hex('#00FF88')(LOGO_ART));
+  const runColor = chalk.hex('#00FF88');  // Green for "Run"
+  const codeColor = chalk.hex('#FFFFFF'); // White for "Code"
+
+  for (let i = 0; i < RUN_ART.length; i++) {
+    console.log(runColor(RUN_ART[i]) + codeColor(CODE_ART[i]));
+  }
   console.log(
-    chalk.bold.white('  RunCode') +
+    chalk.bold.hex('#00FF88')('  Run') +
+      chalk.bold.white('Code') +
       chalk.dim('  ·  AI Coding Agent  ·  blockrun.ai  ·  v' + version)
   );
   console.log(
