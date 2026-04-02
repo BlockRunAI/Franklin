@@ -17,13 +17,13 @@ const CODE_ART = [
     ' ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
 ];
 export function printBanner(version) {
-    const runColor = chalk.hex('#00FF88'); // Green for "Run"
-    const codeColor = chalk.hex('#FFFFFF'); // White for "Code"
+    const runColor = chalk.hex('#FFD700'); // Gold for "Run"
+    const codeColor = chalk.cyan; // Cyan for "Code"
     for (let i = 0; i < RUN_ART.length; i++) {
         console.log(runColor(RUN_ART[i]) + codeColor(CODE_ART[i]));
     }
-    console.log(chalk.bold.hex('#00FF88')('  Run') +
-        chalk.bold.white('Code') +
+    console.log(chalk.bold.hex('#FFD700')('  Run') +
+        chalk.bold.cyan('Code') +
         chalk.dim('  ·  AI Coding Agent  ·  blockrun.ai  ·  v' + version));
     console.log(chalk.dim('  41+ models · Pay per use with USDC\n'));
 }
