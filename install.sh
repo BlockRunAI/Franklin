@@ -1,8 +1,8 @@
 #!/bin/bash
-# brcc — BlockRun Claude Code
-# One-line install: curl -fsSL https://brcc.blockrun.ai/install.sh | bash
+# runcode — RunCode
+# One-line install: curl -fsSL https://runcode.blockrun.ai/install.sh | bash
 #
-# Installs: Node.js (if missing) + Claude Code + brcc
+# Installs: Node.js (if missing) + Claude Code + runcode
 # Creates wallet and shows funding instructions
 
 set -e
@@ -15,7 +15,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 echo ""
-echo -e "${BOLD}brcc — BlockRun Claude Code${NC}"
+echo -e "${BOLD}runcode — RunCode${NC}"
 echo -e "Run Claude Code with any model. No rate limits. Pay with USDC."
 echo ""
 
@@ -79,21 +79,21 @@ else
 fi
 
 # ======================================================================
-# 3. Install brcc
+# 3. Install runcode
 # ======================================================================
-echo "Installing brcc..."
+echo "Installing runcode..."
 if [[ "$EUID" -eq 0 ]]; then
   npm install -g @blockrun/cc@latest 2>/dev/null
 else
   sudo npm install -g @blockrun/cc@latest 2>/dev/null || npm install -g @blockrun/cc@latest 2>/dev/null
 fi
-echo -e "${GREEN}✓${NC} brcc $(brcc --version 2>/dev/null || echo 'installed')"
+echo -e "${GREEN}✓${NC} runcode $(runcode --version 2>/dev/null || echo 'installed')"
 
 # ======================================================================
 # 4. Setup wallet
 # ======================================================================
 echo ""
-brcc setup base
+runcode setup base
 
 # ======================================================================
 # 5. Done
@@ -109,14 +109,14 @@ echo -e "  1. Fund your wallet with USDC on Base"
 echo -e "     (or use free models without funding)"
 echo ""
 echo -e "  2. Start Claude Code:"
-echo -e "     ${CYAN}brcc start${NC}                          # default model"
-echo -e "     ${CYAN}brcc start --model nvidia/nemotron-ultra-253b${NC}  # free model"
-echo -e "     ${CYAN}brcc start --model openai/gpt-5.4${NC}      # GPT-5.4"
+echo -e "     ${CYAN}runcode start${NC}                          # default model"
+echo -e "     ${CYAN}runcode start --model nvidia/nemotron-ultra-253b${NC}  # free model"
+echo -e "     ${CYAN}runcode start --model openai/gpt-5.4${NC}      # GPT-5.4"
 echo ""
 echo -e "  3. Useful commands:"
-echo -e "     ${CYAN}brcc models${NC}    — list all models + pricing"
-echo -e "     ${CYAN}brcc balance${NC}   — check wallet balance"
-echo -e "     ${CYAN}brcc config list${NC} — view settings"
+echo -e "     ${CYAN}runcode models${NC}    — list all models + pricing"
+echo -e "     ${CYAN}runcode balance${NC}   — check wallet balance"
+echo -e "     ${CYAN}runcode config list${NC} — view settings"
 echo ""
-echo -e "  ${BOLD}Docs:${NC} https://github.com/BlockRunAI/brcc"
+echo -e "  ${BOLD}Docs:${NC} https://github.com/BlockRunAI/runcode"
 echo ""

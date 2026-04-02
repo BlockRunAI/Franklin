@@ -4,9 +4,9 @@
 
 ### Features
 
-- **`brcc init`**: Permanently configure Claude Code to use brcc — writes `~/.claude/settings.json` and installs a macOS LaunchAgent so the proxy auto-starts on login. Run `claude` directly after init, no need to remember `brcc start`
-- **`brcc daemon start|stop|status`**: Run the proxy as a background process, detached from the terminal
-- **`brcc uninit`**: Remove brcc from Claude Code settings and uninstall the LaunchAgent
+- **`runcode init`**: Permanently configure Claude Code to use runcode — writes `~/.claude/settings.json` and installs a macOS LaunchAgent so the proxy auto-starts on login. Run `claude` directly after init, no need to remember `runcode start`
+- **`runcode daemon start|stop|status`**: Run the proxy as a background process, detached from the terminal
+- **`runcode uninit`**: Remove runcode from Claude Code settings and uninstall the LaunchAgent
 
 ### Bug Fixes
 
@@ -25,32 +25,32 @@
 
 ### Features
 
-- **Welcome banner**: `brcc start` now displays a gold ASCII art BRCC banner with tagline on launch, so users and onlookers can immediately see BlockRun is powering the session
+- **Welcome banner**: `runcode start` now displays a gold ASCII art RUNCODE banner with tagline on launch, so users and onlookers can immediately see BlockRun is powering the session
 
 ## 0.9.10 (2026-03-29)
 
 ### Bug Fixes
 
-- **Terminal distortion (complete fix)**: `fallback.ts` was still using `console.error` for network error messages (e.g., `[fallback] anthropic/claude-sonnet-4.6 network error: fetch failed`), which printed to stderr — also inherited by Claude Code's terminal. All fallback error messages now go to the log file only. Combined with v0.9.9, brcc is now fully silent while Claude Code is running
+- **Terminal distortion (complete fix)**: `fallback.ts` was still using `console.error` for network error messages (e.g., `[fallback] anthropic/claude-sonnet-4.6 network error: fetch failed`), which printed to stderr — also inherited by Claude Code's terminal. All fallback error messages now go to the log file only. Combined with v0.9.9, runcode is now fully silent while Claude Code is running
 
 ## 0.9.9 (2026-03-28)
 
 ### Bug Fixes
 
-- **Terminal distortion (root cause fix)**: Removed `console.log` from the proxy's runtime `log()` function. Claude Code is launched with `stdio: inherit`, so brcc and Claude Code share the same terminal. Printing to stdout while Claude Code's `* Thinking…` spinner writes `\r` to the same fd caused the garbled/overwritten display. Runtime messages now go to `~/.blockrun/brcc-debug.log` only — use `brcc logs` or `brcc logs -f` to monitor live
+- **Terminal distortion (root cause fix)**: Removed `console.log` from the proxy's runtime `log()` function. Claude Code is launched with `stdio: inherit`, so runcode and Claude Code share the same terminal. Printing to stdout while Claude Code's `* Thinking…` spinner writes `\r` to the same fd caused the garbled/overwritten display. Runtime messages now go to `~/.blockrun/runcode-debug.log` only — use `runcode logs` or `runcode logs -f` to monitor live
 
 ## 0.9.8 (2026-03-28)
 
 ### Bug Fixes
 
-- **Terminal distortion in `brcc logs`**: Strip ANSI escape sequences and carriage returns from log entries before writing to `~/.blockrun/brcc-debug.log`. Previously, spinner/progress output from Claude Code (e.g., `* Thinking…`) contained `\r` characters that caused cursor jumps and screen corruption when replayed by `brcc logs` or `brcc logs -f`
+- **Terminal distortion in `runcode logs`**: Strip ANSI escape sequences and carriage returns from log entries before writing to `~/.blockrun/runcode-debug.log`. Previously, spinner/progress output from Claude Code (e.g., `* Thinking…`) contained `\r` characters that caused cursor jumps and screen corruption when replayed by `runcode logs` or `runcode logs -f`
 
 ## 0.9.7 (2026-03-27)
 
 ### Features
 
-- **`brcc logs` command**: View debug logs with `brcc logs`, tail with `-f`, show last N lines with `-n 100`, clear with `--clear`. Auto-rotates at 10MB to prevent disk bloat
-- **Always-on logging**: `[brcc]` messages now always written to `~/.blockrun/brcc-debug.log` (no need for `--debug` flag for basic logs)
+- **`runcode logs` command**: View debug logs with `runcode logs`, tail with `-f`, show last N lines with `-n 100`, clear with `--clear`. Auto-rotates at 10MB to prevent disk bloat
+- **Always-on logging**: `[runcode]` messages now always written to `~/.blockrun/runcode-debug.log` (no need for `--debug` flag for basic logs)
 
 ### Bug Fixes
 
@@ -60,7 +60,7 @@
 
 ### Bug Fixes
 
-- **Login prompt fix**: Use `ANTHROPIC_AUTH_TOKEN` instead of `ANTHROPIC_API_KEY` to prevent Claude Code from showing login prompt when launched via `brcc start` (thanks @0xCheetah1, #2)
+- **Login prompt fix**: Use `ANTHROPIC_AUTH_TOKEN` instead of `ANTHROPIC_API_KEY` to prevent Claude Code from showing login prompt when launched via `runcode start` (thanks @0xCheetah1, #2)
 - Consistent env var in all output messages (proxy-only mode, error fallback)
 
 ## 0.9.5 (2026-03-25)
@@ -69,11 +69,11 @@
 
 - **Fallback 400 errors**: Removed virtual routing profiles (`blockrun/auto`, `blockrun/eco`) from fallback chain — backend doesn't recognize these, causing 400 loops. Fallback now uses concrete models: `deepseek/deepseek-chat` → `google/gemini-2.5-flash` → `nvidia/nemotron-ultra-253b`
 - **Safety filter**: `buildFallbackChain()` now strips routing profiles to prevent them from ever reaching the backend
-- **`brcc start` automation**: Smarter claude binary detection — searches PATH + common install locations (`~/.local/bin`, `/usr/local/bin`). Falls back to printing manual env vars instead of crashing
+- **`runcode start` automation**: Smarter claude binary detection — searches PATH + common install locations (`~/.local/bin`, `/usr/local/bin`). Falls back to printing manual env vars instead of crashing
 
 ### Docs
 
-- Use `blockrun.ai/brcc-install` short URL in README install command
+- Use `blockrun.ai/runcode-install` short URL in README install command
 
 ## 0.9.4 (2026-03-24)
 
@@ -110,13 +110,13 @@
 - Default to `blockrun/auto` with 4 routing profiles: auto, eco, premium, free
 - In-session model switching — type `use gpt` or `use deepseek` inside Claude Code
 - Automatic fallback chain when models fail (429, 5xx)
-- Usage statistics with `brcc stats`
+- Usage statistics with `runcode stats`
 - User-Agent and version headers on backend requests
 
 ### Bug Fixes
 
 - Adaptive max_tokens: `max(lastOutput*2, 4096)` prevents token starvation
-- Debug logs to file (`~/.blockrun/brcc-debug.log`) instead of stderr
+- Debug logs to file (`~/.blockrun/runcode-debug.log`) instead of stderr
 - Always inject max_tokens default to prevent 400 on Turn 2+
 - Fix version mismatch, token parsing, port validation
 
@@ -128,6 +128,6 @@
 - Local proxy for Claude Code → BlockRun API
 - Dual chain support (Base + Solana)
 - x402 micropayment signing
-- `brcc setup`, `brcc start`, `brcc models`, `brcc balance` commands
+- `runcode setup`, `runcode start`, `runcode models`, `runcode balance` commands
 - 40+ model support with `--model` flag
 - Install script for one-line setup
