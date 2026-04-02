@@ -84,6 +84,7 @@ interface AppProps {
   workDir: string;
   walletAddress: string;
   walletBalance: string;
+  startWithPicker?: boolean;
   chain: string;
   onSubmit: (input: string) => void;
   onModelChange: (model: string) => void;
@@ -92,7 +93,7 @@ interface AppProps {
 
 function RunCodeApp({
   initialModel, workDir, walletAddress, walletBalance, chain,
-  onSubmit, onModelChange, onExit,
+  startWithPicker, onSubmit, onModelChange, onExit,
 }: AppProps) {
   const { exit } = useApp();
   const [input, setInput] = useState('');
@@ -100,9 +101,9 @@ function RunCodeApp({
   const [thinking, setThinking] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const [tools, setTools] = useState<Map<string, ToolStatus>>(new Map());
-  const [currentModel, setCurrentModel] = useState(initialModel);
-  const [ready, setReady] = useState(true);
-  const [mode, setMode] = useState<UIMode>('input');
+  const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS[0].id);
+  const [ready, setReady] = useState(!startWithPicker);
+  const [mode, setMode] = useState<UIMode>(startWithPicker ? 'model-picker' : 'input');
   const [pickerIdx, setPickerIdx] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
   const [turnTokens, setTurnTokens] = useState({ input: 0, output: 0 });
@@ -128,9 +129,13 @@ function RunCodeApp({
       onModelChange(selected.id);
       setStatusMsg(`Model → ${selected.label}`);
       setMode('input');
+      setReady(true); // Show input box after picking
       setTimeout(() => setStatusMsg(''), 3000);
     }
-    else if (key.escape) setMode('input');
+    else if (key.escape) {
+      setMode('input');
+      setReady(true);
+    }
   });
 
   const handleSubmit = useCallback((value: string) => {
@@ -401,6 +406,7 @@ export function launchInkUI(opts: {
   walletAddress?: string;
   walletBalance?: string;
   chain?: string;
+  showPicker?: boolean;
   onModelChange?: (model: string) => void;
 }): InkUIHandle {
   let resolveInput: ((value: string | null) => void) | null = null;
@@ -413,6 +419,7 @@ export function launchInkUI(opts: {
       walletAddress={opts.walletAddress || 'not set — run: runcode setup'}
       walletBalance={opts.walletBalance || 'unknown'}
       chain={opts.chain || 'base'}
+      startWithPicker={opts.showPicker}
       onSubmit={(value) => {
         if (resolveInput) { resolveInput(value); resolveInput = null; }
       }}

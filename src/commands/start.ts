@@ -23,23 +23,18 @@ export async function startCommand(options: StartOptions) {
   const apiUrl = API_URLS[chain];
   const config = loadConfig();
 
-  // Resolve model
+  // Resolve model — if TTY and no model specified, ink will show picker
   let model: string;
-  let bannerShown = false;
+  let needsPicker = false;
   const configModel = config['default-model'];
   if (options.model) {
     model = resolveModel(options.model);
   } else if (configModel) {
     model = configModel;
   } else if (process.stdin.isTTY) {
-    printBanner(version);
-    bannerShown = true;
-    const picked = await pickModel();
-    if (!picked) {
-      model = 'anthropic/claude-sonnet-4.6';
-    } else {
-      model = picked;
-    }
+    // Don't pick here — let ink show the picker
+    model = ''; // placeholder, ink will set it
+    needsPicker = true;
   } else {
     model = 'anthropic/claude-sonnet-4.6';
   }
@@ -78,7 +73,7 @@ export async function startCommand(options: StartOptions) {
     }
   }
 
-  if (!bannerShown) printBanner(version);
+  printBanner(version);
 
   const workDir = process.cwd();
 
@@ -110,7 +105,7 @@ export async function startCommand(options: StartOptions) {
 
   // Use ink UI if TTY, fallback to basic readline for piped input
   if (process.stdin.isTTY) {
-    await runWithInkUI(agentConfig, model, workDir, version, walletInfo);
+    await runWithInkUI(agentConfig, model, workDir, version, walletInfo, needsPicker);
   } else {
     await runWithBasicUI(agentConfig, model, workDir);
   }
@@ -123,7 +118,8 @@ async function runWithInkUI(
   model: string,
   workDir: string,
   version: string,
-  walletInfo?: { address: string; balance: string; chain: string }
+  walletInfo?: { address: string; balance: string; chain: string },
+  showPicker = false
 ) {
   const ui = launchInkUI({
     model,
@@ -132,6 +128,7 @@ async function runWithInkUI(
     walletAddress: walletInfo?.address,
     walletBalance: walletInfo?.balance,
     chain: walletInfo?.chain,
+    showPicker,
     onModelChange: (newModel: string) => {
       agentConfig.model = newModel;
     },
