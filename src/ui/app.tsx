@@ -4,11 +4,47 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { render, Box, Text, useApp, useInput } from 'ink';
+import { render, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import type { StreamEvent } from '../agent/types.js';
 import { resolveModel } from './model-picker.js';
+
+// ─── Full-width input box ──────────────────────────────────────────────────
+
+function InputBox({ input, setInput, onSubmit, model, balance }: {
+  input: string;
+  setInput: (v: string) => void;
+  onSubmit: (v: string) => void;
+  model: string;
+  balance: string;
+}) {
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  const innerWidth = Math.max(40, cols - 4); // 4 = borders + padding
+
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text dimColor>{'╭' + '─'.repeat(cols - 2) + '╮'}</Text>
+      <Box>
+        <Text dimColor>│ </Text>
+        <Box width={innerWidth}>
+          <TextInput
+            value={input}
+            onChange={setInput}
+            onSubmit={onSubmit}
+            placeholder="Ask anything... (/model to switch, /help for commands)"
+          />
+        </Box>
+        <Text dimColor>{' '.repeat(Math.max(0, cols - innerWidth - 4))}│</Text>
+      </Box>
+      <Text dimColor>{'╰' + '─'.repeat(cols - 2) + '╯'}</Text>
+      <Box marginLeft={1}>
+        <Text dimColor>{model}  ·  {balance}  ·  esc to quit</Text>
+      </Box>
+    </Box>
+  );
+}
 
 // ─── Model picker data ─────────────────────────────────────────────────────
 
@@ -326,43 +362,15 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Claude Code-style input box */}
+      {/* Full-width input box */}
       {ready && (
-        <Box flexDirection="column" marginTop={streamText ? 1 : 0}>
-          <Box>
-            <Text dimColor>╭─</Text>
-            <Text dimColor>{'─'.repeat(58)}</Text>
-            <Text dimColor>╮</Text>
-          </Box>
-          <Box>
-            <Text dimColor>│ </Text>
-            <Box width={58}>
-              {input ? (
-                <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />
-              ) : (
-                <TextInput
-                  value={input}
-                  onChange={setInput}
-                  onSubmit={handleSubmit}
-                  placeholder="Ask anything... (/model to switch, /help for commands)"
-                />
-              )}
-            </Box>
-            <Text dimColor> │</Text>
-          </Box>
-          <Box>
-            <Text dimColor>╰─</Text>
-            <Text dimColor>{'─'.repeat(58)}</Text>
-            <Text dimColor>╯</Text>
-          </Box>
-          <Box marginLeft={2}>
-            <Text dimColor>{currentModel}</Text>
-            <Text dimColor>  ·  </Text>
-            <Text dimColor>{walletBalance}</Text>
-            <Text dimColor>  ·  </Text>
-            <Text dimColor>esc to quit</Text>
-          </Box>
-        </Box>
+        <InputBox
+          input={input}
+          setInput={setInput}
+          onSubmit={handleSubmit}
+          model={currentModel}
+          balance={walletBalance}
+        />
       )}
     </Box>
   );
