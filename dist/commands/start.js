@@ -37,17 +37,15 @@ export async function startCommand(options) {
     else {
         model = 'anthropic/claude-sonnet-4.6';
     }
-    // Ensure wallet exists + get info for UI
+    // Auto-create wallet if needed (no interruption — free models work without funding)
     let walletInfo;
     if (chain === 'solana') {
         const wallet = await getOrCreateSolanaWallet();
         if (wallet.isNew) {
-            console.log(chalk.yellow('No Solana wallet found — created a new one.'));
-            console.log(`Address: ${chalk.cyan(wallet.address)}`);
-            console.log(`\nSend USDC on Solana to this address, then run ${chalk.bold('runcode start')} again.\n`);
-            return;
+            console.log(chalk.green('  Wallet created automatically.'));
+            console.log(chalk.dim(`  Address: ${wallet.address}`));
+            console.log(chalk.dim('  Free models work now. Fund with USDC for paid models.\n'));
         }
-        // Try to get balance (non-blocking)
         try {
             const { setupAgentSolanaWallet } = await import('@blockrun/llm');
             const client = await setupAgentSolanaWallet({ silent: true });
@@ -55,16 +53,15 @@ export async function startCommand(options) {
             walletInfo = { address: wallet.address, balance: `$${bal.toFixed(2)} USDC`, chain: 'solana' };
         }
         catch {
-            walletInfo = { address: wallet.address, balance: 'unknown', chain: 'solana' };
+            walletInfo = { address: wallet.address, balance: '$0.00 USDC', chain: 'solana' };
         }
     }
     else {
         const wallet = getOrCreateWallet();
         if (wallet.isNew) {
-            console.log(chalk.yellow('No wallet found — created a new one.'));
-            console.log(`Address: ${chalk.cyan(wallet.address)}`);
-            console.log(`\nSend USDC on Base to this address, then run ${chalk.bold('runcode start')} again.\n`);
-            return;
+            console.log(chalk.green('  Wallet created automatically.'));
+            console.log(chalk.dim(`  Address: ${wallet.address}`));
+            console.log(chalk.dim('  Free models work now. Fund with USDC for paid models.\n'));
         }
         try {
             const { setupAgentWallet } = await import('@blockrun/llm');
@@ -73,7 +70,7 @@ export async function startCommand(options) {
             walletInfo = { address: wallet.address, balance: `$${bal.toFixed(2)} USDC`, chain: 'base' };
         }
         catch {
-            walletInfo = { address: wallet.address, balance: 'unknown', chain: 'base' };
+            walletInfo = { address: wallet.address, balance: '$0.00 USDC', chain: 'base' };
         }
     }
     if (!bannerShown)

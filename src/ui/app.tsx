@@ -73,8 +73,15 @@ function RunCodeApp({
   const [showHelp, setShowHelp] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
 
-  // Arrow key navigation for model picker
   useInput((ch, key) => {
+    // Esc to quit (when not in picker)
+    if (key.escape && mode === 'input' && ready && !input) {
+      onExit();
+      exit();
+      return;
+    }
+
+    // Arrow key navigation for model picker
     if (mode !== 'model-picker') return;
     if (key.upArrow) setPickerIdx(i => Math.max(0, i - 1));
     else if (key.downArrow) setPickerIdx(i => Math.min(PICKER_MODELS.length - 1, i + 1));
@@ -312,25 +319,49 @@ function RunCodeApp({
 
       {/* Token count after response */}
       {ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (
-        <Box marginLeft={2} marginTop={0}>
+        <Box marginLeft={1} marginTop={0}>
           <Text dimColor>
             {turnTokens.input.toLocaleString()} in / {turnTokens.output.toLocaleString()} out
           </Text>
         </Box>
       )}
 
-      {/* Input prompt */}
+      {/* Claude Code-style input box */}
       {ready && (
-        <Box marginTop={streamText ? 1 : 0}>
-          <Text bold color="green">{'>'} </Text>
-          <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />
-        </Box>
-      )}
-
-      {/* Model + help hint */}
-      {ready && !showHelp && !showWallet && (
-        <Box marginLeft={2}>
-          <Text dimColor>{currentModel}  ·  /help for commands</Text>
+        <Box flexDirection="column" marginTop={streamText ? 1 : 0}>
+          <Box>
+            <Text dimColor>╭─</Text>
+            <Text dimColor>{'─'.repeat(58)}</Text>
+            <Text dimColor>╮</Text>
+          </Box>
+          <Box>
+            <Text dimColor>│ </Text>
+            <Box width={58}>
+              {input ? (
+                <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />
+              ) : (
+                <TextInput
+                  value={input}
+                  onChange={setInput}
+                  onSubmit={handleSubmit}
+                  placeholder="Ask anything... (/model to switch, /help for commands)"
+                />
+              )}
+            </Box>
+            <Text dimColor> │</Text>
+          </Box>
+          <Box>
+            <Text dimColor>╰─</Text>
+            <Text dimColor>{'─'.repeat(58)}</Text>
+            <Text dimColor>╯</Text>
+          </Box>
+          <Box marginLeft={2}>
+            <Text dimColor>{currentModel}</Text>
+            <Text dimColor>  ·  </Text>
+            <Text dimColor>{walletBalance}</Text>
+            <Text dimColor>  ·  </Text>
+            <Text dimColor>esc to quit</Text>
+          </Box>
         </Box>
       )}
     </Box>
