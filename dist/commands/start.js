@@ -86,7 +86,14 @@ export async function startCommand(options) {
 }
 // ─── Ink UI (interactive terminal) ─────────────────────────────────────────
 async function runWithInkUI(agentConfig, model, workDir, version) {
-    const ui = launchInkUI({ model, workDir, version });
+    const ui = launchInkUI({
+        model,
+        workDir,
+        version,
+        onModelChange: (newModel) => {
+            agentConfig.model = newModel;
+        },
+    });
     try {
         await interactiveSession(agentConfig, async () => {
             const input = await ui.waitForInput();
@@ -94,15 +101,6 @@ async function runWithInkUI(agentConfig, model, workDir, version) {
                 return null;
             if (input === '')
                 return '';
-            // Handle slash commands
-            if (input.startsWith('/')) {
-                const result = await handleSlashCommand(input, agentConfig, ui);
-                if (result === 'exit')
-                    return null;
-                if (result === null)
-                    return ''; // re-prompt
-                return result;
-            }
             return input;
         }, (event) => ui.handleEvent(event));
     }
