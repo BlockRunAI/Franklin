@@ -90,7 +90,26 @@ program
 const args = process.argv.slice(2);
 const knownCommands = program.commands.map(c => c.name());
 const firstArg = args[0];
-if (!firstArg || (firstArg.startsWith('-') && firstArg !== '-h' && firstArg !== '--help' && firstArg !== '-V' && firstArg !== '--version')) {
+// Handle chain shortcuts: `runcode solana` or `runcode base`
+if (firstArg === 'solana' || firstArg === 'base') {
+    // Set chain and start
+    import('./config.js').then(({ saveChain }) => {
+        saveChain(firstArg);
+        const startOpts = { version };
+        // Parse remaining flags
+        for (let i = 1; i < args.length; i++) {
+            if (args[i] === '--trust')
+                startOpts.trust = true;
+            else if (args[i] === '--debug')
+                startOpts.debug = true;
+            else if ((args[i] === '-m' || args[i] === '--model') && args[i + 1]) {
+                startOpts.model = args[++i];
+            }
+        }
+        startCommand(startOpts);
+    });
+}
+else if (!firstArg || (firstArg.startsWith('-') && firstArg !== '-h' && firstArg !== '--help' && firstArg !== '-V' && firstArg !== '--version')) {
     // No subcommand or only flags — treat as 'start' with flags
     const startOpts = { version };
     for (let i = 0; i < args.length; i++) {
