@@ -49,6 +49,7 @@ function InputBox({ input, setInput, onSubmit, model, balance }: {
 // ─── Model picker data ─────────────────────────────────────────────────────
 
 const PICKER_MODELS = [
+  { id: 'zai/glm-5', shortcut: 'glm', label: '🔥 GLM-5 (promo til Apr 15)', price: '$0.001/call', highlight: true },
   { id: 'anthropic/claude-sonnet-4.6', shortcut: 'sonnet', label: 'Claude Sonnet 4.6', price: '$3/$15' },
   { id: 'anthropic/claude-opus-4.6', shortcut: 'opus', label: 'Claude Opus 4.6', price: '$5/$25' },
   { id: 'openai/gpt-5.4', shortcut: 'gpt', label: 'GPT-5.4', price: '$2.5/$15' },
@@ -63,7 +64,7 @@ const PICKER_MODELS = [
   { id: 'nvidia/nemotron-ultra-253b', shortcut: 'free', label: 'Nemotron Ultra 253B', price: 'FREE' },
   { id: 'nvidia/qwen3-coder-480b', shortcut: 'qwen-coder', label: 'Qwen3 Coder 480B', price: 'FREE' },
   { id: 'nvidia/devstral-2-123b', shortcut: 'devstral', label: 'Devstral 2 123B', price: 'FREE' },
-];
+] as const satisfies readonly { id: string; shortcut: string; label: string; price: string; highlight?: boolean }[];
 
 interface ToolStatus {
   name: string;
@@ -268,18 +269,27 @@ function RunCodeApp({
       <Box flexDirection="column">
         <Text bold>{'\n'}  Select a model  <Text dimColor>(↑↓ navigate, Enter select, Esc cancel)</Text></Text>
         <Text> </Text>
-        {PICKER_MODELS.map((m, i) => (
-          <Box key={m.id} marginLeft={2}>
-            <Text inverse={i === pickerIdx} color={i === pickerIdx ? 'cyan' : undefined} bold={i === pickerIdx}>
-              {' '}{m.label.padEnd(24)}{' '}
-            </Text>
-            <Text dimColor> {m.shortcut.padEnd(12)}</Text>
-            <Text color={m.price === 'FREE' ? 'green' : undefined} dimColor={m.price !== 'FREE'}>
-              {m.price}
-            </Text>
-            {m.id === currentModel && <Text color="green"> ←</Text>}
-          </Box>
-        ))}
+        {PICKER_MODELS.map((m, i) => {
+          const isHighlight = 'highlight' in m && m.highlight;
+          const isSelected = i === pickerIdx;
+          const isCurrent = m.id === currentModel;
+          return (
+            <Box key={m.id} marginLeft={2}>
+              <Text
+                inverse={isSelected}
+                color={isSelected ? 'cyan' : isHighlight ? 'yellow' : undefined}
+                bold={isSelected || isHighlight}
+              >
+                {' '}{m.label.padEnd(26)}{' '}
+              </Text>
+              <Text dimColor> {m.shortcut.padEnd(12)}</Text>
+              <Text color={m.price === 'FREE' ? 'green' : isHighlight ? 'yellow' : undefined} dimColor={!isHighlight && m.price !== 'FREE'}>
+                {m.price}
+              </Text>
+              {isCurrent && <Text color="green"> ←</Text>}
+            </Box>
+          );
+        })}
         <Text> </Text>
       </Box>
     );
