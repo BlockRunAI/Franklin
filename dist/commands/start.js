@@ -13,9 +13,9 @@ export async function startCommand(options) {
     const chain = loadChain();
     const apiUrl = API_URLS[chain];
     const config = loadConfig();
-    // Resolve model
+    // Resolve model — if TTY and no model specified, ink will show picker
     let model;
-    let bannerShown = false;
+    let needsPicker = false;
     const configModel = config['default-model'];
     if (options.model) {
         model = resolveModel(options.model);
@@ -24,15 +24,9 @@ export async function startCommand(options) {
         model = configModel;
     }
     else if (process.stdin.isTTY) {
-        printBanner(version);
-        bannerShown = true;
-        const picked = await pickModel();
-        if (!picked) {
-            model = 'anthropic/claude-sonnet-4.6';
-        }
-        else {
-            model = picked;
-        }
+        // Don't pick here — let ink show the picker
+        model = ''; // placeholder, ink will set it
+        needsPicker = true;
     }
     else {
         model = 'anthropic/claude-sonnet-4.6';
@@ -73,8 +67,7 @@ export async function startCommand(options) {
             walletInfo = { address: wallet.address, balance: '$0.00 USDC', chain: 'base' };
         }
     }
-    if (!bannerShown)
-        printBanner(version);
+    printBanner(version);
     const workDir = process.cwd();
     // Show session info
     console.log(chalk.dim(`  Model:  ${model}`));
@@ -100,14 +93,14 @@ export async function startCommand(options) {
     };
     // Use ink UI if TTY, fallback to basic readline for piped input
     if (process.stdin.isTTY) {
-        await runWithInkUI(agentConfig, model, workDir, version, walletInfo);
+        await runWithInkUI(agentConfig, model, workDir, version, walletInfo, needsPicker);
     }
     else {
         await runWithBasicUI(agentConfig, model, workDir);
     }
 }
 // ─── Ink UI (interactive terminal) ─────────────────────────────────────────
-async function runWithInkUI(agentConfig, model, workDir, version, walletInfo) {
+async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, showPicker = false) {
     const ui = launchInkUI({
         model,
         workDir,
@@ -115,6 +108,7 @@ async function runWithInkUI(agentConfig, model, workDir, version, walletInfo) {
         walletAddress: walletInfo?.address,
         walletBalance: walletInfo?.balance,
         chain: walletInfo?.chain,
+        showPicker,
         onModelChange: (newModel) => {
             agentConfig.model = newModel;
         },
