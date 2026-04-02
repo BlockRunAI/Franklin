@@ -1,17 +1,17 @@
-# brcc Roadmap
+# runcode Roadmap
 
 ## Vision
 
-brcc = Claude Code + any model + no rate limits + pay-per-use USDC
+runcode = Claude Code + any model + no rate limits + pay-per-use USDC
 
 The goal is to let any developer run Claude Code with any LLM model, selecting and switching models freely, paying only for what they use.
 
 ## Current State (v0.5.0)
 
 ```
-User runs: brcc start --model openai/gpt-5.4
+User runs: runcode start --model openai/gpt-5.4
 
-  brcc proxy (localhost:8402)
+  runcode proxy (localhost:8402)
     ├── Receives Anthropic-format requests from Claude Code
     ├── Overrides model name to user's choice
     ├── Signs x402 payment with user's wallet
@@ -19,10 +19,10 @@ User runs: brcc start --model openai/gpt-5.4
 ```
 
 **Working:**
-- `brcc setup base|solana` — create wallet
-- `brcc start --model <model>` — start proxy + launch Claude Code
-- `brcc models` — list 50+ models with pricing
-- `brcc balance` — check USDC balance
+- `runcode setup base|solana` — create wallet
+- `runcode start --model <model>` — start proxy + launch Claude Code
+- `runcode models` — list 50+ models with pricing
+- `runcode balance` — check USDC balance
 - Dual chain support (Base + Solana)
 - Free model (nvidia/nemotron-ultra-253b) tested end-to-end
 
@@ -53,11 +53,11 @@ Let users switch between any BlockRun model inside Claude Code without restartin
 
 ### Implementation Plan
 
-#### 1. Add tweakcc patching to brcc
+#### 1. Add tweakcc patching to runcode
 
 ```bash
-brcc patch          # Patch Claude Code to allow custom model names
-brcc patch --undo   # Restore original Claude Code
+runcode patch          # Patch Claude Code to allow custom model names
+runcode patch --undo   # Restore original Claude Code
 ```
 
 Key patches to apply:
@@ -72,7 +72,7 @@ Reference: `/Users/vickyfu/tmp/tweakcc/src/patches/`
 Borrow from ClawRouter's 14-dimension classifier:
 
 ```
-Claude Code request → brcc proxy analyzes request →
+Claude Code request → runcode proxy analyzes request →
   Simple task (definitions, math) → cheapest model (DeepSeek, NVIDIA free)
   Code task (editing, debugging) → code-optimized model (Claude Sonnet, GPT-5)
   Reasoning task (proofs, planning) → reasoning model (o3, Grok reasoning)
@@ -85,7 +85,7 @@ Reference: `/Users/vickyfu/Documents/blockrun-web/ClawRouter/`
 
 #### 3. Env var model mapping
 
-brcc start sets these env vars so Claude Code's built-in `/model` picker maps to BlockRun models:
+runcode start sets these env vars so Claude Code's built-in `/model` picker maps to BlockRun models:
 
 ```bash
 ANTHROPIC_DEFAULT_SONNET_MODEL=anthropic/claude-sonnet-4.6
@@ -94,7 +94,7 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek/deepseek-chat  # cheap alternative
 CLAUDE_CODE_SUBAGENT_MODEL=anthropic/claude-haiku-4.5
 ```
 
-User can customize in `~/.blockrun/brcc-config.json`.
+User can customize in `~/.blockrun/runcode-config.json`.
 
 #### 4. Transformer chain
 
@@ -102,7 +102,7 @@ For non-Anthropic models, the proxy needs format conversion:
 
 ```
 Claude Code (Anthropic format)
-  → brcc proxy
+  → runcode proxy
     → If Anthropic model: pass through to /v1/messages
     → If OpenAI model: convert Anthropic→OpenAI format, call /v1/chat/completions
     → Convert response back to Anthropic format
@@ -121,22 +121,22 @@ One-line install that sets up everything.
 ### Implementation
 
 ```bash
-# Install brcc + Claude Code + patch in one command
-curl -fsSL https://brcc.blockrun.ai/install.sh | bash
+# Install runcode + Claude Code + patch in one command
+curl -fsSL https://runcode.blockrun.ai/install.sh | bash
 ```
 
 The install script:
 1. Install Node.js if missing
 2. Install Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`
-3. Install brcc: `npm install -g @blockrun/cc`
-4. Create wallet: `brcc setup base`
-5. Patch Claude Code: `brcc patch`
+3. Install runcode: `npm install -g @blockrun/cc`
+4. Create wallet: `runcode setup base`
+5. Patch Claude Code: `runcode patch`
 6. Show wallet address + funding instructions
 
 ### Uninstall
 
 ```bash
-brcc patch --undo    # Restore Claude Code
+runcode patch --undo    # Restore Claude Code
 npm uninstall -g @blockrun/cc
 ```
 
@@ -145,18 +145,18 @@ npm uninstall -g @blockrun/cc
 ## Phase 3: Smart Defaults
 
 ### Goal
-Zero-config experience — brcc auto-picks the best model for each task.
+Zero-config experience — runcode auto-picks the best model for each task.
 
 ### Implementation
 
 ```bash
-brcc start --smart   # Auto-route every request to optimal model
+runcode start --smart   # Auto-route every request to optimal model
 ```
 
 Uses ClawRouter's classifier to analyze each request:
 - Token count, code presence, reasoning markers, creative markers
 - Routes to cheapest capable model
-- User sets budget: `brcc start --smart --budget 0.01` (max $0.01 per request)
+- User sets budget: `runcode start --smart --budget 0.01` (max $0.01 per request)
 
 ---
 
@@ -168,10 +168,10 @@ Teams share a wallet and track per-developer usage.
 ### Implementation
 
 ```bash
-brcc team create "My Team"
-brcc team add dev@example.com
-brcc team budget 100          # $100 monthly budget
-brcc team usage                # Per-developer breakdown
+runcode team create "My Team"
+runcode team add dev@example.com
+runcode team budget 100          # $100 monthly budget
+runcode team usage                # Per-developer breakdown
 ```
 
 ---
@@ -188,8 +188,8 @@ brcc team usage                # Per-developer breakdown
 
 ### Key Claude Code env vars
 ```bash
-ANTHROPIC_BASE_URL              # API endpoint (brcc sets to localhost proxy)
-ANTHROPIC_API_KEY               # API key (brcc sets dummy key)
+ANTHROPIC_BASE_URL              # API endpoint (runcode sets to localhost proxy)
+ANTHROPIC_API_KEY               # API key (runcode sets dummy key)
 ANTHROPIC_MODEL                 # Default model
 ANTHROPIC_DEFAULT_OPUS_MODEL    # What /model opus resolves to
 ANTHROPIC_DEFAULT_SONNET_MODEL  # What /model sonnet resolves to
@@ -201,7 +201,7 @@ ANTHROPIC_CUSTOM_MODEL_OPTION   # Custom model in /model picker (no validation)
 ### Architecture target
 
 ```
-brcc start
+runcode start
   │
   ├── Patch Claude Code (tweakcc engine)
   │     └── Unlock custom model names

@@ -46,22 +46,22 @@ The result:
 
 ## The Fix: Pay Per Token, Not Per Month
 
-**brcc** ([github.com/BlockRunAI/brcc](https://github.com/BlockRunAI/brcc)) takes a different approach: you pay for exactly what you use. No subscriptions. No limits. No accounts.
+**runcode** ([github.com/BlockRunAI/runcode](https://github.com/BlockRunAI/runcode)) takes a different approach: you pay for exactly what you use. No subscriptions. No limits. No accounts.
 
 ```bash
 sudo npm install -g @blockrun/cc  # use sudo on Linux
-brcc setup base
-brcc start
+runcode setup base
+runcode start
 ```
 
 Three commands. Claude Code opens. You have access to 50+ models. No rate limits.
 
 ### How it works
 
-brcc runs a local proxy between Claude Code and [BlockRun](https://blockrun.ai), an AI API gateway that accepts USDC micropayments:
+runcode runs a local proxy between Claude Code and [BlockRun](https://blockrun.ai), an AI API gateway that accepts USDC micropayments:
 
 ```
-Claude Code → brcc (localhost) → BlockRun → Any model
+Claude Code → runcode (localhost) → BlockRun → Any model
                 signs payment      50+ models
                 with your wallet   pay per token
 ```
@@ -78,24 +78,24 @@ Every request is paid individually via the [x402 protocol](https://x402.org). Yo
 | Claude Opus 4.6 | ~$0.015 | ~$1.00-5.00 |
 | NVIDIA GPT-OSS 120B | **Free** | **$0.00** |
 
-A typical developer spends **$5-15/week** using brcc. Compare that to $200/month for a Max subscription that doesn't work.
+A typical developer spends **$5-15/week** using runcode. Compare that to $200/month for a Max subscription that doesn't work.
 
 ---
 
 ## But I Want Claude Specifically
 
-You can still use Claude through brcc. BlockRun routes to Anthropic's Claude API — same models, same quality. The difference:
+You can still use Claude through runcode. BlockRun routes to Anthropic's Claude API — same models, same quality. The difference:
 
 - **Claude Max**: $200/month, opaque limits, account locks
-- **Claude via brcc**: ~$2/day for heavy use, no limits, no account
+- **Claude via runcode**: ~$2/day for heavy use, no limits, no account
 
 And you get a bonus: **access to every other model too.** Need GPT-5 for reasoning? Gemini for long context? DeepSeek for cheap bulk work? Switch with `--model` or `/model` inside Claude Code.
 
 ---
 
-## Who Should Use brcc
+## Who Should Use runcode
 
-**You should use brcc if:**
+**You should use runcode if:**
 - You've been rate limited on Claude Max
 - You can't verify your phone number
 - You're in a region where Claude is expensive or unavailable
@@ -114,12 +114,12 @@ And you get a bonus: **access to every other model too.** Need GPT-5 for reasoni
 
 ```bash
 # Install (one line)
-curl -fsSL https://raw.githubusercontent.com/BlockRunAI/brcc/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BlockRunAI/runcode/main/install.sh | bash
 
 # Or manual
 sudo npm install -g @blockrun/cc  # use sudo on Linux
-brcc setup base
-brcc start --model nvidia/nemotron-ultra-253b  # Free model to test
+runcode setup base
+runcode start --model nvidia/nemotron-ultra-253b  # Free model to test
 ```
 
 Fund your wallet with $5 USDC on Base. That's enough for a week of heavy coding.
@@ -127,7 +127,7 @@ Fund your wallet with $5 USDC on Base. That's enough for a week of heavy coding.
 ---
 
 **Links:**
-- [brcc on GitHub](https://github.com/BlockRunAI/brcc)
-- [brcc on npm](https://npmjs.com/package/@blockrun/cc)
+- [runcode on GitHub](https://github.com/BlockRunAI/runcode)
+- [runcode on npm](https://npmjs.com/package/@blockrun/cc)
 - [BlockRun](https://blockrun.ai)
 - [Telegram](https://t.me/blockrunAI)
