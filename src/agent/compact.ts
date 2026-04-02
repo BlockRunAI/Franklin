@@ -1,5 +1,5 @@
 /**
- * Context compaction for 0xcode.
+ * Context compaction for runcode.
  * When conversation history approaches the context window limit,
  * summarize older messages and replace them with the summary.
  */
@@ -54,7 +54,7 @@ export async function autoCompactIfNeeded(
 
   if (debug) {
     console.error(
-      `[0xcode] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}`
+      `[runcode] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}`
     );
   }
 
@@ -63,7 +63,7 @@ export async function autoCompactIfNeeded(
     return { history: compacted, compacted: true };
   } catch (err) {
     if (debug) {
-      console.error(`[0xcode] Compaction failed: ${(err as Error).message}`);
+      console.error(`[runcode] Compaction failed: ${(err as Error).message}`);
     }
     // Fallback: truncate oldest messages instead of crashing
     const truncated = emergencyTruncate(history, threshold);
@@ -96,7 +96,7 @@ async function compactHistory(
 
   if (debug) {
     console.error(
-      `[0xcode] Summarizing ${toSummarize.length} messages, keeping ${toKeep.length}`
+      `[runcode] Summarizing ${toSummarize.length} messages, keeping ${toKeep.length}`
     );
   }
 
@@ -146,7 +146,7 @@ async function compactHistory(
   if (debug) {
     const newTokens = estimateHistoryTokens(compacted);
     console.error(
-      `[0xcode] Compacted: ${estimateHistoryTokens(history)} → ${newTokens} tokens`
+      `[runcode] Compacted: ${estimateHistoryTokens(history)} → ${newTokens} tokens`
     );
   }
 

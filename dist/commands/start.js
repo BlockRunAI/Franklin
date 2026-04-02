@@ -44,7 +44,7 @@ export async function startCommand(options) {
         if (wallet.isNew) {
             console.log(chalk.yellow('No Solana wallet found — created a new one.'));
             console.log(`Address: ${chalk.cyan(wallet.address)}`);
-            console.log(`\nSend USDC on Solana to this address, then run ${chalk.bold('0xcode start')} again.\n`);
+            console.log(`\nSend USDC on Solana to this address, then run ${chalk.bold('runcode start')} again.\n`);
             return;
         }
     }
@@ -53,7 +53,7 @@ export async function startCommand(options) {
         if (wallet.isNew) {
             console.log(chalk.yellow('No wallet found — created a new one.'));
             console.log(`Address: ${chalk.cyan(wallet.address)}`);
-            console.log(`\nSend USDC on Base to this address, then run ${chalk.bold('0xcode start')} again.\n`);
+            console.log(`\nSend USDC on Base to this address, then run ${chalk.bold('runcode start')} again.\n`);
             return;
         }
     }

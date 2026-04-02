@@ -1,5 +1,5 @@
 /**
- * Token optimization strategies for 0xcode.
+ * Token optimization strategies for runcode.
  *
  * Five layers of optimization to minimize token usage:
  * 1. Tool result size budgeting — cap large outputs, keep preview
@@ -216,7 +216,7 @@ export function optimizeHistory(history, opts) {
         result = stripped;
         changed = true;
         if (opts?.debug)
-            console.error('[0xcode] Stripped old thinking blocks');
+            console.error('[runcode] Stripped old thinking blocks');
     }
     // 2. Budget tool results
     const budgeted = budgetToolResults(result);
@@ -224,7 +224,7 @@ export function optimizeHistory(history, opts) {
         result = budgeted;
         changed = true;
         if (opts?.debug)
-            console.error('[0xcode] Budgeted oversized tool results');
+            console.error('[runcode] Budgeted oversized tool results');
     }
     // 3. Time-based cleanup
     const { history: cleaned, cleaned: didClean } = timeBasedCleanup(result, opts?.lastActivityTimestamp);
@@ -232,7 +232,7 @@ export function optimizeHistory(history, opts) {
         result = cleaned;
         changed = true;
         if (opts?.debug)
-            console.error('[0xcode] Cleared stale tool results after idle gap');
+            console.error('[runcode] Cleared stale tool results after idle gap');
     }
     return result;
 }

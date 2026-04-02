@@ -20,7 +20,7 @@ export function saveChain(chain: Chain): void {
 }
 
 export function loadChain(): Chain {
-  const envChain = process.env.OXCODE_CHAIN || process.env.BRCC_CHAIN;
+  const envChain = process.env.RUNCODE_CHAIN || process.env.BRCC_CHAIN;
   if (envChain === 'solana') return 'solana';
   if (envChain === 'base') return 'base';
 

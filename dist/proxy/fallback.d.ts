@@ -1,5 +1,5 @@
 /**
- * Fallback chain for 0xcode
+ * Fallback chain for runcode
  * Automatically switches to backup models when primary fails (429, 5xx, etc.)
  */
 export interface FallbackConfig {
