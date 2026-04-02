@@ -142,6 +142,14 @@ function RunCodeApp({
     const trimmed = value.trim();
     if (!trimmed) return;
 
+    // Bare exit/quit (no slash needed)
+    const lower = trimmed.toLowerCase();
+    if (lower === 'exit' || lower === 'quit' || lower === 'q') {
+      onExit();
+      exit();
+      return;
+    }
+
     // ── Slash commands ──
     if (trimmed.startsWith('/')) {
       setInput('');
