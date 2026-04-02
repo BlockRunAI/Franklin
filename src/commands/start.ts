@@ -107,7 +107,14 @@ async function runWithInkUI(
   workDir: string,
   version: string
 ) {
-  const ui = launchInkUI({ model, workDir, version });
+  const ui = launchInkUI({
+    model,
+    workDir,
+    version,
+    onModelChange: (newModel: string) => {
+      agentConfig.model = newModel;
+    },
+  });
 
   try {
     await interactiveSession(
@@ -116,14 +123,6 @@ async function runWithInkUI(
         const input = await ui.waitForInput();
         if (input === null) return null;
         if (input === '') return '';
-
-        // Handle slash commands
-        if (input.startsWith('/')) {
-          const result = await handleSlashCommand(input, agentConfig, ui);
-          if (result === 'exit') return null;
-          if (result === null) return ''; // re-prompt
-          return result;
-        }
         return input;
       },
       (event) => ui.handleEvent(event)
