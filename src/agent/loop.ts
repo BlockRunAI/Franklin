@@ -378,7 +378,15 @@ export async function interactiveSession(
           },
           abort.signal,
           // Start concurrent tools as soon as their input is fully received
-          (tool) => streamExec.onToolReceived(tool)
+          (tool) => streamExec.onToolReceived(tool),
+          // Stream text/thinking deltas to UI in real-time
+          (delta) => {
+            if (delta.type === 'text') {
+              onEvent({ kind: 'text_delta', text: delta.text });
+            } else if (delta.type === 'thinking') {
+              onEvent({ kind: 'thinking_delta', text: delta.text });
+            }
+          }
         );
         responseParts = result.content;
         usage = result.usage;
@@ -426,32 +434,22 @@ export async function interactiveSession(
             console.error(`[runcode] Max tokens hit — escalating to ${maxTokensOverride}`);
           }
         }
-        // Append what we got + a continuation prompt
+        // Append what we got + a continuation prompt (text already streamed)
         history.push({ role: 'assistant', content: responseParts });
         history.push({
           role: 'user',
           content: 'Continue where you left off. Do not repeat what you already said.',
         });
-        // Emit partial text
-        for (const part of responseParts) {
-          if (part.type === 'text') {
-            onEvent({ kind: 'text_delta', text: part.text });
-          }
-        }
         continue; // Retry with higher limit
       }
 
       // Reset recovery counter on successful completion
       recoveryAttempts = 0;
 
-      // Emit text and thinking
+      // Extract tool invocations (text/thinking already streamed in real-time)
       const invocations: CapabilityInvocation[] = [];
       for (const part of responseParts) {
-        if (part.type === 'text') {
-          onEvent({ kind: 'text_delta', text: part.text });
-        } else if (part.type === 'thinking') {
-          onEvent({ kind: 'thinking_delta', text: part.thinking });
-        } else if (part.type === 'tool_use') {
+        if (part.type === 'tool_use') {
           invocations.push(part);
         }
       }

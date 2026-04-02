@@ -1,12 +1,12 @@
 import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
-import { loadChain, API_URLS, DEFAULT_PROXY_PORT } from '../config.js';
+import { loadChain, API_URLS } from '../config.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
 import { assembleInstructions } from '../agent/context.js';
 import { interactiveSession } from '../agent/loop.js';
 import { allCapabilities, createSubAgentCapability } from '../tools/index.js';
-import { TerminalUI } from '../ui/terminal.js';
+import { launchInkUI } from '../ui/app.js';
 import { pickModel, resolveModel } from '../ui/model-picker.js';
 import type { AgentConfig } from '../agent/types.js';
 
@@ -23,7 +23,7 @@ export async function startCommand(options: StartOptions) {
   const apiUrl = API_URLS[chain];
   const config = loadConfig();
 
-  // Resolve model — show picker if interactive and no model specified
+  // Resolve model
   let model: string;
   let bannerShown = false;
   const configModel = config['default-model'];
@@ -32,7 +32,6 @@ export async function startCommand(options: StartOptions) {
   } else if (configModel) {
     model = configModel;
   } else if (process.stdin.isTTY) {
-    // Interactive — show model picker
     printBanner(version);
     bannerShown = true;
     const picked = await pickModel();
@@ -68,17 +67,14 @@ export async function startCommand(options: StartOptions) {
     }
   }
 
-  // Print banner (skip if already shown during model pick)
   if (!bannerShown) printBanner(version);
 
   const workDir = process.cwd();
-  const ui = new TerminalUI();
-  ui.printWelcome(model, workDir);
 
   // Assemble system instructions
   const systemInstructions = assembleInstructions(workDir);
 
-  // Build capabilities including sub-agent
+  // Build capabilities
   const subAgent = createSubAgentCapability(apiUrl, chain, allCapabilities);
   const capabilities = [...allCapabilities, subAgent];
 
@@ -95,30 +91,79 @@ export async function startCommand(options: StartOptions) {
     debug: options.debug,
   };
 
-  // Run interactive session
+  // Use ink UI if TTY, fallback to basic readline for piped input
+  if (process.stdin.isTTY) {
+    await runWithInkUI(agentConfig, model, workDir, version);
+  } else {
+    await runWithBasicUI(agentConfig, model, workDir);
+  }
+}
+
+// ─── Ink UI (interactive terminal) ─────────────────────────────────────────
+
+async function runWithInkUI(
+  agentConfig: AgentConfig,
+  model: string,
+  workDir: string,
+  version: string
+) {
+  const ui = launchInkUI({ model, workDir, version });
+
+  try {
+    await interactiveSession(
+      agentConfig,
+      async () => {
+        const input = await ui.waitForInput();
+        if (input === null) return null;
+        if (input === '') return '';
+
+        // Handle slash commands
+        if (input.startsWith('/')) {
+          const result = await handleSlashCommand(input, agentConfig, ui);
+          if (result === 'exit') return null;
+          if (result === null) return ''; // re-prompt
+          return result;
+        }
+        return input;
+      },
+      (event) => ui.handleEvent(event)
+    );
+  } catch (err) {
+    if ((err as Error).name !== 'AbortError') {
+      console.error(chalk.red(`\nError: ${(err as Error).message}`));
+    }
+  }
+
+  ui.cleanup();
+  console.log(chalk.dim('\nGoodbye.\n'));
+}
+
+// ─── Basic readline UI (piped input) ───────────────────────────────────────
+
+async function runWithBasicUI(
+  agentConfig: AgentConfig,
+  model: string,
+  workDir: string
+) {
+  const { TerminalUI } = await import('../ui/terminal.js');
+  const ui = new TerminalUI();
+  ui.printWelcome(model, workDir);
+
   try {
     await interactiveSession(
       agentConfig,
       async () => {
         while (true) {
           const input = await ui.promptUser();
-          if (input === null) return null;  // EOF
-          if (input === '') continue;       // empty → re-prompt
-          if (input.startsWith('/')) {
-            const result = await handleSlashCommand(input, agentConfig);
-            if (result === 'exit') return null;
-            if (result === null) continue;  // command handled → re-prompt
-            return result;                   // string → send to agent
-          }
+          if (input === null) return null;
+          if (input === '') continue;
           return input;
         }
       },
       (event) => ui.handleEvent(event)
     );
   } catch (err) {
-    if ((err as Error).name === 'AbortError') {
-      // User interrupted
-    } else {
+    if ((err as Error).name !== 'AbortError') {
       console.error(chalk.red(`\nError: ${(err as Error).message}`));
     }
   }
@@ -126,13 +171,15 @@ export async function startCommand(options: StartOptions) {
   ui.printGoodbye();
 }
 
-// Slash commands return:
-//   string → send to agent
-//   null → re-prompt (command handled)
-//   'exit' → exit session
+// ─── Slash commands ────────────────────────────────────────────────────────
+
 type SlashResult = string | null | 'exit';
 
-async function handleSlashCommand(cmd: string, config: AgentConfig): Promise<SlashResult> {
+async function handleSlashCommand(
+  cmd: string,
+  config: AgentConfig,
+  ui?: { handleEvent: (e: import('../agent/types.js').StreamEvent) => void }
+): Promise<SlashResult> {
   const parts = cmd.trim().split(/\s+/);
   const command = parts[0].toLowerCase();
 
@@ -144,12 +191,10 @@ async function handleSlashCommand(cmd: string, config: AgentConfig): Promise<Sla
     case '/model': {
       const newModel = parts[1];
       if (newModel) {
-        // Direct switch via shortcut or full ID
         config.model = resolveModel(newModel);
         console.error(chalk.green(`  Model → ${config.model}`));
         return null;
       }
-      // No arg — show interactive picker
       const picked = await pickModel(config.model);
       if (picked) {
         config.model = picked;
@@ -158,31 +203,37 @@ async function handleSlashCommand(cmd: string, config: AgentConfig): Promise<Sla
       return null;
     }
 
-    case '/models':
-      // Shortcut: same as /model with no args
+    case '/models': {
       const picked = await pickModel(config.model);
       if (picked) {
         config.model = picked;
         console.error(chalk.green(`  Model → ${config.model}`));
       }
       return null;
+    }
 
     case '/cost':
     case '/usage': {
       const { getStatsSummary } = await import('../stats/tracker.js');
-      const { stats, opusCost, saved } = getStatsSummary();
-      console.error(chalk.dim(`\n  Requests: ${stats.totalRequests} | Cost: $${stats.totalCostUsd.toFixed(4)} | Saved: $${saved.toFixed(2)} vs Opus\n`));
+      const { stats, saved } = getStatsSummary();
+      console.error(
+        chalk.dim(
+          `\n  Requests: ${stats.totalRequests} | Cost: $${stats.totalCostUsd.toFixed(4)} | Saved: $${saved.toFixed(2)} vs Opus\n`
+        )
+      );
       return null;
     }
 
     case '/help':
       console.error(chalk.bold('\n  Commands:'));
-      console.error('  /model [name]  — switch model (interactive picker if no name)');
-      console.error('  /models        — browse all available models');
-      console.error('  /cost          — show session cost and savings');
+      console.error('  /model [name]  — switch model (picker if no name)');
+      console.error('  /models        — browse available models');
+      console.error('  /cost          — session cost and savings');
       console.error('  /exit          — quit');
       console.error('  /help          — this help\n');
-      console.error(chalk.dim('  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4\n'));
+      console.error(
+        chalk.dim('  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4\n')
+      );
       return null;
 
     default:

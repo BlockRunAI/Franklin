@@ -44,7 +44,10 @@ export declare class ModelClient {
     /**
      * Non-streaming completion for simple requests.
      */
-    complete(request: ModelRequest, signal?: AbortSignal, onToolReady?: (tool: CapabilityInvocation) => void): Promise<{
+    complete(request: ModelRequest, signal?: AbortSignal, onToolReady?: (tool: CapabilityInvocation) => void, onStreamDelta?: (delta: {
+        type: 'text' | 'thinking';
+        text: string;
+    }) => void): Promise<{
         content: ContentPart[];
         usage: CompletionUsage;
         stopReason: string;
