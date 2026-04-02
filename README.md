@@ -258,8 +258,8 @@ Typical usage: **$5-20/month** for active development.
 ## Development
 
 ```bash
-git clone https://github.com/BlockRunAI/brcc.git
-cd brcc
+git clone https://github.com/BlockRunAI/runcode.git
+cd runcode
 npm install
 npm run build
 node dist/index.js --help
