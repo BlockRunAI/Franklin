@@ -130,6 +130,7 @@ async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, sh
     }
     ui.cleanup();
     console.log(chalk.dim('\nGoodbye.\n'));
+    process.exit(0);
 }
 // ─── Basic readline UI (piped input) ───────────────────────────────────────
 async function runWithBasicUI(agentConfig, model, workDir) {

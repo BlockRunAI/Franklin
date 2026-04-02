@@ -153,6 +153,7 @@ async function runWithInkUI(
 
   ui.cleanup();
   console.log(chalk.dim('\nGoodbye.\n'));
+  process.exit(0);
 }
 
 // ─── Basic readline UI (piped input) ───────────────────────────────────────
