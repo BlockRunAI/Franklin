@@ -12,5 +12,8 @@ export declare function launchInkUI(opts: {
     model: string;
     workDir: string;
     version: string;
+    walletAddress?: string;
+    walletBalance?: string;
+    chain?: string;
     onModelChange?: (model: string) => void;
 }): InkUIHandle;

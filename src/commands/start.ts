@@ -44,7 +44,8 @@ export async function startCommand(options: StartOptions) {
     model = 'anthropic/claude-sonnet-4.6';
   }
 
-  // Ensure wallet exists
+  // Ensure wallet exists + get info for UI
+  let walletInfo: { address: string; balance: string; chain: string } | undefined;
   if (chain === 'solana') {
     const wallet = await getOrCreateSolanaWallet();
     if (wallet.isNew) {
@@ -54,6 +55,15 @@ export async function startCommand(options: StartOptions) {
         `\nSend USDC on Solana to this address, then run ${chalk.bold('runcode start')} again.\n`
       );
       return;
+    }
+    // Try to get balance (non-blocking)
+    try {
+      const { setupAgentSolanaWallet } = await import('@blockrun/llm');
+      const client = await setupAgentSolanaWallet({ silent: true });
+      const bal = await client.getBalance();
+      walletInfo = { address: wallet.address, balance: `$${bal.toFixed(2)} USDC`, chain: 'solana' };
+    } catch {
+      walletInfo = { address: wallet.address, balance: 'unknown', chain: 'solana' };
     }
   } else {
     const wallet = getOrCreateWallet();
@@ -65,11 +75,25 @@ export async function startCommand(options: StartOptions) {
       );
       return;
     }
+    try {
+      const { setupAgentWallet } = await import('@blockrun/llm');
+      const client = setupAgentWallet({ silent: true });
+      const bal = await client.getBalance();
+      walletInfo = { address: wallet.address, balance: `$${bal.toFixed(2)} USDC`, chain: 'base' };
+    } catch {
+      walletInfo = { address: wallet.address, balance: 'unknown', chain: 'base' };
+    }
   }
 
   if (!bannerShown) printBanner(version);
 
   const workDir = process.cwd();
+
+  // Show session info
+  console.log(chalk.dim(`  Model:  ${model}`));
+  console.log(chalk.dim(`  Wallet: ${walletInfo?.address || 'not set'} (${walletInfo?.balance || '?'})`));
+  console.log(chalk.dim(`  Dir:    ${workDir}`));
+  console.log('');
 
   // Assemble system instructions
   const systemInstructions = assembleInstructions(workDir);
@@ -93,7 +117,7 @@ export async function startCommand(options: StartOptions) {
 
   // Use ink UI if TTY, fallback to basic readline for piped input
   if (process.stdin.isTTY) {
-    await runWithInkUI(agentConfig, model, workDir, version);
+    await runWithInkUI(agentConfig, model, workDir, version, walletInfo);
   } else {
     await runWithBasicUI(agentConfig, model, workDir);
   }
@@ -105,12 +129,16 @@ async function runWithInkUI(
   agentConfig: AgentConfig,
   model: string,
   workDir: string,
-  version: string
+  version: string,
+  walletInfo?: { address: string; balance: string; chain: string }
 ) {
   const ui = launchInkUI({
     model,
     workDir,
     version,
+    walletAddress: walletInfo?.address,
+    walletBalance: walletInfo?.balance,
+    chain: walletInfo?.chain,
     onModelChange: (newModel: string) => {
       agentConfig.model = newModel;
     },

@@ -8,7 +8,7 @@ import { render, Box, Text, useApp, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import type { StreamEvent } from '../agent/types.js';
-import { MODEL_SHORTCUTS, resolveModel } from './model-picker.js';
+import { resolveModel } from './model-picker.js';
 
 // ─── Model picker data ─────────────────────────────────────────────────────
 
@@ -29,8 +29,6 @@ const PICKER_MODELS = [
   { id: 'nvidia/devstral-2-123b', shortcut: 'devstral', label: 'Devstral 2 123B', price: 'FREE' },
 ];
 
-// ─── Tool status ───────────────────────────────────────────────────────────
-
 interface ToolStatus {
   name: string;
   startTime: number;
@@ -40,21 +38,25 @@ interface ToolStatus {
   elapsed: number;
 }
 
-// ─── Mode: normal input, model picker, or help ─────────────────────────────
-
-type UIMode = 'input' | 'model-picker' | 'help';
+type UIMode = 'input' | 'model-picker';
 
 // ─── Main App ──────────────────────────────────────────────────────────────
 
 interface AppProps {
   initialModel: string;
   workDir: string;
+  walletAddress: string;
+  walletBalance: string;
+  chain: string;
   onSubmit: (input: string) => void;
   onModelChange: (model: string) => void;
   onExit: () => void;
 }
 
-function RunCodeApp({ initialModel, workDir, onSubmit, onModelChange, onExit }: AppProps) {
+function RunCodeApp({
+  initialModel, workDir, walletAddress, walletBalance, chain,
+  onSubmit, onModelChange, onExit,
+}: AppProps) {
   const { exit } = useApp();
   const [input, setInput] = useState('');
   const [streamText, setStreamText] = useState('');
@@ -66,75 +68,83 @@ function RunCodeApp({ initialModel, workDir, onSubmit, onModelChange, onExit }: 
   const [mode, setMode] = useState<UIMode>('input');
   const [pickerIdx, setPickerIdx] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
+  const [turnTokens, setTurnTokens] = useState({ input: 0, output: 0 });
+  const [totalCost, setTotalCost] = useState(0);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showWallet, setShowWallet] = useState(false);
 
   // Arrow key navigation for model picker
   useInput((ch, key) => {
     if (mode !== 'model-picker') return;
-
-    if (key.upArrow) {
-      setPickerIdx(i => Math.max(0, i - 1));
-    } else if (key.downArrow) {
-      setPickerIdx(i => Math.min(PICKER_MODELS.length - 1, i + 1));
-    } else if (key.return) {
+    if (key.upArrow) setPickerIdx(i => Math.max(0, i - 1));
+    else if (key.downArrow) setPickerIdx(i => Math.min(PICKER_MODELS.length - 1, i + 1));
+    else if (key.return) {
       const selected = PICKER_MODELS[pickerIdx];
       setCurrentModel(selected.id);
       onModelChange(selected.id);
       setStatusMsg(`Model → ${selected.label}`);
       setMode('input');
       setTimeout(() => setStatusMsg(''), 3000);
-    } else if (key.escape) {
-      setMode('input');
     }
+    else if (key.escape) setMode('input');
   });
 
   const handleSubmit = useCallback((value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
 
-    // ── Slash commands (handled in-app) ──
+    // ── Slash commands ──
     if (trimmed.startsWith('/')) {
       setInput('');
+      setShowHelp(false);
+      setShowWallet(false);
       const parts = trimmed.split(/\s+/);
       const cmd = parts[0].toLowerCase();
 
-      if (cmd === '/exit' || cmd === '/quit') {
-        onExit();
-        exit();
-        return;
-      }
+      switch (cmd) {
+        case '/exit':
+        case '/quit':
+          onExit();
+          exit();
+          return;
 
-      if (cmd === '/model' || cmd === '/models') {
-        if (parts[1]) {
-          // Direct switch: /model sonnet
-          const resolved = resolveModel(parts[1]);
-          setCurrentModel(resolved);
-          onModelChange(resolved);
-          setStatusMsg(`Model → ${resolved}`);
+        case '/model':
+        case '/models':
+          if (parts[1]) {
+            const resolved = resolveModel(parts[1]);
+            setCurrentModel(resolved);
+            onModelChange(resolved);
+            setStatusMsg(`Model → ${resolved}`);
+            setTimeout(() => setStatusMsg(''), 3000);
+          } else {
+            const idx = PICKER_MODELS.findIndex(m => m.id === currentModel);
+            setPickerIdx(idx >= 0 ? idx : 0);
+            setMode('model-picker');
+          }
+          return;
+
+        case '/wallet':
+        case '/balance':
+          setShowWallet(true);
+          setShowHelp(false);
+          return;
+
+        case '/cost':
+        case '/usage':
+          setStatusMsg(`Cost: $${totalCost.toFixed(4)} this session`);
+          setTimeout(() => setStatusMsg(''), 4000);
+          return;
+
+        case '/help':
+          setShowHelp(true);
+          setShowWallet(false);
+          return;
+
+        default:
+          setStatusMsg(`Unknown command: ${cmd}. Try /help`);
           setTimeout(() => setStatusMsg(''), 3000);
-        } else {
-          // Open picker
-          const idx = PICKER_MODELS.findIndex(m => m.id === currentModel);
-          setPickerIdx(idx >= 0 ? idx : 0);
-          setMode('model-picker');
-        }
-        return;
+          return;
       }
-
-      if (cmd === '/help') {
-        setMode('help');
-        setTimeout(() => setMode('input'), 100); // Flash help then return
-        return;
-      }
-
-      if (cmd === '/cost' || cmd === '/usage') {
-        setStatusMsg('Use `runcode stats` in another terminal for full stats');
-        setTimeout(() => setStatusMsg(''), 4000);
-        return;
-      }
-
-      setStatusMsg(`Unknown command: ${cmd}. Try /help`);
-      setTimeout(() => setStatusMsg(''), 3000);
-      return;
     }
 
     // ── Normal prompt ──
@@ -145,8 +155,11 @@ function RunCodeApp({ initialModel, workDir, onSubmit, onModelChange, onExit }: 
     setReady(false);
     setWaiting(true);
     setStatusMsg('');
+    setShowHelp(false);
+    setShowWallet(false);
+    setTurnTokens({ input: 0, output: 0 });
     onSubmit(trimmed);
-  }, [currentModel, onSubmit, onModelChange, onExit, exit]);
+  }, [currentModel, totalCost, onSubmit, onModelChange, onExit, exit]);
 
   // Expose event handler
   useEffect(() => {
@@ -190,6 +203,10 @@ function RunCodeApp({ initialModel, workDir, onSubmit, onModelChange, onExit }: 
             break;
           case 'usage':
             setCurrentModel(event.model);
+            setTurnTokens(prev => ({
+              input: prev.input + event.inputTokens,
+              output: prev.output + event.outputTokens,
+            }));
             break;
           case 'turn_done':
             setReady(true);
@@ -202,18 +219,15 @@ function RunCodeApp({ initialModel, workDir, onSubmit, onModelChange, onExit }: 
     return () => { delete (globalThis as Record<string, unknown>).__runcode_ui; };
   }, []);
 
-  // ── Model Picker Mode ──
+  // ── Model Picker ──
   if (mode === 'model-picker') {
     return (
       <Box flexDirection="column">
-        <Text bold>{'\n'}  Select a model (↑↓ to navigate, Enter to select, Esc to cancel):{'\n'}</Text>
+        <Text bold>{'\n'}  Select a model  <Text dimColor>(↑↓ navigate, Enter select, Esc cancel)</Text></Text>
+        <Text> </Text>
         {PICKER_MODELS.map((m, i) => (
           <Box key={m.id} marginLeft={2}>
-            <Text
-              color={i === pickerIdx ? 'cyan' : undefined}
-              bold={i === pickerIdx}
-              inverse={i === pickerIdx}
-            >
+            <Text inverse={i === pickerIdx} color={i === pickerIdx ? 'cyan' : undefined} bold={i === pickerIdx}>
               {' '}{m.label.padEnd(24)}{' '}
             </Text>
             <Text dimColor> {m.shortcut.padEnd(12)}</Text>
@@ -223,22 +237,7 @@ function RunCodeApp({ initialModel, workDir, onSubmit, onModelChange, onExit }: 
             {m.id === currentModel && <Text color="green"> ←</Text>}
           </Box>
         ))}
-      </Box>
-    );
-  }
-
-  // ── Help Mode ──
-  if (mode === 'help') {
-    setMode('input'); // Immediately switch back
-    return (
-      <Box flexDirection="column" marginLeft={2}>
-        <Text bold>{'\n'}  Commands:</Text>
-        <Text>  /model [name]  — switch model (arrow-key picker if no name)</Text>
-        <Text>  /models        — browse available models</Text>
-        <Text>  /cost          — session stats</Text>
-        <Text>  /exit          — quit</Text>
-        <Text>  /help          — this help</Text>
-        <Text dimColor>{'\n'}  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4{'\n'}</Text>
+        <Text> </Text>
       </Box>
     );
   }
@@ -248,8 +247,32 @@ function RunCodeApp({ initialModel, workDir, onSubmit, onModelChange, onExit }: 
     <Box flexDirection="column">
       {/* Status message */}
       {statusMsg && (
-        <Box marginLeft={1}>
-          <Text color="green">  {statusMsg}</Text>
+        <Box marginLeft={2}><Text color="green">{statusMsg}</Text></Box>
+      )}
+
+      {/* Help panel */}
+      {showHelp && (
+        <Box flexDirection="column" marginLeft={2} marginTop={1} marginBottom={1}>
+          <Text bold>Commands</Text>
+          <Text> </Text>
+          <Text>  <Text color="cyan">/model</Text> [name]  Switch model (picker if no name)</Text>
+          <Text>  <Text color="cyan">/wallet</Text>        Show wallet address & balance</Text>
+          <Text>  <Text color="cyan">/cost</Text>          Session cost</Text>
+          <Text>  <Text color="cyan">/help</Text>          This help</Text>
+          <Text>  <Text color="cyan">/exit</Text>          Quit</Text>
+          <Text> </Text>
+          <Text dimColor>  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4, nano, mini, haiku</Text>
+        </Box>
+      )}
+
+      {/* Wallet panel */}
+      {showWallet && (
+        <Box flexDirection="column" marginLeft={2} marginTop={1} marginBottom={1}>
+          <Text bold>Wallet</Text>
+          <Text> </Text>
+          <Text>  Chain:   <Text color="magenta">{chain}</Text></Text>
+          <Text>  Address: <Text color="cyan">{walletAddress}</Text></Text>
+          <Text>  Balance: <Text color="green">{walletBalance}</Text></Text>
         </Box>
       )}
 
@@ -257,12 +280,9 @@ function RunCodeApp({ initialModel, workDir, onSubmit, onModelChange, onExit }: 
       {Array.from(tools.values()).map((tool, i) => (
         <Box key={i} marginLeft={1}>
           {tool.done ? (
-            <Text>
-              {tool.error
-                ? <Text color="red">  ✗ {tool.name} <Text dimColor>{tool.elapsed}ms</Text> — {tool.preview.slice(0, 80)}</Text>
-                : <Text color="green">  ✓ {tool.name} <Text dimColor>{tool.elapsed}ms — {tool.preview.slice(0, 80)}{tool.preview.length > 80 ? '...' : ''}</Text></Text>
-              }
-            </Text>
+            tool.error
+              ? <Text color="red">  ✗ {tool.name} <Text dimColor>{tool.elapsed}ms</Text></Text>
+              : <Text color="green">  ✓ {tool.name} <Text dimColor>{tool.elapsed}ms — {tool.preview.slice(0, 60)}{tool.preview.length > 60 ? '...' : ''}</Text></Text>
           ) : (
             <Text color="cyan">  <Spinner type="dots" /> {tool.name}...</Text>
           )}
@@ -279,25 +299,38 @@ function RunCodeApp({ initialModel, workDir, onSubmit, onModelChange, onExit }: 
       {/* Waiting */}
       {waiting && !thinking && tools.size === 0 && (
         <Box marginLeft={1}>
-          <Text color="yellow">  <Spinner type="dots" /> {currentModel}...</Text>
+          <Text color="yellow">  <Spinner type="dots" /> <Text dimColor>{currentModel}</Text></Text>
         </Box>
       )}
 
       {/* Response */}
-      {streamText && <Text>{streamText}</Text>}
+      {streamText && (
+        <Box marginTop={0} marginBottom={0}>
+          <Text>{streamText}</Text>
+        </Box>
+      )}
 
-      {/* Input */}
+      {/* Token count after response */}
+      {ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (
+        <Box marginLeft={2} marginTop={0}>
+          <Text dimColor>
+            {turnTokens.input.toLocaleString()} in / {turnTokens.output.toLocaleString()} out
+          </Text>
+        </Box>
+      )}
+
+      {/* Input prompt */}
       {ready && (
         <Box marginTop={streamText ? 1 : 0}>
-          <Text bold color="green">&gt; </Text>
+          <Text bold color="green">{'>'} </Text>
           <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />
         </Box>
       )}
 
-      {/* Model indicator */}
-      {ready && (
+      {/* Model + help hint */}
+      {ready && !showHelp && !showWallet && (
         <Box marginLeft={2}>
-          <Text dimColor>{currentModel}</Text>
+          <Text dimColor>{currentModel}  ·  /help for commands</Text>
         </Box>
       )}
     </Box>
@@ -316,6 +349,9 @@ export function launchInkUI(opts: {
   model: string;
   workDir: string;
   version: string;
+  walletAddress?: string;
+  walletBalance?: string;
+  chain?: string;
   onModelChange?: (model: string) => void;
 }): InkUIHandle {
   let resolveInput: ((value: string | null) => void) | null = null;
@@ -325,21 +361,16 @@ export function launchInkUI(opts: {
     <RunCodeApp
       initialModel={opts.model}
       workDir={opts.workDir}
+      walletAddress={opts.walletAddress || 'not set — run: runcode setup'}
+      walletBalance={opts.walletBalance || 'unknown'}
+      chain={opts.chain || 'base'}
       onSubmit={(value) => {
-        if (resolveInput) {
-          resolveInput(value);
-          resolveInput = null;
-        }
+        if (resolveInput) { resolveInput(value); resolveInput = null; }
       }}
-      onModelChange={(model) => {
-        opts.onModelChange?.(model);
-      }}
+      onModelChange={(model) => { opts.onModelChange?.(model); }}
       onExit={() => {
         exiting = true;
-        if (resolveInput) {
-          resolveInput(null);
-          resolveInput = null;
-        }
+        if (resolveInput) { resolveInput(null); resolveInput = null; }
       }}
     />
   );
@@ -351,16 +382,10 @@ export function launchInkUI(opts: {
       } | undefined;
       ui?.handleEvent(event);
     },
-
     waitForInput: () => {
       if (exiting) return Promise.resolve(null);
-      return new Promise<string | null>((resolve) => {
-        resolveInput = resolve;
-      });
+      return new Promise<string | null>((resolve) => { resolveInput = resolve; });
     },
-
-    cleanup: () => {
-      instance.unmount();
-    },
+    cleanup: () => { instance.unmount(); },
   };
 }
