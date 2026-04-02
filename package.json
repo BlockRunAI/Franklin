@@ -45,9 +45,14 @@
     "@blockrun/llm": "^1.4.2",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
+    "@types/react": "^19.2.14",
     "bs58": "^6.0.0",
     "chalk": "^5.4.0",
-    "commander": "^13.0.0"
+    "commander": "^13.0.0",
+    "ink": "^6.8.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
