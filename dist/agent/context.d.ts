@@ -1,5 +1,5 @@
 /**
- * Context Manager for 0xcode
+ * Context Manager for runcode
  * Assembles system instructions, reads project config, injects environment info.
  */
 /**

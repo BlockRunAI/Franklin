@@ -1,10 +1,10 @@
 {
-  "name": "@blockrun/0xcode",
+  "name": "@blockrun/runcode",
   "version": "1.0.0",
-  "description": "0xcode — AI coding agent powered by 41+ models. Pay per use with USDC.",
+  "description": "RunCode — AI coding agent powered by 41+ models. Pay per use with USDC.",
   "type": "module",
   "bin": {
-    "0xcode": "./dist/index.js"
+    "runcode": "./dist/index.js"
   },
   "files": [
     "dist",
@@ -17,7 +17,7 @@
     "start": "node dist/index.js"
   },
   "keywords": [
-    "0xcode",
+    "runcode",
     "coding-agent",
     "ai",
     "llm",
@@ -35,7 +35,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/BlockRunAI/0xcode"
+    "url": "https://github.com/BlockRunAI/runcode"
   },
   "homepage": "https://blockrun.ai",
   "engines": {

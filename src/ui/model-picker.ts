@@ -1,5 +1,5 @@
 /**
- * Interactive model picker for 0xcode.
+ * Interactive model picker for runcode.
  * Shows categorized model list, supports shortcuts and arrow-key selection.
  */
 

@@ -1,5 +1,5 @@
 /**
- * 0xcode stats command
+ * runcode stats command
  * Display usage statistics and cost savings
  */
 interface StatsOptions {

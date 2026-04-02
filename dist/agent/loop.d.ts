@@ -1,5 +1,5 @@
 /**
- * 0xcode Agent Loop
+ * runcode Agent Loop
  * The core reasoning-action cycle: prompt → model → extract capabilities → execute → repeat.
  * Original implementation with different architecture from any reference codebase.
  */

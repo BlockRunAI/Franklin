@@ -1,5 +1,5 @@
 /**
- * LLM Client for 0xcode
+ * LLM Client for runcode
  * Calls BlockRun API directly with x402 payment handling and streaming.
  * Original implementation — not derived from any existing codebase.
  */
@@ -88,11 +88,11 @@ export class ModelClient {
       'Content-Type': 'application/json',
       'anthropic-version': '2023-06-01',
       'x-api-key': 'x402-agent-handles-auth',
-      'User-Agent': '0xcode/1.0',
+      'User-Agent': 'runcode/1.0',
     };
 
     if (this.debug) {
-      console.error(`[0xcode] POST ${endpoint} model=${request.model}`);
+      console.error(`[runcode] POST ${endpoint} model=${request.model}`);
     }
 
     let response = await fetch(endpoint, {
@@ -104,7 +104,7 @@ export class ModelClient {
 
     // Handle x402 payment
     if (response.status === 402) {
-      if (this.debug) console.error('[0xcode] Payment required — signing...');
+      if (this.debug) console.error('[runcode] Payment required — signing...');
       const paymentHeader = await this.signPayment(response);
       if (!paymentHeader) {
         yield { kind: 'error', payload: { message: 'Payment signing failed' } };
@@ -258,11 +258,11 @@ export class ModelClient {
     } catch (err) {
       const msg = (err as Error).message || '';
       if (msg.includes('insufficient') || msg.includes('balance')) {
-        console.error(`[0xcode] Insufficient USDC balance. Run '0xcode balance' to check.`);
+        console.error(`[runcode] Insufficient USDC balance. Run 'runcode balance' to check.`);
       } else if (this.debug) {
-        console.error('[0xcode] Payment error:', msg);
+        console.error('[runcode] Payment error:', msg);
       } else {
-        console.error(`[0xcode] Payment failed: ${msg.slice(0, 100)}`);
+        console.error(`[runcode] Payment failed: ${msg.slice(0, 100)}`);
       }
       return null;
     }

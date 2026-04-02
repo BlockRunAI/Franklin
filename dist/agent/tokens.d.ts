@@ -1,5 +1,5 @@
 /**
- * Token estimation for 0xcode.
+ * Token estimation for runcode.
  * Uses byte-based heuristic (no external tokenizer dependency).
  */
 import type { Dialogue } from './types.js';

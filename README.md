@@ -1,24 +1,24 @@
 <p align="center">
   <br>
   <code>
-  ██████╗ ██╗  ██╗ ██████╗ ██████╗ ██████╗ ███████╗
- ██╔═████╗╚██╗██╔╝██╔════╝██╔═══██╗██╔══██╗██╔════╝
- ██║██╔██║ ╚███╔╝ ██║     ██║   ██║██║  ██║█████╗
- ████╔╝██║ ██╔██╗ ██║     ██║   ██║██║  ██║██╔══╝
- ╚██████╔╝██╔╝ ██╗╚██████╗╚██████╔╝██████╔╝███████╗
-  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+ ██████╗ ██╗   ██╗███╗   ██╗ ██████╗ ██████╗ ██████╗ ███████╗
+ ██╔══██╗██║   ██║████╗  ██║██╔════╝██╔═══██╗██╔══██╗██╔════╝
+ ██████╔╝██║   ██║██╔██╗ ██║██║     ██║   ██║██║  ██║█████╗
+ ██╔══██╗██║   ██║██║╚██╗██║██║     ██║   ██║██║  ██║██╔══╝
+ ██║  ██║╚██████╔╝██║ ╚████║╚██████╗╚██████╔╝██████╔╝███████╗
+ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
   </code>
 </p>
 
 <div align="center">
 
-<h1>0xcode</h1>
+<h1>RunCode</h1>
 
 <p><strong>Open-source AI coding agent. 41+ models. Pay per use with USDC.</strong></p>
 
 <br>
 
-[![npm version](https://img.shields.io/npm/v/@blockrun/0xcode.svg?style=flat-square&color=cb3837)](https://npmjs.com/package/@blockrun/0xcode)
+[![npm version](https://img.shields.io/npm/v/@blockrun/runcode.svg?style=flat-square&color=cb3837)](https://npmjs.com/package/@blockrun/runcode)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![x402](https://img.shields.io/badge/x402-Payments-purple?style=flat-square)](https://x402.org)
@@ -28,14 +28,14 @@
 
 ---
 
-0xcode is a terminal-based AI coding agent that connects to 41+ LLM models through [BlockRun](https://blockrun.ai). It reads your code, edits files, runs commands, searches the web, and manages tasks — all from your terminal. You pay per request with USDC via the [x402](https://x402.org) protocol. No API keys, no accounts, no subscriptions.
+runcode is a terminal-based AI coding agent that connects to 41+ LLM models through [BlockRun](https://blockrun.ai). It reads your code, edits files, runs commands, searches the web, and manages tasks — all from your terminal. You pay per request with USDC via the [x402](https://x402.org) protocol. No API keys, no accounts, no subscriptions.
 
 ## Quick Start
 
 ```bash
-npm install -g @blockrun/0xcode
-0xcode setup base     # Create a wallet (one-time)
-0xcode                # Launch — picks model interactively
+npm install -g @blockrun/runcode
+runcode setup base     # Create a wallet (one-time)
+runcode                # Launch — picks model interactively
 ```
 
 That's it. Fund the wallet address with USDC on Base, or use free models immediately.
@@ -44,7 +44,7 @@ That's it. Fund the wallet address with USDC on Base, or use free models immedia
 
 ### Agent Capabilities
 
-0xcode is a full coding agent with 10 built-in tools:
+runcode is a full coding agent with 10 built-in tools:
 
 | Tool | Description |
 |------|-------------|
@@ -64,11 +64,11 @@ That's it. Fund the wallet address with USDC on Base, or use free models immedia
 Launch with the interactive model picker, or specify directly:
 
 ```bash
-0xcode                          # Interactive picker
-0xcode -m sonnet                # Claude Sonnet 4.6
-0xcode -m gpt                   # GPT-5.4
-0xcode -m deepseek              # DeepSeek V3
-0xcode -m free                  # Nemotron Ultra 253B (free)
+runcode                          # Interactive picker
+runcode -m sonnet                # Claude Sonnet 4.6
+runcode -m gpt                   # GPT-5.4
+runcode -m deepseek              # DeepSeek V3
+runcode -m free                  # Nemotron Ultra 253B (free)
 ```
 
 Switch models mid-session:
@@ -127,10 +127,10 @@ By default, read-only tools run automatically. Destructive tools (Write, Edit, B
 Use `--trust` to skip all prompts:
 
 ```bash
-0xcode --trust
+runcode --trust
 ```
 
-Configure rules in `~/.blockrun/0xcode-permissions.json`:
+Configure rules in `~/.blockrun/runcode-permissions.json`:
 
 ```json
 {
@@ -145,18 +145,18 @@ Concurrent-safe tools (Read, Glob, Grep) start executing while the model is stil
 
 ### Proxy Mode
 
-0xcode also includes a proxy mode for use with Claude Code or other tools:
+runcode also includes a proxy mode for use with Claude Code or other tools:
 
 ```bash
-0xcode proxy                    # Start payment proxy on :8402
-0xcode proxy -m deepseek        # With default model
-0xcode init                     # Auto-configure Claude Code + LaunchAgent
+runcode proxy                    # Start payment proxy on :8402
+runcode proxy -m deepseek        # With default model
+runcode init                     # Auto-configure Claude Code + LaunchAgent
 ```
 
 ## Architecture
 
 ```
-User input → 0xcode CLI
+User input → runcode CLI
   → Terminal UI (markdown rendering, model picker, spinners)
   → Permission check (allow / deny / ask)
   → Agent loop
@@ -204,16 +204,16 @@ src/
 
 | Command | Description |
 |---------|-------------|
-| `0xcode` | Start the agent (interactive model picker) |
-| `0xcode -m <model>` | Start with a specific model |
-| `0xcode --trust` | Start in trust mode (no permission prompts) |
-| `0xcode --debug` | Start with debug logging |
-| `0xcode setup [base\|solana]` | Create payment wallet |
-| `0xcode balance` | Check USDC balance |
-| `0xcode models` | List all models with pricing |
-| `0xcode stats` | View usage statistics and savings |
-| `0xcode config list` | View configuration |
-| `0xcode proxy` | Run as payment proxy for Claude Code |
+| `runcode` | Start the agent (interactive model picker) |
+| `runcode -m <model>` | Start with a specific model |
+| `runcode --trust` | Start in trust mode (no permission prompts) |
+| `runcode --debug` | Start with debug logging |
+| `runcode setup [base\|solana]` | Create payment wallet |
+| `runcode balance` | Check USDC balance |
+| `runcode models` | List all models with pricing |
+| `runcode stats` | View usage statistics and savings |
+| `runcode config list` | View configuration |
+| `runcode proxy` | Run as payment proxy for Claude Code |
 
 ### Session Commands
 
@@ -228,7 +228,7 @@ src/
 
 ## Payment
 
-0xcode uses the [x402](https://x402.org) protocol for pay-per-request payments with USDC stablecoins. No accounts, no API keys, no subscriptions.
+runcode uses the [x402](https://x402.org) protocol for pay-per-request payments with USDC stablecoins. No accounts, no API keys, no subscriptions.
 
 **Supported chains:**
 - **Base** (default) — Coinbase L2, low fees
@@ -237,7 +237,7 @@ src/
 **Setup:**
 
 ```bash
-0xcode setup base     # or: 0xcode setup solana
+runcode setup base     # or: runcode setup solana
 ```
 
 Fund the wallet address with USDC. Free models work without funding.
@@ -277,5 +277,5 @@ Contributions are welcome. Please open an issue first to discuss what you'd like
 
 - [BlockRun](https://blockrun.ai) — The AI gateway
 - [x402 Protocol](https://x402.org) — Internet-native payments
-- [npm](https://npmjs.com/package/@blockrun/0xcode)
+- [npm](https://npmjs.com/package/@blockrun/runcode)
 - [Telegram](https://t.me/blockrunAI)

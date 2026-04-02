@@ -34,7 +34,7 @@ export async function modelsCommand() {
             const ctx = '';
             console.log(`  ${chalk.cyan(m.id.padEnd(35))} ${input.padEnd(12)} ${output.padEnd(12)} ${ctx}`);
         }
-        console.log(`\n${chalk.dim(`${models.length} models available. Use:`)} ${chalk.bold('0xcode start --model <model-id>')}`);
+        console.log(`\n${chalk.dim(`${models.length} models available. Use:`)} ${chalk.bold('runcode start --model <model-id>')}`);
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown error';
