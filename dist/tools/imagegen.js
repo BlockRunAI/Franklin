@@ -32,9 +32,12 @@ async function execute(input, ctx) {
         'User-Agent': 'runcode/1.0',
     };
     try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 60_000); // 60s timeout
         // First request — will get 402
         let response = await fetch(endpoint, {
             method: 'POST',
+            signal: controller.signal,
             headers,
             body,
         });
@@ -46,10 +49,12 @@ async function execute(input, ctx) {
             }
             response = await fetch(endpoint, {
                 method: 'POST',
+                signal: controller.signal,
                 headers: { ...headers, ...paymentHeaders },
                 body,
             });
         }
+        clearTimeout(timeout);
         if (!response.ok) {
             const errText = await response.text().catch(() => '');
             return { output: `Image generation failed (${response.status}): ${errText.slice(0, 200)}`, isError: true };
@@ -83,7 +88,11 @@ async function execute(input, ctx) {
         };
     }
     catch (err) {
-        return { output: `Error: ${err.message}`, isError: true };
+        const msg = err.message || '';
+        if (msg.includes('abort')) {
+            return { output: 'Image generation timed out (60s limit). Try a simpler prompt.', isError: true };
+        }
+        return { output: `Error: ${msg}`, isError: true };
     }
 }
 // ─── Payment ───────────────────────────────────────────────────────────────

@@ -9,11 +9,11 @@ import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import { resolveModel } from './model-picker.js';
 // ─── Full-width input box ──────────────────────────────────────────────────
-function InputBox({ input, setInput, onSubmit, model, balance }) {
+function InputBox({ input, setInput, onSubmit, model, balance, focused }) {
     const { stdout } = useStdout();
     const cols = stdout?.columns ?? 80;
-    const innerWidth = Math.max(40, cols - 4); // 4 = borders + padding
-    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, children: [_jsx(Text, { dimColor: true, children: '╭' + '─'.repeat(cols - 2) + '╮' }), _jsxs(Box, { children: [_jsx(Text, { dimColor: true, children: "\u2502 " }), _jsx(Box, { width: innerWidth, children: _jsx(TextInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: "Ask anything... (/model to switch, /help for commands)" }) }), _jsxs(Text, { dimColor: true, children: [' '.repeat(Math.max(0, cols - innerWidth - 4)), "\u2502"] })] }), _jsx(Text, { dimColor: true, children: '╰' + '─'.repeat(cols - 2) + '╯' }), _jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [model, "  \u00B7  ", balance, "  \u00B7  esc to quit"] }) })] }));
+    const innerWidth = Math.max(40, cols - 4);
+    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, children: [_jsx(Text, { dimColor: true, children: '╭' + '─'.repeat(cols - 2) + '╮' }), _jsxs(Box, { children: [_jsx(Text, { dimColor: true, children: "\u2502 " }), _jsx(Box, { width: innerWidth, children: _jsx(TextInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: "Ask anything... (/model to switch, /help for commands)", focus: focused !== false }) }), _jsxs(Text, { dimColor: true, children: [' '.repeat(Math.max(0, cols - innerWidth - 4)), "\u2502"] })] }), _jsx(Text, { dimColor: true, children: '╰' + '─'.repeat(cols - 2) + '╯' }), _jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [model, "  \u00B7  ", balance, "  \u00B7  esc to quit"] }) })] }));
 }
 // ─── Model picker data ─────────────────────────────────────────────────────
 const PICKER_MODELS = [
@@ -49,8 +49,10 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const [totalCost, setTotalCost] = useState(0);
     const [showHelp, setShowHelp] = useState(false);
     const [showWallet, setShowWallet] = useState(false);
+    // Key handler for picker + esc — ONLY active when TextInput is NOT focused
+    const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input);
     useInput((ch, key) => {
-        // Esc to quit (when not in picker)
+        // Esc to quit (only when input is empty and in input mode)
         if (key.escape && mode === 'input' && ready && !input) {
             onExit();
             exit();
@@ -69,14 +71,14 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
             onModelChange(selected.id);
             setStatusMsg(`Model → ${selected.label}`);
             setMode('input');
-            setReady(true); // Show input box after picking
+            setReady(true);
             setTimeout(() => setStatusMsg(''), 3000);
         }
         else if (key.escape) {
             setMode('input');
             setReady(true);
         }
-    });
+    }, { isActive: isPickerOrEsc });
     const handleSubmit = useCallback((value) => {
         const trimmed = value.trim();
         if (!trimmed)
@@ -218,7 +220,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     // ── Normal Mode ──
     return (_jsxs(Box, { flexDirection: "column", children: [statusMsg && (_jsx(Box, { marginLeft: 2, children: _jsx(Text, { color: "green", children: statusMsg }) })), showHelp && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Commands" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/model" }), " [name]  Switch model (picker if no name)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/wallet" }), "        Show wallet address & balance"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/cost" }), "          Session cost"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/help" }), "          This help"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/exit" }), "          Quit"] }), _jsx(Text, { children: " " }), _jsx(Text, { dimColor: true, children: "  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4, nano, mini, haiku" })] })), showWallet && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Wallet" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  Chain:   ", _jsx(Text, { color: "magenta", children: chain })] }), _jsxs(Text, { children: ["  Address: ", _jsx(Text, { color: "cyan", children: walletAddress })] }), _jsxs(Text, { children: ["  Balance: ", _jsx(Text, { color: "green", children: walletBalance })] })] })), Array.from(tools.values()).map((tool, i) => (_jsx(Box, { marginLeft: 1, children: tool.done ? (tool.error
                     ? _jsxs(Text, { color: "red", children: ["  \u2717 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms"] })] })
-                    : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms \u2014 ", tool.preview.slice(0, 60), tool.preview.length > 60 ? '...' : ''] })] })) : (_jsxs(Text, { color: "cyan", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", tool.name, "..."] })) }, i))), thinking && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }) })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (_jsx(Box, { marginLeft: 1, marginTop: 0, children: _jsxs(Text, { dimColor: true, children: [turnTokens.input.toLocaleString(), " in / ", turnTokens.output.toLocaleString(), " out"] }) })), ready && (_jsx(InputBox, { input: input, setInput: setInput, onSubmit: handleSubmit, model: currentModel, balance: walletBalance }))] }));
+                    : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms \u2014 ", tool.preview.slice(0, 60), tool.preview.length > 60 ? '...' : ''] })] })) : (_jsxs(Text, { color: "cyan", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", tool.name, "..."] })) }, i))), thinking && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }) })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (_jsx(Box, { marginLeft: 1, marginTop: 0, children: _jsxs(Text, { dimColor: true, children: [turnTokens.input.toLocaleString(), " in / ", turnTokens.output.toLocaleString(), " out"] }) })), ready && (_jsx(InputBox, { input: input, setInput: setInput, onSubmit: handleSubmit, model: currentModel, balance: walletBalance, focused: mode === 'input' }))] }));
 }
 export function launchInkUI(opts) {
     let resolveInput = null;
