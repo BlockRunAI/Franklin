@@ -148,6 +148,7 @@ async function runWithBasicUI(agentConfig, model, workDir) {
         }
     }
     ui.printGoodbye();
+    process.exit(0);
 }
 async function handleSlashCommand(cmd, config, ui) {
     const parts = cmd.trim().split(/\s+/);

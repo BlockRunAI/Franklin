@@ -180,6 +180,7 @@ async function runWithBasicUI(
   }
 
   ui.printGoodbye();
+  process.exit(0);
 }
 
 // ─── Slash commands ────────────────────────────────────────────────────────

@@ -57,9 +57,13 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   };
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60_000); // 60s timeout
+
     // First request — will get 402
     let response = await fetch(endpoint, {
       method: 'POST',
+      signal: controller.signal,
       headers,
       body,
     });
@@ -73,10 +77,13 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
       response = await fetch(endpoint, {
         method: 'POST',
+        signal: controller.signal,
         headers: { ...headers, ...paymentHeaders },
         body,
       });
     }
+
+    clearTimeout(timeout);
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
@@ -115,7 +122,11 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       output: `Image saved to ${outPath} (${sizeKB}KB, ${imageSize})${revisedPrompt}\n\nOpen with: open ${outPath}`,
     };
   } catch (err) {
-    return { output: `Error: ${(err as Error).message}`, isError: true };
+    const msg = (err as Error).message || '';
+    if (msg.includes('abort')) {
+      return { output: 'Image generation timed out (60s limit). Try a simpler prompt.', isError: true };
+    }
+    return { output: `Error: ${msg}`, isError: true };
   }
 }
 

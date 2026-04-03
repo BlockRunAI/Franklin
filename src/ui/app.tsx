@@ -12,16 +12,17 @@ import { resolveModel } from './model-picker.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
-function InputBox({ input, setInput, onSubmit, model, balance }: {
+function InputBox({ input, setInput, onSubmit, model, balance, focused }: {
   input: string;
   setInput: (v: string) => void;
   onSubmit: (v: string) => void;
   model: string;
   balance: string;
+  focused?: boolean;
 }) {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
-  const innerWidth = Math.max(40, cols - 4); // 4 = borders + padding
+  const innerWidth = Math.max(40, cols - 4);
 
   return (
     <Box flexDirection="column" marginTop={1}>
@@ -34,6 +35,7 @@ function InputBox({ input, setInput, onSubmit, model, balance }: {
             onChange={setInput}
             onSubmit={onSubmit}
             placeholder="Ask anything... (/model to switch, /help for commands)"
+            focus={focused !== false}
           />
         </Box>
         <Text dimColor>{' '.repeat(Math.max(0, cols - innerWidth - 4))}│</Text>
@@ -111,8 +113,10 @@ function RunCodeApp({
   const [showHelp, setShowHelp] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
 
+  // Key handler for picker + esc — ONLY active when TextInput is NOT focused
+  const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input);
   useInput((ch, key) => {
-    // Esc to quit (when not in picker)
+    // Esc to quit (only when input is empty and in input mode)
     if (key.escape && mode === 'input' && ready && !input) {
       onExit();
       exit();
@@ -129,14 +133,14 @@ function RunCodeApp({
       onModelChange(selected.id);
       setStatusMsg(`Model → ${selected.label}`);
       setMode('input');
-      setReady(true); // Show input box after picking
+      setReady(true);
       setTimeout(() => setStatusMsg(''), 3000);
     }
     else if (key.escape) {
       setMode('input');
       setReady(true);
     }
-  });
+  }, { isActive: isPickerOrEsc });
 
   const handleSubmit = useCallback((value: string) => {
     const trimmed = value.trim();
@@ -393,6 +397,7 @@ function RunCodeApp({
           onSubmit={handleSubmit}
           model={currentModel}
           balance={walletBalance}
+          focused={mode === 'input'}
         />
       )}
     </Box>
