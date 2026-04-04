@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.0 (2026-04-04)
+
+### MCP Support (Model Context Protocol)
+- **Built-in MCP client**: Connect to any MCP server via stdio transport
+- **Auto-discovery**: Tools from MCP servers automatically available to the agent
+- **Config**: Global `~/.blockrun/mcp.json` + project `.mcp.json` support
+- **Namespaced tools**: MCP tools appear as `mcp__<server>__<tool>` (no name collisions)
+- **`/mcp` command**: List connected servers and their tools
+- **Graceful degradation**: Failed MCP connections don't block startup
+- **Cleanup**: MCP connections properly closed on exit
+
+### Token Management Improvements
+- **API-anchored tracking**: Token counts anchored to actual API response values
+- **Estimation on top**: New messages estimated relative to last API count (more accurate)
+- **Anchor reset on compaction**: Prevents stale counts after history compression
+- **`/context` enhanced**: Shows tokens as `~X / Yk (Z%)` with anchored indicator (✓/~)
+- **Context window percentage**: See how full your context is at a glance
+
 ## 1.8.0 (2026-04-04)
 
 ### Major Features
