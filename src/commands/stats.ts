@@ -63,7 +63,7 @@ export function statsCommand(options: StatsOptions): void {
     `    Total Cost:     ${chalk.green('$' + stats.totalCostUsd.toFixed(4))}`
   );
   console.log(
-    `    Avg per Request:${chalk.gray(' $' + avgCostPerRequest.toFixed(6))}`
+    `    Avg per Request: ${chalk.gray('$' + avgCostPerRequest.toFixed(6))}`
   );
   console.log(`    Input Tokens:   ${stats.totalInputTokens.toLocaleString()}`);
   console.log(
