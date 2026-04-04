@@ -435,6 +435,16 @@ export async function interactiveSession(
       input = 'Review the current git diff and staged changes. Stage relevant files with `git add`, then create a commit with a concise message summarizing the changes. Do NOT push to remote.';
     }
 
+    // Handle /review — ask agent to review current changes
+    if (input === '/review') {
+      input = 'Review the current git diff. For each changed file, check for: bugs, security issues, missing error handling, performance problems, and style issues. Provide a brief summary of findings.';
+    }
+
+    // Handle /fix — ask agent to fix the last error or issue
+    if (input === '/fix') {
+      input = 'Look at the most recent error or issue we discussed and fix it. Check the relevant files, identify the root cause, and apply the fix.';
+    }
+
     // Handle /status — show git status
     if (input === '/status') {
       try {
