@@ -119,7 +119,7 @@ async function execute(input, ctx) {
 export const bashCapability = {
     spec: {
         name: 'Bash',
-        description: 'Execute a shell command and return its output. Commands run in the working directory.',
+        description: 'Execute a shell command and return stdout+stderr. Runs in working directory with user env. Output capped at 512KB. Default timeout: 2min, max: 10min (set via timeout param in ms).',
         input_schema: {
             type: 'object',
             properties: {
