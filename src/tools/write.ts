@@ -48,9 +48,10 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
     const lineCount = content.split('\n').length;
     const byteCount = Buffer.byteLength(content, 'utf-8');
+    const sizeStr = byteCount >= 1024 ? `${(byteCount / 1024).toFixed(1)}KB` : `${byteCount}B`;
 
     return {
-      output: `${existed ? 'Updated' : 'Created'} ${resolved} (${lineCount} lines, ${byteCount} bytes)`,
+      output: `${existed ? 'Updated' : 'Created'} ${resolved} (${lineCount} lines, ${sizeStr})`,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
