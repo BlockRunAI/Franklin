@@ -238,6 +238,9 @@ function RunCodeApp({
           return;
 
         case '/commit':
+        case '/push':
+        case '/pr':
+        case '/undo':
         case '/review':
         case '/test':
         case '/fix':
@@ -251,6 +254,11 @@ function RunCodeApp({
         case '/log':
         case '/stash':
         case '/unstash':
+        case '/security':
+        case '/lint':
+        case '/optimize':
+        case '/migrate':
+        case '/clean':
         case '/context':
         case '/doctor':
         case '/bug':
@@ -308,7 +316,8 @@ function RunCodeApp({
           // Commands with arguments that pass through to the loop
           if (trimmed.startsWith('/resume ') || trimmed.startsWith('/branch ')
             || trimmed.startsWith('/explain ') || trimmed.startsWith('/search ')
-            || trimmed.startsWith('/find ') || trimmed.startsWith('/refactor ')) {
+            || trimmed.startsWith('/find ') || trimmed.startsWith('/refactor ')
+            || trimmed.startsWith('/scaffold ') || trimmed.startsWith('/doc ')) {
             setStreamText('');
             setWaiting(true);
             setReady(false);
@@ -455,13 +464,31 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/cost</Text>          Session cost & savings</Text>
           <Text>  <Text color="cyan">/retry</Text>         Retry the last prompt</Text>
           <Text>  <Text color="cyan">/compact</Text>       Compress conversation history</Text>
-          <Text>  <Text color="cyan">/commit</Text>        Auto-commit changes</Text>
-          <Text>  <Text color="cyan">/review</Text>        Review git diff</Text>
+          <Text dimColor>  ── Coding ──</Text>
           <Text>  <Text color="cyan">/test</Text>          Run tests</Text>
+          <Text>  <Text color="cyan">/fix</Text>           Fix last error</Text>
+          <Text>  <Text color="cyan">/review</Text>        Code review</Text>
+          <Text>  <Text color="cyan">/explain</Text> file  Explain code</Text>
+          <Text>  <Text color="cyan">/search</Text> query  Search codebase</Text>
+          <Text>  <Text color="cyan">/refactor</Text> desc Refactor code</Text>
+          <Text>  <Text color="cyan">/scaffold</Text> desc Generate boilerplate</Text>
+          <Text dimColor>  ── Git ──</Text>
+          <Text>  <Text color="cyan">/commit</Text>        Commit changes</Text>
+          <Text>  <Text color="cyan">/push</Text>          Push to remote</Text>
+          <Text>  <Text color="cyan">/pr</Text>            Create pull request</Text>
           <Text>  <Text color="cyan">/status</Text>        Git status</Text>
           <Text>  <Text color="cyan">/diff</Text>          Git diff</Text>
           <Text>  <Text color="cyan">/log</Text>           Git log</Text>
           <Text>  <Text color="cyan">/branch</Text> [name] Branches</Text>
+          <Text>  <Text color="cyan">/stash</Text>         Stash changes</Text>
+          <Text>  <Text color="cyan">/undo</Text>          Undo last commit</Text>
+          <Text dimColor>  ── Analysis ──</Text>
+          <Text>  <Text color="cyan">/security</Text>      Security audit</Text>
+          <Text>  <Text color="cyan">/lint</Text>          Quality check</Text>
+          <Text>  <Text color="cyan">/optimize</Text>      Performance check</Text>
+          <Text>  <Text color="cyan">/todo</Text>          Find TODOs</Text>
+          <Text>  <Text color="cyan">/deps</Text>          Dependencies</Text>
+          <Text>  <Text color="cyan">/clean</Text>         Dead code removal</Text>
           <Text>  <Text color="cyan">/context</Text>       Session info (model, tokens, mode)</Text>
           <Text>  <Text color="cyan">/plan</Text>          Enter plan mode (read-only tools)</Text>
           <Text>  <Text color="cyan">/execute</Text>       Exit plan mode (enable all tools)</Text>
