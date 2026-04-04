@@ -82,8 +82,20 @@ async function execute(input, ctx) {
             updated = content.slice(0, firstIdx) + newStr + content.slice(firstIdx + oldStr.length);
         }
         fs.writeFileSync(resolved, updated, 'utf-8');
+        // Build a concise diff preview
+        const oldLines = oldStr.split('\n');
+        const newLines = newStr.split('\n');
+        let diffPreview = '';
+        if (oldLines.length <= 5 && newLines.length <= 5) {
+            const removed = oldLines.map(l => `- ${l}`).join('\n');
+            const added = newLines.map(l => `+ ${l}`).join('\n');
+            diffPreview = `\n${removed}\n${added}`;
+        }
+        else {
+            diffPreview = ` (${oldLines.length} lines → ${newLines.length} lines)`;
+        }
         return {
-            output: `Updated ${resolved} — ${matchCount} replacement${matchCount > 1 ? 's' : ''} made.`,
+            output: `Updated ${resolved} — ${matchCount} replacement${matchCount > 1 ? 's' : ''} made.${diffPreview}`,
         };
     }
     catch (err) {
