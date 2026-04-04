@@ -7,6 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { BLOCKRUN_DIR } from '../config.js';
 import type { McpConfig, McpServerConfig } from './client.js';
 
@@ -16,19 +17,32 @@ const GLOBAL_MCP_FILE = path.join(BLOCKRUN_DIR, 'mcp.json');
  * Load MCP server configurations from global + project files.
  * Project config overrides global for same server name.
  */
-// Built-in MCP server: @blockrun/mcp is always available (zero config)
+// Built-in MCP server: @blockrun/mcp available when globally installed
+// Uses `blockrun-mcp` binary instead of `npx` for fast startup
 const BUILTIN_MCP_SERVERS: Record<string, McpServerConfig> = {
   blockrun: {
     transport: 'stdio',
-    command: 'npx',
-    args: ['-y', '@blockrun/mcp'],
+    command: 'blockrun-mcp',
+    args: [],
     label: 'BlockRun (built-in)',
   },
 };
 
+function isCommandAvailable(cmd: string): boolean {
+  try {
+    execSync(`which ${cmd}`, { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function loadMcpConfig(workDir: string): McpConfig {
-  // Start with built-in servers
-  const servers: Record<string, McpServerConfig> = { ...BUILTIN_MCP_SERVERS };
+  // Start with built-in servers (only if binary is available)
+  const servers: Record<string, McpServerConfig> = {};
+  if (isCommandAvailable('blockrun-mcp')) {
+    Object.assign(servers, BUILTIN_MCP_SERVERS);
+  }
 
   // 1. Global config
   try {
