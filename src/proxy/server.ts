@@ -73,7 +73,15 @@ function log(...args: unknown[]) {
 
 const DEFAULT_MAX_TOKENS = 4096;
 // Per-model last output tokens for adaptive max_tokens (avoids cross-request pollution)
+const MAX_TRACKED_MODELS = 50;
 const lastOutputByModel = new Map<string, number>();
+function trackOutputTokens(model: string, tokens: number) {
+  if (lastOutputByModel.size >= MAX_TRACKED_MODELS) {
+    const firstKey = lastOutputByModel.keys().next().value;
+    if (firstKey) lastOutputByModel.delete(firstKey);
+  }
+  lastOutputByModel.set(model, tokens);
+}
 
 // Model shortcuts for quick switching
 const MODEL_SHORTCUTS: Record<string, string> = {
@@ -491,7 +499,7 @@ export function createProxy(options: ProxyOptions): http.Server {
                   );
                   if (lastOutputMatch) {
                     const outputTokens = parseInt(lastOutputMatch[1], 10);
-                    lastOutputByModel.set(finalModel, outputTokens);
+                    trackOutputTokens(finalModel, outputTokens);
                     const inputTokens = inputMatch
                       ? parseInt(inputMatch[1], 10)
                       : 0;
@@ -536,7 +544,7 @@ export function createProxy(options: ProxyOptions): http.Server {
             const parsed = JSON.parse(text);
             if (parsed.usage?.output_tokens) {
               const outputTokens = parsed.usage.output_tokens;
-              lastOutputByModel.set(finalModel, outputTokens);
+              trackOutputTokens(finalModel, outputTokens);
               const inputTokens = parsed.usage?.input_tokens || 0;
               const latencyMs = Date.now() - requestStartTime;
               const cost = estimateCost(

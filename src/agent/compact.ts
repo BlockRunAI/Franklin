@@ -72,6 +72,31 @@ export async function autoCompactIfNeeded(
 }
 
 /**
+ * Force compaction regardless of threshold (for /compact command).
+ */
+export async function forceCompact(
+  history: Dialogue[],
+  model: string,
+  client: ModelClient,
+  debug?: boolean
+): Promise<{ history: Dialogue[]; compacted: boolean }> {
+  if (history.length <= 4) {
+    return { history, compacted: false };
+  }
+  try {
+    const compacted = await compactHistory(history, model, client, debug);
+    return { history: compacted, compacted: true };
+  } catch (err) {
+    if (debug) {
+      console.error(`[runcode] Force compaction failed: ${(err as Error).message}`);
+    }
+    const threshold = getCompactionThreshold(model);
+    const truncated = emergencyTruncate(history, threshold);
+    return { history: truncated, compacted: true };
+  }
+}
+
+/**
  * Compact conversation history by summarizing older messages.
  */
 async function compactHistory(

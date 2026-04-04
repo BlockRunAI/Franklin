@@ -153,6 +153,12 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     setTimeout(() => setStatusMsg(''), 3000);
                     return;
                 case '/compact':
+                    setStreamText('');
+                    setThinking(false);
+                    setThinkingText('');
+                    setTools(new Map());
+                    setWaiting(true);
+                    setReady(false);
                     onSubmit('/compact');
                     return;
                 default:
@@ -233,6 +239,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                         setReady(true);
                         setWaiting(false);
                         setThinking(false);
+                        setThinkingText('');
                         break;
                 }
             },
