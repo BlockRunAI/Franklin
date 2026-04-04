@@ -32,6 +32,13 @@ export class PermissionManager {
         if (this.mode === 'trust') {
             return { behavior: 'allow', reason: 'trust mode' };
         }
+        // Plan mode: only allow read-only tools
+        if (this.mode === 'plan') {
+            if (READ_ONLY_TOOLS.has(toolName)) {
+                return { behavior: 'allow', reason: 'plan mode — read-only' };
+            }
+            return { behavior: 'deny', reason: 'plan mode — use /execute to enable writes' };
+        }
         // Deny-all mode: deny everything that isn't read-only
         if (this.mode === 'deny-all') {
             if (READ_ONLY_TOOLS.has(toolName)) {

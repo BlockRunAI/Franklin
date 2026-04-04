@@ -8,7 +8,7 @@ export interface PermissionRules {
     deny: string[];
     ask: string[];
 }
-export type PermissionMode = 'default' | 'trust' | 'deny-all';
+export type PermissionMode = 'default' | 'trust' | 'deny-all' | 'plan';
 export interface PermissionDecision {
     behavior: PermissionBehavior;
     reason?: string;

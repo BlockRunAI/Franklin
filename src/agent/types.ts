@@ -136,7 +136,7 @@ export interface AgentConfig {
   capabilities: CapabilityHandler[];
   maxTurns?: number;
   workingDir?: string;
-  permissionMode?: 'default' | 'trust' | 'deny-all';
+  permissionMode?: 'default' | 'trust' | 'deny-all' | 'plan';
   onEvent?: (event: StreamEvent) => void;
   debug?: boolean;
 }
