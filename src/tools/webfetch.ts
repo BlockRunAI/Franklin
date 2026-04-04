@@ -77,8 +77,13 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     const decoder = new TextDecoder();
     let body = decoder.decode(Buffer.concat(chunks)).slice(0, maxLen);
 
-    // Strip HTML tags for readability if HTML
-    if (contentType.includes('html')) {
+    // Format response based on content type
+    if (contentType.includes('json')) {
+      try {
+        const parsed = JSON.parse(body);
+        body = JSON.stringify(parsed, null, 2).slice(0, maxLen);
+      } catch { /* leave as-is if not valid JSON */ }
+    } else if (contentType.includes('html')) {
       body = stripHtml(body);
     }
 
@@ -102,16 +107,28 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
 
 function stripHtml(html: string): string {
   return html
+    // Remove non-content elements
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
+    .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
+    .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
+    .replace(/<aside[^>]*>[\s\S]*?<\/aside>/gi, '')
+    .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '')
+    // Convert block elements to newlines for readability
+    .replace(/<\/?(p|div|h[1-6]|li|br|tr)[^>]*>/gi, '\n')
+    // Strip remaining tags
     .replace(/<[^>]+>/g, ' ')
+    // Decode entities
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
+    // Clean whitespace
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
