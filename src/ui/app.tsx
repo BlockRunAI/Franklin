@@ -241,6 +241,7 @@ function RunCodeApp({
         case '/status':
         case '/diff':
         case '/context':
+        case '/doctor':
         case '/plan':
         case '/execute':
           onSubmit(trimmed);
@@ -448,6 +449,7 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/sessions</Text>      List saved sessions</Text>
           <Text>  <Text color="cyan">/resume</Text> id     Resume a saved session</Text>
           <Text>  <Text color="cyan">/clear</Text>         Clear conversation display</Text>
+          <Text>  <Text color="cyan">/doctor</Text>        Diagnose setup issues</Text>
           <Text>  <Text color="cyan">/help</Text>          This help</Text>
           <Text>  <Text color="cyan">/exit</Text>          Quit</Text>
           <Text> </Text>
