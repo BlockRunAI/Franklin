@@ -330,7 +330,21 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     await new Promise(r => setTimeout(r, backoffMs));
                     continue;
                 }
-                onEvent({ kind: 'turn_done', reason: 'error', error: errMsg });
+                // Add recovery suggestions based on error type
+                let suggestion = '';
+                if (errLower.includes('429') || errLower.includes('rate')) {
+                    suggestion = '\nTip: Try /model to switch to a different model, or wait a moment and /retry.';
+                }
+                else if (errLower.includes('balance') || errLower.includes('insufficient') || errLower.includes('402')) {
+                    suggestion = '\nTip: Run `runcode balance` to check funds. Try /model free for free models.';
+                }
+                else if (errLower.includes('timeout') || errLower.includes('econnrefused')) {
+                    suggestion = '\nTip: Check your network connection. Use /retry to try again.';
+                }
+                else if (errLower.includes('prompt is too long')) {
+                    suggestion = '\nTip: Run /compact to compress conversation history.';
+                }
+                onEvent({ kind: 'turn_done', reason: 'error', error: errMsg + suggestion });
                 break;
             }
             onEvent({
