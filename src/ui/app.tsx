@@ -23,7 +23,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, focused }: {
 }) {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
-  const innerWidth = Math.max(40, cols - 4);
+  const innerWidth = Math.min(Math.max(30, cols - 4), cols - 2);
 
   return (
     <Box flexDirection="column" marginTop={1}>
@@ -35,7 +35,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, focused }: {
             value={input}
             onChange={setInput}
             onSubmit={onSubmit}
-            placeholder="Ask anything... (/model to switch, /help for commands)"
+            placeholder="Ask anything... (/help for commands)"
             focus={focused !== false}
           />
         </Box>
@@ -237,47 +237,6 @@ function RunCodeApp({
           setShowWallet(false);
           return;
 
-        case '/commit':
-        case '/push':
-        case '/pr':
-        case '/undo':
-        case '/review':
-        case '/test':
-        case '/fix':
-        case '/debug':
-        case '/init':
-        case '/todo':
-        case '/deps':
-        case '/tasks':
-        case '/status':
-        case '/diff':
-        case '/log':
-        case '/stash':
-        case '/unstash':
-        case '/security':
-        case '/lint':
-        case '/optimize':
-        case '/migrate':
-        case '/clean':
-        case '/context':
-        case '/doctor':
-        case '/bug':
-        case '/version':
-        case '/plan':
-        case '/execute':
-          onSubmit(trimmed);
-          setStreamText('');
-          setWaiting(true);
-          setReady(false);
-          return;
-
-        case '/sessions':
-          setStreamText('');
-          setWaiting(true);
-          setReady(false);
-          onSubmit('/sessions');
-          return;
-
         case '/clear':
           setStreamText('');
           setTools(new Map());
@@ -302,30 +261,15 @@ function RunCodeApp({
           onSubmit(lastPrompt);
           return;
 
-        case '/compact':
+        default:
+          // All other slash commands pass through to the agent loop's command registry
           setStreamText('');
           setThinking(false);
           setThinkingText('');
           setTools(new Map());
           setWaiting(true);
           setReady(false);
-          onSubmit('/compact');
-          return;
-
-        default:
-          // Commands with arguments that pass through to the loop
-          if (trimmed.startsWith('/resume ') || trimmed.startsWith('/branch ')
-            || trimmed.startsWith('/explain ') || trimmed.startsWith('/search ')
-            || trimmed.startsWith('/find ') || trimmed.startsWith('/refactor ')
-            || trimmed.startsWith('/scaffold ') || trimmed.startsWith('/doc ')) {
-            setStreamText('');
-            setWaiting(true);
-            setReady(false);
-            onSubmit(trimmed);
-            return;
-          }
-          setStatusMsg(`Unknown command: ${cmd}. Try /help`);
-          setTimeout(() => setStatusMsg(''), 3000);
+          onSubmit(trimmed);
           return;
       }
     }
@@ -346,7 +290,7 @@ function RunCodeApp({
     setShowWallet(false);
     setTurnTokens({ input: 0, output: 0 });
     onSubmit(trimmed);
-  }, [currentModel, totalCost, onSubmit, onModelChange, onExit, exit]);
+  }, [currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
 
   // Expose event handler + balance updater
   useEffect(() => {
@@ -522,7 +466,7 @@ function RunCodeApp({
               ? <Text color="red">  ✗ {tool.name} <Text dimColor>{tool.elapsed}ms</Text></Text>
               : <Text color="green">  ✓ {tool.name} <Text dimColor>{tool.elapsed}ms — {tool.preview.slice(0, 200)}{tool.preview.length > 200 ? '...' : ''}</Text></Text>
           ) : (
-            <Text color="cyan">  <Spinner type="dots" /> {tool.name}... <Text dimColor>{Math.round((Date.now() - tool.startTime) / 1000)}s</Text></Text>
+            <Text color="cyan">  <Spinner type="dots" /> {tool.name}... <Text dimColor>{(() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? `${s}s` : ''; })()}</Text></Text>
           )}
         </Box>
       ))}

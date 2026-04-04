@@ -13,8 +13,8 @@ import { estimateCost } from '../pricing.js';
 function InputBox({ input, setInput, onSubmit, model, balance, focused }) {
     const { stdout } = useStdout();
     const cols = stdout?.columns ?? 80;
-    const innerWidth = Math.max(40, cols - 4);
-    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, children: [_jsx(Text, { dimColor: true, children: '╭' + '─'.repeat(cols - 2) + '╮' }), _jsxs(Box, { children: [_jsx(Text, { dimColor: true, children: "\u2502 " }), _jsx(Box, { width: innerWidth, children: _jsx(TextInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: "Ask anything... (/model to switch, /help for commands)", focus: focused !== false }) }), _jsxs(Text, { dimColor: true, children: [' '.repeat(Math.max(0, cols - innerWidth - 4)), "\u2502"] })] }), _jsx(Text, { dimColor: true, children: '╰' + '─'.repeat(cols - 2) + '╯' }), _jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [model, "  \u00B7  ", balance, "  \u00B7  esc to abort/quit"] }) })] }));
+    const innerWidth = Math.min(Math.max(30, cols - 4), cols - 2);
+    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, children: [_jsx(Text, { dimColor: true, children: '╭' + '─'.repeat(cols - 2) + '╮' }), _jsxs(Box, { children: [_jsx(Text, { dimColor: true, children: "\u2502 " }), _jsx(Box, { width: innerWidth, children: _jsx(TextInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: "Ask anything... (/help for commands)", focus: focused !== false }) }), _jsxs(Text, { dimColor: true, children: [' '.repeat(Math.max(0, cols - innerWidth - 4)), "\u2502"] })] }), _jsx(Text, { dimColor: true, children: '╰' + '─'.repeat(cols - 2) + '╯' }), _jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [model, "  \u00B7  ", balance, "  \u00B7  esc to abort/quit"] }) })] }));
 }
 // ─── Model picker data ─────────────────────────────────────────────────────
 const PICKER_MODELS = [
@@ -167,45 +167,6 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     setShowHelp(true);
                     setShowWallet(false);
                     return;
-                case '/commit':
-                case '/push':
-                case '/pr':
-                case '/undo':
-                case '/review':
-                case '/test':
-                case '/fix':
-                case '/debug':
-                case '/init':
-                case '/todo':
-                case '/deps':
-                case '/tasks':
-                case '/status':
-                case '/diff':
-                case '/log':
-                case '/stash':
-                case '/unstash':
-                case '/security':
-                case '/lint':
-                case '/optimize':
-                case '/migrate':
-                case '/clean':
-                case '/context':
-                case '/doctor':
-                case '/bug':
-                case '/version':
-                case '/plan':
-                case '/execute':
-                    onSubmit(trimmed);
-                    setStreamText('');
-                    setWaiting(true);
-                    setReady(false);
-                    return;
-                case '/sessions':
-                    setStreamText('');
-                    setWaiting(true);
-                    setReady(false);
-                    onSubmit('/sessions');
-                    return;
                 case '/clear':
                     setStreamText('');
                     setTools(new Map());
@@ -228,29 +189,15 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     setTurnTokens({ input: 0, output: 0 });
                     onSubmit(lastPrompt);
                     return;
-                case '/compact':
+                default:
+                    // All other slash commands pass through to the agent loop's command registry
                     setStreamText('');
                     setThinking(false);
                     setThinkingText('');
                     setTools(new Map());
                     setWaiting(true);
                     setReady(false);
-                    onSubmit('/compact');
-                    return;
-                default:
-                    // Commands with arguments that pass through to the loop
-                    if (trimmed.startsWith('/resume ') || trimmed.startsWith('/branch ')
-                        || trimmed.startsWith('/explain ') || trimmed.startsWith('/search ')
-                        || trimmed.startsWith('/find ') || trimmed.startsWith('/refactor ')
-                        || trimmed.startsWith('/scaffold ') || trimmed.startsWith('/doc ')) {
-                        setStreamText('');
-                        setWaiting(true);
-                        setReady(false);
-                        onSubmit(trimmed);
-                        return;
-                    }
-                    setStatusMsg(`Unknown command: ${cmd}. Try /help`);
-                    setTimeout(() => setStatusMsg(''), 3000);
+                    onSubmit(trimmed);
                     return;
             }
         }
@@ -270,7 +217,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         setShowWallet(false);
         setTurnTokens({ input: 0, output: 0 });
         onSubmit(trimmed);
-    }, [currentModel, totalCost, onSubmit, onModelChange, onExit, exit]);
+    }, [currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
     // Expose event handler + balance updater
     useEffect(() => {
         globalThis.__runcode_ui = {
@@ -348,7 +295,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     // ── Normal Mode ──
     return (_jsxs(Box, { flexDirection: "column", children: [statusMsg && (_jsx(Box, { marginLeft: 2, children: _jsx(Text, { color: "green", children: statusMsg }) })), showHelp && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Commands" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/model" }), " [name]  Switch model (picker if no name)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/wallet" }), "        Show wallet address & balance"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/cost" }), "          Session cost & savings"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/retry" }), "         Retry the last prompt"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/compact" }), "       Compress conversation history"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Coding \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/test" }), "          Run tests"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/fix" }), "           Fix last error"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/review" }), "        Code review"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/explain" }), " file  Explain code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/search" }), " query  Search codebase"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/refactor" }), " desc Refactor code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/scaffold" }), " desc Generate boilerplate"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Git \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/commit" }), "        Commit changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/push" }), "          Push to remote"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/pr" }), "            Create pull request"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/status" }), "        Git status"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/diff" }), "          Git diff"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/log" }), "           Git log"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/branch" }), " [name] Branches"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/stash" }), "         Stash changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/undo" }), "          Undo last commit"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Analysis \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/security" }), "      Security audit"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/lint" }), "          Quality check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/optimize" }), "      Performance check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/todo" }), "          Find TODOs"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/deps" }), "          Dependencies"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clean" }), "         Dead code removal"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/context" }), "       Session info (model, tokens, mode)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/plan" }), "          Enter plan mode (read-only tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/execute" }), "       Exit plan mode (enable all tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/sessions" }), "      List saved sessions"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/resume" }), " id     Resume a saved session"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clear" }), "         Clear conversation display"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/doctor" }), "        Diagnose setup issues"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/help" }), "          This help"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/exit" }), "          Quit"] }), _jsx(Text, { children: " " }), _jsx(Text, { dimColor: true, children: "  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4, nano, mini, haiku" })] })), showWallet && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Wallet" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  Chain:   ", _jsx(Text, { color: "magenta", children: chain })] }), _jsxs(Text, { children: ["  Address: ", _jsx(Text, { color: "cyan", children: walletAddress })] }), _jsxs(Text, { children: ["  Balance: ", _jsx(Text, { color: "green", children: balance })] })] })), Array.from(tools.values()).map((tool, i) => (_jsx(Box, { marginLeft: 1, children: tool.done ? (tool.error
                     ? _jsxs(Text, { color: "red", children: ["  \u2717 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms"] })] })
-                    : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms \u2014 ", tool.preview.slice(0, 200), tool.preview.length > 200 ? '...' : ''] })] })) : (_jsxs(Text, { color: "cyan", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", tool.name, "... ", _jsxs(Text, { dimColor: true, children: [Math.round((Date.now() - tool.startTime) / 1000), "s"] })] })) }, i))), thinking && (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }), thinkingText && (_jsxs(Text, { dimColor: true, wrap: "truncate-end", children: ["  ", thinkingText.split('\n').pop()?.slice(0, 80)] }))] })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (_jsx(Box, { marginLeft: 1, marginTop: 0, children: _jsxs(Text, { dimColor: true, children: [turnTokens.input.toLocaleString(), " in / ", turnTokens.output.toLocaleString(), " out", totalCost > 0 ? `  ·  $${totalCost.toFixed(4)} session` : ''] }) })), ready && (_jsx(InputBox, { input: input, setInput: setInput, onSubmit: handleSubmit, model: currentModel, balance: balance, focused: mode === 'input' }))] }));
+                    : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms \u2014 ", tool.preview.slice(0, 200), tool.preview.length > 200 ? '...' : ''] })] })) : (_jsxs(Text, { color: "cyan", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", tool.name, "... ", _jsx(Text, { dimColor: true, children: (() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? `${s}s` : ''; })() })] })) }, i))), thinking && (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }), thinkingText && (_jsxs(Text, { dimColor: true, wrap: "truncate-end", children: ["  ", thinkingText.split('\n').pop()?.slice(0, 80)] }))] })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (_jsx(Box, { marginLeft: 1, marginTop: 0, children: _jsxs(Text, { dimColor: true, children: [turnTokens.input.toLocaleString(), " in / ", turnTokens.output.toLocaleString(), " out", totalCost > 0 ? `  ·  $${totalCost.toFixed(4)} session` : ''] }) })), ready && (_jsx(InputBox, { input: input, setInput: setInput, onSubmit: handleSubmit, model: currentModel, balance: balance, focused: mode === 'input' }))] }));
 }
 export function launchInkUI(opts) {
     let resolveInput = null;
