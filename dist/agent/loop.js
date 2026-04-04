@@ -4,7 +4,7 @@
  * Original implementation with different architecture from any reference codebase.
  */
 import { ModelClient } from './llm.js';
-import { autoCompactIfNeeded, microCompact } from './compact.js';
+import { autoCompactIfNeeded, forceCompact, microCompact } from './compact.js';
 import { estimateHistoryTokens } from './tokens.js';
 import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
@@ -217,7 +217,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         // Handle /compact command — force compaction without sending to model
         if (input === '/compact') {
             const beforeTokens = estimateHistoryTokens(history);
-            const { history: compacted, compacted: didCompact } = await autoCompactIfNeeded(history, config.model, client, config.debug);
+            const { history: compacted, compacted: didCompact } = await forceCompact(history, config.model, client, config.debug);
             if (didCompact) {
                 history.length = 0;
                 history.push(...compacted);
@@ -225,7 +225,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             const afterTokens = estimateHistoryTokens(history);
             onEvent({ kind: 'text_delta', text: didCompact
                     ? `Compacted: ~${beforeTokens.toLocaleString()} → ~${afterTokens.toLocaleString()} tokens\n`
-                    : `History is ${beforeTokens.toLocaleString()} tokens — no compaction needed.\n`
+                    : `History too short to compact (${beforeTokens.toLocaleString()} tokens, ${history.length} messages).\n`
             });
             onEvent({ kind: 'turn_done', reason: 'completed' });
             continue;

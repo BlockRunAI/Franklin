@@ -225,6 +225,12 @@ function RunCodeApp({
           return;
 
         case '/compact':
+          setStreamText('');
+          setThinking(false);
+          setThinkingText('');
+          setTools(new Map());
+          setWaiting(true);
+          setReady(false);
           onSubmit('/compact');
           return;
 
@@ -308,6 +314,7 @@ function RunCodeApp({
             setReady(true);
             setWaiting(false);
             setThinking(false);
+            setThinkingText('');
             break;
         }
       },

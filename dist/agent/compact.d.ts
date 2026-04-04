@@ -14,6 +14,13 @@ export declare function autoCompactIfNeeded(history: Dialogue[], model: string, 
     compacted: boolean;
 }>;
 /**
+ * Force compaction regardless of threshold (for /compact command).
+ */
+export declare function forceCompact(history: Dialogue[], model: string, client: ModelClient, debug?: boolean): Promise<{
+    history: Dialogue[];
+    compacted: boolean;
+}>;
+/**
  * Clear old tool results in-place to save tokens (microcompaction).
  * Replaces tool result content with a short summary for all but the last N results.
  */
