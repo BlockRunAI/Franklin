@@ -290,6 +290,29 @@ export async function handleSlashCommand(
     }
   }
 
-  // Not a recognized command
+  // Not a recognized command — suggest closest match
+  const allCommands = [
+    ...Object.keys(DIRECT_COMMANDS),
+    ...Object.keys(REWRITE_COMMANDS),
+    ...ARG_COMMANDS.map(c => c.prefix.trim()),
+    '/branch', '/resume', '/model', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit',
+  ];
+  const cmd = input.split(/\s/)[0];
+  const close = allCommands.filter(c => {
+    // Simple distance: share >= 50% of characters
+    const shorter = Math.min(cmd.length, c.length);
+    let matches = 0;
+    for (let i = 0; i < shorter; i++) {
+      if (cmd[i] === c[i]) matches++;
+    }
+    return matches >= shorter * 0.5 && matches >= 3;
+  });
+  if (close.length > 0) {
+    ctx.onEvent({ kind: 'text_delta', text: `Unknown command: ${cmd}. Did you mean: ${close.slice(0, 3).join(', ')}?\n` });
+    emitDone(ctx);
+    return { handled: true };
+  }
+
+  // Truly unknown — pass through as regular input
   return { handled: false };
 }
