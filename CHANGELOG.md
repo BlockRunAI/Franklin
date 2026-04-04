@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.4.0 (2026-04-04)
+
+### New Features
+- **`/retry` command**: Resend the last prompt for a fresh response
+- **Input history**: Up/Down arrows recall previous prompts (last 50 stored)
+- **Edit diff preview**: Edit tool now shows `- old / + new` lines in output
+- **Error recovery tips**: API errors include actionable suggestions (/retry, /model, /compact)
+- **Setup next-steps**: `runcode setup` shows clear guidance when wallet already exists
+
+### Bug Fixes
+- **thinkingText persists**: Now properly cleared on turn_done and /compact
+- **/compact force mode**: `/compact` now always compresses, even below auto-threshold
+- **Abort handling**: Esc key emits clean 'aborted' event instead of unhandled error
+- **Token map unbounded**: Proxy per-model tracking capped at 50 entries
+- **Write symlink traversal**: Resolves symlinks before checking sensitive paths
+- **SSE buffer overflow**: 1MB cap prevents memory growth on malformed streams
+- **Fallback timeout**: 60s per fallback attempt prevents infinite hangs
+- **Proxy direct fetch**: 2min timeout on non-fallback requests
+- **Models command**: 15s fetch timeout + handles empty API response
+
+### UX Improvements
+- Tool output preview increased from 60 to 200 chars
+- Running tools show elapsed seconds in real-time
+- Permission prompts styled with box-drawing characters
+- Terminal UI: /retry, /compact, /model (no args shows current)
+- Bash tool description documents output cap and timeout params
+- Help panel lists all commands including /retry and /compact
+
 ## 1.3.0 (2026-04-04)
 
 ### New Features

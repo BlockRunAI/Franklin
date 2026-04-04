@@ -8,6 +8,10 @@ export async function setupCommand(chainArg) {
         if (wallets.length > 0) {
             console.log(chalk.yellow('Solana wallet already exists.'));
             console.log(`Address: ${chalk.cyan(wallets[0].publicKey)}`);
+            console.log(chalk.dim('\nNext steps:'));
+            console.log(chalk.dim('  runcode start        — start coding'));
+            console.log(chalk.dim('  runcode balance      — check USDC balance'));
+            console.log(chalk.dim('  runcode start -m free — use free models (no USDC needed)'));
             saveChain('solana');
             return;
         }
@@ -24,6 +28,10 @@ export async function setupCommand(chainArg) {
         if (wallets.length > 0) {
             console.log(chalk.yellow('Wallet already exists.'));
             console.log(`Address: ${chalk.cyan(wallets[0].address)}`);
+            console.log(chalk.dim('\nNext steps:'));
+            console.log(chalk.dim('  runcode start        — start coding'));
+            console.log(chalk.dim('  runcode balance      — check USDC balance'));
+            console.log(chalk.dim('  runcode start -m free — use free models (no USDC needed)'));
             saveChain('base');
             return;
         }
