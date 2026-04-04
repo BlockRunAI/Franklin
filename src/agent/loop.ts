@@ -343,7 +343,7 @@ export async function interactiveSession(
     let loopCount = 0;
     let recoveryAttempts = 0;
     let maxTokensOverride: number | undefined;
-    const lastActivity = Date.now();
+    let lastActivity = Date.now();
 
     // Agent loop for this user message
     while (loopCount < maxTurns) {
@@ -544,6 +544,9 @@ export async function interactiveSession(
       for (const [inv, result] of results) {
         onEvent({ kind: 'capability_done', id: inv.id, result });
       }
+
+      // Refresh activity timestamp after tool execution
+      lastActivity = Date.now();
 
       // Append outcomes
       const outcomeContent: UserContentPart[] = results.map(
