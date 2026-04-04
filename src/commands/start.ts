@@ -35,36 +35,22 @@ export async function startCommand(options: StartOptions) {
   }
 
   // Auto-create wallet if needed (no interruption — free models work without funding)
-  let walletInfo: { address: string; balance: string; chain: string } | undefined;
+  let walletAddress = '';
   if (chain === 'solana') {
     const wallet = await getOrCreateSolanaWallet();
+    walletAddress = wallet.address;
     if (wallet.isNew) {
       console.log(chalk.green('  Wallet created automatically.'));
       console.log(chalk.dim(`  Address: ${wallet.address}`));
       console.log(chalk.dim('  Free models work now. Fund with USDC for paid models.\n'));
-    }
-    try {
-      const { setupAgentSolanaWallet } = await import('@blockrun/llm');
-      const client = await setupAgentSolanaWallet({ silent: true });
-      const bal = await client.getBalance();
-      walletInfo = { address: wallet.address, balance: `$${bal.toFixed(2)} USDC`, chain: 'solana' };
-    } catch {
-      walletInfo = { address: wallet.address, balance: '$0.00 USDC', chain: 'solana' };
     }
   } else {
     const wallet = getOrCreateWallet();
+    walletAddress = wallet.address;
     if (wallet.isNew) {
       console.log(chalk.green('  Wallet created automatically.'));
       console.log(chalk.dim(`  Address: ${wallet.address}`));
       console.log(chalk.dim('  Free models work now. Fund with USDC for paid models.\n'));
-    }
-    try {
-      const { setupAgentWallet } = await import('@blockrun/llm');
-      const client = setupAgentWallet({ silent: true });
-      const bal = await client.getBalance();
-      walletInfo = { address: wallet.address, balance: `$${bal.toFixed(2)} USDC`, chain: 'base' };
-    } catch {
-      walletInfo = { address: wallet.address, balance: '$0.00 USDC', chain: 'base' };
     }
   }
 
@@ -72,11 +58,35 @@ export async function startCommand(options: StartOptions) {
 
   const workDir = process.cwd();
 
-  // Show session info
+  // Show session info immediately, fetch balance in background
   console.log(chalk.dim(`  Model:  ${model}`));
-  console.log(chalk.dim(`  Wallet: ${walletInfo?.address || 'not set'} (${walletInfo?.balance || '?'})`));
+  console.log(chalk.dim(`  Wallet: ${walletAddress || 'not set'}`));
   console.log(chalk.dim(`  Dir:    ${workDir}`));
   console.log('');
+
+  // Fetch balance in background (don't block startup)
+  const walletInfo: { address: string; balance: string; chain: string } = {
+    address: walletAddress,
+    balance: 'checking...',
+    chain,
+  };
+  (async () => {
+    try {
+      if (chain === 'solana') {
+        const { setupAgentSolanaWallet } = await import('@blockrun/llm');
+        const client = await setupAgentSolanaWallet({ silent: true });
+        const bal = await client.getBalance();
+        walletInfo.balance = `$${bal.toFixed(2)} USDC`;
+      } else {
+        const { setupAgentWallet } = await import('@blockrun/llm');
+        const client = setupAgentWallet({ silent: true });
+        const bal = await client.getBalance();
+        walletInfo.balance = `$${bal.toFixed(2)} USDC`;
+      }
+    } catch {
+      walletInfo.balance = '$?.?? USDC';
+    }
+  })();
 
   // Assemble system instructions
   const systemInstructions = assembleInstructions(workDir);
