@@ -26,7 +26,11 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     const shell = process.env.SHELL || '/bin/bash';
     const child = spawn(shell, ['-c', command], {
       cwd: ctx.workingDir,
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        RUNCODE: '1', // Let scripts detect they're running inside runcode
+        RUNCODE_WORKDIR: ctx.workingDir,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

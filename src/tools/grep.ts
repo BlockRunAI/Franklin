@@ -13,6 +13,8 @@ interface GrepInput {
   glob?: string;
   output_mode?: 'content' | 'files_with_matches' | 'count';
   context?: number;
+  before_context?: number;
+  after_context?: number;
   case_insensitive?: boolean;
   head_limit?: number;
   multiline?: boolean;
@@ -73,6 +75,9 @@ function runRipgrep(
       args.push('-n');
       if (opts.context && opts.context > 0) {
         args.push(`-C${opts.context}`);
+      } else {
+        if (opts.before_context && opts.before_context > 0) args.push(`-B${opts.before_context}`);
+        if (opts.after_context && opts.after_context > 0) args.push(`-A${opts.after_context}`);
       }
       break;
   }
@@ -183,6 +188,8 @@ export const grepCapability: CapabilityHandler = {
           description: 'Output mode: "content" (matching lines), "files_with_matches" (file paths), "count" (match counts). Default: files_with_matches',
         },
         context: { type: 'number', description: 'Lines of context around each match (content mode only)' },
+        before_context: { type: 'number', description: 'Lines before each match (-B, content mode)' },
+        after_context: { type: 'number', description: 'Lines after each match (-A, content mode)' },
         case_insensitive: { type: 'boolean', description: 'Case-insensitive search' },
         head_limit: { type: 'number', description: 'Max results to return. Default: 250' },
         multiline: { type: 'boolean', description: 'Enable multiline mode (patterns span lines). Default: false' },
