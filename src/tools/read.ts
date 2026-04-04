@@ -24,13 +24,26 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   try {
     const stat = fs.statSync(resolved);
     if (stat.isDirectory()) {
-      return { output: `Error: ${resolved} is a directory, not a file. Use Bash with 'ls' to list directory contents.`, isError: true };
+      // Helpfully list directory contents instead of just erroring
+      const entries = fs.readdirSync(resolved, { withFileTypes: true });
+      const dirs = entries.filter(e => e.isDirectory()).map(e => e.name + '/');
+      const files = entries.filter(e => e.isFile()).map(e => e.name);
+      const listing = [...dirs.sort(), ...files.sort()].slice(0, 100);
+      return { output: `Directory: ${resolved}\n${listing.join('\n')}${entries.length > 100 ? `\n... (${entries.length - 100} more)` : ''}` };
     }
 
     // Size guard: skip huge files
     const maxBytes = 2 * 1024 * 1024; // 2MB
     if (stat.size > maxBytes) {
       return { output: `Error: file is too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Use offset/limit to read a portion.`, isError: true };
+    }
+
+    // Detect binary files
+    const ext = path.extname(resolved).toLowerCase();
+    const binaryExts = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.pdf', '.zip', '.tar', '.gz', '.woff', '.woff2', '.ttf', '.eot', '.mp3', '.mp4', '.wav', '.avi', '.mov', '.exe', '.dll', '.so', '.dylib']);
+    if (binaryExts.has(ext)) {
+      const sizeStr = stat.size >= 1024 ? `${(stat.size / 1024).toFixed(1)}KB` : `${stat.size}B`;
+      return { output: `Binary file: ${resolved} (${ext}, ${sizeStr}). Cannot display contents.` };
     }
 
     const raw = fs.readFileSync(resolved, 'utf-8');
