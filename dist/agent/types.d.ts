@@ -101,4 +101,6 @@ export interface AgentConfig {
     permissionMode?: 'default' | 'trust' | 'deny-all' | 'plan';
     onEvent?: (event: StreamEvent) => void;
     debug?: boolean;
+    /** Ultrathink mode: inject deep-reasoning instruction into every prompt */
+    ultrathink?: boolean;
 }

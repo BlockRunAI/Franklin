@@ -5,7 +5,7 @@
  */
 import { ModelClient } from './llm.js';
 import { autoCompactIfNeeded, microCompact } from './compact.js';
-import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor } from './tokens.js';
+import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor, getAnchoredTokenCount, getContextWindow } from './tokens.js';
 import { handleSlashCommand } from './commands.js';
 import { reduceTokens } from './reduce.js';
 import { PermissionManager } from './permissions.js';
@@ -214,6 +214,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     // Session persistence
     const sessionId = createSessionId();
     let turnCount = 0;
+    let tokenBudgetWarned = false; // Emit token budget warning at most once per session
     pruneOldSessions(sessionId); // Cleanup old sessions on start, protect current
     while (true) {
         let input = await getUserInput();
@@ -290,7 +291,18 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     }
                 }
             }
-            const systemPrompt = config.systemInstructions.join('\n\n');
+            // Inject ultrathink instruction when mode is active
+            const systemParts = [...config.systemInstructions];
+            if (config.ultrathink) {
+                systemParts.push('# Ultrathink Mode\n' +
+                    'You are in deep reasoning mode. Before responding to any request:\n' +
+                    '1. Thoroughly analyze the problem from multiple angles\n' +
+                    '2. Consider edge cases, failure modes, and second-order effects\n' +
+                    '3. Challenge your initial assumptions before committing to an approach\n' +
+                    '4. Think step by step — show your reasoning explicitly when it adds value\n' +
+                    'Prioritize correctness and thoroughness over speed.');
+            }
+            const systemPrompt = systemParts.join('\n\n');
             const modelMaxOut = getMaxOutputTokens(config.model);
             let maxTokens = Math.min(maxTokensOverride ?? CAPPED_MAX_TOKENS, modelMaxOut);
             let responseParts = [];
@@ -433,6 +445,19 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     turnCount,
                     messageCount: history.length,
                 });
+                // Token budget warning — emit once per session when crossing 70%
+                if (!tokenBudgetWarned) {
+                    const { estimated } = getAnchoredTokenCount(history);
+                    const contextWindow = getContextWindow(config.model);
+                    const pct = (estimated / contextWindow) * 100;
+                    if (pct >= 70) {
+                        tokenBudgetWarned = true;
+                        onEvent({
+                            kind: 'text_delta',
+                            text: `\n\n> **Token budget: ${pct.toFixed(0)}% used** (~${estimated.toLocaleString()} / ${(contextWindow / 1000).toFixed(0)}k tokens). Run \`/compact\` to free up space.\n`,
+                        });
+                    }
+                }
                 onEvent({ kind: 'turn_done', reason: 'completed' });
                 break;
             }
