@@ -468,6 +468,32 @@ export async function interactiveSession(
       input = `Find files matching the pattern "${pattern}" using Glob. Show the results.`;
     }
 
+    // Handle /refactor <description> — code refactoring
+    if (input.startsWith('/refactor ')) {
+      const desc = input.slice(10).trim();
+      input = `Refactor: ${desc}. Read the relevant code first, then make targeted changes. Explain each change.`;
+    }
+
+    // Handle /debug — analyze recent error
+    if (input === '/debug') {
+      input = 'Look at the most recent error in this session. Read the relevant source files, analyze the root cause, and suggest a fix with specific code changes.';
+    }
+
+    // Handle /init — initialize project context
+    if (input === '/init') {
+      input = 'Read the project structure: check package.json (or equivalent), README, and key config files. Summarize: what this project is, main language/framework, entry points, and how to run/test it.';
+    }
+
+    // Handle /todo — find TODOs in codebase
+    if (input === '/todo') {
+      input = 'Search the codebase for TODO, FIXME, HACK, and XXX comments using Grep. Show the results grouped by file.';
+    }
+
+    // Handle /deps — show project dependencies
+    if (input === '/deps') {
+      input = 'Read the project dependency file (package.json, requirements.txt, go.mod, Cargo.toml, etc.) and list key dependencies with their versions.';
+    }
+
     // Handle /status — show git status
     if (input === '/status') {
       try {
