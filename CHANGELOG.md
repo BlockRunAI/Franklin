@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.2.0 (2026-04-04)
+
+### Architecture
+- **Command registry extracted**: 60+ inline slash commands moved from loop.ts (938→564 lines) to dedicated `commands.ts` (240 lines). Uses dispatch pattern: direct-handled, prompt-rewrite, and arg-based commands.
+
+### Bug Fixes
+- **Partial response saved on abort**: When user presses Esc mid-generation, streamed content is now saved to session history instead of lost.
+- **Tool result aggregate cap**: Once per-message budget exceeded, remaining results are truncated immediately (was continuing to iterate and add bloated messages).
+- **AskUser EOF**: Returns error on EOF/piped input instead of misleading "(user skipped)" string.
+- **SSE buffer overflow logging**: Debug message now logged when SSE buffer exceeds 1MB (was silent).
+- **Glob depth limit**: Increased from 20 to 50 for deep monorepo support.
+- **Read tool offset**: offset=0 now treated as offset=1 (1-based as documented).
+
 ## 2.1.0 (2026-04-04)
 
 ### Security

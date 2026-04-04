@@ -5,23 +5,19 @@
  */
 
 import { ModelClient } from './llm.js';
-import { autoCompactIfNeeded, forceCompact, microCompact } from './compact.js';
+import { autoCompactIfNeeded, microCompact } from './compact.js';
 import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor } from './tokens.js';
+import { handleSlashCommand } from './commands.js';
 import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS } from './optimize.js';
 import { recordUsage } from '../stats/tracker.js';
 import { estimateCost } from '../pricing.js';
-import fs from 'node:fs';
-import path from 'node:path';
-import { BLOCKRUN_DIR, VERSION } from '../config.js';
 import {
   createSessionId,
   appendToSession,
   updateSessionMeta,
   pruneOldSessions,
-  listSessions,
-  loadSessionHistory,
 } from '../session/storage.js';
 import type {
   AgentConfig,
@@ -329,383 +325,13 @@ export async function interactiveSession(
     if (input === null) break; // User wants to exit
     if (input === '') continue; // Empty input → re-prompt
 
-    // Handle /stash and /unstash — git stash management
-    if (input === '/stash') {
-      try {
-        const { execSync } = await import('node:child_process');
-        const result = execSync('git stash push -m "runcode auto-stash"', {
-          cwd: config.workingDir || process.cwd(), encoding: 'utf-8', timeout: 10000 }).trim();
-        onEvent({ kind: 'text_delta', text: result || 'No changes to stash.\n' });
-      } catch (e) { onEvent({ kind: 'text_delta', text: `Stash error: ${(e as Error).message?.split('\n')[0]}\n` }); }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-    if (input === '/unstash') {
-      try {
-        const { execSync } = await import('node:child_process');
-        const result = execSync('git stash pop', {
-          cwd: config.workingDir || process.cwd(), encoding: 'utf-8', timeout: 10000 }).trim();
-        onEvent({ kind: 'text_delta', text: result || 'Stash applied.\n' });
-      } catch (e) { onEvent({ kind: 'text_delta', text: `Unstash error: ${(e as Error).message?.split('\n')[0]}\n` }); }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /branch — show current branch or create new
-    if (input === '/branch' || input.startsWith('/branch ')) {
-      try {
-        const { execSync } = await import('node:child_process');
-        const cwd = config.workingDir || process.cwd();
-        if (input === '/branch') {
-          const branches = execSync('git branch -v --no-color', { cwd, encoding: 'utf-8', timeout: 5000 }).trim();
-          onEvent({ kind: 'text_delta', text: `\`\`\`\n${branches}\n\`\`\`\n` });
-        } else {
-          const branchName = input.slice(8).trim();
-          execSync(`git checkout -b ${branchName}`, { cwd, encoding: 'utf-8', timeout: 5000 });
-          onEvent({ kind: 'text_delta', text: `Created and switched to branch: **${branchName}**\n` });
-        }
-      } catch (e) {
-        onEvent({ kind: 'text_delta', text: `Git error: ${(e as Error).message?.split('\n')[0] || 'unknown'}\n` });
-      }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /log — show recent git log
-    if (input === '/log') {
-      try {
-        const { execSync } = await import('node:child_process');
-        const log = execSync('git log --oneline -15 --no-color', {
-          cwd: config.workingDir || process.cwd(), encoding: 'utf-8', timeout: 5000 }).trim();
-        onEvent({ kind: 'text_delta', text: log ? `\`\`\`\n${log}\n\`\`\`\n` : 'No commits.\n' });
-      } catch {
-        onEvent({ kind: 'text_delta', text: 'Not a git repo.\n' });
-      }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /mcp — show connected MCP servers
-    if (input === '/mcp') {
-      const { listMcpServers } = await import('../mcp/client.js');
-      const servers = listMcpServers();
-      if (servers.length === 0) {
-        onEvent({ kind: 'text_delta', text: 'No MCP servers connected.\nAdd servers to `~/.blockrun/mcp.json` or `.mcp.json` in your project.\n' });
-      } else {
-        let text = `**${servers.length} MCP server(s) connected:**\n\n`;
-        for (const s of servers) {
-          text += `  **${s.name}** — ${s.toolCount} tools\n`;
-          for (const t of s.tools) {
-            text += `    · ${t}\n`;
-          }
-        }
-        onEvent({ kind: 'text_delta', text });
-      }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /bug — open issue tracker
-    if (input === '/bug') {
-      onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/runcode/issues\n' });
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /version — show version
-    if (input === '/version') {
-      onEvent({ kind: 'text_delta', text: `RunCode v${VERSION}\n` });
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /tasks — show task list (shortcut for Task list action)
-    if (input === '/tasks') {
-      input = 'List all current tasks using the Task tool.';
-    }
-
-    // Handle /doctor — diagnose setup issues
-    if (input === '/doctor') {
-      const checks: string[] = [];
-      const { execSync } = await import('node:child_process');
-      // Check git
-      try { execSync('git --version', { stdio: 'pipe' }); checks.push('✓ git available'); }
-      catch { checks.push('✗ git not found'); }
-      // Check rg
-      try { execSync('rg --version', { stdio: 'pipe' }); checks.push('✓ ripgrep available'); }
-      catch { checks.push('⚠ ripgrep not found (using native grep fallback)'); }
-      // Check wallet
-      const walletFile = path.join(BLOCKRUN_DIR, 'wallet.json');
-      checks.push(fs.existsSync(walletFile) ? '✓ wallet configured' : '⚠ no wallet — run: runcode setup');
-      // Check config
-      const configFile = path.join(BLOCKRUN_DIR, 'runcode-config.json');
-      checks.push(fs.existsSync(configFile) ? '✓ config file exists' : '⚠ no config — using defaults');
-      // Model & tokens
-      checks.push(`✓ model: ${config.model}`);
-      checks.push(`✓ history: ${history.length} messages, ~${estimateHistoryTokens(history).toLocaleString()} tokens`);
-      checks.push(`✓ session: ${sessionId}`);
-      checks.push(`✓ version: v${VERSION}`);
-      onEvent({ kind: 'text_delta', text: `**Health Check**\n${checks.map(c => '  ' + c).join('\n')}\n` });
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /commit — rewrite as a prompt for the agent
-    if (input === '/commit') {
-      input = 'Review the current git diff and staged changes. Stage relevant files with `git add`, then create a commit with a concise message summarizing the changes. Do NOT push to remote.';
-    }
-
-    // Handle /undo — undo last commit (keep changes)
-    if (input === '/undo') {
-      try {
-        const { execSync } = await import('node:child_process');
-        const result = execSync('git reset --soft HEAD~1', {
-          cwd: config.workingDir || process.cwd(), encoding: 'utf-8', timeout: 5000 }).trim();
-        onEvent({ kind: 'text_delta', text: result || 'Last commit undone. Changes preserved in staging.\n' });
-      } catch (e) { onEvent({ kind: 'text_delta', text: `Undo error: ${(e as Error).message?.split('\n')[0]}\n` }); }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /push — push to remote
-    if (input === '/push') {
-      input = 'Push the current branch to the remote repository using `git push`. Show the result.';
-    }
-
-    // Handle /pr — create pull request
-    if (input === '/pr') {
-      input = 'Create a pull request for the current branch. First check `git log --oneline main..HEAD` to see commits, then use `gh pr create` with a descriptive title and body summarizing the changes. If gh CLI is not available, show the manual steps.';
-    }
-
-    // Handle /review — ask agent to review current changes
-    if (input === '/review') {
-      input = 'Review the current git diff. For each changed file, check for: bugs, security issues, missing error handling, performance problems, and style issues. Provide a brief summary of findings.';
-    }
-
-    // Handle /fix — ask agent to fix the last error or issue
-    if (input === '/fix') {
-      input = 'Look at the most recent error or issue we discussed and fix it. Check the relevant files, identify the root cause, and apply the fix.';
-    }
-
-    // Handle /test — run project tests
-    if (input === '/test') {
-      input = 'Detect the project test framework (look for package.json scripts, pytest, etc.) and run the test suite. Show a summary of results.';
-    }
-
-    // Handle /explain <file> — explain code
-    if (input.startsWith('/explain ')) {
-      const target = input.slice(9).trim();
-      input = `Read and explain the code in ${target}. Cover: what it does, key functions/classes, how it connects to the rest of the codebase.`;
-    }
-
-    // Handle /search <query> — search codebase
-    if (input.startsWith('/search ')) {
-      const query = input.slice(8).trim();
-      input = `Search the codebase for "${query}" using Grep. Show the matching files and relevant code context.`;
-    }
-
-    // Handle /find <pattern> — find files
-    if (input.startsWith('/find ')) {
-      const pattern = input.slice(6).trim();
-      input = `Find files matching the pattern "${pattern}" using Glob. Show the results.`;
-    }
-
-    // Handle /refactor <description> — code refactoring
-    if (input.startsWith('/refactor ')) {
-      const desc = input.slice(10).trim();
-      input = `Refactor: ${desc}. Read the relevant code first, then make targeted changes. Explain each change.`;
-    }
-
-    // Handle /debug — analyze recent error
-    if (input === '/debug') {
-      input = 'Look at the most recent error in this session. Read the relevant source files, analyze the root cause, and suggest a fix with specific code changes.';
-    }
-
-    // Handle /init — initialize project context
-    if (input === '/init') {
-      input = 'Read the project structure: check package.json (or equivalent), README, and key config files. Summarize: what this project is, main language/framework, entry points, and how to run/test it.';
-    }
-
-    // Handle /todo — find TODOs in codebase
-    if (input === '/todo') {
-      input = 'Search the codebase for TODO, FIXME, HACK, and XXX comments using Grep. Show the results grouped by file.';
-    }
-
-    // Handle /deps — show project dependencies
-    if (input === '/deps') {
-      input = 'Read the project dependency file (package.json, requirements.txt, go.mod, Cargo.toml, etc.) and list key dependencies with their versions.';
-    }
-
-    // Handle /scaffold <desc> — generate boilerplate
-    if (input.startsWith('/scaffold ')) {
-      const desc = input.slice(10).trim();
-      input = `Create the scaffolding/boilerplate for: ${desc}. Generate the file structure and initial code. Ask me if you need clarification on requirements.`;
-    }
-
-    // Handle /optimize — performance optimization
-    if (input === '/optimize') {
-      input = 'Analyze the codebase for performance issues. Check for: unnecessary re-renders, N+1 queries, missing indexes, unoptimized loops, large bundle sizes, and memory leaks. Provide specific recommendations.';
-    }
-
-    // Handle /security — security audit
-    if (input === '/security') {
-      input = 'Audit the codebase for security issues. Check for: SQL injection, XSS, command injection, hardcoded secrets, insecure dependencies, OWASP top 10 vulnerabilities. Report findings with severity.';
-    }
-
-    // Handle /lint — code quality
-    if (input === '/lint') {
-      input = 'Check for code quality issues: unused imports, inconsistent naming, missing type annotations, long functions, duplicated code. Suggest improvements.';
-    }
-
-    // Handle /doc <target> — generate documentation
-    if (input.startsWith('/doc ')) {
-      const target = input.slice(5).trim();
-      input = `Generate documentation for ${target}. Include: purpose, API/interface description, usage examples, and important notes.`;
-    }
-
-    // Handle /migrate — migration helper
-    if (input === '/migrate') {
-      input = 'Check for pending database migrations, outdated dependencies, or breaking changes that need addressing. List required migration steps.';
-    }
-
-    // Handle /clean — cleanup dead code
-    if (input === '/clean') {
-      input = 'Find and remove dead code: unused imports, unreachable code, commented-out blocks, unused variables and functions. Show what would be removed before making changes.';
-    }
-
-    // Handle /status — show git status
-    if (input === '/status') {
-      try {
-        const { execSync } = await import('node:child_process');
-        const status = execSync('git status --short --branch', {
-          cwd: config.workingDir || process.cwd(),
-          encoding: 'utf-8',
-          timeout: 5_000,
-        }).trim();
-        onEvent({ kind: 'text_delta', text: status ? `\`\`\`\n${status}\n\`\`\`\n` : 'No git status.\n' });
-      } catch {
-        onEvent({ kind: 'text_delta', text: 'Not a git repo.\n' });
-      }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /diff — show git diff of current changes
-    if (input === '/diff') {
-      try {
-        const { execSync } = await import('node:child_process');
-        const diff = execSync('git diff --stat && echo "---" && git diff', {
-          cwd: config.workingDir || process.cwd(),
-          encoding: 'utf-8',
-          timeout: 10_000,
-          maxBuffer: 512 * 1024,
-        }).trim();
-        onEvent({ kind: 'text_delta', text: diff ? `\`\`\`diff\n${diff}\n\`\`\`\n` : 'No changes.\n' });
-      } catch {
-        onEvent({ kind: 'text_delta', text: 'Not a git repository or git not available.\n' });
-      }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /context — show current session context info
-    if (input === '/context') {
-      const { getAnchoredTokenCount, getContextWindow } = await import('./tokens.js');
-      const { estimated, apiAnchored } = getAnchoredTokenCount(history);
-      const contextWindow = getContextWindow(config.model);
-      const usagePct = ((estimated / contextWindow) * 100).toFixed(1);
-      const msgs = history.length;
-      const model = config.model;
-      const dir = config.workingDir || process.cwd();
-      const mode = config.permissionMode || 'default';
-      onEvent({ kind: 'text_delta', text:
-        `**Session Context**\n` +
-        `  Model:      ${model}\n` +
-        `  Mode:       ${mode}\n` +
-        `  Messages:   ${msgs}\n` +
-        `  Tokens:     ~${estimated.toLocaleString()} / ${(contextWindow / 1000).toFixed(0)}k (${usagePct}%)${apiAnchored ? ' ✓' : ' ~'}\n` +
-        `  Session:    ${sessionId}\n` +
-        `  Directory:  ${dir}\n`
+    // ── Slash command dispatch ──
+    if (input.startsWith('/')) {
+      const cmdResult = await handleSlashCommand(input, {
+        history, config, client, sessionId, onEvent,
       });
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /plan — enter plan mode (restrict to read-only tools)
-    if (input === '/plan') {
-      if (config.permissionMode === 'plan') {
-        onEvent({ kind: 'text_delta', text: 'Already in plan mode. Use /execute to exit.\n' });
-      } else {
-        (config as { permissionMode: string }).permissionMode = 'plan';
-        onEvent({ kind: 'text_delta', text: '**Plan mode active.** Tools restricted to read-only. Use /execute when ready to implement.\n' });
-      }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /execute — exit plan mode
-    if (input === '/execute') {
-      if (config.permissionMode !== 'plan') {
-        onEvent({ kind: 'text_delta', text: 'Not in plan mode. Use /plan to enter.\n' });
-      } else {
-        (config as { permissionMode: string }).permissionMode = 'default';
-        onEvent({ kind: 'text_delta', text: '**Execution mode.** All tools enabled with permissions.\n' });
-      }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /sessions — list saved sessions
-    if (input === '/sessions') {
-      const sessions = listSessions();
-      if (sessions.length === 0) {
-        onEvent({ kind: 'text_delta', text: 'No saved sessions.\n' });
-      } else {
-        let text = `**${sessions.length} saved sessions:**\n\n`;
-        for (const s of sessions.slice(0, 10)) {
-          const date = new Date(s.updatedAt).toLocaleString();
-          const dir = s.workDir ? ` — ${s.workDir.split('/').pop()}` : '';
-          text += `  ${s.id}  ${s.model}  ${s.turnCount} turns  ${date}${dir}\n`;
-        }
-        if (sessions.length > 10) text += `  ... and ${sessions.length - 10} more\n`;
-        text += '\nUse /resume <session-id> to continue a session.\n';
-        onEvent({ kind: 'text_delta', text });
-      }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /resume <id> — restore session history
-    if (input.startsWith('/resume ')) {
-      const targetId = input.slice(8).trim();
-      const restored = loadSessionHistory(targetId);
-      if (restored.length === 0) {
-        onEvent({ kind: 'text_delta', text: `Session "${targetId}" not found or empty.\n` });
-      } else {
-        history.length = 0;
-        history.push(...restored);
-        onEvent({ kind: 'text_delta', text: `Restored ${restored.length} messages from ${targetId}. Continue where you left off.\n` });
-      }
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
-    }
-
-    // Handle /compact command — force compaction without sending to model
-    if (input === '/compact') {
-      const beforeTokens = estimateHistoryTokens(history);
-      const { history: compacted, compacted: didCompact } =
-        await forceCompact(history, config.model, client, config.debug);
-      if (didCompact) {
-        history.length = 0;
-        history.push(...compacted);
-      }
-      const afterTokens = estimateHistoryTokens(history);
-      onEvent({ kind: 'text_delta', text: didCompact
-        ? `Compacted: ~${beforeTokens.toLocaleString()} → ~${afterTokens.toLocaleString()} tokens\n`
-        : `History too short to compact (${beforeTokens.toLocaleString()} tokens, ${history.length} messages).\n`
-      });
-      onEvent({ kind: 'turn_done', reason: 'completed' });
-      continue;
+      if (cmdResult.handled) continue;
+      if (cmdResult.rewritten) input = cmdResult.rewritten;
     }
 
     history.push({ role: 'user', content: input });
@@ -755,7 +381,7 @@ export async function interactiveSession(
 
       const systemPrompt = config.systemInstructions.join('\n\n');
       let maxTokens = maxTokensOverride ?? CAPPED_MAX_TOKENS;
-      let responseParts: ContentPart[];
+      let responseParts: ContentPart[] = [];
       let usage: { inputTokens: number; outputTokens: number };
       let stopReason: string;
 
@@ -795,6 +421,11 @@ export async function interactiveSession(
       } catch (err) {
         // ── User abort (Esc key) ──
         if ((err as Error).name === 'AbortError' || abort.signal.aborted) {
+          // Save any partial response that was streamed before abort
+          if (responseParts && responseParts.length > 0) {
+            history.push({ role: 'assistant', content: responseParts });
+            appendToSession(sessionId, { role: 'assistant', content: responseParts });
+          }
           onEvent({ kind: 'turn_done', reason: 'aborted' });
           break;
         }
