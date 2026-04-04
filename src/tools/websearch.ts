@@ -3,6 +3,7 @@
  */
 
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
+import { VERSION } from '../config.js';
 
 interface WebSearchInput {
   query: string;
@@ -25,7 +26,7 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
 
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'runcode/1.0 (coding-agent)',
+        'User-Agent': `runcode/${VERSION} (coding-agent)`,
       },
     });
 

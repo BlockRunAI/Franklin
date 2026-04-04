@@ -2,7 +2,7 @@
  * Grep capability — search file contents using ripgrep or native fallback.
  */
 
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
@@ -56,7 +56,7 @@ function runRipgrep(
   mode: string,
   limit: number
 ): CapabilityResult {
-  const args: string[] = ['rg'];
+  const args: string[] = [];
 
   switch (mode) {
     case 'files_with_matches':
@@ -79,11 +79,11 @@ function runRipgrep(
   // Always exclude common noise
   args.push('--glob=!node_modules', '--glob=!.git', '--glob=!dist');
 
-  args.push('--', JSON.stringify(opts.pattern).slice(1, -1)); // unquoted pattern
+  args.push('--', opts.pattern);
   args.push(searchPath);
 
   try {
-    const result = execSync(args.join(' '), {
+    const result = execFileSync('rg', args, {
       encoding: 'utf-8',
       maxBuffer: 2 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -116,7 +116,7 @@ function runNativeGrep(
   mode: string,
   limit: number
 ): CapabilityResult {
-  const args: string[] = ['grep', '-r', '-n'];
+  const args: string[] = ['-r', '-n'];
 
   if (opts.case_insensitive) args.push('-i');
 
@@ -137,7 +137,7 @@ function runNativeGrep(
   args.push('-e', opts.pattern, searchPath);
 
   try {
-    const result = execSync(args.join(' '), {
+    const result = execFileSync('grep', args, {
       encoding: 'utf-8',
       maxBuffer: 2 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],

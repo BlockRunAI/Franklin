@@ -4,6 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 
 interface WriteInput {
@@ -23,10 +24,18 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.workingDir, filePath);
 
-  // Safety: don't write outside working directory without absolute path
-  const dangerousPaths = ['/etc/', '/usr/', '/bin/', '/sbin/', '/var/', '/System/'];
+  // Safety: block system paths and sensitive home directories
+  const home = os.homedir();
+  const dangerousPaths = [
+    '/etc/', '/usr/', '/bin/', '/sbin/', '/var/', '/System/',
+    path.join(home, '.ssh') + '/',
+    path.join(home, '.aws') + '/',
+    path.join(home, '.kube') + '/',
+    path.join(home, '.gnupg') + '/',
+    path.join(home, '.config/gcloud') + '/',
+  ];
   if (dangerousPaths.some(p => resolved.startsWith(p))) {
-    return { output: `Error: refusing to write to system path: ${resolved}`, isError: true };
+    return { output: `Error: refusing to write to sensitive path: ${resolved}`, isError: true };
   }
 
   try {

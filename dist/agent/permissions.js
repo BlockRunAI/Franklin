@@ -72,7 +72,7 @@ export class PermissionManager {
         console.error(chalk.yellow(`  Permission required: ${toolName}`));
         console.error(chalk.dim(`  ${description}`));
         console.error('');
-        const answer = await askQuestion(chalk.bold('  Allow? ') + chalk.dim('[y]es / [n]o / [a]lways: '));
+        const answer = await askQuestion(chalk.bold('  Allow? ') + chalk.dim('[Y/n/a]lways: '));
         const normalized = answer.trim().toLowerCase();
         if (normalized === 'a' || normalized === 'always') {
             this.sessionAllowed.add(toolName);
