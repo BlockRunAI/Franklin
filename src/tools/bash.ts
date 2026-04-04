@@ -104,7 +104,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
       if (killed) {
         resolve({
-          output: result + `\n\n(command killed — timeout after ${timeoutMs / 1000}s)`,
+          output: result + `\n\n(command killed — timeout after ${timeoutMs / 1000}s. Set timeout param up to 600000ms for longer.)`,
           isError: true,
         });
         return;

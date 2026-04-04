@@ -288,7 +288,8 @@ async function runSingleCapability(
 export async function interactiveSession(
   config: AgentConfig,
   getUserInput: () => Promise<string | null>,
-  onEvent: (event: StreamEvent) => void
+  onEvent: (event: StreamEvent) => void,
+  onAbortReady?: (abort: () => void) => void
 ): Promise<Dialogue[]> {
   const client = new ModelClient({
     apiUrl: config.apiUrl,
@@ -315,6 +316,7 @@ export async function interactiveSession(
     history.push({ role: 'user', content: input });
 
     const abort = new AbortController();
+    onAbortReady?.(() => abort.abort());
     let turnCount = 0;
     let recoveryAttempts = 0;
     let maxTokensOverride: number | undefined;

@@ -8,12 +8,13 @@ import { render, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import { resolveModel } from './model-picker.js';
+import { estimateCost } from '../pricing.js';
 // ─── Full-width input box ──────────────────────────────────────────────────
 function InputBox({ input, setInput, onSubmit, model, balance, focused }) {
     const { stdout } = useStdout();
     const cols = stdout?.columns ?? 80;
     const innerWidth = Math.max(40, cols - 4);
-    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, children: [_jsx(Text, { dimColor: true, children: '╭' + '─'.repeat(cols - 2) + '╮' }), _jsxs(Box, { children: [_jsx(Text, { dimColor: true, children: "\u2502 " }), _jsx(Box, { width: innerWidth, children: _jsx(TextInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: "Ask anything... (/model to switch, /help for commands)", focus: focused !== false }) }), _jsxs(Text, { dimColor: true, children: [' '.repeat(Math.max(0, cols - innerWidth - 4)), "\u2502"] })] }), _jsx(Text, { dimColor: true, children: '╰' + '─'.repeat(cols - 2) + '╯' }), _jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [model, "  \u00B7  ", balance, "  \u00B7  esc to quit"] }) })] }));
+    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, children: [_jsx(Text, { dimColor: true, children: '╭' + '─'.repeat(cols - 2) + '╮' }), _jsxs(Box, { children: [_jsx(Text, { dimColor: true, children: "\u2502 " }), _jsx(Box, { width: innerWidth, children: _jsx(TextInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: "Ask anything... (/model to switch, /help for commands)", focus: focused !== false }) }), _jsxs(Text, { dimColor: true, children: [' '.repeat(Math.max(0, cols - innerWidth - 4)), "\u2502"] })] }), _jsx(Text, { dimColor: true, children: '╰' + '─'.repeat(cols - 2) + '╯' }), _jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [model, "  \u00B7  ", balance, "  \u00B7  esc to abort/quit"] }) })] }));
 }
 // ─── Model picker data ─────────────────────────────────────────────────────
 const PICKER_MODELS = [
@@ -22,18 +23,18 @@ const PICKER_MODELS = [
     { id: 'anthropic/claude-opus-4.6', shortcut: 'opus', label: 'Claude Opus 4.6', price: '$5/$25' },
     { id: 'openai/gpt-5.4', shortcut: 'gpt', label: 'GPT-5.4', price: '$2.5/$15' },
     { id: 'google/gemini-2.5-pro', shortcut: 'gemini', label: 'Gemini 2.5 Pro', price: '$1.25/$10' },
-    { id: 'deepseek/deepseek-chat', shortcut: 'deepseek', label: 'DeepSeek V3', price: '$0.28' },
+    { id: 'deepseek/deepseek-chat', shortcut: 'deepseek', label: 'DeepSeek V3', price: '$0.28/$0.42' },
     { id: 'google/gemini-2.5-flash', shortcut: 'flash', label: 'Gemini 2.5 Flash', price: '$0.15/$0.6' },
     { id: 'openai/gpt-5-mini', shortcut: 'mini', label: 'GPT-5 Mini', price: '$0.25/$2' },
-    { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku', label: 'Claude Haiku 4.5', price: '$0.8/$4' },
+    { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku', label: 'Claude Haiku 4.5', price: '$1/$5' },
     { id: 'openai/gpt-5-nano', shortcut: 'nano', label: 'GPT-5 Nano', price: '$0.05/$0.4' },
-    { id: 'deepseek/deepseek-reasoner', shortcut: 'r1', label: 'DeepSeek R1', price: '$0.28' },
+    { id: 'deepseek/deepseek-reasoner', shortcut: 'r1', label: 'DeepSeek R1', price: '$0.28/$0.42' },
     { id: 'openai/o4-mini', shortcut: 'o4', label: 'O4 Mini', price: '$1.1/$4.4' },
     { id: 'nvidia/nemotron-ultra-253b', shortcut: 'free', label: 'Nemotron Ultra 253B', price: 'FREE' },
     { id: 'nvidia/qwen3-coder-480b', shortcut: 'qwen-coder', label: 'Qwen3 Coder 480B', price: 'FREE' },
     { id: 'nvidia/devstral-2-123b', shortcut: 'devstral', label: 'Devstral 2 123B', price: 'FREE' },
 ];
-function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain, startWithPicker, onSubmit, onModelChange, onExit, }) {
+function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain, startWithPicker, onSubmit, onModelChange, onAbort, onExit, }) {
     const { exit } = useApp();
     const [input, setInput] = useState('');
     const [streamText, setStreamText] = useState('');
@@ -49,9 +50,20 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const [totalCost, setTotalCost] = useState(0);
     const [showHelp, setShowHelp] = useState(false);
     const [showWallet, setShowWallet] = useState(false);
-    // Key handler for picker + esc — ONLY active when TextInput is NOT focused
-    const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input);
+    const [balance, setBalance] = useState(walletBalance);
+    // Key handler for picker + esc + abort
+    const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input) || !ready;
     useInput((ch, key) => {
+        // Escape during generation → abort current turn
+        if (key.escape && !ready) {
+            onAbort();
+            setStatusMsg('Aborted');
+            setReady(true);
+            setWaiting(false);
+            setThinking(false);
+            setTimeout(() => setStatusMsg(''), 3000);
+            return;
+        }
         // Esc to quit (only when input is empty and in input mode)
         if (key.escape && mode === 'input' && ready && !input) {
             onExit();
@@ -132,6 +144,13 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     setShowHelp(true);
                     setShowWallet(false);
                     return;
+                case '/clear':
+                    setStreamText('');
+                    setTools(new Map());
+                    setTurnTokens({ input: 0, output: 0 });
+                    setStatusMsg('Conversation cleared');
+                    setTimeout(() => setStatusMsg(''), 3000);
+                    return;
                 default:
                     setStatusMsg(`Unknown command: ${cmd}. Try /help`);
                     setTimeout(() => setStatusMsg(''), 3000);
@@ -151,9 +170,10 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         setTurnTokens({ input: 0, output: 0 });
         onSubmit(trimmed);
     }, [currentModel, totalCost, onSubmit, onModelChange, onExit, exit]);
-    // Expose event handler
+    // Expose event handler + balance updater
     useEffect(() => {
         globalThis.__runcode_ui = {
+            updateBalance: (bal) => setBalance(bal),
             handleEvent: (event) => {
                 switch (event.kind) {
                     case 'text_delta':
@@ -197,6 +217,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                             input: prev.input + event.inputTokens,
                             output: prev.output + event.outputTokens,
                         }));
+                        setTotalCost(prev => prev + estimateCost(event.model, event.inputTokens, event.outputTokens));
                         break;
                     case 'turn_done':
                         setReady(true);
@@ -218,19 +239,20 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                 }), _jsx(Text, { children: " " })] }));
     }
     // ── Normal Mode ──
-    return (_jsxs(Box, { flexDirection: "column", children: [statusMsg && (_jsx(Box, { marginLeft: 2, children: _jsx(Text, { color: "green", children: statusMsg }) })), showHelp && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Commands" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/model" }), " [name]  Switch model (picker if no name)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/wallet" }), "        Show wallet address & balance"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/cost" }), "          Session cost"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/help" }), "          This help"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/exit" }), "          Quit"] }), _jsx(Text, { children: " " }), _jsx(Text, { dimColor: true, children: "  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4, nano, mini, haiku" })] })), showWallet && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Wallet" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  Chain:   ", _jsx(Text, { color: "magenta", children: chain })] }), _jsxs(Text, { children: ["  Address: ", _jsx(Text, { color: "cyan", children: walletAddress })] }), _jsxs(Text, { children: ["  Balance: ", _jsx(Text, { color: "green", children: walletBalance })] })] })), Array.from(tools.values()).map((tool, i) => (_jsx(Box, { marginLeft: 1, children: tool.done ? (tool.error
+    return (_jsxs(Box, { flexDirection: "column", children: [statusMsg && (_jsx(Box, { marginLeft: 2, children: _jsx(Text, { color: "green", children: statusMsg }) })), showHelp && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Commands" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/model" }), " [name]  Switch model (picker if no name)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/wallet" }), "        Show wallet address & balance"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/cost" }), "          Session cost & savings"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clear" }), "         Clear conversation display"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/help" }), "          This help"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/exit" }), "          Quit"] }), _jsx(Text, { children: " " }), _jsx(Text, { dimColor: true, children: "  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4, nano, mini, haiku" })] })), showWallet && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Wallet" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  Chain:   ", _jsx(Text, { color: "magenta", children: chain })] }), _jsxs(Text, { children: ["  Address: ", _jsx(Text, { color: "cyan", children: walletAddress })] }), _jsxs(Text, { children: ["  Balance: ", _jsx(Text, { color: "green", children: balance })] })] })), Array.from(tools.values()).map((tool, i) => (_jsx(Box, { marginLeft: 1, children: tool.done ? (tool.error
                     ? _jsxs(Text, { color: "red", children: ["  \u2717 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms"] })] })
-                    : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms \u2014 ", tool.preview.slice(0, 60), tool.preview.length > 60 ? '...' : ''] })] })) : (_jsxs(Text, { color: "cyan", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", tool.name, "..."] })) }, i))), thinking && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }) })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (_jsx(Box, { marginLeft: 1, marginTop: 0, children: _jsxs(Text, { dimColor: true, children: [turnTokens.input.toLocaleString(), " in / ", turnTokens.output.toLocaleString(), " out"] }) })), ready && (_jsx(InputBox, { input: input, setInput: setInput, onSubmit: handleSubmit, model: currentModel, balance: walletBalance, focused: mode === 'input' }))] }));
+                    : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms \u2014 ", tool.preview.slice(0, 60), tool.preview.length > 60 ? '...' : ''] })] })) : (_jsxs(Text, { color: "cyan", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", tool.name, "..."] })) }, i))), thinking && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }) })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (_jsx(Box, { marginLeft: 1, marginTop: 0, children: _jsxs(Text, { dimColor: true, children: [turnTokens.input.toLocaleString(), " in / ", turnTokens.output.toLocaleString(), " out", totalCost > 0 ? `  ·  $${totalCost.toFixed(4)} session` : ''] }) })), ready && (_jsx(InputBox, { input: input, setInput: setInput, onSubmit: handleSubmit, model: currentModel, balance: balance, focused: mode === 'input' }))] }));
 }
 export function launchInkUI(opts) {
     let resolveInput = null;
     let exiting = false;
+    let abortCallback = null;
     const instance = render(_jsx(RunCodeApp, { initialModel: opts.model, workDir: opts.workDir, walletAddress: opts.walletAddress || 'not set — run: runcode setup', walletBalance: opts.walletBalance || 'unknown', chain: opts.chain || 'base', startWithPicker: opts.showPicker, onSubmit: (value) => {
             if (resolveInput) {
                 resolveInput(value);
                 resolveInput = null;
             }
-        }, onModelChange: (model) => { opts.onModelChange?.(model); }, onExit: () => {
+        }, onModelChange: (model) => { opts.onModelChange?.(model); }, onAbort: () => { abortCallback?.(); }, onExit: () => {
             exiting = true;
             if (resolveInput) {
                 resolveInput(null);
@@ -242,11 +264,16 @@ export function launchInkUI(opts) {
             const ui = globalThis.__runcode_ui;
             ui?.handleEvent(event);
         },
+        updateBalance: (bal) => {
+            const ui = globalThis.__runcode_ui;
+            ui?.updateBalance(bal);
+        },
         waitForInput: () => {
             if (exiting)
                 return Promise.resolve(null);
             return new Promise((resolve) => { resolveInput = resolve; });
         },
+        onAbort: (cb) => { abortCallback = cb; },
         cleanup: () => { instance.unmount(); },
     };
 }

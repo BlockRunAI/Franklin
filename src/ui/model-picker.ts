@@ -9,7 +9,7 @@ import chalk from 'chalk';
 // ─── Model Shortcuts (same as proxy) ───────────────────────────────────────
 
 export const MODEL_SHORTCUTS: Record<string, string> = {
-  // Routing
+  // Routing profiles
   auto: 'blockrun/auto',
   smart: 'blockrun/auto',
   eco: 'blockrun/eco',
@@ -22,23 +22,35 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   // OpenAI
   gpt: 'openai/gpt-5.4',
   gpt5: 'openai/gpt-5.4',
+  'gpt-5': 'openai/gpt-5.4',
   'gpt-5.4': 'openai/gpt-5.4',
+  'gpt-5.4-pro': 'openai/gpt-5.4-pro',
+  'gpt-5.3': 'openai/gpt-5.3',
+  'gpt-5.2': 'openai/gpt-5.2',
+  'gpt-5.2-pro': 'openai/gpt-5.2-pro',
+  'gpt-4.1': 'openai/gpt-4.1',
   codex: 'openai/gpt-5.3-codex',
   nano: 'openai/gpt-5-nano',
   mini: 'openai/gpt-5-mini',
   o3: 'openai/o3',
   o4: 'openai/o4-mini',
+  'o4-mini': 'openai/o4-mini',
+  o1: 'openai/o1',
   // Google
   gemini: 'google/gemini-2.5-pro',
   flash: 'google/gemini-2.5-flash',
+  'gemini-3': 'google/gemini-3.1-pro',
   // xAI
   grok: 'xai/grok-3',
+  'grok-4': 'xai/grok-4-0709',
+  'grok-fast': 'xai/grok-4-1-fast-reasoning',
   // DeepSeek
   deepseek: 'deepseek/deepseek-chat',
   r1: 'deepseek/deepseek-reasoner',
   // Free
   free: 'nvidia/nemotron-ultra-253b',
   nemotron: 'nvidia/nemotron-ultra-253b',
+  'deepseek-free': 'nvidia/deepseek-v3.2',
   devstral: 'nvidia/devstral-2-123b',
   'qwen-coder': 'nvidia/qwen3-coder-480b',
   maverick: 'nvidia/llama-4-maverick',
@@ -81,7 +93,7 @@ const PICKER_MODELS: { category: string; models: ModelEntry[] }[] = [
     models: [
       { id: 'google/gemini-2.5-flash', shortcut: 'flash', label: 'Gemini 2.5 Flash', price: '$0.15/$0.6' },
       { id: 'openai/gpt-5-mini', shortcut: 'mini', label: 'GPT-5 Mini', price: '$0.25/$2' },
-      { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku', label: 'Claude Haiku 4.5', price: '$0.8/$4' },
+      { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku', label: 'Claude Haiku 4.5', price: '$1/$5' },
       { id: 'openai/gpt-5-nano', shortcut: 'nano', label: 'GPT-5 Nano', price: '$0.05/$0.4' },
     ],
   },

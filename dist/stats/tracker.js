@@ -46,6 +46,11 @@ export function saveStats(stats) {
     }
 }
 export function clearStats() {
+    cachedStats = null;
+    if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+    }
     try {
         if (fs.existsSync(STATS_FILE)) {
             fs.unlinkSync(STATS_FILE);
@@ -55,11 +60,40 @@ export function clearStats() {
         /* ignore */
     }
 }
+// ─── In-memory stats cache with debounced write ─────────────────────────
+// Prevents concurrent load→modify→save from losing data in proxy mode
+let cachedStats = null;
+let flushTimer = null;
+const FLUSH_DELAY_MS = 2000;
+function getCachedStats() {
+    if (!cachedStats) {
+        cachedStats = loadStats();
+    }
+    return cachedStats;
+}
+function scheduleSave() {
+    if (flushTimer)
+        return; // Already scheduled
+    flushTimer = setTimeout(() => {
+        flushTimer = null;
+        if (cachedStats)
+            saveStats(cachedStats);
+    }, FLUSH_DELAY_MS);
+}
+/** Flush stats to disk immediately (call on process exit) */
+export function flushStats() {
+    if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+    }
+    if (cachedStats)
+        saveStats(cachedStats);
+}
 /**
  * Record a completed request for stats tracking
  */
 export function recordUsage(model, inputTokens, outputTokens, costUsd, latencyMs, fallback = false) {
-    const stats = loadStats();
+    const stats = getCachedStats();
     const now = Date.now();
     // Update totals
     stats.totalRequests++;
@@ -103,7 +137,7 @@ export function recordUsage(model, inputTokens, outputTokens, costUsd, latencyMs
         latencyMs,
         fallback,
     });
-    saveStats(stats);
+    scheduleSave();
 }
 /**
  * Get stats summary for display

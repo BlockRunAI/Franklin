@@ -72,7 +72,8 @@ function log(...args: unknown[]) {
 }
 
 const DEFAULT_MAX_TOKENS = 4096;
-let lastOutputTokens = 0;
+// Per-model last output tokens for adaptive max_tokens (avoids cross-request pollution)
+const lastOutputByModel = new Map<string, number>();
 
 // Model shortcuts for quick switching
 const MODEL_SHORTCUTS: Record<string, string> = {
@@ -176,11 +177,18 @@ export function createProxy(options: ProxyOptions): http.Server {
     baseWallet = { privateKey: w.privateKey, address: w.address };
   }
 
-  const initSolana = async () => {
-    if (chain === 'solana' && !solanaWallet) {
-      const w = await getOrCreateSolanaWallet();
-      solanaWallet = { privateKey: w.privateKey, address: w.address };
+  let solanaInitPromise: Promise<void> | null = null;
+  const initSolana = () => {
+    if (chain !== 'solana' || solanaWallet) return Promise.resolve();
+    if (!solanaInitPromise) {
+      solanaInitPromise = getOrCreateSolanaWallet().then((w) => {
+        solanaWallet = { privateKey: w.privateKey, address: w.address };
+      }).catch((err) => {
+        solanaInitPromise = null; // Allow retry on failure
+        throw err;
+      });
     }
+    return solanaInitPromise;
   };
 
   const server = http.createServer(async (req, res) => {
@@ -302,16 +310,17 @@ export function createProxy(options: ProxyOptions): http.Server {
 
               // Use max of (last output × 2, default 4096) capped by model limit
               // This ensures short replies don't starve the next request
+              const lastOut = lastOutputByModel.get(requestModel) ?? 0;
               const adaptive =
-                lastOutputTokens > 0
-                  ? Math.max(lastOutputTokens * 2, DEFAULT_MAX_TOKENS)
+                lastOut > 0
+                  ? Math.max(lastOut * 2, DEFAULT_MAX_TOKENS)
                   : DEFAULT_MAX_TOKENS;
               parsed.max_tokens = Math.min(adaptive, modelCap);
 
               if (original !== parsed.max_tokens) {
                 debug(
                   options,
-                  `max_tokens: ${original || 'unset'} → ${parsed.max_tokens} (last output: ${lastOutputTokens || 'none'})`
+                  `max_tokens: ${original || 'unset'} → ${parsed.max_tokens} (last output: ${lastOut || 'none'})`
                 );
               }
             }
@@ -458,8 +467,16 @@ export function createProxy(options: ProxyOptions): http.Server {
           let fullResponse = '';
           const STREAM_CAP = 5_000_000; // 5MB cap on accumulated stream
 
+          const STREAM_TIMEOUT_MS = 5 * 60 * 1000; // 5 min timeout for entire stream
+          const streamDeadline = Date.now() + STREAM_TIMEOUT_MS;
+
           const pump = async () => {
             while (true) {
+              if (Date.now() > streamDeadline) {
+                log('⚠️  Stream timeout after 5 minutes');
+                try { reader.cancel(); } catch { /* ignore */ }
+                break;
+              }
               const { done, value } = await reader.read();
               if (done) {
                 // Record stats from streaming response
@@ -473,7 +490,8 @@ export function createProxy(options: ProxyOptions): http.Server {
                     /"input_tokens"\s*:\s*(\d+)/
                   );
                   if (lastOutputMatch) {
-                    lastOutputTokens = parseInt(lastOutputMatch[1], 10);
+                    const outputTokens = parseInt(lastOutputMatch[1], 10);
+                    lastOutputByModel.set(finalModel, outputTokens);
                     const inputTokens = inputMatch
                       ? parseInt(inputMatch[1], 10)
                       : 0;
@@ -481,20 +499,20 @@ export function createProxy(options: ProxyOptions): http.Server {
                     const cost = estimateCost(
                       finalModel,
                       inputTokens,
-                      lastOutputTokens
+                      outputTokens
                     );
 
                     recordUsage(
                       finalModel,
                       inputTokens,
-                      lastOutputTokens,
+                      outputTokens,
                       cost,
                       latencyMs,
                       usedFallback
                     );
                     debug(
                       options,
-                      `recorded: model=${finalModel} in=${inputTokens} out=${lastOutputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
+                      `recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
                     );
                   }
                 }
@@ -508,32 +526,36 @@ export function createProxy(options: ProxyOptions): http.Server {
               res.write(value);
             }
           };
-          pump().catch(() => res.end());
+          pump().catch((err) => {
+            log(`❌ Stream error: ${err instanceof Error ? err.message : String(err)}`);
+            res.end();
+          });
         } else {
           const text = await response.text();
           try {
             const parsed = JSON.parse(text);
             if (parsed.usage?.output_tokens) {
-              lastOutputTokens = parsed.usage.output_tokens;
+              const outputTokens = parsed.usage.output_tokens;
+              lastOutputByModel.set(finalModel, outputTokens);
               const inputTokens = parsed.usage?.input_tokens || 0;
               const latencyMs = Date.now() - requestStartTime;
               const cost = estimateCost(
                 finalModel,
                 inputTokens,
-                lastOutputTokens
+                outputTokens
               );
 
               recordUsage(
                 finalModel,
                 inputTokens,
-                lastOutputTokens,
+                outputTokens,
                 cost,
                 latencyMs,
                 usedFallback
               );
               debug(
                 options,
-                `recorded: model=${finalModel} in=${inputTokens} out=${lastOutputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
+                `recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
               );
             }
           } catch {

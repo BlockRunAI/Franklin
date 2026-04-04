@@ -101,15 +101,18 @@ class MarkdownRenderer {
         return this.renderInline(line);
     }
     renderInline(text) {
+        // Process in order: code first (to protect from other formatting), then bold, italic, links
         return text
-            // Bold
-            .replace(/\*\*(.+?)\*\*/g, (_, t) => chalk.bold(t))
-            // Italic
-            .replace(/\*(.+?)\*/g, (_, t) => chalk.italic(t))
-            // Inline code
-            .replace(/`([^`]+)`/g, (_, t) => chalk.cyan(t))
+            // Inline code (process first to protect contents)
+            .replace(/`([^`]+)`/g, (_, t) => `\x00CODE${chalk.cyan(t)}\x00END`)
+            // Bold (before italic to avoid ** being consumed by *)
+            .replace(/\*\*([^*]+)\*\*/g, (_, t) => chalk.bold(t))
+            // Italic (only single * not preceded/followed by *)
+            .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, (_, t) => chalk.italic(t))
             // Links
-            .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => chalk.blue.underline(label) + chalk.dim(` (${url})`));
+            .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => chalk.blue.underline(label) + chalk.dim(` (${url})`))
+            // Restore code markers
+            .replace(/\x00CODE/g, '').replace(/\x00END/g, '');
     }
 }
 // ─── Terminal UI ───────────────────────────────────────────────────────────
@@ -168,13 +171,19 @@ export class TerminalUI {
                 this.spinner.stop();
                 process.stderr.write(chalk.dim(event.text));
                 break;
-            case 'capability_start':
+            case 'capability_start': {
+                // Flush any pending markdown text before showing tool status
+                this.spinner.stop();
+                const flushed = this.mdRenderer.flush();
+                if (flushed)
+                    process.stdout.write(flushed + '\n');
                 this.activeCapabilities.set(event.id, {
                     name: event.name,
                     startTime: Date.now(),
                 });
                 this.spinner.start(`${event.name}...`);
                 break;
+            }
             case 'capability_input_delta':
                 break;
             case 'capability_done': {
@@ -240,6 +249,27 @@ export class TerminalUI {
                 this.mdRenderer = new MarkdownRenderer();
                 break;
             }
+        }
+    }
+    /** Check if input is a slash command. Returns true if handled. */
+    handleSlashCommand(input) {
+        const parts = input.trim().split(/\s+/);
+        const cmd = parts[0].toLowerCase();
+        switch (cmd) {
+            case '/help':
+                console.error(chalk.bold('\n  Commands:'));
+                console.error('  /model [name]  — switch model (e.g. /model sonnet)');
+                console.error('  /cost          — session cost and tokens');
+                console.error('  /exit          — quit');
+                console.error('  /help          — this help\n');
+                console.error(chalk.dim('  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4\n'));
+                return true;
+            case '/cost':
+            case '/usage':
+                console.error(chalk.dim(`\n  Tokens: ${this.totalInputTokens.toLocaleString()} in / ${this.totalOutputTokens.toLocaleString()} out\n`));
+                return true;
+            default:
+                return false;
         }
     }
     printWelcome(model, workDir) {

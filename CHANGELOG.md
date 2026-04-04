@@ -1,5 +1,71 @@
 # Changelog
 
+## 1.2.0 (2026-04-04)
+
+### Bug Fixes (36 fixes across 5 rounds)
+
+**Security**
+- Permission system no longer defaults to allow on EOF — piped input now denies destructive ops
+- Glob pattern matching in permissions: `*` matches non-space only (was matching everything including `/`)
+- Global `unhandledRejection` + `uncaughtException` handlers prevent silent crashes
+
+**Memory & Resource Leaks**
+- WebFetch reader released on exception (try-finally)
+- ImageGen/WebFetch timeout timers cleaned up on all error paths
+- Proxy stream reader cancelled after timeout
+- Stats flush timer cleaned up on process exit
+
+**Race Conditions**
+- Solana wallet init uses promise-cache to prevent concurrent initialization
+- Stats uses in-memory cache + debounced write (no more load→save races)
+- Proxy `lastOutputTokens` tracked per-model (no cross-request pollution)
+- Daemon stop waits for process exit before removing PID file
+
+**Error Handling**
+- Proxy `pump()` now logs streaming errors (was silently swallowing)
+- Proxy server has `error` event handler — port-in-use shows clear message
+- Proxy handles `SIGTERM` for graceful container shutdown
+- Init warns when settings.json is corrupted (was silent)
+- Config `saveConfig` catches disk errors
+
+**Validation**
+- Port validation on `init`, `daemon`, `proxy` commands (NaN → error)
+- `logs --lines` validates input (NaN → default 50)
+- `config unset` validates key against known keys
+- WebSearch `max_results` capped at 20
+
+**Pricing**
+- Haiku display price fixed ($0.8/$4 → $1/$5)
+- DeepSeek output price added to Ink UI picker
+
+**Tools**
+- Edit tool shows similar lines when string not found (was showing first 10 lines)
+- Bash timeout message now mentions timeout parameter
+- Native grep handles `**/*.ts` patterns
+- `rg --version` check cached (was re-running every grep call)
+- Glob: only `**` triggers recursion (was over-recursing on `/`)
+- Glob: symlink loop protection via realpath tracking
+- Glob: suggests `**/<pattern>` when non-recursive finds nothing
+
+**Timeouts**
+- Git context operations: 5s timeout (prevents startup hang)
+- Proxy stream pump: 5min timeout
+- WebSearch: 15s timeout
+- SubAgent: 5min total timeout
+
+### New Features
+
+- **Escape to abort**: Press Esc during generation to cancel the current turn
+- **Per-turn cost display**: Session cost shown after every response (e.g. `$0.0042 session`)
+- **`/clear` command**: Clear conversation display
+- **Terminal UI commands**: `/model`, `/cost`, `/help` now work in piped/non-TTY mode
+- **Improved system prompt**: All 11 tools documented with constraints (file size limits, output caps, defaults)
+- **Tool descriptions enhanced**: Read, Grep, Glob schemas document key limits
+- **Model shortcuts synced**: 16 missing shortcuts added to terminal picker
+- **Router improvement**: Code block detection (```) boosts complexity score; byte-length token estimation
+- **Banner shows `/help` hint**
+- **Input box shows `esc to abort/quit`**
+
 ## 0.9.13 (2026-03-30)
 
 ### Features

@@ -8,6 +8,10 @@ const LAUNCH_AGENT_DIR = path.join(os.homedir(), 'Library', 'LaunchAgents');
 const LAUNCH_AGENT_PLIST = path.join(LAUNCH_AGENT_DIR, 'ai.blockrun.runcode.plist');
 export async function initCommand(options) {
     const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
+    if (isNaN(port) || port < 1 || port > 65535) {
+        console.error(chalk.red(`Error: invalid port "${options.port}". Must be 1-65535. Default: ${DEFAULT_PROXY_PORT}`));
+        process.exit(1);
+    }
     // ── 1. Write ~/.claude/settings.json ────────────────────────────────────
     let settings = {};
     try {
@@ -15,7 +19,9 @@ export async function initCommand(options) {
             settings = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS_FILE, 'utf-8'));
         }
     }
-    catch { /* start fresh */ }
+    catch {
+        console.log(chalk.yellow(`  Warning: could not parse ${CLAUDE_SETTINGS_FILE}, starting fresh.`));
+    }
     settings.env = {
         ...(settings.env ?? {}),
         ANTHROPIC_BASE_URL: `http://localhost:${port}/api`,

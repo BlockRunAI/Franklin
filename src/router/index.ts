@@ -131,9 +131,11 @@ function classifyRequest(prompt: string, tokenCount: number): ClassifyResult {
 
   // Code detection (weight: 0.20) - increased weight
   const codeMatches = countMatches(prompt, CODE_KEYWORDS);
-  if (codeMatches >= 2) {
+  // Extra weight for code blocks (triple backticks)
+  const codeBlockCount = (prompt.match(/```/g) || []).length / 2; // pairs
+  if (codeBlockCount >= 1 || codeMatches >= 2) {
     score += 0.5;
-    signals.push('code');
+    signals.push(codeBlockCount >= 1 ? 'code-block' : 'code');
   } else if (codeMatches >= 1) {
     score += 0.25;
     signals.push('code-light');
@@ -238,8 +240,9 @@ export function routeRequest(
     };
   }
 
-  // Estimate token count (rough: 4 chars per token)
-  const tokenCount = Math.ceil(prompt.length / 4);
+  // Estimate token count (use byte length / 4 for better accuracy with non-ASCII)
+  const byteLen = Buffer.byteLength(prompt, 'utf-8');
+  const tokenCount = Math.ceil(byteLen / 4);
 
   // Classify the request
   const { tier, confidence, signals } = classifyRequest(prompt, tokenCount);

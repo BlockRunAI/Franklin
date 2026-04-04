@@ -18,6 +18,8 @@ export declare class TerminalUI {
      * Handle a stream event from the agent loop.
      */
     handleEvent(event: StreamEvent): void;
+    /** Check if input is a slash command. Returns true if handled. */
+    handleSlashCommand(input: string): boolean;
     printWelcome(model: string, workDir: string): void;
     printUsageSummary(): void;
     printGoodbye(): void;

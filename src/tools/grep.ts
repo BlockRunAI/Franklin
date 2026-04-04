@@ -17,13 +17,16 @@ interface GrepInput {
   head_limit?: number;
 }
 
+let _hasRipgrep: boolean | null = null;
 function hasRipgrep(): boolean {
+  if (_hasRipgrep !== null) return _hasRipgrep;
   try {
     execSync('rg --version', { stdio: 'pipe' });
-    return true;
+    _hasRipgrep = true;
   } catch {
-    return false;
+    _hasRipgrep = false;
   }
+  return _hasRipgrep;
 }
 
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
@@ -130,7 +133,9 @@ function runNativeGrep(
   }
 
   if (opts.glob) {
-    args.push(`--include=${opts.glob}`);
+    // Native grep doesn't support recursive globs like **/*.ts — strip leading **/
+    const nativeGlob = opts.glob.replace(/^\*\*\//, '');
+    args.push(`--include=${nativeGlob}`);
   }
 
   args.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=dist');
@@ -164,7 +169,7 @@ function runNativeGrep(
 export const grepCapability: CapabilityHandler = {
   spec: {
     name: 'Grep',
-    description: 'Search file contents by regex pattern. Uses ripgrep if available, falls back to native grep.',
+    description: 'Search file contents by regex pattern. Default: returns file paths (files_with_matches). Use output_mode "content" for matching lines with context. Skips node_modules, .git, dist.',
     input_schema: {
       type: 'object',
       properties: {

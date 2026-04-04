@@ -14,4 +14,4 @@ export declare function runAgent(config: AgentConfig, initialPrompt: string): As
  * Each user message triggers a full agent loop.
  * Returns the accumulated conversation history.
  */
-export declare function interactiveSession(config: AgentConfig, getUserInput: () => Promise<string | null>, onEvent: (event: StreamEvent) => void): Promise<Dialogue[]>;
+export declare function interactiveSession(config: AgentConfig, getUserInput: () => Promise<string | null>, onEvent: (event: StreamEvent) => void, onAbortReady?: (abort: () => void) => void): Promise<Dialogue[]>;
