@@ -129,7 +129,12 @@ export class ModelClient {
                         try {
                             parsedInput = JSON.parse(currentToolInput || '{}');
                         }
-                        catch { /* empty */ }
+                        catch (parseErr) {
+                            // Log malformed JSON instead of silently defaulting to {}
+                            if (this.debug) {
+                                console.error(`[runcode] Malformed tool input JSON for ${currentToolName}: ${parseErr.message}`);
+                            }
+                        }
                         const toolInvocation = {
                             type: 'tool_use',
                             id: currentToolId,

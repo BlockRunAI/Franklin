@@ -21,7 +21,17 @@ async function connectStdio(name, config) {
         env: { ...process.env, ...(config.env || {}) },
     });
     const client = new Client({ name: `runcode-mcp-${name}`, version: '1.0.0' }, { capabilities: {} });
-    await client.connect(transport);
+    try {
+        await client.connect(transport);
+    }
+    catch (err) {
+        // Clean up transport if connect fails to prevent resource leak
+        try {
+            await transport.close();
+        }
+        catch { /* ignore */ }
+        throw err;
+    }
     // Discover tools
     const { tools: mcpTools } = await client.listTools();
     const capabilities = [];
@@ -38,11 +48,12 @@ async function connectStdio(name, config) {
                 },
             },
             execute: async (input, _ctx) => {
+                const MCP_TOOL_TIMEOUT = 30_000;
                 try {
-                    const result = await client.callTool({
-                        name: tool.name,
-                        arguments: input,
-                    });
+                    // Timeout protection: if tool hangs, don't block the agent forever
+                    const callPromise = client.callTool({ name: tool.name, arguments: input });
+                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`MCP tool timeout after ${MCP_TOOL_TIMEOUT / 1000}s`)), MCP_TOOL_TIMEOUT));
+                    const result = await Promise.race([callPromise, timeoutPromise]);
                     // Extract text content from MCP response
                     const output = result.content
                         ?.filter(c => c.type === 'text')
@@ -70,6 +81,11 @@ async function connectStdio(name, config) {
 /**
  * Connect to all configured MCP servers and return discovered tools.
  */
+const MCP_CONNECT_TIMEOUT = 5_000; // 5s per server connection
+/**
+ * Connect to all configured MCP servers and return discovered tools.
+ * Each connection has a 5s timeout to avoid blocking startup.
+ */
 export async function connectMcpServers(config, debug) {
     const allTools = [];
     for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
@@ -79,17 +95,16 @@ export async function connectMcpServers(config, debug) {
             if (debug) {
                 console.error(`[runcode] Connecting to MCP server: ${name}...`);
             }
-            let connected;
-            if (serverConfig.transport === 'stdio') {
-                connected = await connectStdio(name, serverConfig);
-            }
-            else {
-                // HTTP transport — TODO: implement SSE/HTTP transport
+            if (serverConfig.transport !== 'stdio') {
                 if (debug) {
                     console.error(`[runcode] MCP HTTP transport not yet supported for ${name}`);
                 }
                 continue;
             }
+            // Timeout: don't let a slow server block startup
+            const connectPromise = connectStdio(name, serverConfig);
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('connection timeout (5s)')), MCP_CONNECT_TIMEOUT));
+            const connected = await Promise.race([connectPromise, timeoutPromise]);
             allTools.push(...connected.tools);
             if (debug) {
                 console.error(`[runcode] MCP ${name}: ${connected.tools.length} tools discovered`);

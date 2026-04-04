@@ -39,4 +39,8 @@ export declare function listSessions(): SessionMeta[];
 /**
  * Prune old sessions beyond MAX_SESSIONS.
  */
-export declare function pruneOldSessions(): void;
+/**
+ * Prune old sessions beyond MAX_SESSIONS.
+ * Accepts optional activeSessionId to protect from deletion.
+ */
+export declare function pruneOldSessions(activeSessionId?: string): void;

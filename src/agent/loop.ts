@@ -322,7 +322,7 @@ export async function interactiveSession(
   // Session persistence
   const sessionId = createSessionId();
   let turnCount = 0;
-  pruneOldSessions(); // Cleanup old sessions on start
+  pruneOldSessions(sessionId); // Cleanup old sessions on start, protect current
 
   while (true) {
     let input = await getUserInput();

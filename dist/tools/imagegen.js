@@ -70,8 +70,11 @@ async function execute(input, ctx) {
             fs.writeFileSync(outPath, buffer);
         }
         else if (imageData.url) {
-            // Download from URL
-            const imgResp = await fetch(imageData.url);
+            // Download from URL (with 30s timeout)
+            const dlCtrl = new AbortController();
+            const dlTimeout = setTimeout(() => dlCtrl.abort(), 30_000);
+            const imgResp = await fetch(imageData.url, { signal: dlCtrl.signal });
+            clearTimeout(dlTimeout);
             const buffer = Buffer.from(await imgResp.arrayBuffer());
             fs.mkdirSync(path.dirname(outPath), { recursive: true });
             fs.writeFileSync(outPath, buffer);

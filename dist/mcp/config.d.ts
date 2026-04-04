@@ -5,10 +5,6 @@
  * 2. Project: .mcp.json in working directory
  */
 import type { McpConfig, McpServerConfig } from './client.js';
-/**
- * Load MCP server configurations from global + project files.
- * Project config overrides global for same server name.
- */
 export declare function loadMcpConfig(workDir: string): McpConfig;
 /**
  * Save a server config to the global MCP config.
@@ -18,3 +14,7 @@ export declare function saveMcpServer(name: string, config: McpServerConfig): vo
  * Remove a server from the global MCP config.
  */
 export declare function removeMcpServer(name: string): boolean;
+/**
+ * Trust a project directory to load its .mcp.json.
+ */
+export declare function trustProjectDir(workDir: string): void;

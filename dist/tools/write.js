@@ -40,6 +40,16 @@ async function execute(input, ctx) {
         }
     }
     catch { /* parent doesn't exist yet, will be created */ }
+    // Also check if target file itself is a symlink to a sensitive location
+    try {
+        if (fs.existsSync(resolved) && fs.lstatSync(resolved).isSymbolicLink()) {
+            const realTarget = fs.realpathSync(resolved);
+            if (checkPath(realTarget)) {
+                return { output: `Error: refusing to write — symlink resolves to sensitive location: ${realTarget}`, isError: true };
+            }
+        }
+    }
+    catch { /* file doesn't exist yet, ok */ }
     try {
         // Ensure parent directory exists
         const parentDir = path.dirname(resolved);
