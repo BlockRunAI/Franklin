@@ -329,6 +329,11 @@ export async function interactiveSession(
     if (input === null) break; // User wants to exit
     if (input === '') continue; // Empty input → re-prompt
 
+    // Handle /tasks — show task list (shortcut for Task list action)
+    if (input === '/tasks') {
+      input = 'List all current tasks using the Task tool.';
+    }
+
     // Handle /doctor — diagnose setup issues
     if (input === '/doctor') {
       const checks: string[] = [];

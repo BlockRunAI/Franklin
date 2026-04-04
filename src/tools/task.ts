@@ -16,7 +16,7 @@ const tasks: TaskEntry[] = [];
 let nextId = 1;
 
 interface TaskInput {
-  action: 'create' | 'update' | 'list';
+  action: 'create' | 'update' | 'list' | 'delete';
   subject?: string;
   description?: string;
   task_id?: number;
@@ -59,11 +59,26 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
       if (tasks.length === 0) {
         return { output: 'No tasks.' };
       }
+      const pending = tasks.filter(t => t.status !== 'completed').length;
+      const done = tasks.filter(t => t.status === 'completed').length;
       const lines = tasks.map(t => {
         const icon = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '→' : '○';
         return `${icon} #${t.id} [${t.status}] ${t.subject}`;
       });
+      lines.push(`\n${done} done, ${pending} remaining`);
       return { output: lines.join('\n') };
+    }
+
+    case 'delete': {
+      if (!task_id) {
+        return { output: 'Error: task_id is required for delete', isError: true };
+      }
+      const idx = tasks.findIndex(t => t.id === task_id);
+      if (idx === -1) {
+        return { output: `Error: task #${task_id} not found`, isError: true };
+      }
+      const removed = tasks.splice(idx, 1)[0];
+      return { output: `Task #${removed.id} deleted: ${removed.subject}` };
     }
 
     default:
@@ -74,13 +89,13 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
 export const taskCapability: CapabilityHandler = {
   spec: {
     name: 'Task',
-    description: 'Manage in-session tasks. Actions: create (new task), update (change status), list (show all).',
+    description: 'Manage in-session tasks. Actions: create, update (status/subject), list (with summary), delete.',
     input_schema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          description: 'Action: "create", "update", or "list"',
+          description: 'Action: "create", "update", "list", or "delete"',
         },
         subject: { type: 'string', description: 'Task title (for create/update)' },
         description: { type: 'string', description: 'Task description (for create/update)' },
