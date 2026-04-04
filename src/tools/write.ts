@@ -25,6 +25,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.workingDir, filePath);
 
   // Safety: block system paths and sensitive home directories
+  // Resolve symlinks to prevent traversal attacks
   const home = os.homedir();
   const dangerousPaths = [
     '/etc/', '/usr/', '/bin/', '/sbin/', '/var/', '/System/',
@@ -34,9 +35,21 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     path.join(home, '.gnupg') + '/',
     path.join(home, '.config/gcloud') + '/',
   ];
-  if (dangerousPaths.some(p => resolved.startsWith(p))) {
+  // Check both the resolved path and the real path (after symlink resolution)
+  const checkPath = (p: string) => dangerousPaths.some(dp => p.startsWith(dp));
+  if (checkPath(resolved)) {
     return { output: `Error: refusing to write to sensitive path: ${resolved}`, isError: true };
   }
+  // Also check parent dir's real path if it already exists (symlink protection)
+  const parentDir = path.dirname(resolved);
+  try {
+    if (fs.existsSync(parentDir)) {
+      const realParent = fs.realpathSync(parentDir);
+      if (checkPath(realParent + '/')) {
+        return { output: `Error: refusing to write — path resolves to sensitive location: ${realParent}`, isError: true };
+      }
+    }
+  } catch { /* parent doesn't exist yet, will be created */ }
 
   try {
     // Ensure parent directory exists
