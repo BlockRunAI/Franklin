@@ -148,7 +148,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
     });
     emitDone(ctx);
   },
-  '/doctor': (ctx) => {
+  '/doctor': async (ctx) => {
     const checks: string[] = [];
     try { execSync('git --version', { stdio: 'pipe' }); checks.push('✓ git available'); }
     catch { checks.push('✗ git not found'); }
