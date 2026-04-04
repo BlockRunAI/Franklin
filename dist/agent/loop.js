@@ -342,6 +342,29 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         if (input === '/commit') {
             input = 'Review the current git diff and staged changes. Stage relevant files with `git add`, then create a commit with a concise message summarizing the changes. Do NOT push to remote.';
         }
+        // Handle /undo — undo last commit (keep changes)
+        if (input === '/undo') {
+            try {
+                const { execSync } = await import('node:child_process');
+                const result = execSync('git reset --soft HEAD~1', {
+                    cwd: config.workingDir || process.cwd(), encoding: 'utf-8', timeout: 5000
+                }).trim();
+                onEvent({ kind: 'text_delta', text: result || 'Last commit undone. Changes preserved in staging.\n' });
+            }
+            catch (e) {
+                onEvent({ kind: 'text_delta', text: `Undo error: ${e.message?.split('\n')[0]}\n` });
+            }
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
+        // Handle /push — push to remote
+        if (input === '/push') {
+            input = 'Push the current branch to the remote repository using `git push`. Show the result.';
+        }
+        // Handle /pr — create pull request
+        if (input === '/pr') {
+            input = 'Create a pull request for the current branch. First check `git log --oneline main..HEAD` to see commits, then use `gh pr create` with a descriptive title and body summarizing the changes. If gh CLI is not available, show the manual steps.';
+        }
         // Handle /review — ask agent to review current changes
         if (input === '/review') {
             input = 'Review the current git diff. For each changed file, check for: bugs, security issues, missing error handling, performance problems, and style issues. Provide a brief summary of findings.';
@@ -389,6 +412,15 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         // Handle /deps — show project dependencies
         if (input === '/deps') {
             input = 'Read the project dependency file (package.json, requirements.txt, go.mod, Cargo.toml, etc.) and list key dependencies with their versions.';
+        }
+        // Handle /scaffold <desc> — generate boilerplate
+        if (input.startsWith('/scaffold ')) {
+            const desc = input.slice(10).trim();
+            input = `Create the scaffolding/boilerplate for: ${desc}. Generate the file structure and initial code. Ask me if you need clarification on requirements.`;
+        }
+        // Handle /optimize — performance optimization
+        if (input === '/optimize') {
+            input = 'Analyze the codebase for performance issues. Check for: unnecessary re-renders, N+1 queries, missing indexes, unoptimized loops, large bundle sizes, and memory leaks. Provide specific recommendations.';
         }
         // Handle /status — show git status
         if (input === '/status') {
