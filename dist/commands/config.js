@@ -9,6 +9,11 @@ const VALID_KEYS = [
     'opus-model',
     'haiku-model',
     'smart-routing',
+    'permission-mode',
+    'max-turns',
+    'auto-compact',
+    'session-save',
+    'debug',
 ];
 export function loadConfig() {
     try {
