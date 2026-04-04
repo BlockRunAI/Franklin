@@ -11,6 +11,11 @@ const VALID_KEYS = [
   'opus-model',
   'haiku-model',
   'smart-routing',
+  'permission-mode',
+  'max-turns',
+  'auto-compact',
+  'session-save',
+  'debug',
 ] as const;
 
 type ConfigKey = (typeof VALID_KEYS)[number];
@@ -21,6 +26,11 @@ export interface AppConfig {
   'opus-model'?: string;
   'haiku-model'?: string;
   'smart-routing'?: string;
+  'permission-mode'?: string;
+  'max-turns'?: string;
+  'auto-compact'?: string;
+  'session-save'?: string;
+  'debug'?: string;
 }
 
 export function loadConfig(): AppConfig {

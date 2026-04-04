@@ -238,10 +238,23 @@ function RunCodeApp({
           return;
 
         case '/commit':
+        case '/review':
+        case '/test':
+        case '/fix':
+        case '/debug':
+        case '/init':
+        case '/todo':
+        case '/deps':
+        case '/tasks':
         case '/status':
         case '/diff':
+        case '/log':
+        case '/stash':
+        case '/unstash':
         case '/context':
         case '/doctor':
+        case '/bug':
+        case '/version':
         case '/plan':
         case '/execute':
           onSubmit(trimmed);
@@ -293,7 +306,9 @@ function RunCodeApp({
 
         default:
           // Commands with arguments that pass through to the loop
-          if (trimmed.startsWith('/resume ')) {
+          if (trimmed.startsWith('/resume ') || trimmed.startsWith('/branch ')
+            || trimmed.startsWith('/explain ') || trimmed.startsWith('/search ')
+            || trimmed.startsWith('/find ') || trimmed.startsWith('/refactor ')) {
             setStreamText('');
             setWaiting(true);
             setReady(false);
@@ -440,9 +455,13 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/cost</Text>          Session cost & savings</Text>
           <Text>  <Text color="cyan">/retry</Text>         Retry the last prompt</Text>
           <Text>  <Text color="cyan">/compact</Text>       Compress conversation history</Text>
-          <Text>  <Text color="cyan">/commit</Text>        Auto-commit current changes</Text>
-          <Text>  <Text color="cyan">/status</Text>        Show git status</Text>
-          <Text>  <Text color="cyan">/diff</Text>          Show git changes</Text>
+          <Text>  <Text color="cyan">/commit</Text>        Auto-commit changes</Text>
+          <Text>  <Text color="cyan">/review</Text>        Review git diff</Text>
+          <Text>  <Text color="cyan">/test</Text>          Run tests</Text>
+          <Text>  <Text color="cyan">/status</Text>        Git status</Text>
+          <Text>  <Text color="cyan">/diff</Text>          Git diff</Text>
+          <Text>  <Text color="cyan">/log</Text>           Git log</Text>
+          <Text>  <Text color="cyan">/branch</Text> [name] Branches</Text>
           <Text>  <Text color="cyan">/context</Text>       Session info (model, tokens, mode)</Text>
           <Text>  <Text color="cyan">/plan</Text>          Enter plan mode (read-only tools)</Text>
           <Text>  <Text color="cyan">/execute</Text>       Exit plan mode (enable all tools)</Text>
