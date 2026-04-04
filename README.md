@@ -1,18 +1,8 @@
 <p align="center">
-  <br>
-  <code>
- ██████╗ ██╗   ██╗███╗   ██╗ ██████╗ ██████╗ ██████╗ ███████╗
- ██╔══██╗██║   ██║████╗  ██║██╔════╝██╔═══██╗██╔══██╗██╔════╝
- ██████╔╝██║   ██║██╔██╗ ██║██║     ██║   ██║██║  ██║█████╗
- ██╔══██╗██║   ██║██║╚██╗██║██║     ██║   ██║██║  ██║██╔══╝
- ██║  ██║╚██████╔╝██║ ╚████║╚██████╗╚██████╔╝██████╔╝███████╗
- ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
-  </code>
+  <img src="assets/banner.png" alt="RunCode" width="600">
 </p>
 
 <div align="center">
-
-<h1>RunCode</h1>
 
 <p><strong>Open-source AI coding agent. 41+ models. Pay per use with USDC.</strong></p>
 
@@ -28,7 +18,17 @@
 
 ---
 
-runcode is a terminal-based AI coding agent that connects to 41+ LLM models through [BlockRun](https://blockrun.ai). It reads your code, edits files, runs commands, searches the web, and manages tasks — all from your terminal. You pay per request with USDC via the [x402](https://x402.org) protocol. No API keys, no accounts, no subscriptions.
+## Why RunCode?
+
+| | Claude Code | Cursor | Aider | **RunCode** |
+|---|---|---|---|---|
+| Models | Claude only | Mixed (limited) | Bring your key | **41+ models, one tool** |
+| Pricing | $200/mo subscription | $20/mo + usage | Free + API costs | **Pay per request** |
+| Payment | Credit card | Credit card | API keys | **USDC — no accounts** |
+| Open source | No | No | Yes | **Yes** |
+| Switch models mid-session | No | No | Yes | **Yes** |
+
+RunCode gives you the same agent capabilities — file editing, shell commands, web search, sub-agents — across every major model provider. You pay only for what you use, with stablecoin. No API keys to manage, no accounts to create, no subscriptions to cancel.
 
 ## Quick Start
 
@@ -44,7 +44,7 @@ That's it. Fund the wallet address with USDC on Base, or use free models immedia
 
 ### Agent Capabilities
 
-runcode is a full coding agent with 10 built-in tools:
+RunCode is a full coding agent with 10 built-in tools:
 
 | Tool | Description |
 |------|-------------|
@@ -79,7 +79,8 @@ Switch models mid-session:
 /cost               # Check session cost
 ```
 
-**30+ shortcuts:**
+<details>
+<summary><strong>All model shortcuts (30+)</strong></summary>
 
 | Shortcut | Model | Price (in/out per 1M) |
 |----------|-------|----------------------|
@@ -100,6 +101,8 @@ Switch models mid-session:
 | `devstral` | Devstral 2 123B | FREE |
 | `qwen-coder` | Qwen3 Coder 480B | FREE |
 | `maverick` | Llama 4 Maverick | FREE |
+
+</details>
 
 ### Token Optimization
 
@@ -145,90 +148,34 @@ Concurrent-safe tools (Read, Glob, Grep) start executing while the model is stil
 
 ### Proxy Mode
 
-runcode also includes a proxy mode for use with Claude Code or other tools:
+Use any model through Claude Code by running RunCode as a payment proxy. It translates between OpenAI and Anthropic formats, handles x402 payments, and adds automatic fallback when a model is unavailable.
 
 ```bash
 runcode proxy                    # Start payment proxy on :8402
 runcode proxy -m deepseek        # With default model
-runcode init                     # Auto-configure Claude Code + LaunchAgent
 ```
 
-## Architecture
+**One-command setup for Claude Code:**
 
-```
-User input → runcode CLI
-  → Terminal UI (markdown rendering, model picker, spinners)
-  → Permission check (allow / deny / ask)
-  → Agent loop
-    → Token optimization pipeline
-    → BlockRun API (direct, with x402 payment)
-      → 41+ models (Claude, GPT, Gemini, DeepSeek, Grok, ...)
-    → Streaming tool execution
-    → Context compaction (when needed)
-  → Loop until task complete
+```bash
+runcode init                     # Auto-configures Claude Code + LaunchAgent
 ```
 
+This writes the proxy endpoint into Claude Code's config and installs a macOS LaunchAgent so the proxy starts automatically on login. Run `runcode uninit` to undo.
+
+**How it works:**
+
 ```
-src/
-├── agent/                  # Core agent system
-│   ├── loop.ts             # Agent loop + interactive session
-│   ├── llm.ts              # API client + x402 payment + SSE parsing
-│   ├── types.ts            # Type definitions
-│   ├── context.ts          # System prompt assembly
-│   ├── tokens.ts           # Token estimation
-│   ├── compact.ts          # Auto-compaction
-│   ├── optimize.ts         # 5-layer token optimization
-│   ├── permissions.ts      # Tool permission system
-│   └── streaming-executor.ts # Parallel tool execution
-├── tools/                  # 10 built-in tools
-│   ├── read.ts, write.ts, edit.ts, bash.ts
-│   ├── glob.ts, grep.ts
-│   ├── webfetch.ts, websearch.ts
-│   ├── subagent.ts, task.ts
-│   └── index.ts
-├── ui/                     # Terminal interface
-│   ├── terminal.ts         # Streaming output + markdown
-│   └── model-picker.ts     # Interactive model selection
-├── proxy/                  # Proxy mode (for Claude Code)
-│   ├── server.ts           # HTTP proxy + payment handling
-│   ├── fallback.ts         # Auto-fallback chain
-│   └── sse-translator.ts   # OpenAI → Anthropic format
-├── router/                 # Smart routing engine
-│   └── index.ts
-├── commands/               # CLI commands
-├── config.ts               # Global configuration
-└── index.ts                # Entry point
+Claude Code → RunCode proxy (:8402) → BlockRun API → 41+ models
+                 ↓
+          x402 payment (USDC)
+          SSE format translation
+          Auto-fallback on failure
 ```
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `runcode` | Start the agent (interactive model picker) |
-| `runcode -m <model>` | Start with a specific model |
-| `runcode --trust` | Start in trust mode (no permission prompts) |
-| `runcode --debug` | Start with debug logging |
-| `runcode setup [base\|solana]` | Create payment wallet |
-| `runcode balance` | Check USDC balance |
-| `runcode models` | List all models with pricing |
-| `runcode stats` | View usage statistics and savings |
-| `runcode config list` | View configuration |
-| `runcode proxy` | Run as payment proxy for Claude Code |
-
-### Session Commands
-
-| Command | Description |
-|---------|-------------|
-| `/model` | Interactive model picker |
-| `/model <name>` | Switch model (shortcut or full ID) |
-| `/models` | Same as `/model` |
-| `/cost` | Show session cost and savings |
-| `/help` | List all commands |
-| `/exit` | Quit |
 
 ## Payment
 
-runcode uses the [x402](https://x402.org) protocol for pay-per-request payments with USDC stablecoins. No accounts, no API keys, no subscriptions.
+RunCode uses the [x402](https://x402.org) protocol for pay-per-request payments with USDC stablecoins. No accounts, no API keys, no subscriptions.
 
 **Supported chains:**
 - **Base** (default) — Coinbase L2, low fees
@@ -254,6 +201,49 @@ Fund the wallet address with USDC. Free models work without funding.
 | Claude Opus | ~$0.05 |
 
 Typical usage: **$5-20/month** for active development.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `runcode` | Start the agent (interactive model picker) |
+| `runcode -m <model>` | Start with a specific model |
+| `runcode --trust` | Start in trust mode (no permission prompts) |
+| `runcode --debug` | Start with debug logging |
+| `runcode setup [base\|solana]` | Create payment wallet |
+| `runcode balance` | Check USDC balance |
+| `runcode models` | List all models with pricing |
+| `runcode stats` | View usage statistics and savings |
+| `runcode config list` | View configuration |
+| `runcode proxy` | Run as payment proxy for Claude Code |
+| `runcode init` | Auto-configure Claude Code + LaunchAgent |
+| `runcode uninit` | Remove Claude Code proxy config |
+
+### Session Commands
+
+| Command | Description |
+|---------|-------------|
+| `/model` | Interactive model picker |
+| `/model <name>` | Switch model (shortcut or full ID) |
+| `/cost` | Show session cost and savings |
+| `/help` | List all commands |
+| `/exit` | Quit |
+
+## Architecture
+
+```
+src/
+├── agent/                  # Core agent loop, LLM client, token optimization
+├── tools/                  # 10 built-in tools (read, write, edit, bash, ...)
+├── ui/                     # Terminal UI + model picker
+├── proxy/                  # Payment proxy for Claude Code
+├── router/                 # Smart model routing
+├── commands/               # CLI commands (setup, balance, stats, ...)
+├── wallet/                 # Wallet management
+├── stats/                  # Usage tracking
+├── config.ts               # Global configuration
+└── index.ts                # Entry point
+```
 
 ## Development
 
