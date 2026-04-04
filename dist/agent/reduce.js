@@ -168,7 +168,27 @@ export function trimOldAssistantMessages(history) {
     });
     return modified ? result : history;
 }
-// ─── Pipeline ─────────────────────────────────────────────────────────────
+// ─── 4. Deduplication ────────────���────────────────────────────────────────
+/**
+ * Remove consecutive duplicate messages (same role + same content).
+ */
+export function deduplicateMessages(history) {
+    if (history.length < 3)
+        return history;
+    const result = [history[0]];
+    let modified = false;
+    for (let i = 1; i < history.length; i++) {
+        const prev = history[i - 1];
+        const curr = history[i];
+        if (curr.role === prev.role && typeof curr.content === 'string' && curr.content === prev.content) {
+            modified = true;
+            continue;
+        }
+        result.push(curr);
+    }
+    return modified ? result : history;
+}
+// ─── Pipeline ───────���───────────────────���─────────────────────────────────
 /**
  * Run all token reduction passes on conversation history.
  * Returns same reference if nothing changed (cheap identity check).
@@ -198,6 +218,13 @@ export function reduceTokens(history, debug) {
     if (trimmed !== current) {
         const before = estimateChars(current);
         current = trimmed;
+        totalSaved += before - estimateChars(current);
+    }
+    // Pass 4: Remove consecutive duplicate messages
+    const deduped = deduplicateMessages(current);
+    if (deduped !== current) {
+        const before = estimateChars(current);
+        current = deduped;
         totalSaved += before - estimateChars(current);
     }
     if (debug && totalSaved > 500) {

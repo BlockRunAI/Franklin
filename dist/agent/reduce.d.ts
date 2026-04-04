@@ -32,6 +32,10 @@ export declare function normalizeWhitespace(history: Dialogue[]): Dialogue[];
  */
 export declare function trimOldAssistantMessages(history: Dialogue[]): Dialogue[];
 /**
+ * Remove consecutive duplicate messages (same role + same content).
+ */
+export declare function deduplicateMessages(history: Dialogue[]): Dialogue[];
+/**
  * Run all token reduction passes on conversation history.
  * Returns same reference if nothing changed (cheap identity check).
  */
