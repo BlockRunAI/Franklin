@@ -456,6 +456,18 @@ export async function interactiveSession(
       input = `Read and explain the code in ${target}. Cover: what it does, key functions/classes, how it connects to the rest of the codebase.`;
     }
 
+    // Handle /search <query> — search codebase
+    if (input.startsWith('/search ')) {
+      const query = input.slice(8).trim();
+      input = `Search the codebase for "${query}" using Grep. Show the matching files and relevant code context.`;
+    }
+
+    // Handle /find <pattern> — find files
+    if (input.startsWith('/find ')) {
+      const pattern = input.slice(6).trim();
+      input = `Find files matching the pattern "${pattern}" using Glob. Show the results.`;
+    }
+
     // Handle /status — show git status
     if (input === '/status') {
       try {
