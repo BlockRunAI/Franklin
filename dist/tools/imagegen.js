@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getOrCreateWallet, getOrCreateSolanaWallet, createPaymentPayload, createSolanaPaymentPayload, parsePaymentRequired, extractPaymentDetails, solanaKeyToBytes, SOLANA_NETWORK, } from '@blockrun/llm';
-import { loadChain, API_URLS } from '../config.js';
+import { loadChain, API_URLS, VERSION } from '../config.js';
 async function execute(input, ctx) {
     const { prompt, output_path, size, model } = input;
     if (!prompt) {
@@ -29,7 +29,7 @@ async function execute(input, ctx) {
     });
     const headers = {
         'Content-Type': 'application/json',
-        'User-Agent': 'runcode/1.0',
+        'User-Agent': `runcode/${VERSION}`,
     };
     try {
         const controller = new AbortController();

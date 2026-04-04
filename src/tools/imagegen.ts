@@ -16,7 +16,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS } from '../config.js';
+import { loadChain, API_URLS, VERSION } from '../config.js';
 
 interface ImageGenInput {
   prompt: string;
@@ -53,7 +53,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'User-Agent': 'runcode/1.0',
+    'User-Agent': `runcode/${VERSION}`,
   };
 
   try {

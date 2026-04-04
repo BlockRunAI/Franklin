@@ -4,6 +4,7 @@
  * Original implementation — not derived from any existing codebase.
  */
 import { getOrCreateWallet, getOrCreateSolanaWallet, createPaymentPayload, createSolanaPaymentPayload, parsePaymentRequired, extractPaymentDetails, solanaKeyToBytes, SOLANA_NETWORK, } from '@blockrun/llm';
+import { VERSION } from '../config.js';
 // ─── Client ────────────────────────────────────────────────────────────────
 export class ModelClient {
     apiUrl;
@@ -32,7 +33,7 @@ export class ModelClient {
             'Content-Type': 'application/json',
             'anthropic-version': '2023-06-01',
             'x-api-key': 'x402-agent-handles-auth',
-            'User-Agent': 'runcode/1.0',
+            'User-Agent': `runcode/${VERSION}`,
         };
         if (this.debug) {
             console.error(`[runcode] POST ${endpoint} model=${request.model}`);

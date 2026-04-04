@@ -1,7 +1,7 @@
 /**
  * Grep capability — search file contents using ripgrep or native fallback.
  */
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 function hasRipgrep() {
@@ -32,7 +32,7 @@ async function execute(input, ctx) {
     return runNativeGrep(opts, searchPath, mode, limit);
 }
 function runRipgrep(opts, searchPath, mode, limit) {
-    const args = ['rg'];
+    const args = [];
     switch (mode) {
         case 'files_with_matches':
             args.push('-l');
@@ -53,10 +53,10 @@ function runRipgrep(opts, searchPath, mode, limit) {
         args.push(`--glob=${opts.glob}`);
     // Always exclude common noise
     args.push('--glob=!node_modules', '--glob=!.git', '--glob=!dist');
-    args.push('--', JSON.stringify(opts.pattern).slice(1, -1)); // unquoted pattern
+    args.push('--', opts.pattern);
     args.push(searchPath);
     try {
-        const result = execSync(args.join(' '), {
+        const result = execFileSync('rg', args, {
             encoding: 'utf-8',
             maxBuffer: 2 * 1024 * 1024,
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -81,7 +81,7 @@ function runRipgrep(opts, searchPath, mode, limit) {
     }
 }
 function runNativeGrep(opts, searchPath, mode, limit) {
-    const args = ['grep', '-r', '-n'];
+    const args = ['-r', '-n'];
     if (opts.case_insensitive)
         args.push('-i');
     switch (mode) {
@@ -98,7 +98,7 @@ function runNativeGrep(opts, searchPath, mode, limit) {
     args.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=dist');
     args.push('-e', opts.pattern, searchPath);
     try {
-        const result = execSync(args.join(' '), {
+        const result = execFileSync('grep', args, {
             encoding: 'utf-8',
             maxBuffer: 2 * 1024 * 1024,
             stdio: ['pipe', 'pipe', 'pipe'],

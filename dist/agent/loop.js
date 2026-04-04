@@ -10,6 +10,7 @@ import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS } from './optimize.js';
 import { recordUsage } from '../stats/tracker.js';
+import { estimateCost } from '../pricing.js';
 // ─── Main Entry Point ──────────────────────────────────────────────────────
 /**
  * Run the agent loop.
@@ -363,20 +364,4 @@ export async function interactiveSession(config, getUserInput, onEvent) {
     }
     return history;
 }
-// ─── Cost Estimation ───────────────────────────────────────────────────────
-const MODEL_PRICING = {
-    'anthropic/claude-opus-4.6': { input: 15, output: 75 },
-    'anthropic/claude-sonnet-4.6': { input: 3, output: 15 },
-    'anthropic/claude-haiku-4.5-20251001': { input: 0.8, output: 4 },
-    'openai/gpt-5.4': { input: 2.5, output: 10 },
-    'openai/gpt-5-mini': { input: 0.4, output: 1.6 },
-    'google/gemini-2.5-pro': { input: 1.25, output: 10 },
-    'google/gemini-2.5-flash': { input: 0.15, output: 0.6 },
-    'deepseek/deepseek-chat': { input: 0.28, output: 0.42 },
-};
-function estimateCost(model, inputTokens, outputTokens) {
-    const pricing = MODEL_PRICING[model];
-    if (!pricing)
-        return 0; // Free or unknown model
-    return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
-}
+// Cost estimation now uses shared pricing from src/pricing.ts

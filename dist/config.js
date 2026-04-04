@@ -1,6 +1,15 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let _version = '1.1.0';
+try {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf-8'));
+    _version = pkg.version || _version;
+}
+catch { /* use default */ }
+export const VERSION = _version;
 export const BLOCKRUN_DIR = path.join(os.homedir(), '.blockrun');
 export const CHAIN_FILE = path.join(BLOCKRUN_DIR, 'payment-chain');
 export const API_URLS = {

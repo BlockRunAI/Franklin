@@ -1,6 +1,7 @@
 /**
  * WebSearch capability — search the web via BlockRun API or DuckDuckGo fallback.
  */
+import { VERSION } from '../config.js';
 async function execute(input, _ctx) {
     const { query, max_results } = input;
     if (!query) {
@@ -13,7 +14,7 @@ async function execute(input, _ctx) {
         const url = `https://html.duckduckgo.com/html/?q=${encoded}`;
         const response = await fetch(url, {
             headers: {
-                'User-Agent': 'runcode/1.0 (coding-agent)',
+                'User-Agent': `runcode/${VERSION} (coding-agent)`,
             },
         });
         if (!response.ok) {

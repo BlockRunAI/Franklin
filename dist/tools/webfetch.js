@@ -1,6 +1,7 @@
 /**
  * WebFetch capability — fetch web page content.
  */
+import { VERSION } from '../config.js';
 const MAX_BODY_BYTES = 256 * 1024; // 256KB
 async function execute(input, _ctx) {
     const { url, max_length } = input;
@@ -24,7 +25,7 @@ async function execute(input, _ctx) {
         const response = await fetch(url, {
             signal: controller.signal,
             headers: {
-                'User-Agent': 'runcode/1.0 (coding-agent)',
+                'User-Agent': `runcode/${VERSION} (coding-agent)`,
                 'Accept': 'text/html,application/json,text/plain,*/*',
             },
             redirect: 'follow',
