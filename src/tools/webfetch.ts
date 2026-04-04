@@ -3,6 +3,7 @@
  */
 
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
+import { VERSION } from '../config.js';
 
 interface WebFetchInput {
   url: string;
@@ -37,7 +38,7 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'runcode/1.0 (coding-agent)',
+        'User-Agent': `runcode/${VERSION} (coding-agent)`,
         'Accept': 'text/html,application/json,text/plain,*/*',
       },
       redirect: 'follow',

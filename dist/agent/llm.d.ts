@@ -3,7 +3,7 @@
  * Calls BlockRun API directly with x402 payment handling and streaming.
  * Original implementation — not derived from any existing codebase.
  */
-import type { Chain } from '../config.js';
+import { type Chain } from '../config.js';
 import type { Dialogue, CapabilityDefinition, ContentPart, CapabilityInvocation } from './types.js';
 export interface ModelRequest {
     model: string;

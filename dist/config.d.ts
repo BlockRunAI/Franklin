@@ -1,3 +1,4 @@
+export declare const VERSION: string;
 export type Chain = 'base' | 'solana';
 export declare const BLOCKRUN_DIR: string;
 export declare const CHAIN_FILE: string;
