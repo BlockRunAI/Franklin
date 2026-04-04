@@ -7,6 +7,7 @@ import { ModelClient } from './llm.js';
 import { autoCompactIfNeeded, microCompact } from './compact.js';
 import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor } from './tokens.js';
 import { handleSlashCommand } from './commands.js';
+import { reduceTokens } from './reduce.js';
 import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
@@ -253,7 +254,13 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 history.length = 0;
                 history.push(...optimized);
             }
-            // 2. Microcompact: only when history has >15 messages (skip for short conversations)
+            // 2. Token reduction: age old results, normalize whitespace, trim verbose messages
+            const reduced = reduceTokens(history, config.debug);
+            if (reduced !== history) {
+                history.length = 0;
+                history.push(...reduced);
+            }
+            // 3. Microcompact: only when history has >15 messages (skip for short conversations)
             if (history.length > 15) {
                 const microCompacted = microCompact(history, 8);
                 if (microCompacted !== history) {
