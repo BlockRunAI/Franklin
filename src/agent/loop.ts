@@ -12,6 +12,9 @@ import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS } from './optimize.js';
 import { recordUsage } from '../stats/tracker.js';
 import { estimateCost } from '../pricing.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { BLOCKRUN_DIR, VERSION } from '../config.js';
 import {
   createSessionId,
   appendToSession,
@@ -325,6 +328,32 @@ export async function interactiveSession(
     let input = await getUserInput();
     if (input === null) break; // User wants to exit
     if (input === '') continue; // Empty input → re-prompt
+
+    // Handle /doctor — diagnose setup issues
+    if (input === '/doctor') {
+      const checks: string[] = [];
+      const { execSync } = await import('node:child_process');
+      // Check git
+      try { execSync('git --version', { stdio: 'pipe' }); checks.push('✓ git available'); }
+      catch { checks.push('✗ git not found'); }
+      // Check rg
+      try { execSync('rg --version', { stdio: 'pipe' }); checks.push('✓ ripgrep available'); }
+      catch { checks.push('⚠ ripgrep not found (using native grep fallback)'); }
+      // Check wallet
+      const walletFile = path.join(BLOCKRUN_DIR, 'wallet.json');
+      checks.push(fs.existsSync(walletFile) ? '✓ wallet configured' : '⚠ no wallet — run: runcode setup');
+      // Check config
+      const configFile = path.join(BLOCKRUN_DIR, 'runcode-config.json');
+      checks.push(fs.existsSync(configFile) ? '✓ config file exists' : '⚠ no config — using defaults');
+      // Model & tokens
+      checks.push(`✓ model: ${config.model}`);
+      checks.push(`✓ history: ${history.length} messages, ~${estimateHistoryTokens(history).toLocaleString()} tokens`);
+      checks.push(`✓ session: ${sessionId}`);
+      checks.push(`✓ version: v${VERSION}`);
+      onEvent({ kind: 'text_delta', text: `**Health Check**\n${checks.map(c => '  ' + c).join('\n')}\n` });
+      onEvent({ kind: 'turn_done', reason: 'completed' });
+      continue;
+    }
 
     // Handle /commit — rewrite as a prompt for the agent
     if (input === '/commit') {
