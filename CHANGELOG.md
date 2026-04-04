@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.4.0 (2026-04-04)
+
+### 7-Layer Context Compression (15-40% token savings)
+
+Integrated BlockRun's context compression library into the agent loop. Runs automatically when history >10 messages:
+
+1. **Deduplication** — removes duplicate messages (2-5%)
+2. **Whitespace normalization** — reduces indentation, trailing spaces (3-8%)
+3. **Dictionary encoding** — 41 common phrases → short codes (4-8%)
+4. **Path shortening** — repeated file paths → $P1, $P2 (1-3%)
+5. **JSON compaction** — minifies tool schemas (2-4%)
+6. **Observation compression** — summarizes large tool results (15-97%)
+7. **Dynamic codebook** — learns repeated phrases per-request (5-15%)
+
+Compression adds a header to the first message explaining codes, so the model can interpret shortened text.
+
 ## 2.3.0 (2026-04-04)
 
 ### Token Management Overhaul
