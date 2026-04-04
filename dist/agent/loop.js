@@ -11,6 +11,7 @@ import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS } from './optimize.js';
 import { recordUsage } from '../stats/tracker.js';
 import { estimateCost } from '../pricing.js';
+import { createSessionId, appendToSession, updateSessionMeta, pruneOldSessions, listSessions, loadSessionHistory, } from '../session/storage.js';
 // ─── Main Entry Point ──────────────────────────────────────────────────────
 /**
  * Run the agent loop.
@@ -208,12 +209,52 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     const workDir = config.workingDir ?? process.cwd();
     const permissions = new PermissionManager(config.permissionMode ?? 'default');
     const history = [];
+    // Session persistence
+    const sessionId = createSessionId();
+    let turnCount = 0;
+    pruneOldSessions(); // Cleanup old sessions on start
     while (true) {
         const input = await getUserInput();
         if (input === null)
             break; // User wants to exit
         if (input === '')
             continue; // Empty input → re-prompt
+        // Handle /sessions — list saved sessions
+        if (input === '/sessions') {
+            const sessions = listSessions();
+            if (sessions.length === 0) {
+                onEvent({ kind: 'text_delta', text: 'No saved sessions.\n' });
+            }
+            else {
+                let text = `**${sessions.length} saved sessions:**\n\n`;
+                for (const s of sessions.slice(0, 10)) {
+                    const date = new Date(s.updatedAt).toLocaleString();
+                    const dir = s.workDir ? ` — ${s.workDir.split('/').pop()}` : '';
+                    text += `  ${s.id}  ${s.model}  ${s.turnCount} turns  ${date}${dir}\n`;
+                }
+                if (sessions.length > 10)
+                    text += `  ... and ${sessions.length - 10} more\n`;
+                text += '\nUse /resume <session-id> to continue a session.\n';
+                onEvent({ kind: 'text_delta', text });
+            }
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
+        // Handle /resume <id> — restore session history
+        if (input.startsWith('/resume ')) {
+            const targetId = input.slice(8).trim();
+            const restored = loadSessionHistory(targetId);
+            if (restored.length === 0) {
+                onEvent({ kind: 'text_delta', text: `Session "${targetId}" not found or empty.\n` });
+            }
+            else {
+                history.length = 0;
+                history.push(...restored);
+                onEvent({ kind: 'text_delta', text: `Restored ${restored.length} messages from ${targetId}. Continue where you left off.\n` });
+            }
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
         // Handle /compact command — force compaction without sending to model
         if (input === '/compact') {
             const beforeTokens = estimateHistoryTokens(history);
@@ -231,15 +272,17 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             continue;
         }
         history.push({ role: 'user', content: input });
+        appendToSession(sessionId, { role: 'user', content: input });
+        turnCount++;
         const abort = new AbortController();
         onAbortReady?.(() => abort.abort());
-        let turnCount = 0;
+        let loopCount = 0;
         let recoveryAttempts = 0;
         let maxTokensOverride;
         const lastActivity = Date.now();
         // Agent loop for this user message
-        while (turnCount < maxTurns) {
-            turnCount++;
+        while (loopCount < maxTurns) {
+            loopCount++;
             // ── Token optimization pipeline ──
             // 1. Strip thinking, budget tool results, time-based cleanup
             const optimized = optimizeHistory(history, {
@@ -392,6 +435,14 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             history.push({ role: 'assistant', content: responseParts });
             // No more capabilities → done with this user message
             if (invocations.length === 0) {
+                // Save session on completed turn
+                appendToSession(sessionId, { role: 'assistant', content: responseParts });
+                updateSessionMeta(sessionId, {
+                    model: config.model,
+                    workDir: config.workingDir || process.cwd(),
+                    turnCount,
+                    messageCount: history.length,
+                });
                 onEvent({ kind: 'turn_done', reason: 'completed' });
                 break;
             }
@@ -409,7 +460,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             }));
             history.push({ role: 'user', content: outcomeContent });
         }
-        if (turnCount >= maxTurns) {
+        if (loopCount >= maxTurns) {
             onEvent({ kind: 'turn_done', reason: 'max_turns' });
         }
     }
