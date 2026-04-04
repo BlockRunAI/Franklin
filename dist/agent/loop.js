@@ -422,6 +422,27 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         if (input === '/optimize') {
             input = 'Analyze the codebase for performance issues. Check for: unnecessary re-renders, N+1 queries, missing indexes, unoptimized loops, large bundle sizes, and memory leaks. Provide specific recommendations.';
         }
+        // Handle /security — security audit
+        if (input === '/security') {
+            input = 'Audit the codebase for security issues. Check for: SQL injection, XSS, command injection, hardcoded secrets, insecure dependencies, OWASP top 10 vulnerabilities. Report findings with severity.';
+        }
+        // Handle /lint — code quality
+        if (input === '/lint') {
+            input = 'Check for code quality issues: unused imports, inconsistent naming, missing type annotations, long functions, duplicated code. Suggest improvements.';
+        }
+        // Handle /doc <target> — generate documentation
+        if (input.startsWith('/doc ')) {
+            const target = input.slice(5).trim();
+            input = `Generate documentation for ${target}. Include: purpose, API/interface description, usage examples, and important notes.`;
+        }
+        // Handle /migrate — migration helper
+        if (input === '/migrate') {
+            input = 'Check for pending database migrations, outdated dependencies, or breaking changes that need addressing. List required migration steps.';
+        }
+        // Handle /clean — cleanup dead code
+        if (input === '/clean') {
+            input = 'Find and remove dead code: unused imports, unreachable code, commented-out blocks, unused variables and functions. Show what would be removed before making changes.';
+        }
         // Handle /status — show git status
         if (input === '/status') {
             try {
