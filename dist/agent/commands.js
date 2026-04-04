@@ -71,6 +71,17 @@ const DIRECT_COMMANDS = {
             ctx.onEvent({ kind: 'text_delta', text: 'Last commit undone. Changes preserved in staging.\n' });
         emitDone(ctx);
     },
+    '/help': (ctx) => {
+        ctx.onEvent({ kind: 'text_delta', text: `**RunCode Commands**\n\n` +
+                `  **Coding:** /commit /review /test /fix /debug /explain /search /find /refactor /scaffold\n` +
+                `  **Git:** /push /pr /undo /status /diff /log /branch /stash /unstash\n` +
+                `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
+                `  **Session:** /plan /execute /compact /retry /sessions /resume /context /tasks\n` +
+                `  **Info:** /model /wallet /cost /mcp /doctor /version /bug /help\n` +
+                `  **UI:** /clear /exit\n`
+        });
+        emitDone(ctx);
+    },
     '/bug': (ctx) => {
         ctx.onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/runcode/issues\n' });
         emitDone(ctx);
@@ -99,12 +110,15 @@ const DIRECT_COMMANDS = {
     '/context': async (ctx) => {
         const { estimated, apiAnchored } = getAnchoredTokenCount(ctx.history);
         const contextWindow = getContextWindow(ctx.config.model);
-        const usagePct = ((estimated / contextWindow) * 100).toFixed(1);
+        const pct = (estimated / contextWindow) * 100;
+        const usagePct = pct.toFixed(1);
+        const warning = pct > 80 ? '  ⚠ Near limit — consider /compact\n' : '';
         ctx.onEvent({ kind: 'text_delta', text: `**Session Context**\n` +
                 `  Model:      ${ctx.config.model}\n` +
                 `  Mode:       ${ctx.config.permissionMode || 'default'}\n` +
                 `  Messages:   ${ctx.history.length}\n` +
                 `  Tokens:     ~${estimated.toLocaleString()} / ${(contextWindow / 1000).toFixed(0)}k (${usagePct}%)${apiAnchored ? ' ✓' : ' ~'}\n` +
+                warning +
                 `  Session:    ${ctx.sessionId}\n` +
                 `  Directory:  ${ctx.config.workingDir || process.cwd()}\n`
         });
@@ -128,6 +142,12 @@ const DIRECT_COMMANDS = {
         }
         checks.push(fs.existsSync(path.join(BLOCKRUN_DIR, 'wallet.json')) ? '✓ wallet configured' : '⚠ no wallet — run: runcode setup');
         checks.push(fs.existsSync(path.join(BLOCKRUN_DIR, 'runcode-config.json')) ? '✓ config file exists' : '⚠ no config — using defaults');
+        // Check MCP
+        const { listMcpServers } = await import('../mcp/client.js');
+        const mcpServers = listMcpServers();
+        checks.push(mcpServers.length > 0
+            ? `✓ MCP: ${mcpServers.length} server(s), ${mcpServers.reduce((a, s) => a + s.toolCount, 0)} tools`
+            : '⚠ no MCP servers connected');
         checks.push(`✓ model: ${ctx.config.model}`);
         checks.push(`✓ history: ${ctx.history.length} messages, ~${estimateHistoryTokens(ctx.history).toLocaleString()} tokens`);
         checks.push(`✓ session: ${ctx.sessionId}`);
