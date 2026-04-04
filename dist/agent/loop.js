@@ -302,6 +302,11 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 stopReason = result.stopReason;
             }
             catch (err) {
+                // ── User abort (Esc key) ──
+                if (err.name === 'AbortError' || abort.signal.aborted) {
+                    onEvent({ kind: 'turn_done', reason: 'aborted' });
+                    break;
+                }
                 const errMsg = err.message || '';
                 const errLower = errMsg.toLowerCase();
                 // ── Prompt too long recovery ──
