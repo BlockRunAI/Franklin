@@ -116,6 +116,7 @@ function RunCodeApp({
   const [showWallet, setShowWallet] = useState(false);
   const [balance, setBalance] = useState(walletBalance);
   const [thinkingText, setThinkingText] = useState('');
+  const [lastPrompt, setLastPrompt] = useState('');
 
   // Key handler for picker + esc + abort
   const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input) || !ready;
@@ -224,6 +225,22 @@ function RunCodeApp({
           setTimeout(() => setStatusMsg(''), 3000);
           return;
 
+        case '/retry':
+          if (!lastPrompt) {
+            setStatusMsg('No previous prompt to retry');
+            setTimeout(() => setStatusMsg(''), 3000);
+            return;
+          }
+          setStreamText('');
+          setThinking(false);
+          setThinkingText('');
+          setTools(new Map());
+          setReady(false);
+          setWaiting(true);
+          setTurnTokens({ input: 0, output: 0 });
+          onSubmit(lastPrompt);
+          return;
+
         case '/compact':
           setStreamText('');
           setThinking(false);
@@ -242,6 +259,7 @@ function RunCodeApp({
     }
 
     // ── Normal prompt ──
+    setLastPrompt(trimmed);
     setInput('');
     setStreamText('');
     setThinking(false);
@@ -295,7 +313,7 @@ function RunCodeApp({
                 next.set(event.id, {
                   ...t, done: true,
                   error: !!event.result.isError,
-                  preview: event.result.output.replace(/\n/g, ' ').slice(0, 120),
+                  preview: event.result.output.replace(/\n/g, ' ').slice(0, 200),
                   elapsed: Date.now() - t.startTime,
                 });
               }
@@ -370,6 +388,7 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/model</Text> [name]  Switch model (picker if no name)</Text>
           <Text>  <Text color="cyan">/wallet</Text>        Show wallet address & balance</Text>
           <Text>  <Text color="cyan">/cost</Text>          Session cost & savings</Text>
+          <Text>  <Text color="cyan">/retry</Text>         Retry the last prompt</Text>
           <Text>  <Text color="cyan">/compact</Text>       Compress conversation history</Text>
           <Text>  <Text color="cyan">/clear</Text>         Clear conversation display</Text>
           <Text>  <Text color="cyan">/help</Text>          This help</Text>
@@ -396,9 +415,9 @@ function RunCodeApp({
           {tool.done ? (
             tool.error
               ? <Text color="red">  ✗ {tool.name} <Text dimColor>{tool.elapsed}ms</Text></Text>
-              : <Text color="green">  ✓ {tool.name} <Text dimColor>{tool.elapsed}ms — {tool.preview.slice(0, 60)}{tool.preview.length > 60 ? '...' : ''}</Text></Text>
+              : <Text color="green">  ✓ {tool.name} <Text dimColor>{tool.elapsed}ms — {tool.preview.slice(0, 200)}{tool.preview.length > 200 ? '...' : ''}</Text></Text>
           ) : (
-            <Text color="cyan">  <Spinner type="dots" /> {tool.name}...</Text>
+            <Text color="cyan">  <Spinner type="dots" /> {tool.name}... <Text dimColor>{Math.round((Date.now() - tool.startTime) / 1000)}s</Text></Text>
           )}
         </Box>
       ))}
