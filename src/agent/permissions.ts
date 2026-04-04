@@ -113,7 +113,7 @@ export class PermissionManager {
     console.error('');
 
     const answer = await askQuestion(
-      chalk.bold('  Allow? ') + chalk.dim('[y]es / [n]o / [a]lways: ')
+      chalk.bold('  Allow? ') + chalk.dim('[Y/n/a]lways: ')
     );
 
     const normalized = answer.trim().toLowerCase();

@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { OPUS_PRICING } from '../pricing.js';
 
 const STATS_FILE = path.join(os.homedir(), '.blockrun', 'runcode-stats.json');
 
@@ -168,8 +169,8 @@ export function getStatsSummary(): {
 
   // Calculate what it would cost with Claude Opus
   const opusCost =
-    (stats.totalInputTokens / 1_000_000) * 5 +
-    (stats.totalOutputTokens / 1_000_000) * 25;
+    (stats.totalInputTokens / 1_000_000) * OPUS_PRICING.input +
+    (stats.totalOutputTokens / 1_000_000) * OPUS_PRICING.output;
 
   const saved = opusCost - stats.totalCostUsd;
   const savedPct = opusCost > 0 ? (saved / opusCost) * 100 : 0;

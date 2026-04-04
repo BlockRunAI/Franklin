@@ -12,16 +12,7 @@ import { initCommand } from './commands/init.js';
 import { uninitCommand } from './commands/uninit.js';
 import { proxyCommand } from './commands/proxy.js';
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-let version = '0.9.0';
-try {
-  const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf-8'));
-  version = pkg.version || version;
-} catch { /* use default */ }
+import { VERSION as version } from './config.js';
 
 const program = new Command();
 
