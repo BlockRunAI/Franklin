@@ -157,6 +157,7 @@ async function runWithBasicUI(agentConfig, model, workDir) {
     const { TerminalUI } = await import('../ui/terminal.js');
     const ui = new TerminalUI();
     ui.printWelcome(model, workDir);
+    let lastTerminalPrompt = '';
     try {
         await interactiveSession(agentConfig, async () => {
             while (true) {
@@ -175,6 +176,18 @@ async function runWithBasicUI(agentConfig, model, workDir) {
                     console.error(chalk.green(`  Model → ${newModel}`));
                     continue;
                 }
+                // /retry — resend last prompt
+                if (input === '/retry') {
+                    if (!lastTerminalPrompt) {
+                        console.error(chalk.yellow('  No previous prompt to retry'));
+                        continue;
+                    }
+                    return lastTerminalPrompt;
+                }
+                // /compact passes through to loop
+                if (input === '/compact')
+                    return input;
+                lastTerminalPrompt = input;
                 return input;
             }
         }, (event) => ui.handleEvent(event));

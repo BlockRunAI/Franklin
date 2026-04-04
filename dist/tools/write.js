@@ -34,8 +34,9 @@ async function execute(input, ctx) {
         fs.writeFileSync(resolved, content, 'utf-8');
         const lineCount = content.split('\n').length;
         const byteCount = Buffer.byteLength(content, 'utf-8');
+        const sizeStr = byteCount >= 1024 ? `${(byteCount / 1024).toFixed(1)}KB` : `${byteCount}B`;
         return {
-            output: `${existed ? 'Updated' : 'Created'} ${resolved} (${lineCount} lines, ${byteCount} bytes)`,
+            output: `${existed ? 'Updated' : 'Created'} ${resolved} (${lineCount} lines, ${sizeStr})`,
         };
     }
     catch (err) {
