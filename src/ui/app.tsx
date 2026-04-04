@@ -237,6 +237,14 @@ function RunCodeApp({
           setShowWallet(false);
           return;
 
+        case '/plan':
+        case '/execute':
+          onSubmit(trimmed);
+          setStreamText('');
+          setWaiting(true);
+          setReady(false);
+          return;
+
         case '/sessions':
           setStreamText('');
           setWaiting(true);
@@ -427,6 +435,8 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/cost</Text>          Session cost & savings</Text>
           <Text>  <Text color="cyan">/retry</Text>         Retry the last prompt</Text>
           <Text>  <Text color="cyan">/compact</Text>       Compress conversation history</Text>
+          <Text>  <Text color="cyan">/plan</Text>          Enter plan mode (read-only tools)</Text>
+          <Text>  <Text color="cyan">/execute</Text>       Exit plan mode (enable all tools)</Text>
           <Text>  <Text color="cyan">/sessions</Text>      List saved sessions</Text>
           <Text>  <Text color="cyan">/resume</Text> id     Resume a saved session</Text>
           <Text>  <Text color="cyan">/clear</Text>         Clear conversation display</Text>

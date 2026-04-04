@@ -19,7 +19,7 @@ export interface PermissionRules {
   ask: string[];    // Tool names that require prompting
 }
 
-export type PermissionMode = 'default' | 'trust' | 'deny-all';
+export type PermissionMode = 'default' | 'trust' | 'deny-all' | 'plan';
 
 export interface PermissionDecision {
   behavior: PermissionBehavior;
@@ -59,6 +59,14 @@ export class PermissionManager {
     // Trust mode: allow everything
     if (this.mode === 'trust') {
       return { behavior: 'allow', reason: 'trust mode' };
+    }
+
+    // Plan mode: only allow read-only tools
+    if (this.mode === 'plan') {
+      if (READ_ONLY_TOOLS.has(toolName)) {
+        return { behavior: 'allow', reason: 'plan mode — read-only' };
+      }
+      return { behavior: 'deny', reason: 'plan mode — use /execute to enable writes' };
     }
 
     // Deny-all mode: deny everything that isn't read-only

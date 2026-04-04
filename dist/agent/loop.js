@@ -219,6 +219,30 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             break; // User wants to exit
         if (input === '')
             continue; // Empty input → re-prompt
+        // Handle /plan — enter plan mode (restrict to read-only tools)
+        if (input === '/plan') {
+            if (config.permissionMode === 'plan') {
+                onEvent({ kind: 'text_delta', text: 'Already in plan mode. Use /execute to exit.\n' });
+            }
+            else {
+                config.permissionMode = 'plan';
+                onEvent({ kind: 'text_delta', text: '**Plan mode active.** Tools restricted to read-only. Use /execute when ready to implement.\n' });
+            }
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
+        // Handle /execute — exit plan mode
+        if (input === '/execute') {
+            if (config.permissionMode !== 'plan') {
+                onEvent({ kind: 'text_delta', text: 'Not in plan mode. Use /plan to enter.\n' });
+            }
+            else {
+                config.permissionMode = 'default';
+                onEvent({ kind: 'text_delta', text: '**Execution mode.** All tools enabled with permissions.\n' });
+            }
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
         // Handle /sessions — list saved sessions
         if (input === '/sessions') {
             const sessions = listSessions();
