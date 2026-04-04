@@ -34,7 +34,7 @@ async function execute(input, ctx) {
                     child.kill('SIGKILL');
                 }
                 catch { /* already dead */ }
-            }, 3000);
+            }, 5000); // Give 5s for graceful shutdown before SIGKILL
         }, timeoutMs);
         // Handle abort signal
         const onAbort = () => {

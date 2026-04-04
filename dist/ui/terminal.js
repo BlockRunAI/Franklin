@@ -95,7 +95,14 @@ class MarkdownRenderer {
         if (line.match(/^(\s*)[-*] /)) {
             return line.replace(/^(\s*)[-*] /, '$1• ');
         }
-        // Numbered lists — leave as-is
+        // Numbered lists
+        if (/^\s*\d+\.\s/.test(line)) {
+            return this.renderInline(line);
+        }
+        // Blockquotes
+        if (line.startsWith('> ')) {
+            return chalk.dim('│ ') + chalk.italic(this.renderInline(line.slice(2)));
+        }
         // Tables — leave as-is (chalk doesn't help much)
         // Inline formatting
         return this.renderInline(line);
@@ -109,6 +116,8 @@ class MarkdownRenderer {
             .replace(/\*\*([^*]+)\*\*/g, (_, t) => chalk.bold(t))
             // Italic (only single * not preceded/followed by *)
             .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, (_, t) => chalk.italic(t))
+            // Strikethrough
+            .replace(/~~([^~]+)~~/g, (_, t) => chalk.strikethrough(t))
             // Links
             .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => chalk.blue.underline(label) + chalk.dim(` (${url})`))
             // Restore code markers
