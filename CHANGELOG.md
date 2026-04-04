@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.4.0 (2026-04-04)
+## 2.5.0 (2026-04-04)
 
 ### Power User Features (inspired by free-code/Claude Code)
 
