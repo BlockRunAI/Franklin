@@ -1,6 +1,15 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let _version = '1.1.0';
+try {
+  const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf-8'));
+  _version = pkg.version || _version;
+} catch { /* use default */ }
+export const VERSION = _version;
 
 export type Chain = 'base' | 'solana';
 

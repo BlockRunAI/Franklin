@@ -3,6 +3,8 @@
  * Ported from ClawRouter - 15-dimension weighted scoring for tier classification
  */
 
+import { MODEL_PRICING, OPUS_PRICING } from '../pricing.js';
+
 export type Tier = 'SIMPLE' | 'MEDIUM' | 'COMPLEX' | 'REASONING';
 export type RoutingProfile = 'auto' | 'eco' | 'premium' | 'free';
 
@@ -257,55 +259,13 @@ export function routeRequest(
 
   const model = tierConfigs[tier].primary;
 
-  // Calculate savings estimate
-  // Baseline: Claude Opus at $5/$25 per 1M tokens
-  const OPUS_COST_PER_1K = 0.015; // rough average
-  const modelCosts: Record<string, number> = {
-    // FREE
-    'nvidia/gpt-oss-120b': 0,
-    'nvidia/gpt-oss-20b': 0,
-    'nvidia/nemotron-ultra-253b': 0,
-    'nvidia/nemotron-3-super-120b': 0,
-    'nvidia/nemotron-super-49b': 0,
-    'nvidia/deepseek-v3.2': 0,
-    'nvidia/mistral-large-3-675b': 0,
-    'nvidia/qwen3-coder-480b': 0,
-    'nvidia/devstral-2-123b': 0,
-    'nvidia/glm-4.7': 0,
-    'nvidia/llama-4-maverick': 0,
-    // Budget
-    'openai/gpt-5-nano': 0.0002,
-    'openai/gpt-4.1-nano': 0.0003,
-    'google/gemini-2.5-flash-lite': 0.0003,
-    'xai/grok-4-fast': 0.0004,
-    'xai/grok-4-1-fast': 0.0004,
-    'xai/grok-4-1-fast-reasoning': 0.0004,
-    'deepseek/deepseek-chat': 0.0004,
-    'deepseek/deepseek-reasoner': 0.0004,
-    'minimax/minimax-m2.7': 0.0008,
-    'minimax/minimax-m2.5': 0.0008,
-    'google/gemini-2.5-flash': 0.0014,
-    'openai/gpt-5-mini': 0.0011,
-    'moonshot/kimi-k2.5': 0.0018,
-    // Mid-range
-    'anthropic/claude-haiku-4.5': 0.003,
-    'zai/glm-5': 0.0021,
-    'openai/o4-mini': 0.0028,
-    'google/gemini-2.5-pro': 0.0056,
-    'openai/gpt-5.3-codex': 0.0079,
-    'openai/gpt-5.2': 0.0079,
-    'openai/gpt-5.3': 0.0079,
-    'openai/gpt-4.1': 0.005,
-    'openai/o3': 0.005,
-    'google/gemini-3.1-pro': 0.007,
-    'openai/gpt-5.4': 0.0088,
-    // Premium
-    'anthropic/claude-sonnet-4.6': 0.009,
-    'xai/grok-3': 0.009,
-    'anthropic/claude-opus-4.6': 0.015,
-  };
-  const modelCost = modelCosts[model] ?? 0.005;
-  const savings = Math.max(0, (OPUS_COST_PER_1K - modelCost) / OPUS_COST_PER_1K);
+  // Calculate savings estimate vs Claude Opus
+  const opusCostPer1K = (OPUS_PRICING.input + OPUS_PRICING.output) / 2 / 1000;
+  const modelPricing = MODEL_PRICING[model];
+  const modelCostPer1K = modelPricing
+    ? (modelPricing.input + modelPricing.output) / 2 / 1000
+    : 0.005;
+  const savings = Math.max(0, (opusCostPer1K - modelCostPer1K) / opusCostPer1K);
 
   return {
     model,
