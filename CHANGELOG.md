@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.3.0 (2026-04-04)
+
+### Token Management Overhaul
+
+Comprehensive token reduction improvements based on Claude Code comparison audit:
+
+**Smarter Optimization Pipeline**
+- **Conditional microcompact**: Only runs when history >15 messages (was running every single loop iteration, wasting cycles on short conversations)
+- **Circuit breaker**: Stops retrying auto-compaction after 3 consecutive failures (prevents spam of doomed API calls)
+- **Conservative token estimation**: 33% padding factor on byte-based estimates (was under-counting, causing late compaction triggers)
+
+**Selective Thinking Retention**
+- Keeps thinking blocks from last 2 assistant turns (was stripping all except latest)
+- Preserves recent reasoning context while still reducing old bloat
+
+**Per-Model Output Budgeting**
+- Default max_tokens raised from 8K to 16K (was too low for code generation)
+- Per-model max output caps: Opus 32K, Sonnet 64K, Haiku 16K, GPT-5.4 32K, etc.
+- Prevents requesting more tokens than a model supports
+
+**Cheaper Compaction**
+- Smarter model selection: tiers down further (haiku/mini/nano → Gemini Flash)
+- Free models available as compaction target
+
+**New /tokens Command**
+- Shows detailed token breakdown: estimated count, context usage %, tool results count+size, thinking block count
+- Warns when >80% context used
+
 ## 2.2.0 (2026-04-04)
 
 ### Architecture

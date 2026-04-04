@@ -10,6 +10,7 @@
  */
 
 import type { Dialogue, ContentPart, UserContentPart } from './types.js';
+import { estimateTokens } from './tokens.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -22,11 +23,28 @@ const MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200_000;
 /** Preview size when truncating */
 const PREVIEW_CHARS = 2_000;
 
-/** Default max_tokens (low to save slot reservation) */
-export const CAPPED_MAX_TOKENS = 8_192;
+/** Default max_tokens (low to save output slot reservation) */
+export const CAPPED_MAX_TOKENS = 16_384;
 
 /** Escalated max_tokens after hitting the cap */
 export const ESCALATED_MAX_TOKENS = 65_536;
+
+/** Per-model max output tokens — prevents requesting more than the model supports */
+const MODEL_MAX_OUTPUT: Record<string, number> = {
+  'anthropic/claude-opus-4.6': 32_000,
+  'anthropic/claude-sonnet-4.6': 64_000,
+  'anthropic/claude-haiku-4.5-20251001': 16_384,
+  'openai/gpt-5.4': 32_768,
+  'openai/gpt-5-mini': 16_384,
+  'google/gemini-2.5-pro': 65_536,
+  'google/gemini-2.5-flash': 65_536,
+  'deepseek/deepseek-chat': 8_192,
+};
+
+/** Get max output tokens for a model */
+export function getMaxOutputTokens(model: string): number {
+  return MODEL_MAX_OUTPUT[model] ?? 16_384;
+}
 
 /** Idle gap (minutes) after which old tool results are cleared */
 const IDLE_GAP_THRESHOLD_MINUTES = 60;
@@ -109,20 +127,23 @@ export function budgetToolResults(history: Dialogue[]): Dialogue[] {
 
 /**
  * Remove thinking blocks from older assistant messages.
- * Keeps thinking only in the most recent assistant message.
- * Thinking blocks are large and not needed for context after the decision is made.
+ * Keeps thinking only in the most recent N assistant messages (default: last 2 turns).
+ * Older thinking blocks are large and not needed after the decision is made.
  */
+const KEEP_THINKING_TURNS = 2;
+
 export function stripOldThinking(history: Dialogue[]): Dialogue[] {
-  // Find the last assistant message index
-  let lastAssistantIdx = -1;
+  // Find the last N assistant message indices to preserve their thinking
+  const assistantIndices: number[] = [];
   for (let i = history.length - 1; i >= 0; i--) {
     if (history[i].role === 'assistant') {
-      lastAssistantIdx = i;
-      break;
+      assistantIndices.push(i);
+      if (assistantIndices.length >= KEEP_THINKING_TURNS) break;
     }
   }
 
-  if (lastAssistantIdx <= 0) return history;
+  if (assistantIndices.length === 0) return history;
+  const keepSet = new Set(assistantIndices);
 
   const result: Dialogue[] = [];
   let modified = false;
@@ -130,8 +151,8 @@ export function stripOldThinking(history: Dialogue[]): Dialogue[] {
   for (let i = 0; i < history.length; i++) {
     const msg = history[i];
 
-    // Only strip from older assistant messages (not the latest)
-    if (msg.role === 'assistant' && i < lastAssistantIdx && Array.isArray(msg.content)) {
+    // Strip thinking from assistant messages NOT in the keep set
+    if (msg.role === 'assistant' && !keepSet.has(i) && Array.isArray(msg.content)) {
       const filtered = (msg.content as ContentPart[]).filter(
         (part) => part.type !== 'thinking'
       );
