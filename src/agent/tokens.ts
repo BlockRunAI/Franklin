@@ -34,19 +34,26 @@ export function getAnchoredTokenCount(history: Dialogue[]): {
   apiAnchored: boolean;
   contextUsagePct: number;
 } {
-  if (lastApiInputTokens > 0 && history.length >= lastApiMessageCount) {
-    // Anchor to API count, estimate only new messages
-    const newMessages = history.slice(lastApiMessageCount);
-    let newTokens = 0;
-    for (const msg of newMessages) {
-      newTokens += estimateDialogueTokens(msg);
+  if (lastApiInputTokens > 0 && lastApiMessageCount > 0 && history.length >= lastApiMessageCount) {
+    // Sanity check: if history was mutated (compaction, micro-compact), anchor may be stale.
+    // Detect by checking if new messages were only appended (length grew), not if content changed.
+    // If history grew by more than expected (e.g., resume injected many messages), fall through to estimation.
+    const growth = history.length - lastApiMessageCount;
+    if (growth <= 20) { // Reasonable growth since last API call
+      const newMessages = history.slice(lastApiMessageCount);
+      let newTokens = 0;
+      for (const msg of newMessages) {
+        newTokens += estimateDialogueTokens(msg);
+      }
+      const total = lastApiInputTokens + newTokens;
+      return {
+        estimated: total,
+        apiAnchored: true,
+        contextUsagePct: 0,
+      };
     }
-    const total = lastApiInputTokens + newTokens;
-    return {
-      estimated: total,
-      apiAnchored: true,
-      contextUsagePct: 0, // Will be calculated by caller with model context window
-    };
+    // Too much growth — anchor is unreliable, fall through to estimation
+    resetTokenAnchor();
   }
 
   // No anchor — pure estimation

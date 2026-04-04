@@ -12,8 +12,18 @@ const GLOBAL_MCP_FILE = path.join(BLOCKRUN_DIR, 'mcp.json');
  * Load MCP server configurations from global + project files.
  * Project config overrides global for same server name.
  */
+// Built-in MCP server: @blockrun/mcp is always available (zero config)
+const BUILTIN_MCP_SERVERS = {
+    blockrun: {
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@blockrun/mcp'],
+        label: 'BlockRun (built-in)',
+    },
+};
 export function loadMcpConfig(workDir) {
-    const servers = {};
+    // Start with built-in servers
+    const servers = { ...BUILTIN_MCP_SERVERS };
     // 1. Global config
     try {
         if (fs.existsSync(GLOBAL_MCP_FILE)) {
@@ -27,14 +37,28 @@ export function loadMcpConfig(workDir) {
         // Ignore corrupt global config
     }
     // 2. Project config (.mcp.json in working directory)
+    // Security: project configs can execute arbitrary commands via stdio transport.
+    // Only load if a trust marker exists (user has explicitly opted in).
     const projectMcpFile = path.join(workDir, '.mcp.json');
+    const trustMarker = path.join(BLOCKRUN_DIR, 'trusted-projects.json');
     try {
         if (fs.existsSync(projectMcpFile)) {
-            const raw = JSON.parse(fs.readFileSync(projectMcpFile, 'utf-8'));
-            if (raw.mcpServers && typeof raw.mcpServers === 'object') {
-                // Project overrides global for same name
-                Object.assign(servers, raw.mcpServers);
+            // Check if this project directory is trusted
+            let trusted = false;
+            try {
+                if (fs.existsSync(trustMarker)) {
+                    const trustedDirs = JSON.parse(fs.readFileSync(trustMarker, 'utf-8'));
+                    trusted = Array.isArray(trustedDirs) && trustedDirs.includes(workDir);
+                }
             }
+            catch { /* not trusted */ }
+            if (trusted) {
+                const raw = JSON.parse(fs.readFileSync(projectMcpFile, 'utf-8'));
+                if (raw.mcpServers && typeof raw.mcpServers === 'object') {
+                    Object.assign(servers, raw.mcpServers);
+                }
+            }
+            // If not trusted, silently skip project config (user must run /mcp trust)
         }
     }
     catch {
@@ -61,6 +85,24 @@ export function removeMcpServer(name) {
     delete existing.mcpServers[name];
     fs.writeFileSync(GLOBAL_MCP_FILE, JSON.stringify(existing, null, 2) + '\n');
     return true;
+}
+/**
+ * Trust a project directory to load its .mcp.json.
+ */
+export function trustProjectDir(workDir) {
+    const trustMarker = path.join(BLOCKRUN_DIR, 'trusted-projects.json');
+    let trusted = [];
+    try {
+        if (fs.existsSync(trustMarker)) {
+            trusted = JSON.parse(fs.readFileSync(trustMarker, 'utf-8'));
+        }
+    }
+    catch { /* fresh */ }
+    if (!trusted.includes(workDir)) {
+        trusted.push(workDir);
+        fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+        fs.writeFileSync(trustMarker, JSON.stringify(trusted, null, 2));
+    }
 }
 function loadGlobalMcpConfig() {
     try {
