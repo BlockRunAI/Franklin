@@ -6,12 +6,19 @@ export async function modelsCommand() {
     console.log(chalk.bold('Available Models\n'));
     console.log(`Chain: ${chalk.magenta(chain)} — ${chalk.dim(apiUrl)}\n`);
     try {
-        const response = await fetch(`${apiUrl}/v1/models`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15_000);
+        const response = await fetch(`${apiUrl}/v1/models`, { signal: controller.signal });
+        clearTimeout(timeout);
         if (!response.ok) {
             console.log(chalk.red(`Failed to fetch models: ${response.status}`));
             return;
         }
         const data = (await response.json());
+        if (!data.data || data.data.length === 0) {
+            console.log(chalk.yellow('No models returned from API.'));
+            return;
+        }
         const models = data.data
             .sort((a, b) => (a.pricing?.input ?? 0) - (b.pricing?.input ?? 0));
         const free = models.filter((m) => m.billing_mode === 'free');

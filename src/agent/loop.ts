@@ -413,6 +413,12 @@ export async function interactiveSession(
         usage = result.usage;
         stopReason = result.stopReason;
       } catch (err) {
+        // ── User abort (Esc key) ──
+        if ((err as Error).name === 'AbortError' || abort.signal.aborted) {
+          onEvent({ kind: 'turn_done', reason: 'aborted' });
+          break;
+        }
+
         const errMsg = (err as Error).message || '';
         const errLower = errMsg.toLowerCase();
 
