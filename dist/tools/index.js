@@ -11,6 +11,7 @@ import { webFetchCapability } from './webfetch.js';
 import { webSearchCapability } from './websearch.js';
 import { taskCapability } from './task.js';
 import { imageGenCapability } from './imagegen.js';
+import { askUserCapability } from './askuser.js';
 /** All capabilities available to the runcode agent (excluding sub-agent, which needs config). */
 export const allCapabilities = [
     readCapability,
@@ -23,6 +24,7 @@ export const allCapabilities = [
     webSearchCapability,
     taskCapability,
     imageGenCapability,
+    askUserCapability,
 ];
 export { readCapability, writeCapability, editCapability, bashCapability, globCapability, grepCapability, webFetchCapability, webSearchCapability, taskCapability, };
 export { createSubAgentCapability } from './subagent.js';
