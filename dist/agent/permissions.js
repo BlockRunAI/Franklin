@@ -131,11 +131,13 @@ export class PermissionManager {
         }
     }
     globMatch(pattern, text) {
-        // Simple glob: * matches anything
+        // Glob matching: * matches non-space chars, ** matches anything
+        const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp('^' +
-            pattern
-                .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-                .replace(/\*/g, '.*')
+            escaped
+                .replace(/\*\*/g, '{{GLOB_STAR}}')
+                .replace(/\*/g, '[^ ]*')
+                .replace(/\{\{GLOB_STAR\}\}/g, '.*')
             + '$');
         return regex.test(text);
     }
@@ -181,7 +183,7 @@ function askQuestion(prompt) {
         });
         rl.on('close', () => {
             if (!answered)
-                resolve('y'); // Default allow on EOF (piped input)
+                resolve('n'); // Default deny on EOF (piped input) for safety
         });
     });
 }

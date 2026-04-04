@@ -47,7 +47,7 @@ async function execute(input, ctx) {
 export const readCapability = {
     spec: {
         name: 'Read',
-        description: 'Read a file from the filesystem with line numbers. Returns content in cat -n format.',
+        description: 'Read a file from the filesystem with line numbers (cat -n format). Max 2MB file size. Use offset/limit params for large files or to read specific sections.',
         input_schema: {
             type: 'object',
             properties: {

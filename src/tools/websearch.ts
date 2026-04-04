@@ -17,18 +17,24 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     return { output: 'Error: query is required', isError: true };
   }
 
-  const maxResults = max_results ?? 5;
+  const maxResults = Math.min(Math.max(max_results ?? 5, 1), 20);
 
   // Try DuckDuckGo HTML search (no API key needed)
   try {
     const encoded = encodeURIComponent(query);
     const url = `https://html.duckduckgo.com/html/?q=${encoded}`;
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+
     const response = await fetch(url, {
+      signal: controller.signal,
       headers: {
         'User-Agent': `runcode/${VERSION} (coding-agent)`,
       },
     });
+
+    clearTimeout(timeout);
 
     if (!response.ok) {
       return { output: `Search failed: HTTP ${response.status}`, isError: true };
@@ -48,6 +54,9 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     return { output: `Search results for "${query}":\n\n${formatted}` };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('abort')) {
+      return { output: `Search timed out after 15s for: ${query}`, isError: true };
+    }
     return { output: `Search error: ${msg}`, isError: true };
   }
 }

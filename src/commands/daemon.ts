@@ -29,6 +29,10 @@ function isRunning(pid: number): boolean {
 
 export async function daemonCommand(action: string, options: { port?: string }) {
   const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
+  if (isNaN(port) || port < 1 || port > 65535) {
+    console.log(chalk.red(`Invalid port "${options.port}". Must be 1-65535. Default: ${DEFAULT_PROXY_PORT}`));
+    return;
+  }
 
   switch (action) {
     case 'start': {
@@ -76,7 +80,15 @@ export async function daemonCommand(action: string, options: { port?: string }) 
       }
       try {
         process.kill(pid, 'SIGTERM');
-        fs.unlinkSync(PID_FILE);
+        // Wait for process to exit (up to 5s)
+        for (let i = 0; i < 50; i++) {
+          if (!isRunning(pid)) break;
+          await new Promise(r => setTimeout(r, 100));
+        }
+        if (isRunning(pid)) {
+          process.kill(pid, 'SIGKILL');
+        }
+        try { fs.unlinkSync(PID_FILE); } catch { /* already gone */ }
         console.log(chalk.green(`✓ runcode daemon stopped (PID ${pid})`));
       } catch (e) {
         console.log(chalk.red(`Failed to stop daemon: ${(e as Error).message}`));

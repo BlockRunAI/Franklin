@@ -193,7 +193,7 @@ async function runSingleCapability(invocation, handlers, scope) {
  * Each user message triggers a full agent loop.
  * Returns the accumulated conversation history.
  */
-export async function interactiveSession(config, getUserInput, onEvent) {
+export async function interactiveSession(config, getUserInput, onEvent, onAbortReady) {
     const client = new ModelClient({
         apiUrl: config.apiUrl,
         chain: config.chain,
@@ -216,6 +216,7 @@ export async function interactiveSession(config, getUserInput, onEvent) {
             continue; // Empty input → re-prompt
         history.push({ role: 'user', content: input });
         const abort = new AbortController();
+        onAbortReady?.(() => abort.abort());
         let turnCount = 0;
         let recoveryAttempts = 0;
         let maxTokensOverride;

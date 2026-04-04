@@ -29,9 +29,14 @@ async function execute(input, ctx) {
         { role: 'user', content: prompt },
     ];
     const maxTurns = 30;
+    const SUB_AGENT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minute total timeout
+    const deadline = Date.now() + SUB_AGENT_TIMEOUT_MS;
     let turn = 0;
     let finalText = '';
     while (turn < maxTurns) {
+        if (Date.now() > deadline) {
+            return { output: `[${description || 'sub-agent'}] timed out after 5 minutes (${turn} turns completed).`, isError: true };
+        }
         turn++;
         const { content: parts } = await client.complete({
             model: model || 'anthropic/claude-sonnet-4.6',
