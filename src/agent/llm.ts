@@ -389,8 +389,11 @@ export class ModelClient {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        // Safety: if buffer grows too large without newlines, truncate
+        // Safety: if buffer grows too large without newlines, something is wrong
         if (buffer.length > MAX_BUFFER) {
+          if (this.debug) {
+            console.error(`[runcode] SSE buffer overflow (${(buffer.length / 1024).toFixed(0)}KB) — truncating to prevent OOM`);
+          }
           buffer = buffer.slice(-MAX_BUFFER / 2);
         }
         const lines = buffer.split('\n');

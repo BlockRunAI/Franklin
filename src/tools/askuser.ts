@@ -43,7 +43,7 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
       resolve({ output: answer.trim() || '(no response)' });
     });
     rl.on('close', () => {
-      if (!answered) resolve({ output: '(user skipped)' });
+      if (!answered) resolve({ output: 'User did not respond (EOF/piped input).', isError: true });
     });
   });
 }

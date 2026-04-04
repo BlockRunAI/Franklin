@@ -32,7 +32,7 @@ async function execute(input, _ctx) {
         });
         rl.on('close', () => {
             if (!answered)
-                resolve({ output: '(user skipped)' });
+                resolve({ output: 'User did not respond (EOF/piped input).', isError: true });
         });
     });
 }

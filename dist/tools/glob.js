@@ -21,7 +21,7 @@ function globMatch(pattern, text) {
     return regex.test(text.replace(/\\/g, '/'));
 }
 function walkDirectory(dir, baseDir, pattern, results, depth, visited) {
-    if (depth > 20 || results.length >= MAX_RESULTS)
+    if (depth > 50 || results.length >= MAX_RESULTS)
         return;
     // Symlink loop protection
     const visitedSet = visited ?? new Set();

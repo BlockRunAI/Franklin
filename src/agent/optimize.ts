@@ -82,15 +82,13 @@ export function budgetToolResults(history: Dialogue[]): Dialogue[] {
         continue;
       }
 
-      // Per-message aggregate cap
+      // Per-message aggregate cap — once exceeded, truncate remaining results
       if (messageTotal + size > MAX_TOOL_RESULTS_PER_MESSAGE_CHARS) {
         modified = true;
-        const remaining = Math.max(0, MAX_TOOL_RESULTS_PER_MESSAGE_CHARS - messageTotal);
-        const preview = content.slice(0, Math.min(PREVIEW_CHARS, remaining));
         budgeted.push({
           type: 'tool_result',
           tool_use_id: part.tool_use_id,
-          content: `[Output omitted: message budget exceeded (${MAX_TOOL_RESULTS_PER_MESSAGE_CHARS / 1000}K chars/msg)]\n\n${preview}`,
+          content: `[Output omitted: message budget exceeded (${MAX_TOOL_RESULTS_PER_MESSAGE_CHARS / 1000}K chars/msg)]`,
           is_error: part.is_error,
         });
         messageTotal = MAX_TOOL_RESULTS_PER_MESSAGE_CHARS;
