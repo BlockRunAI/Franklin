@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.8.0 (2026-04-04)
+
+### Major Features
+- **Session Persistence**: Conversations auto-save to `~/.blockrun/sessions/`. Use `/sessions` to list, `/resume <id>` to continue.
+- **Plan Mode**: `/plan` restricts to read-only tools for safe exploration. `/execute` restores full access.
+- **AskUser Tool**: Agent can ask clarifying questions with suggested answers.
+- **40+ Slash Commands**: Organized by category (Coding, Git, Analysis, Session).
+
+### Slash Commands Added (v1.5.0 → v1.8.0)
+
+**Coding Workflow:**
+`/commit`, `/review`, `/test`, `/fix`, `/debug`, `/explain <file>`, `/search <query>`, `/find <pattern>`, `/refactor <desc>`, `/scaffold <desc>`, `/init`, `/todo`, `/deps`
+
+**Git Operations:**
+`/push`, `/pr`, `/undo`, `/status`, `/diff`, `/log`, `/branch [name]`, `/stash`, `/unstash`
+
+**Code Analysis:**
+`/security`, `/lint`, `/optimize`, `/clean`, `/migrate`, `/doc <target>`
+
+**Session Management:**
+`/plan`, `/execute`, `/sessions`, `/resume <id>`, `/compact`, `/context`, `/retry`, `/tasks`, `/doctor`, `/bug`, `/version`
+
+### Tool Enhancements
+- **AskUser**: Agent-initiated clarifying questions with styled prompt box
+- **Read**: Directories return listing; binary files show type+size instead of garbled output
+- **Grep**: `multiline` mode for cross-line patterns; `before_context`/`after_context` params
+- **WebFetch**: JSON auto-formatting; HTML stripping removes nav/header/footer/aside
+- **Bash**: Sets `RUNCODE=1` env var for script detection
+- **Task**: Delete action + list shows done/remaining counts
+
+### System Improvements
+- System prompt: safety rules, AskUser guidance, lists all 40+ slash commands
+- Config: 5 new keys (permission-mode, max-turns, auto-compact, session-save, debug)
+- Help panel: organized into Coding/Git/Analysis/Session categories
+
 ## 1.4.0 (2026-04-04)
 
 ### New Features
