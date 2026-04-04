@@ -49,7 +49,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     const raw = fs.readFileSync(resolved, 'utf-8');
     const allLines = raw.split('\n');
 
-    const startLine = Math.max(0, (offset ?? 1) - 1);
+    const startLine = Math.max(0, (Math.max(1, offset ?? 1)) - 1);
     const maxLines = limit ?? 2000;
     const endLine = Math.min(allLines.length, startLine + maxLines);
     const slice = allLines.slice(startLine, endLine);

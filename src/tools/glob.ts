@@ -41,7 +41,7 @@ function walkDirectory(
   depth: number,
   visited?: Set<string>
 ): void {
-  if (depth > 20 || results.length >= MAX_RESULTS) return;
+  if (depth > 50 || results.length >= MAX_RESULTS) return;
 
   // Symlink loop protection
   const visitedSet = visited ?? new Set<string>();
