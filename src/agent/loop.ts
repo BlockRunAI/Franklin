@@ -329,6 +329,20 @@ export async function interactiveSession(
     if (input === null) break; // User wants to exit
     if (input === '') continue; // Empty input → re-prompt
 
+    // Handle /bug — open issue tracker
+    if (input === '/bug') {
+      onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/runcode/issues\n' });
+      onEvent({ kind: 'turn_done', reason: 'completed' });
+      continue;
+    }
+
+    // Handle /version — show version
+    if (input === '/version') {
+      onEvent({ kind: 'text_delta', text: `RunCode v${VERSION}\n` });
+      onEvent({ kind: 'turn_done', reason: 'completed' });
+      continue;
+    }
+
     // Handle /tasks — show task list (shortcut for Task list action)
     if (input === '/tasks') {
       input = 'List all current tasks using the Task tool.';
