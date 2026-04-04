@@ -60,23 +60,56 @@ export function estimateHistoryTokens(history) {
  * Context window sizes for known models.
  */
 const MODEL_CONTEXT_WINDOWS = {
+    // Anthropic
     'anthropic/claude-opus-4.6': 200_000,
     'anthropic/claude-sonnet-4.6': 200_000,
     'anthropic/claude-sonnet-4': 200_000,
     'anthropic/claude-haiku-4.5': 200_000,
+    'anthropic/claude-haiku-4.5-20251001': 200_000,
+    // OpenAI
     'openai/gpt-5.4': 128_000,
     'openai/gpt-5.4-pro': 128_000,
+    'openai/gpt-5.3': 128_000,
+    'openai/gpt-5.3-codex': 128_000,
+    'openai/gpt-5.2': 128_000,
     'openai/gpt-5-mini': 128_000,
+    'openai/gpt-5-nano': 128_000,
+    'openai/gpt-4.1': 1_000_000,
+    'openai/o3': 200_000,
+    'openai/o4-mini': 200_000,
+    // Google
     'google/gemini-2.5-pro': 1_000_000,
     'google/gemini-2.5-flash': 1_000_000,
+    'google/gemini-2.5-flash-lite': 1_000_000,
+    'google/gemini-3.1-pro': 1_000_000,
+    // DeepSeek
     'deepseek/deepseek-chat': 64_000,
     'deepseek/deepseek-reasoner': 64_000,
+    // xAI
+    'xai/grok-3': 131_072,
+    'xai/grok-4-0709': 131_072,
+    'xai/grok-4-1-fast-reasoning': 131_072,
+    // Others
+    'zai/glm-5': 128_000,
+    'moonshot/kimi-k2.5': 128_000,
+    'minimax/minimax-m2.7': 128_000,
 };
 /**
  * Get the context window size for a model, with a conservative default.
  */
 export function getContextWindow(model) {
-    return MODEL_CONTEXT_WINDOWS[model] ?? 128_000;
+    if (MODEL_CONTEXT_WINDOWS[model])
+        return MODEL_CONTEXT_WINDOWS[model];
+    // Pattern-based inference for unknown models
+    if (model.includes('gemini'))
+        return 1_000_000;
+    if (model.includes('claude'))
+        return 200_000;
+    if (model.includes('gpt-4.1'))
+        return 1_000_000;
+    if (model.includes('nemotron') || model.includes('qwen'))
+        return 128_000;
+    return 128_000;
 }
 /**
  * Reserved tokens for the compaction summary output.

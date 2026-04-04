@@ -260,6 +260,7 @@ export class TerminalUI {
                 console.error(chalk.bold('\n  Commands:'));
                 console.error('  /model [name]  — switch model (e.g. /model sonnet)');
                 console.error('  /cost          — session cost and tokens');
+                console.error('  /compact       — compress conversation history');
                 console.error('  /exit          — quit');
                 console.error('  /help          — this help\n');
                 console.error(chalk.dim('  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4\n'));

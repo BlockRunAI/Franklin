@@ -32,7 +32,9 @@ export async function startCommand(options: StartOptions) {
   } else if (configModel) {
     model = configModel;
   } else {
-    model = 'zai/glm-5'; // Default: GLM-5 promo ($0.001/call)
+    // Default: GLM-5 promo if still active, otherwise Gemini Flash (cheap & reliable)
+    const promoExpiry = new Date('2026-04-15');
+    model = Date.now() < promoExpiry.getTime() ? 'zai/glm-5' : 'google/gemini-2.5-flash';
   }
 
   // Auto-create wallet if needed (no interruption — free models work without funding)
@@ -63,6 +65,10 @@ export async function startCommand(options: StartOptions) {
   console.log(chalk.dim(`  Model:  ${model}`));
   console.log(chalk.dim(`  Wallet: ${walletAddress || 'not set'}`));
   console.log(chalk.dim(`  Dir:    ${workDir}`));
+  // First-run tip: show if no config file exists yet
+  if (!configModel && !options.model) {
+    console.log(chalk.dim(`\n  Tip: /model to switch models · /compact to save tokens · /help for all commands`));
+  }
   console.log('');
 
   // Fetch balance in background (don't block startup)

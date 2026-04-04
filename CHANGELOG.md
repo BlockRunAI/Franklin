@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.3.0 (2026-04-04)
+
+### New Features
+
+- **`/compact` command**: Manually compress conversation history to save tokens. Shows before/after token count.
+- **Thinking content display**: Ink UI now shows last line of model's thinking process (was only showing spinner).
+- **Transient error retry**: Network timeouts, 429 rate limits, and server errors now auto-retry with exponential backoff (up to 3 attempts) instead of terminating the session.
+- **First-run tips**: New users see helpful tip about `/model`, `/compact`, and `/help` on first launch.
+- **GLM promo auto-expiry**: Default model automatically switches from GLM-5 to Gemini Flash after promo ends.
+
+### Bug Fixes
+
+- **System prompt completeness**: All 11 tools now documented with constraints (was missing 5 tools)
+- **Model shortcuts synced**: 16 missing shortcuts added to terminal picker (was out of sync with proxy)
+- **Token estimation**: tool_use overhead now includes 16-token framing cost
+- **Router code block detection**: Triple backtick code blocks now boost complexity score
+- **Router token estimation**: Uses byte length for better accuracy with CJK/Unicode
+- **Context window registry**: Added 20+ missing models (xAI, GLM, Minimax, etc.) + pattern-based fallback
+- **Glob recursion**: Only `**` triggers full recursion (was over-recursing on `/` patterns)
+- **WebSearch parser**: Fallback regex when DuckDuckGo updates HTML; skip internal DDG links
+- **Tool descriptions**: Read, Grep, Glob schemas now document key limits and defaults
+- **Terminal UI commands**: `/model`, `/cost`, `/help`, `/compact` now work in piped/non-TTY mode
+- **Escape to abort**: Press Esc during generation to cancel current turn
+- **Per-turn cost display**: Session cost shown after every response
+
 ## 1.2.0 (2026-04-04)
 
 ### Bug Fixes (36 fixes across 5 rounds)

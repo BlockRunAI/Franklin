@@ -70,12 +70,18 @@ interface SearchResult {
 function parseDuckDuckGoResults(html: string, maxResults: number): SearchResult[] {
   const results: SearchResult[] = [];
 
-  // Match result blocks: <a class="result__a" href="...">title</a>
+  // Primary parser: match result blocks by class names
   const linkRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
   const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
 
-  const links = [...html.matchAll(linkRegex)];
-  const snippets = [...html.matchAll(snippetRegex)];
+  let links = [...html.matchAll(linkRegex)];
+  let snippets = [...html.matchAll(snippetRegex)];
+
+  // Fallback parser if primary finds nothing (DDG may have updated HTML)
+  if (links.length === 0) {
+    const fallbackLink = /<a[^>]*class="[^"]*result[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+    links = [...html.matchAll(fallbackLink)];
+  }
 
   for (let i = 0; i < Math.min(links.length, maxResults); i++) {
     const link = links[i];
@@ -87,6 +93,9 @@ function parseDuckDuckGoResults(html: string, maxResults: number): SearchResult[
     if (uddgMatch) {
       url = decodeURIComponent(uddgMatch[1]);
     }
+
+    // Skip internal DDG links
+    if (url.startsWith('/') || url.includes('duckduckgo.com')) continue;
 
     results.push({
       title: stripTags(link[2] || '').trim(),

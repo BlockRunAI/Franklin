@@ -214,6 +214,22 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             break; // User wants to exit
         if (input === '')
             continue; // Empty input → re-prompt
+        // Handle /compact command — force compaction without sending to model
+        if (input === '/compact') {
+            const beforeTokens = estimateHistoryTokens(history);
+            const { history: compacted, compacted: didCompact } = await autoCompactIfNeeded(history, config.model, client, config.debug);
+            if (didCompact) {
+                history.length = 0;
+                history.push(...compacted);
+            }
+            const afterTokens = estimateHistoryTokens(history);
+            onEvent({ kind: 'text_delta', text: didCompact
+                    ? `Compacted: ~${beforeTokens.toLocaleString()} → ~${afterTokens.toLocaleString()} tokens\n`
+                    : `History is ${beforeTokens.toLocaleString()} tokens — no compaction needed.\n`
+            });
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
         history.push({ role: 'user', content: input });
         const abort = new AbortController();
         onAbortReady?.(() => abort.abort());
@@ -287,17 +303,32 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             }
             catch (err) {
                 const errMsg = err.message || '';
+                const errLower = errMsg.toLowerCase();
                 // ── Prompt too long recovery ──
-                if (errMsg.toLowerCase().includes('prompt is too long') && recoveryAttempts < 3) {
+                if (errLower.includes('prompt is too long') && recoveryAttempts < 3) {
                     recoveryAttempts++;
                     if (config.debug) {
                         console.error(`[runcode] Prompt too long — forcing compact (attempt ${recoveryAttempts})`);
                     }
-                    // Force compaction by reducing history
                     const { history: compactedAgain } = await autoCompactIfNeeded(history, config.model, client, config.debug);
                     history.length = 0;
                     history.push(...compactedAgain);
                     continue; // Retry
+                }
+                // ── Transient error recovery (network, rate limit, server errors) ──
+                const isTransient = errLower.includes('429') || errLower.includes('rate')
+                    || errLower.includes('500') || errLower.includes('502') || errLower.includes('503')
+                    || errLower.includes('timeout') || errLower.includes('econnrefused')
+                    || errLower.includes('econnreset') || errLower.includes('fetch failed');
+                if (isTransient && recoveryAttempts < 3) {
+                    recoveryAttempts++;
+                    const backoffMs = Math.pow(2, recoveryAttempts) * 1000;
+                    if (config.debug) {
+                        console.error(`[runcode] Transient error — retrying in ${backoffMs / 1000}s (attempt ${recoveryAttempts}): ${errMsg.slice(0, 100)}`);
+                    }
+                    onEvent({ kind: 'text_delta', text: `\n*Retrying (${recoveryAttempts}/3)...*\n` });
+                    await new Promise(r => setTimeout(r, backoffMs));
+                    continue;
                 }
                 onEvent({ kind: 'turn_done', reason: 'error', error: errMsg });
                 break;

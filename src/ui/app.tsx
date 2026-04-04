@@ -115,6 +115,7 @@ function RunCodeApp({
   const [showHelp, setShowHelp] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
   const [balance, setBalance] = useState(walletBalance);
+  const [thinkingText, setThinkingText] = useState('');
 
   // Key handler for picker + esc + abort
   const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input) || !ready;
@@ -223,6 +224,10 @@ function RunCodeApp({
           setTimeout(() => setStatusMsg(''), 3000);
           return;
 
+        case '/compact':
+          onSubmit('/compact');
+          return;
+
         default:
           setStatusMsg(`Unknown command: ${cmd}. Try /help`);
           setTimeout(() => setStatusMsg(''), 3000);
@@ -234,6 +239,7 @@ function RunCodeApp({
     setInput('');
     setStreamText('');
     setThinking(false);
+    setThinkingText('');
     setTools(new Map());
     setReady(false);
     setWaiting(true);
@@ -258,6 +264,11 @@ function RunCodeApp({
           case 'thinking_delta':
             setWaiting(false);
             setThinking(true);
+            setThinkingText(prev => {
+              // Keep last 500 chars of thinking for display
+              const updated = prev + event.text;
+              return updated.length > 500 ? updated.slice(-500) : updated;
+            });
             break;
           case 'capability_start':
             setWaiting(false);
@@ -352,6 +363,7 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/model</Text> [name]  Switch model (picker if no name)</Text>
           <Text>  <Text color="cyan">/wallet</Text>        Show wallet address & balance</Text>
           <Text>  <Text color="cyan">/cost</Text>          Session cost & savings</Text>
+          <Text>  <Text color="cyan">/compact</Text>       Compress conversation history</Text>
           <Text>  <Text color="cyan">/clear</Text>         Clear conversation display</Text>
           <Text>  <Text color="cyan">/help</Text>          This help</Text>
           <Text>  <Text color="cyan">/exit</Text>          Quit</Text>
@@ -386,8 +398,11 @@ function RunCodeApp({
 
       {/* Thinking */}
       {thinking && (
-        <Box marginLeft={1}>
+        <Box flexDirection="column" marginLeft={1}>
           <Text color="magenta">  <Spinner type="dots" /> thinking...</Text>
+          {thinkingText && (
+            <Text dimColor wrap="truncate-end">  {thinkingText.split('\n').pop()?.slice(0, 80)}</Text>
+          )}
         </Box>
       )}
 
