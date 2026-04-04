@@ -9,6 +9,8 @@ import { interactiveSession } from '../agent/loop.js';
 import { allCapabilities, createSubAgentCapability } from '../tools/index.js';
 import { launchInkUI } from '../ui/app.js';
 import { pickModel, resolveModel } from '../ui/model-picker.js';
+import { loadMcpConfig } from '../mcp/config.js';
+import { connectMcpServers, disconnectMcpServers } from '../mcp/client.js';
 export async function startCommand(options) {
     const version = options.version ?? '1.0.0';
     const chain = loadChain();
@@ -92,9 +94,26 @@ export async function startCommand(options) {
     })();
     // Assemble system instructions
     const systemInstructions = assembleInstructions(workDir);
-    // Build capabilities
+    // Connect MCP servers (non-blocking — add tools if servers are available)
+    const mcpConfig = loadMcpConfig(workDir);
+    let mcpTools = [];
+    const mcpServerCount = Object.keys(mcpConfig.mcpServers).filter(k => !mcpConfig.mcpServers[k].disabled).length;
+    if (mcpServerCount > 0) {
+        try {
+            mcpTools = await connectMcpServers(mcpConfig, options.debug);
+            if (mcpTools.length > 0) {
+                console.log(chalk.dim(`  MCP:    ${mcpTools.length} tools from ${mcpServerCount} server(s)`));
+            }
+        }
+        catch (err) {
+            if (options.debug) {
+                console.error(chalk.yellow(`  MCP error: ${err.message}`));
+            }
+        }
+    }
+    // Build capabilities (built-in + MCP + sub-agent)
     const subAgent = createSubAgentCapability(apiUrl, chain, allCapabilities);
-    const capabilities = [...allCapabilities, subAgent];
+    const capabilities = [...allCapabilities, ...mcpTools, subAgent];
     // Agent config
     const agentConfig = {
         model,
@@ -149,6 +168,7 @@ async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, on
     }
     ui.cleanup();
     flushStats();
+    await disconnectMcpServers();
     console.log(chalk.dim('\nGoodbye.\n'));
     process.exit(0);
 }

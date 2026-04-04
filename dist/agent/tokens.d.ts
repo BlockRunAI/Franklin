@@ -1,8 +1,27 @@
 /**
  * Token estimation for runcode.
  * Uses byte-based heuristic (no external tokenizer dependency).
+ * Anchors to actual API counts when available, estimates on top for new messages.
  */
 import type { Dialogue } from './types.js';
+/**
+ * Update with actual token counts from API response.
+ * This anchors our estimates to reality.
+ */
+export declare function updateActualTokens(inputTokens: number, outputTokens: number, messageCount: number): void;
+/**
+ * Get token count using API anchor + estimation for new messages.
+ * More accurate than pure estimation because it's grounded in actual API counts.
+ */
+export declare function getAnchoredTokenCount(history: Dialogue[]): {
+    estimated: number;
+    apiAnchored: boolean;
+    contextUsagePct: number;
+};
+/**
+ * Reset anchor (e.g., after compaction).
+ */
+export declare function resetTokenAnchor(): void;
 /**
  * Estimate token count for a string using byte-length heuristic.
  * JSON-heavy content uses 2 bytes/token; general text uses 4.
