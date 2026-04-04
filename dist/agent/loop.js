@@ -7,7 +7,6 @@ import { ModelClient } from './llm.js';
 import { autoCompactIfNeeded, microCompact } from './compact.js';
 import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor } from './tokens.js';
 import { handleSlashCommand } from './commands.js';
-import { compressHistory } from '../compression/adapter.js';
 import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
@@ -262,15 +261,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     history.push(...microCompacted);
                 }
             }
-            // 3. Context compression: 7-layer compression for 15-40% token savings
-            if (history.length > 10) {
-                const compressed = await compressHistory(history, config.debug);
-                if (compressed) {
-                    history.length = 0;
-                    history.push(...compressed.history);
-                }
-            }
-            // 4. Auto-compact: summarize history if approaching context limit
+            // 3. Auto-compact: summarize history if approaching context limit
             // Circuit breaker: stop retrying after 3 consecutive failures
             if (compactFailures < 3) {
                 try {
