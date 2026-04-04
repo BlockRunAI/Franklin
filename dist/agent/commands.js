@@ -124,7 +124,7 @@ const DIRECT_COMMANDS = {
         });
         emitDone(ctx);
     },
-    '/doctor': (ctx) => {
+    '/doctor': async (ctx) => {
         const checks = [];
         try {
             execSync('git --version', { stdio: 'pipe' });
