@@ -222,6 +222,42 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             break; // User wants to exit
         if (input === '')
             continue; // Empty input → re-prompt
+        // Handle /branch — show current branch or create new
+        if (input === '/branch' || input.startsWith('/branch ')) {
+            try {
+                const { execSync } = await import('node:child_process');
+                const cwd = config.workingDir || process.cwd();
+                if (input === '/branch') {
+                    const branches = execSync('git branch -v --no-color', { cwd, encoding: 'utf-8', timeout: 5000 }).trim();
+                    onEvent({ kind: 'text_delta', text: `\`\`\`\n${branches}\n\`\`\`\n` });
+                }
+                else {
+                    const branchName = input.slice(8).trim();
+                    execSync(`git checkout -b ${branchName}`, { cwd, encoding: 'utf-8', timeout: 5000 });
+                    onEvent({ kind: 'text_delta', text: `Created and switched to branch: **${branchName}**\n` });
+                }
+            }
+            catch (e) {
+                onEvent({ kind: 'text_delta', text: `Git error: ${e.message?.split('\n')[0] || 'unknown'}\n` });
+            }
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
+        // Handle /log — show recent git log
+        if (input === '/log') {
+            try {
+                const { execSync } = await import('node:child_process');
+                const log = execSync('git log --oneline -15 --no-color', {
+                    cwd: config.workingDir || process.cwd(), encoding: 'utf-8', timeout: 5000
+                }).trim();
+                onEvent({ kind: 'text_delta', text: log ? `\`\`\`\n${log}\n\`\`\`\n` : 'No commits.\n' });
+            }
+            catch {
+                onEvent({ kind: 'text_delta', text: 'Not a git repo.\n' });
+            }
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
         // Handle /bug — open issue tracker
         if (input === '/bug') {
             onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/runcode/issues\n' });
