@@ -53,6 +53,8 @@ function runRipgrep(opts, searchPath, mode, limit) {
     }
     if (opts.case_insensitive)
         args.push('-i');
+    if (opts.multiline)
+        args.push('-U', '--multiline-dotall');
     if (opts.glob)
         args.push(`--glob=${opts.glob}`);
     // Always exclude common noise
@@ -142,6 +144,7 @@ export const grepCapability = {
                 context: { type: 'number', description: 'Lines of context around each match (content mode only)' },
                 case_insensitive: { type: 'boolean', description: 'Case-insensitive search' },
                 head_limit: { type: 'number', description: 'Max results to return. Default: 250' },
+                multiline: { type: 'boolean', description: 'Enable multiline mode (patterns span lines). Default: false' },
             },
             required: ['pattern'],
         },
