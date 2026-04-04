@@ -45,7 +45,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       child.kill('SIGTERM');
       setTimeout(() => {
         try { child.kill('SIGKILL'); } catch { /* already dead */ }
-      }, 3000);
+      }, 5000); // Give 5s for graceful shutdown before SIGKILL
     }, timeoutMs);
 
     // Handle abort signal

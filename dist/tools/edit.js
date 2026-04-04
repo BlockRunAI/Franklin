@@ -26,7 +26,7 @@ async function execute(input, ctx) {
         if (!content.includes(oldStr)) {
             // Find lines containing fragments of old_string for helpful context
             const lines = content.split('\n');
-            const searchTerms = oldStr.split('\n').map(l => l.trim()).filter(l => l.length > 8);
+            const searchTerms = oldStr.split('\n').map(l => l.trim()).filter(l => l.length > 3);
             const matchedLines = [];
             if (searchTerms.length > 0) {
                 for (let i = 0; i < lines.length && matchedLines.length < 5; i++) {

@@ -42,7 +42,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     if (!content.includes(oldStr)) {
       // Find lines containing fragments of old_string for helpful context
       const lines = content.split('\n');
-      const searchTerms = oldStr.split('\n').map(l => l.trim()).filter(l => l.length > 8);
+      const searchTerms = oldStr.split('\n').map(l => l.trim()).filter(l => l.length > 3);
       const matchedLines: { num: number; text: string }[] = [];
 
       if (searchTerms.length > 0) {
