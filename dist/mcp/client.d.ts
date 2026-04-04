@@ -27,6 +27,7 @@ export interface McpConfig {
 }
 /**
  * Connect to all configured MCP servers and return discovered tools.
+ * Each connection has a 5s timeout to avoid blocking startup.
  */
 export declare function connectMcpServers(config: McpConfig, debug?: boolean): Promise<CapabilityHandler[]>;
 /**

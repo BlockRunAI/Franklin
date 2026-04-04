@@ -93,7 +93,16 @@ export function loadSessionHistory(sessionId: string): Dialogue[] {
   try {
     const content = fs.readFileSync(sessionPath(sessionId), 'utf-8');
     const lines = content.trim().split('\n').filter(Boolean);
-    return lines.map(line => JSON.parse(line) as Dialogue);
+    const results: Dialogue[] = [];
+    for (const line of lines) {
+      try {
+        results.push(JSON.parse(line) as Dialogue);
+      } catch {
+        // Skip corrupted lines — partial writes from crashes
+        continue;
+      }
+    }
+    return results;
   } catch {
     return [];
   }
@@ -125,11 +134,17 @@ export function listSessions(): SessionMeta[] {
 /**
  * Prune old sessions beyond MAX_SESSIONS.
  */
-export function pruneOldSessions(): void {
+/**
+ * Prune old sessions beyond MAX_SESSIONS.
+ * Accepts optional activeSessionId to protect from deletion.
+ */
+export function pruneOldSessions(activeSessionId?: string): void {
   const sessions = listSessions();
   if (sessions.length <= MAX_SESSIONS) return;
 
-  const toDelete = sessions.slice(MAX_SESSIONS);
+  const toDelete = sessions
+    .slice(MAX_SESSIONS)
+    .filter(s => s.id !== activeSessionId); // Never delete active session
   for (const s of toDelete) {
     try { fs.unlinkSync(sessionPath(s.id)); } catch { /* ok */ }
     try { fs.unlinkSync(metaPath(s.id)); } catch { /* ok */ }

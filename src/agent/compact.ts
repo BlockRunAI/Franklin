@@ -183,10 +183,11 @@ async function compactHistory(
  * Keeps the most recent tool exchange + the last few user/assistant turns.
  */
 function findKeepBoundary(history: Dialogue[]): number {
-  // Keep at least the last 6 messages (3 turns), or ~30% of history
-  const minKeep = Math.min(6, history.length);
-  const pctKeep = Math.ceil(history.length * 0.3);
-  let keep = Math.max(minKeep, pctKeep);
+  // Keep the last 8-20 messages (absolute range, not percentage)
+  // Prevents "never compacts" bug when history grows large
+  const minKeep = Math.min(8, history.length);
+  const maxKeep = Math.min(20, history.length - 1);
+  let keep = Math.max(minKeep, Math.min(maxKeep, Math.ceil(history.length * 0.3)));
 
   // Make sure we don't split in the middle of a tool exchange
   // (assistant with tool_use must be followed by user with tool_result)

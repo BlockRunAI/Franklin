@@ -66,7 +66,12 @@ export function budgetToolResults(history: Dialogue[]): Dialogue[] {
       // Per-tool cap
       if (size > MAX_TOOL_RESULT_CHARS) {
         modified = true;
-        const preview = content.slice(0, PREVIEW_CHARS);
+        // Truncate at line boundary for cleaner output
+        let preview = content.slice(0, PREVIEW_CHARS);
+        const lastNewline = preview.lastIndexOf('\n');
+        if (lastNewline > PREVIEW_CHARS * 0.5) {
+          preview = preview.slice(0, lastNewline);
+        }
         budgeted.push({
           type: 'tool_result',
           tool_use_id: part.tool_use_id,

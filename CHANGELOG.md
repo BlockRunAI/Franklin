@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.1.0 (2026-04-04)
+
+### Security
+- **MCP project config trust**: `.mcp.json` from project directories now requires explicit trust (`/mcp trust`). Prevents arbitrary code execution from untrusted repos.
+- **Write tool symlink protection**: Now also checks if the target file itself is a symlink to a sensitive location (was only checking parent directory).
+
+### MCP Improvements
+- **@blockrun/mcp built-in**: BlockRun MCP server auto-registered — zero config needed for search, dex, markets, chat tools.
+- **5s connection timeout**: Slow MCP servers don't block startup anymore.
+- **30s tool call timeout**: Hanging MCP tools don't freeze the agent.
+- **Transport leak fix**: Failed connections now properly clean up stdio transport.
+
+### Token Management
+- **Anchor sanity check**: Token anchor invalidated when history grows unexpectedly (e.g., /resume with large session). Falls back to estimation instead of wrong counts.
+- **LLM parse warning**: Malformed tool JSON input now logged in debug mode (was silently defaulting to {}).
+
+### Bug Fixes
+- **Session JSONL recovery**: Corrupted lines now skipped individually instead of failing entire session load.
+- **Session prune safety**: Active session ID protected from pruning.
+- **Tool result truncation**: Now truncates at line boundaries for cleaner previews.
+- **ImageGen download timeout**: 30s timeout on image URL download (was unlimited).
+- **Compact threshold**: Keep boundary now 8-20 messages (was unbounded 30% that could prevent compaction on long sessions).
+
 ## 2.0.0 (2026-04-04)
 
 ### MCP Support (Model Context Protocol)

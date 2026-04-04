@@ -187,7 +187,14 @@ export class ModelClient {
         case 'content_block_stop': {
           if (currentToolId) {
             let parsedInput: Record<string, unknown> = {};
-            try { parsedInput = JSON.parse(currentToolInput || '{}'); } catch { /* empty */ }
+            try {
+              parsedInput = JSON.parse(currentToolInput || '{}');
+            } catch (parseErr) {
+              // Log malformed JSON instead of silently defaulting to {}
+              if (this.debug) {
+                console.error(`[runcode] Malformed tool input JSON for ${currentToolName}: ${(parseErr as Error).message}`);
+              }
+            }
             const toolInvocation = {
               type: 'tool_use',
               id: currentToolId,
