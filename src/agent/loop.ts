@@ -329,6 +329,28 @@ export async function interactiveSession(
     if (input === null) break; // User wants to exit
     if (input === '') continue; // Empty input → re-prompt
 
+    // Handle /stash and /unstash — git stash management
+    if (input === '/stash') {
+      try {
+        const { execSync } = await import('node:child_process');
+        const result = execSync('git stash push -m "runcode auto-stash"', {
+          cwd: config.workingDir || process.cwd(), encoding: 'utf-8', timeout: 10000 }).trim();
+        onEvent({ kind: 'text_delta', text: result || 'No changes to stash.\n' });
+      } catch (e) { onEvent({ kind: 'text_delta', text: `Stash error: ${(e as Error).message?.split('\n')[0]}\n` }); }
+      onEvent({ kind: 'turn_done', reason: 'completed' });
+      continue;
+    }
+    if (input === '/unstash') {
+      try {
+        const { execSync } = await import('node:child_process');
+        const result = execSync('git stash pop', {
+          cwd: config.workingDir || process.cwd(), encoding: 'utf-8', timeout: 10000 }).trim();
+        onEvent({ kind: 'text_delta', text: result || 'Stash applied.\n' });
+      } catch (e) { onEvent({ kind: 'text_delta', text: `Unstash error: ${(e as Error).message?.split('\n')[0]}\n` }); }
+      onEvent({ kind: 'turn_done', reason: 'completed' });
+      continue;
+    }
+
     // Handle /branch — show current branch or create new
     if (input === '/branch' || input.startsWith('/branch ')) {
       try {
