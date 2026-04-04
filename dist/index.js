@@ -1,5 +1,17 @@
 #!/usr/bin/env node
+// Global error handlers — catch unhandled rejections/exceptions before they crash silently
+process.on('unhandledRejection', (reason) => {
+    console.error(`\x1b[31mUnhandled error: ${reason instanceof Error ? reason.message : String(reason)}\x1b[0m`);
+    process.exit(1);
+});
+process.on('uncaughtException', (err) => {
+    console.error(`\x1b[31mFatal error: ${err.message}\x1b[0m`);
+    process.exit(1);
+});
 import { Command } from 'commander';
+import { flushStats } from './stats/tracker.js';
+// Ensure stats are flushed on any exit
+process.on('exit', () => flushStats());
 import { setupCommand } from './commands/setup.js';
 import { startCommand } from './commands/start.js';
 import { balanceCommand } from './commands/balance.js';

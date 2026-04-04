@@ -4,14 +4,18 @@
 import { execSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+let _hasRipgrep = null;
 function hasRipgrep() {
+    if (_hasRipgrep !== null)
+        return _hasRipgrep;
     try {
         execSync('rg --version', { stdio: 'pipe' });
-        return true;
+        _hasRipgrep = true;
     }
     catch {
-        return false;
+        _hasRipgrep = false;
     }
+    return _hasRipgrep;
 }
 async function execute(input, ctx) {
     const opts = input;
@@ -93,7 +97,9 @@ function runNativeGrep(opts, searchPath, mode, limit) {
             break;
     }
     if (opts.glob) {
-        args.push(`--include=${opts.glob}`);
+        // Native grep doesn't support recursive globs like **/*.ts — strip leading **/
+        const nativeGlob = opts.glob.replace(/^\*\*\//, '');
+        args.push(`--include=${nativeGlob}`);
     }
     args.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=dist');
     args.push('-e', opts.pattern, searchPath);
@@ -122,7 +128,7 @@ function runNativeGrep(opts, searchPath, mode, limit) {
 export const grepCapability = {
     spec: {
         name: 'Grep',
-        description: 'Search file contents by regex pattern. Uses ripgrep if available, falls back to native grep.',
+        description: 'Search file contents by regex pattern. Default: returns file paths (files_with_matches). Use output_mode "content" for matching lines with context. Skips node_modules, .git, dist.',
         input_schema: {
             type: 'object',
             properties: {

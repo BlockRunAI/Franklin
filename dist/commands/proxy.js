@@ -76,6 +76,15 @@ export async function proxyCommand(options) {
     }
 }
 function launchProxy(server, port, debug) {
+    server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+            console.error(chalk.red(`Port ${port} is already in use. Try a different port with --port.`));
+        }
+        else {
+            console.error(chalk.red(`Server error: ${err.message}`));
+        }
+        process.exit(1);
+    });
     server.listen(port, () => {
         console.log(chalk.green(`✓ Proxy running on port ${port}`));
         console.log(chalk.dim(`  Usage tracking: ~/.blockrun/runcode-stats.json`));
@@ -87,9 +96,11 @@ function launchProxy(server, port, debug) {
         console.log(chalk.bold(`  export ANTHROPIC_AUTH_TOKEN=x402-proxy-handles-auth`));
         console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
     });
-    process.on('SIGINT', () => {
+    const shutdown = () => {
         console.log('\nShutting down...');
         server.close();
         process.exit(0);
-    });
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
 }

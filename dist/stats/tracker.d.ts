@@ -35,6 +35,8 @@ export interface Stats {
 export declare function loadStats(): Stats;
 export declare function saveStats(stats: Stats): void;
 export declare function clearStats(): void;
+/** Flush stats to disk immediately (call on process exit) */
+export declare function flushStats(): void;
 /**
  * Record a completed request for stats tracking
  */

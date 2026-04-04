@@ -7,7 +7,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 // ─── System Instructions Assembly ──────────────────────────────────────────
 const BASE_INSTRUCTIONS = `You are runcode, an AI coding agent that helps users with software engineering tasks.
-You have access to tools for reading, writing, editing files, running shell commands, and searching codebases.
+You have access to tools for reading, writing, editing files, running shell commands, searching codebases, web browsing, and more.
 
 # Core Principles
 - Read before writing: always understand existing code before making changes.
@@ -16,12 +16,24 @@ You have access to tools for reading, writing, editing files, running shell comm
 - Be honest: if you're unsure, say so. Don't guess at implementation details.
 
 # Tool Usage
-- Use Read to examine files before editing them.
-- Use Edit for targeted changes (preferred over Write for existing files).
-- Use Write only for new files or complete rewrites.
-- Use Bash for shell commands, builds, and tests.
-- Use Glob to find files by pattern.
-- Use Grep to search file contents.
+- **Read**: Read files with line numbers. Max 2MB; use offset/limit for large files.
+- **Edit**: Targeted string replacement in files (preferred over Write for existing files). old_string must be unique in the file.
+- **Write**: Create new files or complete rewrites. Creates parent directories automatically.
+- **Bash**: Execute shell commands with timeout (default 2min, max 10min via timeout param). Output capped at 512KB.
+- **Glob**: Find files by pattern (e.g. "**/*.ts"). Sorted by modification time. Skips node_modules, .git. Max 500 results.
+- **Grep**: Search file contents by regex. Uses ripgrep. Default mode: files_with_matches. Use output_mode "content" for matching lines.
+- **WebFetch**: Fetch and read web pages. HTML tags stripped for readability. Max 256KB.
+- **WebSearch**: Search the web via DuckDuckGo. Returns titles, URLs, and snippets.
+- **Task**: Create and manage tasks for tracking multi-step work within a session.
+- **ImageGen**: Generate images from text prompts using DALL-E. Saves to file.
+- **Agent**: Launch a sub-agent for independent parallel tasks. Sub-agents have their own context.
+
+# Best Practices
+- Use Glob/Grep to find files before reading them.
+- Read a file before editing it — Edit requires exact string matching.
+- Call multiple tools in parallel when they don't depend on each other.
+- Use Bash for builds, tests, git operations, and system commands.
+- Use WebSearch + WebFetch together to research topics.
 
 # Communication
 - Be concise. Lead with the answer or action.
@@ -87,12 +99,14 @@ function buildEnvironmentSection(workingDir) {
     return lines.join('\n');
 }
 // ─── Git Context ───────────────────────────────────────────────────────────
+const GIT_TIMEOUT_MS = 5_000;
 function getGitContext(workingDir) {
     try {
         const isGit = execSync('git rev-parse --is-inside-work-tree', {
             cwd: workingDir,
             encoding: 'utf-8',
             stdio: ['pipe', 'pipe', 'pipe'],
+            timeout: GIT_TIMEOUT_MS,
         }).trim();
         if (isGit !== 'true')
             return null;
@@ -103,6 +117,7 @@ function getGitContext(workingDir) {
                 cwd: workingDir,
                 encoding: 'utf-8',
                 stdio: ['pipe', 'pipe', 'pipe'],
+                timeout: GIT_TIMEOUT_MS,
             }).trim();
             if (branch)
                 lines.push(`Branch: ${branch}`);
@@ -114,6 +129,7 @@ function getGitContext(workingDir) {
                 cwd: workingDir,
                 encoding: 'utf-8',
                 stdio: ['pipe', 'pipe', 'pipe'],
+                timeout: GIT_TIMEOUT_MS,
             }).trim();
             if (status) {
                 const fileCount = status.split('\n').length;
@@ -130,6 +146,7 @@ function getGitContext(workingDir) {
                 cwd: workingDir,
                 encoding: 'utf-8',
                 stdio: ['pipe', 'pipe', 'pipe'],
+                timeout: GIT_TIMEOUT_MS,
             }).trim();
             if (log) {
                 lines.push(`\nRecent commits:\n${log}`);
@@ -142,6 +159,7 @@ function getGitContext(workingDir) {
                 cwd: workingDir,
                 encoding: 'utf-8',
                 stdio: ['pipe', 'pipe', 'pipe'],
+                timeout: GIT_TIMEOUT_MS,
             }).trim();
             if (user)
                 lines.push(`User: ${user}`);

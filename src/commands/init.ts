@@ -10,6 +10,10 @@ const LAUNCH_AGENT_PLIST = path.join(LAUNCH_AGENT_DIR, 'ai.blockrun.runcode.plis
 
 export async function initCommand(options: { port?: string }) {
   const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
+  if (isNaN(port) || port < 1 || port > 65535) {
+    console.error(chalk.red(`Error: invalid port "${options.port}". Must be 1-65535. Default: ${DEFAULT_PROXY_PORT}`));
+    process.exit(1);
+  }
 
   // ── 1. Write ~/.claude/settings.json ────────────────────────────────────
   let settings: Record<string, unknown> = {};
@@ -17,7 +21,9 @@ export async function initCommand(options: { port?: string }) {
     if (fs.existsSync(CLAUDE_SETTINGS_FILE)) {
       settings = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS_FILE, 'utf-8'));
     }
-  } catch { /* start fresh */ }
+  } catch {
+    console.log(chalk.yellow(`  Warning: could not parse ${CLAUDE_SETTINGS_FILE}, starting fresh.`));
+  }
 
   settings.env = {
     ...(settings.env as Record<string, string> | undefined ?? {}),

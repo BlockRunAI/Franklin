@@ -23,7 +23,8 @@ function estimateContentPartTokens(part: ContentPart | UserContentPart): number 
     case 'text':
       return estimateTokens(part.text);
     case 'tool_use':
-      return estimateTokens(part.name) + estimateTokens(JSON.stringify(part.input), 2);
+      // +16 tokens for tool_use framing (type, id, name fields, JSON structure)
+      return 16 + estimateTokens(part.name) + estimateTokens(JSON.stringify(part.input), 2);
     case 'tool_result': {
       const content = typeof part.content === 'string'
         ? part.content

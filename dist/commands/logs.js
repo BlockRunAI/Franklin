@@ -32,7 +32,8 @@ export function logsCommand(options) {
         }
     }
     catch { /* ignore rotation errors */ }
-    const tailLines = parseInt(options.lines || '50', 10);
+    const parsed = parseInt(options.lines || '50', 10);
+    const tailLines = isNaN(parsed) ? 50 : Math.max(1, Math.min(10000, parsed));
     if (options.follow) {
         // Tail -f mode: print last N lines then watch for changes
         printLastLines(tailLines);

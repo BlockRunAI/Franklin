@@ -56,10 +56,10 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     'User-Agent': `runcode/${VERSION}`,
   };
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60_000); // 60s timeout
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000); // 60s timeout
 
+  try {
     // First request — will get 402
     let response = await fetch(endpoint, {
       method: 'POST',
@@ -82,8 +82,6 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
         body,
       });
     }
-
-    clearTimeout(timeout);
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
@@ -127,6 +125,8 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       return { output: 'Image generation timed out (60s limit). Try a simpler prompt.', isError: true };
     }
     return { output: `Error: ${msg}`, isError: true };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

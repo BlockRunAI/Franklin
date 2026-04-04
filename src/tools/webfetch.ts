@@ -31,10 +31,10 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     return { output: `Error: only http/https URLs are supported`, isError: true };
   }
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
+  try {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
@@ -43,8 +43,6 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
       },
       redirect: 'follow',
     });
-
-    clearTimeout(timeout);
 
     if (!response.ok) {
       return {
@@ -65,13 +63,16 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     const chunks: Uint8Array[] = [];
     let totalBytes = 0;
 
-    while (totalBytes < maxLen) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      totalBytes += value.length;
+    try {
+      while (totalBytes < maxLen) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        totalBytes += value.length;
+      }
+    } finally {
+      reader.releaseLock();
     }
-    reader.releaseLock();
 
     const decoder = new TextDecoder();
     let body = decoder.decode(Buffer.concat(chunks)).slice(0, maxLen);
@@ -94,6 +95,8 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
       return { output: `Error: request timed out after 30s for ${url}`, isError: true };
     }
     return { output: `Error fetching ${url}: ${msg}`, isError: true };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

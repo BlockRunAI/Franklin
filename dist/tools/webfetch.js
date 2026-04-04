@@ -19,9 +19,9 @@ async function execute(input, _ctx) {
     if (!['http:', 'https:'].includes(parsed.protocol)) {
         return { output: `Error: only http/https URLs are supported`, isError: true };
     }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 30_000);
         const response = await fetch(url, {
             signal: controller.signal,
             headers: {
@@ -30,7 +30,6 @@ async function execute(input, _ctx) {
             },
             redirect: 'follow',
         });
-        clearTimeout(timeout);
         if (!response.ok) {
             return {
                 output: `HTTP ${response.status} ${response.statusText} for ${url}`,
@@ -46,14 +45,18 @@ async function execute(input, _ctx) {
         }
         const chunks = [];
         let totalBytes = 0;
-        while (totalBytes < maxLen) {
-            const { done, value } = await reader.read();
-            if (done)
-                break;
-            chunks.push(value);
-            totalBytes += value.length;
+        try {
+            while (totalBytes < maxLen) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                chunks.push(value);
+                totalBytes += value.length;
+            }
         }
-        reader.releaseLock();
+        finally {
+            reader.releaseLock();
+        }
         const decoder = new TextDecoder();
         let body = decoder.decode(Buffer.concat(chunks)).slice(0, maxLen);
         // Strip HTML tags for readability if HTML
@@ -72,6 +75,9 @@ async function execute(input, _ctx) {
             return { output: `Error: request timed out after 30s for ${url}`, isError: true };
         }
         return { output: `Error fetching ${url}: ${msg}`, isError: true };
+    }
+    finally {
+        clearTimeout(timeout);
     }
 }
 function stripHtml(html) {

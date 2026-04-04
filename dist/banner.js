@@ -25,5 +25,5 @@ export function printBanner(version) {
     console.log(chalk.bold.hex('#FFD700')('  Run') +
         chalk.bold.cyan('Code') +
         chalk.dim('  ·  AI Coding Agent  ·  blockrun.ai  ·  v' + version));
-    console.log(chalk.dim('  41+ models · Pay per use with USDC\n'));
+    console.log(chalk.dim('  41+ models · Pay per use with USDC · /help for commands\n'));
 }

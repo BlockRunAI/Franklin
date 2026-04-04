@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { loadChain, API_URLS } from '../config.js';
+import { flushStats } from '../stats/tracker.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
 import { assembleInstructions } from '../agent/context.js';
@@ -70,21 +71,27 @@ export async function startCommand(options: StartOptions) {
     balance: 'checking...',
     chain,
   };
+  // Balance fetch callback — will update Ink UI once resolved
+  let onBalanceFetched: ((bal: string) => void) | undefined;
   (async () => {
     try {
+      let bal: number;
       if (chain === 'solana') {
         const { setupAgentSolanaWallet } = await import('@blockrun/llm');
         const client = await setupAgentSolanaWallet({ silent: true });
-        const bal = await client.getBalance();
-        walletInfo.balance = `$${bal.toFixed(2)} USDC`;
+        bal = await client.getBalance();
       } else {
         const { setupAgentWallet } = await import('@blockrun/llm');
         const client = setupAgentWallet({ silent: true });
-        const bal = await client.getBalance();
-        walletInfo.balance = `$${bal.toFixed(2)} USDC`;
+        bal = await client.getBalance();
       }
+      const balStr = `$${bal.toFixed(2)} USDC`;
+      walletInfo.balance = balStr;
+      onBalanceFetched?.(balStr);
     } catch {
-      walletInfo.balance = '$?.?? USDC';
+      const balStr = '$?.?? USDC';
+      walletInfo.balance = balStr;
+      onBalanceFetched?.(balStr);
     }
   })();
 
@@ -110,7 +117,9 @@ export async function startCommand(options: StartOptions) {
 
   // Use ink UI if TTY, fallback to basic readline for piped input
   if (process.stdin.isTTY) {
-    await runWithInkUI(agentConfig, model, workDir, version, walletInfo);
+    await runWithInkUI(agentConfig, model, workDir, version, walletInfo, (cb) => {
+      onBalanceFetched = cb;
+    });
   } else {
     await runWithBasicUI(agentConfig, model, workDir);
   }
@@ -123,7 +132,8 @@ async function runWithInkUI(
   model: string,
   workDir: string,
   version: string,
-  walletInfo?: { address: string; balance: string; chain: string }
+  walletInfo?: { address: string; balance: string; chain: string },
+  onBalanceReady?: (cb: (bal: string) => void) => void,
 ) {
   const ui = launchInkUI({
     model,
@@ -137,6 +147,9 @@ async function runWithInkUI(
     },
   });
 
+  // Wire up background balance fetch to UI
+  onBalanceReady?.((bal) => ui.updateBalance(bal));
+
   try {
     await interactiveSession(
       agentConfig,
@@ -146,7 +159,8 @@ async function runWithInkUI(
         if (input === '') return '';
         return input;
       },
-      (event) => ui.handleEvent(event)
+      (event) => ui.handleEvent(event),
+      (abortFn) => ui.onAbort(abortFn)
     );
   } catch (err) {
     if ((err as Error).name !== 'AbortError') {
@@ -155,6 +169,7 @@ async function runWithInkUI(
   }
 
   ui.cleanup();
+  flushStats();
   console.log(chalk.dim('\nGoodbye.\n'));
   process.exit(0);
 }
@@ -178,6 +193,15 @@ async function runWithBasicUI(
           const input = await ui.promptUser();
           if (input === null) return null;
           if (input === '') continue;
+          // Handle slash commands in terminal UI
+          if (input.startsWith('/') && ui.handleSlashCommand(input)) continue;
+          // Handle model switch via /model shortcut
+          if (input.startsWith('/model ')) {
+            const newModel = resolveModel(input.slice(7).trim());
+            agentConfig.model = newModel;
+            console.error(chalk.green(`  Model → ${newModel}`));
+            continue;
+          }
           return input;
         }
       },
@@ -190,6 +214,7 @@ async function runWithBasicUI(
   }
 
   ui.printGoodbye();
+  flushStats();
   process.exit(0);
 }
 

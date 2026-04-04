@@ -24,11 +24,28 @@ async function execute(input, ctx) {
         }
         const content = fs.readFileSync(resolved, 'utf-8');
         if (!content.includes(oldStr)) {
-            // Provide helpful context — show a snippet of the file
+            // Find lines containing fragments of old_string for helpful context
             const lines = content.split('\n');
-            const preview = lines.slice(0, 10).map((l, i) => `${i + 1}\t${l}`).join('\n');
+            const searchTerms = oldStr.split('\n').map(l => l.trim()).filter(l => l.length > 8);
+            const matchedLines = [];
+            if (searchTerms.length > 0) {
+                for (let i = 0; i < lines.length && matchedLines.length < 5; i++) {
+                    if (searchTerms.some(term => lines[i].includes(term))) {
+                        matchedLines.push({ num: i + 1, text: lines[i] });
+                    }
+                }
+            }
+            let hint;
+            if (matchedLines.length > 0) {
+                const preview = matchedLines.map(m => `${m.num}\t${m.text}`).join('\n');
+                hint = `\n\nSimilar lines found:\n${preview}\n\nCheck for whitespace or formatting differences.`;
+            }
+            else {
+                const preview = lines.slice(0, 10).map((l, i) => `${i + 1}\t${l}`).join('\n');
+                hint = `\n\nFirst 10 lines of file:\n${preview}`;
+            }
             return {
-                output: `Error: old_string not found in ${resolved}.\n\nFirst 10 lines of file:\n${preview}`,
+                output: `Error: old_string not found in ${resolved}.${hint}`,
                 isError: true,
             };
         }

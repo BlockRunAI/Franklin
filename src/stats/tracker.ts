@@ -84,6 +84,8 @@ export function saveStats(stats: Stats): void {
 }
 
 export function clearStats(): void {
+  cachedStats = null;
+  if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
   try {
     if (fs.existsSync(STATS_FILE)) {
       fs.unlinkSync(STATS_FILE);
@@ -91,6 +93,36 @@ export function clearStats(): void {
   } catch {
     /* ignore */
   }
+}
+
+// ─── In-memory stats cache with debounced write ─────────────────────────
+// Prevents concurrent load→modify→save from losing data in proxy mode
+let cachedStats: Stats | null = null;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+const FLUSH_DELAY_MS = 2000;
+
+function getCachedStats(): Stats {
+  if (!cachedStats) {
+    cachedStats = loadStats();
+  }
+  return cachedStats;
+}
+
+function scheduleSave(): void {
+  if (flushTimer) return; // Already scheduled
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    if (cachedStats) saveStats(cachedStats);
+  }, FLUSH_DELAY_MS);
+}
+
+/** Flush stats to disk immediately (call on process exit) */
+export function flushStats(): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (cachedStats) saveStats(cachedStats);
 }
 
 /**
@@ -104,7 +136,7 @@ export function recordUsage(
   latencyMs: number,
   fallback: boolean = false
 ): void {
-  const stats = loadStats();
+  const stats = getCachedStats();
   const now = Date.now();
 
   // Update totals
@@ -151,7 +183,7 @@ export function recordUsage(
     fallback,
   });
 
-  saveStats(stats);
+  scheduleSave();
 }
 
 /**

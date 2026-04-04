@@ -20,9 +20,21 @@ function globMatch(pattern, text) {
     const regex = new RegExp(`^${regexStr}$`);
     return regex.test(text.replace(/\\/g, '/'));
 }
-function walkDirectory(dir, baseDir, pattern, results, depth) {
+function walkDirectory(dir, baseDir, pattern, results, depth, visited) {
     if (depth > 20 || results.length >= MAX_RESULTS)
         return;
+    // Symlink loop protection
+    const visitedSet = visited ?? new Set();
+    let realDir;
+    try {
+        realDir = fs.realpathSync(dir);
+    }
+    catch {
+        return;
+    }
+    if (visitedSet.has(realDir))
+        return;
+    visitedSet.add(realDir);
     let entries;
     try {
         entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -34,23 +46,40 @@ function walkDirectory(dir, baseDir, pattern, results, depth) {
         if (results.length >= MAX_RESULTS)
             break;
         // Skip hidden dirs and common large dirs
-        if (entry.name.startsWith('.') && entry.isDirectory())
+        const isDir = entry.isDirectory() || (entry.isSymbolicLink() && isSymlinkDir(path.join(dir, entry.name)));
+        if (entry.name.startsWith('.') && isDir)
             continue;
         if (entry.name === 'node_modules' || entry.name === '__pycache__' || entry.name === '.git')
             continue;
         const fullPath = path.join(dir, entry.name);
         const relativePath = path.relative(baseDir, fullPath);
-        if (entry.isFile()) {
+        if (entry.isFile() || (entry.isSymbolicLink() && !isDir)) {
             if (globMatch(pattern, relativePath)) {
                 results.push(fullPath);
             }
         }
-        else if (entry.isDirectory()) {
-            // Always recurse if pattern contains **
-            if (pattern.includes('**') || pattern.includes('/')) {
-                walkDirectory(fullPath, baseDir, pattern, results, depth + 1);
+        else if (isDir) {
+            // Recurse for ** patterns; for patterns with /, only recurse if current dir is on the path
+            if (pattern.includes('**')) {
+                walkDirectory(fullPath, baseDir, pattern, results, depth + 1, visitedSet);
+            }
+            else if (pattern.includes('/')) {
+                // Check if this directory could be part of the pattern path
+                const relativePath = path.relative(baseDir, fullPath);
+                const patternDir = pattern.split('/').slice(0, -1).join('/');
+                if (patternDir.startsWith(relativePath) || relativePath.startsWith(patternDir)) {
+                    walkDirectory(fullPath, baseDir, pattern, results, depth + 1, visitedSet);
+                }
             }
         }
+    }
+}
+function isSymlinkDir(p) {
+    try {
+        return fs.statSync(p).isDirectory();
+    }
+    catch {
+        return false;
     }
 }
 async function execute(input, ctx) {
@@ -78,7 +107,11 @@ async function execute(input, ctx) {
     withMtime.sort((a, b) => b.mtime - a.mtime);
     const sorted = withMtime.map(f => f.path);
     if (sorted.length === 0) {
-        return { output: `No files matched pattern "${pattern}" in ${baseDir}` };
+        // Suggest recursive pattern if user used non-recursive glob
+        const hint = !pattern.includes('**') && !pattern.includes('/')
+            ? ` Try "**/${pattern}" for recursive search.`
+            : '';
+        return { output: `No files matched pattern "${pattern}" in ${baseDir}.${hint}` };
     }
     let output = sorted.join('\n');
     if (sorted.length >= MAX_RESULTS) {
@@ -89,7 +122,7 @@ async function execute(input, ctx) {
 export const globCapability = {
     spec: {
         name: 'Glob',
-        description: 'Find files by glob pattern (e.g. "**/*.ts", "src/**/*.tsx"). Returns matching paths sorted by modification time.',
+        description: 'Find files by glob pattern (e.g. "**/*.ts", "src/**/*.tsx"). Returns up to 500 paths sorted by modification time. Skips node_modules, .git, hidden dirs.',
         input_schema: {
             type: 'object',
             properties: {

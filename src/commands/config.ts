@@ -33,10 +33,15 @@ export function loadConfig(): AppConfig {
 }
 
 function saveConfig(config: AppConfig): void {
-  fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + '\n', {
-    mode: 0o600,
-  });
+  try {
+    fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + '\n', {
+      mode: 0o600,
+    });
+  } catch (err) {
+    console.error(chalk.red(`Failed to save config: ${(err as Error).message}`));
+    process.exit(1);
+  }
 }
 
 function isValidKey(key: string): key is ConfigKey {
@@ -109,8 +114,13 @@ export function configCommand(
       console.log(chalk.red('Usage: runcode config unset <key>'));
       process.exit(1);
     }
+    if (!isValidKey(keyOrUndefined)) {
+      console.log(chalk.red(`Unknown config key: ${keyOrUndefined}`));
+      console.log(`Valid keys: ${VALID_KEYS.map((k) => chalk.cyan(k)).join(', ')}`);
+      process.exit(1);
+    }
     const config = loadConfig();
-    delete config[keyOrUndefined as ConfigKey];
+    delete config[keyOrUndefined];
     saveConfig(config);
     console.log(chalk.dim(`Unset ${keyOrUndefined}`));
     return;
