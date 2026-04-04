@@ -237,6 +237,8 @@ function RunCodeApp({
           setShowWallet(false);
           return;
 
+        case '/commit':
+        case '/status':
         case '/diff':
         case '/context':
         case '/plan':
@@ -437,6 +439,8 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/cost</Text>          Session cost & savings</Text>
           <Text>  <Text color="cyan">/retry</Text>         Retry the last prompt</Text>
           <Text>  <Text color="cyan">/compact</Text>       Compress conversation history</Text>
+          <Text>  <Text color="cyan">/commit</Text>        Auto-commit current changes</Text>
+          <Text>  <Text color="cyan">/status</Text>        Show git status</Text>
           <Text>  <Text color="cyan">/diff</Text>          Show git changes</Text>
           <Text>  <Text color="cyan">/context</Text>       Session info (model, tokens, mode)</Text>
           <Text>  <Text color="cyan">/plan</Text>          Enter plan mode (read-only tools)</Text>

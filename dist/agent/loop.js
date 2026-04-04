@@ -214,11 +214,32 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     let turnCount = 0;
     pruneOldSessions(); // Cleanup old sessions on start
     while (true) {
-        const input = await getUserInput();
+        let input = await getUserInput();
         if (input === null)
             break; // User wants to exit
         if (input === '')
             continue; // Empty input → re-prompt
+        // Handle /commit — rewrite as a prompt for the agent
+        if (input === '/commit') {
+            input = 'Review the current git diff and staged changes. Stage relevant files with `git add`, then create a commit with a concise message summarizing the changes. Do NOT push to remote.';
+        }
+        // Handle /status — show git status
+        if (input === '/status') {
+            try {
+                const { execSync } = await import('node:child_process');
+                const status = execSync('git status --short --branch', {
+                    cwd: config.workingDir || process.cwd(),
+                    encoding: 'utf-8',
+                    timeout: 5_000,
+                }).trim();
+                onEvent({ kind: 'text_delta', text: status ? `\`\`\`\n${status}\n\`\`\`\n` : 'No git status.\n' });
+            }
+            catch {
+                onEvent({ kind: 'text_delta', text: 'Not a git repo.\n' });
+            }
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
         // Handle /diff — show git diff of current changes
         if (input === '/diff') {
             try {
