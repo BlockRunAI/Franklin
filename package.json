@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/runcode",
-  "version": "1.8.0",
+  "version": "2.0.0",
   "description": "RunCode — AI coding agent powered by 41+ models. Pay per use with USDC.",
   "type": "module",
   "bin": {
@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@blockrun/llm": "^1.4.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@types/react": "^19.2.14",
