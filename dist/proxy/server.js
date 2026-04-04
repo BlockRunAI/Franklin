@@ -314,8 +314,11 @@ export function createProxy(options) {
                     }
                 }
                 else {
-                    // Direct fetch without fallback
-                    response = await fetch(targetUrl, requestInit);
+                    // Direct fetch without fallback (with timeout)
+                    const directCtrl = new AbortController();
+                    const directTimeout = setTimeout(() => directCtrl.abort(), 120_000); // 2min
+                    response = await fetch(targetUrl, { ...requestInit, signal: directCtrl.signal });
+                    clearTimeout(directTimeout);
                 }
                 // Handle 402 payment — body now has the correct model after fallback
                 if (response.status === 402) {

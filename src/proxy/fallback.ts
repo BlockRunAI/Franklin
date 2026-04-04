@@ -83,16 +83,22 @@ export async function fetchWithFallback(
   const failedModels: string[] = [];
   let attempts = 0;
 
+  const FALLBACK_TIMEOUT_MS = 60_000; // 60s per attempt
+
   for (let i = 0; i < config.chain.length && attempts < config.maxRetries; i++) {
     const model = config.chain[i];
     const body = replaceModelInBody(originalBody, model);
 
     try {
       attempts++;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), FALLBACK_TIMEOUT_MS);
       const response = await fetch(url, {
         ...init,
         body,
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
 
       // Success or non-retryable error
       if (!config.retryOn.includes(response.status)) {
