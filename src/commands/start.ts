@@ -203,6 +203,11 @@ async function runWithBasicUI(
           // Handle slash commands in terminal UI
           if (input.startsWith('/') && ui.handleSlashCommand(input)) continue;
           // Handle model switch via /model shortcut
+          if (input === '/model' || input === '/models') {
+            console.error(chalk.dim(`  Current model: ${agentConfig.model}`));
+            console.error(chalk.dim('  Switch with: /model <name> (e.g. /model sonnet, /model free)'));
+            continue;
+          }
           if (input.startsWith('/model ')) {
             const newModel = resolveModel(input.slice(7).trim());
             agentConfig.model = newModel;

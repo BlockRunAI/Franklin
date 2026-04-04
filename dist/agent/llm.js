@@ -280,6 +280,7 @@ export class ModelClient {
         let buffer = '';
         // Persist across read() calls — event: and data: may arrive in separate chunks
         let currentEvent = '';
+        const MAX_BUFFER = 1_000_000; // 1MB buffer cap
         try {
             while (true) {
                 if (signal?.aborted)
@@ -288,6 +289,10 @@ export class ModelClient {
                 if (done)
                     break;
                 buffer += decoder.decode(value, { stream: true });
+                // Safety: if buffer grows too large without newlines, truncate
+                if (buffer.length > MAX_BUFFER) {
+                    buffer = buffer.slice(-MAX_BUFFER / 2);
+                }
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
                 for (const line of lines) {
