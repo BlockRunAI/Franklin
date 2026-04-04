@@ -37,7 +37,7 @@ export function statsCommand(options) {
     console.log(chalk.bold('\n  Overview') + chalk.gray(` (${period})\n`));
     console.log(`    Requests:       ${chalk.cyan(stats.totalRequests.toLocaleString())}`);
     console.log(`    Total Cost:     ${chalk.green('$' + stats.totalCostUsd.toFixed(4))}`);
-    console.log(`    Avg per Request:${chalk.gray(' $' + avgCostPerRequest.toFixed(6))}`);
+    console.log(`    Avg per Request: ${chalk.gray('$' + avgCostPerRequest.toFixed(6))}`);
     console.log(`    Input Tokens:   ${stats.totalInputTokens.toLocaleString()}`);
     console.log(`    Output Tokens:  ${stats.totalOutputTokens.toLocaleString()}`);
     if (stats.totalFallbacks > 0) {
