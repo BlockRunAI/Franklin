@@ -64,7 +64,8 @@ export function resetTokenAnchor() {
  * JSON-heavy content uses 2 bytes/token; general text uses 4.
  */
 export function estimateTokens(text, bytesPerToken = DEFAULT_BYTES_PER_TOKEN) {
-    return Math.ceil(Buffer.byteLength(text, 'utf-8') / bytesPerToken);
+    // Pad by 4/3 (~33%) for conservative estimation — better to over-count than under-count
+    return Math.ceil(Buffer.byteLength(text, 'utf-8') / bytesPerToken * 1.33);
 }
 /**
  * Estimate tokens for a content part.

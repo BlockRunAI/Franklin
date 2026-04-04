@@ -204,15 +204,19 @@ function formatForSummarization(messages) {
  * Pick a cheaper/faster model for compaction to save cost.
  */
 function pickCompactionModel(primaryModel) {
-    // Use a fast model for summarization — no need for the expensive primary
-    if (primaryModel.includes('opus') || primaryModel.includes('gpt-5.4-pro')) {
+    // Use cheapest capable model for summarization to save cost
+    // Tier down: opus/pro → sonnet, sonnet → haiku, everything else → flash (cheapest capable)
+    if (primaryModel.includes('opus') || primaryModel.includes('pro')) {
         return 'anthropic/claude-sonnet-4.6';
     }
-    if (primaryModel.includes('sonnet')) {
+    if (primaryModel.includes('sonnet') || primaryModel.includes('gpt-5.4') || primaryModel.includes('gemini-2.5-pro')) {
         return 'anthropic/claude-haiku-4.5-20251001';
     }
-    // For cheaper models, just use the same one
-    return primaryModel;
+    if (primaryModel.includes('haiku') || primaryModel.includes('mini') || primaryModel.includes('nano')) {
+        return 'google/gemini-2.5-flash'; // Cheapest capable model
+    }
+    // Free/unknown models — use flash
+    return 'google/gemini-2.5-flash';
 }
 /**
  * Emergency fallback: drop oldest messages until under threshold.

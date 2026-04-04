@@ -9,21 +9,18 @@
  * 5. Pre-compact stripping — remove images/docs before summarization
  */
 import type { Dialogue } from './types.js';
-/** Default max_tokens (low to save slot reservation) */
-export declare const CAPPED_MAX_TOKENS = 8192;
+/** Default max_tokens (low to save output slot reservation) */
+export declare const CAPPED_MAX_TOKENS = 16384;
 /** Escalated max_tokens after hitting the cap */
 export declare const ESCALATED_MAX_TOKENS = 65536;
+/** Get max output tokens for a model */
+export declare function getMaxOutputTokens(model: string): number;
 /**
  * Cap tool result sizes to prevent context bloat.
  * Large results (>50K chars) are truncated with a preview.
  * Per-message aggregate is also capped at 200K chars.
  */
 export declare function budgetToolResults(history: Dialogue[]): Dialogue[];
-/**
- * Remove thinking blocks from older assistant messages.
- * Keeps thinking only in the most recent assistant message.
- * Thinking blocks are large and not needed for context after the decision is made.
- */
 export declare function stripOldThinking(history: Dialogue[]): Dialogue[];
 /**
  * After an idle gap (>60 min), clear old tool results.

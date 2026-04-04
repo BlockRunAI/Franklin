@@ -10,7 +10,7 @@ import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor } from './t
 import { handleSlashCommand } from './commands.js';
 import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
-import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS } from './optimize.js';
+import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
 import { recordUsage } from '../stats/tracker.js';
 import { estimateCost } from '../pricing.js';
 import {
@@ -342,6 +342,7 @@ export async function interactiveSession(
     onAbortReady?.(() => abort.abort());
     let loopCount = 0;
     let recoveryAttempts = 0;
+    let compactFailures = 0;
     let maxTokensOverride: number | undefined;
     let lastActivity = Date.now();
 
@@ -350,7 +351,7 @@ export async function interactiveSession(
       loopCount++;
 
       // ── Token optimization pipeline ──
-      // 1. Strip thinking, budget tool results, time-based cleanup
+      // 1. Strip thinking, budget tool results, time-based cleanup (always — cheap)
       const optimized = optimizeHistory(history, {
         debug: config.debug,
         lastActivityTimestamp: lastActivity,
@@ -360,27 +361,41 @@ export async function interactiveSession(
         history.push(...optimized);
       }
 
-      // 2. Microcompact: clear old tool results to save tokens
-      const microCompacted = microCompact(history, 8);
-      if (microCompacted !== history) {
-        history.length = 0;
-        history.push(...microCompacted);
+      // 2. Microcompact: only when history has >15 messages (skip for short conversations)
+      if (history.length > 15) {
+        const microCompacted = microCompact(history, 8);
+        if (microCompacted !== history) {
+          history.length = 0;
+          history.push(...microCompacted);
+        }
       }
 
-      // Auto-compact: summarize history if approaching context limit
-      const { history: compacted, compacted: didCompact } =
-        await autoCompactIfNeeded(history, config.model, client, config.debug);
-      if (didCompact) {
-        history.length = 0;
-        history.push(...compacted);
-        resetTokenAnchor(); // Reset anchor after compaction — estimates will be used
-        if (config.debug) {
-          console.error(`[runcode] History compacted: ~${estimateHistoryTokens(history)} tokens`);
+      // 3. Auto-compact: summarize history if approaching context limit
+      // Circuit breaker: stop retrying after 3 consecutive failures
+      if (compactFailures < 3) {
+        try {
+          const { history: compacted, compacted: didCompact } =
+            await autoCompactIfNeeded(history, config.model, client, config.debug);
+          if (didCompact) {
+            history.length = 0;
+            history.push(...compacted);
+            resetTokenAnchor();
+            compactFailures = 0;
+            if (config.debug) {
+              console.error(`[runcode] History compacted: ~${estimateHistoryTokens(history)} tokens`);
+            }
+          }
+        } catch (compactErr) {
+          compactFailures++;
+          if (config.debug) {
+            console.error(`[runcode] Compaction failed (${compactFailures}/3): ${(compactErr as Error).message}`);
+          }
         }
       }
 
       const systemPrompt = config.systemInstructions.join('\n\n');
-      let maxTokens = maxTokensOverride ?? CAPPED_MAX_TOKENS;
+      const modelMaxOut = getMaxOutputTokens(config.model);
+      let maxTokens = Math.min(maxTokensOverride ?? CAPPED_MAX_TOKENS, modelMaxOut);
       let responseParts: ContentPart[] = [];
       let usage: { inputTokens: number; outputTokens: number };
       let stopReason: string;
