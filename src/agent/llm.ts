@@ -62,6 +62,8 @@ export class ModelClient {
   private walletAddress = '';
   private cachedBaseWallet: { privateKey: string; address: string } | null = null;
   private cachedSolanaWallet: { privateKey: string; address: string } | null = null;
+  private walletCacheTime = 0;
+  private static WALLET_CACHE_TTL = 30 * 60 * 1000; // 30 min TTL
 
   constructor(opts: LLMClientOptions) {
     this.apiUrl = opts.apiUrl;
@@ -283,8 +285,10 @@ export class ModelClient {
   private async signBasePayment(
     response: Response
   ): Promise<Record<string, string>> {
-    if (!this.cachedBaseWallet) {
+    // Refresh wallet cache after TTL to pick up balance/key changes
+    if (!this.cachedBaseWallet || (Date.now() - this.walletCacheTime > ModelClient.WALLET_CACHE_TTL)) {
       const w = getOrCreateWallet();
+      this.walletCacheTime = Date.now();
       this.cachedBaseWallet = { privateKey: w.privateKey, address: w.address };
     }
     const wallet = this.cachedBaseWallet;
@@ -317,8 +321,9 @@ export class ModelClient {
   private async signSolanaPayment(
     response: Response
   ): Promise<Record<string, string>> {
-    if (!this.cachedSolanaWallet) {
+    if (!this.cachedSolanaWallet || (Date.now() - this.walletCacheTime > ModelClient.WALLET_CACHE_TTL)) {
       const w = await getOrCreateSolanaWallet();
+      this.walletCacheTime = Date.now();
       this.cachedSolanaWallet = { privateKey: w.privateKey, address: w.address };
     }
     const wallet = this.cachedSolanaWallet;

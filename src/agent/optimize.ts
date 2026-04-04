@@ -166,7 +166,9 @@ export function timeBasedCleanup(
     return { history, cleaned: false };
   }
 
-  const gapMinutes = (Date.now() - lastActivityTimestamp) / 60_000;
+  const gapMs = Date.now() - lastActivityTimestamp;
+  if (gapMs < 0) return { history, cleaned: false }; // Clock skew protection
+  const gapMinutes = gapMs / 60_000;
   if (gapMinutes < IDLE_GAP_THRESHOLD_MINUTES) {
     return { history, cleaned: false };
   }

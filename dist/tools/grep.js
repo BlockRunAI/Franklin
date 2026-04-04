@@ -105,8 +105,12 @@ function runNativeGrep(opts, searchPath, mode, limit) {
             break;
     }
     if (opts.glob) {
-        // Native grep doesn't support recursive globs like **/*.ts — strip leading **/
-        const nativeGlob = opts.glob.replace(/^\*\*\//, '');
+        // Native grep --include doesn't support ** or path separators
+        // Extract file extension pattern for best compatibility
+        const nativeGlob = opts.glob
+            .replace(/^\*\*\//, '') // Strip leading **/
+            .replace(/^.*\//, '') // Strip path prefix (src/ etc.)
+            .replace(/\*\*/, '*'); // Convert ** to * for flat matching
         args.push(`--include=${nativeGlob}`);
     }
     args.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=dist');

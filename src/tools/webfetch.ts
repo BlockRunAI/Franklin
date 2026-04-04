@@ -115,6 +115,8 @@ function stripHtml(html: string): string {
     .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
     .replace(/<aside[^>]*>[\s\S]*?<\/aside>/gi, '')
     .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '')
+    .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, '')
+    .replace(/<form[^>]*>[\s\S]*?<\/form>/gi, '')
     // Convert block elements to newlines for readability
     .replace(/<\/?(p|div|h[1-6]|li|br|tr)[^>]*>/gi, '\n')
     // Strip remaining tags
