@@ -53,6 +53,8 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const [balance, setBalance] = useState(walletBalance);
     const [thinkingText, setThinkingText] = useState('');
     const [lastPrompt, setLastPrompt] = useState('');
+    const [inputHistory, setInputHistory] = useState([]);
+    const [historyIdx, setHistoryIdx] = useState(-1);
     // Key handler for picker + esc + abort
     const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input) || !ready;
     useInput((ch, key) => {
@@ -93,6 +95,25 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
             setReady(true);
         }
     }, { isActive: isPickerOrEsc });
+    // Input history: Up/Down arrow when in ready input mode
+    useInput((_ch, key) => {
+        if (key.upArrow && inputHistory.length > 0) {
+            const newIdx = historyIdx < 0 ? inputHistory.length - 1 : Math.max(0, historyIdx - 1);
+            setHistoryIdx(newIdx);
+            setInput(inputHistory[newIdx]);
+        }
+        else if (key.downArrow) {
+            if (historyIdx >= 0 && historyIdx < inputHistory.length - 1) {
+                const newIdx = historyIdx + 1;
+                setHistoryIdx(newIdx);
+                setInput(inputHistory[newIdx]);
+            }
+            else {
+                setHistoryIdx(-1);
+                setInput('');
+            }
+        }
+    }, { isActive: ready && mode === 'input' });
     const handleSubmit = useCallback((value) => {
         const trimmed = value.trim();
         if (!trimmed)
@@ -185,6 +206,8 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         }
         // ── Normal prompt ──
         setLastPrompt(trimmed);
+        setInputHistory(prev => [...prev.slice(-49), trimmed]); // Keep last 50
+        setHistoryIdx(-1);
         setInput('');
         setStreamText('');
         setThinking(false);

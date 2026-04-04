@@ -108,9 +108,10 @@ export class PermissionManager {
   ): Promise<boolean> {
     const description = this.describeAction(toolName, input);
     console.error('');
-    console.error(chalk.yellow(`  Permission required: ${toolName}`));
-    console.error(chalk.dim(`  ${description}`));
-    console.error('');
+    console.error(chalk.yellow('  ╭─ Permission required ─────────────────'));
+    console.error(chalk.yellow(`  │ ${toolName}`));
+    console.error(chalk.dim(`  │ ${description}`));
+    console.error(chalk.yellow('  ╰─────────────────────────────────────'));
 
     const answer = await askQuestion(
       chalk.bold('  Allow? ') + chalk.dim('[Y/n/a]lways: ')
