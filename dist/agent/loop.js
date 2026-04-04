@@ -5,7 +5,7 @@
  */
 import { ModelClient } from './llm.js';
 import { autoCompactIfNeeded, forceCompact, microCompact } from './compact.js';
-import { estimateHistoryTokens } from './tokens.js';
+import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor } from './tokens.js';
 import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS } from './optimize.js';
@@ -287,6 +287,26 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             onEvent({ kind: 'turn_done', reason: 'completed' });
             continue;
         }
+        // Handle /mcp — show connected MCP servers
+        if (input === '/mcp') {
+            const { listMcpServers } = await import('../mcp/client.js');
+            const servers = listMcpServers();
+            if (servers.length === 0) {
+                onEvent({ kind: 'text_delta', text: 'No MCP servers connected.\nAdd servers to `~/.blockrun/mcp.json` or `.mcp.json` in your project.\n' });
+            }
+            else {
+                let text = `**${servers.length} MCP server(s) connected:**\n\n`;
+                for (const s of servers) {
+                    text += `  **${s.name}** — ${s.toolCount} tools\n`;
+                    for (const t of s.tools) {
+                        text += `    · ${t}\n`;
+                    }
+                }
+                onEvent({ kind: 'text_delta', text });
+            }
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
         // Handle /bug — open issue tracker
         if (input === '/bug') {
             onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/runcode/issues\n' });
@@ -480,7 +500,10 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         }
         // Handle /context — show current session context info
         if (input === '/context') {
-            const tokens = estimateHistoryTokens(history);
+            const { getAnchoredTokenCount, getContextWindow } = await import('./tokens.js');
+            const { estimated, apiAnchored } = getAnchoredTokenCount(history);
+            const contextWindow = getContextWindow(config.model);
+            const usagePct = ((estimated / contextWindow) * 100).toFixed(1);
             const msgs = history.length;
             const model = config.model;
             const dir = config.workingDir || process.cwd();
@@ -489,7 +512,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     `  Model:      ${model}\n` +
                     `  Mode:       ${mode}\n` +
                     `  Messages:   ${msgs}\n` +
-                    `  Tokens:     ~${tokens.toLocaleString()}\n` +
+                    `  Tokens:     ~${estimated.toLocaleString()} / ${(contextWindow / 1000).toFixed(0)}k (${usagePct}%)${apiAnchored ? ' ✓' : ' ~'}\n` +
                     `  Session:    ${sessionId}\n` +
                     `  Directory:  ${dir}\n`
             });
@@ -605,6 +628,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             if (didCompact) {
                 history.length = 0;
                 history.push(...compacted);
+                resetTokenAnchor(); // Reset anchor after compaction — estimates will be used
                 if (config.debug) {
                     console.error(`[runcode] History compacted: ~${estimateHistoryTokens(history)} tokens`);
                 }
@@ -696,6 +720,8 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 onEvent({ kind: 'turn_done', reason: 'error', error: errMsg + suggestion });
                 break;
             }
+            // Anchor token tracking to actual API counts
+            updateActualTokens(usage.inputTokens, usage.outputTokens, history.length);
             onEvent({
                 kind: 'usage',
                 inputTokens: usage.inputTokens,

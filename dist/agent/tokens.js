@@ -1,8 +1,57 @@
 /**
  * Token estimation for runcode.
  * Uses byte-based heuristic (no external tokenizer dependency).
+ * Anchors to actual API counts when available, estimates on top for new messages.
  */
 const DEFAULT_BYTES_PER_TOKEN = 4;
+// ─── API-anchored token tracking ───────────────────────���──────────────────
+/** Last known actual token count from API response */
+let lastApiInputTokens = 0;
+let lastApiOutputTokens = 0;
+let lastApiMessageCount = 0;
+/**
+ * Update with actual token counts from API response.
+ * This anchors our estimates to reality.
+ */
+export function updateActualTokens(inputTokens, outputTokens, messageCount) {
+    lastApiInputTokens = inputTokens;
+    lastApiOutputTokens = outputTokens;
+    lastApiMessageCount = messageCount;
+}
+/**
+ * Get token count using API anchor + estimation for new messages.
+ * More accurate than pure estimation because it's grounded in actual API counts.
+ */
+export function getAnchoredTokenCount(history) {
+    if (lastApiInputTokens > 0 && history.length >= lastApiMessageCount) {
+        // Anchor to API count, estimate only new messages
+        const newMessages = history.slice(lastApiMessageCount);
+        let newTokens = 0;
+        for (const msg of newMessages) {
+            newTokens += estimateDialogueTokens(msg);
+        }
+        const total = lastApiInputTokens + newTokens;
+        return {
+            estimated: total,
+            apiAnchored: true,
+            contextUsagePct: 0, // Will be calculated by caller with model context window
+        };
+    }
+    // No anchor — pure estimation
+    return {
+        estimated: estimateHistoryTokens(history),
+        apiAnchored: false,
+        contextUsagePct: 0,
+    };
+}
+/**
+ * Reset anchor (e.g., after compaction).
+ */
+export function resetTokenAnchor() {
+    lastApiInputTokens = 0;
+    lastApiOutputTokens = 0;
+    lastApiMessageCount = 0;
+}
 /**
  * Estimate token count for a string using byte-length heuristic.
  * JSON-heavy content uses 2 bytes/token; general text uses 4.
