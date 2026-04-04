@@ -219,6 +219,42 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             break; // User wants to exit
         if (input === '')
             continue; // Empty input → re-prompt
+        // Handle /diff — show git diff of current changes
+        if (input === '/diff') {
+            try {
+                const { execSync } = await import('node:child_process');
+                const diff = execSync('git diff --stat && echo "---" && git diff', {
+                    cwd: config.workingDir || process.cwd(),
+                    encoding: 'utf-8',
+                    timeout: 10_000,
+                    maxBuffer: 512 * 1024,
+                }).trim();
+                onEvent({ kind: 'text_delta', text: diff ? `\`\`\`diff\n${diff}\n\`\`\`\n` : 'No changes.\n' });
+            }
+            catch {
+                onEvent({ kind: 'text_delta', text: 'Not a git repository or git not available.\n' });
+            }
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
+        // Handle /context — show current session context info
+        if (input === '/context') {
+            const tokens = estimateHistoryTokens(history);
+            const msgs = history.length;
+            const model = config.model;
+            const dir = config.workingDir || process.cwd();
+            const mode = config.permissionMode || 'default';
+            onEvent({ kind: 'text_delta', text: `**Session Context**\n` +
+                    `  Model:      ${model}\n` +
+                    `  Mode:       ${mode}\n` +
+                    `  Messages:   ${msgs}\n` +
+                    `  Tokens:     ~${tokens.toLocaleString()}\n` +
+                    `  Session:    ${sessionId}\n` +
+                    `  Directory:  ${dir}\n`
+            });
+            onEvent({ kind: 'turn_done', reason: 'completed' });
+            continue;
+        }
         // Handle /plan — enter plan mode (restrict to read-only tools)
         if (input === '/plan') {
             if (config.permissionMode === 'plan') {
