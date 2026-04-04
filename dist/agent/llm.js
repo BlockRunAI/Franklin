@@ -13,6 +13,8 @@ export class ModelClient {
     walletAddress = '';
     cachedBaseWallet = null;
     cachedSolanaWallet = null;
+    walletCacheTime = 0;
+    static WALLET_CACHE_TTL = 30 * 60 * 1000; // 30 min TTL
     constructor(opts) {
         this.apiUrl = opts.apiUrl;
         this.chain = opts.chain;
@@ -219,8 +221,10 @@ export class ModelClient {
         }
     }
     async signBasePayment(response) {
-        if (!this.cachedBaseWallet) {
+        // Refresh wallet cache after TTL to pick up balance/key changes
+        if (!this.cachedBaseWallet || (Date.now() - this.walletCacheTime > ModelClient.WALLET_CACHE_TTL)) {
             const w = getOrCreateWallet();
+            this.walletCacheTime = Date.now();
             this.cachedBaseWallet = { privateKey: w.privateKey, address: w.address };
         }
         const wallet = this.cachedBaseWallet;
@@ -240,8 +244,9 @@ export class ModelClient {
         return { 'PAYMENT-SIGNATURE': payload };
     }
     async signSolanaPayment(response) {
-        if (!this.cachedSolanaWallet) {
+        if (!this.cachedSolanaWallet || (Date.now() - this.walletCacheTime > ModelClient.WALLET_CACHE_TTL)) {
             const w = await getOrCreateSolanaWallet();
+            this.walletCacheTime = Date.now();
             this.cachedSolanaWallet = { privateKey: w.privateKey, address: w.address };
         }
         const wallet = this.cachedSolanaWallet;

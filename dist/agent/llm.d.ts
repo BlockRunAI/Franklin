@@ -34,6 +34,8 @@ export declare class ModelClient {
     private walletAddress;
     private cachedBaseWallet;
     private cachedSolanaWallet;
+    private walletCacheTime;
+    private static WALLET_CACHE_TTL;
     constructor(opts: LLMClientOptions);
     /**
      * Stream a completion from the BlockRun API.

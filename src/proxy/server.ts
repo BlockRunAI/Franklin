@@ -492,20 +492,22 @@ export function createProxy(options: ProxyOptions): http.Server {
               if (done) {
                 // Record stats from streaming response
                 if (isStreaming && fullResponse) {
-                  // Search full response for the last output_tokens value
-                  const allOutputMatches = [...fullResponse.matchAll(
-                    /"output_tokens"\s*:\s*(\d+)/g
-                  )];
-                  const lastOutputMatch = allOutputMatches[allOutputMatches.length - 1];
-                  const inputMatch = fullResponse.match(
-                    /"input_tokens"\s*:\s*(\d+)/
-                  );
-                  if (lastOutputMatch) {
-                    const outputTokens = parseInt(lastOutputMatch[1], 10);
+                  // Extract token usage from SSE stream by parsing message_delta events
+                  let outputTokens = 0;
+                  let inputTokens = 0;
+                  // Find all data: lines and parse JSON to extract usage
+                  for (const line of fullResponse.split('\n')) {
+                    if (!line.startsWith('data: ')) continue;
+                    const json = line.slice(6).trim();
+                    if (json === '[DONE]') continue;
+                    try {
+                      const parsed = JSON.parse(json);
+                      if (parsed.usage?.output_tokens) outputTokens = parsed.usage.output_tokens;
+                      if (parsed.usage?.input_tokens) inputTokens = parsed.usage.input_tokens;
+                    } catch { /* skip malformed */ }
+                  }
+                  if (outputTokens > 0) {
                     trackOutputTokens(finalModel, outputTokens);
-                    const inputTokens = inputMatch
-                      ? parseInt(inputMatch[1], 10)
-                      : 0;
                     const latencyMs = Date.now() - requestStartTime;
                     const cost = estimateCost(
                       finalModel,
