@@ -445,6 +445,17 @@ export async function interactiveSession(
       input = 'Look at the most recent error or issue we discussed and fix it. Check the relevant files, identify the root cause, and apply the fix.';
     }
 
+    // Handle /test — run project tests
+    if (input === '/test') {
+      input = 'Detect the project test framework (look for package.json scripts, pytest, etc.) and run the test suite. Show a summary of results.';
+    }
+
+    // Handle /explain <file> — explain code
+    if (input.startsWith('/explain ')) {
+      const target = input.slice(9).trim();
+      input = `Read and explain the code in ${target}. Cover: what it does, key functions/classes, how it connects to the rest of the codebase.`;
+    }
+
     // Handle /status — show git status
     if (input === '/status') {
       try {
