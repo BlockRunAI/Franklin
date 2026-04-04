@@ -95,6 +95,40 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
     if (r !== null) ctx.onEvent({ kind: 'text_delta', text: 'Last commit undone. Changes preserved in staging.\n' });
     emitDone(ctx);
   },
+  '/tokens': (ctx) => {
+    const { estimated, apiAnchored } = getAnchoredTokenCount(ctx.history);
+    const contextWindow = getContextWindow(ctx.config.model);
+    const pct = (estimated / contextWindow) * 100;
+    // Count tool results and thinking blocks
+    let toolResults = 0;
+    let thinkingBlocks = 0;
+    let totalToolChars = 0;
+    for (const msg of ctx.history) {
+      if (typeof msg.content === 'string') continue;
+      if (!Array.isArray(msg.content)) continue;
+      for (const part of msg.content) {
+        if ('type' in part) {
+          if (part.type === 'tool_result') {
+            toolResults++;
+            const c = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
+            totalToolChars += c.length;
+          }
+          if (part.type === 'thinking') thinkingBlocks++;
+        }
+      }
+    }
+    ctx.onEvent({ kind: 'text_delta', text:
+      `**Token Usage**\n` +
+      `  Estimated:  ~${estimated.toLocaleString()} tokens ${apiAnchored ? '(API-anchored)' : '(estimated)'}\n` +
+      `  Context:    ${(contextWindow / 1000).toFixed(0)}k window (${pct.toFixed(1)}% used)\n` +
+      `  Messages:   ${ctx.history.length}\n` +
+      `  Tool results: ${toolResults} (${(totalToolChars / 1024).toFixed(0)}KB)\n` +
+      `  Thinking:   ${thinkingBlocks} blocks\n` +
+      (pct > 80 ? '  ⚠ Near limit — run /compact\n' : '') +
+      (pct > 60 ? '' : '  ✓ Healthy\n')
+    });
+    emitDone(ctx);
+  },
   '/help': (ctx) => {
     ctx.onEvent({ kind: 'text_delta', text:
       `**RunCode Commands**\n\n` +
