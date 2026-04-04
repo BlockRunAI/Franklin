@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.4.0 (2026-04-04)
+
+### Power User Features (inspired by free-code/Claude Code)
+
+**Ultrathink Mode** (`/ultrathink`)
+- Toggle session-level deep reasoning mode — injects a thorough analysis instruction into every system prompt turn
+- One-shot: `/ultrathink <query>` prefixes the query with deep-reasoning instructions without toggling the mode
+- When ON, the model is instructed to: consider multiple approaches, check edge cases, challenge initial assumptions, and show reasoning explicitly
+
+**Ultraplan Mode** (`/ultraplan`)
+- New command that triggers an ultra-thorough planning pass before any code is written
+- Agent reads ALL relevant files first, maps dependencies and side effects, identifies edge cases and security implications, then produces a numbered implementation plan with specific file paths and function names
+- No code written — plan only
+
+**System Prompt Dump** (`/dump`)
+- Dumps the current assembled system instructions (all sections) for debugging
+- Useful for verifying that RUNCODE.md / CLAUDE.md project configs are being picked up correctly
+
+**Token Budget Proactive Warnings**
+- Proactively warns when context usage crosses 70% (once per session)
+- Shown inline after the agent's response: "Token budget: 73% used (~92k / 128k tokens). Run /compact to free up space."
+- Previously required manually running `/tokens` to discover budget pressure
+
+**Updated /help**
+- Now shows ultrathink status (ON/OFF) when mode is active
+- Lists new commands in dedicated "Power" category
+
 ## 2.3.0 (2026-04-04)
 
 ### Token Management Overhaul

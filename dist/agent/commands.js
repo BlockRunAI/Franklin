@@ -108,13 +108,16 @@ const DIRECT_COMMANDS = {
         emitDone(ctx);
     },
     '/help': (ctx) => {
+        const ultrathinkOn = ctx.config.ultrathink;
         ctx.onEvent({ kind: 'text_delta', text: `**RunCode Commands**\n\n` +
                 `  **Coding:** /commit /review /test /fix /debug /explain /search /find /refactor /scaffold\n` +
                 `  **Git:** /push /pr /undo /status /diff /log /branch /stash /unstash\n` +
                 `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
-                `  **Session:** /plan /execute /compact /retry /sessions /resume /context /tasks\n` +
-                `  **Info:** /model /wallet /cost /mcp /doctor /version /bug /help\n` +
-                `  **UI:** /clear /exit\n`
+                `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /context /tasks\n` +
+                `  **Power:** /ultrathink [query] /ultraplan /dump\n` +
+                `  **Info:** /model /wallet /cost /tokens /mcp /doctor /version /bug /help\n` +
+                `  **UI:** /clear /exit\n` +
+                (ultrathinkOn ? `\n  Ultrathink: ON\n` : '')
         });
         emitDone(ctx);
     },
@@ -201,6 +204,27 @@ const DIRECT_COMMANDS = {
         }
         emitDone(ctx);
     },
+    '/ultrathink': (ctx) => {
+        const cfg = ctx.config;
+        cfg.ultrathink = !cfg.ultrathink;
+        if (cfg.ultrathink) {
+            ctx.onEvent({ kind: 'text_delta', text: '**Ultrathink mode ON.** Extended reasoning active — the model will think deeply before responding.\n' +
+                    'Use `/ultrathink` again to disable, or `/ultrathink <query>` to send a one-shot deep analysis.\n'
+            });
+        }
+        else {
+            ctx.onEvent({ kind: 'text_delta', text: '**Ultrathink mode OFF.** Normal response mode restored.\n' });
+        }
+        emitDone(ctx);
+    },
+    '/dump': (ctx) => {
+        const instructions = ctx.config.systemInstructions;
+        const joined = instructions.join('\n\n---\n\n');
+        ctx.onEvent({ kind: 'text_delta', text: `**System Prompt** (${instructions.length} section${instructions.length !== 1 ? 's' : ''}):\n\n` +
+                `\`\`\`\n${joined.slice(0, 4000)}${joined.length > 4000 ? `\n... (${joined.length - 4000} chars truncated)` : ''}\n\`\`\`\n`
+        });
+        emitDone(ctx);
+    },
     '/execute': (ctx) => {
         if (ctx.config.permissionMode !== 'plan') {
             ctx.onEvent({ kind: 'text_delta', text: 'Not in plan mode. Use /plan to enter.\n' });
@@ -264,9 +288,19 @@ const REWRITE_COMMANDS = {
     '/migrate': 'Check for pending database migrations, outdated dependencies, or breaking changes that need addressing. List required migration steps.',
     '/clean': 'Find and remove dead code: unused imports, unreachable code, commented-out blocks, unused variables and functions. Show what would be removed before making changes.',
     '/tasks': 'List all current tasks using the Task tool.',
+    '/ultraplan': 'Enter ultraplan mode: create a detailed, step-by-step implementation plan before writing any code. ' +
+        'First, thoroughly read ALL relevant files. Map out every dependency and potential side effect. ' +
+        'Identify edge cases, security considerations, and performance implications. ' +
+        'Then produce a numbered implementation plan with specific file paths, function names, and code changes. ' +
+        'Do NOT write any code yet — only the plan.',
 };
 // Commands with arguments (prefix match → rewrite)
 const ARG_COMMANDS = [
+    { prefix: '/ultrathink ', rewrite: (a) => `Think deeply, carefully, and thoroughly before responding. ` +
+            `Consider multiple approaches, check edge cases, reason through implications step by step, ` +
+            `and challenge your initial assumptions. Take your time — quality of reasoning matters more than speed. ` +
+            `Now respond to: ${a}`
+    },
     { prefix: '/explain ', rewrite: (a) => `Read and explain the code in ${a}. Cover: what it does, key functions/classes, how it connects to the rest of the codebase.` },
     { prefix: '/search ', rewrite: (a) => `Search the codebase for "${a}" using Grep. Show the matching files and relevant code context.` },
     { prefix: '/find ', rewrite: (a) => `Find files matching the pattern "${a}" using Glob. Show the results.` },

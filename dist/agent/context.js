@@ -50,8 +50,9 @@ You have access to tools for reading, writing, editing files, running shell comm
 # Slash Commands Available
 The user can type these shortcuts: /commit, /review, /test, /fix, /debug, /explain <file>,
 /search <query>, /find <pattern>, /refactor <desc>, /init, /todo, /deps, /diff, /status,
-/log, /branch, /stash, /plan, /execute, /compact, /retry, /sessions, /resume, /tasks,
-/context, /doctor, /model, /cost, /clear, /help, /exit.`;
+/log, /branch, /stash, /plan, /ultraplan, /execute, /compact, /retry, /sessions, /resume,
+/tasks, /context, /doctor, /tokens, /model, /cost, /dump, /ultrathink [query], /clear,
+/help, /exit.`;
 /**
  * Build the full system instructions array for a session.
  */
