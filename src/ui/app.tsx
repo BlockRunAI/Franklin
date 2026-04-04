@@ -237,6 +237,13 @@ function RunCodeApp({
           setShowWallet(false);
           return;
 
+        case '/sessions':
+          setStreamText('');
+          setWaiting(true);
+          setReady(false);
+          onSubmit('/sessions');
+          return;
+
         case '/clear':
           setStreamText('');
           setTools(new Map());
@@ -272,6 +279,14 @@ function RunCodeApp({
           return;
 
         default:
+          // Commands with arguments that pass through to the loop
+          if (trimmed.startsWith('/resume ')) {
+            setStreamText('');
+            setWaiting(true);
+            setReady(false);
+            onSubmit(trimmed);
+            return;
+          }
           setStatusMsg(`Unknown command: ${cmd}. Try /help`);
           setTimeout(() => setStatusMsg(''), 3000);
           return;
@@ -412,6 +427,8 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/cost</Text>          Session cost & savings</Text>
           <Text>  <Text color="cyan">/retry</Text>         Retry the last prompt</Text>
           <Text>  <Text color="cyan">/compact</Text>       Compress conversation history</Text>
+          <Text>  <Text color="cyan">/sessions</Text>      List saved sessions</Text>
+          <Text>  <Text color="cyan">/resume</Text> id     Resume a saved session</Text>
           <Text>  <Text color="cyan">/clear</Text>         Clear conversation display</Text>
           <Text>  <Text color="cyan">/help</Text>          This help</Text>
           <Text>  <Text color="cyan">/exit</Text>          Quit</Text>
