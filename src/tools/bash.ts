@@ -10,7 +10,8 @@ interface BashInput {
   timeout?: number;
 }
 
-const MAX_OUTPUT_BYTES = 512 * 1024; // 512KB output cap
+const MAX_OUTPUT_BYTES = 512 * 1024; // 512KB capture buffer (prevents OOM)
+const MAX_RETURN_CHARS = 32_000;    // 32KB return cap (~8,000 tokens) — prevents context bloat
 const DEFAULT_TIMEOUT_MS = 120_000;  // 2 minutes
 
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
@@ -109,7 +110,21 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       }
 
       if (truncated) {
-        result += '\n\n... (output truncated at 512KB)';
+        result += '\n\n... (output truncated — command produced >512KB)';
+      }
+
+      // Cap returned output to prevent context bloat.
+      // Keep the LAST part (most relevant for errors/test failures/build output).
+      if (result.length > MAX_RETURN_CHARS) {
+        const lines = result.split('\n');
+        let trimmed = '';
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const candidate = lines[i] + '\n' + trimmed;
+          if (candidate.length > MAX_RETURN_CHARS) break;
+          trimmed = candidate;
+        }
+        const omitted = result.length - trimmed.length;
+        result = `... (${omitted.toLocaleString()} chars omitted from start)\n${trimmed}`;
       }
 
       if (killed) {
