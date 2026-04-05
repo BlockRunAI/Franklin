@@ -4,6 +4,7 @@
 import { execSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+const MAX_GREP_OUTPUT_CHARS = 16_000; // ~4,000 tokens — prevents huge grep results
 let _hasRipgrep = null;
 function hasRipgrep() {
     if (_hasRipgrep !== null)
@@ -79,6 +80,10 @@ function runRipgrep(opts, searchPath, mode, limit) {
         if (lines.length > limited.length) {
             output += `\n\n... (${lines.length - limited.length} more results, use head_limit to see more)`;
         }
+        // Cap total output to prevent context bloat
+        if (output.length > MAX_GREP_OUTPUT_CHARS) {
+            output = output.slice(0, MAX_GREP_OUTPUT_CHARS) + `\n... (output capped at ${MAX_GREP_OUTPUT_CHARS / 1000}KB — use more specific pattern or head_limit)`;
+        }
         return { output: output || 'No matches found' };
     }
     catch (err) {
@@ -126,6 +131,9 @@ function runNativeGrep(opts, searchPath, mode, limit) {
         let output = limited.join('\n');
         if (lines.length > limited.length) {
             output += `\n\n... (${lines.length - limited.length} more results)`;
+        }
+        if (output.length > MAX_GREP_OUTPUT_CHARS) {
+            output = output.slice(0, MAX_GREP_OUTPUT_CHARS) + `\n... (output capped at ${MAX_GREP_OUTPUT_CHARS / 1000}KB)`;
         }
         return { output: output || 'No matches found' };
     }

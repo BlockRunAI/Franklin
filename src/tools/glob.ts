@@ -11,7 +11,8 @@ interface GlobInput {
   path?: string;
 }
 
-const MAX_RESULTS = 500;
+const MAX_RESULTS = 200;
+const MAX_OUTPUT_CHARS = 12_000; // ~3,000 tokens — prevents huge glob results from blowing up context
 
 /**
  * Simple glob matcher supporting *, **, and ? wildcards.
@@ -136,7 +137,23 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   let output = sorted.join('\n');
   if (sorted.length >= MAX_RESULTS) {
-    output += `\n\n... (limited to ${MAX_RESULTS} results)`;
+    output += `\n\n... (limited to ${MAX_RESULTS} results. Use a more specific pattern to narrow results.)`;
+  }
+
+  // Cap total output length to prevent context bloat
+  if (output.length > MAX_OUTPUT_CHARS) {
+    const lines = output.split('\n');
+    let trimmed = '';
+    let count = 0;
+    for (const line of lines) {
+      if ((trimmed + line).length > MAX_OUTPUT_CHARS) break;
+      trimmed += (trimmed ? '\n' : '') + line;
+      count++;
+    }
+    const remaining = lines.length - count;
+    if (remaining > 0) {
+      output = `${trimmed}\n... (${remaining} more paths not shown — use a more specific pattern)`;
+    }
   }
 
   return { output };
