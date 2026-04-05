@@ -9,6 +9,7 @@ export declare class TerminalUI {
     private activeCapabilities;
     private totalInputTokens;
     private totalOutputTokens;
+    private sessionModel;
     private mdRenderer;
     private lineQueue;
     private lineWaiters;
