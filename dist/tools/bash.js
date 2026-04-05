@@ -12,15 +12,22 @@ async function execute(input, ctx) {
     const timeoutMs = Math.min(timeout ?? DEFAULT_TIMEOUT_MS, 600_000);
     return new Promise((resolve) => {
         const shell = process.env.SHELL || '/bin/bash';
-        const child = spawn(shell, ['-c', command], {
-            cwd: ctx.workingDir,
-            env: {
-                ...process.env,
-                RUNCODE: '1', // Let scripts detect they're running inside runcode
-                RUNCODE_WORKDIR: ctx.workingDir,
-            },
-            stdio: ['ignore', 'pipe', 'pipe'],
-        });
+        let child;
+        try {
+            child = spawn(shell, ['-c', command], {
+                cwd: ctx.workingDir,
+                env: {
+                    ...process.env,
+                    RUNCODE: '1', // Let scripts detect they're running inside runcode
+                    RUNCODE_WORKDIR: ctx.workingDir,
+                },
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+        }
+        catch (spawnErr) {
+            resolve({ output: `Error spawning shell: ${spawnErr.message}`, isError: true });
+            return;
+        }
         let stdout = '';
         let stderr = '';
         let outputBytes = 0;

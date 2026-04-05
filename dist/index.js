@@ -108,6 +108,7 @@ if (firstArg === 'solana' || firstArg === 'base') {
         }
     }
     await startCommand(startOpts);
+    process.exit(0);
 }
 else if (!firstArg || (firstArg.startsWith('-') && !['-h', '--help', '-V', '--version'].includes(firstArg))) {
     // No subcommand or only flags — treat as 'start' with flags
@@ -122,6 +123,7 @@ else if (!firstArg || (firstArg.startsWith('-') && !['-h', '--help', '-V', '--ve
         }
     }
     await startCommand(startOpts);
+    process.exit(0);
 }
 else {
     program.parse();

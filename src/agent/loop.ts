@@ -376,6 +376,7 @@ export async function interactiveSession(
         if (microCompacted !== history) {
           history.length = 0;
           history.push(...microCompacted);
+          resetTokenAnchor(); // History shrunk — resync token tracking
         }
       }
 

@@ -24,15 +24,21 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   return new Promise<CapabilityResult>((resolve) => {
     const shell = process.env.SHELL || '/bin/bash';
-    const child = spawn(shell, ['-c', command], {
-      cwd: ctx.workingDir,
-      env: {
-        ...process.env,
-        RUNCODE: '1', // Let scripts detect they're running inside runcode
-        RUNCODE_WORKDIR: ctx.workingDir,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(shell, ['-c', command], {
+        cwd: ctx.workingDir,
+        env: {
+          ...process.env,
+          RUNCODE: '1', // Let scripts detect they're running inside runcode
+          RUNCODE_WORKDIR: ctx.workingDir,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (spawnErr) {
+      resolve({ output: `Error spawning shell: ${(spawnErr as Error).message}`, isError: true });
+      return;
+    }
 
     let stdout = '';
     let stderr = '';

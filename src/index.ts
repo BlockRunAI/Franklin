@@ -135,6 +135,7 @@ if (firstArg === 'solana' || firstArg === 'base') {
     }
   }
   await startCommand(startOpts as Parameters<typeof startCommand>[0]);
+  process.exit(0);
 } else if (!firstArg || (firstArg.startsWith('-') && !['-h', '--help', '-V', '--version'].includes(firstArg))) {
   // No subcommand or only flags — treat as 'start' with flags
   const startOpts: Record<string, unknown> = { version };
@@ -146,6 +147,7 @@ if (firstArg === 'solana' || firstArg === 'base') {
     }
   }
   await startCommand(startOpts as Parameters<typeof startCommand>[0]);
+  process.exit(0);
 } else {
   program.parse();
 }
