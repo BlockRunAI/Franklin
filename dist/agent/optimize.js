@@ -9,10 +9,10 @@
  * 5. Pre-compact stripping — remove images/docs before summarization
  */
 // ─── Constants ─────────────────────────────────────────────────────────────
-/** Max chars per individual tool result before truncation */
-const MAX_TOOL_RESULT_CHARS = 50_000;
+/** Max chars per individual tool result before truncation (history-level safety net) */
+const MAX_TOOL_RESULT_CHARS = 32_000;
 /** Max aggregate tool result chars per user message */
-const MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200_000;
+const MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 100_000;
 /** Preview size when truncating */
 const PREVIEW_CHARS = 2_000;
 /** Default max_tokens (low to save output slot reservation) */
