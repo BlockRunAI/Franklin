@@ -154,7 +154,9 @@ export class TerminalUI {
         });
         rl.on('close', () => {
             this.stdinEOF = true;
-            this.lineQueue = []; // Don't deliver buffered lines after EOF — signal exit cleanly
+            // Keep lineQueue intact — buffered lines should still drain before signaling EOF.
+            // If there are active waiters, queue is already empty (nextLine checks queue first),
+            // so it's safe to resolve them with null now.
             for (const waiter of this.lineWaiters)
                 waiter(null);
             this.lineWaiters = [];

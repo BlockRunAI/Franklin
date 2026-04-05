@@ -5,11 +5,6 @@
  */
 import type { AgentConfig, Dialogue, StreamEvent } from './types.js';
 /**
- * Run the agent loop.
- * Yields StreamEvents for the UI to render. Returns when the conversation ends.
- */
-export declare function runAgent(config: AgentConfig, initialPrompt: string): AsyncGenerator<StreamEvent, void>;
-/**
  * Run a multi-turn interactive session.
  * Each user message triggers a full agent loop.
  * Returns the accumulated conversation history.
