@@ -295,17 +295,18 @@ const DIRECT_COMMANDS = {
         try {
             let address;
             let balance;
+            const fetchTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
             if (chain === 'solana') {
                 const { getOrCreateSolanaWallet, setupAgentSolanaWallet } = await import('@blockrun/llm');
                 const w = await getOrCreateSolanaWallet();
                 address = w.address;
                 try {
                     const client = await setupAgentSolanaWallet({ silent: true });
-                    const bal = await client.getBalance();
+                    const bal = await Promise.race([client.getBalance(), fetchTimeout(5000)]);
                     balance = `$${bal.toFixed(2)} USDC`;
                 }
                 catch {
-                    balance = '(fetch failed)';
+                    balance = '(unavailable)';
                 }
             }
             else {
@@ -314,11 +315,11 @@ const DIRECT_COMMANDS = {
                 address = w.address;
                 try {
                     const client = setupAgentWallet({ silent: true });
-                    const bal = await client.getBalance();
+                    const bal = await Promise.race([client.getBalance(), fetchTimeout(5000)]);
                     balance = `$${bal.toFixed(2)} USDC`;
                 }
                 catch {
-                    balance = '(fetch failed)';
+                    balance = '(unavailable)';
                 }
             }
             ctx.onEvent({ kind: 'text_delta', text: `**Wallet**\n` +
@@ -345,12 +346,16 @@ const DIRECT_COMMANDS = {
             ctx.history.length = 0;
             ctx.history.push(...compacted);
             resetTokenAnchor();
+            const afterTokens = estimateHistoryTokens(ctx.history);
+            const saved = beforeTokens - afterTokens;
+            const pct = Math.round((saved / beforeTokens) * 100);
+            ctx.onEvent({ kind: 'text_delta', text: `Compacted: ~${beforeTokens.toLocaleString()} → ~${afterTokens.toLocaleString()} tokens (saved ${pct}%)\n`
+            });
         }
-        const afterTokens = estimateHistoryTokens(ctx.history);
-        ctx.onEvent({ kind: 'text_delta', text: didCompact
-                ? `Compacted: ~${beforeTokens.toLocaleString()} → ~${afterTokens.toLocaleString()} tokens\n`
-                : `History too short to compact (${beforeTokens.toLocaleString()} tokens, ${ctx.history.length} messages).\n`
-        });
+        else {
+            ctx.onEvent({ kind: 'text_delta', text: `Nothing to compact — history is already minimal (${beforeTokens.toLocaleString()} tokens, ${ctx.history.length} messages).\n`
+            });
+        }
         emitDone(ctx);
     },
 };

@@ -38,8 +38,16 @@ export async function autoCompactIfNeeded(history, model, client, debug) {
     if (debug) {
         console.error(`[runcode] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}`);
     }
+    const beforeTokens = estimateHistoryTokens(history);
     try {
         const compacted = await compactHistory(history, model, client, debug);
+        const afterTokens = estimateHistoryTokens(compacted);
+        if (afterTokens >= beforeTokens) {
+            if (debug) {
+                console.error(`[runcode] Auto-compaction grew history (${beforeTokens} → ${afterTokens}) — skipping`);
+            }
+            return { history, compacted: false };
+        }
         return { history: compacted, compacted: true };
     }
     catch (err) {
@@ -58,8 +66,17 @@ export async function forceCompact(history, model, client, debug) {
     if (history.length <= 4) {
         return { history, compacted: false };
     }
+    const beforeTokens = estimateHistoryTokens(history);
     try {
         const compacted = await compactHistory(history, model, client, debug);
+        const afterTokens = estimateHistoryTokens(compacted);
+        // Only accept compaction if it actually reduces tokens
+        if (afterTokens >= beforeTokens) {
+            if (debug) {
+                console.error(`[runcode] Compaction produced larger history (${beforeTokens} → ${afterTokens}) — reverting`);
+            }
+            return { history, compacted: false };
+        }
         return { history: compacted, compacted: true };
     }
     catch (err) {

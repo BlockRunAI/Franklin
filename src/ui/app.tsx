@@ -461,8 +461,8 @@ function RunCodeApp({
       )}
 
       {/* Active tools */}
-      {Array.from(tools.values()).map((tool, i) => (
-        <Box key={i} marginLeft={1}>
+      {Array.from(tools.entries()).map(([id, tool]) => (
+        <Box key={id} marginLeft={1}>
           {tool.done ? (
             tool.error
               ? <Text color="red">  ✗ {tool.name} <Text dimColor>{tool.elapsed}ms</Text></Text>
