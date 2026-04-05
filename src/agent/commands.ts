@@ -191,7 +191,9 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
     catch { checks.push('✗ git not found'); }
     try { execSync('rg --version', { stdio: 'pipe' }); checks.push('✓ ripgrep available'); }
     catch { checks.push('⚠ ripgrep not found (using native grep fallback)'); }
-    checks.push(fs.existsSync(path.join(BLOCKRUN_DIR, 'wallet.json')) ? '✓ wallet configured' : '⚠ no wallet — run: runcode setup');
+    const hasWallet = fs.existsSync(path.join(BLOCKRUN_DIR, 'wallet.json'))
+      || fs.existsSync(path.join(BLOCKRUN_DIR, 'solana-wallet.json'));
+    checks.push(hasWallet ? '✓ wallet configured' : '⚠ no wallet — run: runcode setup');
     checks.push(fs.existsSync(path.join(BLOCKRUN_DIR, 'runcode-config.json')) ? '✓ config file exists' : '⚠ no config — using defaults');
     // Check MCP
     const { listMcpServers } = await import('../mcp/client.js');

@@ -396,18 +396,21 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 onEvent({ kind: 'turn_done', reason: 'error', error: errMsg + suggestion });
                 break;
             }
+            // When API doesn't return input tokens (some models return 0), estimate from history
+            const inputTokens = usage.inputTokens > 0
+                ? usage.inputTokens
+                : estimateHistoryTokens(history);
             // Anchor token tracking to actual API counts
-            updateActualTokens(usage.inputTokens, usage.outputTokens, history.length);
+            updateActualTokens(inputTokens, usage.outputTokens, history.length);
             onEvent({
                 kind: 'usage',
-                inputTokens: usage.inputTokens,
+                inputTokens,
                 outputTokens: usage.outputTokens,
                 model: config.model,
             });
             // Record usage for stats tracking (runcode stats command)
-            // Rough cost estimate: use typical pricing if unknown
-            const costEstimate = estimateCost(config.model, usage.inputTokens, usage.outputTokens);
-            recordUsage(config.model, usage.inputTokens, usage.outputTokens, costEstimate, 0);
+            const costEstimate = estimateCost(config.model, inputTokens, usage.outputTokens);
+            recordUsage(config.model, inputTokens, usage.outputTokens, costEstimate, 0);
             // ── Max output tokens recovery ──
             if (stopReason === 'max_tokens' && recoveryAttempts < 3) {
                 recoveryAttempts++;
