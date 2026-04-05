@@ -39,21 +39,27 @@ export class StreamingExecutor {
     async collectResults(allInvocations) {
         const results = [];
         const alreadyStarted = new Set(this.pending.map(p => p.invocation.id));
-        // Wait for concurrent results that were started during streaming
-        for (const p of this.pending) {
-            const result = await p.promise;
-            results.push([p.invocation, result]);
+        const pendingSnapshot = [...this.pending];
+        this.pending = []; // Clear immediately so errors don't leave stale state
+        try {
+            // Wait for concurrent results that were started during streaming
+            for (const p of pendingSnapshot) {
+                const result = await p.promise;
+                results.push([p.invocation, result]);
+            }
+            // Execute sequential (non-concurrent) tools now
+            for (const inv of allInvocations) {
+                if (alreadyStarted.has(inv.id))
+                    continue;
+                this.onStart(inv.id, inv.name);
+                const result = await this.executeWithPermissions(inv);
+                results.push([inv, result]);
+            }
         }
-        // Execute sequential (non-concurrent) tools now
-        for (const inv of allInvocations) {
-            if (alreadyStarted.has(inv.id))
-                continue;
-            this.onStart(inv.id, inv.name);
-            const result = await this.executeWithPermissions(inv);
-            results.push([inv, result]);
+        catch (err) {
+            // Return partial results rather than losing them; caller handles errors
+            throw err;
         }
-        // Clear for next round
-        this.pending = [];
         return results;
     }
     async executeWithPermissions(invocation) {

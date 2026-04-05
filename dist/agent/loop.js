@@ -267,6 +267,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 if (microCompacted !== history) {
                     history.length = 0;
                     history.push(...microCompacted);
+                    resetTokenAnchor(); // History shrunk — resync token tracking
                 }
             }
             // 3. Auto-compact: summarize history if approaching context limit

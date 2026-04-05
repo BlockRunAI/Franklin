@@ -170,7 +170,6 @@ async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, on
     flushStats();
     await disconnectMcpServers();
     console.log(chalk.dim('\nGoodbye.\n'));
-    process.exit(0);
 }
 // ─── Basic readline UI (piped input) ───────────────────────────────────────
 async function runWithBasicUI(agentConfig, model, workDir) {
@@ -224,7 +223,6 @@ async function runWithBasicUI(agentConfig, model, workDir) {
     }
     ui.printGoodbye();
     flushStats();
-    process.exit(0);
 }
 async function handleSlashCommand(cmd, config, ui) {
     const parts = cmd.trim().split(/\s+/);

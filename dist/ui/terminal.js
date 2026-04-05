@@ -131,37 +131,64 @@ export class TerminalUI {
     totalInputTokens = 0;
     totalOutputTokens = 0;
     mdRenderer = new MarkdownRenderer();
-    /**
-     * Prompt the user for input. Returns null on EOF/exit.
-     */
-    async promptUser(promptText) {
+    // Line queue for piped (non-TTY) input — buffers all stdin lines eagerly
+    lineQueue = [];
+    lineWaiters = [];
+    stdinEOF = false;
+    constructor() {
         const rl = readline.createInterface({
             input: process.stdin,
             output: process.stderr,
-            terminal: process.stdin.isTTY ?? false,
+            terminal: false, // Always treat as non-TTY so line events fire for piped input
         });
+        rl.on('line', (line) => {
+            if (this.lineWaiters.length > 0) {
+                // Someone is already waiting — deliver immediately
+                const waiter = this.lineWaiters.shift();
+                waiter(line);
+            }
+            else {
+                // Buffer the line for the next promptUser() call
+                this.lineQueue.push(line);
+            }
+        });
+        rl.on('close', () => {
+            this.stdinEOF = true;
+            this.lineQueue = []; // Don't deliver buffered lines after EOF — signal exit cleanly
+            for (const waiter of this.lineWaiters)
+                waiter(null);
+            this.lineWaiters = [];
+        });
+    }
+    /**
+     * Prompt the user for input. Returns null on EOF/exit.
+     * Uses a line-queue approach so piped input works across multiple calls.
+     */
+    async promptUser(promptText) {
+        const prompt = promptText ?? chalk.bold.green('> ');
+        process.stderr.write(prompt);
+        const raw = await this.nextLine();
+        if (raw === null)
+            return null;
+        const trimmed = raw.trim();
+        if (trimmed === '/exit' || trimmed === '/quit')
+            return null;
+        return trimmed;
+    }
+    nextLine() {
+        if (this.lineQueue.length > 0) {
+            return Promise.resolve(this.lineQueue.shift());
+        }
+        if (this.stdinEOF) {
+            return Promise.resolve(null);
+        }
         return new Promise((resolve) => {
-            let answered = false;
-            const prompt = promptText ?? chalk.bold.green('> ');
-            rl.question(prompt, (answer) => {
-                answered = true;
-                rl.close();
-                const trimmed = answer.trim();
-                if (trimmed === '/exit' || trimmed === '/quit') {
-                    resolve(null);
-                }
-                else if (trimmed === '') {
-                    resolve('');
-                }
-                else {
-                    resolve(trimmed);
-                }
-            });
-            rl.on('close', () => {
-                if (!answered)
-                    resolve(null);
-            });
+            this.lineWaiters.push(resolve);
         });
+    }
+    /** No-op kept for API compatibility — readline closes when stdin EOF. */
+    closeInput() {
+        // Nothing to do — readline closes itself on stdin EOF
     }
     /**
      * Handle a stream event from the agent loop.
@@ -260,26 +287,17 @@ export class TerminalUI {
             }
         }
     }
-    /** Check if input is a slash command. Returns true if handled. */
+    /** Check if input is a slash command. Returns true if handled locally (don't pass to agent). */
     handleSlashCommand(input) {
         const parts = input.trim().split(/\s+/);
         const cmd = parts[0].toLowerCase();
         switch (cmd) {
-            case '/help':
-                console.error(chalk.bold('\n  Commands:'));
-                console.error('  /model [name]  — switch model (e.g. /model sonnet)');
-                console.error('  /cost          — session cost and tokens');
-                console.error('  /retry         — retry the last prompt');
-                console.error('  /compact       — compress conversation history');
-                console.error('  /exit          — quit');
-                console.error('  /help          — this help\n');
-                console.error(chalk.dim('  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4\n'));
-                return true;
             case '/cost':
             case '/usage':
                 console.error(chalk.dim(`\n  Tokens: ${this.totalInputTokens.toLocaleString()} in / ${this.totalOutputTokens.toLocaleString()} out\n`));
                 return true;
             default:
+                // All other slash commands pass through to the agent loop (commands.ts handles them)
                 return false;
         }
     }
@@ -294,6 +312,7 @@ export class TerminalUI {
         }
     }
     printGoodbye() {
+        this.closeInput();
         this.printUsageSummary();
         console.error(chalk.dim('\nGoodbye.\n'));
     }
