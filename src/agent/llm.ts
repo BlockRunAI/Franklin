@@ -123,9 +123,15 @@ export class ModelClient {
 
     if (!response.ok) {
       const errorBody = await response.text().catch(() => 'unknown error');
+      // Extract human-readable message from JSON error bodies ({"error":{"message":"..."}})
+      let message = errorBody;
+      try {
+        const parsed = JSON.parse(errorBody);
+        message = parsed?.error?.message || parsed?.message || errorBody;
+      } catch { /* not JSON — use raw text */ }
       yield {
         kind: 'error',
-        payload: { status: response.status, message: errorBody },
+        payload: { status: response.status, message },
       };
       return;
     }
