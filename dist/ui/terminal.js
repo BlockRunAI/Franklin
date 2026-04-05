@@ -5,6 +5,7 @@
  */
 import readline from 'node:readline';
 import chalk from 'chalk';
+import { estimateCost } from '../pricing.js';
 // ─── Spinner ───────────────────────────────────────────────────────────────
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 class Spinner {
@@ -130,6 +131,7 @@ export class TerminalUI {
     activeCapabilities = new Map();
     totalInputTokens = 0;
     totalOutputTokens = 0;
+    sessionModel = '';
     mdRenderer = new MarkdownRenderer();
     // Line queue for piped (non-TTY) input — buffers all stdin lines eagerly
     lineQueue = [];
@@ -269,6 +271,8 @@ export class TerminalUI {
             case 'usage':
                 this.totalInputTokens += event.inputTokens;
                 this.totalOutputTokens += event.outputTokens;
+                if (event.model)
+                    this.sessionModel = event.model;
                 break;
             case 'turn_done': {
                 this.spinner.stop();
@@ -295,9 +299,14 @@ export class TerminalUI {
         const cmd = parts[0].toLowerCase();
         switch (cmd) {
             case '/cost':
-            case '/usage':
-                console.error(chalk.dim(`\n  Tokens: ${this.totalInputTokens.toLocaleString()} in / ${this.totalOutputTokens.toLocaleString()} out\n`));
+            case '/usage': {
+                const cost = this.sessionModel
+                    ? estimateCost(this.sessionModel, this.totalInputTokens, this.totalOutputTokens)
+                    : 0;
+                const costStr = cost > 0 ? `  ·  $${cost.toFixed(4)} USDC` : '';
+                console.error(chalk.dim(`\n  Tokens: ${this.totalInputTokens.toLocaleString()} in / ${this.totalOutputTokens.toLocaleString()} out${costStr}\n`));
                 return true;
+            }
             default:
                 // All other slash commands pass through to the agent loop (commands.ts handles them)
                 return false;

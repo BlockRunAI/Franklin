@@ -19,6 +19,15 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     return { output: 'Error: question is required', isError: true };
   }
 
+  // In non-TTY (piped/scripted) mode, creating a new readline would conflict with
+  // the TerminalUI's existing readline. Return a hint for the model to proceed.
+  if (!process.stdin.isTTY) {
+    return {
+      output: `[Non-interactive mode] Cannot prompt user. Proceed with a reasonable assumption. Question was: ${question}`,
+      isError: false,
+    };
+  }
+
   console.error('');
   console.error(chalk.yellow('  ╭─ Question ────────────────────────────'));
   console.error(chalk.yellow(`  │ ${question}`));
@@ -32,7 +41,7 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stderr,
-    terminal: process.stdin.isTTY ?? false,
+    terminal: true,
   });
 
   return new Promise<CapabilityResult>((resolve) => {
@@ -43,7 +52,7 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
       resolve({ output: answer.trim() || '(no response)' });
     });
     rl.on('close', () => {
-      if (!answered) resolve({ output: 'User did not respond (EOF/piped input).', isError: true });
+      if (!answered) resolve({ output: 'User closed input without responding.', isError: false });
     });
   });
 }
