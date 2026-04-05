@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.5.1 (2026-04-05)
+
+### Bug Fixes (end-to-end test)
+
+**Terminal UI: piped input only read one line** (critical)
+- `promptUser()` was creating a new `readline.Interface` per call, closing stdin after each read
+- Replaced with a persistent rl + line-queue approach that buffers all stdin eagerly
+- EOF now clears the queue and resolves all waiters immediately (prevents hang on exit)
+
+**Unsettled top-level await warning on exit**
+- `process.exit(0)` was called inside `startCommand` before the top-level `await startCommand()` could complete
+- Moved `process.exit(0)` to the top-level in `index.ts` after the await resolves
+- Also removed stale `/help` from `terminal.ts` (all slash commands now go through `commands.ts`)
+
+**Token anchor desync after micro-compaction**
+- `microCompact()` reduced history size but `resetTokenAnchor()` was not called
+- Token budget warnings and compaction triggers were using stale counts
+- Added `resetTokenAnchor()` after micro-compact modifies history
+
+**StreamingExecutor pending tools not cleared on error**
+- `this.pending` was cleared at the end of `collectResults()`, but errors skipped the clear
+- Changed to clear pending snapshot immediately at start of `collectResults()` to prevent stale state
+
+**Bash tool synchronous spawn error not caught**
+- `spawn()` could throw synchronously if the shell was unavailable
+- Added try/catch around spawn call; resolves with error message instead of hanging promise
+
 ## 2.5.0 (2026-04-04)
 
 ### Power User Features (inspired by free-code/Claude Code)

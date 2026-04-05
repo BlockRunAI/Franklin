@@ -197,7 +197,6 @@ async function runWithInkUI(
   flushStats();
   await disconnectMcpServers();
   console.log(chalk.dim('\nGoodbye.\n'));
-  process.exit(0);
 }
 
 // ─── Basic readline UI (piped input) ───────────────────────────────────────
@@ -258,7 +257,6 @@ async function runWithBasicUI(
 
   ui.printGoodbye();
   flushStats();
-  process.exit(0);
 }
 
 // ─── Slash commands ────────────────────────────────────────────────────────
