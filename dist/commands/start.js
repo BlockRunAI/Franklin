@@ -123,7 +123,9 @@ export async function startCommand(options) {
         capabilities,
         maxTurns: 100,
         workingDir: workDir,
-        permissionMode: options.trust ? 'trust' : 'default',
+        // Non-TTY (piped) input = scripted mode → trust all tools automatically.
+        // Interactive TTY = default mode (prompts for Bash/Write/Edit).
+        permissionMode: (options.trust || !process.stdin.isTTY) ? 'trust' : 'default',
         debug: options.debug,
     };
     // Use ink UI if TTY, fallback to basic readline for piped input
