@@ -64,8 +64,8 @@ function runRipgrep(opts, searchPath, mode, limit) {
         args.push('-U', '--multiline-dotall');
     if (opts.glob)
         args.push(`--glob=${opts.glob}`);
-    // Always exclude common noise
-    args.push('--glob=!node_modules', '--glob=!.git', '--glob=!dist');
+    // Always exclude common noise + lock files (huge, rarely useful)
+    args.push('--glob=!node_modules', '--glob=!.git', '--glob=!dist', '--glob=!*.lock', '--glob=!package-lock.json', '--glob=!pnpm-lock.yaml');
     args.push('--', opts.pattern);
     args.push(searchPath);
     try {
@@ -118,7 +118,7 @@ function runNativeGrep(opts, searchPath, mode, limit) {
             .replace(/\*\*/, '*'); // Convert ** to * for flat matching
         args.push(`--include=${nativeGlob}`);
     }
-    args.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=dist');
+    args.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=dist', '--exclude=*.lock', '--exclude=package-lock.json', '--exclude=pnpm-lock.yaml');
     args.push('-e', opts.pattern, searchPath);
     try {
         const result = execFileSync('grep', args, {
