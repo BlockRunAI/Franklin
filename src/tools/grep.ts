@@ -20,6 +20,8 @@ interface GrepInput {
   multiline?: boolean;
 }
 
+const MAX_GREP_OUTPUT_CHARS = 16_000; // ~4,000 tokens — prevents huge grep results
+
 let _hasRipgrep: boolean | null = null;
 function hasRipgrep(): boolean {
   if (_hasRipgrep !== null) return _hasRipgrep;
@@ -107,6 +109,11 @@ function runRipgrep(
       output += `\n\n... (${lines.length - limited.length} more results, use head_limit to see more)`;
     }
 
+    // Cap total output to prevent context bloat
+    if (output.length > MAX_GREP_OUTPUT_CHARS) {
+      output = output.slice(0, MAX_GREP_OUTPUT_CHARS) + `\n... (output capped at ${MAX_GREP_OUTPUT_CHARS / 1000}KB — use more specific pattern or head_limit)`;
+    }
+
     return { output: output || 'No matches found' };
   } catch (err) {
     const exitErr = err as { status?: number; stdout?: string; stderr?: string };
@@ -165,6 +172,10 @@ function runNativeGrep(
 
     if (lines.length > limited.length) {
       output += `\n\n... (${lines.length - limited.length} more results)`;
+    }
+
+    if (output.length > MAX_GREP_OUTPUT_CHARS) {
+      output = output.slice(0, MAX_GREP_OUTPUT_CHARS) + `\n... (output capped at ${MAX_GREP_OUTPUT_CHARS / 1000}KB)`;
     }
 
     return { output: output || 'No matches found' };
