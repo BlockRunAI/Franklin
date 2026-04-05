@@ -24,267 +24,11 @@ import type {
   AgentConfig,
   CapabilityHandler,
   CapabilityInvocation,
-  CapabilityResult,
   ContentPart,
   Dialogue,
-  ExecutionScope,
   StreamEvent,
   UserContentPart,
 } from './types.js';
-
-// ─── Agent State ───────────────────────────────────────────────────────────
-
-interface CycleState {
-  history: Dialogue[];
-  turnIndex: number;
-  abort: AbortController;
-}
-
-// ─── Main Entry Point ──────────────────────────────────────────────────────
-
-/**
- * Run the agent loop.
- * Yields StreamEvents for the UI to render. Returns when the conversation ends.
- */
-export async function* runAgent(
-  config: AgentConfig,
-  initialPrompt: string
-): AsyncGenerator<StreamEvent, void> {
-  const client = new ModelClient({
-    apiUrl: config.apiUrl,
-    chain: config.chain,
-    debug: config.debug,
-  });
-
-  const capabilityMap = new Map<string, CapabilityHandler>();
-  for (const cap of config.capabilities) {
-    capabilityMap.set(cap.spec.name, cap);
-  }
-
-  const toolDefs = config.capabilities.map((c) => c.spec);
-  const maxTurns = config.maxTurns ?? 100;
-  const workDir = config.workingDir ?? process.cwd();
-
-  const state: CycleState = {
-    history: [
-      { role: 'user', content: initialPrompt },
-    ],
-    turnIndex: 0,
-    abort: new AbortController(),
-  };
-
-  // ─── Reasoning-Action Cycle ────────────────────────────────────────────
-
-  while (state.turnIndex < maxTurns) {
-    state.turnIndex++;
-
-    // 1. Call model
-    const { content: responseParts, usage } = await callModel(
-      client,
-      config,
-      state,
-      toolDefs
-    );
-
-    // Emit usage
-    yield {
-      kind: 'usage',
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      model: config.model,
-    };
-
-    // 2. Classify response parts
-    const textParts: string[] = [];
-    const invocations: CapabilityInvocation[] = [];
-
-    for (const part of responseParts) {
-      if (part.type === 'text') {
-        textParts.push(part.text);
-        yield { kind: 'text_delta', text: part.text };
-      } else if (part.type === 'tool_use') {
-        invocations.push(part);
-      } else if (part.type === 'thinking') {
-        yield { kind: 'thinking_delta', text: part.thinking };
-      }
-    }
-
-    // 3. Append assistant response to history
-    state.history.push({
-      role: 'assistant',
-      content: responseParts,
-    });
-
-    // 4. If no capability invocations, the agent is done
-    if (invocations.length === 0) {
-      yield { kind: 'turn_done', reason: 'completed' };
-      return;
-    }
-
-    // 5. Execute capabilities
-    const outcomes = await executeCapabilities(
-      invocations,
-      capabilityMap,
-      workDir,
-      state.abort,
-      (evt) => { config.onEvent?.(evt); },
-    );
-
-    // Emit capability results
-    for (const [invocation, result] of outcomes) {
-      yield {
-        kind: 'capability_done',
-        id: invocation.id,
-        result,
-      };
-    }
-
-    // 6. Append capability outcomes as user message
-    const outcomeContent: UserContentPart[] = outcomes.map(
-      ([invocation, result]) => ({
-        type: 'tool_result' as const,
-        tool_use_id: invocation.id,
-        content: result.output,
-        is_error: result.isError,
-      })
-    );
-
-    state.history.push({
-      role: 'user',
-      content: outcomeContent,
-    });
-
-    // Continue to next cycle...
-  }
-
-  yield { kind: 'turn_done', reason: 'max_turns' };
-}
-
-// ─── Model Call ────────────────────────────────────────────────────────────
-
-async function callModel(
-  client: ModelClient,
-  config: AgentConfig,
-  state: CycleState,
-  tools: import('./types.js').CapabilityDefinition[]
-): Promise<{ content: ContentPart[]; usage: { inputTokens: number; outputTokens: number } }> {
-  const systemPrompt = config.systemInstructions.join('\n\n');
-
-  return client.complete(
-    {
-      model: config.model,
-      messages: state.history,
-      system: systemPrompt,
-      tools,
-      max_tokens: 16384,
-      stream: true,
-    },
-    state.abort.signal
-  );
-}
-
-// ─── Capability Execution ──────────────────────────────────────────────────
-
-async function executeCapabilities(
-  invocations: CapabilityInvocation[],
-  handlers: Map<string, CapabilityHandler>,
-  workDir: string,
-  abort: AbortController,
-  emitEvent: (evt: StreamEvent) => void,
-  permissions?: PermissionManager,
-): Promise<[CapabilityInvocation, CapabilityResult][]> {
-  // Partition into concurrent-safe and sequential
-  const concurrent: CapabilityInvocation[] = [];
-  const sequential: CapabilityInvocation[] = [];
-
-  for (const inv of invocations) {
-    const handler = handlers.get(inv.name);
-    if (handler?.concurrent) {
-      concurrent.push(inv);
-    } else {
-      sequential.push(inv);
-    }
-  }
-
-  const results: [CapabilityInvocation, CapabilityResult][] = [];
-  const scope: ExecutionScope = {
-    workingDir: workDir,
-    abortSignal: abort.signal,
-  };
-
-  // Run concurrent capabilities in parallel
-  if (concurrent.length > 0) {
-    const batch = concurrent.map(async (inv) => {
-      const result = await checkAndRun(inv, handlers, scope, permissions, emitEvent);
-      return [inv, result] as [CapabilityInvocation, CapabilityResult];
-    });
-    const batchResults = await Promise.all(batch);
-    results.push(...batchResults);
-  }
-
-  // Run sequential capabilities one at a time
-  for (const inv of sequential) {
-    const result = await checkAndRun(inv, handlers, scope, permissions, emitEvent);
-    results.push([inv, result]);
-  }
-
-  return results;
-}
-
-async function checkAndRun(
-  invocation: CapabilityInvocation,
-  handlers: Map<string, CapabilityHandler>,
-  scope: ExecutionScope,
-  permissions: PermissionManager | undefined,
-  emitEvent: (evt: StreamEvent) => void,
-): Promise<CapabilityResult> {
-  // Permission check
-  if (permissions) {
-    const decision = await permissions.check(invocation.name, invocation.input);
-    if (decision.behavior === 'deny') {
-      return {
-        output: `Permission denied for ${invocation.name}: ${decision.reason || 'denied by policy'}`,
-        isError: true,
-      };
-    }
-    if (decision.behavior === 'ask') {
-      const allowed = await permissions.promptUser(invocation.name, invocation.input);
-      if (!allowed) {
-        return {
-          output: `User denied permission for ${invocation.name}`,
-          isError: true,
-        };
-      }
-    }
-  }
-
-  emitEvent({ kind: 'capability_start', id: invocation.id, name: invocation.name });
-  return runSingleCapability(invocation, handlers, scope);
-}
-
-async function runSingleCapability(
-  invocation: CapabilityInvocation,
-  handlers: Map<string, CapabilityHandler>,
-  scope: ExecutionScope
-): Promise<CapabilityResult> {
-  const handler = handlers.get(invocation.name);
-  if (!handler) {
-    return {
-      output: `Unknown capability: ${invocation.name}`,
-      isError: true,
-    };
-  }
-
-  try {
-    return await handler.execute(invocation.input, scope);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      output: `Error executing ${invocation.name}: ${message}`,
-      isError: true,
-    };
-  }
-}
 
 // ─── Interactive Session ───────────────────────────────────────────────────
 
@@ -315,6 +59,7 @@ export async function interactiveSession(
   const workDir = config.workingDir ?? process.cwd();
   const permissions = new PermissionManager(config.permissionMode ?? 'default');
   const history: Dialogue[] = [];
+  let lastUserInput = ''; // For /retry
 
   // Session persistence
   const sessionId = createSessionId();
@@ -329,13 +74,24 @@ export async function interactiveSession(
 
     // ── Slash command dispatch ──
     if (input.startsWith('/')) {
-      const cmdResult = await handleSlashCommand(input, {
-        history, config, client, sessionId, onEvent,
-      });
-      if (cmdResult.handled) continue;
-      if (cmdResult.rewritten) input = cmdResult.rewritten;
+      // /retry re-sends the last user message
+      if (input === '/retry') {
+        if (!lastUserInput) {
+          onEvent({ kind: 'text_delta', text: 'No previous message to retry.\n' });
+          onEvent({ kind: 'turn_done', reason: 'completed' });
+          continue;
+        }
+        input = lastUserInput;
+      } else {
+        const cmdResult = await handleSlashCommand(input, {
+          history, config, client, sessionId, onEvent,
+        });
+        if (cmdResult.handled) continue;
+        if (cmdResult.rewritten) input = cmdResult.rewritten;
+      }
     }
 
+    lastUserInput = input;
     history.push({ role: 'user', content: input });
     appendToSession(sessionId, { role: 'user', content: input });
     turnCount++;
