@@ -12,6 +12,8 @@ import { execSync } from 'node:child_process';
 import { BLOCKRUN_DIR, VERSION } from '../config.js';
 import { estimateHistoryTokens, getAnchoredTokenCount, getContextWindow, resetTokenAnchor } from './tokens.js';
 import { forceCompact } from './compact.js';
+import { getStatsSummary } from '../stats/tracker.js';
+import { resolveModel } from '../ui/model-picker.js';
 import { listSessions, loadSessionHistory, } from '../session/storage.js';
 // ─── Git helpers ──────────────────────────────────────────────────────────
 function gitExec(cmd, cwd, timeout = 5000, maxBuffer) {
@@ -28,7 +30,12 @@ function gitCmd(ctx, cmd, timeout, maxBuffer) {
         return gitExec(cmd, ctx.config.workingDir || process.cwd(), timeout, maxBuffer);
     }
     catch (e) {
-        ctx.onEvent({ kind: 'text_delta', text: `Git error: ${e.message?.split('\n')[0] || 'unknown'}\n` });
+        // Prefer stderr (actual git error message) over the noisy "Command failed: ..." header
+        const errObj = e;
+        const stderr = errObj.stderr ? String(errObj.stderr).trim() : '';
+        // Take only the first meaningful line (git sometimes dumps full usage on errors)
+        const firstLine = (stderr || errObj.message || 'unknown').split('\n')[0].trim();
+        ctx.onEvent({ kind: 'text_delta', text: `Git: ${firstLine}\n` });
         return null;
     }
 }
@@ -41,34 +48,51 @@ const DIRECT_COMMANDS = {
     '/stash': (ctx) => {
         const r = gitCmd(ctx, 'git stash push -m "runcode auto-stash"', 10000);
         if (r !== null)
-            ctx.onEvent({ kind: 'text_delta', text: r || 'No changes to stash.\n' });
+            ctx.onEvent({ kind: 'text_delta', text: r ? `${r}\n` : 'No changes to stash.\n' });
         emitDone(ctx);
     },
     '/unstash': (ctx) => {
         const r = gitCmd(ctx, 'git stash pop', 10000);
         if (r !== null)
-            ctx.onEvent({ kind: 'text_delta', text: r || 'Stash applied.\n' });
+            ctx.onEvent({ kind: 'text_delta', text: r ? `${r}\n` : 'Stash applied.\n' });
         emitDone(ctx);
     },
     '/log': (ctx) => {
         const r = gitCmd(ctx, 'git log --oneline -15 --no-color');
-        ctx.onEvent({ kind: 'text_delta', text: r ? `\`\`\`\n${r}\n\`\`\`\n` : 'No commits or not a git repo.\n' });
+        if (r !== null)
+            ctx.onEvent({ kind: 'text_delta', text: r ? `\`\`\`\n${r}\n\`\`\`\n` : 'No commits yet.\n' });
         emitDone(ctx);
     },
     '/status': (ctx) => {
         const r = gitCmd(ctx, 'git status --short --branch');
-        ctx.onEvent({ kind: 'text_delta', text: r ? `\`\`\`\n${r}\n\`\`\`\n` : 'Not a git repo.\n' });
+        if (r !== null)
+            ctx.onEvent({ kind: 'text_delta', text: r ? `\`\`\`\n${r}\n\`\`\`\n` : 'Working tree clean.\n' });
         emitDone(ctx);
     },
     '/diff': (ctx) => {
-        const r = gitCmd(ctx, 'git diff --stat && echo "---" && git diff', 10000, 512 * 1024);
-        ctx.onEvent({ kind: 'text_delta', text: r ? `\`\`\`diff\n${r}\n\`\`\`\n` : 'No changes.\n' });
+        // git diff with stat header then full diff
+        const stat = gitCmd(ctx, 'git diff --stat --no-color');
+        if (stat === null) {
+            emitDone(ctx);
+            return;
+        }
+        const full = gitCmd(ctx, 'git diff --no-color');
+        if (full === null) {
+            emitDone(ctx);
+            return;
+        }
+        if (!stat && !full) {
+            ctx.onEvent({ kind: 'text_delta', text: 'No unstaged changes.\n' });
+        }
+        else {
+            ctx.onEvent({ kind: 'text_delta', text: `\`\`\`diff\n${[stat, full].filter(Boolean).join('\n---\n')}\n\`\`\`\n` });
+        }
         emitDone(ctx);
     },
     '/undo': (ctx) => {
         const r = gitCmd(ctx, 'git reset --soft HEAD~1');
         if (r !== null)
-            ctx.onEvent({ kind: 'text_delta', text: 'Last commit undone. Changes preserved in staging.\n' });
+            ctx.onEvent({ kind: 'text_delta', text: `Last commit undone. Changes preserved in staging.\n` });
         emitDone(ctx);
     },
     '/tokens': (ctx) => {
@@ -256,6 +280,64 @@ const DIRECT_COMMANDS = {
         }
         emitDone(ctx);
     },
+    '/cost': async (ctx) => {
+        const { stats, saved } = getStatsSummary();
+        ctx.onEvent({ kind: 'text_delta', text: `**Session Cost**\n` +
+                `  Requests: ${stats.totalRequests}\n` +
+                `  Cost:     $${stats.totalCostUsd.toFixed(4)} USDC\n` +
+                `  Saved:    $${saved.toFixed(2)} vs Claude Opus\n` +
+                `  Tokens:   ${stats.totalInputTokens.toLocaleString()} in / ${stats.totalOutputTokens.toLocaleString()} out\n`
+        });
+        emitDone(ctx);
+    },
+    '/wallet': async (ctx) => {
+        const chain = (await import('../config.js')).loadChain();
+        try {
+            let address;
+            let balance;
+            if (chain === 'solana') {
+                const { getOrCreateSolanaWallet, setupAgentSolanaWallet } = await import('@blockrun/llm');
+                const w = await getOrCreateSolanaWallet();
+                address = w.address;
+                try {
+                    const client = await setupAgentSolanaWallet({ silent: true });
+                    const bal = await client.getBalance();
+                    balance = `$${bal.toFixed(2)} USDC`;
+                }
+                catch {
+                    balance = '(fetch failed)';
+                }
+            }
+            else {
+                const { getOrCreateWallet, setupAgentWallet } = await import('@blockrun/llm');
+                const w = getOrCreateWallet();
+                address = w.address;
+                try {
+                    const client = setupAgentWallet({ silent: true });
+                    const bal = await client.getBalance();
+                    balance = `$${bal.toFixed(2)} USDC`;
+                }
+                catch {
+                    balance = '(fetch failed)';
+                }
+            }
+            ctx.onEvent({ kind: 'text_delta', text: `**Wallet**\n` +
+                    `  Chain:   ${chain}\n` +
+                    `  Address: ${address}\n` +
+                    `  Balance: ${balance}\n`
+            });
+        }
+        catch (err) {
+            ctx.onEvent({ kind: 'text_delta', text: `Wallet error: ${err.message}\n` });
+        }
+        emitDone(ctx);
+    },
+    '/clear': (ctx) => {
+        ctx.history.length = 0;
+        resetTokenAnchor();
+        ctx.onEvent({ kind: 'text_delta', text: 'Conversation history cleared.\n' });
+        emitDone(ctx);
+    },
     '/compact': async (ctx) => {
         const beforeTokens = estimateHistoryTokens(ctx.history);
         const { history: compacted, compacted: didCompact } = await forceCompact(ctx.history, ctx.config.model, ctx.client, ctx.config.debug);
@@ -320,12 +402,28 @@ export async function handleSlashCommand(input, ctx) {
         await DIRECT_COMMANDS[input](ctx);
         return { handled: true };
     }
+    // /model — show current model or switch with /model <name>
+    if (input === '/model' || input.startsWith('/model ')) {
+        if (input === '/model') {
+            ctx.onEvent({ kind: 'text_delta', text: `Current model: **${ctx.config.model}**\n` +
+                    `Switch with: \`/model <name>\` (e.g. \`/model sonnet\`, \`/model free\`, \`/model gemini\`)\n`
+            });
+        }
+        else {
+            const newModel = resolveModel(input.slice(7).trim());
+            ctx.config.model = newModel;
+            ctx.onEvent({ kind: 'text_delta', text: `Model → **${newModel}**\n` });
+        }
+        emitDone(ctx);
+        return { handled: true };
+    }
     // /branch has both no-arg and with-arg forms
     if (input === '/branch' || input.startsWith('/branch ')) {
         const cwd = ctx.config.workingDir || process.cwd();
         if (input === '/branch') {
             const r = gitCmd(ctx, 'git branch -v --no-color');
-            ctx.onEvent({ kind: 'text_delta', text: r ? `\`\`\`\n${r}\n\`\`\`\n` : 'Not a git repo.\n' });
+            if (r !== null)
+                ctx.onEvent({ kind: 'text_delta', text: r ? `\`\`\`\n${r}\n\`\`\`\n` : 'No branches yet.\n' });
         }
         else {
             const branchName = input.slice(8).trim();

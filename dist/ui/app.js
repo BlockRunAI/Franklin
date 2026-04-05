@@ -171,8 +171,10 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     setStreamText('');
                     setTools(new Map());
                     setTurnTokens({ input: 0, output: 0 });
-                    setStatusMsg('Conversation cleared');
-                    setTimeout(() => setStatusMsg(''), 3000);
+                    setWaiting(true);
+                    setReady(false);
+                    // Pass through to agent loop to clear the actual conversation history
+                    onSubmit('/clear');
                     return;
                 case '/retry':
                     if (!lastPrompt) {
