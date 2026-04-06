@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/runcode",
-  "version": "2.5.8",
+  "version": "2.5.11",
   "description": "RunCode — AI coding agent powered by 41+ models. Pay per use with USDC.",
   "type": "module",
   "bin": {
@@ -14,7 +14,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "node --test --test-reporter=spec test/e2e.mjs",
+    "test:watch": "node --test --watch test/e2e.mjs"
   },
   "keywords": [
     "runcode",

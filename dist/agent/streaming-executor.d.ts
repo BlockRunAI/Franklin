@@ -10,12 +10,14 @@ export declare class StreamingExecutor {
     private scope;
     private permissions?;
     private onStart;
+    private onProgress?;
     private pending;
     constructor(opts: {
         handlers: Map<string, CapabilityHandler>;
         scope: ExecutionScope;
         permissions?: PermissionManager;
-        onStart: (id: string, name: string) => void;
+        onStart: (id: string, name: string, preview?: string) => void;
+        onProgress?: (id: string, text: string) => void;
     });
     /**
      * Called when a tool_use block is fully received from the stream.
@@ -29,4 +31,6 @@ export declare class StreamingExecutor {
      */
     collectResults(allInvocations: CapabilityInvocation[]): Promise<[CapabilityInvocation, CapabilityResult][]>;
     private executeWithPermissions;
+    /** Extract a short preview string from a tool invocation's input. */
+    private inputPreview;
 }

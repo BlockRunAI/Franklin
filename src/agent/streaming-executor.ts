@@ -21,19 +21,22 @@ export class StreamingExecutor {
   private handlers: Map<string, CapabilityHandler>;
   private scope: ExecutionScope;
   private permissions?: PermissionManager;
-  private onStart: (id: string, name: string) => void;
+  private onStart: (id: string, name: string, preview?: string) => void;
+  private onProgress?: (id: string, text: string) => void;
   private pending: PendingTool[] = [];
 
   constructor(opts: {
     handlers: Map<string, CapabilityHandler>;
     scope: ExecutionScope;
     permissions?: PermissionManager;
-    onStart: (id: string, name: string) => void;
+    onStart: (id: string, name: string, preview?: string) => void;
+    onProgress?: (id: string, text: string) => void;
   }) {
     this.handlers = opts.handlers;
     this.scope = opts.scope;
     this.permissions = opts.permissions;
     this.onStart = opts.onStart;
+    this.onProgress = opts.onProgress;
   }
 
   /**
@@ -46,13 +49,13 @@ export class StreamingExecutor {
     const isConcurrent = handler?.concurrent ?? false;
 
     if (isConcurrent) {
-      // Start executing immediately
-      this.onStart(invocation.id, invocation.name);
-      const promise = this.executeWithPermissions(invocation);
+      // Concurrent tools are auto-allowed — start immediately and time from here
+      const preview = this.inputPreview(invocation);
+      this.onStart(invocation.id, invocation.name, preview);
+      const promise = this.executeWithPermissions(invocation, 1, false);
       this.pending.push({ invocation, promise });
     }
-    // Non-concurrent tools are NOT started here — they'll be executed
-    // via getRemainingResults after the model finishes streaming
+    // Non-concurrent tools are NOT started here — executed via collectResults
   }
 
   /**
@@ -67,6 +70,16 @@ export class StreamingExecutor {
     const pendingSnapshot = [...this.pending];
     this.pending = []; // Clear immediately so errors don't leave stale state
 
+    // Pre-count pending sequential invocations per tool type.
+    // Shown in permission dialog: "N pending — press [a] to allow all".
+    const pendingCounts: Map<string, number> = new Map();
+    for (const inv of allInvocations) {
+      if (!alreadyStarted.has(inv.id)) {
+        pendingCounts.set(inv.name, (pendingCounts.get(inv.name) || 0) + 1);
+      }
+    }
+    const remainingCounts = new Map(pendingCounts);
+
     try {
       // Wait for concurrent results that were started during streaming
       for (const p of pendingSnapshot) {
@@ -78,8 +91,12 @@ export class StreamingExecutor {
       for (const inv of allInvocations) {
         if (alreadyStarted.has(inv.id)) continue;
 
-        this.onStart(inv.id, inv.name);
-        const result = await this.executeWithPermissions(inv);
+        const remaining = remainingCounts.get(inv.name) ?? 1;
+        remainingCounts.set(inv.name, remaining - 1);
+
+        // NOTE: onStart is called INSIDE executeWithPermissions, AFTER permission is granted.
+        // This ensures elapsed time reflects actual execution time, not permission wait time.
+        const result = await this.executeWithPermissions(inv, remaining, true);
         results.push([inv, result]);
       }
     } catch (err) {
@@ -91,26 +108,34 @@ export class StreamingExecutor {
   }
 
   private async executeWithPermissions(
-    invocation: CapabilityInvocation
+    invocation: CapabilityInvocation,
+    pendingCount = 1,
+    callStart = true  // false for concurrent tools (already called in onToolReceived)
   ): Promise<CapabilityResult> {
     // Permission check
     if (this.permissions) {
       const decision = await this.permissions.check(invocation.name, invocation.input);
       if (decision.behavior === 'deny') {
         return {
-          output: `Permission denied for ${invocation.name}: ${decision.reason || 'denied by policy'}`,
+          output: `Permission denied for ${invocation.name}: ${decision.reason || 'denied by policy'}. Do not retry — explain to the user what you were trying to do and ask how they'd like to proceed.`,
           isError: true,
         };
       }
       if (decision.behavior === 'ask') {
-        const allowed = await this.permissions.promptUser(invocation.name, invocation.input);
+        const allowed = await this.permissions.promptUser(invocation.name, invocation.input, pendingCount);
         if (!allowed) {
           return {
-            output: `User denied permission for ${invocation.name}`,
+            output: `User denied permission for ${invocation.name}. Do not retry — ask the user what they'd like to do instead.`,
             isError: true,
           };
         }
       }
+    }
+
+    // Start timing AFTER permission is granted (accurate elapsed time)
+    if (callStart) {
+      const preview = this.inputPreview(invocation);
+      this.onStart(invocation.id, invocation.name, preview);
     }
 
     const handler = this.handlers.get(invocation.name);
@@ -118,13 +143,45 @@ export class StreamingExecutor {
       return { output: `Unknown capability: ${invocation.name}`, isError: true };
     }
 
+    // Wire per-invocation progress to onProgress callback
+    const progressScope: ExecutionScope = this.onProgress
+      ? {
+          ...this.scope,
+          onProgress: (text: string) => this.onProgress!(invocation.id, text),
+        }
+      : this.scope;
+
     try {
-      return await handler.execute(invocation.input, this.scope);
+      return await handler.execute(invocation.input, progressScope);
     } catch (err) {
       return {
         output: `Error executing ${invocation.name}: ${(err as Error).message}`,
         isError: true,
       };
+    }
+  }
+
+  /** Extract a short preview string from a tool invocation's input. */
+  private inputPreview(invocation: CapabilityInvocation): string | undefined {
+    const input = invocation.input;
+    switch (invocation.name) {
+      case 'Bash': {
+        const cmd = (input.command as string) || '';
+        return cmd.length > 80 ? cmd.slice(0, 80) + '…' : cmd;
+      }
+      case 'Write':
+      case 'Read':
+      case 'Edit':
+        return (input.file_path as string) || undefined;
+      case 'Grep':
+        return (input.pattern as string) || undefined;
+      case 'Glob':
+        return (input.pattern as string) || undefined;
+      case 'WebFetch':
+      case 'WebSearch':
+        return ((input.url ?? input.query) as string) || undefined;
+      default:
+        return undefined;
     }
   }
 }
