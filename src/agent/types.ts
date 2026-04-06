@@ -90,12 +90,19 @@ export interface StreamCapabilityStart {
   kind: 'capability_start';
   id: string;
   name: string;
+  preview?: string; // Short description shown in spinner (e.g. truncated command for Bash)
 }
 
 export interface StreamCapabilityInputDelta {
   kind: 'capability_input_delta';
   id: string;
   delta: string;
+}
+
+export interface StreamCapabilityProgress {
+  kind: 'capability_progress';
+  id: string;
+  text: string; // Latest output snippet — streams last-line while tool is running
 }
 
 export interface StreamCapabilityDone {
@@ -122,6 +129,7 @@ export type StreamEvent =
   | StreamThinkingDelta
   | StreamCapabilityStart
   | StreamCapabilityInputDelta
+  | StreamCapabilityProgress
   | StreamCapabilityDone
   | StreamTurnDone
   | StreamUsageInfo;
@@ -141,4 +149,10 @@ export interface AgentConfig {
   debug?: boolean;
   /** Ultrathink mode: inject deep-reasoning instruction into every prompt */
   ultrathink?: boolean;
+  /**
+   * Permission prompt function — injected by Ink UI to avoid stdin conflict.
+   * Replaces the readline-based askQuestion() when running in interactive mode.
+   * Returns 'yes' | 'no' | 'always' (always = allow for rest of session).
+   */
+  permissionPromptFn?: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
 }

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { render, Box, Text, useApp, useInput, useStdout } from 'ink';
+import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import type { StreamEvent } from '../agent/types.js';
@@ -74,11 +74,18 @@ interface ToolStatus {
   startTime: number;
   done: boolean;
   error: boolean;
-  preview: string;
+  preview: string;    // input preview (command/path) shown in spinner
+  liveOutput: string; // latest output line while running
   elapsed: number;
 }
 
 type UIMode = 'input' | 'model-picker';
+
+interface PermissionRequest {
+  toolName: string;
+  description: string;
+  resolve: (result: 'yes' | 'no' | 'always') => void;
+}
 
 // ─── Main App ──────────────────────────────────────────────────────────────
 
@@ -105,6 +112,8 @@ function RunCodeApp({
   const [thinking, setThinking] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const [tools, setTools] = useState<Map<string, ToolStatus>>(new Map());
+  // Completed tool results committed to Static (permanent scrollback — no re-render artifacts)
+  const [completedTools, setCompletedTools] = useState<Array<ToolStatus & { key: string }>>([]);
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS[0].id);
   const [ready, setReady] = useState(!startWithPicker);
   const [mode, setMode] = useState<UIMode>(startWithPicker ? 'model-picker' : 'input');
@@ -119,12 +128,33 @@ function RunCodeApp({
   const [lastPrompt, setLastPrompt] = useState('');
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
+  const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+
+  // Permission dialog key handler — captures y/n/a when dialog is visible.
+  // Must be registered before other handlers so it takes priority.
+  useInput((ch, _key) => {
+    if (!permissionRequest) return;
+    const c = ch.toLowerCase();
+    if (c === 'y') {
+      const r = permissionRequest.resolve;
+      setPermissionRequest(null);
+      r('yes');
+    } else if (c === 'n') {
+      const r = permissionRequest.resolve;
+      setPermissionRequest(null);
+      r('no');
+    } else if (c === 'a') {
+      const r = permissionRequest.resolve;
+      setPermissionRequest(null);
+      r('always');
+    }
+  }, { isActive: !!permissionRequest });
 
   // Key handler for picker + esc + abort
   const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input) || !ready;
   useInput((ch, key) => {
-    // Escape during generation → abort current turn
-    if (key.escape && !ready) {
+    // Escape during generation → abort current turn (skip if permission dialog open)
+    if (key.escape && !ready && !permissionRequest) {
       onAbort();
       setStatusMsg('Aborted');
       setReady(true);
@@ -285,6 +315,7 @@ function RunCodeApp({
     setThinking(false);
     setThinkingText('');
     setTools(new Map());
+    setCompletedTools([]);
     setReady(false);
     setWaiting(true);
     setStatusMsg('');
@@ -294,10 +325,17 @@ function RunCodeApp({
     onSubmit(trimmed);
   }, [currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
 
-  // Expose event handler + balance updater
+  // Expose event handler, balance updater, and permission bridge
   useEffect(() => {
     (globalThis as Record<string, unknown>).__runcode_ui = {
       updateBalance: (bal: string) => setBalance(bal),
+      requestPermission: (toolName: string, description: string): Promise<'yes' | 'no' | 'always'> => {
+        return new Promise((resolve) => {
+          // Ring the terminal bell — causes tab to show notification badge in iTerm2/Terminal.app
+          process.stderr.write('\x07');
+          setPermissionRequest({ toolName, description, resolve });
+        });
+      },
       handleEvent: (event: StreamEvent) => {
         switch (event.kind) {
           case 'text_delta':
@@ -320,26 +358,49 @@ function RunCodeApp({
               const next = new Map(prev);
               next.set(event.id, {
                 name: event.name, startTime: Date.now(),
-                done: false, error: false, preview: '', elapsed: 0,
+                done: false, error: false,
+                preview: event.preview || '',
+                liveOutput: '',
+                elapsed: 0,
               });
               return next;
             });
             break;
-          case 'capability_done':
+          case 'capability_progress':
+            setTools(prev => {
+              const t = prev.get(event.id);
+              if (!t || t.done) return prev;
+              const next = new Map(prev);
+              next.set(event.id, { ...t, liveOutput: event.text });
+              return next;
+            });
+            break;
+          case 'capability_done': {
             setTools(prev => {
               const next = new Map(prev);
               const t = next.get(event.id);
               if (t) {
-                next.set(event.id, {
-                  ...t, done: true,
+                // On success: show input preview (command/path). On error: show error output.
+                const resultPreview = event.result.isError
+                  ? event.result.output.replace(/\n/g, ' ').slice(0, 150)
+                  : (t.preview || event.result.output.replace(/\n/g, ' ').slice(0, 120));
+                const completed: ToolStatus & { key: string } = {
+                  ...t,
+                  key: event.id,
+                  done: true,
                   error: !!event.result.isError,
-                  preview: event.result.output.replace(/\n/g, ' ').slice(0, 200),
+                  preview: resultPreview,
+                  liveOutput: '',
                   elapsed: Date.now() - t.startTime,
-                });
+                };
+                // Move to Static (permanent scrollback) — prevents re-render artifacts
+                setCompletedTools(prev2 => [...prev2, completed]);
+                next.delete(event.id);
               }
               return next;
             });
             break;
+          }
           case 'usage':
             setCurrentModel(event.model);
             setTurnTokens(prev => ({
@@ -460,16 +521,51 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Active tools */}
+      {/* Completed tools — Static commits them permanently to scrollback, no re-render artifacts */}
+      <Static items={completedTools}>
+        {(tool) => (
+          <Box key={tool.key} marginLeft={1}>
+            {tool.error
+              ? <Text color="red">  ✗ {tool.name} <Text dimColor>{tool.elapsed}ms{tool.preview ? ` — ${tool.preview}` : ''}</Text></Text>
+              : <Text color="green">  ✓ {tool.name} <Text dimColor>{tool.elapsed}ms{tool.preview ? ` — ${tool.preview}` : ''}</Text></Text>
+            }
+          </Box>
+        )}
+      </Static>
+
+      {/* Permission dialog — rendered inline, captured via useInput above */}
+      {permissionRequest && (
+        <Box flexDirection="column" marginTop={1} marginLeft={1}>
+          <Text color="yellow">  ╭─ Permission required ─────────────────</Text>
+          <Text color="yellow">  │ <Text bold>{permissionRequest.toolName}</Text></Text>
+          {permissionRequest.description.split('\n').map((line, i) => (
+            <Text key={i} dimColor>  {line}</Text>
+          ))}
+          <Text color="yellow">  ╰─────────────────────────────────────</Text>
+          <Box marginLeft={2}>
+            <Text>
+              <Text bold color="green">[y]</Text>
+              <Text dimColor> yes  </Text>
+              <Text bold color="red">[n]</Text>
+              <Text dimColor> no  </Text>
+              <Text bold color="cyan">[a]</Text>
+              <Text dimColor> always allow this session</Text>
+            </Text>
+          </Box>
+        </Box>
+      )}
+
+      {/* Active (in-progress) tools — shows command preview + live output line */}
       {Array.from(tools.entries()).map(([id, tool]) => (
-        <Box key={id} marginLeft={1}>
-          {tool.done ? (
-            tool.error
-              ? <Text color="red">  ✗ {tool.name} <Text dimColor>{tool.elapsed}ms</Text></Text>
-              : <Text color="green">  ✓ {tool.name} <Text dimColor>{tool.elapsed}ms — {tool.preview.slice(0, 200)}{tool.preview.length > 200 ? '...' : ''}</Text></Text>
-          ) : (
-            <Text color="cyan">  <Spinner type="dots" /> {tool.name}... <Text dimColor>{(() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? `${s}s` : ''; })()}</Text></Text>
-          )}
+        <Box key={id} flexDirection="column" marginLeft={1}>
+          <Text color="cyan">
+            {'  '}<Spinner type="dots" />{' '}{tool.name}
+            {tool.preview ? <Text dimColor>: {tool.preview}</Text> : null}
+            <Text dimColor>{(() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? ` ${s}s` : ''; })()}</Text>
+          </Text>
+          {tool.liveOutput ? (
+            <Text dimColor>  └ {tool.liveOutput}</Text>
+          ) : null}
         </Box>
       ))}
 
@@ -507,17 +603,15 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Full-width input box */}
-      {ready && (
-        <InputBox
-          input={input}
-          setInput={setInput}
-          onSubmit={handleSubmit}
-          model={currentModel}
-          balance={balance}
-          focused={mode === 'input'}
-        />
-      )}
+      {/* Full-width input box — always visible, focused only when ready and no permission dialog */}
+      <InputBox
+        input={ready ? input : ''}
+        setInput={ready ? setInput : () => {}}
+        onSubmit={ready ? handleSubmit : () => {}}
+        model={currentModel}
+        balance={balance}
+        focused={ready && !permissionRequest}
+      />
     </Box>
   );
 }
@@ -530,6 +624,7 @@ export interface InkUIHandle {
   waitForInput: () => Promise<string | null>;
   onAbort: (cb: () => void) => void;
   cleanup: () => void;
+  requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
 }
 
 export function launchInkUI(opts: {
@@ -586,5 +681,11 @@ export function launchInkUI(opts: {
     },
     onAbort: (cb: () => void) => { abortCallback = cb; },
     cleanup: () => { instance.unmount(); },
+    requestPermission: (toolName: string, description: string) => {
+      const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
+        requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
+      } | undefined;
+      return ui?.requestPermission(toolName, description) ?? Promise.resolve('no' as const);
+    },
   };
 }
