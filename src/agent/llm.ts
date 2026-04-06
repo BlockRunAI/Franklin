@@ -14,7 +14,7 @@ import {
   solanaKeyToBytes,
   SOLANA_NETWORK,
 } from '@blockrun/llm';
-import { VERSION, type Chain } from '../config.js';
+import { USER_AGENT, type Chain } from '../config.js';
 import type {
   Dialogue,
   CapabilityDefinition,
@@ -90,7 +90,7 @@ export class ModelClient {
       'Content-Type': 'application/json',
       'anthropic-version': '2023-06-01',
       'x-api-key': 'x402-agent-handles-auth',
-      'User-Agent': `runcode/${VERSION}`,
+      'User-Agent': USER_AGENT,
     };
 
     if (this.debug) {
