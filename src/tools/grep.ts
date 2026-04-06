@@ -53,18 +53,27 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   const limit = opts.head_limit ?? 250;
 
   if (hasRipgrep()) {
-    return runRipgrep(opts, searchPath, mode, limit);
+    return runRipgrep(opts, searchPath, mode, limit, ctx.workingDir);
   }
-  return runNativeGrep(opts, searchPath, mode, limit);
+  return runNativeGrep(opts, searchPath, mode, limit, ctx.workingDir);
+}
+
+function toRelative(absPath: string, cwd: string): string {
+  const rel = path.relative(cwd, absPath);
+  return rel.startsWith('..') ? absPath : rel;
 }
 
 function runRipgrep(
   opts: GrepInput,
   searchPath: string,
   mode: string,
-  limit: number
+  limit: number,
+  cwd: string
 ): CapabilityResult {
   const args: string[] = [];
+
+  // Limit line length to prevent base64/minified content from cluttering output
+  args.push('--max-columns', '500');
 
   switch (mode) {
     case 'files_with_matches':
@@ -104,7 +113,19 @@ function runRipgrep(
 
     const lines = result.split('\n').filter(Boolean);
     const limited = limit > 0 ? lines.slice(0, limit) : lines;
-    let output = limited.join('\n');
+
+    // Convert absolute paths to relative paths to save tokens (same as Claude Code)
+    const relativized = limited.map(line => {
+      // Lines: /abs/path or /abs/path:rest (content mode)
+      const colonIdx = line.indexOf(':');
+      if (colonIdx > 0 && line.startsWith('/')) {
+        const filePart = line.slice(0, colonIdx);
+        return toRelative(filePart, cwd) + line.slice(colonIdx);
+      }
+      return line.startsWith('/') ? toRelative(line, cwd) : line;
+    });
+
+    let output = relativized.join('\n');
 
     if (lines.length > limited.length) {
       output += `\n\n... (${lines.length - limited.length} more results, use head_limit to see more)`;
@@ -132,7 +153,8 @@ function runNativeGrep(
   opts: GrepInput,
   searchPath: string,
   mode: string,
-  limit: number
+  limit: number,
+  cwd: string
 ): CapabilityResult {
   const args: string[] = ['-r', '-n'];
 
@@ -170,7 +192,16 @@ function runNativeGrep(
 
     const lines = result.split('\n').filter(Boolean);
     const limited = limit > 0 ? lines.slice(0, limit) : lines;
-    let output = limited.join('\n');
+
+    const relativized = limited.map(line => {
+      const colonIdx = line.indexOf(':');
+      if (colonIdx > 0 && line.startsWith('/')) {
+        return toRelative(line.slice(0, colonIdx), cwd) + line.slice(colonIdx);
+      }
+      return line.startsWith('/') ? toRelative(line, cwd) : line;
+    });
+
+    let output = relativized.join('\n');
 
     if (lines.length > limited.length) {
       output += `\n\n... (${lines.length - limited.length} more results)`;
