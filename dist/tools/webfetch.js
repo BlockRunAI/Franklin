@@ -1,7 +1,7 @@
 /**
  * WebFetch capability — fetch web page content.
  */
-import { VERSION } from '../config.js';
+import { USER_AGENT } from '../config.js';
 const MAX_BODY_BYTES = 256 * 1024; // 256KB
 // ─── Session cache ──────────────────────────────────────────────────────────
 // Avoids re-fetching the same URL within a session (common in research tasks).
@@ -56,7 +56,7 @@ async function execute(input, _ctx) {
         const response = await fetch(url, {
             signal: controller.signal,
             headers: {
-                'User-Agent': `runcode/${VERSION} (coding-agent)`,
+                'User-Agent': USER_AGENT,
                 'Accept': 'text/html,application/json,text/plain,*/*',
             },
             redirect: 'follow',
