@@ -13,13 +13,14 @@ import { estimateCost } from '../pricing.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
-function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, focused }: {
+function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, focused }: {
   input: string;
   setInput: (v: string) => void;
   onSubmit: (v: string) => void;
   model: string;
   balance: string;
   sessionCost: number;
+  queued?: string;
   focused?: boolean;
 }) {
   const { stdout } = useStdout();
@@ -32,13 +33,16 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, focu
       <Box>
         <Text dimColor>│ </Text>
         <Box width={innerWidth}>
-          <TextInput
-            value={input}
-            onChange={setInput}
-            onSubmit={onSubmit}
-            placeholder="Ask anything... (/help for commands)"
-            focus={focused !== false}
-          />
+          {queued
+            ? <Text color="yellow">⏎ queued: {queued.slice(0, innerWidth - 12)}{queued.length > innerWidth - 12 ? '…' : ''}</Text>
+            : <TextInput
+                value={input}
+                onChange={setInput}
+                onSubmit={onSubmit}
+                placeholder="Type next message... (queued while AI runs)"
+                focus={focused !== false}
+              />
+          }
         </Box>
         <Text dimColor>{' '.repeat(Math.max(0, cols - innerWidth - 4))}│</Text>
       </Box>
@@ -138,18 +142,22 @@ function RunCodeApp({
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+  // Message queued while agent is busy — auto-submitted when turn completes
+  const [queuedInput, setQueuedInput] = useState('');
   const turnDoneCallbackRef = useRef<(() => void) | null>(null);
   // Refs to read current state values inside memoized event handlers (avoids stale closures)
   const streamTextRef = useRef('');
   const turnTokensRef = useRef({ input: 0, output: 0 });
   const totalCostRef = useRef(0);
   const latestResponseRef = useRef<{ text: string; tokens: { input: number; output: number }; cost: number } | null>(null);
+  const queuedInputRef = useRef('');
 
   // Keep refs in sync so memoized event handlers can read current values
   streamTextRef.current = streamText;
   turnTokensRef.current = turnTokens;
   totalCostRef.current = totalCost;
   latestResponseRef.current = latestResponse;
+  queuedInputRef.current = queuedInput;
 
   // Permission dialog key handler — captures y/n/a when dialog is visible.
   // Must be registered before other handlers so it takes priority.
@@ -232,6 +240,13 @@ function RunCodeApp({
   const handleSubmit = useCallback((value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
+
+    // If agent is busy, queue the message — it will be auto-submitted when the turn finishes
+    if (!ready) {
+      setQueuedInput(trimmed);
+      setInput('');
+      return;
+    }
 
     // Bare exit/quit (no slash needed)
     const lower = trimmed.toLowerCase();
@@ -460,13 +475,29 @@ function RunCodeApp({
             setThinkingText('');
             // Trigger balance refresh after each completed turn
             turnDoneCallbackRef.current?.();
+            // Auto-submit any message queued while agent was busy
+            const queued = queuedInputRef.current;
+            if (queued) {
+              setQueuedInput('');
+              // Small delay so React can flush the ready=true state first
+              setTimeout(() => {
+                const fn = (globalThis as Record<string, unknown>).__runcode_submit;
+                if (typeof fn === 'function') fn(queued);
+              }, 50);
+            }
             break;
           }
         }
       },
     };
-    return () => { delete (globalThis as Record<string, unknown>).__runcode_ui; };
-  }, []);
+    (globalThis as Record<string, unknown>).__runcode_submit = (msg: string) => {
+      handleSubmit(msg);
+    };
+    return () => {
+      delete (globalThis as Record<string, unknown>).__runcode_ui;
+      delete (globalThis as Record<string, unknown>).__runcode_submit;
+    };
+  }, [handleSubmit]);
 
   // ── Model Picker ──
   if (mode === 'model-picker') {
@@ -666,13 +697,14 @@ function RunCodeApp({
 
       {/* Full-width input box — always visible, focused only when ready and no permission dialog */}
       <InputBox
-        input={ready ? input : ''}
-        setInput={ready ? setInput : () => {}}
-        onSubmit={ready ? handleSubmit : () => {}}
+        input={input}
+        setInput={setInput}
+        onSubmit={handleSubmit}
         model={currentModel}
         balance={balance}
         sessionCost={totalCost}
-        focused={ready && !permissionRequest}
+        queued={queuedInput || undefined}
+        focused={!permissionRequest && !queuedInput}
       />
     </Box>
   );
