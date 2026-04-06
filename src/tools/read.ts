@@ -12,6 +12,13 @@ interface ReadInput {
   limit?: number;
 }
 
+/**
+ * Tracks files that were only partially read (offset or limit applied).
+ * Edit tool uses this to warn when editing without full context.
+ * Exported so edit.ts can check and clear entries.
+ */
+export const partiallyReadFiles = new Set<string>();
+
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
   const { file_path: filePath, offset, limit } = input as unknown as ReadInput;
 
@@ -53,6 +60,15 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     const maxLines = limit ?? 2000;
     const endLine = Math.min(allLines.length, startLine + maxLines);
     const slice = allLines.slice(startLine, endLine);
+
+    // Track partial reads — file was not read from the beginning or was truncated
+    const isPartial = startLine > 0 || endLine < allLines.length;
+    if (isPartial) {
+      partiallyReadFiles.add(resolved);
+    } else {
+      // Full read — clear any stale partial flag
+      partiallyReadFiles.delete(resolved);
+    }
 
     // Format with line numbers (cat -n style)
     const numbered = slice.map((line, i) => `${startLine + i + 1}\t${line}`);
