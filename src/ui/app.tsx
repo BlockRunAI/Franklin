@@ -123,10 +123,10 @@ function RunCodeApp({
   const [tools, setTools] = useState<Map<string, ToolStatus>>(new Map());
   // Completed tool results committed to Static (permanent scrollback — no re-render artifacts)
   const [completedTools, setCompletedTools] = useState<Array<ToolStatus & { key: string }>>([]);
-  // Latest completed response — shown in full in the dynamic area (always visible)
-  const [latestResponse, setLatestResponse] = useState<{ text: string; tokens: { input: number; output: number }; cost: number } | null>(null);
-  // Older responses folded to one-line summaries committed to Static (scrollable)
-  const [foldedResponses, setFoldedResponses] = useState<Array<{ key: string; summary: string }>>([]);
+  // Full responses committed to Static immediately — goes into terminal scrollback like Claude Code
+  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number }; cost: number }>>([]);
+  // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
+  const [responsePreview, setResponsePreview] = useState('');
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS[0].id);
   const [ready, setReady] = useState(!startWithPicker);
   const [mode, setMode] = useState<UIMode>(startWithPicker ? 'model-picker' : 'input');
@@ -149,14 +149,12 @@ function RunCodeApp({
   const streamTextRef = useRef('');
   const turnTokensRef = useRef({ input: 0, output: 0 });
   const totalCostRef = useRef(0);
-  const latestResponseRef = useRef<{ text: string; tokens: { input: number; output: number }; cost: number } | null>(null);
   const queuedInputRef = useRef('');
 
   // Keep refs in sync so memoized event handlers can read current values
   streamTextRef.current = streamText;
   turnTokensRef.current = turnTokens;
   totalCostRef.current = totalCost;
-  latestResponseRef.current = latestResponse;
   queuedInputRef.current = queuedInput;
 
   // Permission dialog key handler — captures y/n/a when dialog is visible.
@@ -343,19 +341,9 @@ function RunCodeApp({
     }
 
     // ── Normal prompt ──
-    // Fold the previous response to a one-line summary before starting a new turn
-    const prev = latestResponseRef.current;
-    if (prev?.text.trim()) {
-      const firstLine = prev.text.replace(/\n+/g, ' ').trim().slice(0, 100);
-      const summary = firstLine.length < prev.text.trim().length ? firstLine + '…' : firstLine;
-      const tokStr = prev.tokens.input > 0
-        ? `  [${prev.tokens.input.toLocaleString()} in / ${prev.tokens.output.toLocaleString()} out]`
-        : '';
-      setFoldedResponses(rs => [...rs, { key: String(Date.now()), summary: summary + tokStr }]);
-      setLatestResponse(null);
-    }
+    setResponsePreview('');
     setLastPrompt(trimmed);
-    setInputHistory(prev2 => [...prev2.slice(-49), trimmed]); // Keep last 50
+    setInputHistory(prev => [...prev.slice(-49), trimmed]); // Keep last 50
     setHistoryIdx(-1);
     setInput('');
     setStreamText('');
@@ -458,15 +446,19 @@ function RunCodeApp({
             setTotalCost(prev => prev + estimateCost(event.model, event.inputTokens, event.outputTokens));
             break;
           case 'turn_done': {
-            // Move streamed response to latestResponse (shown in full, dynamic area).
-            // On the next turn, latestResponse gets folded to a one-line summary in Static.
+            // Commit full response to Static immediately — enters terminal scrollback like Claude Code.
+            // Also keep a short preview (last 5 lines) visible in the dynamic area.
             const text = streamTextRef.current;
             if (text.trim()) {
-              setLatestResponse({
+              setCommittedResponses(rs => [...rs, {
+                key: String(Date.now()),
                 text,
                 tokens: turnTokensRef.current,
                 cost: totalCostRef.current,
-              });
+              }]);
+              // Preview = last 5 non-empty lines of the response
+              const previewLines = text.split('\n').filter(l => l.trim()).slice(-5).join('\n');
+              setResponsePreview(previewLines);
               setStreamText('');
             }
             setReady(true);
@@ -611,11 +603,19 @@ function RunCodeApp({
         )}
       </Static>
 
-      {/* Older responses folded to one-line summaries — permanently in scrollback */}
-      <Static items={foldedResponses}>
+      {/* Full responses — committed to Static immediately so all content enters terminal scrollback */}
+      <Static items={committedResponses}>
         {(r) => (
-          <Box key={r.key} marginLeft={1}>
-            <Text dimColor>  ↑ {r.summary}</Text>
+          <Box key={r.key} flexDirection="column">
+            <Text>{r.text}</Text>
+            {(r.tokens.input > 0 || r.tokens.output > 0) && (
+              <Box marginLeft={1}>
+                <Text dimColor>
+                  {r.tokens.input.toLocaleString()} in / {r.tokens.output.toLocaleString()} out
+                  {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)} session` : ''}
+                </Text>
+              </Box>
+            )}
           </Box>
         )}
       </Static>
@@ -680,18 +680,12 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Latest completed response — shown in full, always visible above the input box */}
-      {latestResponse && !streamText && (
+      {/* Preview of latest response — last 5 lines shown in dynamic area for quick reference.
+          Full text is already in Static/scrollback above. Cleared when next turn starts. */}
+      {responsePreview && !streamText && (
         <Box flexDirection="column" marginBottom={0}>
-          <Text>{latestResponse.text}</Text>
-          {(latestResponse.tokens.input > 0 || latestResponse.tokens.output > 0) && (
-            <Box marginLeft={1}>
-              <Text dimColor>
-                {latestResponse.tokens.input.toLocaleString()} in / {latestResponse.tokens.output.toLocaleString()} out
-                {latestResponse.cost > 0 ? `  ·  $${latestResponse.cost.toFixed(4)} session` : ''}
-              </Text>
-            </Box>
-          )}
+          <Text dimColor>  ↑ scroll to see full reply</Text>
+          <Text>{responsePreview}</Text>
         </Box>
       )}
 
