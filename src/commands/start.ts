@@ -73,15 +73,8 @@ export async function startCommand(options: StartOptions) {
   }
   console.log('');
 
-  // Fetch balance in background (don't block startup)
-  const walletInfo: { address: string; balance: string; chain: string } = {
-    address: walletAddress,
-    balance: 'checking...',
-    chain,
-  };
-  // Balance fetch callback — will update Ink UI once resolved
-  let onBalanceFetched: ((bal: string) => void) | undefined;
-  (async () => {
+  // Balance fetcher — used at startup and after each turn
+  const fetchBalance = async (): Promise<string> => {
     try {
       let bal: number;
       if (chain === 'solana') {
@@ -93,14 +86,24 @@ export async function startCommand(options: StartOptions) {
         const client = setupAgentWallet({ silent: true });
         bal = await client.getBalance();
       }
-      const balStr = `$${bal.toFixed(2)} USDC`;
-      walletInfo.balance = balStr;
-      onBalanceFetched?.(balStr);
+      return `$${bal.toFixed(2)} USDC`;
     } catch {
-      const balStr = '$?.?? USDC';
-      walletInfo.balance = balStr;
-      onBalanceFetched?.(balStr);
+      return '$?.?? USDC';
     }
+  };
+
+  // Fetch balance in background (don't block startup)
+  const walletInfo: { address: string; balance: string; chain: string } = {
+    address: walletAddress,
+    balance: 'checking...',
+    chain,
+  };
+  // Balance fetch callback — will update Ink UI once resolved
+  let onBalanceFetched: ((bal: string) => void) | undefined;
+  (async () => {
+    const balStr = await fetchBalance();
+    walletInfo.balance = balStr;
+    onBalanceFetched?.(balStr);
   })();
 
   // Assemble system instructions
@@ -146,7 +149,7 @@ export async function startCommand(options: StartOptions) {
   if (process.stdin.isTTY) {
     await runWithInkUI(agentConfig, model, workDir, version, walletInfo, (cb) => {
       onBalanceFetched = cb;
-    });
+    }, fetchBalance);
   } else {
     await runWithBasicUI(agentConfig, model, workDir);
   }
@@ -161,6 +164,7 @@ async function runWithInkUI(
   version: string,
   walletInfo?: { address: string; balance: string; chain: string },
   onBalanceReady?: (cb: (bal: string) => void) => void,
+  fetchBalance?: () => Promise<string>,
 ) {
   const ui = launchInkUI({
     model,
@@ -182,6 +186,13 @@ async function runWithInkUI(
 
   // Wire up background balance fetch to UI
   onBalanceReady?.((bal) => ui.updateBalance(bal));
+
+  // Refresh balance after each completed turn so the display stays current
+  if (fetchBalance) {
+    ui.onTurnDone(() => {
+      fetchBalance().then(bal => ui.updateBalance(bal)).catch(() => {});
+    });
+  }
 
   try {
     await interactiveSession(
