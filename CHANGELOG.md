@@ -1,5 +1,59 @@
 # Changelog
 
+## 2.5.11 (2026-04-06)
+
+### Improvements
+
+**Bash live output streaming**
+- Bash now emits the latest stdout/stderr line to the UI spinner every 500ms while running
+- Shows `└ [last output line]` below the spinner so long-running downloads/builds are visible
+
+**Tool spinner shows command/input preview**
+- Active tool spinner now shows a truncated preview of what's running: `⠙ Bash: yt-dlp https://...`
+- Applies to Bash (command), Read/Write/Edit (file path), Grep/Glob (pattern), WebFetch (url)
+
+**Completed tool shows error detail**
+- Failed tools now show the error message in the result line: `✗ Bash 515s — error: ...`
+- Previously only showed `✗ Bash 515s` with no explanation
+
+**Accurate elapsed time — permission wait no longer included**
+- `onStart` is now called AFTER permission is granted for sequential tools
+- Previously the timer started before the permission dialog appeared, inflating elapsed time
+
+## 2.5.10 (2026-04-06)
+
+### Bug Fixes
+
+**Terminal tab bell notification on permission request**
+- When a tool requires permission, the terminal bell (`\x07`) is now sent to stderr
+- Causes iTerm2/Terminal.app to show the attention badge on the tab so users know action is needed
+
+## 2.5.9 (2026-04-06)
+
+### Bug Fixes
+
+**Permission dialog immediately auto-denied in Ink UI** (critical)
+- Ink owns stdin in raw mode; `askQuestion()` created a second `readline` on stdin, got EOF immediately, and resolved with `'n'` (deny) without user interaction
+- Fixed by injecting a `permissionPromptFn` into `AgentConfig`; `PermissionManager` uses it when set, falling back to readline only in non-Ink (piped) mode
+- Permission dialog is now rendered as an Ink component; `useInput` captures `y`/`n`/`a` keypresses without touching stdin directly
+
+**24 stacked permission boxes / dialog keeps jumping**
+- When the model issued N sequential Bash operations in one response, each required a separate dialog, causing rapid Ink re-renders that left ghost frames in terminal scrollback
+- Pre-count pending sequential invocations per tool type in `collectResults`; pass remaining count to `promptUser`
+- Dialog now shows `N pending — press [a] to allow all` so users skip all at once with one keypress
+
+**Completed tool results caused Ink re-render artifacts**
+- Tool results were kept in reactive state, causing Ink to re-render and change component height on every completion, leaving partial dialog boxes in scrollback
+- Moved completed tool results to Ink `Static` component — permanently committed to scrollback, excluded from re-render cycle
+
+**Glob infinite loop after permission deny**
+- When Write was denied, the model received a bare "User denied" message and looped endlessly through Glob calls trying to find an alternative
+- Deny messages now include explicit instruction: "Do not retry — ask the user what they'd like to do instead"
+
+**Input box disappeared while agent was running**
+- `InputBox` was only rendered when `ready === true`, causing it to vanish during agent execution
+- Now always rendered; unfocused (placeholder only) while agent runs, regains focus when done
+
 ## 2.5.1 (2026-04-05)
 
 ### Bug Fixes (end-to-end test)

@@ -50,6 +50,19 @@ async function execute(input, ctx) {
             child.kill('SIGTERM');
         };
         ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
+        // Emit last non-empty line to UI progress (throttled to avoid flooding)
+        let lastProgressEmit = 0;
+        const emitProgress = (text) => {
+            if (!ctx.onProgress)
+                return;
+            const now = Date.now();
+            if (now - lastProgressEmit < 500)
+                return; // max 2 updates/sec
+            lastProgressEmit = now;
+            const lastLine = text.split('\n').map(l => l.trim()).filter(Boolean).pop();
+            if (lastLine)
+                ctx.onProgress(lastLine.slice(0, 120));
+        };
         child.stdout?.on('data', (chunk) => {
             if (truncated)
                 return;
@@ -68,6 +81,7 @@ async function execute(input, ctx) {
                 outputBytes = MAX_OUTPUT_BYTES;
                 truncated = true;
             }
+            emitProgress(text);
         });
         child.stderr?.on('data', (chunk) => {
             if (truncated)
@@ -87,6 +101,7 @@ async function execute(input, ctx) {
                 outputBytes = MAX_OUTPUT_BYTES;
                 truncated = true;
             }
+            emitProgress(text);
         });
         child.on('close', (code) => {
             clearTimeout(timer);
