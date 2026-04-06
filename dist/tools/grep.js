@@ -32,12 +32,18 @@ async function execute(input, ctx) {
     const mode = opts.output_mode || 'files_with_matches';
     const limit = opts.head_limit ?? 250;
     if (hasRipgrep()) {
-        return runRipgrep(opts, searchPath, mode, limit);
+        return runRipgrep(opts, searchPath, mode, limit, ctx.workingDir);
     }
-    return runNativeGrep(opts, searchPath, mode, limit);
+    return runNativeGrep(opts, searchPath, mode, limit, ctx.workingDir);
 }
-function runRipgrep(opts, searchPath, mode, limit) {
+function toRelative(absPath, cwd) {
+    const rel = path.relative(cwd, absPath);
+    return rel.startsWith('..') ? absPath : rel;
+}
+function runRipgrep(opts, searchPath, mode, limit, cwd) {
     const args = [];
+    // Limit line length to prevent base64/minified content from cluttering output
+    args.push('--max-columns', '500');
     switch (mode) {
         case 'files_with_matches':
             args.push('-l');
@@ -76,7 +82,17 @@ function runRipgrep(opts, searchPath, mode, limit) {
         });
         const lines = result.split('\n').filter(Boolean);
         const limited = limit > 0 ? lines.slice(0, limit) : lines;
-        let output = limited.join('\n');
+        // Convert absolute paths to relative paths to save tokens (same as Claude Code)
+        const relativized = limited.map(line => {
+            // Lines: /abs/path or /abs/path:rest (content mode)
+            const colonIdx = line.indexOf(':');
+            if (colonIdx > 0 && line.startsWith('/')) {
+                const filePart = line.slice(0, colonIdx);
+                return toRelative(filePart, cwd) + line.slice(colonIdx);
+            }
+            return line.startsWith('/') ? toRelative(line, cwd) : line;
+        });
+        let output = relativized.join('\n');
         if (lines.length > limited.length) {
             output += `\n\n... (${lines.length - limited.length} more results, use head_limit to see more)`;
         }
@@ -97,7 +113,7 @@ function runRipgrep(opts, searchPath, mode, limit) {
         };
     }
 }
-function runNativeGrep(opts, searchPath, mode, limit) {
+function runNativeGrep(opts, searchPath, mode, limit, cwd) {
     const args = ['-r', '-n'];
     if (opts.case_insensitive)
         args.push('-i');
@@ -128,7 +144,14 @@ function runNativeGrep(opts, searchPath, mode, limit) {
         });
         const lines = result.split('\n').filter(Boolean);
         const limited = limit > 0 ? lines.slice(0, limit) : lines;
-        let output = limited.join('\n');
+        const relativized = limited.map(line => {
+            const colonIdx = line.indexOf(':');
+            if (colonIdx > 0 && line.startsWith('/')) {
+                return toRelative(line.slice(0, colonIdx), cwd) + line.slice(colonIdx);
+            }
+            return line.startsWith('/') ? toRelative(line, cwd) : line;
+        });
+        let output = relativized.join('\n');
         if (lines.length > limited.length) {
             output += `\n\n... (${lines.length - limited.length} more results)`;
         }

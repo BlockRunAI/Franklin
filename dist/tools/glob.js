@@ -106,7 +106,11 @@ async function execute(input, ctx) {
         }
     });
     withMtime.sort((a, b) => b.mtime - a.mtime);
-    const sorted = withMtime.map(f => f.path);
+    // Convert to relative paths to save tokens (same as Claude Code)
+    const sorted = withMtime.map(f => {
+        const rel = path.relative(ctx.workingDir, f.path);
+        return rel.startsWith('..') ? f.path : rel;
+    });
     if (sorted.length === 0) {
         // Suggest recursive pattern if user used non-recursive glob
         const hint = !pattern.includes('**') && !pattern.includes('/')
