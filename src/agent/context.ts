@@ -57,10 +57,18 @@ The user can type these shortcuts: /commit, /review, /test, /fix, /debug, /expla
 /tasks, /context, /doctor, /tokens, /model, /cost, /dump, /ultrathink [query], /clear,
 /help, /exit.`;
 
+// Cache assembled instructions per workingDir — avoids re-running git commands
+// when sub-agents are spawned (common in parallel tool use patterns).
+const _instructionCache = new Map<string, string[]>();
+
 /**
  * Build the full system instructions array for a session.
+ * Result is memoized per workingDir for the process lifetime.
  */
 export function assembleInstructions(workingDir: string): string[] {
+  const cached = _instructionCache.get(workingDir);
+  if (cached) return cached;
+
   const parts: string[] = [BASE_INSTRUCTIONS];
 
   // Read RUNCODE.md or CLAUDE.md from the project
@@ -78,7 +86,13 @@ export function assembleInstructions(workingDir: string): string[] {
     parts.push(`# Git Context\n\n${gitInfo}`);
   }
 
+  _instructionCache.set(workingDir, parts);
   return parts;
+}
+
+/** Invalidate cache for a workingDir (call after /clear or session reset). */
+export function invalidateInstructionCache(workingDir: string): void {
+  _instructionCache.delete(workingDir);
 }
 
 // ─── Project Config ────────────────────────────────────────────────────────
@@ -131,6 +145,9 @@ function buildEnvironmentSection(workingDir: string): string {
 
 const GIT_TIMEOUT_MS = 5_000;
 
+// Max chars for git log output — long commit messages can bloat the system prompt
+const MAX_GIT_LOG_CHARS = 2_000;
+
 function getGitContext(workingDir: string): string | null {
   try {
     const isGit = execSync('git rev-parse --is-inside-work-tree', {
@@ -171,15 +188,18 @@ function getGitContext(workingDir: string): string | null {
       }
     } catch { /* ignore */ }
 
-    // Recent commits (last 5)
+    // Recent commits (last 5) — capped to prevent huge messages bloating context
     try {
-      const log = execSync('git log --oneline -5', {
+      let log = execSync('git log --oneline -5', {
         cwd: workingDir,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: GIT_TIMEOUT_MS,
       }).trim();
       if (log) {
+        if (log.length > MAX_GIT_LOG_CHARS) {
+          log = log.slice(0, MAX_GIT_LOG_CHARS) + '\n... (truncated)';
+        }
         lines.push(`\nRecent commits:\n${log}`);
       }
     } catch { /* ignore */ }
