@@ -61,15 +61,8 @@ export async function startCommand(options) {
         console.log(chalk.dim(`\n  Tip: /model to switch models · /compact to save tokens · /help for all commands`));
     }
     console.log('');
-    // Fetch balance in background (don't block startup)
-    const walletInfo = {
-        address: walletAddress,
-        balance: 'checking...',
-        chain,
-    };
-    // Balance fetch callback — will update Ink UI once resolved
-    let onBalanceFetched;
-    (async () => {
+    // Balance fetcher — used at startup and after each turn
+    const fetchBalance = async () => {
         try {
             let bal;
             if (chain === 'solana') {
@@ -82,15 +75,24 @@ export async function startCommand(options) {
                 const client = setupAgentWallet({ silent: true });
                 bal = await client.getBalance();
             }
-            const balStr = `$${bal.toFixed(2)} USDC`;
-            walletInfo.balance = balStr;
-            onBalanceFetched?.(balStr);
+            return `$${bal.toFixed(2)} USDC`;
         }
         catch {
-            const balStr = '$?.?? USDC';
-            walletInfo.balance = balStr;
-            onBalanceFetched?.(balStr);
+            return '$?.?? USDC';
         }
+    };
+    // Fetch balance in background (don't block startup)
+    const walletInfo = {
+        address: walletAddress,
+        balance: 'checking...',
+        chain,
+    };
+    // Balance fetch callback — will update Ink UI once resolved
+    let onBalanceFetched;
+    (async () => {
+        const balStr = await fetchBalance();
+        walletInfo.balance = balStr;
+        onBalanceFetched?.(balStr);
     })();
     // Assemble system instructions
     const systemInstructions = assembleInstructions(workDir);
@@ -132,14 +134,14 @@ export async function startCommand(options) {
     if (process.stdin.isTTY) {
         await runWithInkUI(agentConfig, model, workDir, version, walletInfo, (cb) => {
             onBalanceFetched = cb;
-        });
+        }, fetchBalance);
     }
     else {
         await runWithBasicUI(agentConfig, model, workDir);
     }
 }
 // ─── Ink UI (interactive terminal) ─────────────────────────────────────────
-async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, onBalanceReady) {
+async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, onBalanceReady, fetchBalance) {
     const ui = launchInkUI({
         model,
         workDir,
@@ -157,6 +159,12 @@ async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, on
     agentConfig.permissionPromptFn = (toolName, description) => ui.requestPermission(toolName, description);
     // Wire up background balance fetch to UI
     onBalanceReady?.((bal) => ui.updateBalance(bal));
+    // Refresh balance after each completed turn so the display stays current
+    if (fetchBalance) {
+        ui.onTurnDone(() => {
+            fetchBalance().then(bal => ui.updateBalance(bal)).catch(() => { });
+        });
+    }
     try {
         await interactiveSession(agentConfig, async () => {
             const input = await ui.waitForInput();
