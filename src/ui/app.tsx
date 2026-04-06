@@ -3,7 +3,7 @@
  * Real-time streaming, thinking animation, tool progress, slash commands.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
@@ -13,12 +13,13 @@ import { estimateCost } from '../pricing.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
-function InputBox({ input, setInput, onSubmit, model, balance, focused }: {
+function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, focused }: {
   input: string;
   setInput: (v: string) => void;
   onSubmit: (v: string) => void;
   model: string;
   balance: string;
+  sessionCost: number;
   focused?: boolean;
 }) {
   const { stdout } = useStdout();
@@ -43,7 +44,11 @@ function InputBox({ input, setInput, onSubmit, model, balance, focused }: {
       </Box>
       <Text dimColor>{'╰' + '─'.repeat(cols - 2) + '╯'}</Text>
       <Box marginLeft={1}>
-        <Text dimColor>{model}  ·  {balance}  ·  esc to abort/quit</Text>
+        <Text dimColor>
+          {model}  ·  {balance}
+          {sessionCost > 0.00001 ? <Text color="yellow">  -${sessionCost.toFixed(4)}</Text> : ''}
+          {'  ·  esc to abort/quit'}
+        </Text>
       </Box>
     </Box>
   );
@@ -129,6 +134,7 @@ function RunCodeApp({
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+  const turnDoneCallbackRef = useRef<(() => void) | null>(null);
 
   // Permission dialog key handler — captures y/n/a when dialog is visible.
   // Must be registered before other handlers so it takes priority.
@@ -329,6 +335,7 @@ function RunCodeApp({
   useEffect(() => {
     (globalThis as Record<string, unknown>).__runcode_ui = {
       updateBalance: (bal: string) => setBalance(bal),
+      onTurnDone: (cb: () => void) => { turnDoneCallbackRef.current = cb; },
       requestPermission: (toolName: string, description: string): Promise<'yes' | 'no' | 'always'> => {
         return new Promise((resolve) => {
           // Ring the terminal bell — causes tab to show notification badge in iTerm2/Terminal.app
@@ -414,6 +421,8 @@ function RunCodeApp({
             setWaiting(false);
             setThinking(false);
             setThinkingText('');
+            // Trigger balance refresh after each completed turn
+            turnDoneCallbackRef.current?.();
             break;
         }
       },
@@ -610,6 +619,7 @@ function RunCodeApp({
         onSubmit={ready ? handleSubmit : () => {}}
         model={currentModel}
         balance={balance}
+        sessionCost={totalCost}
         focused={ready && !permissionRequest}
       />
     </Box>
@@ -621,6 +631,7 @@ function RunCodeApp({
 export interface InkUIHandle {
   handleEvent: (event: StreamEvent) => void;
   updateBalance: (balance: string) => void;
+  onTurnDone: (cb: () => void) => void;
   waitForInput: () => Promise<string | null>;
   onAbort: (cb: () => void) => void;
   cleanup: () => void;
@@ -674,6 +685,12 @@ export function launchInkUI(opts: {
         updateBalance: (bal: string) => void;
       } | undefined;
       ui?.updateBalance(bal);
+    },
+    onTurnDone: (cb: () => void) => {
+      const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
+        onTurnDone: (cb: () => void) => void;
+      } | undefined;
+      ui?.onTurnDone(cb);
     },
     waitForInput: () => {
       if (exiting) return Promise.resolve(null);
