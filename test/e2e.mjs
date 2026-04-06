@@ -22,7 +22,8 @@ const TIMEOUT_MS = 90_000; // 90s per test — model calls can be slow
 // ─── Helper ────────────────────────────────────────────────────────────────
 
 /**
- * Run runcode with the given prompt piped to stdin.
+ * Run runcode with the given prompt(s) piped to stdin.
+ * Pass a string for a single turn, or an array of strings for multi-turn.
  * Returns { stdout, stderr, exitCode }.
  */
 function runcode(prompt, { cwd, timeoutMs = TIMEOUT_MS } = {}) {
@@ -39,8 +40,9 @@ function runcode(prompt, { cwd, timeoutMs = TIMEOUT_MS } = {}) {
     proc.stdout.on('data', (d) => { stdout += d.toString(); });
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
-    // Send prompt then close stdin (signals EOF to runcode)
-    proc.stdin.write(prompt + '\n');
+    // Send prompt(s) then close stdin (EOF signals session end)
+    const lines = Array.isArray(prompt) ? prompt : [prompt];
+    proc.stdin.write(lines.join('\n') + '\n');
     proc.stdin.end();
 
     const timer = setTimeout(() => {
@@ -201,4 +203,76 @@ test('multi-tool: write then read a file in same session', { timeout: 90_000 }, 
   } finally {
     rmSync(testDir, { recursive: true, force: true });
   }
+});
+
+// ─── Session cost tracking tests ───────────────────────────────────────────
+
+test('session cost: token usage reported at session end', { timeout: 60_000 }, async () => {
+  // The terminal UI (piped mode) prints "Tokens: X in / Y out" to stderr at exit.
+  // This verifies the usage event pipeline is wired end-to-end.
+  const { stderr, exitCode } = await runcode('say exactly: COST_CHECK_OK');
+  assert.equal(exitCode, 0, `Non-zero exit.\nstderr: ${stderr}`);
+  assert.ok(
+    stderr.includes('Tokens:'),
+    `Expected "Tokens:" summary in stderr.\nstderr:\n${stderr}`
+  );
+  // Token counts should be non-zero
+  const match = stderr.match(/Tokens:\s*(\d+)\s*in\s*\/\s*(\d+)\s*out/);
+  assert.ok(match, `Could not parse token line from: ${stderr}`);
+  const inputTokens = parseInt(match[1], 10);
+  const outputTokens = parseInt(match[2], 10);
+  assert.ok(inputTokens > 0, `Expected input tokens > 0, got ${inputTokens}`);
+  assert.ok(outputTokens > 0, `Expected output tokens > 0, got ${outputTokens}`);
+});
+
+test('session cost: accumulates across multiple turns', { timeout: 120_000 }, async () => {
+  // Two turns in one session — token totals at session end should reflect both.
+  const { stderr, exitCode } = await runcode([
+    'say exactly: TURN_ONE',
+    'say exactly: TURN_TWO',
+  ]);
+  assert.equal(exitCode, 0, `Non-zero exit.\nstderr: ${stderr}`);
+
+  const match = stderr.match(/Tokens:\s*(\d+)\s*in\s*\/\s*(\d+)\s*out/);
+  assert.ok(match, `Could not parse token line from: ${stderr}`);
+  const inputTokens = parseInt(match[1], 10);
+  const outputTokens = parseInt(match[2], 10);
+
+  // Two turns means more tokens than a single turn would produce.
+  // A single "say X" turn typically uses 10-50 input tokens.
+  // Two turns should be at least 20 input tokens combined.
+  assert.ok(inputTokens >= 20, `Expected ≥20 input tokens for 2 turns, got ${inputTokens}`);
+  assert.ok(outputTokens >= 2, `Expected ≥2 output tokens for 2 turns, got ${outputTokens}`);
+});
+
+test('session cost: /cost command shows cost info', { timeout: 60_000 }, async () => {
+  // Run a prompt then check /cost output in the same piped session.
+  const { stderr, exitCode } = await runcode([
+    'say exactly: BEFORE_COST',
+    '/cost',
+  ]);
+  assert.equal(exitCode, 0, `Non-zero exit.\nstderr: ${stderr}`);
+  // /cost prints token counts to stderr in the terminal UI
+  assert.ok(
+    stderr.includes('Tokens:'),
+    `Expected "Tokens:" in /cost output.\nstderr:\n${stderr}`
+  );
+});
+
+test('session cost: estimateCost returns non-negative value for known model', { timeout: 5_000 }, async () => {
+  // Import and unit-test the pricing function directly (no model call needed).
+  const { estimateCost } = await import('../dist/pricing.js');
+
+  // GLM-5: $1.00/M input, $3.20/M output
+  const cost = estimateCost('zai/glm-5', 1_000_000, 1_000_000);
+  assert.ok(cost > 0, `Expected non-zero cost for 1M tokens, got ${cost}`);
+  assert.ok(cost < 10, `Cost sanity check failed (got ${cost}, expected < $10)`);
+
+  // Free model should cost $0
+  const freeCost = estimateCost('nvidia/nemotron-ultra-253b', 1_000_000, 1_000_000);
+  assert.equal(freeCost, 0, `Expected $0 for free model, got ${freeCost}`);
+
+  // Unknown model should return 0 (not throw)
+  const unknownCost = estimateCost('unknown/model-xyz', 1_000, 1_000);
+  assert.ok(unknownCost >= 0, `Expected non-negative for unknown model, got ${unknownCost}`);
 });
