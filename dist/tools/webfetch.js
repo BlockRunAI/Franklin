@@ -3,6 +3,32 @@
  */
 import { VERSION } from '../config.js';
 const MAX_BODY_BYTES = 256 * 1024; // 256KB
+// ─── Session cache ──────────────────────────────────────────────────────────
+// Avoids re-fetching the same URL within a session (common in research tasks).
+// 15-min TTL, max 50 entries.
+const CACHE_TTL_MS = 15 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 50;
+const fetchCache = new Map();
+function getCached(url) {
+    const entry = fetchCache.get(url);
+    if (!entry)
+        return null;
+    if (Date.now() > entry.expiresAt) {
+        fetchCache.delete(url);
+        return null;
+    }
+    return entry.output;
+}
+function setCached(url, output) {
+    // Evict oldest entry if at capacity
+    if (fetchCache.size >= MAX_CACHE_ENTRIES) {
+        const firstKey = fetchCache.keys().next().value;
+        if (firstKey)
+            fetchCache.delete(firstKey);
+    }
+    fetchCache.set(url, { output, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+// ─── Execute ────────────────────────────────────────────────────────────────
 async function execute(input, _ctx) {
     const { url, max_length } = input;
     if (!url) {
@@ -18,6 +44,11 @@ async function execute(input, _ctx) {
     }
     if (!['http:', 'https:'].includes(parsed.protocol)) {
         return { output: `Error: only http/https URLs are supported`, isError: true };
+    }
+    // Check cache first
+    const cached = getCached(url);
+    if (cached) {
+        return { output: cached + '\n\n(cached)' };
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -62,8 +93,8 @@ async function execute(input, _ctx) {
         // Format response based on content type
         if (contentType.includes('json')) {
             try {
-                const parsed = JSON.parse(body);
-                body = JSON.stringify(parsed, null, 2).slice(0, maxLen);
+                const parsedJson = JSON.parse(body);
+                body = JSON.stringify(parsedJson, null, 2).slice(0, maxLen);
             }
             catch { /* leave as-is if not valid JSON */ }
         }
@@ -74,6 +105,8 @@ async function execute(input, _ctx) {
         if (totalBytes >= maxLen) {
             output += '\n\n... (content truncated)';
         }
+        // Cache successful responses
+        setCached(url, output);
         return { output };
     }
     catch (err) {
@@ -118,7 +151,7 @@ function stripHtml(html) {
 export const webFetchCapability = {
     spec: {
         name: 'WebFetch',
-        description: 'Fetch a web page and return its content. HTML tags are stripped for readability.',
+        description: 'Fetch a web page and return its content. HTML tags are stripped for readability. Results are cached for 15 minutes.',
         input_schema: {
             type: 'object',
             properties: {

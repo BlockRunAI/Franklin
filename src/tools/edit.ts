@@ -5,12 +5,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
+import { partiallyReadFiles } from './read.js';
 
 interface EditInput {
   file_path: string;
   old_string: string;
   new_string: string;
   replace_all?: boolean;
+}
+
+/**
+ * Normalize curly/smart quotes to straight quotes.
+ * Claude Code does this to handle API-sanitized strings and editor paste artifacts.
+ */
+function normalizeQuotes(str: string): string {
+  return str
+    .replace(/[\u201C\u201D]/g, '"')   // " " → "
+    .replace(/[\u2018\u2019]/g, "'");  // ' ' → '
 }
 
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
@@ -32,6 +43,9 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.workingDir, filePath);
 
+  // Warn if the file was only partially read — editing without full context risks mistakes
+  const isPartial = partiallyReadFiles.has(resolved);
+
   try {
     if (!fs.existsSync(resolved)) {
       return { output: `Error: file not found: ${resolved}`, isError: true };
@@ -39,7 +53,19 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
     const content = fs.readFileSync(resolved, 'utf-8');
 
+    // Try exact match first, then quote-normalized fallback
+    let effectiveOldStr = oldStr;
     if (!content.includes(oldStr)) {
+      const normalized = normalizeQuotes(oldStr);
+      const contentNormalized = normalizeQuotes(content);
+      if (normalized !== oldStr && contentNormalized.includes(normalized)) {
+        // Find the original text in content that corresponds to the normalized match
+        const idx = contentNormalized.indexOf(normalized);
+        effectiveOldStr = content.slice(idx, idx + normalized.length);
+      }
+    }
+
+    if (!content.includes(effectiveOldStr)) {
       // Find lines containing fragments of old_string for helpful context
       const lines = content.split('\n');
       const searchTerms = oldStr.split('\n').map(l => l.trim()).filter(l => l.length > 3);
@@ -72,20 +98,17 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     let matchCount: number;
 
     if (replaceAll) {
-      // Count occurrences
-      matchCount = content.split(oldStr).length - 1;
-      updated = content.split(oldStr).join(newStr);
+      matchCount = content.split(effectiveOldStr).length - 1;
+      updated = content.split(effectiveOldStr).join(newStr);
     } else {
-      // Ensure uniqueness for single replacement
-      const firstIdx = content.indexOf(oldStr);
-      const secondIdx = content.indexOf(oldStr, firstIdx + 1);
+      const firstIdx = content.indexOf(effectiveOldStr);
+      const secondIdx = content.indexOf(effectiveOldStr, firstIdx + 1);
 
       if (secondIdx !== -1) {
-        // Multiple matches — show where they are
         const positions: number[] = [];
         let searchFrom = 0;
         while (true) {
-          const idx = content.indexOf(oldStr, searchFrom);
+          const idx = content.indexOf(effectiveOldStr, searchFrom);
           if (idx === -1) break;
           const lineNum = content.slice(0, idx).split('\n').length;
           positions.push(lineNum);
@@ -99,13 +122,15 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       }
 
       matchCount = 1;
-      updated = content.slice(0, firstIdx) + newStr + content.slice(firstIdx + oldStr.length);
+      updated = content.slice(0, firstIdx) + newStr + content.slice(firstIdx + effectiveOldStr.length);
     }
 
     fs.writeFileSync(resolved, updated, 'utf-8');
+    // File has been modified — remove from partial-read tracking so next read is fresh
+    partiallyReadFiles.delete(resolved);
 
     // Build a concise diff preview
-    const oldLines = oldStr.split('\n');
+    const oldLines = effectiveOldStr.split('\n');
     const newLines = newStr.split('\n');
     let diffPreview = '';
     if (oldLines.length <= 5 && newLines.length <= 5) {
@@ -116,8 +141,12 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       diffPreview = ` (${oldLines.length} lines → ${newLines.length} lines)`;
     }
 
+    const partialWarning = isPartial
+      ? '\nNote: file was only partially read before this edit.'
+      : '';
+
     return {
-      output: `Updated ${resolved} — ${matchCount} replacement${matchCount > 1 ? 's' : ''} made.${diffPreview}`,
+      output: `Updated ${resolved} — ${matchCount} replacement${matchCount > 1 ? 's' : ''} made.${diffPreview}${partialWarning}`,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

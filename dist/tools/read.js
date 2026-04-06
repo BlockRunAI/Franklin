@@ -3,6 +3,12 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+/**
+ * Tracks files that were only partially read (offset or limit applied).
+ * Edit tool uses this to warn when editing without full context.
+ * Exported so edit.ts can check and clear entries.
+ */
+export const partiallyReadFiles = new Set();
 async function execute(input, ctx) {
     const { file_path: filePath, offset, limit } = input;
     if (!filePath) {
@@ -37,6 +43,15 @@ async function execute(input, ctx) {
         const maxLines = limit ?? 2000;
         const endLine = Math.min(allLines.length, startLine + maxLines);
         const slice = allLines.slice(startLine, endLine);
+        // Track partial reads — file was not read from the beginning or was truncated
+        const isPartial = startLine > 0 || endLine < allLines.length;
+        if (isPartial) {
+            partiallyReadFiles.add(resolved);
+        }
+        else {
+            // Full read — clear any stale partial flag
+            partiallyReadFiles.delete(resolved);
+        }
         // Format with line numbers (cat -n style)
         const numbered = slice.map((line, i) => `${startLine + i + 1}\t${line}`);
         let result = numbered.join('\n');
