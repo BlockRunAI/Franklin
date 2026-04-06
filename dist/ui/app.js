@@ -4,7 +4,7 @@ import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
  * Real-time streaming, thinking animation, tool progress, slash commands.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { render, Box, Text, useApp, useInput, useStdout } from 'ink';
+import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import { resolveModel } from './model-picker.js';
@@ -41,6 +41,8 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const [thinking, setThinking] = useState(false);
     const [waiting, setWaiting] = useState(false);
     const [tools, setTools] = useState(new Map());
+    // Completed tool results committed to Static (permanent scrollback — no re-render artifacts)
+    const [completedTools, setCompletedTools] = useState([]);
     const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS[0].id);
     const [ready, setReady] = useState(!startWithPicker);
     const [mode, setMode] = useState(startWithPicker ? 'model-picker' : 'input');
@@ -55,11 +57,34 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const [lastPrompt, setLastPrompt] = useState('');
     const [inputHistory, setInputHistory] = useState([]);
     const [historyIdx, setHistoryIdx] = useState(-1);
+    const [permissionRequest, setPermissionRequest] = useState(null);
+    // Permission dialog key handler — captures y/n/a when dialog is visible.
+    // Must be registered before other handlers so it takes priority.
+    useInput((ch, _key) => {
+        if (!permissionRequest)
+            return;
+        const c = ch.toLowerCase();
+        if (c === 'y') {
+            const r = permissionRequest.resolve;
+            setPermissionRequest(null);
+            r('yes');
+        }
+        else if (c === 'n') {
+            const r = permissionRequest.resolve;
+            setPermissionRequest(null);
+            r('no');
+        }
+        else if (c === 'a') {
+            const r = permissionRequest.resolve;
+            setPermissionRequest(null);
+            r('always');
+        }
+    }, { isActive: !!permissionRequest });
     // Key handler for picker + esc + abort
     const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input) || !ready;
     useInput((ch, key) => {
-        // Escape during generation → abort current turn
-        if (key.escape && !ready) {
+        // Escape during generation → abort current turn (skip if permission dialog open)
+        if (key.escape && !ready && !permissionRequest) {
             onAbort();
             setStatusMsg('Aborted');
             setReady(true);
@@ -212,6 +237,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         setThinking(false);
         setThinkingText('');
         setTools(new Map());
+        setCompletedTools([]);
         setReady(false);
         setWaiting(true);
         setStatusMsg('');
@@ -220,10 +246,17 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         setTurnTokens({ input: 0, output: 0 });
         onSubmit(trimmed);
     }, [currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
-    // Expose event handler + balance updater
+    // Expose event handler, balance updater, and permission bridge
     useEffect(() => {
         globalThis.__runcode_ui = {
             updateBalance: (bal) => setBalance(bal),
+            requestPermission: (toolName, description) => {
+                return new Promise((resolve) => {
+                    // Ring the terminal bell — causes tab to show notification badge in iTerm2/Terminal.app
+                    process.stderr.write('\x07');
+                    setPermissionRequest({ toolName, description, resolve });
+                });
+            },
             handleEvent: (event) => {
                 switch (event.kind) {
                     case 'text_delta':
@@ -246,26 +279,50 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                             const next = new Map(prev);
                             next.set(event.id, {
                                 name: event.name, startTime: Date.now(),
-                                done: false, error: false, preview: '', elapsed: 0,
+                                done: false, error: false,
+                                preview: event.preview || '',
+                                liveOutput: '',
+                                elapsed: 0,
                             });
                             return next;
                         });
                         break;
-                    case 'capability_done':
+                    case 'capability_progress':
+                        setTools(prev => {
+                            const t = prev.get(event.id);
+                            if (!t || t.done)
+                                return prev;
+                            const next = new Map(prev);
+                            next.set(event.id, { ...t, liveOutput: event.text });
+                            return next;
+                        });
+                        break;
+                    case 'capability_done': {
                         setTools(prev => {
                             const next = new Map(prev);
                             const t = next.get(event.id);
                             if (t) {
-                                next.set(event.id, {
-                                    ...t, done: true,
+                                // On success: show input preview (command/path). On error: show error output.
+                                const resultPreview = event.result.isError
+                                    ? event.result.output.replace(/\n/g, ' ').slice(0, 150)
+                                    : (t.preview || event.result.output.replace(/\n/g, ' ').slice(0, 120));
+                                const completed = {
+                                    ...t,
+                                    key: event.id,
+                                    done: true,
                                     error: !!event.result.isError,
-                                    preview: event.result.output.replace(/\n/g, ' ').slice(0, 200),
+                                    preview: resultPreview,
+                                    liveOutput: '',
                                     elapsed: Date.now() - t.startTime,
-                                });
+                                };
+                                // Move to Static (permanent scrollback) — prevents re-render artifacts
+                                setCompletedTools(prev2 => [...prev2, completed]);
+                                next.delete(event.id);
                             }
                             return next;
                         });
                         break;
+                    }
                     case 'usage':
                         setCurrentModel(event.model);
                         setTurnTokens(prev => ({
@@ -295,9 +352,9 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                 }), _jsx(Text, { children: " " })] }));
     }
     // ── Normal Mode ──
-    return (_jsxs(Box, { flexDirection: "column", children: [statusMsg && (_jsx(Box, { marginLeft: 2, children: _jsx(Text, { color: "green", children: statusMsg }) })), showHelp && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Commands" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/model" }), " [name]  Switch model (picker if no name)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/wallet" }), "        Show wallet address & balance"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/cost" }), "          Session cost & savings"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/retry" }), "         Retry the last prompt"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/compact" }), "       Compress conversation history"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Coding \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/test" }), "          Run tests"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/fix" }), "           Fix last error"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/review" }), "        Code review"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/explain" }), " file  Explain code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/search" }), " query  Search codebase"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/refactor" }), " desc Refactor code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/scaffold" }), " desc Generate boilerplate"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Git \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/commit" }), "        Commit changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/push" }), "          Push to remote"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/pr" }), "            Create pull request"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/status" }), "        Git status"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/diff" }), "          Git diff"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/log" }), "           Git log"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/branch" }), " [name] Branches"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/stash" }), "         Stash changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/undo" }), "          Undo last commit"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Analysis \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/security" }), "      Security audit"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/lint" }), "          Quality check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/optimize" }), "      Performance check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/todo" }), "          Find TODOs"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/deps" }), "          Dependencies"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clean" }), "         Dead code removal"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/context" }), "       Session info (model, tokens, mode)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/plan" }), "          Enter plan mode (read-only tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/execute" }), "       Exit plan mode (enable all tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/sessions" }), "      List saved sessions"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/resume" }), " id     Resume a saved session"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clear" }), "         Clear conversation display"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/doctor" }), "        Diagnose setup issues"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/help" }), "          This help"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/exit" }), "          Quit"] }), _jsx(Text, { children: " " }), _jsx(Text, { dimColor: true, children: "  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4, nano, mini, haiku" })] })), showWallet && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Wallet" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  Chain:   ", _jsx(Text, { color: "magenta", children: chain })] }), _jsxs(Text, { children: ["  Address: ", _jsx(Text, { color: "cyan", children: walletAddress })] }), _jsxs(Text, { children: ["  Balance: ", _jsx(Text, { color: "green", children: balance })] })] })), Array.from(tools.entries()).map(([id, tool]) => (_jsx(Box, { marginLeft: 1, children: tool.done ? (tool.error
-                    ? _jsxs(Text, { color: "red", children: ["  \u2717 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms"] })] })
-                    : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms \u2014 ", tool.preview.slice(0, 200), tool.preview.length > 200 ? '...' : ''] })] })) : (_jsxs(Text, { color: "cyan", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", tool.name, "... ", _jsx(Text, { dimColor: true, children: (() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? `${s}s` : ''; })() })] })) }, id))), thinking && (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }), thinkingText && (_jsxs(Text, { dimColor: true, wrap: "truncate-end", children: ["  ", thinkingText.split('\n').pop()?.slice(0, 80)] }))] })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (_jsx(Box, { marginLeft: 1, marginTop: 0, children: _jsxs(Text, { dimColor: true, children: [turnTokens.input.toLocaleString(), " in / ", turnTokens.output.toLocaleString(), " out", totalCost > 0 ? `  ·  $${totalCost.toFixed(4)} session` : ''] }) })), ready && (_jsx(InputBox, { input: input, setInput: setInput, onSubmit: handleSubmit, model: currentModel, balance: balance, focused: mode === 'input' }))] }));
+    return (_jsxs(Box, { flexDirection: "column", children: [statusMsg && (_jsx(Box, { marginLeft: 2, children: _jsx(Text, { color: "green", children: statusMsg }) })), showHelp && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Commands" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/model" }), " [name]  Switch model (picker if no name)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/wallet" }), "        Show wallet address & balance"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/cost" }), "          Session cost & savings"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/retry" }), "         Retry the last prompt"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/compact" }), "       Compress conversation history"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Coding \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/test" }), "          Run tests"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/fix" }), "           Fix last error"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/review" }), "        Code review"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/explain" }), " file  Explain code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/search" }), " query  Search codebase"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/refactor" }), " desc Refactor code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/scaffold" }), " desc Generate boilerplate"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Git \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/commit" }), "        Commit changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/push" }), "          Push to remote"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/pr" }), "            Create pull request"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/status" }), "        Git status"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/diff" }), "          Git diff"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/log" }), "           Git log"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/branch" }), " [name] Branches"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/stash" }), "         Stash changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/undo" }), "          Undo last commit"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Analysis \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/security" }), "      Security audit"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/lint" }), "          Quality check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/optimize" }), "      Performance check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/todo" }), "          Find TODOs"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/deps" }), "          Dependencies"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clean" }), "         Dead code removal"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/context" }), "       Session info (model, tokens, mode)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/plan" }), "          Enter plan mode (read-only tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/execute" }), "       Exit plan mode (enable all tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/sessions" }), "      List saved sessions"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/resume" }), " id     Resume a saved session"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clear" }), "         Clear conversation display"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/doctor" }), "        Diagnose setup issues"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/help" }), "          This help"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/exit" }), "          Quit"] }), _jsx(Text, { children: " " }), _jsx(Text, { dimColor: true, children: "  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4, nano, mini, haiku" })] })), showWallet && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Wallet" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  Chain:   ", _jsx(Text, { color: "magenta", children: chain })] }), _jsxs(Text, { children: ["  Address: ", _jsx(Text, { color: "cyan", children: walletAddress })] }), _jsxs(Text, { children: ["  Balance: ", _jsx(Text, { color: "green", children: balance })] })] })), _jsx(Static, { items: completedTools, children: (tool) => (_jsx(Box, { marginLeft: 1, children: tool.error
+                        ? _jsxs(Text, { color: "red", children: ["  \u2717 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms", tool.preview ? ` — ${tool.preview}` : ''] })] })
+                        : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms", tool.preview ? ` — ${tool.preview}` : ''] })] }) }, tool.key)) }), permissionRequest && (_jsxs(Box, { flexDirection: "column", marginTop: 1, marginLeft: 1, children: [_jsx(Text, { color: "yellow", children: "  \u256D\u2500 Permission required \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsxs(Text, { color: "yellow", children: ["  \u2502 ", _jsx(Text, { bold: true, children: permissionRequest.toolName })] }), permissionRequest.description.split('\n').map((line, i) => (_jsxs(Text, { dimColor: true, children: ["  ", line] }, i))), _jsx(Text, { color: "yellow", children: "  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsx(Box, { marginLeft: 2, children: _jsxs(Text, { children: [_jsx(Text, { bold: true, color: "green", children: "[y]" }), _jsx(Text, { dimColor: true, children: " yes  " }), _jsx(Text, { bold: true, color: "red", children: "[n]" }), _jsx(Text, { dimColor: true, children: " no  " }), _jsx(Text, { bold: true, color: "cyan", children: "[a]" }), _jsx(Text, { dimColor: true, children: " always allow this session" })] }) })] })), Array.from(tools.entries()).map(([id, tool]) => (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "cyan", children: ['  ', _jsx(Spinner, { type: "dots" }), ' ', tool.name, tool.preview ? _jsxs(Text, { dimColor: true, children: [": ", tool.preview] }) : null, _jsx(Text, { dimColor: true, children: (() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? ` ${s}s` : ''; })() })] }), tool.liveOutput ? (_jsxs(Text, { dimColor: true, children: ["  \u2514 ", tool.liveOutput] })) : null] }, id))), thinking && (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }), thinkingText && (_jsxs(Text, { dimColor: true, wrap: "truncate-end", children: ["  ", thinkingText.split('\n').pop()?.slice(0, 80)] }))] })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (_jsx(Box, { marginLeft: 1, marginTop: 0, children: _jsxs(Text, { dimColor: true, children: [turnTokens.input.toLocaleString(), " in / ", turnTokens.output.toLocaleString(), " out", totalCost > 0 ? `  ·  $${totalCost.toFixed(4)} session` : ''] }) })), _jsx(InputBox, { input: ready ? input : '', setInput: ready ? setInput : () => { }, onSubmit: ready ? handleSubmit : () => { }, model: currentModel, balance: balance, focused: ready && !permissionRequest })] }));
 }
 export function launchInkUI(opts) {
     let resolveInput = null;
@@ -331,5 +388,9 @@ export function launchInkUI(opts) {
         },
         onAbort: (cb) => { abortCallback = cb; },
         cleanup: () => { instance.unmount(); },
+        requestPermission: (toolName, description) => {
+            const ui = globalThis.__runcode_ui;
+            return ui?.requestPermission(toolName, description) ?? Promise.resolve('no');
+        },
     };
 }

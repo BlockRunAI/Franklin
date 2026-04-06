@@ -142,7 +142,7 @@ export async function startCommand(options: StartOptions) {
     debug: options.debug,
   };
 
-  // Use ink UI if TTY, fallback to basic readline for piped input
+  // Use Ink UI if TTY, fallback to basic readline for piped input
   if (process.stdin.isTTY) {
     await runWithInkUI(agentConfig, model, workDir, version, walletInfo, (cb) => {
       onBalanceFetched = cb;
@@ -173,6 +173,12 @@ async function runWithInkUI(
       agentConfig.model = newModel;
     },
   });
+
+  // Wire permission prompts through Ink UI to avoid stdin/readline conflict.
+  // Ink owns stdin in raw mode; the old readline-based askQuestion() got EOF
+  // immediately and auto-denied every permission. Now y/n/a goes through useInput.
+  agentConfig.permissionPromptFn = (toolName, description) =>
+    ui.requestPermission(toolName, description);
 
   // Wire up background balance fetch to UI
   onBalanceReady?.((bal) => ui.updateBalance(bal));

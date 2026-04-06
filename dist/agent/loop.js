@@ -33,7 +33,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     const toolDefs = config.capabilities.map((c) => c.spec);
     const maxTurns = config.maxTurns ?? 100;
     const workDir = config.workingDir ?? process.cwd();
-    const permissions = new PermissionManager(config.permissionMode ?? 'default');
+    const permissions = new PermissionManager(config.permissionMode ?? 'default', config.permissionPromptFn);
     const history = [];
     let lastUserInput = ''; // For /retry
     // Session persistence
@@ -151,7 +151,8 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 handlers: capabilityMap,
                 scope: { workingDir: workDir, abortSignal: abort.signal },
                 permissions,
-                onStart: (id, name) => onEvent({ kind: 'capability_start', id, name }),
+                onStart: (id, name, preview) => onEvent({ kind: 'capability_start', id, name, preview }),
+                onProgress: (id, text) => onEvent({ kind: 'capability_progress', id, text }),
             });
             try {
                 const result = await client.complete({

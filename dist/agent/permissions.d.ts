@@ -17,16 +17,19 @@ export declare class PermissionManager {
     private rules;
     private mode;
     private sessionAllowed;
-    constructor(mode?: PermissionMode);
+    private promptFn?;
+    constructor(mode?: PermissionMode, promptFn?: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>);
     /**
      * Check if a tool can be used. Returns the decision.
      */
     check(toolName: string, input: Record<string, unknown>): Promise<PermissionDecision>;
     /**
      * Prompt the user interactively for permission.
+     * Uses injected promptFn (Ink UI) when available, falls back to readline.
+     * pendingCount: how many more operations of this type are waiting (including this one).
      * Returns true if allowed, false if denied.
      */
-    promptUser(toolName: string, input: Record<string, unknown>): Promise<boolean>;
+    promptUser(toolName: string, input: Record<string, unknown>, pendingCount?: number): Promise<boolean>;
     private loadRules;
     private matchesRule;
     private getPrimaryInputValue;

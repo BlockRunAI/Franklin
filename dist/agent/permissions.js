@@ -20,9 +20,11 @@ export class PermissionManager {
     rules;
     mode;
     sessionAllowed = new Set(); // "always allow" for this session
-    constructor(mode = 'default') {
+    promptFn;
+    constructor(mode = 'default', promptFn) {
         this.mode = mode;
         this.rules = this.loadRules();
+        this.promptFn = promptFn;
     }
     /**
      * Check if a tool can be used. Returns the decision.
@@ -71,14 +73,34 @@ export class PermissionManager {
     }
     /**
      * Prompt the user interactively for permission.
+     * Uses injected promptFn (Ink UI) when available, falls back to readline.
+     * pendingCount: how many more operations of this type are waiting (including this one).
      * Returns true if allowed, false if denied.
      */
-    async promptUser(toolName, input) {
+    async promptUser(toolName, input, pendingCount = 1) {
         const description = this.describeAction(toolName, input);
+        // Append pending-count hint so user knows to press [a] to skip all
+        const hint = pendingCount > 1
+            ? `${description}\n  │ \x1b[33m${pendingCount} pending — press [a] to allow all\x1b[0m`
+            : description;
+        // Ink UI path: use injected prompt function to avoid stdin conflict.
+        // Ink owns stdin in raw mode; a second readline would get EOF immediately.
+        if (this.promptFn) {
+            const result = await this.promptFn(toolName, hint);
+            if (result === 'always') {
+                this.sessionAllowed.add(toolName);
+                return true;
+            }
+            return result === 'yes';
+        }
+        // Readline fallback (basic terminal / piped mode)
         console.error('');
         console.error(chalk.yellow('  ╭─ Permission required ─────────────────'));
         console.error(chalk.yellow(`  │ ${toolName}`));
         console.error(chalk.dim(`  │ ${description}`));
+        if (pendingCount > 1) {
+            console.error(chalk.yellow(`  │ ${pendingCount} pending — press [a] to allow all`));
+        }
         console.error(chalk.yellow('  ╰─────────────────────────────────────'));
         const answer = await askQuestion(chalk.bold('  Allow? ') + chalk.dim('[Y/n/a]lways: '));
         const normalized = answer.trim().toLowerCase();

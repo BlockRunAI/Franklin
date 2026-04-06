@@ -9,6 +9,7 @@ export interface InkUIHandle {
     waitForInput: () => Promise<string | null>;
     onAbort: (cb: () => void) => void;
     cleanup: () => void;
+    requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
 }
 export declare function launchInkUI(opts: {
     model: string;
