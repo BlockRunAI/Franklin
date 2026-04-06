@@ -119,6 +119,8 @@ function RunCodeApp({
   const [tools, setTools] = useState<Map<string, ToolStatus>>(new Map());
   // Completed tool results committed to Static (permanent scrollback — no re-render artifacts)
   const [completedTools, setCompletedTools] = useState<Array<ToolStatus & { key: string }>>([]);
+  // Completed text responses — committed to Static so long replies are scrollable
+  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number }; cost: number }>>([]);
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS[0].id);
   const [ready, setReady] = useState(!startWithPicker);
   const [mode, setMode] = useState<UIMode>(startWithPicker ? 'model-picker' : 'input');
@@ -135,6 +137,15 @@ function RunCodeApp({
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const turnDoneCallbackRef = useRef<(() => void) | null>(null);
+  // Refs to read current state values inside memoized event handlers (avoids stale closures)
+  const streamTextRef = useRef('');
+  const turnTokensRef = useRef({ input: 0, output: 0 });
+  const totalCostRef = useRef(0);
+
+  // Keep refs in sync so memoized event handlers can read current values
+  streamTextRef.current = streamText;
+  turnTokensRef.current = turnTokens;
+  totalCostRef.current = totalCost;
 
   // Permission dialog key handler — captures y/n/a when dialog is visible.
   // Must be registered before other handlers so it takes priority.
@@ -416,7 +427,19 @@ function RunCodeApp({
             }));
             setTotalCost(prev => prev + estimateCost(event.model, event.inputTokens, event.outputTokens));
             break;
-          case 'turn_done':
+          case 'turn_done': {
+            // Commit streamed response to Static so long replies are fully scrollable.
+            // Ink clips dynamic content taller than the terminal window — Static does not.
+            const text = streamTextRef.current;
+            if (text.trim()) {
+              setCommittedResponses(rs => [...rs, {
+                key: String(Date.now()),
+                text,
+                tokens: turnTokensRef.current,
+                cost: totalCostRef.current,
+              }]);
+              setStreamText('');
+            }
             setReady(true);
             setWaiting(false);
             setThinking(false);
@@ -424,6 +447,7 @@ function RunCodeApp({
             // Trigger balance refresh after each completed turn
             turnDoneCallbackRef.current?.();
             break;
+          }
         }
       },
     };
@@ -542,6 +566,24 @@ function RunCodeApp({
         )}
       </Static>
 
+      {/* Completed responses — committed to Static so long replies are fully scrollable.
+          Ink clips dynamic content taller than the terminal window; Static does not. */}
+      <Static items={committedResponses}>
+        {(r) => (
+          <Box key={r.key} flexDirection="column" marginBottom={0}>
+            <Text>{r.text}</Text>
+            {(r.tokens.input > 0 || r.tokens.output > 0) && (
+              <Box marginLeft={1}>
+                <Text dimColor>
+                  {r.tokens.input.toLocaleString()} in / {r.tokens.output.toLocaleString()} out
+                  {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)} session` : ''}
+                </Text>
+              </Box>
+            )}
+          </Box>
+        )}
+      </Static>
+
       {/* Permission dialog — rendered inline, captured via useInput above */}
       {permissionRequest && (
         <Box flexDirection="column" marginTop={1} marginLeft={1}>
@@ -595,20 +637,10 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Response */}
+      {/* Response — streaming in progress (committed to Static on turn_done) */}
       {streamText && (
         <Box marginTop={0} marginBottom={0}>
           <Text>{streamText}</Text>
-        </Box>
-      )}
-
-      {/* Token count + cost after response */}
-      {ready && (turnTokens.input > 0 || turnTokens.output > 0) && streamText && (
-        <Box marginLeft={1} marginTop={0}>
-          <Text dimColor>
-            {turnTokens.input.toLocaleString()} in / {turnTokens.output.toLocaleString()} out
-            {totalCost > 0 ? `  ·  $${totalCost.toFixed(4)} session` : ''}
-          </Text>
         </Box>
       )}
 
