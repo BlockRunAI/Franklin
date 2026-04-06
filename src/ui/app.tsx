@@ -119,8 +119,10 @@ function RunCodeApp({
   const [tools, setTools] = useState<Map<string, ToolStatus>>(new Map());
   // Completed tool results committed to Static (permanent scrollback — no re-render artifacts)
   const [completedTools, setCompletedTools] = useState<Array<ToolStatus & { key: string }>>([]);
-  // Completed text responses — committed to Static so long replies are scrollable
-  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number }; cost: number }>>([]);
+  // Latest completed response — shown in full in the dynamic area (always visible)
+  const [latestResponse, setLatestResponse] = useState<{ text: string; tokens: { input: number; output: number }; cost: number } | null>(null);
+  // Older responses folded to one-line summaries committed to Static (scrollable)
+  const [foldedResponses, setFoldedResponses] = useState<Array<{ key: string; summary: string }>>([]);
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS[0].id);
   const [ready, setReady] = useState(!startWithPicker);
   const [mode, setMode] = useState<UIMode>(startWithPicker ? 'model-picker' : 'input');
@@ -141,11 +143,13 @@ function RunCodeApp({
   const streamTextRef = useRef('');
   const turnTokensRef = useRef({ input: 0, output: 0 });
   const totalCostRef = useRef(0);
+  const latestResponseRef = useRef<{ text: string; tokens: { input: number; output: number }; cost: number } | null>(null);
 
   // Keep refs in sync so memoized event handlers can read current values
   streamTextRef.current = streamText;
   turnTokensRef.current = turnTokens;
   totalCostRef.current = totalCost;
+  latestResponseRef.current = latestResponse;
 
   // Permission dialog key handler — captures y/n/a when dialog is visible.
   // Must be registered before other handlers so it takes priority.
@@ -324,8 +328,19 @@ function RunCodeApp({
     }
 
     // ── Normal prompt ──
+    // Fold the previous response to a one-line summary before starting a new turn
+    const prev = latestResponseRef.current;
+    if (prev?.text.trim()) {
+      const firstLine = prev.text.replace(/\n+/g, ' ').trim().slice(0, 100);
+      const summary = firstLine.length < prev.text.trim().length ? firstLine + '…' : firstLine;
+      const tokStr = prev.tokens.input > 0
+        ? `  [${prev.tokens.input.toLocaleString()} in / ${prev.tokens.output.toLocaleString()} out]`
+        : '';
+      setFoldedResponses(rs => [...rs, { key: String(Date.now()), summary: summary + tokStr }]);
+      setLatestResponse(null);
+    }
     setLastPrompt(trimmed);
-    setInputHistory(prev => [...prev.slice(-49), trimmed]); // Keep last 50
+    setInputHistory(prev2 => [...prev2.slice(-49), trimmed]); // Keep last 50
     setHistoryIdx(-1);
     setInput('');
     setStreamText('');
@@ -428,16 +443,15 @@ function RunCodeApp({
             setTotalCost(prev => prev + estimateCost(event.model, event.inputTokens, event.outputTokens));
             break;
           case 'turn_done': {
-            // Commit streamed response to Static so long replies are fully scrollable.
-            // Ink clips dynamic content taller than the terminal window — Static does not.
+            // Move streamed response to latestResponse (shown in full, dynamic area).
+            // On the next turn, latestResponse gets folded to a one-line summary in Static.
             const text = streamTextRef.current;
             if (text.trim()) {
-              setCommittedResponses(rs => [...rs, {
-                key: String(Date.now()),
+              setLatestResponse({
                 text,
                 tokens: turnTokensRef.current,
                 cost: totalCostRef.current,
-              }]);
+              });
               setStreamText('');
             }
             setReady(true);
@@ -566,20 +580,11 @@ function RunCodeApp({
         )}
       </Static>
 
-      {/* Completed responses — committed to Static so long replies are fully scrollable.
-          Ink clips dynamic content taller than the terminal window; Static does not. */}
-      <Static items={committedResponses}>
+      {/* Older responses folded to one-line summaries — permanently in scrollback */}
+      <Static items={foldedResponses}>
         {(r) => (
-          <Box key={r.key} flexDirection="column" marginBottom={0}>
-            <Text>{r.text}</Text>
-            {(r.tokens.input > 0 || r.tokens.output > 0) && (
-              <Box marginLeft={1}>
-                <Text dimColor>
-                  {r.tokens.input.toLocaleString()} in / {r.tokens.output.toLocaleString()} out
-                  {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)} session` : ''}
-                </Text>
-              </Box>
-            )}
+          <Box key={r.key} marginLeft={1}>
+            <Text dimColor>  ↑ {r.summary}</Text>
           </Box>
         )}
       </Static>
@@ -637,10 +642,25 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Response — streaming in progress (committed to Static on turn_done) */}
+      {/* Streaming response — visible while the model is generating */}
       {streamText && (
         <Box marginTop={0} marginBottom={0}>
           <Text>{streamText}</Text>
+        </Box>
+      )}
+
+      {/* Latest completed response — shown in full, always visible above the input box */}
+      {latestResponse && !streamText && (
+        <Box flexDirection="column" marginBottom={0}>
+          <Text>{latestResponse.text}</Text>
+          {(latestResponse.tokens.input > 0 || latestResponse.tokens.output > 0) && (
+            <Box marginLeft={1}>
+              <Text dimColor>
+                {latestResponse.tokens.input.toLocaleString()} in / {latestResponse.tokens.output.toLocaleString()} out
+                {latestResponse.cost > 0 ? `  ·  $${latestResponse.cost.toFixed(4)} session` : ''}
+              </Text>
+            </Box>
+          )}
         </Box>
       )}
 
