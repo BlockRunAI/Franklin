@@ -3,7 +3,7 @@
  * Used by agent loop, proxy server, stats tracker, and router.
  */
 
-export const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+export const MODEL_PRICING: Record<string, { input: number; output: number; perCall?: number }> = {
   // Routing profiles (blended averages)
   'blockrun/auto': { input: 0.8, output: 4.0 },
   'blockrun/eco': { input: 0.2, output: 1.0 },
@@ -70,8 +70,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   // Others
   'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
   'nvidia/kimi-k2.5': { input: 0.55, output: 2.5 },
-  'zai/glm-5': { input: 1.0, output: 3.2 },
-  'zai/glm-5-turbo': { input: 1.2, output: 4.0 },
+  'zai/glm-5': { input: 0, output: 0, perCall: 0.001 },
+  'zai/glm-5-turbo': { input: 0, output: 0, perCall: 0.001 },
 };
 
 /** Opus pricing for savings calculations */
@@ -80,13 +80,18 @@ export const OPUS_PRICING = MODEL_PRICING['anthropic/claude-opus-4.6'];
 /**
  * Estimate cost in USD for a request.
  * Falls back to $2/$10 per 1M for unknown models.
+ * For per-call models (perCall > 0), uses flat per-call pricing instead of per-token.
  */
 export function estimateCost(
   model: string,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
+  calls = 1
 ): number {
   const pricing = MODEL_PRICING[model] || { input: 2.0, output: 10.0 };
+  if (pricing.perCall) {
+    return pricing.perCall * calls;
+  }
   return (
     (inputTokens / 1_000_000) * pricing.input +
     (outputTokens / 1_000_000) * pricing.output

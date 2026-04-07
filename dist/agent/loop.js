@@ -245,9 +245,10 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 inputTokens,
                 outputTokens: usage.outputTokens,
                 model: config.model,
+                calls: 1,
             });
             // Record usage for stats tracking (runcode stats command)
-            const costEstimate = estimateCost(config.model, inputTokens, usage.outputTokens);
+            const costEstimate = estimateCost(config.model, inputTokens, usage.outputTokens, 1);
             recordUsage(config.model, inputTokens, usage.outputTokens, costEstimate, 0);
             // ── Max output tokens recovery ──
             if (stopReason === 'max_tokens' && recoveryAttempts < 3) {

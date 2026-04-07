@@ -69,17 +69,21 @@ export const MODEL_PRICING = {
     // Others
     'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
     'nvidia/kimi-k2.5': { input: 0.55, output: 2.5 },
-    'zai/glm-5': { input: 1.0, output: 3.2 },
-    'zai/glm-5-turbo': { input: 1.2, output: 4.0 },
+    'zai/glm-5': { input: 0, output: 0, perCall: 0.001 },
+    'zai/glm-5-turbo': { input: 0, output: 0, perCall: 0.001 },
 };
 /** Opus pricing for savings calculations */
 export const OPUS_PRICING = MODEL_PRICING['anthropic/claude-opus-4.6'];
 /**
  * Estimate cost in USD for a request.
  * Falls back to $2/$10 per 1M for unknown models.
+ * For per-call models (perCall > 0), uses flat per-call pricing instead of per-token.
  */
-export function estimateCost(model, inputTokens, outputTokens) {
+export function estimateCost(model, inputTokens, outputTokens, calls = 1) {
     const pricing = MODEL_PRICING[model] || { input: 2.0, output: 10.0 };
+    if (pricing.perCall) {
+        return pricing.perCall * calls;
+    }
     return ((inputTokens / 1_000_000) * pricing.input +
         (outputTokens / 1_000_000) * pricing.output);
 }
