@@ -80,10 +80,45 @@ export class ModelClient {
     request: ModelRequest,
     signal?: AbortSignal
   ): AsyncGenerator<StreamChunk> {
-    const body = JSON.stringify({
-      ...request,
-      stream: true,
-    });
+    const isAnthropic = request.model.startsWith('anthropic/');
+
+    // Build the request payload, injecting cache_control markers for Anthropic models
+    let requestPayload: Record<string, unknown> = { ...request, stream: true };
+
+    if (isAnthropic) {
+      // 1. Convert system string → array with cache_control on the last block
+      if (typeof request.system === 'string' && request.system.length > 0) {
+        requestPayload['system'] = [
+          { type: 'text', text: request.system, cache_control: { type: 'ephemeral' } },
+        ];
+      }
+
+      // 2. Add cache_control to the last tool in the tools array
+      if (request.tools && request.tools.length > 0) {
+        const toolsCopy = request.tools.map(t => ({ ...t }));
+        (toolsCopy[toolsCopy.length - 1] as Record<string, unknown>)['cache_control'] = { type: 'ephemeral' };
+        requestPayload['tools'] = toolsCopy;
+      }
+
+      // 3. Add cache_control to the penultimate message (second-to-last)
+      if (request.messages && request.messages.length >= 2) {
+        const messagesCopy = request.messages.map(m => ({ ...m }));
+        const targetIdx = messagesCopy.length - 2;
+        const targetMsg = messagesCopy[targetIdx];
+        if (typeof targetMsg.content === 'string') {
+          (messagesCopy[targetIdx] as Record<string, unknown>)['content'] = [
+            { type: 'text', text: targetMsg.content, cache_control: { type: 'ephemeral' } },
+          ];
+        } else if (Array.isArray(targetMsg.content) && targetMsg.content.length > 0) {
+          const contentCopy = targetMsg.content.map(c => ({ ...(c as unknown as Record<string, unknown>) }));
+          contentCopy[contentCopy.length - 1]['cache_control'] = { type: 'ephemeral' };
+          (messagesCopy[targetIdx] as Record<string, unknown>)['content'] = contentCopy;
+        }
+        requestPayload['messages'] = messagesCopy;
+      }
+    }
+
+    const body = JSON.stringify(requestPayload);
 
     const endpoint = `${this.apiUrl}/v1/messages`;
     const headers: Record<string, string> = {
@@ -92,6 +127,11 @@ export class ModelClient {
       'x-api-key': 'x402-agent-handles-auth',
       'User-Agent': USER_AGENT,
     };
+
+    // Enable prompt caching beta for Anthropic models
+    if (isAnthropic) {
+      headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
+    }
 
     if (this.debug) {
       console.error(`[runcode] POST ${endpoint} model=${request.model}`);
