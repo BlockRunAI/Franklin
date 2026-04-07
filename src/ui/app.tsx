@@ -62,6 +62,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
 
 const PICKER_MODELS = [
   { id: 'zai/glm-5', shortcut: 'glm', label: '🔥 GLM-5 (promo til Apr 15)', price: '$0.001/call', highlight: true },
+  { id: 'zai/glm-5-turbo', shortcut: 'glm-turbo', label: 'GLM-5 Turbo', price: '$0.001/call' },
   { id: 'anthropic/claude-sonnet-4.6', shortcut: 'sonnet', label: 'Claude Sonnet 4.6', price: '$3/$15' },
   { id: 'anthropic/claude-opus-4.6', shortcut: 'opus', label: 'Claude Opus 4.6', price: '$5/$25' },
   { id: 'openai/gpt-5.4', shortcut: 'gpt', label: 'GPT-5.4', price: '$2.5/$15' },
