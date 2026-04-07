@@ -406,6 +406,9 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                         setThinkingText('');
                         // Trigger balance refresh after each completed turn
                         turnDoneCallbackRef.current?.();
+                        // Ring the terminal bell so the user knows the AI finished
+                        // (shows notification badge in iTerm2/Terminal.app when tabbed away)
+                        process.stderr.write('\x07');
                         // Auto-submit any message queued while agent was busy
                         const queued = queuedInputRef.current;
                         if (queued) {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.5.22 (2026-04-06)
+
+### Improvements
+
+**Terminal bell notification on turn completion**
+- Rings the terminal bell (`\x07`) when the AI finishes a response
+- Shows notification badge in iTerm2/Terminal.app when tabbed away
+- No more checking back to see if the AI is done — the bell tells you
+
 ## 2.5.11 (2026-04-06)
 
 ### Improvements
