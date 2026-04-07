@@ -97,6 +97,8 @@ Switch models mid-session:
 | `o3` | O3 | $2 / $8 |
 | `o4` | O4 Mini | $1.1 / $4.4 |
 | `grok` | Grok 3 | varies |
+| `glm` | GLM-5 (Zhipu) | $0.001/call |
+| `glm-turbo` | GLM-5-Turbo (Zhipu) | $0.001/call |
 | `free` | Nemotron Ultra 253B | FREE |
 | `devstral` | Devstral 2 123B | FREE |
 | `qwen-coder` | Qwen3 Coder 480B | FREE |
@@ -106,7 +108,7 @@ Switch models mid-session:
 
 ### Token Optimization
 
-Seven layers of automatic optimization keep context usage low and costs down:
+Nine layers of automatic optimization keep context usage low and costs down:
 
 1. **Thinking block stripping** — removes old reasoning from history
 2. **Tool result budgeting** — caps large outputs at 50K chars with preview
@@ -115,6 +117,8 @@ Seven layers of automatic optimization keep context usage low and costs down:
 5. **Auto-compact** — summarizes history when approaching context limit
 6. **Adaptive max_tokens** — starts at 8K, escalates to 64K on demand
 7. **Prompt-too-long recovery** — auto-compacts and retries up to 3x
+8. **Anthropic prompt caching** — automatically adds `cache_control` markers on system prompt, tools, and recent messages; cuts cached input cost ~90%
+9. **GLM-5 tuning** — sets temperature=0.8 (Zhipu spec), enables thinking mode for `-thinking-` variants; flat $0.001/call billing tracked accurately
 
 ### Permission System
 
@@ -231,10 +235,12 @@ Wallets are stored locally in `~/.blockrun/`. Each chain has its own wallet — 
 |-------|-------------------|
 | Free models (Nemotron, Devstral, etc.) | **$0** |
 | DeepSeek V3 / Gemini Flash | ~$0.001 |
-| GLM-5 | ~$0.001/call |
+| GLM-5 / GLM-5-Turbo | **$0.001/call** (flat rate, any token count) |
 | Claude Haiku / GPT-5 Mini | ~$0.005 |
 | Claude Sonnet / GPT-5.4 | ~$0.01 |
 | Claude Opus | ~$0.05 |
+
+The balance shown in the status bar updates in real-time as you spend — no need to wait for on-chain confirmation.
 
 Typical usage: **$5-20/month** for active development. Start with free models — no funding required.
 
