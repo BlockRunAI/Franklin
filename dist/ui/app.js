@@ -14,9 +14,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
     const { stdout } = useStdout();
     const cols = stdout?.columns ?? 80;
     const innerWidth = Math.min(Math.max(30, cols - 4), cols - 2);
-    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, children: [_jsx(Text, { dimColor: true, children: '╭' + '─'.repeat(cols - 2) + '╮' }), _jsxs(Box, { children: [_jsx(Text, { dimColor: true, children: "\u2502 " }), _jsx(Box, { width: innerWidth, children: queued
-                            ? _jsxs(Text, { color: "yellow", children: ["\u23CE queued: ", queued.slice(0, innerWidth - 12), queued.length > innerWidth - 12 ? '…' : ''] })
-                            : _jsx(TextInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: "Type next message... (queued while AI runs)", focus: focused !== false }) }), _jsxs(Text, { dimColor: true, children: [' '.repeat(Math.max(0, cols - innerWidth - 4)), "\u2502"] })] }), _jsx(Text, { dimColor: true, children: '╰' + '─'.repeat(cols - 2) + '╯' }), _jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [model, "  \u00B7  ", balance, sessionCost > 0.00001 ? _jsxs(Text, { color: "yellow", children: ["  -$", sessionCost.toFixed(4)] }) : '', '  ·  esc to abort/quit'] }) })] }));
+    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, children: [_jsx(Text, { dimColor: true, children: '╭' + '─'.repeat(cols - 2) + '╮' }), _jsxs(Box, { children: [_jsx(Text, { dimColor: true, children: "\u2502 " }), _jsx(Box, { width: innerWidth, children: _jsx(TextInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: queued ? `⏎ queued: ${queued.slice(0, 40)}` : 'Type a message...', focus: focused !== false }) }), _jsxs(Text, { dimColor: true, children: [' '.repeat(Math.max(0, cols - innerWidth - 4)), "\u2502"] })] }), _jsx(Text, { dimColor: true, children: '╰' + '─'.repeat(cols - 2) + '╯' }), _jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [model, "  \u00B7  ", balance, sessionCost > 0.00001 ? _jsxs(Text, { color: "yellow", children: ["  -$", sessionCost.toFixed(4)] }) : '', '  ·  esc to abort/quit'] }) })] }));
 }
 // ─── Model picker data ─────────────────────────────────────────────────────
 const PICKER_MODELS = [
@@ -75,6 +73,8 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const [inputHistory, setInputHistory] = useState([]);
     const [historyIdx, setHistoryIdx] = useState(-1);
     const [permissionRequest, setPermissionRequest] = useState(null);
+    const [askUserRequest, setAskUserRequest] = useState(null);
+    const [askUserInput, setAskUserInput] = useState('');
     // Message queued while agent is busy — auto-submitted when turn completes
     const [queuedInput, setQueuedInput] = useState('');
     const turnDoneCallbackRef = useRef(null);
@@ -82,6 +82,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const streamTextRef = useRef('');
     const turnTokensRef = useRef({ input: 0, output: 0, calls: 0 });
     const totalCostRef = useRef(0);
+    const turnCostRef = useRef(0); // per-turn cost (reset each turn)
     const queuedInputRef = useRef('');
     // Keep refs in sync so memoized event handlers can read current values
     streamTextRef.current = streamText;
@@ -95,10 +96,13 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         ? `$${Math.max(0, baseBalanceNum - (totalCost - costAtLastFetch)).toFixed(2)} USDC`
         : balance;
     // Permission dialog key handler — captures y/n/a when dialog is visible.
-    // Must be registered before other handlers so it takes priority.
+    // ink 6.x: useInput handlers all fire regardless of TextInput focus prop,
+    // so we handle here AND block TextInput onChange (see focused prop below).
     useInput((ch, _key) => {
         if (!permissionRequest)
             return;
+        // Clear any character that leaked into the text input
+        setInput('');
         const c = ch.toLowerCase();
         if (c === 'y') {
             const r = permissionRequest.resolve;
@@ -238,6 +242,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     setStreamText('');
                     setTools(new Map());
                     setTurnTokens({ input: 0, output: 0, calls: 0 });
+                    turnCostRef.current = 0;
                     setWaiting(true);
                     setReady(false);
                     // Pass through to agent loop to clear the actual conversation history
@@ -256,6 +261,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     setReady(false);
                     setWaiting(true);
                     setTurnTokens({ input: 0, output: 0, calls: 0 });
+                    turnCostRef.current = 0;
                     onSubmit(lastPrompt);
                     return;
                 default:
@@ -287,6 +293,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         setShowHelp(false);
         setShowWallet(false);
         setTurnTokens({ input: 0, output: 0, calls: 0 });
+        turnCostRef.current = 0;
         onSubmit(trimmed);
     }, [currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
     // Expose event handler, balance updater, and permission bridge
@@ -307,6 +314,13 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     // Ring the terminal bell — causes tab to show notification badge in iTerm2/Terminal.app
                     process.stderr.write('\x07');
                     setPermissionRequest({ toolName, description, resolve });
+                });
+            },
+            requestAskUser: (question, options) => {
+                return new Promise((resolve) => {
+                    process.stderr.write('\x07');
+                    setAskUserInput('');
+                    setAskUserRequest({ question, options, resolve });
                 });
             },
             handleEvent: (event) => {
@@ -375,15 +389,18 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                         });
                         break;
                     }
-                    case 'usage':
+                    case 'usage': {
                         setCurrentModel(event.model);
                         setTurnTokens(prev => ({
                             input: prev.input + event.inputTokens,
                             output: prev.output + event.outputTokens,
                             calls: prev.calls + (event.calls ?? 1),
                         }));
-                        setTotalCost(prev => prev + estimateCost(event.model, event.inputTokens, event.outputTokens, event.calls ?? 1));
+                        const turnCallCost = estimateCost(event.model, event.inputTokens, event.outputTokens, event.calls ?? 1);
+                        turnCostRef.current += turnCallCost;
+                        setTotalCost(prev => prev + turnCallCost);
                         break;
+                    }
                     case 'turn_done': {
                         // Commit full response to Static immediately — enters terminal scrollback like Claude Code.
                         // Also keep a short preview (last 5 lines) visible in the dynamic area.
@@ -393,10 +410,12 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                                     key: String(Date.now()),
                                     text,
                                     tokens: turnTokensRef.current,
-                                    cost: totalCostRef.current,
+                                    cost: turnCostRef.current, // per-turn cost, not cumulative
                                 }]);
-                            // Preview = last 5 non-empty lines of the response
-                            const previewLines = text.split('\n').filter(l => l.trim()).slice(-5).join('\n');
+                            // Preview = last 20 lines of the response so the user sees enough context
+                            const allLines = text.split('\n');
+                            const wasTruncated = allLines.length > 20;
+                            const previewLines = (wasTruncated ? '  ↑ scroll to see full reply\n' : '') + allLines.slice(-20).join('\n');
                             setResponsePreview(previewLines);
                             setStreamText('');
                         }
@@ -447,7 +466,13 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                         ? _jsxs(Text, { color: "red", children: ["  \u2717 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms", tool.preview ? ` — ${tool.preview}` : ''] })] })
                         : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms", tool.preview ? ` — ${tool.preview}` : ''] })] }) }, tool.key)) }), _jsx(Static, { items: committedResponses, children: (r) => (_jsxs(Box, { flexDirection: "column", children: [_jsx(Text, { children: r.text }), (r.tokens.input > 0 || r.tokens.output > 0) && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [r.tokens.calls > 0 && r.tokens.input === 0
                                         ? `${r.tokens.calls} calls`
-                                        : `${r.tokens.input.toLocaleString()} in / ${r.tokens.output.toLocaleString()} out${r.tokens.calls > 0 ? ` / ${r.tokens.calls} calls` : ''}`, r.cost > 0 ? `  ·  $${r.cost.toFixed(4)} session` : ''] }) }))] }, r.key)) }), permissionRequest && (_jsxs(Box, { flexDirection: "column", marginTop: 1, marginLeft: 1, children: [_jsx(Text, { color: "yellow", children: "  \u256D\u2500 Permission required \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsxs(Text, { color: "yellow", children: ["  \u2502 ", _jsx(Text, { bold: true, children: permissionRequest.toolName })] }), permissionRequest.description.split('\n').map((line, i) => (_jsxs(Text, { dimColor: true, children: ["  ", line] }, i))), _jsx(Text, { color: "yellow", children: "  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsx(Box, { marginLeft: 2, children: _jsxs(Text, { children: [_jsx(Text, { bold: true, color: "green", children: "[y]" }), _jsx(Text, { dimColor: true, children: " yes  " }), _jsx(Text, { bold: true, color: "red", children: "[n]" }), _jsx(Text, { dimColor: true, children: " no  " }), _jsx(Text, { bold: true, color: "cyan", children: "[a]" }), _jsx(Text, { dimColor: true, children: " always allow this session" })] }) })] })), Array.from(tools.entries()).map(([id, tool]) => (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "cyan", children: ['  ', _jsx(Spinner, { type: "dots" }), ' ', tool.name, tool.preview ? _jsxs(Text, { dimColor: true, children: [": ", tool.preview] }) : null, _jsx(Text, { dimColor: true, children: (() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? ` ${s}s` : ''; })() })] }), tool.liveOutput ? (_jsxs(Text, { dimColor: true, children: ["  \u2514 ", tool.liveOutput] })) : null] }, id))), thinking && (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }), thinkingText && (_jsxs(Text, { dimColor: true, wrap: "truncate-end", children: ["  ", thinkingText.split('\n').pop()?.slice(0, 80)] }))] })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), responsePreview && !streamText && (_jsxs(Box, { flexDirection: "column", marginBottom: 0, children: [_jsx(Text, { dimColor: true, children: "  \u2191 scroll to see full reply" }), _jsx(Text, { children: responsePreview })] })), _jsx(InputBox, { input: input, setInput: setInput, onSubmit: handleSubmit, model: currentModel, balance: liveBalance, sessionCost: totalCost, queued: queuedInput || undefined, focused: !permissionRequest && !queuedInput })] }));
+                                        : `${r.tokens.input.toLocaleString()} in / ${r.tokens.output.toLocaleString()} out${r.tokens.calls > 0 ? ` / ${r.tokens.calls} calls` : ''}`, r.cost > 0 ? `  ·  $${r.cost.toFixed(4)}` : ''] }) }))] }, r.key)) }), permissionRequest && (_jsxs(Box, { flexDirection: "column", marginTop: 1, marginLeft: 1, children: [_jsx(Text, { color: "yellow", children: "  \u256D\u2500 Permission required \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsxs(Text, { color: "yellow", children: ["  \u2502 ", _jsx(Text, { bold: true, children: permissionRequest.toolName })] }), permissionRequest.description.split('\n').map((line, i) => (_jsxs(Text, { dimColor: true, children: ["  \u2502 ", line] }, i))), _jsx(Text, { color: "yellow", children: "  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsx(Box, { marginLeft: 3, children: _jsxs(Text, { children: [_jsx(Text, { bold: true, color: "green", children: "[y]" }), _jsx(Text, { dimColor: true, children: " yes  " }), _jsx(Text, { bold: true, color: "cyan", children: "[a]" }), _jsx(Text, { dimColor: true, children: " always  " }), _jsx(Text, { bold: true, color: "red", children: "[n]" }), _jsx(Text, { dimColor: true, children: " no" })] }) })] })), askUserRequest && (_jsxs(Box, { flexDirection: "column", marginTop: 1, marginLeft: 1, children: [_jsx(Text, { color: "cyan", children: "  \u256D\u2500 Question \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsxs(Text, { color: "cyan", children: ["  \u2502 ", _jsx(Text, { bold: true, children: askUserRequest.question })] }), askUserRequest.options && askUserRequest.options.length > 0 && (askUserRequest.options.map((opt, i) => (_jsxs(Text, { dimColor: true, children: ["  \u2502 ", i + 1, ". ", opt] }, i)))), _jsx(Text, { color: "cyan", children: "  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsxs(Box, { marginLeft: 3, children: [_jsx(Text, { bold: true, children: "answer> " }), _jsx(TextInput, { value: askUserInput, onChange: setAskUserInput, onSubmit: (val) => {
+                                    const answer = val.trim() || '(no response)';
+                                    const r = askUserRequest.resolve;
+                                    setAskUserRequest(null);
+                                    setAskUserInput('');
+                                    r(answer);
+                                }, focus: true })] })] })), Array.from(tools.entries()).map(([id, tool]) => (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "cyan", children: ['  ', _jsx(Spinner, { type: "dots" }), ' ', tool.name, tool.preview ? _jsxs(Text, { dimColor: true, children: [": ", tool.preview] }) : null, _jsx(Text, { dimColor: true, children: (() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? ` ${s}s` : ''; })() })] }), tool.liveOutput ? (_jsxs(Text, { dimColor: true, children: ["  \u2514 ", tool.liveOutput] })) : null] }, id))), thinking && (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }), thinkingText && (_jsxs(Text, { dimColor: true, wrap: "truncate-end", children: ["  ", thinkingText.split('\n').pop()?.slice(0, 80)] }))] })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), responsePreview && !streamText && (_jsx(Box, { flexDirection: "column", marginBottom: 0, children: _jsx(Text, { children: responsePreview }) })), _jsx(InputBox, { input: (permissionRequest || askUserRequest) ? '' : input, setInput: (permissionRequest || askUserRequest) ? () => { } : setInput, onSubmit: (permissionRequest || askUserRequest) ? () => { } : handleSubmit, model: currentModel, balance: liveBalance, sessionCost: totalCost, queued: queuedInput || undefined, focused: !permissionRequest && !askUserRequest })] }));
 }
 export function launchInkUI(opts) {
     let resolveInput = null;
@@ -488,6 +513,10 @@ export function launchInkUI(opts) {
         requestPermission: (toolName, description) => {
             const ui = globalThis.__runcode_ui;
             return ui?.requestPermission(toolName, description) ?? Promise.resolve('no');
+        },
+        requestAskUser: (question, options) => {
+            const ui = globalThis.__runcode_ui;
+            return ui?.requestAskUser(question, options) ?? Promise.resolve('(no response)');
         },
     };
 }

@@ -183,6 +183,8 @@ async function runWithInkUI(
   // immediately and auto-denied every permission. Now y/n/a goes through useInput.
   agentConfig.permissionPromptFn = (toolName, description) =>
     ui.requestPermission(toolName, description);
+  agentConfig.onAskUser = (question, options) =>
+    ui.requestAskUser(question, options);
 
   // Wire up background balance fetch to UI
   onBalanceReady?.((bal) => ui.updateBalance(bal));

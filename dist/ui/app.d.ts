@@ -11,6 +11,7 @@ export interface InkUIHandle {
     onAbort: (cb: () => void) => void;
     cleanup: () => void;
     requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
+    requestAskUser: (question: string, options?: string[]) => Promise<string>;
 }
 export declare function launchInkUI(opts: {
     model: string;

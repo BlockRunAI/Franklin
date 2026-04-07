@@ -72,6 +72,8 @@ export interface ExecutionScope {
   workingDir: string;
   abortSignal: AbortSignal;
   onProgress?: (text: string) => void;
+  /** Routes AskUser questions through ink UI input to avoid raw-mode stdin conflict */
+  onAskUser?: (question: string, options?: string[]) => Promise<string>;
 }
 
 // ─── Streaming Events ──────────────────────────────────────────────────────
@@ -156,4 +158,6 @@ export interface AgentConfig {
    * Returns 'yes' | 'no' | 'always' (always = allow for rest of session).
    */
   permissionPromptFn?: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
+  /** Routes AskUser questions through ink UI input to avoid raw-mode stdin conflict */
+  onAskUser?: (question: string, options?: string[]) => Promise<string>;
 }

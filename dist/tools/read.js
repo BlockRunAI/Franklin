@@ -74,13 +74,13 @@ async function execute(input, ctx) {
 export const readCapability = {
     spec: {
         name: 'Read',
-        description: 'Read a file from the filesystem with line numbers (cat -n format). Max 2MB file size. Use offset/limit params for large files or to read specific sections.',
+        description: 'Read file with line numbers. Use offset/limit for large files.',
         input_schema: {
             type: 'object',
             properties: {
-                file_path: { type: 'string', description: 'Absolute path to the file to read' },
-                offset: { type: 'number', description: 'Line number to start reading from (1-based). Default: 1' },
-                limit: { type: 'number', description: 'Maximum number of lines to read. Default: 2000' },
+                file_path: { type: 'string', description: 'Absolute path' },
+                offset: { type: 'number', description: 'Start line (1-based)' },
+                limit: { type: 'number', description: 'Max lines (default 2000)' },
             },
             required: ['file_path'],
         },

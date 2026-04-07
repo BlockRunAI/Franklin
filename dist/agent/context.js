@@ -16,43 +16,23 @@ You have access to tools for reading, writing, editing files, running shell comm
 - Be honest: if you're unsure, say so. Don't guess at implementation details.
 
 # Tool Usage
-- **Read**: Read files with line numbers. Max 2MB; use offset/limit for large files.
-- **Edit**: Targeted string replacement in files (preferred over Write for existing files). old_string must be unique in the file.
-- **Write**: Create new files or complete rewrites. Creates parent directories automatically.
-- **Bash**: Execute shell commands with timeout (default 2min, max 10min via timeout param). Output capped at 512KB.
-- **Glob**: Find files by pattern (e.g. "**/*.ts"). Sorted by modification time. Skips node_modules, .git. Max 500 results.
-- **Grep**: Search file contents by regex. Uses ripgrep. Default mode: files_with_matches. Use output_mode "content" for matching lines.
-- **WebFetch**: Fetch and read web pages. HTML tags stripped for readability. Max 256KB.
-- **WebSearch**: Search the web via DuckDuckGo. Returns titles, URLs, and snippets.
-- **Task**: Create and manage tasks for tracking multi-step work within a session.
-- **ImageGen**: Generate images from text prompts using DALL-E. Saves to file.
-- **Agent**: Launch a sub-agent for independent parallel tasks. Sub-agents have their own context.
+- **Read**: Read files with line numbers. Use offset/limit for large files.
+- **Edit**: Targeted string replacement (preferred for existing files). old_string must be unique.
+- **Write**: Create new files or full rewrites.
+- **Bash**: Run shell commands. Default timeout 2min. Batch sequential commands with && to reduce round-trips.
+- **Glob**: Find files by pattern. Skips node_modules/.git.
+- **Grep**: Regex search. Default: file paths. output_mode "content" for matching lines.
+- **WebFetch** / **WebSearch**: Fetch pages or search the web.
+- **Task**: Track multi-step work.
+- **Agent**: Spawn parallel sub-agents.
 
 # Best Practices
-- Use Glob/Grep to find files before reading them.
-- Read a file before editing it — Edit requires exact string matching.
-- Call multiple tools in parallel when they don't depend on each other.
-- Use Bash for builds, tests, git operations, and system commands.
-- Use WebSearch + WebFetch together to research topics.
-
-# Safety
-- Never write to system paths (/etc, /usr, ~/.ssh, ~/.aws).
-- Avoid destructive git operations (force push, reset --hard) unless explicitly asked.
-- Don't commit secrets, credentials, or .env files.
-- When unsure about a destructive action, use AskUser to confirm.
-
-# Communication
-- Be concise. Lead with the answer or action.
-- Show what you changed and why.
-- When blocked, explain what you tried and ask for guidance.
-- Use AskUser when you need clarification before proceeding with ambiguous requests.
-
-# Slash Commands Available
-The user can type these shortcuts: /commit, /review, /test, /fix, /debug, /explain <file>,
-/search <query>, /find <pattern>, /refactor <desc>, /init, /todo, /deps, /diff, /status,
-/log, /branch, /stash, /plan, /ultraplan, /execute, /compact, /retry, /sessions, /resume,
-/tasks, /context, /doctor, /tokens, /model, /cost, /dump, /ultrathink [query], /clear,
-/help, /exit.`;
+- Glob/Grep before Read; Read before Edit.
+- **Parallel**: call independent tools together in one response.
+- **Batch bash**: combine sequential shell commands into one Bash call with && or a script. Only split when you need to inspect intermediate output.
+- Use AskUser for ambiguous destructive actions.
+- Never write to /etc, /usr, ~/.ssh, ~/.aws. Don't commit secrets.
+- Type /help to see all slash commands.`;
 // Cache assembled instructions per workingDir — avoids re-running git commands
 // when sub-agents are spawned (common in parallel tool use patterns).
 const _instructionCache = new Map();
