@@ -81,9 +81,23 @@ export class ModelClient {
     signal?: AbortSignal
   ): AsyncGenerator<StreamChunk> {
     const isAnthropic = request.model.startsWith('anthropic/');
+    const isGLM = request.model.startsWith('zai/') || request.model.includes('glm');
 
-    // Build the request payload, injecting cache_control markers for Anthropic models
+    // Build the request payload, injecting model-specific optimizations
     let requestPayload: Record<string, unknown> = { ...request, stream: true };
+
+    // ── GLM-specific optimizations ───────────────────────────────────────────
+    // GLM models work best with temperature=0.8 per official zai spec.
+    // Enable thinking mode only for explicit reasoning variants (-thinking-).
+    if (isGLM) {
+      if (requestPayload['temperature'] === undefined) {
+        requestPayload['temperature'] = 0.8;
+      }
+      // Only enable thinking for models that explicitly ship reasoning mode
+      if (request.model.includes('-thinking-')) {
+        requestPayload['thinking'] = { type: 'enabled' };
+      }
+    }
 
     if (isAnthropic) {
       // 1. Convert system string → array with cache_control on the last block
