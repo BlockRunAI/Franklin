@@ -54,11 +54,21 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const [mode, setMode] = useState(startWithPicker ? 'model-picker' : 'input');
     const [pickerIdx, setPickerIdx] = useState(0);
     const [statusMsg, setStatusMsg] = useState('');
-    const [turnTokens, setTurnTokens] = useState({ input: 0, output: 0 });
+    const [turnTokens, setTurnTokens] = useState({ input: 0, output: 0, calls: 0 });
     const [totalCost, setTotalCost] = useState(0);
     const [showHelp, setShowHelp] = useState(false);
     const [showWallet, setShowWallet] = useState(false);
     const [balance, setBalance] = useState(walletBalance);
+    // Parse the fetched balance to a number so we can compute live balance = fetchedBalance - sessionCost.
+    // costAtLastFetch tracks totalCost when balance was last fetched, to avoid double-subtracting.
+    const parseBalanceNum = (s) => {
+        const m = s.match(/\$([\d.]+)/);
+        return m ? parseFloat(m[1]) : null;
+    };
+    const [baseBalanceNum, setBaseBalanceNum] = useState(() => parseBalanceNum(walletBalance));
+    const [costAtLastFetch, setCostAtLastFetch] = useState(0);
+    const costAtLastFetchRef = useRef(0);
+    const baseBalanceNumRef = useRef(parseBalanceNum(walletBalance));
     const [thinkingText, setThinkingText] = useState('');
     const [lastPrompt, setLastPrompt] = useState('');
     const [inputHistory, setInputHistory] = useState([]);
@@ -69,7 +79,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const turnDoneCallbackRef = useRef(null);
     // Refs to read current state values inside memoized event handlers (avoids stale closures)
     const streamTextRef = useRef('');
-    const turnTokensRef = useRef({ input: 0, output: 0 });
+    const turnTokensRef = useRef({ input: 0, output: 0, calls: 0 });
     const totalCostRef = useRef(0);
     const queuedInputRef = useRef('');
     // Keep refs in sync so memoized event handlers can read current values
@@ -77,6 +87,12 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     turnTokensRef.current = turnTokens;
     totalCostRef.current = totalCost;
     queuedInputRef.current = queuedInput;
+    costAtLastFetchRef.current = costAtLastFetch;
+    baseBalanceNumRef.current = baseBalanceNum;
+    // Compute live balance = fetchedBalance - spend_since_last_fetch
+    const liveBalance = baseBalanceNum !== null
+        ? `$${Math.max(0, baseBalanceNum - (totalCost - costAtLastFetch)).toFixed(2)} USDC`
+        : balance;
     // Permission dialog key handler — captures y/n/a when dialog is visible.
     // Must be registered before other handlers so it takes priority.
     useInput((ch, _key) => {
@@ -220,7 +236,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                 case '/clear':
                     setStreamText('');
                     setTools(new Map());
-                    setTurnTokens({ input: 0, output: 0 });
+                    setTurnTokens({ input: 0, output: 0, calls: 0 });
                     setWaiting(true);
                     setReady(false);
                     // Pass through to agent loop to clear the actual conversation history
@@ -238,7 +254,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     setTools(new Map());
                     setReady(false);
                     setWaiting(true);
-                    setTurnTokens({ input: 0, output: 0 });
+                    setTurnTokens({ input: 0, output: 0, calls: 0 });
                     onSubmit(lastPrompt);
                     return;
                 default:
@@ -269,13 +285,21 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         setStatusMsg('');
         setShowHelp(false);
         setShowWallet(false);
-        setTurnTokens({ input: 0, output: 0 });
+        setTurnTokens({ input: 0, output: 0, calls: 0 });
         onSubmit(trimmed);
     }, [currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
     // Expose event handler, balance updater, and permission bridge
     useEffect(() => {
         globalThis.__runcode_ui = {
-            updateBalance: (bal) => setBalance(bal),
+            updateBalance: (bal) => {
+                setBalance(bal);
+                const num = parseBalanceNum(bal);
+                if (num !== null) {
+                    setBaseBalanceNum(num);
+                    // Reset cost baseline — the fetched balance already reflects costs up to this point
+                    setCostAtLastFetch(totalCostRef.current);
+                }
+            },
             onTurnDone: (cb) => { turnDoneCallbackRef.current = cb; },
             requestPermission: (toolName, description) => {
                 return new Promise((resolve) => {
@@ -355,8 +379,9 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                         setTurnTokens(prev => ({
                             input: prev.input + event.inputTokens,
                             output: prev.output + event.outputTokens,
+                            calls: prev.calls + (event.calls ?? 1),
                         }));
-                        setTotalCost(prev => prev + estimateCost(event.model, event.inputTokens, event.outputTokens));
+                        setTotalCost(prev => prev + estimateCost(event.model, event.inputTokens, event.outputTokens, event.calls ?? 1));
                         break;
                     case 'turn_done': {
                         // Commit full response to Static immediately — enters terminal scrollback like Claude Code.
@@ -416,7 +441,9 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     // ── Normal Mode ──
     return (_jsxs(Box, { flexDirection: "column", children: [statusMsg && (_jsx(Box, { marginLeft: 2, children: _jsx(Text, { color: "green", children: statusMsg }) })), showHelp && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Commands" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/model" }), " [name]  Switch model (picker if no name)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/wallet" }), "        Show wallet address & balance"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/cost" }), "          Session cost & savings"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/retry" }), "         Retry the last prompt"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/compact" }), "       Compress conversation history"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Coding \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/test" }), "          Run tests"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/fix" }), "           Fix last error"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/review" }), "        Code review"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/explain" }), " file  Explain code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/search" }), " query  Search codebase"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/refactor" }), " desc Refactor code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/scaffold" }), " desc Generate boilerplate"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Git \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/commit" }), "        Commit changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/push" }), "          Push to remote"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/pr" }), "            Create pull request"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/status" }), "        Git status"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/diff" }), "          Git diff"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/log" }), "           Git log"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/branch" }), " [name] Branches"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/stash" }), "         Stash changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/undo" }), "          Undo last commit"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Analysis \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/security" }), "      Security audit"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/lint" }), "          Quality check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/optimize" }), "      Performance check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/todo" }), "          Find TODOs"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/deps" }), "          Dependencies"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clean" }), "         Dead code removal"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/context" }), "       Session info (model, tokens, mode)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/plan" }), "          Enter plan mode (read-only tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/execute" }), "       Exit plan mode (enable all tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/sessions" }), "      List saved sessions"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/resume" }), " id     Resume a saved session"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clear" }), "         Clear conversation display"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/doctor" }), "        Diagnose setup issues"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/help" }), "          This help"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/exit" }), "          Quit"] }), _jsx(Text, { children: " " }), _jsx(Text, { dimColor: true, children: "  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4, nano, mini, haiku" })] })), showWallet && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Wallet" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  Chain:   ", _jsx(Text, { color: "magenta", children: chain })] }), _jsxs(Text, { children: ["  Address: ", _jsx(Text, { color: "cyan", children: walletAddress })] }), _jsxs(Text, { children: ["  Balance: ", _jsx(Text, { color: "green", children: balance })] })] })), _jsx(Static, { items: completedTools, children: (tool) => (_jsx(Box, { marginLeft: 1, children: tool.error
                         ? _jsxs(Text, { color: "red", children: ["  \u2717 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms", tool.preview ? ` — ${tool.preview}` : ''] })] })
-                        : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms", tool.preview ? ` — ${tool.preview}` : ''] })] }) }, tool.key)) }), _jsx(Static, { items: committedResponses, children: (r) => (_jsxs(Box, { flexDirection: "column", children: [_jsx(Text, { children: r.text }), (r.tokens.input > 0 || r.tokens.output > 0) && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [r.tokens.input.toLocaleString(), " in / ", r.tokens.output.toLocaleString(), " out", r.cost > 0 ? `  ·  $${r.cost.toFixed(4)} session` : ''] }) }))] }, r.key)) }), permissionRequest && (_jsxs(Box, { flexDirection: "column", marginTop: 1, marginLeft: 1, children: [_jsx(Text, { color: "yellow", children: "  \u256D\u2500 Permission required \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsxs(Text, { color: "yellow", children: ["  \u2502 ", _jsx(Text, { bold: true, children: permissionRequest.toolName })] }), permissionRequest.description.split('\n').map((line, i) => (_jsxs(Text, { dimColor: true, children: ["  ", line] }, i))), _jsx(Text, { color: "yellow", children: "  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsx(Box, { marginLeft: 2, children: _jsxs(Text, { children: [_jsx(Text, { bold: true, color: "green", children: "[y]" }), _jsx(Text, { dimColor: true, children: " yes  " }), _jsx(Text, { bold: true, color: "red", children: "[n]" }), _jsx(Text, { dimColor: true, children: " no  " }), _jsx(Text, { bold: true, color: "cyan", children: "[a]" }), _jsx(Text, { dimColor: true, children: " always allow this session" })] }) })] })), Array.from(tools.entries()).map(([id, tool]) => (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "cyan", children: ['  ', _jsx(Spinner, { type: "dots" }), ' ', tool.name, tool.preview ? _jsxs(Text, { dimColor: true, children: [": ", tool.preview] }) : null, _jsx(Text, { dimColor: true, children: (() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? ` ${s}s` : ''; })() })] }), tool.liveOutput ? (_jsxs(Text, { dimColor: true, children: ["  \u2514 ", tool.liveOutput] })) : null] }, id))), thinking && (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }), thinkingText && (_jsxs(Text, { dimColor: true, wrap: "truncate-end", children: ["  ", thinkingText.split('\n').pop()?.slice(0, 80)] }))] })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), responsePreview && !streamText && (_jsxs(Box, { flexDirection: "column", marginBottom: 0, children: [_jsx(Text, { dimColor: true, children: "  \u2191 scroll to see full reply" }), _jsx(Text, { children: responsePreview })] })), _jsx(InputBox, { input: input, setInput: setInput, onSubmit: handleSubmit, model: currentModel, balance: balance, sessionCost: totalCost, queued: queuedInput || undefined, focused: !permissionRequest && !queuedInput })] }));
+                        : _jsxs(Text, { color: "green", children: ["  \u2713 ", tool.name, " ", _jsxs(Text, { dimColor: true, children: [tool.elapsed, "ms", tool.preview ? ` — ${tool.preview}` : ''] })] }) }, tool.key)) }), _jsx(Static, { items: committedResponses, children: (r) => (_jsxs(Box, { flexDirection: "column", children: [_jsx(Text, { children: r.text }), (r.tokens.input > 0 || r.tokens.output > 0) && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [r.tokens.calls > 0 && r.tokens.input === 0
+                                        ? `${r.tokens.calls} calls`
+                                        : `${r.tokens.input.toLocaleString()} in / ${r.tokens.output.toLocaleString()} out${r.tokens.calls > 0 ? ` / ${r.tokens.calls} calls` : ''}`, r.cost > 0 ? `  ·  $${r.cost.toFixed(4)} session` : ''] }) }))] }, r.key)) }), permissionRequest && (_jsxs(Box, { flexDirection: "column", marginTop: 1, marginLeft: 1, children: [_jsx(Text, { color: "yellow", children: "  \u256D\u2500 Permission required \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsxs(Text, { color: "yellow", children: ["  \u2502 ", _jsx(Text, { bold: true, children: permissionRequest.toolName })] }), permissionRequest.description.split('\n').map((line, i) => (_jsxs(Text, { dimColor: true, children: ["  ", line] }, i))), _jsx(Text, { color: "yellow", children: "  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" }), _jsx(Box, { marginLeft: 2, children: _jsxs(Text, { children: [_jsx(Text, { bold: true, color: "green", children: "[y]" }), _jsx(Text, { dimColor: true, children: " yes  " }), _jsx(Text, { bold: true, color: "red", children: "[n]" }), _jsx(Text, { dimColor: true, children: " no  " }), _jsx(Text, { bold: true, color: "cyan", children: "[a]" }), _jsx(Text, { dimColor: true, children: " always allow this session" })] }) })] })), Array.from(tools.entries()).map(([id, tool]) => (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "cyan", children: ['  ', _jsx(Spinner, { type: "dots" }), ' ', tool.name, tool.preview ? _jsxs(Text, { dimColor: true, children: [": ", tool.preview] }) : null, _jsx(Text, { dimColor: true, children: (() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? ` ${s}s` : ''; })() })] }), tool.liveOutput ? (_jsxs(Text, { dimColor: true, children: ["  \u2514 ", tool.liveOutput] })) : null] }, id))), thinking && (_jsxs(Box, { flexDirection: "column", marginLeft: 1, children: [_jsxs(Text, { color: "magenta", children: ["  ", _jsx(Spinner, { type: "dots" }), " thinking..."] }), thinkingText && (_jsxs(Text, { dimColor: true, wrap: "truncate-end", children: ["  ", thinkingText.split('\n').pop()?.slice(0, 80)] }))] })), waiting && !thinking && tools.size === 0 && (_jsx(Box, { marginLeft: 1, children: _jsxs(Text, { color: "yellow", children: ["  ", _jsx(Spinner, { type: "dots" }), " ", _jsx(Text, { dimColor: true, children: currentModel })] }) })), streamText && (_jsx(Box, { marginTop: 0, marginBottom: 0, children: _jsx(Text, { children: streamText }) })), responsePreview && !streamText && (_jsxs(Box, { flexDirection: "column", marginBottom: 0, children: [_jsx(Text, { dimColor: true, children: "  \u2191 scroll to see full reply" }), _jsx(Text, { children: responsePreview })] })), _jsx(InputBox, { input: input, setInput: setInput, onSubmit: handleSubmit, model: currentModel, balance: liveBalance, sessionCost: totalCost, queued: queuedInput || undefined, focused: !permissionRequest && !queuedInput })] }));
 }
 export function launchInkUI(opts) {
     let resolveInput = null;
