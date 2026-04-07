@@ -33,16 +33,13 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
       <Box>
         <Text dimColor>│ </Text>
         <Box width={innerWidth}>
-          {queued
-            ? <Text color="yellow">⏎ queued: {queued.slice(0, innerWidth - 12)}{queued.length > innerWidth - 12 ? '…' : ''}</Text>
-            : <TextInput
-                value={input}
-                onChange={setInput}
-                onSubmit={onSubmit}
-                placeholder="Type next message... (queued while AI runs)"
-                focus={focused !== false}
-              />
-          }
+          <TextInput
+            value={input}
+            onChange={setInput}
+            onSubmit={onSubmit}
+            placeholder={queued ? `⏎ queued: ${queued.slice(0, 40)}` : 'Type a message...'}
+            focus={focused !== false}
+          />
         </Box>
         <Text dimColor>{' '.repeat(Math.max(0, cols - innerWidth - 4))}│</Text>
       </Box>
@@ -160,6 +157,7 @@ function RunCodeApp({
   const streamTextRef = useRef('');
   const turnTokensRef = useRef({ input: 0, output: 0, calls: 0 });
   const totalCostRef = useRef(0);
+  const turnCostRef = useRef(0); // per-turn cost (reset each turn)
   const queuedInputRef = useRef('');
 
   // Keep refs in sync so memoized event handlers can read current values
@@ -323,6 +321,7 @@ function RunCodeApp({
           setStreamText('');
           setTools(new Map());
           setTurnTokens({ input: 0, output: 0, calls: 0 });
+          turnCostRef.current = 0;
           setWaiting(true);
           setReady(false);
           // Pass through to agent loop to clear the actual conversation history
@@ -342,6 +341,7 @@ function RunCodeApp({
           setReady(false);
           setWaiting(true);
           setTurnTokens({ input: 0, output: 0, calls: 0 });
+          turnCostRef.current = 0;
           onSubmit(lastPrompt);
           return;
 
@@ -375,6 +375,7 @@ function RunCodeApp({
     setShowHelp(false);
     setShowWallet(false);
     setTurnTokens({ input: 0, output: 0, calls: 0 });
+    turnCostRef.current = 0;
     onSubmit(trimmed);
   }, [currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
 
@@ -463,15 +464,18 @@ function RunCodeApp({
             });
             break;
           }
-          case 'usage':
+          case 'usage': {
             setCurrentModel(event.model);
             setTurnTokens(prev => ({
               input: prev.input + event.inputTokens,
               output: prev.output + event.outputTokens,
               calls: prev.calls + (event.calls ?? 1),
             }));
-            setTotalCost(prev => prev + estimateCost(event.model, event.inputTokens, event.outputTokens, event.calls ?? 1));
+            const turnCallCost = estimateCost(event.model, event.inputTokens, event.outputTokens, event.calls ?? 1);
+            turnCostRef.current += turnCallCost;
+            setTotalCost(prev => prev + turnCallCost);
             break;
+          }
           case 'turn_done': {
             // Commit full response to Static immediately — enters terminal scrollback like Claude Code.
             // Also keep a short preview (last 5 lines) visible in the dynamic area.
@@ -481,10 +485,12 @@ function RunCodeApp({
                 key: String(Date.now()),
                 text,
                 tokens: turnTokensRef.current,
-                cost: totalCostRef.current,
+                cost: turnCostRef.current, // per-turn cost, not cumulative
               }]);
-              // Preview = last 5 non-empty lines of the response
-              const previewLines = text.split('\n').filter(l => l.trim()).slice(-5).join('\n');
+              // Preview = last 20 lines of the response so the user sees enough context
+              const allLines = text.split('\n');
+              const wasTruncated = allLines.length > 20;
+              const previewLines = (wasTruncated ? '  ↑ scroll to see full reply\n' : '') + allLines.slice(-20).join('\n');
               setResponsePreview(previewLines);
               setStreamText('');
             }
@@ -644,7 +650,7 @@ function RunCodeApp({
                   {r.tokens.calls > 0 && r.tokens.input === 0
                     ? `${r.tokens.calls} calls`
                     : `${r.tokens.input.toLocaleString()} in / ${r.tokens.output.toLocaleString()} out${r.tokens.calls > 0 ? ` / ${r.tokens.calls} calls` : ''}`}
-                  {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)} session` : ''}
+                  {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)}` : ''}
                 </Text>
               </Box>
             )}
@@ -658,17 +664,17 @@ function RunCodeApp({
           <Text color="yellow">  ╭─ Permission required ─────────────────</Text>
           <Text color="yellow">  │ <Text bold>{permissionRequest.toolName}</Text></Text>
           {permissionRequest.description.split('\n').map((line, i) => (
-            <Text key={i} dimColor>  {line}</Text>
+            <Text key={i} dimColor>  │ {line}</Text>
           ))}
           <Text color="yellow">  ╰─────────────────────────────────────</Text>
-          <Box marginLeft={2}>
+          <Box marginLeft={3}>
             <Text>
               <Text bold color="green">[y]</Text>
               <Text dimColor> yes  </Text>
-              <Text bold color="red">[n]</Text>
-              <Text dimColor> no  </Text>
               <Text bold color="cyan">[a]</Text>
-              <Text dimColor> always allow this session</Text>
+              <Text dimColor> always  </Text>
+              <Text bold color="red">[n]</Text>
+              <Text dimColor> no</Text>
             </Text>
           </Box>
         </Box>
@@ -716,7 +722,6 @@ function RunCodeApp({
           Full text is already in Static/scrollback above. Cleared when next turn starts. */}
       {responsePreview && !streamText && (
         <Box flexDirection="column" marginBottom={0}>
-          <Text dimColor>  ↑ scroll to see full reply</Text>
           <Text>{responsePreview}</Text>
         </Box>
       )}
@@ -730,7 +735,7 @@ function RunCodeApp({
         balance={liveBalance}
         sessionCost={totalCost}
         queued={queuedInput || undefined}
-        focused={!permissionRequest && !queuedInput}
+        focused={!permissionRequest}
       />
     </Box>
   );
