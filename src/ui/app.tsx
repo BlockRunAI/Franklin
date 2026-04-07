@@ -174,9 +174,12 @@ function RunCodeApp({
     : balance;
 
   // Permission dialog key handler — captures y/n/a when dialog is visible.
-  // Must be registered before other handlers so it takes priority.
+  // ink 6.x: useInput handlers all fire regardless of TextInput focus prop,
+  // so we handle here AND block TextInput onChange (see focused prop below).
   useInput((ch, _key) => {
     if (!permissionRequest) return;
+    // Clear any character that leaked into the text input
+    setInput('');
     const c = ch.toLowerCase();
     if (c === 'y') {
       const r = permissionRequest.resolve;
@@ -728,9 +731,9 @@ function RunCodeApp({
 
       {/* Full-width input box — always visible, focused only when ready and no permission dialog */}
       <InputBox
-        input={input}
-        setInput={setInput}
-        onSubmit={handleSubmit}
+        input={permissionRequest ? '' : input}
+        setInput={permissionRequest ? () => {} : setInput}
+        onSubmit={permissionRequest ? () => {} : handleSubmit}
         model={currentModel}
         balance={liveBalance}
         sessionCost={totalCost}
