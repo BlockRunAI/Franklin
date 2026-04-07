@@ -2,6 +2,165 @@
  * Bash capability — execute shell commands with timeout and output capture.
  */
 import { spawn } from 'node:child_process';
+// ─── Smart Output Compression ─────────────────────────────────────────────
+// Learned from RTK (Rust Token Killer): strip noise before sending to LLM.
+// Applied after capture, before the 32KB cap — reduces tokens on verbose commands.
+const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+function stripAnsi(s) {
+    return s.replace(ANSI_RE, '');
+}
+function collapseBlankLines(s) {
+    // Collapse 3+ consecutive blank lines → 1 blank line
+    return s.replace(/\n{3,}/g, '\n\n');
+}
+/** Extract the base command word (first non-env token). */
+function baseCmd(command) {
+    // Strip leading env var assignments (FOO=bar cmd → cmd)
+    const stripped = command.replace(/^(?:[A-Z_][A-Z0-9_]*=\S*\s+)*/, '').trimStart();
+    return stripped.split(/\s+/)[0] ?? '';
+}
+function compressOutput(command, output) {
+    // 1. Always strip ANSI escape codes
+    let out = stripAnsi(output);
+    const cmd = baseCmd(command);
+    const fullCmd = command.trimStart();
+    // 2. Git command-aware compression
+    if (cmd === 'git') {
+        const sub = fullCmd.split(/\s+/)[1] ?? '';
+        out = compressGit(sub, out);
+    }
+    // 3. Package manager installs — keep only errors + final summary
+    else if (/^(npm|pnpm|yarn|bun)\s+(install|i|add|ci)\b/.test(fullCmd)) {
+        out = compressInstall(out);
+    }
+    // 4. Test runners — keep only failures + summary line
+    else if (/^(npm|pnpm|bun)\s+test\b|^(jest|vitest|mocha)\b/.test(fullCmd)) {
+        out = compressTests(out);
+    }
+    // 5. Build commands — keep errors/warnings, drop verbose compile lines
+    else if (/^(npm|pnpm|bun)\s+(run\s+)?(build|compile)\b|^tsc\b/.test(fullCmd)) {
+        out = compressBuild(out);
+    }
+    // 6. cargo
+    else if (cmd === 'cargo') {
+        const sub = fullCmd.split(/\s+/)[1] ?? '';
+        if (sub === 'test' || sub === 'nextest')
+            out = compressTests(out);
+        else if (sub === 'build' || sub === 'check' || sub === 'clippy')
+            out = compressBuild(out);
+        else if (sub === 'install')
+            out = compressInstall(out);
+    }
+    // 7. Always collapse excessive blank lines
+    out = collapseBlankLines(out);
+    return out;
+}
+function compressGit(sub, out) {
+    switch (sub) {
+        case 'add': {
+            // git add is usually silent. Strip any blank output.
+            const trimmed = out.trim();
+            return trimmed || 'ok';
+        }
+        case 'commit': {
+            // Keep: [branch abc1234] message + stats line. Strip verbose output.
+            const lines = out.split('\n');
+            const kept = lines.filter(l => /^\[.+\]/.test(l) || // [main abc1234] commit msg
+                /\d+ file/.test(l) || // 2 files changed, 10 insertions
+                /^\s*(create|delete) mode/.test(l) ||
+                l.trim() === '');
+            return kept.join('\n').trim() || out.trim();
+        }
+        case 'push': {
+            // Strip verbose remote "enumerating/counting/compressing" lines
+            const lines = out.split('\n').filter(l => !/^remote:\s*(Enumerating|Counting|Compressing|Writing|Total|Delta)/.test(l) &&
+                !/^Counting objects|^Compressing objects|^Writing objects/.test(l) &&
+                l.trim() !== '');
+            return lines.join('\n').trim() || 'ok';
+        }
+        case 'pull': {
+            // Strip "remote: Counting..." lines, keep summary
+            const lines = out.split('\n').filter(l => !/^remote:\s*(Enumerating|Counting|Compressing|Writing|Total|Delta)/.test(l) &&
+                !/^Counting objects|^Compressing objects/.test(l));
+            return collapseBlankLines(lines.join('\n')).trim();
+        }
+        case 'fetch': {
+            const lines = out.split('\n').filter(l => !/^remote:\s*(Enumerating|Counting|Compressing|Writing|Total|Delta)/.test(l));
+            return lines.join('\n').trim();
+        }
+        case 'log': {
+            // Already terse if user uses --oneline; just collapse blanks
+            return out.trim();
+        }
+        default:
+            return out;
+    }
+}
+function compressInstall(out) {
+    const lines = out.split('\n');
+    const kept = [];
+    for (const line of lines) {
+        const l = line.trim();
+        // Drop pure progress lines
+        if (/^(Downloading|Fetching|Resolving|Progress|Preparing|Caching)/.test(l))
+            continue;
+        if (/^[\s.]*$/.test(l))
+            continue;
+        // Keep errors, warnings, and summary lines
+        kept.push(line);
+    }
+    // If no lines kept, return original trimmed (don't lose error info)
+    const result = kept.join('\n').trim();
+    return result || out.trim();
+}
+function compressTests(out) {
+    const lines = out.split('\n');
+    // Look for failure sections and summary
+    const kept = [];
+    let inFailure = false;
+    for (const line of lines) {
+        const l = line.trim();
+        // Detect failure/error blocks
+        if (/^(FAIL|FAILED|Error:|●|✕|✗|×|error\[)/.test(l)) {
+            inFailure = true;
+        }
+        // Summary lines (always keep)
+        if (/^(Tests?|Test Suites?|Suites?|PASS|FAIL|ok\s|error|warning|\d+ (test|spec|example))/.test(l) ||
+            /\d+\s*(passed|failed|skipped|pending|todo)/.test(l)) {
+            kept.push(line);
+            inFailure = false;
+            continue;
+        }
+        if (inFailure) {
+            kept.push(line);
+            // End failure block on blank line after content
+            if (l === '' && kept[kept.length - 2]?.trim() !== '')
+                inFailure = false;
+        }
+    }
+    // If nothing matched (e.g. all passed with no verbose output), return original
+    if (kept.length === 0)
+        return out.trim();
+    return collapseBlankLines(kept.join('\n')).trim();
+}
+function compressBuild(out) {
+    const lines = out.split('\n');
+    const kept = lines.filter(l => {
+        const t = l.trim();
+        if (t === '')
+            return false;
+        // Drop pure progress/info lines from bundlers/compilers
+        if (/^(Compiling|Finished|Checking|warning: unused import)/.test(t) &&
+            !/^(Compiling.*error|Finished.*error)/.test(t)) {
+            // Keep "Finished" summary
+            if (/^Finished/.test(t))
+                return true;
+            return false;
+        }
+        return true;
+    });
+    return collapseBlankLines(kept.join('\n')).trim() || out.trim();
+}
 const MAX_OUTPUT_BYTES = 512 * 1024; // 512KB capture buffer (prevents OOM)
 const MAX_RETURN_CHARS = 32_000; // 32KB return cap (~8,000 tokens) — prevents context bloat
 const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes
@@ -117,6 +276,8 @@ async function execute(input, ctx) {
             if (truncated) {
                 result += '\n\n... (output truncated — command produced >512KB)';
             }
+            // Smart compression: strip ANSI, collapse blank lines, command-aware filters
+            result = compressOutput(command, result);
             // Cap returned output to prevent context bloat.
             // Keep the LAST part (most relevant for errors/test failures/build output).
             if (result.length > MAX_RETURN_CHARS) {

@@ -185,7 +185,7 @@ export async function interactiveSession(
       // Create streaming executor for concurrent tool execution
       const streamExec = new StreamingExecutor({
         handlers: capabilityMap,
-        scope: { workingDir: workDir, abortSignal: abort.signal },
+        scope: { workingDir: workDir, abortSignal: abort.signal, onAskUser: config.onAskUser },
         permissions,
         onStart: (id, name, preview) => onEvent({ kind: 'capability_start', id, name, preview }),
         onProgress: (id, text) => onEvent({ kind: 'capability_progress', id, text }),

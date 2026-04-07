@@ -8,10 +8,10 @@ import readline from 'node:readline';
 import chalk from 'chalk';
 import { BLOCKRUN_DIR } from '../config.js';
 // ─── Default Rules ─────────────────────────────────────────────────────────
-const READ_ONLY_TOOLS = new Set(['Read', 'Glob', 'Grep', 'WebSearch', 'Task']);
+const READ_ONLY_TOOLS = new Set(['Read', 'Glob', 'Grep', 'WebSearch', 'Task', 'AskUser', 'ImageGen']);
 const DESTRUCTIVE_TOOLS = new Set(['Write', 'Edit', 'Bash']);
 const DEFAULT_RULES = {
-    allow: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Task'],
+    allow: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Task', 'AskUser', 'ImageGen'],
     deny: [],
     ask: ['Write', 'Edit', 'Bash', 'Agent'],
 };
@@ -102,7 +102,7 @@ export class PermissionManager {
             console.error(chalk.yellow(`  │ ${pendingCount} pending — press [a] to allow all`));
         }
         console.error(chalk.yellow('  ╰─────────────────────────────────────'));
-        const answer = await askQuestion(chalk.bold('  Allow? ') + chalk.dim('[Y/n/a]lways: '));
+        const answer = await askQuestion(chalk.bold('  Allow? ') + chalk.dim('[Y/a/n] '));
         const normalized = answer.trim().toLowerCase();
         if (normalized === 'a' || normalized === 'always') {
             this.sessionAllowed.add(toolName);

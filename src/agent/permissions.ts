@@ -28,11 +28,11 @@ export interface PermissionDecision {
 
 // ─── Default Rules ─────────────────────────────────────────────────────────
 
-const READ_ONLY_TOOLS = new Set(['Read', 'Glob', 'Grep', 'WebSearch', 'Task']);
+const READ_ONLY_TOOLS = new Set(['Read', 'Glob', 'Grep', 'WebSearch', 'Task', 'AskUser', 'ImageGen']);
 const DESTRUCTIVE_TOOLS = new Set(['Write', 'Edit', 'Bash']);
 
 const DEFAULT_RULES: PermissionRules = {
-  allow: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Task'],
+  allow: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Task', 'AskUser', 'ImageGen'],
   deny: [],
   ask: ['Write', 'Edit', 'Bash', 'Agent'],
 };
@@ -150,7 +150,7 @@ export class PermissionManager {
     console.error(chalk.yellow('  ╰─────────────────────────────────────'));
 
     const answer = await askQuestion(
-      chalk.bold('  Allow? ') + chalk.dim('[Y/n/a]lways: ')
+      chalk.bold('  Allow? ') + chalk.dim('[Y/a/n] ')
     );
 
     const normalized = answer.trim().toLowerCase();

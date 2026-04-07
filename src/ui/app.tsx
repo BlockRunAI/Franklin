@@ -94,6 +94,12 @@ interface PermissionRequest {
   resolve: (result: 'yes' | 'no' | 'always') => void;
 }
 
+interface AskUserRequest {
+  question: string;
+  options?: string[];
+  resolve: (answer: string) => void;
+}
+
 // ─── Main App ──────────────────────────────────────────────────────────────
 
 interface AppProps {
@@ -150,6 +156,8 @@ function RunCodeApp({
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+  const [askUserRequest, setAskUserRequest] = useState<AskUserRequest | null>(null);
+  const [askUserInput, setAskUserInput] = useState('');
   // Message queued while agent is busy — auto-submitted when turn completes
   const [queuedInput, setQueuedInput] = useState('');
   const turnDoneCallbackRef = useRef<(() => void) | null>(null);
@@ -400,6 +408,13 @@ function RunCodeApp({
           // Ring the terminal bell — causes tab to show notification badge in iTerm2/Terminal.app
           process.stderr.write('\x07');
           setPermissionRequest({ toolName, description, resolve });
+        });
+      },
+      requestAskUser: (question: string, options?: string[]): Promise<string> => {
+        return new Promise((resolve) => {
+          process.stderr.write('\x07');
+          setAskUserInput('');
+          setAskUserRequest({ question, options, resolve });
         });
       },
       handleEvent: (event: StreamEvent) => {
@@ -683,6 +698,35 @@ function RunCodeApp({
         </Box>
       )}
 
+      {/* AskUser dialog — text input for agent questions */}
+      {askUserRequest && (
+        <Box flexDirection="column" marginTop={1} marginLeft={1}>
+          <Text color="cyan">  ╭─ Question ─────────────────────────────</Text>
+          <Text color="cyan">  │ <Text bold>{askUserRequest.question}</Text></Text>
+          {askUserRequest.options && askUserRequest.options.length > 0 && (
+            askUserRequest.options.map((opt, i) => (
+              <Text key={i} dimColor>  │ {i + 1}. {opt}</Text>
+            ))
+          )}
+          <Text color="cyan">  ╰─────────────────────────────────────</Text>
+          <Box marginLeft={3}>
+            <Text bold>answer&gt; </Text>
+            <TextInput
+              value={askUserInput}
+              onChange={setAskUserInput}
+              onSubmit={(val) => {
+                const answer = val.trim() || '(no response)';
+                const r = askUserRequest.resolve;
+                setAskUserRequest(null);
+                setAskUserInput('');
+                r(answer);
+              }}
+              focus={true}
+            />
+          </Box>
+        </Box>
+      )}
+
       {/* Active (in-progress) tools — shows command preview + live output line */}
       {Array.from(tools.entries()).map(([id, tool]) => (
         <Box key={id} flexDirection="column" marginLeft={1}>
@@ -729,16 +773,16 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Full-width input box — always visible, focused only when ready and no permission dialog */}
+      {/* Full-width input box — blocked when permission or askUser dialog is active */}
       <InputBox
-        input={permissionRequest ? '' : input}
-        setInput={permissionRequest ? () => {} : setInput}
-        onSubmit={permissionRequest ? () => {} : handleSubmit}
+        input={(permissionRequest || askUserRequest) ? '' : input}
+        setInput={(permissionRequest || askUserRequest) ? () => {} : setInput}
+        onSubmit={(permissionRequest || askUserRequest) ? () => {} : handleSubmit}
         model={currentModel}
         balance={liveBalance}
         sessionCost={totalCost}
         queued={queuedInput || undefined}
-        focused={!permissionRequest}
+        focused={!permissionRequest && !askUserRequest}
       />
     </Box>
   );
@@ -754,6 +798,7 @@ export interface InkUIHandle {
   onAbort: (cb: () => void) => void;
   cleanup: () => void;
   requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
+  requestAskUser: (question: string, options?: string[]) => Promise<string>;
 }
 
 export function launchInkUI(opts: {
@@ -821,6 +866,12 @@ export function launchInkUI(opts: {
         requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
       } | undefined;
       return ui?.requestPermission(toolName, description) ?? Promise.resolve('no' as const);
+    },
+    requestAskUser: (question: string, options?: string[]) => {
+      const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
+        requestAskUser: (question: string, options?: string[]) => Promise<string>;
+      } | undefined;
+      return ui?.requestAskUser(question, options) ?? Promise.resolve('(no response)');
     },
   };
 }

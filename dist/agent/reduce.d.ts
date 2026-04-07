@@ -36,6 +36,13 @@ export declare function trimOldAssistantMessages(history: Dialogue[]): Dialogue[
  */
 export declare function deduplicateMessages(history: Dialogue[]): Dialogue[];
 /**
+ * Collapse repeated consecutive lines within tool results.
+ * "Fetching...\nFetching...\nFetching...\n" → "Fetching... ×3"
+ * Also strips any residual ANSI escape codes from older tool results.
+ * RTK-inspired: dedup_lines + strip_ansi pipeline stages.
+ */
+export declare function deduplicateToolResultLines(history: Dialogue[]): Dialogue[];
+/**
  * Run all token reduction passes on conversation history.
  * Returns same reference if nothing changed (cheap identity check).
  */

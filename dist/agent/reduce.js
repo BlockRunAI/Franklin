@@ -168,7 +168,7 @@ export function trimOldAssistantMessages(history) {
     });
     return modified ? result : history;
 }
-// ─── 4. Deduplication ────────────���────────────────────────────────────────
+// ─── 4. Deduplication ─────────────────────────────────────────────────────
 /**
  * Remove consecutive duplicate messages (same role + same content).
  */
@@ -186,6 +186,58 @@ export function deduplicateMessages(history) {
         }
         result.push(curr);
     }
+    return modified ? result : history;
+}
+// ─── 5. Line-level deduplication in tool results ──────────────────────────
+const ANSI_RE_REDUCE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+/**
+ * Collapse repeated consecutive lines within tool results.
+ * "Fetching...\nFetching...\nFetching...\n" → "Fetching... ×3"
+ * Also strips any residual ANSI escape codes from older tool results.
+ * RTK-inspired: dedup_lines + strip_ansi pipeline stages.
+ */
+export function deduplicateToolResultLines(history) {
+    let modified = false;
+    const result = history.map(msg => {
+        if (msg.role !== 'user' || !Array.isArray(msg.content))
+            return msg;
+        const parts = msg.content;
+        let partModified = false;
+        const newParts = parts.map(part => {
+            if (part.type !== 'tool_result')
+                return part;
+            const raw = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
+            // Strip ANSI codes
+            const stripped = raw.replace(ANSI_RE_REDUCE, '');
+            // Collapse repeated consecutive lines
+            const lines = stripped.split('\n');
+            const deduped = [];
+            let i = 0;
+            while (i < lines.length) {
+                const line = lines[i];
+                let count = 1;
+                while (i + count < lines.length && lines[i + count] === line)
+                    count++;
+                if (count > 2 && line.trim() !== '') {
+                    deduped.push(`${line} ×${count}`);
+                }
+                else {
+                    for (let k = 0; k < count; k++)
+                        deduped.push(line);
+                }
+                i += count;
+            }
+            const result = deduped.join('\n');
+            if (result === raw)
+                return part;
+            partModified = true;
+            return { ...part, content: result };
+        });
+        if (!partModified)
+            return msg;
+        modified = true;
+        return { ...msg, content: newParts };
+    });
     return modified ? result : history;
 }
 // ─── Pipeline ───────���───────────────────���─────────────────────────────────
@@ -225,6 +277,13 @@ export function reduceTokens(history, debug) {
     if (deduped !== current) {
         const before = estimateChars(current);
         current = deduped;
+        totalSaved += before - estimateChars(current);
+    }
+    // Pass 5: Strip ANSI + collapse repeated lines in tool results
+    const lineDeduped = deduplicateToolResultLines(current);
+    if (lineDeduped !== current) {
+        const before = estimateChars(current);
+        current = lineDeduped;
         totalSaved += before - estimateChars(current);
     }
     if (debug && totalSaved > 500) {

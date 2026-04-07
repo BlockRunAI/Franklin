@@ -12,15 +12,24 @@ interface AskUserInput {
   options?: string[];
 }
 
-async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Promise<CapabilityResult> {
+async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
   const { question, options } = input as unknown as AskUserInput;
 
   if (!question) {
     return { output: 'Error: question is required', isError: true };
   }
 
-  // In non-TTY (piped/scripted) mode, creating a new readline would conflict with
-  // the TerminalUI's existing readline. Return a hint for the model to proceed.
+  // Ink UI path: use the provided callback to avoid raw-mode stdin conflict
+  if (ctx.onAskUser) {
+    try {
+      const answer = await ctx.onAskUser(question, options);
+      return { output: answer || '(no response)' };
+    } catch {
+      return { output: 'User did not respond.', isError: false };
+    }
+  }
+
+  // Non-ink fallback (CLI piped / scripted mode)
   if (!process.stdin.isTTY) {
     return {
       output: `[Non-interactive mode] Cannot prompt user. Proceed with a reasonable assumption. Question was: ${question}`,
@@ -28,6 +37,7 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     };
   }
 
+  // Bare TTY fallback (no ink UI) — use readline
   console.error('');
   console.error(chalk.yellow('  ╭─ Question ────────────────────────────'));
   console.error(chalk.yellow(`  │ ${question}`));

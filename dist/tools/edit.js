@@ -131,14 +131,14 @@ async function execute(input, ctx) {
 export const editCapability = {
     spec: {
         name: 'Edit',
-        description: 'Replace a specific string in a file. By default requires the old_string to be unique; use replace_all for multiple replacements.',
+        description: 'Replace exact string in a file. old_string must be unique (or use replace_all).',
         input_schema: {
             type: 'object',
             properties: {
-                file_path: { type: 'string', description: 'Absolute path to the file to edit' },
-                old_string: { type: 'string', description: 'The exact text to find and replace' },
-                new_string: { type: 'string', description: 'The replacement text' },
-                replace_all: { type: 'boolean', description: 'Replace all occurrences (default: false)' },
+                file_path: { type: 'string', description: 'Absolute path' },
+                old_string: { type: 'string', description: 'Text to find' },
+                new_string: { type: 'string', description: 'Replacement text' },
+                replace_all: { type: 'boolean', description: 'Replace all occurrences' },
             },
             required: ['file_path', 'old_string', 'new_string'],
         },

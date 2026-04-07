@@ -71,12 +71,12 @@ async function execute(input, ctx) {
 export const writeCapability = {
     spec: {
         name: 'Write',
-        description: 'Create or overwrite a file. Creates parent directories automatically.',
+        description: 'Create or overwrite a file.',
         input_schema: {
             type: 'object',
             properties: {
-                file_path: { type: 'string', description: 'Absolute path to the file to write' },
-                content: { type: 'string', description: 'The content to write to the file' },
+                file_path: { type: 'string', description: 'Absolute path' },
+                content: { type: 'string', description: 'File content' },
             },
             required: ['file_path', 'content'],
         },
