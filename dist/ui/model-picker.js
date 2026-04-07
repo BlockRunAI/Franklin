@@ -54,6 +54,8 @@ export const MODEL_SHORTCUTS = {
     // Others
     minimax: 'minimax/minimax-m2.7',
     glm: 'zai/glm-5',
+    'glm-turbo': 'zai/glm-5-turbo',
+    'glm5': 'zai/glm-5',
     kimi: 'moonshot/kimi-k2.5',
 };
 /**
