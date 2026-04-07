@@ -34,11 +34,11 @@ RunCode gives you the same agent capabilities — file editing, shell commands, 
 
 ```bash
 npm install -g @blockrun/runcode
-runcode setup base     # Create a wallet (one-time)
+runcode setup base     # Create a Base wallet (or: runcode setup solana)
 runcode                # Launch — picks model interactively
 ```
 
-That's it. Fund the wallet address with USDC on Base, or use free models immediately.
+Fund the wallet address with USDC on Base, or use free models immediately — no funding required to start.
 
 ## Features
 
@@ -177,30 +177,76 @@ Claude Code → RunCode proxy (:8402) → BlockRun API → 41+ models
 
 RunCode uses the [x402](https://x402.org) protocol for pay-per-request payments with USDC stablecoins. No accounts, no API keys, no subscriptions.
 
-**Supported chains:**
-- **Base** (default) — Coinbase L2, low fees
-- **Solana** — also low fees
+### Supported chains
 
-**Setup:**
+| Chain | Default | API endpoint | Gas token |
+|-------|---------|-------------|-----------|
+| **Base** | ✓ | `blockrun.ai/api` | ETH (tiny, ~$0.00) |
+| **Solana** | — | `sol.blockrun.ai/api` | SOL (tiny, ~$0.00) |
 
+Both chains use **USDC** (USD Coin) as the payment token. USDC is a stablecoin pegged 1:1 to USD — $1 USDC = $1.
+
+### Quick setup
+
+**Option A — Base (recommended for most users):**
 ```bash
-runcode setup base     # or: runcode setup solana
+runcode setup base         # Create an EVM wallet (Base chain)
+runcode balance            # Check USDC balance
 ```
 
-Fund the wallet address with USDC. Free models work without funding.
+Fund with USDC on Base:
+- Buy ETH on Coinbase → bridge to Base → swap to USDC on [Aerodrome](https://aerodrome.finance)
+- Or: buy USDC directly on Coinbase and withdraw to Base network
+- Or: transfer USDC from any Base wallet to the address shown by `runcode balance`
 
-**What does it cost?**
+**Option B — Solana:**
+```bash
+runcode setup solana       # Create a Solana wallet
+runcode balance            # Check USDC balance
+```
+
+Fund with USDC on Solana:
+- Buy SOL on Coinbase/Binance → swap to USDC on [Jupiter](https://jup.ag)
+- Or: buy USDC on any exchange and withdraw to Solana network
+- Or: transfer USDC from any Solana wallet (e.g., Phantom, Backpack)
+
+### Switching chains
+
+```bash
+runcode solana             # Switch to Solana
+runcode base               # Switch to Base
+```
+
+Or via environment variable (useful for CI/CD):
+```bash
+RUNCODE_CHAIN=solana runcode
+RUNCODE_CHAIN=base runcode
+```
+
+Wallets are stored locally in `~/.blockrun/`. Each chain has its own wallet — switching doesn't affect the other.
+
+### What does it cost?
 
 | Model | ~Cost per request |
 |-------|-------------------|
-| Free models (Nemotron, etc.) | $0 |
-| DeepSeek V3 | ~$0.001 |
-| Gemini Flash | ~$0.001 |
-| Claude Sonnet | ~$0.01 |
-| GPT-5.4 | ~$0.01 |
+| Free models (Nemotron, Devstral, etc.) | **$0** |
+| DeepSeek V3 / Gemini Flash | ~$0.001 |
+| GLM-5 | ~$0.001/call |
+| Claude Haiku / GPT-5 Mini | ~$0.005 |
+| Claude Sonnet / GPT-5.4 | ~$0.01 |
 | Claude Opus | ~$0.05 |
 
-Typical usage: **$5-20/month** for active development.
+Typical usage: **$5-20/month** for active development. Start with free models — no funding required.
+
+### Where to get USDC
+
+| Source | Chain | Notes |
+|--------|-------|-------|
+| [Coinbase](https://coinbase.com) | Base (native) | Cheapest — withdraw directly to Base |
+| [Binance](https://binance.com) | Solana | Withdraw as USDC-SPL |
+| [Jupiter](https://jup.ag) | Solana | Swap any Solana token → USDC |
+| [Aerodrome](https://aerodrome.finance) | Base | Swap ETH/USDC on Base |
+| [Uniswap](https://app.uniswap.org) | Base | Swap on Base network |
 
 ## Commands
 
@@ -210,7 +256,9 @@ Typical usage: **$5-20/month** for active development.
 | `runcode -m <model>` | Start with a specific model |
 | `runcode --trust` | Start in trust mode (no permission prompts) |
 | `runcode --debug` | Start with debug logging |
-| `runcode setup [base\|solana]` | Create payment wallet |
+| `runcode setup [base\|solana]` | Create payment wallet for Base or Solana |
+| `runcode base` | Switch to Base chain |
+| `runcode solana` | Switch to Solana chain |
 | `runcode balance` | Check USDC balance |
 | `runcode models` | List all models with pricing |
 | `runcode stats` | View usage statistics and savings |
