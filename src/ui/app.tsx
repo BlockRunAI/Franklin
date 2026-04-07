@@ -124,7 +124,7 @@ function RunCodeApp({
   // Completed tool results committed to Static (permanent scrollback — no re-render artifacts)
   const [completedTools, setCompletedTools] = useState<Array<ToolStatus & { key: string }>>([]);
   // Full responses committed to Static immediately — goes into terminal scrollback like Claude Code
-  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number }; cost: number }>>([]);
+  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number }>>([]);
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
   const [responsePreview, setResponsePreview] = useState('');
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS[0].id);
@@ -132,11 +132,21 @@ function RunCodeApp({
   const [mode, setMode] = useState<UIMode>(startWithPicker ? 'model-picker' : 'input');
   const [pickerIdx, setPickerIdx] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
-  const [turnTokens, setTurnTokens] = useState({ input: 0, output: 0 });
+  const [turnTokens, setTurnTokens] = useState({ input: 0, output: 0, calls: 0 });
   const [totalCost, setTotalCost] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
   const [balance, setBalance] = useState(walletBalance);
+  // Parse the fetched balance to a number so we can compute live balance = fetchedBalance - sessionCost.
+  // costAtLastFetch tracks totalCost when balance was last fetched, to avoid double-subtracting.
+  const parseBalanceNum = (s: string): number | null => {
+    const m = s.match(/\$([\d.]+)/);
+    return m ? parseFloat(m[1]) : null;
+  };
+  const [baseBalanceNum, setBaseBalanceNum] = useState<number | null>(() => parseBalanceNum(walletBalance));
+  const [costAtLastFetch, setCostAtLastFetch] = useState(0);
+  const costAtLastFetchRef = useRef(0);
+  const baseBalanceNumRef = useRef<number | null>(parseBalanceNum(walletBalance));
   const [thinkingText, setThinkingText] = useState('');
   const [lastPrompt, setLastPrompt] = useState('');
   const [inputHistory, setInputHistory] = useState<string[]>([]);
@@ -147,7 +157,7 @@ function RunCodeApp({
   const turnDoneCallbackRef = useRef<(() => void) | null>(null);
   // Refs to read current state values inside memoized event handlers (avoids stale closures)
   const streamTextRef = useRef('');
-  const turnTokensRef = useRef({ input: 0, output: 0 });
+  const turnTokensRef = useRef({ input: 0, output: 0, calls: 0 });
   const totalCostRef = useRef(0);
   const queuedInputRef = useRef('');
 
@@ -156,6 +166,13 @@ function RunCodeApp({
   turnTokensRef.current = turnTokens;
   totalCostRef.current = totalCost;
   queuedInputRef.current = queuedInput;
+  costAtLastFetchRef.current = costAtLastFetch;
+  baseBalanceNumRef.current = baseBalanceNum;
+
+  // Compute live balance = fetchedBalance - spend_since_last_fetch
+  const liveBalance = baseBalanceNum !== null
+    ? `$${Math.max(0, baseBalanceNum - (totalCost - costAtLastFetch)).toFixed(2)} USDC`
+    : balance;
 
   // Permission dialog key handler — captures y/n/a when dialog is visible.
   // Must be registered before other handlers so it takes priority.
@@ -304,7 +321,7 @@ function RunCodeApp({
         case '/clear':
           setStreamText('');
           setTools(new Map());
-          setTurnTokens({ input: 0, output: 0 });
+          setTurnTokens({ input: 0, output: 0, calls: 0 });
           setWaiting(true);
           setReady(false);
           // Pass through to agent loop to clear the actual conversation history
@@ -323,7 +340,7 @@ function RunCodeApp({
           setTools(new Map());
           setReady(false);
           setWaiting(true);
-          setTurnTokens({ input: 0, output: 0 });
+          setTurnTokens({ input: 0, output: 0, calls: 0 });
           onSubmit(lastPrompt);
           return;
 
@@ -356,14 +373,22 @@ function RunCodeApp({
     setStatusMsg('');
     setShowHelp(false);
     setShowWallet(false);
-    setTurnTokens({ input: 0, output: 0 });
+    setTurnTokens({ input: 0, output: 0, calls: 0 });
     onSubmit(trimmed);
   }, [currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
 
   // Expose event handler, balance updater, and permission bridge
   useEffect(() => {
     (globalThis as Record<string, unknown>).__runcode_ui = {
-      updateBalance: (bal: string) => setBalance(bal),
+      updateBalance: (bal: string) => {
+        setBalance(bal);
+        const num = parseBalanceNum(bal);
+        if (num !== null) {
+          setBaseBalanceNum(num);
+          // Reset cost baseline — the fetched balance already reflects costs up to this point
+          setCostAtLastFetch(totalCostRef.current);
+        }
+      },
       onTurnDone: (cb: () => void) => { turnDoneCallbackRef.current = cb; },
       requestPermission: (toolName: string, description: string): Promise<'yes' | 'no' | 'always'> => {
         return new Promise((resolve) => {
@@ -442,8 +467,9 @@ function RunCodeApp({
             setTurnTokens(prev => ({
               input: prev.input + event.inputTokens,
               output: prev.output + event.outputTokens,
+              calls: prev.calls + (event.calls ?? 1),
             }));
-            setTotalCost(prev => prev + estimateCost(event.model, event.inputTokens, event.outputTokens));
+            setTotalCost(prev => prev + estimateCost(event.model, event.inputTokens, event.outputTokens, event.calls ?? 1));
             break;
           case 'turn_done': {
             // Commit full response to Static immediately — enters terminal scrollback like Claude Code.
@@ -611,7 +637,9 @@ function RunCodeApp({
             {(r.tokens.input > 0 || r.tokens.output > 0) && (
               <Box marginLeft={1}>
                 <Text dimColor>
-                  {r.tokens.input.toLocaleString()} in / {r.tokens.output.toLocaleString()} out
+                  {r.tokens.calls > 0 && r.tokens.input === 0
+                    ? `${r.tokens.calls} calls`
+                    : `${r.tokens.input.toLocaleString()} in / ${r.tokens.output.toLocaleString()} out${r.tokens.calls > 0 ? ` / ${r.tokens.calls} calls` : ''}`}
                   {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)} session` : ''}
                 </Text>
               </Box>
@@ -695,7 +723,7 @@ function RunCodeApp({
         setInput={setInput}
         onSubmit={handleSubmit}
         model={currentModel}
-        balance={balance}
+        balance={liveBalance}
         sessionCost={totalCost}
         queued={queuedInput || undefined}
         focused={!permissionRequest && !queuedInput}

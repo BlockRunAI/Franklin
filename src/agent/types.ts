@@ -122,6 +122,7 @@ export interface StreamUsageInfo {
   inputTokens: number;
   outputTokens: number;
   model: string;
+  calls: number;
 }
 
 export type StreamEvent =
