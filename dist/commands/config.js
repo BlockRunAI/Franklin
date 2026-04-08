@@ -33,7 +33,6 @@ function saveConfig(config) {
     }
     catch (err) {
         console.error(chalk.red(`Failed to save config: ${err.message}`));
-        process.exit(1);
     }
 }
 function isValidKey(key) {

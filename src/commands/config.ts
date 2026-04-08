@@ -50,7 +50,6 @@ function saveConfig(config: AppConfig): void {
     });
   } catch (err) {
     console.error(chalk.red(`Failed to save config: ${(err as Error).message}`));
-    process.exit(1);
   }
 }
 
