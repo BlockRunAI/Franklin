@@ -37,18 +37,15 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
       <Text dimColor>{'╭' + '─'.repeat(cols - 2) + '╮'}</Text>
       <Box>
         <Text dimColor>│ </Text>
-        <Box width={innerWidth}>
-          {busy && !queued ? (
-            <Text color="yellow"><Spinner type="dots" /> {placeholder}</Text>
-          ) : (
-            <TextInput
-              value={input}
-              onChange={setInput}
-              onSubmit={onSubmit}
-              placeholder={placeholder}
-              focus={focused !== false}
-            />
-          )}
+        {busy && !input ? <Text color="yellow"><Spinner type="dots" /> </Text> : null}
+        <Box width={busy && !input ? innerWidth - 4 : innerWidth}>
+          <TextInput
+            value={input}
+            onChange={setInput}
+            onSubmit={onSubmit}
+            placeholder={placeholder}
+            focus={focused !== false}
+          />
         </Box>
         <Text dimColor>{' '.repeat(Math.max(0, cols - innerWidth - 4))}│</Text>
       </Box>
