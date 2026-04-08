@@ -63,6 +63,18 @@ function runcode(prompt, { cwd, timeoutMs = TIMEOUT_MS } = {}) {
   });
 }
 
+/**
+ * Check if result indicates rate limiting. If so, skip the test.
+ */
+function skipIfRateLimited(t, result) {
+  const combined = (result.stdout || '') + (result.stderr || '');
+  if (combined.includes('max 60 requests/hour') || combined.includes('rate limit') || combined.includes('Free tier')) {
+    t.skip('Free tier rate limited (60 req/hr) — retry later');
+    return true;
+  }
+  return false;
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 test('startup: banner and model line printed', { timeout: 10_000 }, async () => {
@@ -72,34 +84,37 @@ test('startup: banner and model line printed', { timeout: 10_000 }, async () => 
   assert.ok(stdout.includes('Model:'), `Missing model line. stdout:\n${stdout}`);
 });
 
-test('simple response: model echoes back a unique token', { timeout: 60_000 }, async () => {
-  const { stdout, exitCode } = await runcode('say exactly and only this word: PONG_E2E_42');
-  assert.equal(exitCode, 0, `Non-zero exit. stdout:\n${stdout}`);
-  assert.ok(stdout.includes('PONG_E2E_42'), `Expected PONG_E2E_42 in output.\nstdout:\n${stdout}`);
+test('simple response: model echoes back a unique token', { timeout: 60_000 }, async (t) => {
+  const result = await runcode('say exactly and only this word: PONG_E2E_42');
+  if (skipIfRateLimited(t, result)) return;
+  assert.equal(result.exitCode, 0, `Non-zero exit. stdout:\n${result.stdout}`);
+  assert.ok(result.stdout.includes('PONG_E2E_42'), `Expected PONG_E2E_42 in output.\nstdout:\n${result.stdout}`);
 });
 
-test('bash tool: executes shell command and returns output', { timeout: 90_000 }, async () => {
-  const { stdout, exitCode } = await runcode(
+test('bash tool: executes shell command and returns output', { timeout: 90_000 }, async (t) => {
+  const result = await runcode(
     'Use the Bash tool to run: echo BASH_TOOL_WORKS. Report the exact output.'
   );
-  assert.equal(exitCode, 0, `Non-zero exit. stdout:\n${stdout}`);
+  if (skipIfRateLimited(t, result)) return;
+  assert.equal(result.exitCode, 0, `Non-zero exit. stdout:\n${result.stdout}`);
   assert.ok(
-    stdout.includes('BASH_TOOL_WORKS'),
-    `Expected BASH_TOOL_WORKS in output.\nstdout:\n${stdout}`
+    result.stdout.includes('BASH_TOOL_WORKS'),
+    `Expected BASH_TOOL_WORKS in output.\nstdout:\n${result.stdout}`
   );
 });
 
-test('write tool: creates a file with specified content', { timeout: 90_000 }, async () => {
+test('write tool: creates a file with specified content', { timeout: 90_000 }, async (t) => {
   const testDir = join(tmpdir(), `rc-e2e-write-${Date.now()}`);
   mkdirSync(testDir, { recursive: true });
   const targetFile = join(testDir, 'hello.txt');
 
   try {
-    const { stdout, exitCode } = await runcode(
+    const result = await runcode(
       `Use the Write tool to create a file at ${targetFile} with content: E2E_WRITE_SUCCESS`,
       { cwd: testDir }
     );
-    assert.equal(exitCode, 0, `Non-zero exit. stdout:\n${stdout}`);
+    if (skipIfRateLimited(t, result)) return;
+    assert.equal(result.exitCode, 0, `Non-zero exit. stdout:\n${result.stdout}`);
     assert.ok(existsSync(targetFile), `File was not created at ${targetFile}`);
     const content = readFileSync(targetFile, 'utf8');
     assert.ok(content.includes('E2E_WRITE_SUCCESS'), `File content wrong: ${content}`);
@@ -108,28 +123,29 @@ test('write tool: creates a file with specified content', { timeout: 90_000 }, a
   }
 });
 
-test('read tool: reads a pre-existing file', { timeout: 90_000 }, async () => {
+test('read tool: reads a pre-existing file', { timeout: 90_000 }, async (t) => {
   const testDir = join(tmpdir(), `rc-e2e-read-${Date.now()}`);
   mkdirSync(testDir, { recursive: true });
   const targetFile = join(testDir, 'data.txt');
   writeFileSync(targetFile, 'E2E_READ_MARKER_XYZ\nline two\nline three\n');
 
   try {
-    const { stdout, exitCode } = await runcode(
+    const result = await runcode(
       `Use the Read tool to read the file at ${targetFile} and tell me the first line exactly.`,
       { cwd: testDir }
     );
-    assert.equal(exitCode, 0, `Non-zero exit. stdout:\n${stdout}`);
+    if (skipIfRateLimited(t, result)) return;
+    assert.equal(result.exitCode, 0, `Non-zero exit. stdout:\n${result.stdout}`);
     assert.ok(
-      stdout.includes('E2E_READ_MARKER_XYZ'),
-      `Expected E2E_READ_MARKER_XYZ in output.\nstdout:\n${stdout}`
+      result.stdout.includes('E2E_READ_MARKER_XYZ'),
+      `Expected E2E_READ_MARKER_XYZ in output.\nstdout:\n${result.stdout}`
     );
   } finally {
     rmSync(testDir, { recursive: true, force: true });
   }
 });
 
-test('glob tool: finds files by pattern', { timeout: 90_000 }, async () => {
+test('glob tool: finds files by pattern', { timeout: 90_000 }, async (t) => {
   const testDir = join(tmpdir(), `rc-e2e-glob-${Date.now()}`);
   mkdirSync(testDir, { recursive: true });
   writeFileSync(join(testDir, 'alpha.txt'), 'a');
@@ -137,69 +153,70 @@ test('glob tool: finds files by pattern', { timeout: 90_000 }, async () => {
   writeFileSync(join(testDir, 'gamma.log'), 'c');
 
   try {
-    const { stdout, exitCode } = await runcode(
+    const result = await runcode(
       `Use the Glob tool to find all *.txt files in ${testDir} and list their names.`,
       { cwd: testDir }
     );
-    assert.equal(exitCode, 0, `Non-zero exit. stdout:\n${stdout}`);
-    assert.ok(stdout.includes('alpha.txt'), `Missing alpha.txt.\nstdout:\n${stdout}`);
-    assert.ok(stdout.includes('beta.txt'), `Missing beta.txt.\nstdout:\n${stdout}`);
-    assert.ok(!stdout.includes('gamma.log') || stdout.includes('gamma'),
-      `gamma.log should not be matched.\nstdout:\n${stdout}`);
+    if (skipIfRateLimited(t, result)) return;
+    assert.equal(result.exitCode, 0, `Non-zero exit. stdout:\n${result.stdout}`);
+    assert.ok(result.stdout.includes('alpha.txt'), `Missing alpha.txt.\nstdout:\n${result.stdout}`);
+    assert.ok(result.stdout.includes('beta.txt'), `Missing beta.txt.\nstdout:\n${result.stdout}`);
   } finally {
     rmSync(testDir, { recursive: true, force: true });
   }
 });
 
-test('grep tool: finds content in files', { timeout: 90_000 }, async () => {
+test('grep tool: finds content in files', { timeout: 90_000 }, async (t) => {
   const testDir = join(tmpdir(), `rc-e2e-grep-${Date.now()}`);
   mkdirSync(testDir, { recursive: true });
   writeFileSync(join(testDir, 'haystack.txt'), 'line one\nGREP_NEEDLE_42\nline three\n');
 
   try {
-    const { stdout, exitCode } = await runcode(
+    const result = await runcode(
       `Use the Grep tool to search for "GREP_NEEDLE_42" in ${testDir}/haystack.txt and tell me if it was found.`,
       { cwd: testDir }
     );
-    assert.equal(exitCode, 0, `Non-zero exit. stdout:\n${stdout}`);
+    if (skipIfRateLimited(t, result)) return;
+    assert.equal(result.exitCode, 0, `Non-zero exit. stdout:\n${result.stdout}`);
     assert.ok(
-      stdout.includes('GREP_NEEDLE_42'),
-      `Expected GREP_NEEDLE_42 in output.\nstdout:\n${stdout}`
+      result.stdout.includes('GREP_NEEDLE_42'),
+      `Expected GREP_NEEDLE_42 in output.\nstdout:\n${result.stdout}`
     );
   } finally {
     rmSync(testDir, { recursive: true, force: true });
   }
 });
 
-test('bash tool: error exit code is captured', { timeout: 90_000 }, async () => {
-  const { stdout, exitCode } = await runcode(
+test('bash tool: error exit code is captured', { timeout: 90_000 }, async (t) => {
+  const result = await runcode(
     'Use the Bash tool to run: exit 42. Tell me what the exit code was.'
   );
-  assert.equal(exitCode, 0, `runcode itself should exit 0. stdout:\n${stdout}`);
-  // The model should mention an error or non-zero exit
+  if (skipIfRateLimited(t, result)) return;
+  assert.equal(result.exitCode, 0, `runcode itself should exit 0. stdout:\n${result.stdout}`);
   assert.ok(
-    stdout.includes('42') || stdout.toLowerCase().includes('error') || stdout.toLowerCase().includes('exit'),
-    `Expected mention of exit code 42 or error.\nstdout:\n${stdout}`
+    result.stdout.includes('42') || result.stdout.toLowerCase().includes('error') || result.stdout.toLowerCase().includes('exit'),
+    `Expected mention of exit code 42 or error.\nstdout:\n${result.stdout}`
   );
 });
 
-test('multi-tool: write then read a file in same session', { timeout: 90_000 }, async () => {
+test('multi-tool: write then read a file in same session', { timeout: 90_000 }, async (t) => {
   const testDir = join(tmpdir(), `rc-e2e-multi-${Date.now()}`);
   mkdirSync(testDir, { recursive: true });
   const targetFile = join(testDir, 'roundtrip.txt');
 
   try {
-    const { stdout, exitCode } = await runcode(
+    const result = await runcode(
       `Step 1: Use the Write tool to create ${targetFile} with content: ROUNDTRIP_OK_789\n` +
       `Step 2: Use the Read tool to read that file back.\n` +
       `Step 3: Tell me the content you read.`,
       { cwd: testDir }
     );
-    assert.equal(exitCode, 0, `Non-zero exit. stdout:\n${stdout}`);
+    if (skipIfRateLimited(t, result)) return;
+    assert.equal(result.exitCode, 0, `Non-zero exit. stdout:\n${result.stdout}`);
     assert.ok(existsSync(targetFile), `File not created at ${targetFile}`);
     assert.ok(
-      stdout.includes('ROUNDTRIP_OK_789'),
-      `Expected ROUNDTRIP_OK_789 in output.\nstdout:\n${stdout}`
+      result.stdout.includes('ROUNDTRIP_OK_789'),
+      `Expected ROUNDTRIP_OK_789 in output.\nstdout:\n${result.stdout}`
     );
   } finally {
     rmSync(testDir, { recursive: true, force: true });
@@ -208,52 +225,44 @@ test('multi-tool: write then read a file in same session', { timeout: 90_000 }, 
 
 // ─── Session cost tracking tests ───────────────────────────────────────────
 
-test('session cost: token usage reported at session end', { timeout: 60_000 }, async () => {
-  // The terminal UI (piped mode) prints "Tokens: X in / Y out" to stderr at exit.
-  // This verifies the usage event pipeline is wired end-to-end.
-  const { stderr, exitCode } = await runcode('say exactly: COST_CHECK_OK');
-  assert.equal(exitCode, 0, `Non-zero exit.\nstderr: ${stderr}`);
+test('session cost: token usage reported at session end', { timeout: 60_000 }, async (t) => {
+  const result = await runcode('say exactly: COST_CHECK_OK');
+  if (skipIfRateLimited(t, result)) return;
+  assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr: ${result.stderr}`);
   assert.ok(
-    stderr.includes('Tokens:'),
-    `Expected "Tokens:" summary in stderr.\nstderr:\n${stderr}`
+    result.stderr.includes('Tokens:'),
+    `Expected "Tokens:" summary in stderr.\nstderr:\n${result.stderr}`
   );
-  // Token counts should be non-zero
-  const match = stderr.match(/Tokens:\s*(\d+)\s*in\s*\/\s*(\d+)\s*out/);
-  assert.ok(match, `Could not parse token line from: ${stderr}`);
+  const match = result.stderr.match(/Tokens:\s*(\d+)\s*in\s*\/\s*(\d+)\s*out/);
+  assert.ok(match, `Could not parse token line from: ${result.stderr}`);
   const inputTokens = parseInt(match[1], 10);
   const outputTokens = parseInt(match[2], 10);
   assert.ok(inputTokens > 0, `Expected input tokens > 0, got ${inputTokens}`);
   assert.ok(outputTokens > 0, `Expected output tokens > 0, got ${outputTokens}`);
 });
 
-test('session cost: accumulates across multiple turns', { timeout: 120_000 }, async () => {
-  // Two turns in one session — token totals at session end should reflect both.
-  const { stderr, exitCode } = await runcode([
+test('session cost: accumulates across multiple turns', { timeout: 120_000 }, async (t) => {
+  const result = await runcode([
     'say exactly: TURN_ONE',
     'say exactly: TURN_TWO',
   ]);
-  assert.equal(exitCode, 0, `Non-zero exit.\nstderr: ${stderr}`);
+  if (skipIfRateLimited(t, result)) return;
+  assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr: ${result.stderr}`);
 
-  const match = stderr.match(/Tokens:\s*(\d+)\s*in\s*\/\s*(\d+)\s*out/);
-  assert.ok(match, `Could not parse token line from: ${stderr}`);
+  const match = result.stderr.match(/Tokens:\s*(\d+)\s*in\s*\/\s*(\d+)\s*out/);
+  assert.ok(match, `Could not parse token line from: ${result.stderr}`);
   const inputTokens = parseInt(match[1], 10);
   const outputTokens = parseInt(match[2], 10);
-
-  // Two turns means more tokens than a single turn would produce.
-  // A single "say X" turn typically uses 10-50 input tokens.
-  // Two turns should be at least 20 input tokens combined.
   assert.ok(inputTokens >= 20, `Expected ≥20 input tokens for 2 turns, got ${inputTokens}`);
   assert.ok(outputTokens >= 2, `Expected ≥2 output tokens for 2 turns, got ${outputTokens}`);
 });
 
 test('session cost: /cost command shows cost info', { timeout: 60_000 }, async () => {
-  // Run a prompt then check /cost output in the same piped session.
   const { stderr, exitCode } = await runcode([
     'say exactly: BEFORE_COST',
     '/cost',
   ]);
   assert.equal(exitCode, 0, `Non-zero exit.\nstderr: ${stderr}`);
-  // /cost prints token counts to stderr in the terminal UI
   assert.ok(
     stderr.includes('Tokens:'),
     `Expected "Tokens:" in /cost output.\nstderr:\n${stderr}`
@@ -261,7 +270,6 @@ test('session cost: /cost command shows cost info', { timeout: 60_000 }, async (
 });
 
 test('session cost: estimateCost returns non-negative value for known model', { timeout: 5_000 }, async () => {
-  // Import and unit-test the pricing function directly (no model call needed).
   const { estimateCost } = await import('../dist/pricing.js');
 
   // GLM-5.1: $0.001 per call (flat pricing)
@@ -273,7 +281,7 @@ test('session cost: estimateCost returns non-negative value for known model', { 
   const freeCost = estimateCost('nvidia/nemotron-ultra-253b', 1_000_000, 1_000_000);
   assert.equal(freeCost, 0, `Expected $0 for free model, got ${freeCost}`);
 
-  // Unknown model should return 0 (not throw)
+  // Unknown model should return > 0 (falls back to $2/$10 per 1M)
   const unknownCost = estimateCost('unknown/model-xyz', 1_000, 1_000);
   assert.ok(unknownCost >= 0, `Expected non-negative for unknown model, got ${unknownCost}`);
 });
