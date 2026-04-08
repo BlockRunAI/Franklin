@@ -89,7 +89,7 @@ Getting USDC in India/emerging markets:
 
 ---
 
-## 41+ Models, Your Choice
+## 55+ Models, Your Choice
 
 With RunCode, you're not locked into Claude. Use the best model for each task:
 
