@@ -27,7 +27,7 @@ import { VERSION as version } from './config.js';
 const program = new Command();
 program
     .name('runcode')
-    .description('runcode — AI coding agent powered by 41+ models, pay with USDC.\n\n' +
+    .description('runcode — AI coding agent powered by 55+ models, pay with USDC.\n\n' +
     'Use /model to switch between models on the fly.')
     .version(version);
 program
