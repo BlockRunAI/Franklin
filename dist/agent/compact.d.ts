@@ -21,7 +21,10 @@ export declare function forceCompact(history: Dialogue[], model: string, client:
     compacted: boolean;
 }>;
 /**
- * Clear old tool results in-place to save tokens (microcompaction).
- * Replaces tool result content with a short summary for all but the last N results.
+ * Clear old tool results AND truncate old tool_use inputs to save tokens.
+ * This is the primary defense against context snowball:
+ * - tool_result content (Read output, Bash output, Grep matches) grows fast
+ * - tool_use input (Edit replacements, Bash commands) also accumulates
+ * Both are cleared for all but the last N tool exchanges.
  */
 export declare function microCompact(history: Dialogue[], keepLastN?: number): Dialogue[];

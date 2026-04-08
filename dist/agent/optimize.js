@@ -35,9 +35,9 @@ export function getMaxOutputTokens(model) {
     return MODEL_MAX_OUTPUT[model] ?? 16_384;
 }
 /** Idle gap (minutes) after which old tool results are cleared */
-const IDLE_GAP_THRESHOLD_MINUTES = 60;
+const IDLE_GAP_THRESHOLD_MINUTES = 5;
 /** Number of recent tool results to keep during time-based cleanup */
-const KEEP_RECENT_TOOL_RESULTS = 5;
+const KEEP_RECENT_TOOL_RESULTS = 3;
 // ─── 1. Tool Result Size Budgeting ─────────────────────────────────────────
 /**
  * Cap tool result sizes to prevent context bloat.

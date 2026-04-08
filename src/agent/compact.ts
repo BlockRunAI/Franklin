@@ -5,7 +5,7 @@
  */
 
 import { ModelClient } from './llm.js';
-import type { Dialogue, UserContentPart } from './types.js';
+import type { Dialogue, ContentPart, UserContentPart } from './types.js';
 import {
   estimateHistoryTokens,
   estimateDialogueTokens,
@@ -314,53 +314,90 @@ function emergencyTruncate(history: Dialogue[], targetTokens: number): Dialogue[
 }
 
 /**
- * Clear old tool results in-place to save tokens (microcompaction).
- * Replaces tool result content with a short summary for all but the last N results.
+ * Clear old tool results AND truncate old tool_use inputs to save tokens.
+ * This is the primary defense against context snowball:
+ * - tool_result content (Read output, Bash output, Grep matches) grows fast
+ * - tool_use input (Edit replacements, Bash commands) also accumulates
+ * Both are cleared for all but the last N tool exchanges.
  */
-export function microCompact(history: Dialogue[], keepLastN = 5): Dialogue[] {
-  // Find all tool_result positions
-  const toolResultPositions: number[] = [];
-  for (let i = 0; i < history.length; i++) {
-    const msg = history[i];
-    if (
-      msg.role === 'user' &&
-      Array.isArray(msg.content) &&
-      msg.content.length > 0 &&
-      typeof msg.content[0] !== 'string' &&
-      'type' in msg.content[0] &&
-      msg.content[0].type === 'tool_result'
-    ) {
-      toolResultPositions.push(i);
+export function microCompact(history: Dialogue[], keepLastN = 3): Dialogue[] {
+  // Find all tool_use IDs in assistant messages, in order
+  const allToolUseIds: string[] = [];
+  for (const msg of history) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      for (const part of msg.content as ContentPart[]) {
+        if (part.type === 'tool_use') {
+          allToolUseIds.push(part.id);
+        }
+      }
     }
   }
 
-  // Nothing to compact
-  if (toolResultPositions.length <= keepLastN) {
+  if (allToolUseIds.length <= keepLastN) {
     return history;
   }
 
-  // Clear older tool results
-  const clearPositions = toolResultPositions.slice(0, -keepLastN);
-  const result = [...history];
+  // IDs to clear (all except the most recent N)
+  const clearIds = new Set(allToolUseIds.slice(0, -keepLastN));
+  if (clearIds.size === 0) return history;
 
-  for (const pos of clearPositions) {
-    const msg = result[pos];
-    if (!Array.isArray(msg.content)) continue;
+  const result: Dialogue[] = [];
+  let changed = false;
 
-    const cleared = (msg.content as UserContentPart[]).map((part): UserContentPart => {
-      if (part.type === 'tool_result') {
-        return {
-          type: 'tool_result',
-          tool_use_id: part.tool_use_id,
-          content: '[Tool result cleared to save context]',
-          is_error: part.is_error,
-        };
+  for (const msg of history) {
+    if (msg.role === 'user' && Array.isArray(msg.content)) {
+      // Clear old tool_result content
+      let modified = false;
+      const cleared = (msg.content as UserContentPart[]).map((part): UserContentPart => {
+        if (part.type === 'tool_result' && clearIds.has(part.tool_use_id)) {
+          // Already cleared — skip
+          if (part.content === '[Tool result cleared to save context]') return part;
+          modified = true;
+          return {
+            type: 'tool_result',
+            tool_use_id: part.tool_use_id,
+            content: '[Tool result cleared to save context]',
+            is_error: part.is_error,
+          };
+        }
+        return part;
+      });
+      if (modified) {
+        changed = true;
+        result.push({ role: 'user', content: cleared });
+      } else {
+        result.push(msg);
       }
-      return part;
-    });
-
-    result[pos] = { role: 'user', content: cleared };
+    } else if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      // Truncate old tool_use inputs (keep name + id, shrink input)
+      let modified = false;
+      const truncated = (msg.content as ContentPart[]).map((part): ContentPart => {
+        if (part.type === 'tool_use' && clearIds.has(part.id)) {
+          const inputStr = JSON.stringify(part.input);
+          if (inputStr.length > 200) {
+            modified = true;
+            // Keep just enough to know what was called
+            const summary: Record<string, unknown> = {};
+            const input = part.input as Record<string, unknown>;
+            for (const [k, v] of Object.entries(input)) {
+              const val = typeof v === 'string' ? v.slice(0, 100) : v;
+              summary[k] = val;
+            }
+            return { ...part, input: summary };
+          }
+        }
+        return part;
+      });
+      if (modified) {
+        changed = true;
+        result.push({ role: 'assistant', content: truncated });
+      } else {
+        result.push(msg);
+      }
+    } else {
+      result.push(msg);
+    }
   }
 
-  return result;
+  return changed ? result : history;
 }
