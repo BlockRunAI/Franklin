@@ -158,6 +158,7 @@ async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, on
     // immediately and auto-denied every permission. Now y/n/a goes through useInput.
     agentConfig.permissionPromptFn = (toolName, description) => ui.requestPermission(toolName, description);
     agentConfig.onAskUser = (question, options) => ui.requestAskUser(question, options);
+    agentConfig.onModelChange = (model) => ui.updateModel(model);
     // Wire up background balance fetch to UI
     onBalanceReady?.((bal) => ui.updateBalance(bal));
     // Refresh balance after each completed turn so the display stays current

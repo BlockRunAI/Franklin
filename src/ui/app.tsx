@@ -400,6 +400,7 @@ function RunCodeApp({
   // Expose event handler, balance updater, and permission bridge
   useEffect(() => {
     (globalThis as Record<string, unknown>).__runcode_ui = {
+      updateModel: (model: string) => { setCurrentModel(model); },
       updateBalance: (bal: string) => {
         setBalance(bal);
         const num = parseBalanceNum(bal);
@@ -803,6 +804,7 @@ function RunCodeApp({
 
 export interface InkUIHandle {
   handleEvent: (event: StreamEvent) => void;
+  updateModel: (model: string) => void;
   updateBalance: (balance: string) => void;
   onTurnDone: (cb: () => void) => void;
   waitForInput: () => Promise<string | null>;
@@ -857,9 +859,16 @@ export function launchInkUI(opts: {
     handleEvent: (event: StreamEvent) => {
       const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
         handleEvent: (e: StreamEvent) => void;
+        updateModel: (m: string) => void;
         updateBalance: (bal: string) => void;
       } | undefined;
       ui?.handleEvent(event);
+    },
+    updateModel: (model: string) => {
+      const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
+        updateModel: (m: string) => void;
+      } | undefined;
+      ui?.updateModel(model);
     },
     updateBalance: (bal: string) => {
       const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
