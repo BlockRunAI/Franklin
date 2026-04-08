@@ -467,7 +467,7 @@ Comprehensive token reduction improvements based on Claude Code comparison audit
 
 ### Features
 
-- Built-in smart routing from ClawRouter — 15-dimension classifier for automatic model selection
+- Built-in smart routing — 15-dimension classifier for automatic model selection
 - Default to `blockrun/auto` with 4 routing profiles: auto, eco, premium, free
 - In-session model switching — type `use gpt` or `use deepseek` inside Claude Code
 - Automatic fallback chain when models fail (429, 5xx)
