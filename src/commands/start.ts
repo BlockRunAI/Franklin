@@ -26,7 +26,7 @@ export async function startCommand(options: StartOptions) {
   const apiUrl = API_URLS[chain];
   const config = loadConfig();
 
-  // Resolve model — default to GLM-5 promo if nothing specified
+  // Resolve model — default to GLM-5.1 promo if nothing specified
   let model: string;
   const configModel = config['default-model'];
   if (options.model) {
@@ -34,9 +34,9 @@ export async function startCommand(options: StartOptions) {
   } else if (configModel) {
     model = configModel;
   } else {
-    // Default: GLM-5 promo if still active, otherwise Gemini Flash (cheap & reliable)
+    // Default: GLM-5.1 promo if still active, otherwise Gemini Flash (cheap & reliable)
     const promoExpiry = new Date('2026-04-15');
-    model = Date.now() < promoExpiry.getTime() ? 'zai/glm-5' : 'google/gemini-2.5-flash';
+    model = Date.now() < promoExpiry.getTime() ? 'zai/glm-5.1' : 'google/gemini-2.5-flash';
   }
 
   // Auto-create wallet if needed (no interruption — free models work without funding)

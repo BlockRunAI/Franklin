@@ -133,7 +133,7 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   // Minimax
   minimax: 'minimax/minimax-m2.7',
   // Others
-  glm: 'zai/glm-5',
+  glm: 'zai/glm-5.1',
   kimi: 'moonshot/kimi-k2.5',
 };
 

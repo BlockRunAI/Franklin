@@ -70,9 +70,9 @@ export const MODEL_PRICING = {
     'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
     'nvidia/kimi-k2.5': { input: 0.55, output: 2.5 },
     // PROMOTION (active ~2026-04): flat $0.001/call. Normal pricing: input:1.00, output:3.20
-    'zai/glm-5': { input: 0, output: 0, perCall: 0.001 },
+    'zai/glm-5.1': { input: 0, output: 0, perCall: 0.001 },
     // PROMOTION (active ~2026-04): flat $0.001/call. Normal pricing: input:1.20, output:4.00
-    'zai/glm-5-turbo': { input: 0, output: 0, perCall: 0.001 },
+    'zai/glm-5.1-turbo': { input: 0, output: 0, perCall: 0.001 },
 };
 /** Opus pricing for savings calculations */
 export const OPUS_PRICING = MODEL_PRICING['anthropic/claude-opus-4.6'];

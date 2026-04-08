@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.5.31 (2026-04-08)
+
+### Changes
+
+- **GLM-5 → GLM-5.1**: Default model updated to `zai/glm-5.1` (server-side upgrade)
+- **GLM-5 Turbo → GLM-5.1 Turbo**: Turbo variant updated to `zai/glm-5.1-turbo`
+- **Unbrowse built-in**: Auto-discovers [Unbrowse](https://github.com/unbrowse-ai/unbrowse) MCP server when installed — turn any website into a reusable API for your agent
+
 ## 2.5.22 (2026-04-06)
 
 ### Improvements
