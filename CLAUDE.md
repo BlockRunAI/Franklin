@@ -1,6 +1,6 @@
 # RunCode
 
-Open-source AI coding agent. 41+ models. Pay per use with USDC via x402.
+Open-source AI coding agent. 55+ models. Pay per use with USDC via x402.
 
 ## Commands
 

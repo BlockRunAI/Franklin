@@ -4,7 +4,7 @@
 
 <div align="center">
 
-<p><strong>Open-source AI coding agent. 41+ models. Pay per use with USDC.</strong></p>
+<p><strong>Open-source AI coding agent. 55+ models. Pay per use with USDC.</strong></p>
 
 <br>
 
@@ -22,7 +22,7 @@
 
 | | Claude Code | Cursor | Aider | **RunCode** |
 |---|---|---|---|---|
-| Models | Claude only | Mixed (limited) | Bring your key | **41+ models, one tool** |
+| Models | Claude only | Mixed (limited) | Bring your key | **55+ models, one tool** |
 | Pricing | $200/mo subscription | $20/mo + usage | Free + API costs | **Pay per request** |
 | Payment | Credit card | Credit card | API keys | **USDC — no accounts** |
 | Open source | No | No | Yes | **Yes** |
@@ -170,7 +170,7 @@ This writes the proxy endpoint into Claude Code's config and installs a macOS La
 **How it works:**
 
 ```
-Claude Code → RunCode proxy (:8402) → BlockRun API → 41+ models
+Claude Code → RunCode proxy (:8402) → BlockRun API → 55+ models
                  ↓
           x402 payment (USDC)
           SSE format translation
