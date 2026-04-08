@@ -36,6 +36,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     const permissions = new PermissionManager(config.permissionMode ?? 'default', config.permissionPromptFn);
     const history = [];
     let lastUserInput = ''; // For /retry
+    const failedModels = new Set(); // Models that failed payment/rate-limit (session-level)
     // Session persistence
     const sessionId = createSessionId();
     let turnCount = 0;
@@ -226,15 +227,16 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     || errLower.includes('payment') || errLower.includes('verification failed')
                     || errLower.includes('free tier')) {
                     // Auto-fallback to free models on payment/rate limit failure
+                    // Track failed models at session level to prevent ping-pong loops
+                    failedModels.add(config.model);
                     const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/nemotron-ultra-253b', 'nvidia/devstral-2-123b'];
-                    const nextFree = FREE_MODELS.find(m => m !== config.model);
-                    if (nextFree && recoveryAttempts < 2) {
-                        recoveryAttempts++;
+                    const nextFree = FREE_MODELS.find(m => !failedModels.has(m));
+                    if (nextFree) {
                         const oldModel = config.model;
                         config.model = nextFree;
                         config.onModelChange?.(nextFree);
                         onEvent({ kind: 'text_delta', text: `\n*${oldModel} failed — switching to ${nextFree}*\n` });
-                        continue; // Retry with free model
+                        continue; // Retry with next model
                     }
                     suggestion = '\nTip: Run `runcode balance` to check funds. Try /model free for free models.';
                 }
