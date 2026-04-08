@@ -263,10 +263,10 @@ test('session cost: estimateCost returns non-negative value for known model', { 
   // Import and unit-test the pricing function directly (no model call needed).
   const { estimateCost } = await import('../dist/pricing.js');
 
-  // GLM-5: $1.00/M input, $3.20/M output
-  const cost = estimateCost('zai/glm-5', 1_000_000, 1_000_000);
-  assert.ok(cost > 0, `Expected non-zero cost for 1M tokens, got ${cost}`);
-  assert.ok(cost < 10, `Cost sanity check failed (got ${cost}, expected < $10)`);
+  // GLM-5.1: $0.001 per call (flat pricing)
+  const cost = estimateCost('zai/glm-5.1', 1_000_000, 1_000_000, 1);
+  assert.ok(cost > 0, `Expected non-zero cost for GLM-5.1, got ${cost}`);
+  assert.ok(cost <= 0.001, `GLM-5.1 is flat $0.001/call, got ${cost}`);
 
   // Free model should cost $0
   const freeCost = estimateCost('nvidia/nemotron-ultra-253b', 1_000_000, 1_000_000);
