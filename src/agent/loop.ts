@@ -267,7 +267,8 @@ export async function interactiveSession(
         } else if (errLower.includes('balance') || errLower.includes('insufficient') || errLower.includes('402')
           || errLower.includes('payment') || errLower.includes('verification failed')) {
           // Auto-fallback to free model on payment failure
-          const FREE_MODEL = 'nvidia/nemotron-ultra-253b';
+          // Use qwen3-coder: better instruction following than nemotron for coding tasks
+          const FREE_MODEL = 'nvidia/qwen3-coder-480b';
           if (config.model !== FREE_MODEL && recoveryAttempts < 1) {
             recoveryAttempts++;
             const oldModel = config.model;
