@@ -1,6 +1,6 @@
 /**
  * Smart Router for runcode
- * Ported from ClawRouter - 15-dimension weighted scoring for tier classification
+ * Smart Router - 15-dimension weighted scoring for tier classification
  */
 
 import { MODEL_PRICING, OPUS_PRICING } from '../pricing.js';

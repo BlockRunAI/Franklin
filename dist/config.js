@@ -24,7 +24,7 @@ export function saveChain(chain) {
     fs.writeFileSync(CHAIN_FILE, chain + '\n', { mode: 0o600 });
 }
 export function loadChain() {
-    const envChain = process.env.RUNCODE_CHAIN || process.env.BRCC_CHAIN;
+    const envChain = process.env.RUNCODE_CHAIN;
     if (envChain === 'solana')
         return 'solana';
     if (envChain === 'base')

@@ -69,7 +69,7 @@ Reference: `/Users/vickyfu/tmp/tweakcc/src/patches/`
 
 #### 2. Smart model routing in proxy
 
-Borrow from ClawRouter's 14-dimension classifier:
+Smart routing uses a 15-dimension classifier:
 
 ```
 Claude Code request → runcode proxy analyzes request →
@@ -81,7 +81,7 @@ Claude Code request → runcode proxy analyzes request →
 
 User can override with explicit `/model` selection.
 
-Reference: `/Users/vickyfu/Documents/blockrun-web/ClawRouter/`
+Reference: built-in `src/router/index.ts`
 
 #### 3. Env var model mapping
 
@@ -153,7 +153,7 @@ Zero-config experience — runcode auto-picks the best model for each task.
 runcode start --smart   # Auto-route every request to optimal model
 ```
 
-Uses ClawRouter's classifier to analyze each request:
+Uses the built-in classifier to analyze each request:
 - Token count, code presence, reasoning markers, creative markers
 - Routes to cheapest capable model
 - User sets budget: `runcode start --smart --budget 0.01` (max $0.01 per request)
@@ -183,7 +183,7 @@ runcode team usage                # Per-developer breakdown
 |------|----------------|
 | [tweakcc](https://github.com/Piebald-AI/tweakcc) | JS patching engine, `allowCustomAgentModels`, `subagentModels`, prompt customization |
 | [claude-code-router](https://github.com/musistudio/claude-code-router) | Dynamic `/model` switching, transformer chain, smart routing by task type |
-| [ClawRouter](https://github.com/BlockRunAI/ClawRouter) | 14-dimension request classifier, cost-optimized model selection |
+| RunCode router (built-in) | 15-dimension request classifier, cost-optimized model selection |
 | [OpenRouter](https://openrouter.ai/docs/guides/coding-agents/claude-code-integration) | `ANTHROPIC_DEFAULT_*_MODEL` env vars, `ANTHROPIC_AUTH_TOKEN` pattern |
 
 ### Key Claude Code env vars
@@ -207,7 +207,7 @@ runcode start
   │     └── Unlock custom model names
   │
   ├── Start proxy (localhost:8402)
-  │     ├── Request classifier (ClawRouter)
+  │     ├── Request classifier (built-in router)
   │     ├── Model router (CCR pattern)
   │     ├── Transformer chain (Anthropic↔OpenAI)
   │     ├── x402 payment signing
