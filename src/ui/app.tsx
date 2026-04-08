@@ -13,7 +13,7 @@ import { estimateCost } from '../pricing.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
-function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, focused }: {
+function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, focused, busy }: {
   input: string;
   setInput: (v: string) => void;
   onSubmit: (v: string) => void;
@@ -22,10 +22,15 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
   sessionCost: number;
   queued?: string;
   focused?: boolean;
+  busy?: boolean;
 }) {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
   const innerWidth = Math.min(Math.max(30, cols - 4), cols - 2);
+
+  const placeholder = busy
+    ? (queued ? `⏎ queued: ${queued.slice(0, 40)}` : 'Working...')
+    : 'Type a message...';
 
   return (
     <Box flexDirection="column" marginTop={1}>
@@ -33,20 +38,25 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
       <Box>
         <Text dimColor>│ </Text>
         <Box width={innerWidth}>
-          <TextInput
-            value={input}
-            onChange={setInput}
-            onSubmit={onSubmit}
-            placeholder={queued ? `⏎ queued: ${queued.slice(0, 40)}` : 'Type a message...'}
-            focus={focused !== false}
-          />
+          {busy && !queued ? (
+            <Text color="yellow"><Spinner type="dots" /> {placeholder}</Text>
+          ) : (
+            <TextInput
+              value={input}
+              onChange={setInput}
+              onSubmit={onSubmit}
+              placeholder={placeholder}
+              focus={focused !== false}
+            />
+          )}
         </Box>
         <Text dimColor>{' '.repeat(Math.max(0, cols - innerWidth - 4))}│</Text>
       </Box>
       <Text dimColor>{'╰' + '─'.repeat(cols - 2) + '╯'}</Text>
       <Box marginLeft={1}>
         <Text dimColor>
-          {model}  ·  {balance}
+          {busy ? <Text color="yellow"><Spinner type="dots" /></Text> : null}
+          {busy ? ' ' : ''}{model}  ·  {balance}
           {sessionCost > 0.00001 ? <Text color="yellow">  -${sessionCost.toFixed(4)}</Text> : ''}
           {'  ·  esc to abort/quit'}
         </Text>
@@ -783,6 +793,7 @@ function RunCodeApp({
         sessionCost={totalCost}
         queued={queuedInput || undefined}
         focused={!permissionRequest && !askUserRequest}
+        busy={waiting || thinking || tools.size > 0}
       />
     </Box>
   );
