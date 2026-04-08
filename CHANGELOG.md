@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.5.32 (2026-04-08)
+
+### Performance
+
+- **Context snowball fix**: Aggressive microcompaction cuts token usage 40-60% in long sessions
+  - Clear old tool results after 3 exchanges (was 8)
+  - Truncate old tool_use inputs (Edit replacements, Bash commands)
+  - Idle threshold reduced to 5 minutes (was 60)
+  - Triggers at 6 messages (was 15)
+
+### Added
+
+- **Busy indicator**: Spinner in input box and status bar when agent is working — always visible whether waiting for API, thinking, or running tools
+- **Unbrowse built-in**: Auto-discovers [Unbrowse](https://github.com/unbrowse-ai/unbrowse) MCP server when installed
+
+### Changed
+
+- **GLM-5 → GLM-5.1**: Default model and turbo variant updated
+- **55+ models**: Updated model count across all docs (was 41+)
+- **Brand cleanup**: Removed all legacy BRCC and ClawRouter references
+
 ## 2.5.31 (2026-04-08)
 
 ### Changes
