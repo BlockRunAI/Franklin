@@ -98,9 +98,9 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 history.length = 0;
                 history.push(...reduced);
             }
-            // 3. Microcompact: only when history has >15 messages (skip for short conversations)
-            if (history.length > 15) {
-                const microCompacted = microCompact(history, 8);
+            // 3. Microcompact: clear old tool results to prevent context snowball
+            if (history.length > 6) {
+                const microCompacted = microCompact(history, 3);
                 if (microCompacted !== history) {
                     history.length = 0;
                     history.push(...microCompacted);
