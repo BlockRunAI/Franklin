@@ -298,7 +298,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         setTurnTokens({ input: 0, output: 0, calls: 0 });
         turnCostRef.current = 0;
         onSubmit(trimmed);
-    }, [currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
+    }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
     // Expose event handler, balance updater, and permission bridge
     useEffect(() => {
         globalThis.__runcode_ui = {
@@ -415,11 +415,15 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                                     tokens: turnTokensRef.current,
                                     cost: turnCostRef.current, // per-turn cost, not cumulative
                                 }]);
-                            // Preview = last 20 lines of the response so the user sees enough context
+                            // Preview = only show when response is long enough to scroll off screen
                             const allLines = text.split('\n');
-                            const wasTruncated = allLines.length > 20;
-                            const previewLines = (wasTruncated ? '  ↑ scroll to see full reply\n' : '') + allLines.slice(-20).join('\n');
-                            setResponsePreview(previewLines);
+                            if (allLines.length > 20) {
+                                setResponsePreview('  ↑ scroll to see full reply\n' + allLines.slice(-20).join('\n'));
+                            }
+                            else {
+                                // Short response: already fully visible in scrollback, no preview needed
+                                setResponsePreview('');
+                            }
                             setStreamText('');
                         }
                         setReady(true);
