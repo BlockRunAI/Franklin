@@ -5,6 +5,7 @@
 import type { StreamEvent } from '../agent/types.js';
 export interface InkUIHandle {
     handleEvent: (event: StreamEvent) => void;
+    updateModel: (model: string) => void;
     updateBalance: (balance: string) => void;
     onTurnDone: (cb: () => void) => void;
     waitForInput: () => Promise<string | null>;
