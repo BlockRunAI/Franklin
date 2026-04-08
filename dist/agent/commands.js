@@ -42,6 +42,65 @@ function gitCmd(ctx, cmd, timeout, maxBuffer) {
 function emitDone(ctx) {
     ctx.onEvent({ kind: 'turn_done', reason: 'completed' });
 }
+function buildExchanges(history) {
+    const exchanges = [];
+    let i = 0;
+    while (i < history.length) {
+        const msg = history[i];
+        if (msg.role !== 'user') {
+            i++;
+            continue;
+        }
+        const userText = extractText(msg);
+        if (!userText) {
+            i++;
+            continue;
+        } // skip tool_result-only user messages
+        const startIdx = i;
+        let endIdx = i;
+        let assistantText = '';
+        const toolNames = [];
+        let j = i + 1;
+        while (j < history.length) {
+            const next = history[j];
+            if (next.role === 'user' && extractText(next))
+                break; // next exchange
+            if (next.role === 'assistant') {
+                const t = extractText(next);
+                if (t && !assistantText)
+                    assistantText = t;
+                if (Array.isArray(next.content)) {
+                    for (const p of next.content) {
+                        if (p.type === 'tool_use' && !toolNames.includes(p.name))
+                            toolNames.push(p.name);
+                    }
+                }
+            }
+            endIdx = j;
+            j++;
+        }
+        exchanges.push({
+            userText: userText.slice(0, 120) + (userText.length > 120 ? '…' : ''),
+            assistantText: (assistantText.slice(0, 80) + (assistantText.length > 80 ? '…' : '')) || '(no text)',
+            toolNames,
+            startIdx,
+            endIdx,
+        });
+        i = j;
+    }
+    return exchanges;
+}
+function extractText(msg) {
+    if (typeof msg.content === 'string')
+        return msg.content.trim();
+    if (!Array.isArray(msg.content))
+        return '';
+    for (const p of msg.content) {
+        if (p.type === 'text' && p.text.trim())
+            return p.text.trim();
+    }
+    return '';
+}
 // ─── Command Definitions ──────────────────────────────────────────────────
 // Direct-handled commands (don't go to agent)
 const DIRECT_COMMANDS = {
@@ -148,43 +207,20 @@ const DIRECT_COMMANDS = {
     '/history': (ctx) => {
         const { history, config } = ctx;
         const modelName = config.model.split('/').pop() || config.model;
+        const exchanges = buildExchanges(history);
         let output = '**Conversation History**\n\n';
-        if (history.length === 0) {
+        if (exchanges.length === 0) {
             output += 'No history in the current session yet.\n';
         }
         else {
-            for (let i = 0; i < history.length; i++) {
-                const turn = history[i];
-                const rolePrefix = turn.role === 'user' ? '[user]' : `[${modelName}]`;
-                const numPrefix = `[${i + 1}]`;
-                let turnText = '';
-                if (typeof turn.content === 'string') {
-                    turnText = turn.content;
-                }
-                else if (Array.isArray(turn.content)) {
-                    const textParts = turn.content
-                        .filter(p => p.type === 'text' && p.text.trim())
-                        .map(p => p.text.trim());
-                    if (textParts.length > 0) {
-                        turnText = textParts.join(' ');
-                    }
-                    else {
-                        const toolCall = turn.content.find(p => p.type === 'tool_use');
-                        if (toolCall) {
-                            turnText = `(Thinking and using tool: ${toolCall.name})`;
-                        }
-                        const toolResult = turn.content.find(p => p.type === 'tool_result');
-                        if (toolResult) {
-                            turnText = `(Processing tool result)`;
-                        }
-                    }
-                }
-                if (turnText.trim()) {
-                    output += `${numPrefix} ${rolePrefix} ${turnText.trim()}\n\n`;
-                }
+            for (let i = 0; i < exchanges.length; i++) {
+                const ex = exchanges[i];
+                const tools = ex.toolNames.length > 0 ? ` · used: ${ex.toolNames.join(', ')}` : '';
+                output += `[${i + 1}] [user] ${ex.userText}\n`;
+                output += `     [${modelName}] ${ex.assistantText}${tools}\n\n`;
             }
         }
-        output += '\nUse `/delete <number>` to remove turns (e.g., `/delete 2` or `/delete 3-5`).\n';
+        output += 'Use `/delete <number>` to remove exchanges (e.g., `/delete 2` or `/delete 3-5`).\n';
         ctx.onEvent({ kind: 'text_delta', text: output });
         emitDone(ctx);
     },
@@ -486,49 +522,57 @@ export async function handleSlashCommand(input, ctx) {
     if (input.startsWith('/delete ')) {
         const arg = input.slice('/delete '.length).trim();
         if (!arg) {
-            ctx.onEvent({ kind: 'text_delta', text: 'Usage: /delete <turn_number> (e.g., /delete 3, /delete 2,5, /delete 4-7)\n' });
+            ctx.onEvent({ kind: 'text_delta', text: 'Usage: /delete <exchange> (e.g., /delete 3, /delete 2,5, /delete 4-7)\n' });
             emitDone(ctx);
             return { handled: true };
         }
-        const indicesToDelete = new Set();
+        // Parse exchange numbers (1-based) into a set of 0-based exchange indices
+        const exchangeIndicesToDelete = new Set();
         const parts = arg.split(',').map(p => p.trim());
         for (const part of parts) {
             if (part.includes('-')) {
                 const [start, end] = part.split('-').map(n => parseInt(n, 10));
                 if (!isNaN(start) && !isNaN(end) && start <= end) {
-                    for (let i = start; i <= end; i++) {
-                        indicesToDelete.add(i - 1); // User sees 1-based, we use 0-based
-                    }
+                    for (let i = start; i <= end; i++)
+                        exchangeIndicesToDelete.add(i - 1);
                 }
             }
             else {
-                const index = parseInt(part, 10);
-                if (!isNaN(index)) {
-                    indicesToDelete.add(index - 1); // 0-based
-                }
+                const n = parseInt(part, 10);
+                if (!isNaN(n))
+                    exchangeIndicesToDelete.add(n - 1);
             }
         }
-        if (indicesToDelete.size === 0) {
-            ctx.onEvent({ kind: 'text_delta', text: 'No valid turn numbers provided.\n' });
+        if (exchangeIndicesToDelete.size === 0) {
+            ctx.onEvent({ kind: 'text_delta', text: 'No valid exchange numbers provided.\n' });
             emitDone(ctx);
             return { handled: true };
         }
-        const sortedIndices = Array.from(indicesToDelete).sort((a, b) => b - a); // Sort descending
-        let deletedCount = 0;
-        const deletedNumbers = [];
-        for (const index of sortedIndices) {
-            if (index >= 0 && index < ctx.history.length) {
-                ctx.history.splice(index, 1);
-                deletedCount++;
-                deletedNumbers.push(index + 1);
-            }
+        // Map exchange indices → raw history index ranges, then delete descending.
+        // This preserves valid user/assistant alternation — each exchange covers the
+        // full unit: user prompt + all tool calls/results + assistant replies.
+        const exchanges = buildExchanges(ctx.history);
+        const rawToDelete = new Set();
+        const deletedNums = [];
+        for (const exIdx of exchangeIndicesToDelete) {
+            const ex = exchanges[exIdx];
+            if (!ex)
+                continue;
+            for (let i = ex.startIdx; i <= ex.endIdx; i++)
+                rawToDelete.add(i);
+            deletedNums.push(exIdx + 1);
         }
-        if (deletedCount > 0) {
+        const sorted = Array.from(rawToDelete).sort((a, b) => b - a);
+        for (const idx of sorted) {
+            if (idx >= 0 && idx < ctx.history.length)
+                ctx.history.splice(idx, 1);
+        }
+        if (deletedNums.length > 0) {
             resetTokenAnchor();
-            ctx.onEvent({ kind: 'text_delta', text: `Deleted turn(s) ${deletedNumbers.reverse().join(', ')} from history.\n` });
+            ctx.onEvent({ kind: 'text_delta', text: `Deleted exchange(s) ${deletedNums.sort((a, b) => a - b).join(', ')} from history.\n` });
         }
         else {
-            ctx.onEvent({ kind: 'text_delta', text: `No matching turns found to delete.\n` });
+            ctx.onEvent({ kind: 'text_delta', text: 'No matching exchanges found to delete.\n' });
         }
         emitDone(ctx);
         return { handled: true };
