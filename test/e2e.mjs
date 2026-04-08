@@ -29,7 +29,8 @@ const TIMEOUT_MS = 90_000; // 90s per test — model calls can be slow
 function runcode(prompt, { cwd, timeoutMs = TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const workDir = cwd ?? tmpdir();
-    const proc = spawn('node', [DIST], {
+    const model = process.env.E2E_MODEL || 'nvidia/nemotron-ultra-253b';
+    const proc = spawn('node', [DIST, '--model', model, '--trust'], {
       cwd: workDir,
       env: { ...process.env },
       stdio: ['pipe', 'pipe', 'pipe'],
