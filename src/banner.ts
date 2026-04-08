@@ -32,6 +32,6 @@ export function printBanner(version: string) {
       chalk.dim('  ·  AI Coding Agent  ·  blockrun.ai  ·  v' + version)
   );
   console.log(
-    chalk.dim('  41+ models · Pay per use with USDC · /help for commands\n')
+    chalk.dim('  55+ models · Pay per use with USDC · /help for commands\n')
   );
 }
