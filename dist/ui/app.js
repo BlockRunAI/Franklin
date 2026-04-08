@@ -479,12 +479,17 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
 }
 export function launchInkUI(opts) {
     let resolveInput = null;
+    let pendingInput = null; // Queue for inputs that arrive before waitForInput
     let exiting = false;
     let abortCallback = null;
     const instance = render(_jsx(RunCodeApp, { initialModel: opts.model, workDir: opts.workDir, walletAddress: opts.walletAddress || 'not set — run: runcode setup', walletBalance: opts.walletBalance || 'unknown', chain: opts.chain || 'base', startWithPicker: opts.showPicker, onSubmit: (value) => {
             if (resolveInput) {
                 resolveInput(value);
                 resolveInput = null;
+            }
+            else {
+                // Agent loop hasn't called waitForInput yet — queue the input
+                pendingInput = value;
             }
         }, onModelChange: (model) => { opts.onModelChange?.(model); }, onAbort: () => { abortCallback?.(); }, onExit: () => {
             exiting = true;
@@ -509,6 +514,12 @@ export function launchInkUI(opts) {
         waitForInput: () => {
             if (exiting)
                 return Promise.resolve(null);
+            // If user already submitted while we were processing, return immediately
+            if (pendingInput !== null) {
+                const input = pendingInput;
+                pendingInput = null;
+                return Promise.resolve(input);
+            }
             return new Promise((resolve) => { resolveInput = resolve; });
         },
         onAbort: (cb) => { abortCallback = cb; },

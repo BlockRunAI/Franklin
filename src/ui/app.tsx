@@ -820,6 +820,7 @@ export function launchInkUI(opts: {
   onModelChange?: (model: string) => void;
 }): InkUIHandle {
   let resolveInput: ((value: string | null) => void) | null = null;
+  let pendingInput: string | null = null; // Queue for inputs that arrive before waitForInput
   let exiting = false;
   let abortCallback: (() => void) | null = null;
 
@@ -832,7 +833,13 @@ export function launchInkUI(opts: {
       chain={opts.chain || 'base'}
       startWithPicker={opts.showPicker}
       onSubmit={(value) => {
-        if (resolveInput) { resolveInput(value); resolveInput = null; }
+        if (resolveInput) {
+          resolveInput(value);
+          resolveInput = null;
+        } else {
+          // Agent loop hasn't called waitForInput yet — queue the input
+          pendingInput = value;
+        }
       }}
       onModelChange={(model) => { opts.onModelChange?.(model); }}
       onAbort={() => { abortCallback?.(); }}
@@ -865,6 +872,12 @@ export function launchInkUI(opts: {
     },
     waitForInput: () => {
       if (exiting) return Promise.resolve(null);
+      // If user already submitted while we were processing, return immediately
+      if (pendingInput !== null) {
+        const input = pendingInput;
+        pendingInput = null;
+        return Promise.resolve(input);
+      }
       return new Promise<string | null>((resolve) => { resolveInput = resolve; });
     },
     onAbort: (cb: () => void) => { abortCallback = cb; },
