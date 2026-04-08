@@ -1,220 +1,312 @@
-# runcode Roadmap
+# RunCode Roadmap
 
-## Vision
+## What RunCode Is
 
-runcode = Claude Code + any model + no rate limits + pay-per-use USDC
+RunCode is an open-source AI coding agent. 41+ models. Pay per use with USDC. No accounts, no subscriptions, no rate limits.
 
-The goal is to let any developer run Claude Code with any LLM model, selecting and switching models freely, paying only for what they use.
-
-## Current State (v0.5.0)
+**Current version:** 2.5.31
 
 ```
-User runs: runcode start --model openai/gpt-5.4
-
-  runcode proxy (localhost:8402)
-    ├── Receives Anthropic-format requests from Claude Code
-    ├── Overrides model name to user's choice
-    ├── Signs x402 payment with user's wallet
-    └── Forwards to blockrun.ai/api/v1/messages
-```
-
-**Working:**
-- `runcode setup base|solana` — create wallet
-- `runcode start --model <model>` — start proxy + launch Claude Code
-- `runcode models` — list 50+ models with pricing
-- `runcode balance` — check USDC balance
-- Dual chain support (Base + Solana)
-- Free model (nvidia/nemotron-ultra-253b) tested end-to-end
-
-**Limitations:**
-- Cannot switch models inside Claude Code — must restart with different `--model`
-- Claude Code's `/model` only shows Anthropic models
-- Auth conflict warning when user has existing claude.ai login
-
----
-
-## Phase 1: Dynamic Model Selection (next)
-
-### Goal
-Let users switch between any BlockRun model inside Claude Code without restarting.
-
-### Approach: Combine tweakcc + claude-code-router patterns
-
-**From [tweakcc](https://github.com/Piebald-AI/tweakcc):**
-- `allowCustomAgentModels` patch — removes Claude Code's model name validation
-- Enables arbitrary model names in Claude Code's `/model` picker
-- Patches Claude Code's minified JS directly
-
-**From [claude-code-router](https://github.com/musistudio/claude-code-router):**
-- Dynamic `/model provider,model_name` syntax inside Claude Code
-- Smart routing based on task type (simple/complex/reasoning/long-context)
-- Transformer chain for format conversion between providers
-- Per-subagent model override via tags
-
-### Implementation Plan
-
-#### 1. Add tweakcc patching to runcode
-
-```bash
-runcode patch          # Patch Claude Code to allow custom model names
-runcode patch --undo   # Restore original Claude Code
-```
-
-Key patches to apply:
-- `allowCustomAgentModels` — unlock arbitrary model names
-- `contextLimit` override — support models with different context windows
-- `subagentModels` — set different models for plan/explore/general-purpose agents
-
-Reference: `/Users/vickyfu/tmp/tweakcc/src/patches/`
-
-#### 2. Smart model routing in proxy
-
-Smart routing uses a 15-dimension classifier:
-
-```
-Claude Code request → runcode proxy analyzes request →
-  Simple task (definitions, math) → cheapest model (DeepSeek, NVIDIA free)
-  Code task (editing, debugging) → code-optimized model (Claude Sonnet, GPT-5)
-  Reasoning task (proofs, planning) → reasoning model (o3, Grok reasoning)
-  Long context (large files) → large context model (GPT-5.4 1M, Gemini)
-```
-
-User can override with explicit `/model` selection.
-
-Reference: built-in `src/router/index.ts`
-
-#### 3. Env var model mapping
-
-runcode start sets these env vars so Claude Code's built-in `/model` picker maps to BlockRun models:
-
-```bash
-ANTHROPIC_DEFAULT_SONNET_MODEL=anthropic/claude-sonnet-4.6
-ANTHROPIC_DEFAULT_OPUS_MODEL=anthropic/claude-opus-4.6
-ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek/deepseek-chat  # cheap alternative
-CLAUDE_CODE_SUBAGENT_MODEL=anthropic/claude-haiku-4.5
-```
-
-User can customize in `~/.blockrun/runcode-config.json`.
-
-#### 4. Transformer chain
-
-For non-Anthropic models, the proxy needs format conversion:
-
-```
-Claude Code (Anthropic format)
-  → runcode proxy
-    → If Anthropic model: pass through to /v1/messages
-    → If OpenAI model: convert Anthropic→OpenAI format, call /v1/chat/completions
-    → Convert response back to Anthropic format
-  → Claude Code
-```
-
-BlockRun's `/v1/messages` endpoint already handles this server-side, so the proxy just forwards. But for edge cases (streaming, tool calling), client-side transformation may be needed.
-
----
-
-## Phase 2: Installation UX
-
-### Goal
-One-line install that sets up everything.
-
-### Implementation
-
-```bash
-# Install runcode + Claude Code + patch in one command
-curl -fsSL https://runcode.blockrun.ai/install.sh | bash
-```
-
-The install script:
-1. Install Node.js if missing
-2. Install Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`
-3. Install runcode: `npm install -g @blockrun/cc`
-4. Create wallet: `runcode setup base`
-5. Patch Claude Code: `runcode patch`
-6. Show wallet address + funding instructions
-
-### Uninstall
-
-```bash
-runcode patch --undo    # Restore Claude Code
-npm uninstall -g @blockrun/cc
-```
-
----
-
-## Phase 3: Smart Defaults
-
-### Goal
-Zero-config experience — runcode auto-picks the best model for each task.
-
-### Implementation
-
-```bash
-runcode start --smart   # Auto-route every request to optimal model
-```
-
-Uses the built-in classifier to analyze each request:
-- Token count, code presence, reasoning markers, creative markers
-- Routes to cheapest capable model
-- User sets budget: `runcode start --smart --budget 0.01` (max $0.01 per request)
-
----
-
-## Phase 4: Team Features
-
-### Goal
-Teams share a wallet and track per-developer usage.
-
-### Implementation
-
-```bash
-runcode team create "My Team"
-runcode team add dev@example.com
-runcode team budget 100          # $100 monthly budget
-runcode team usage                # Per-developer breakdown
-```
-
----
-
-## Technical Reference
-
-### Key repos
-| Repo | What to borrow |
-|------|----------------|
-| [tweakcc](https://github.com/Piebald-AI/tweakcc) | JS patching engine, `allowCustomAgentModels`, `subagentModels`, prompt customization |
-| [claude-code-router](https://github.com/musistudio/claude-code-router) | Dynamic `/model` switching, transformer chain, smart routing by task type |
-| RunCode router (built-in) | 15-dimension request classifier, cost-optimized model selection |
-| [OpenRouter](https://openrouter.ai/docs/guides/coding-agents/claude-code-integration) | `ANTHROPIC_DEFAULT_*_MODEL` env vars, `ANTHROPIC_AUTH_TOKEN` pattern |
-
-### Key Claude Code env vars
-```bash
-ANTHROPIC_BASE_URL              # API endpoint (runcode sets to localhost proxy)
-ANTHROPIC_API_KEY               # API key (runcode sets dummy key)
-ANTHROPIC_MODEL                 # Default model
-ANTHROPIC_DEFAULT_OPUS_MODEL    # What /model opus resolves to
-ANTHROPIC_DEFAULT_SONNET_MODEL  # What /model sonnet resolves to
-ANTHROPIC_DEFAULT_HAIKU_MODEL   # What /model haiku resolves to
-CLAUDE_CODE_SUBAGENT_MODEL      # Model for subagents
-ANTHROPIC_CUSTOM_MODEL_OPTION   # Custom model in /model picker (no validation)
-```
-
-### Architecture target
-
-```
-runcode start
+runcode
   │
-  ├── Patch Claude Code (tweakcc engine)
-  │     └── Unlock custom model names
+  ├── Standalone AI coding agent
+  │     ├── Ink-based terminal UI (React for terminal)
+  │     ├── 11 built-in tools
+  │     │     Read, Write, Edit, Bash, Glob, Grep,
+  │     │     WebFetch, WebSearch, Task, ImageGen, AskUser
+  │     ├── 38 slash commands
+  │     │     /model, /compact, /ultrathink, /ultraplan,
+  │     │     /commit, /pr, /plan, /execute, /history, /resume...
+  │     ├── MCP server integration
+  │     │     blockrun (built-in), unbrowse (built-in),
+  │     │     + user-configured servers via ~/.blockrun/mcp.json
+  │     ├── Sub-agent spawning for parallel work
+  │     └── Session persistence (JSONL) + /resume
   │
-  ├── Start proxy (localhost:8402)
-  │     ├── Request classifier (built-in router)
-  │     ├── Model router (CCR pattern)
-  │     ├── Transformer chain (Anthropic↔OpenAI)
-  │     ├── x402 payment signing
-  │     └── Response streaming
+  ├── Smart router
+  │     ├── 15-dimension weighted classifier
+  │     ├── 4 profiles: auto, eco, premium, free
+  │     ├── 4 tiers: SIMPLE → MEDIUM → COMPLEX → REASONING
+  │     └── Automatic fallback chains per tier
   │
-  └── Launch Claude Code
-        ├── ANTHROPIC_BASE_URL → proxy
-        ├── Model env vars → BlockRun models
-        └── /model picker → all 50+ models
+  ├── Proxy mode (for Claude Code + other tools)
+  │     ├── localhost:8402, x402 payment signing
+  │     ├── In-session model switching (last-message detection)
+  │     ├── Daemon mode (background process)
+  │     └── LaunchAgent auto-start on macOS
+  │
+  └── Payment (USDC via x402 protocol)
+        ├── Base (Ethereum L2) — default
+        ├── Solana — alternative
+        └── No account, no subscription, no rate limits
 ```
+
+---
+
+## What's Shipped (v2.5.31)
+
+### Models
+
+41+ models across 8 providers. Switch mid-conversation with `/model`.
+
+| Provider | Models | Pricing |
+|----------|--------|---------|
+| Anthropic | Claude Opus 4.6, Sonnet 4.6, Haiku 4.5 | $1-25/1M tokens |
+| OpenAI | GPT-5.4, GPT-5.3 Codex, GPT-5 Mini, O3, O4 Mini | $0.05-180/1M tokens |
+| Google | Gemini 3.1 Pro, 2.5 Pro, 2.5 Flash, Flash Lite | $0.10-12/1M tokens |
+| xAI | Grok 4, Grok 3, Grok Fast Reasoning | $0.20-15/1M tokens |
+| DeepSeek | DeepSeek V3, DeepSeek Reasoner | $0.28-0.42/1M tokens |
+| Zhipu AI | GLM-5.1, GLM-5.1 Turbo | $0.001/call (promo) |
+| Moonshot | Kimi K2.5 | $0.60-3/1M tokens |
+| NVIDIA (free) | Nemotron Ultra 253B, GPT-OSS 120B, DeepSeek V3.2, Qwen3 Coder 480B, Devstral 2, Llama 4 Maverick | **$0.00** |
+
+### Agent Tools
+
+| Tool | What it does | Concurrent |
+|------|-------------|------------|
+| Read | Read files with line ranges | Yes |
+| Write | Create new files | No (permission required) |
+| Edit | Modify files with replacements | No (permission required) |
+| Bash | Execute shell commands (30s timeout, 32KB output cap) | No (permission required) |
+| Glob | Find files by pattern | Yes |
+| Grep | Search file contents with regex | Yes |
+| WebFetch | Fetch URL, convert HTML to markdown | Yes |
+| WebSearch | Real-time web + X/Twitter + news search | Yes |
+| Task | In-session task management | Yes |
+| ImageGen | Generate images (DALL-E 3, Flux) | Yes |
+| AskUser | Interactive question dialog | No |
+| SubAgent | Spawn child agents for parallel work | No |
+
+### Slash Commands (38)
+
+**Session:** `/clear`, `/compact`, `/history`, `/sessions`, `/resume <id>`, `/delete <exchanges>`, `/retry`
+
+**Model:** `/model` (show current), `/model <name>` (switch), `/model` (interactive picker with 16 models)
+
+**Modes:** `/plan` (read-only), `/execute` (normal), `/ultrathink` (deep reasoning), `/ultraplan` (deep planning), `/dump` (show system prompt)
+
+**Git:** `/status`, `/diff`, `/log`, `/undo`, `/stash`, `/unstash`, `/commit`, `/push`, `/pr`, `/review`, `/branch`
+
+**Code:** `/fix`, `/debug`, `/test`, `/refactor <target>`, `/explain <path>`, `/search <pattern>`, `/find <pattern>`, `/scaffold <desc>`, `/doc <target>`, `/todo`, `/deps`, `/optimize`, `/security`, `/lint`, `/migrate`, `/clean`
+
+**Info:** `/help`, `/version`, `/bug`, `/tokens`, `/context`, `/cost`, `/wallet`, `/mcp`, `/doctor`, `/tasks`
+
+### Token Management
+
+Multi-stage pipeline that keeps context healthy during long sessions:
+
+1. **Optimize** — Strip thinking blocks, budget tool results, time-based cleanup
+2. **Reduce** — Age old results, normalize whitespace, trim verbose messages
+3. **Microcompact** — Compress history when >15 messages
+4. **Auto-compact** — Summarize entire exchanges when approaching context limit
+5. **Fallback** — Even more aggressive stripping if still over limit
+
+Proactive warning at 70% context usage. Suggests `/compact`.
+
+### Permission System
+
+| Mode | Behavior |
+|------|----------|
+| `default` | Prompt for Write, Edit, Bash. Allow Read, Glob, Grep, etc. |
+| `trust` | Allow all tools without prompting |
+| `plan` | Read-only (no Writes, Edits, Bash) |
+| `deny-all` | Block everything except read-only tools |
+
+Interactive permission dialog: `y` (yes), `n` (no), `a` (allow all pending). Shows pending count when multiple tools queued.
+
+### MCP Integration
+
+- **Built-in servers** (auto-discovered if installed): `blockrun-mcp`, `unbrowse`
+- **User servers**: `~/.blockrun/mcp.json` (global) + `.mcp.json` (project, requires trust)
+- **Transport**: stdio (5s connection timeout, 30s per-tool timeout)
+- **Naming**: `mcp__<server>__<tool>`
+
+### Session Persistence
+
+- JSONL format in `~/.blockrun/sessions/`
+- Metadata: model, working directory, timestamps, turn count
+- Auto-prune: keeps last 20 sessions
+- Resume: `/resume <id>` restores full conversation
+
+### Proxy Mode
+
+Run RunCode as a payment proxy for Claude Code or any OpenAI-compatible tool:
+
+```bash
+runcode proxy                          # Start proxy on localhost:8402
+runcode proxy --model sonnet           # Default to Claude Sonnet
+runcode daemon start                   # Background daemon
+runcode init                           # Auto-start on login (macOS LaunchAgent)
+```
+
+Claude Code connects via `ANTHROPIC_BASE_URL=http://localhost:8402/api`. The proxy signs x402 payments with your local wallet and forwards to BlockRun.
+
+### Stats & Cost Tracking
+
+- Per-request logging: model, tokens (in/out), cost, latency, fallback flag
+- Per-model aggregation: requests, total cost, avg latency
+- Session cost displayed live in the input bar
+- `/cost` for detailed breakdown
+- `runcode stats` for historical usage
+
+---
+
+## What's Next
+
+### Onboarding (Priority 1)
+
+The biggest drop-off is "Send USDC on Base." Non-crypto users stop here.
+
+- [ ] **Fiat on-ramp integration** — Guide users through buying USDC (Coinbase, MoonPay, or similar). Show QR code + step-by-step. Target: fund wallet in under 3 minutes with a credit card.
+- [ ] **First-run wizard** — Interactive setup: choose chain → create wallet → test with free model → show funding instructions only when they want a paid model.
+- [ ] **Install script that works** — The current `install.sh` leaves broken state. Rewrite to: detect OS, install Node if missing, `npm install -g @blockrun/runcode`, `runcode setup`, verify `runcode` command exists.
+- [ ] **Zero-config start** — `runcode` with no wallet should default to free NVIDIA models. No setup required to try it.
+
+### Agent Quality (Priority 2)
+
+- [ ] **Streaming Bash output** — Currently shows final result. Should stream lines as they appear (partially implemented with 500ms polling, needs real-time pipe).
+- [ ] **Better auto-compact** — Current compaction loses important context. Implement selective compaction: keep recent tool results + user instructions, compress old exchanges.
+- [ ] **Multi-file edit** — Single tool call that edits multiple files atomically. Reduces turn count for refactoring tasks.
+- [ ] **Image understanding** — Accept image input (screenshots, diagrams) in user messages. Requires multimodal API support.
+- [ ] **Thinking display** — Currently hidden. Add `/thinking` toggle to show model's reasoning (Claude Code #8477 has 193 upvotes requesting this).
+
+### Ecosystem (Priority 3)
+
+- [ ] **HTTP/SSE transport for MCP** — Currently stdio only. HTTP enables remote MCP servers.
+- [ ] **More built-in MCP servers** — Evaluate: GitHub (issues, PRs), Slack, Linear, Notion.
+- [ ] **Custom tool plugins** — User-defined tools in `~/.blockrun/tools/` without writing a full MCP server.
+- [ ] **CLAUDE.md / AGENTS.md support** — Auto-load project context files (Claude Code #6235 has 3,517 upvotes).
+
+### Team & Enterprise (Priority 4)
+
+- [ ] **Shared wallets** — Team funds a single wallet, developers draw from it
+- [ ] **Per-developer budgets** — `runcode team budget dev@example.com 50` ($50/week cap)
+- [ ] **Usage dashboard** — Web UI showing per-developer cost, model usage, request patterns
+- [ ] **Audit logs** — Track who ran what, when, on which model
+
+### Growth & Community (Priority 5)
+
+- [ ] **GitHub Discussions** — Enable on the RunCode repo for community Q&A
+- [ ] **Blog posts targeting Claude Code pain points** — Rate limits, account bans, regional pricing, token drain. SEO-optimized, linking to RunCode as the solution.
+- [ ] **Discord / Telegram community** — Already have Telegram (t.me/blockrunAI), grow it
+- [ ] **Model comparison benchmarks** — Publish coding benchmarks across all 41+ models. Help users pick the right model.
+
+---
+
+## Architecture Reference
+
+### Key Files
+
+```
+src/
+├── index.ts                  # CLI entry (commander)
+├── config.ts                 # VERSION, API_URLS, chain management
+├── pricing.ts                # Per-model pricing (single source of truth)
+├── banner.ts                 # Startup banner
+│
+├── agent/
+│   ├── loop.ts               # Main agent loop (reasoning-action cycle)
+│   ├── streaming-executor.ts # Concurrent/sequential tool dispatch
+│   ├── permissions.ts        # Permission system (default/trust/plan/deny-all)
+│   ├── tokens.ts             # Token estimation + context windows
+│   ├── compact.ts            # Conversation compaction
+│   ├── optimize.ts           # Token optimization (strip thinking, budget results)
+│   ├── reduce.ts             # Token reduction (age old results, normalize)
+│   ├── context.ts            # System prompt assembly
+│   ├── llm.ts                # LLM API client (streaming)
+│   ├── commands.ts           # Slash command dispatch
+│   └── types.ts              # TypeScript interfaces
+│
+├── tools/
+│   ├── index.ts              # Tool registry (all capabilities)
+│   ├── read.ts, write.ts, edit.ts, bash.ts
+│   ├── glob.ts, grep.ts
+│   ├── webfetch.ts, websearch.ts
+│   ├── task.ts, imagegen.ts, askuser.ts
+│   └── subagent.ts
+│
+├── router/
+│   └── index.ts              # 15-dimension classifier + tier routing
+│
+├── proxy/
+│   ├── server.ts             # HTTP proxy server (x402 payment)
+│   ├── fallback.ts           # Model fallback chains
+│   └── sse-translator.ts     # SSE streaming translation
+│
+├── mcp/
+│   ├── config.ts             # MCP server discovery (built-in + user)
+│   └── client.ts             # MCP client (stdio transport)
+│
+├── session/
+│   └── storage.ts            # JSONL session persistence
+│
+├── stats/
+│   └── tracker.ts            # Usage statistics + cost tracking
+│
+├── wallet/
+│   └── manager.ts            # Wallet abstraction (Base + Solana)
+│
+├── ui/
+│   ├── app.tsx               # Ink terminal UI (React)
+│   ├── model-picker.ts       # Model shortcuts + interactive picker
+│   └── terminal.ts           # Terminal utilities
+│
+└── commands/
+    ├── start.ts              # runcode (default) — launch agent
+    ├── proxy.ts              # runcode proxy — payment proxy
+    ├── daemon.ts             # runcode daemon start/stop/status
+    ├── init.ts               # runcode init — auto-start config
+    ├── uninit.ts             # runcode uninit — remove config
+    ├── models.ts             # runcode models — list models
+    ├── balance.ts            # runcode balance — check USDC
+    ├── config.ts             # runcode config — settings
+    ├── stats.ts              # runcode stats — usage stats
+    ├── setup.ts              # runcode setup — create wallet
+    ├── logs.ts               # runcode logs — debug logs
+    └── history.ts            # runcode history — session list
+```
+
+### Environment Variables
+
+```bash
+RUNCODE_CHAIN          # Payment chain: base (default) or solana
+ANTHROPIC_BASE_URL     # Override API endpoint (set by proxy mode)
+ANTHROPIC_API_KEY      # API key (set by proxy mode)
+```
+
+### Config File
+
+`~/.blockrun/runcode-config.json`:
+
+```json
+{
+  "default-model": "zai/glm-5.1",
+  "smart-routing": "auto",
+  "permission-mode": "default",
+  "max-turns": 100,
+  "auto-compact": true,
+  "session-save": true,
+  "debug": false
+}
+```
+
+### Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `@blockrun/llm` | LLM gateway SDK (x402 payments, wallet, models) |
+| `@modelcontextprotocol/sdk` | MCP protocol (server discovery, tool calls) |
+| `ink` + `react` | Terminal UI framework |
+| `commander` | CLI argument parsing |
+| `@solana/web3.js` | Solana blockchain integration |
+| `chalk` | Terminal colors |
+
+---
+
+## Links
+
+- [GitHub](https://github.com/BlockRunAI/runcode)
+- [npm](https://npmjs.com/package/@blockrun/runcode)
+- [BlockRun](https://blockrun.ai)
+- [Telegram](https://t.me/blockrunAI)
+- [x402 Protocol](https://x402.org)
