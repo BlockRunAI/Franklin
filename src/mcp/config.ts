@@ -26,6 +26,12 @@ const BUILTIN_MCP_SERVERS: Record<string, McpServerConfig> = {
     args: [],
     label: 'BlockRun (built-in)',
   },
+  unbrowse: {
+    transport: 'stdio',
+    command: 'unbrowse',
+    args: ['mcp'],
+    label: 'Unbrowse (built-in)',
+  },
 };
 
 function isCommandAvailable(cmd: string): boolean {
@@ -38,10 +44,12 @@ function isCommandAvailable(cmd: string): boolean {
 }
 
 export function loadMcpConfig(workDir: string): McpConfig {
-  // Start with built-in servers (only if binary is available)
+  // Start with built-in servers (only if their binary is available)
   const servers: Record<string, McpServerConfig> = {};
-  if (isCommandAvailable('blockrun-mcp')) {
-    Object.assign(servers, BUILTIN_MCP_SERVERS);
+  for (const [name, config] of Object.entries(BUILTIN_MCP_SERVERS)) {
+    if (config.command && isCommandAvailable(config.command)) {
+      servers[name] = config;
+    }
   }
 
   // 1. Global config

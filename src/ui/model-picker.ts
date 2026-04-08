@@ -56,9 +56,9 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   maverick: 'nvidia/llama-4-maverick',
   // Others
   minimax: 'minimax/minimax-m2.7',
-  glm: 'zai/glm-5',
-  'glm-turbo': 'zai/glm-5-turbo',
-  'glm5': 'zai/glm-5',
+  glm: 'zai/glm-5.1',
+  'glm-turbo': 'zai/glm-5.1-turbo',
+  'glm5': 'zai/glm-5.1',
   kimi: 'moonshot/kimi-k2.5',
 };
 

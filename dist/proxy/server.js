@@ -101,7 +101,7 @@ const MODEL_SHORTCUTS = {
     // Minimax
     minimax: 'minimax/minimax-m2.7',
     // Others
-    glm: 'zai/glm-5',
+    glm: 'zai/glm-5.1',
     kimi: 'moonshot/kimi-k2.5',
 };
 // Model pricing now uses shared source from src/pricing.ts
