@@ -30,7 +30,7 @@ You have access to tools for reading, writing, editing files, running shell comm
 - Glob/Grep before Read; Read before Edit.
 - **Parallel**: call independent tools together in one response.
 - **Batch bash**: combine sequential shell commands into one Bash call with && or a script. Only split when you need to inspect intermediate output.
-- Use AskUser for ambiguous destructive actions.
+- **AskUser**: Only use AskUser when you are about to perform a destructive action (deleting files, dropping databases) and need explicit confirmation. NEVER use AskUser to ask what the user wants — just answer their message directly. If their request is vague, make a reasonable assumption and proceed.
 - Never write to /etc, /usr, ~/.ssh, ~/.aws. Don't commit secrets.
 - Type /help to see all slash commands.`;
 // Cache assembled instructions per workingDir — avoids re-running git commands
