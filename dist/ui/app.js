@@ -302,6 +302,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     // Expose event handler, balance updater, and permission bridge
     useEffect(() => {
         globalThis.__runcode_ui = {
+            updateModel: (model) => { setCurrentModel(model); },
             updateBalance: (bal) => {
                 setBalance(bal);
                 const num = parseBalanceNum(bal);
@@ -506,6 +507,10 @@ export function launchInkUI(opts) {
         handleEvent: (event) => {
             const ui = globalThis.__runcode_ui;
             ui?.handleEvent(event);
+        },
+        updateModel: (model) => {
+            const ui = globalThis.__runcode_ui;
+            ui?.updateModel(model);
         },
         updateBalance: (bal) => {
             const ui = globalThis.__runcode_ui;

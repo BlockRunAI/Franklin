@@ -223,15 +223,17 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     suggestion = '\nTip: Try /model to switch to a different model, or wait a moment and /retry.';
                 }
                 else if (errLower.includes('balance') || errLower.includes('insufficient') || errLower.includes('402')
-                    || errLower.includes('payment') || errLower.includes('verification failed')) {
-                    // Auto-fallback to free model on payment failure
-                    // Use qwen3-coder: better instruction following than nemotron for coding tasks
-                    const FREE_MODEL = 'nvidia/qwen3-coder-480b';
-                    if (config.model !== FREE_MODEL && recoveryAttempts < 1) {
+                    || errLower.includes('payment') || errLower.includes('verification failed')
+                    || errLower.includes('free tier')) {
+                    // Auto-fallback to free models on payment/rate limit failure
+                    const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/nemotron-ultra-253b', 'nvidia/devstral-2-123b'];
+                    const nextFree = FREE_MODELS.find(m => m !== config.model);
+                    if (nextFree && recoveryAttempts < 2) {
                         recoveryAttempts++;
                         const oldModel = config.model;
-                        config.model = FREE_MODEL;
-                        onEvent({ kind: 'text_delta', text: `\n*Payment failed on ${oldModel} — switching to free model (${FREE_MODEL})*\n` });
+                        config.model = nextFree;
+                        config.onModelChange?.(nextFree);
+                        onEvent({ kind: 'text_delta', text: `\n*${oldModel} failed — switching to ${nextFree}*\n` });
                         continue; // Retry with free model
                     }
                     suggestion = '\nTip: Run `runcode balance` to check funds. Try /model free for free models.';
