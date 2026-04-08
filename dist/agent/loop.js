@@ -222,7 +222,17 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 if (errLower.includes('429') || errLower.includes('rate')) {
                     suggestion = '\nTip: Try /model to switch to a different model, or wait a moment and /retry.';
                 }
-                else if (errLower.includes('balance') || errLower.includes('insufficient') || errLower.includes('402')) {
+                else if (errLower.includes('balance') || errLower.includes('insufficient') || errLower.includes('402')
+                    || errLower.includes('payment') || errLower.includes('verification failed')) {
+                    // Auto-fallback to free model on payment failure
+                    const FREE_MODEL = 'nvidia/nemotron-ultra-253b';
+                    if (config.model !== FREE_MODEL && recoveryAttempts < 1) {
+                        recoveryAttempts++;
+                        const oldModel = config.model;
+                        config.model = FREE_MODEL;
+                        onEvent({ kind: 'text_delta', text: `\n*Payment failed on ${oldModel} — switching to free model (${FREE_MODEL})*\n` });
+                        continue; // Retry with free model
+                    }
                     suggestion = '\nTip: Run `runcode balance` to check funds. Try /model free for free models.';
                 }
                 else if (errLower.includes('timeout') || errLower.includes('econnrefused')) {
