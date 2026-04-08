@@ -790,7 +790,7 @@ function RunCodeApp({
         sessionCost={totalCost}
         queued={queuedInput || undefined}
         focused={!permissionRequest && !askUserRequest}
-        busy={waiting || thinking || tools.size > 0}
+        busy={!askUserRequest && (waiting || thinking || tools.size > 0)}
       />
     </Box>
   );
