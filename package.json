@@ -1,7 +1,7 @@
 {
   "name": "@blockrun/runcode",
   "version": "2.5.31",
-  "description": "RunCode — AI coding agent powered by 41+ models. Pay per use with USDC.",
+  "description": "RunCode — AI coding agent powered by 55+ models. Pay per use with USDC.",
   "type": "module",
   "bin": {
     "runcode": "./dist/index.js"
