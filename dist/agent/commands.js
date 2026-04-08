@@ -145,6 +145,49 @@ const DIRECT_COMMANDS = {
         });
         emitDone(ctx);
     },
+    '/history': (ctx) => {
+        const { history, config } = ctx;
+        const modelName = config.model.split('/').pop() || config.model;
+        let output = '**Conversation History**\n\n';
+        if (history.length === 0) {
+            output += 'No history in the current session yet.\n';
+        }
+        else {
+            for (let i = 0; i < history.length; i++) {
+                const turn = history[i];
+                const rolePrefix = turn.role === 'user' ? '[user]' : `[${modelName}]`;
+                const numPrefix = `[${i + 1}]`;
+                let turnText = '';
+                if (typeof turn.content === 'string') {
+                    turnText = turn.content;
+                }
+                else if (Array.isArray(turn.content)) {
+                    const textParts = turn.content
+                        .filter(p => p.type === 'text' && p.text.trim())
+                        .map(p => p.text.trim());
+                    if (textParts.length > 0) {
+                        turnText = textParts.join(' ');
+                    }
+                    else {
+                        const toolCall = turn.content.find(p => p.type === 'tool_use');
+                        if (toolCall) {
+                            turnText = `(Thinking and using tool: ${toolCall.name})`;
+                        }
+                        const toolResult = turn.content.find(p => p.type === 'tool_result');
+                        if (toolResult) {
+                            turnText = `(Processing tool result)`;
+                        }
+                    }
+                }
+                if (turnText.trim()) {
+                    output += `${numPrefix} ${rolePrefix} ${turnText.trim()}\n\n`;
+                }
+            }
+        }
+        output += '\nUse `/delete <number>` to remove turns (e.g., `/delete 2` or `/delete 3-5`).\n';
+        ctx.onEvent({ kind: 'text_delta', text: output });
+        emitDone(ctx);
+    },
     '/bug': (ctx) => {
         ctx.onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/runcode/issues\n' });
         emitDone(ctx);
@@ -435,6 +478,57 @@ export async function handleSlashCommand(input, ctx) {
             const r = gitCmd(ctx, `git checkout -b ${branchName}`);
             if (r !== null)
                 ctx.onEvent({ kind: 'text_delta', text: `Created and switched to branch: **${branchName}**\n` });
+        }
+        emitDone(ctx);
+        return { handled: true };
+    }
+    // /delete <...>
+    if (input.startsWith('/delete ')) {
+        const arg = input.slice('/delete '.length).trim();
+        if (!arg) {
+            ctx.onEvent({ kind: 'text_delta', text: 'Usage: /delete <turn_number> (e.g., /delete 3, /delete 2,5, /delete 4-7)\n' });
+            emitDone(ctx);
+            return { handled: true };
+        }
+        const indicesToDelete = new Set();
+        const parts = arg.split(',').map(p => p.trim());
+        for (const part of parts) {
+            if (part.includes('-')) {
+                const [start, end] = part.split('-').map(n => parseInt(n, 10));
+                if (!isNaN(start) && !isNaN(end) && start <= end) {
+                    for (let i = start; i <= end; i++) {
+                        indicesToDelete.add(i - 1); // User sees 1-based, we use 0-based
+                    }
+                }
+            }
+            else {
+                const index = parseInt(part, 10);
+                if (!isNaN(index)) {
+                    indicesToDelete.add(index - 1); // 0-based
+                }
+            }
+        }
+        if (indicesToDelete.size === 0) {
+            ctx.onEvent({ kind: 'text_delta', text: 'No valid turn numbers provided.\n' });
+            emitDone(ctx);
+            return { handled: true };
+        }
+        const sortedIndices = Array.from(indicesToDelete).sort((a, b) => b - a); // Sort descending
+        let deletedCount = 0;
+        const deletedNumbers = [];
+        for (const index of sortedIndices) {
+            if (index >= 0 && index < ctx.history.length) {
+                ctx.history.splice(index, 1);
+                deletedCount++;
+                deletedNumbers.push(index + 1);
+            }
+        }
+        if (deletedCount > 0) {
+            resetTokenAnchor();
+            ctx.onEvent({ kind: 'text_delta', text: `Deleted turn(s) ${deletedNumbers.reverse().join(', ')} from history.\n` });
+        }
+        else {
+            ctx.onEvent({ kind: 'text_delta', text: `No matching turns found to delete.\n` });
         }
         emitDone(ctx);
         return { handled: true };
