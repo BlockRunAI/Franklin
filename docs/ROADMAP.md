@@ -2,7 +2,7 @@
 
 ## What RunCode Is
 
-RunCode is an open-source AI coding agent. 41+ models. Pay per use with USDC. No accounts, no subscriptions, no rate limits.
+RunCode is an open-source AI coding agent. 55+ models. Pay per use with USDC. No accounts, no subscriptions, no rate limits.
 
 **Current version:** 2.5.31
 
@@ -14,7 +14,7 @@ runcode
   │     ├── 11 built-in tools
   │     │     Read, Write, Edit, Bash, Glob, Grep,
   │     │     WebFetch, WebSearch, Task, ImageGen, AskUser
-  │     ├── 38 slash commands
+  │     ├── 45 slash commands
   │     │     /model, /compact, /ultrathink, /ultraplan,
   │     │     /commit, /pr, /plan, /execute, /history, /resume...
   │     ├── MCP server integration
@@ -47,18 +47,19 @@ runcode
 
 ### Models
 
-41+ models across 8 providers. Switch mid-conversation with `/model`.
+55+ models across 9 providers. Switch mid-conversation with `/model`.
 
 | Provider | Models | Pricing |
 |----------|--------|---------|
-| Anthropic | Claude Opus 4.6, Sonnet 4.6, Haiku 4.5 | $1-25/1M tokens |
-| OpenAI | GPT-5.4, GPT-5.3 Codex, GPT-5 Mini, O3, O4 Mini | $0.05-180/1M tokens |
-| Google | Gemini 3.1 Pro, 2.5 Pro, 2.5 Flash, Flash Lite | $0.10-12/1M tokens |
-| xAI | Grok 4, Grok 3, Grok Fast Reasoning | $0.20-15/1M tokens |
-| DeepSeek | DeepSeek V3, DeepSeek Reasoner | $0.28-0.42/1M tokens |
-| Zhipu AI | GLM-5.1, GLM-5.1 Turbo | $0.001/call (promo) |
-| Moonshot | Kimi K2.5 | $0.60-3/1M tokens |
-| NVIDIA (free) | Nemotron Ultra 253B, GPT-OSS 120B, DeepSeek V3.2, Qwen3 Coder 480B, Devstral 2, Llama 4 Maverick | **$0.00** |
+| Anthropic | Claude Opus 4.6, Sonnet 4.6, Haiku 4.5 (4 models) | $1-25/1M tokens |
+| OpenAI | GPT-5.4, 5.3 Codex, 5.2, 5 Mini, 5 Nano, 4.1, O3, O4 Mini, O1 (18 models) | $0.05-180/1M tokens |
+| Google | Gemini 3.1 Pro, 3 Pro/Flash Preview, 2.5 Pro, 2.5 Flash, Flash Lite (6 models) | $0.10-12/1M tokens |
+| xAI | Grok 4, Grok 3, Grok 3 Mini, Grok 2 Vision, Grok Fast Reasoning (8 models) | $0.20-15/1M tokens |
+| DeepSeek | DeepSeek V3, DeepSeek Reasoner (2 models) | $0.28-0.42/1M tokens |
+| Minimax | Minimax M2.7, M2.5 (2 models) | $0.30-1.2/1M tokens |
+| Moonshot | Kimi K2.5 (1 model) | $0.60-3/1M tokens |
+| Zhipu AI | GLM-5.1, GLM-5.1 Turbo (2 models) | $0.001/call (promo) |
+| NVIDIA (free) | Nemotron Ultra 253B, GPT-OSS 120B/20B, DeepSeek V3.2, Qwen3 Coder, Devstral 2, Maverick, Mistral Large 3, GLM-4.7 (11 models) | **$0.00** |
 
 ### Agent Tools
 
@@ -77,9 +78,9 @@ runcode
 | AskUser | Interactive question dialog | No |
 | SubAgent | Spawn child agents for parallel work | No |
 
-### Slash Commands (38)
+### Slash Commands (45)
 
-**Session:** `/clear`, `/compact`, `/history`, `/sessions`, `/resume <id>`, `/delete <exchanges>`, `/retry`
+**Session:** `/clear`, `/compact`, `/history`, `/sessions`, `/resume <id>`, `/delete <exchanges>`, `/retry`, `/exit`
 
 **Model:** `/model` (show current), `/model <name>` (switch), `/model` (interactive picker with 16 models)
 
@@ -87,9 +88,9 @@ runcode
 
 **Git:** `/status`, `/diff`, `/log`, `/undo`, `/stash`, `/unstash`, `/commit`, `/push`, `/pr`, `/review`, `/branch`
 
-**Code:** `/fix`, `/debug`, `/test`, `/refactor <target>`, `/explain <path>`, `/search <pattern>`, `/find <pattern>`, `/scaffold <desc>`, `/doc <target>`, `/todo`, `/deps`, `/optimize`, `/security`, `/lint`, `/migrate`, `/clean`
+**Code:** `/fix`, `/debug`, `/test`, `/init`, `/todo`, `/deps`, `/optimize`, `/security`, `/lint`, `/migrate`, `/clean`, `/tasks`
 
-**Info:** `/help`, `/version`, `/bug`, `/tokens`, `/context`, `/cost`, `/wallet`, `/mcp`, `/doctor`, `/tasks`
+**Info:** `/help`, `/version`, `/bug`, `/tokens`, `/context`, `/cost`, `/wallet`, `/mcp`, `/doctor`
 
 ### Token Management
 
@@ -189,7 +190,7 @@ The biggest drop-off is "Send USDC on Base." Non-crypto users stop here.
 - [ ] **GitHub Discussions** — Enable on the RunCode repo for community Q&A
 - [ ] **Blog posts targeting Claude Code pain points** — Rate limits, account bans, regional pricing, token drain. SEO-optimized, linking to RunCode as the solution.
 - [ ] **Discord / Telegram community** — Already have Telegram (t.me/blockrunAI), grow it
-- [ ] **Model comparison benchmarks** — Publish coding benchmarks across all 41+ models. Help users pick the right model.
+- [ ] **Model comparison benchmarks** — Publish coding benchmarks across all 55+ models. Help users pick the right model.
 
 ---
 
@@ -262,8 +263,7 @@ src/
     ├── config.ts             # runcode config — settings
     ├── stats.ts              # runcode stats — usage stats
     ├── setup.ts              # runcode setup — create wallet
-    ├── logs.ts               # runcode logs — debug logs
-    └── history.ts            # runcode history — session list
+    └── logs.ts               # runcode logs — debug logs
 ```
 
 ### Environment Variables

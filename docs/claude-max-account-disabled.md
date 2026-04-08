@@ -89,7 +89,7 @@ RunCode routes to the same Claude models (Sonnet 4.6, Opus 4.6, Haiku 4.5) via B
 
 The difference: you're paying per token instead of per month, and there's no account to disable.
 
-Plus, you get 41+ other models. If Claude goes down or gets rate limited on Anthropic's side, switch to GPT-5.4 or Gemini with `/model gpt` -- no interruption to your work.
+Plus, you get 55+ other models. If Claude goes down or gets rate limited on Anthropic's side, switch to GPT-5.4 or Gemini with `/model gpt` -- no interruption to your work.
 
 ---
 

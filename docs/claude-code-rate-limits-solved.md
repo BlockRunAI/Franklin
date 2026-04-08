@@ -77,7 +77,7 @@ npm install -g @blockrun/runcode
 runcode
 ```
 
-Two commands. You have access to 41+ models. No rate limits. No invisible caps.
+Two commands. You have access to 55+ models. No rate limits. No invisible caps.
 
 ### How it works
 
@@ -85,7 +85,7 @@ RunCode connects to [BlockRun](https://blockrun.ai), an AI API gateway that acce
 
 ```
 You → RunCode → BlockRun → Any model (Claude, GPT, Gemini, DeepSeek...)
-       signs payment     41+ models
+       signs payment     55+ models
        with your wallet  pay per token
 ```
 
@@ -127,7 +127,7 @@ And you get access to every other model too. Need GPT-5 for reasoning? Gemini fo
 | Usage meter accurate | No ([#29579](https://github.com/anthropics/claude-code/issues/29579)) | No | **Yes (exact token count)** |
 | Account can be disabled | Yes ([#5088](https://github.com/anthropics/claude-code/issues/5088)) | Yes | **No account needed** |
 | Phone verification | Required, often broken ([#34229](https://github.com/anthropics/claude-code/issues/34229)) | Required | **Not required** |
-| Models | Claude only | Claude only | **41+ models** |
+| Models | Claude only | Claude only | **55+ models** |
 | Token drain visibility | Hidden | Hidden | **Every token tracked** |
 
 ---
