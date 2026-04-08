@@ -185,6 +185,7 @@ async function runWithInkUI(
     ui.requestPermission(toolName, description);
   agentConfig.onAskUser = (question, options) =>
     ui.requestAskUser(question, options);
+  agentConfig.onModelChange = (model) => ui.updateModel(model);
 
   // Wire up background balance fetch to UI
   onBalanceReady?.((bal) => ui.updateBalance(bal));
