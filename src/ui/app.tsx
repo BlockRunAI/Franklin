@@ -672,7 +672,7 @@ function RunCodeApp({
       <Static items={committedResponses}>
         {(r) => (
           <Box key={r.key} flexDirection="column">
-            <Text>{r.text}</Text>
+            <Text wrap="wrap">{r.text}</Text>
             {(r.tokens.input > 0 || r.tokens.output > 0) && (
               <Box marginLeft={1}>
                 <Text dimColor>
@@ -772,7 +772,7 @@ function RunCodeApp({
       {/* Streaming response — visible while the model is generating */}
       {streamText && (
         <Box marginTop={0} marginBottom={0}>
-          <Text>{streamText}</Text>
+          <Text wrap="wrap">{streamText}</Text>
         </Box>
       )}
 
@@ -780,7 +780,7 @@ function RunCodeApp({
           Full text is already in Static/scrollback above. Cleared when next turn starts. */}
       {responsePreview && !streamText && (
         <Box flexDirection="column" marginBottom={0}>
-          <Text>{responsePreview}</Text>
+          <Text wrap="wrap">{responsePreview}</Text>
         </Box>
       )}
 
