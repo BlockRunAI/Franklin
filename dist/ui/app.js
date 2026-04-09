@@ -389,6 +389,10 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                         });
                         break;
                     }
+                    case 'status_update': {
+                        setCurrentModel(event.model);
+                        break;
+                    }
                     case 'usage': {
                         setCurrentModel(event.model);
                         setTurnTokens(prev => ({

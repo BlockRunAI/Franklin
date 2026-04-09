@@ -127,6 +127,12 @@ export interface StreamUsageInfo {
   calls: number;
 }
 
+/** UI hosts (e.g. VS Code) — update persistent model display without stderr */
+export interface StreamStatusUpdate {
+  kind: 'status_update';
+  model: string;
+}
+
 export type StreamEvent =
   | StreamTextDelta
   | StreamThinkingDelta
@@ -135,7 +141,8 @@ export type StreamEvent =
   | StreamCapabilityProgress
   | StreamCapabilityDone
   | StreamTurnDone
-  | StreamUsageInfo;
+  | StreamUsageInfo
+  | StreamStatusUpdate;
 
 // ─── Agent Configuration ───────────────────────────────────────────────────
 

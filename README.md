@@ -283,11 +283,36 @@ Typical usage: **$5-20/month** for active development. Start with free models �
 | `/help` | List all commands |
 | `/exit` | Quit |
 
+## VS Code Extension
+
+RunCode is also available as a VS Code sidebar extension.
+
+### Install from VSIX
+
+```bash
+cd vscode-extension
+npm install && npm run compile
+npx @vscode/vsce package
+code --install-extension runcode-vscode-0.1.0.vsix
+```
+
+Or in VS Code: Extensions panel → `...` → **Install from VSIX...**
+
+### Install from Source (Development)
+
+1. Open the repo in VS Code
+2. Run `npm install && npm run build` in the root
+3. Run `npm install && npm run compile` in `vscode-extension/`
+4. Press `F5` to launch the Extension Development Host
+
+The extension appears as a **RunCode** panel in the sidebar with the same agent capabilities as the CLI: model switching, live balance tracking, tool execution, and all slash commands.
+
 ## Architecture
 
 ```
 src/
 ├── agent/                  # Core agent loop, LLM client, token optimization
+├── api/                    # Headless session API (VS Code host)
 ├── tools/                  # 10 built-in tools (read, write, edit, bash, ...)
 ├── ui/                     # Terminal UI + model picker
 ├── proxy/                  # Payment proxy for Claude Code
@@ -297,6 +322,11 @@ src/
 ├── stats/                  # Usage tracking
 ├── config.ts               # Global configuration
 └── index.ts                # Entry point
+vscode-extension/
+├── src/extension.ts        # Webview provider + live balance tracking
+├── media/icon.svg          # Extension icon
+├── package.json            # VS Code extension manifest
+└── tsconfig.json
 ```
 
 ## Development

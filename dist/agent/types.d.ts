@@ -98,7 +98,12 @@ export interface StreamUsageInfo {
     model: string;
     calls: number;
 }
-export type StreamEvent = StreamTextDelta | StreamThinkingDelta | StreamCapabilityStart | StreamCapabilityInputDelta | StreamCapabilityProgress | StreamCapabilityDone | StreamTurnDone | StreamUsageInfo;
+/** UI hosts (e.g. VS Code) — update persistent model display without stderr */
+export interface StreamStatusUpdate {
+    kind: 'status_update';
+    model: string;
+}
+export type StreamEvent = StreamTextDelta | StreamThinkingDelta | StreamCapabilityStart | StreamCapabilityInputDelta | StreamCapabilityProgress | StreamCapabilityDone | StreamTurnDone | StreamUsageInfo | StreamStatusUpdate;
 export interface AgentConfig {
     model: string;
     apiUrl: string;

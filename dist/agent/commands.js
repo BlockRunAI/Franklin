@@ -13,7 +13,7 @@ import { BLOCKRUN_DIR, VERSION } from '../config.js';
 import { estimateHistoryTokens, getAnchoredTokenCount, getContextWindow, resetTokenAnchor } from './tokens.js';
 import { forceCompact } from './compact.js';
 import { getStatsSummary } from '../stats/tracker.js';
-import { resolveModel } from '../ui/model-picker.js';
+import { formatModelPickerListText, listPickerModelsFlat, resolveModel } from '../ui/model-picker.js';
 import { listSessions, loadSessionHistory, } from '../session/storage.js';
 // ─── Git helpers ──────────────────────────────────────────────────────────
 function gitExec(cmd, cwd, timeout = 5000, maxBuffer) {
@@ -450,17 +450,31 @@ export async function handleSlashCommand(input, ctx) {
         await DIRECT_COMMANDS[input](ctx);
         return { handled: true };
     }
-    // /model — show current model or switch with /model <name>
-    if (input === '/model' || input.startsWith('/model ')) {
-        if (input === '/model') {
-            ctx.onEvent({ kind: 'text_delta', text: `Current model: **${ctx.config.model}**\n` +
-                    `Switch with: \`/model <name>\` (e.g. \`/model sonnet\`, \`/model free\`, \`/model gemini\`)\n`
+    // /model — show current model + full list (via onEvent, not stderr) or switch with /model <name|n>
+    if (input === '/model' || input === '/models' || input.startsWith('/model ')) {
+        if (input === '/model' || input === '/models') {
+            const listText = formatModelPickerListText(ctx.config.model);
+            ctx.onEvent({
+                kind: 'text_delta',
+                text: `**Select a model**\n\n` +
+                    `Current: **${ctx.config.model}**\n\n` +
+                    `${listText}\n`,
             });
         }
         else {
-            const newModel = resolveModel(input.slice(7).trim());
+            const arg = input.slice(7).trim();
+            const flat = listPickerModelsFlat();
+            const num = parseInt(arg, 10);
+            let newModel;
+            if (!isNaN(num) && num >= 1 && num <= flat.length) {
+                newModel = flat[num - 1].id;
+            }
+            else {
+                newModel = resolveModel(arg);
+            }
             ctx.config.model = newModel;
             ctx.onEvent({ kind: 'text_delta', text: `Model → **${newModel}**\n` });
+            ctx.onEvent({ kind: 'status_update', model: newModel });
         }
         emitDone(ctx);
         return { handled: true };

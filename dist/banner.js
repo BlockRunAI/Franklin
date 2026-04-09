@@ -16,6 +16,20 @@ const CODE_ART = [
     '╚██████╗╚██████╔╝██████╔╝███████╗',
     ' ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
 ];
+/** Plain-text banner lines (Run + Code ASCII side by side) for non-terminal UIs (e.g. VS Code webview). */
+export function getBannerPlainLines() {
+    const lines = [];
+    for (let i = 0; i < RUN_ART.length; i++) {
+        lines.push(RUN_ART[i] + CODE_ART[i]);
+    }
+    return lines;
+}
+export function getBannerFooterLines(version) {
+    return [
+        '  RunCode  ·  AI Coding Agent  ·  blockrun.ai  ·  v' + version,
+        '  41+ models · Pay per use with USDC · /help for commands',
+    ];
+}
 export function printBanner(version) {
     const runColor = chalk.hex('#FFD700'); // Gold for "Run"
     const codeColor = chalk.cyan; // Cyan for "Code"

@@ -103,16 +103,40 @@ const PICKER_MODELS = [
         ],
     },
 ];
+/** Flat curated list in picker order (for numbering / `/model 3`, etc.). */
+export function listPickerModelsFlat() {
+    const out = [];
+    for (const cat of PICKER_MODELS) {
+        out.push(...cat.models);
+    }
+    return out;
+}
+/**
+ * Plain-text model list (same layout as interactive pickModel), for non-TTY hosts
+ * (e.g. VS Code webview) that only receive StreamEvents — not console.error.
+ */
+export function formatModelPickerListText(currentModel) {
+    const lines = [];
+    let idx = 1;
+    for (const cat of PICKER_MODELS) {
+        lines.push(`── ${cat.category} ──`);
+        for (const m of cat.models) {
+            const cur = m.id === currentModel ? '  <- current' : '';
+            lines.push(`  ${String(idx).padStart(2)}. ${m.label.padEnd(26)} ${m.shortcut.padEnd(14)} ${m.price}${cur}`);
+            idx++;
+        }
+        lines.push('');
+    }
+    lines.push('Enter a number, shortcut, or use `/model <name>` (e.g. `/model 1`, `/model sonnet`, `/model free`).');
+    return lines.join('\n');
+}
 /**
  * Show interactive model picker. Returns the selected model ID.
  * Falls back to text input if terminal doesn't support raw mode.
  */
 export async function pickModel(currentModel) {
     // Flatten for numbering
-    const allModels = [];
-    for (const cat of PICKER_MODELS) {
-        allModels.push(...cat.models);
-    }
+    const allModels = listPickerModelsFlat();
     // Display
     console.error('');
     console.error(chalk.bold('  Select a model:\n'));

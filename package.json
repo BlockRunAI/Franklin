@@ -3,6 +3,10 @@
   "version": "2.5.29",
   "description": "RunCode — AI coding agent powered by 41+ models. Pay per use with USDC.",
   "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./vscode-session": "./dist/api/vscode-session.js"
+  },
   "bin": {
     "runcode": "./dist/index.js"
   },

@@ -274,6 +274,8 @@ export class TerminalUI {
                 if (event.model)
                     this.sessionModel = event.model;
                 break;
+            case 'status_update':
+                break;
             case 'turn_done': {
                 this.spinner.stop();
                 // Flush any remaining markdown

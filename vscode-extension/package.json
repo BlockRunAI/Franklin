@@ -1,0 +1,59 @@
+{
+  "name": "runcode-vscode",
+  "displayName": "RunCode Chat",
+  "description": "Side panel chat with RunCode agent (same engine as CLI)",
+  "version": "0.1.0",
+  "publisher": "runcode-local",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:runcode.chatPanel"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "runcode-chat",
+          "title": "RunCode",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "runcode-chat": [
+        {
+          "type": "webview",
+          "id": "runcode.chatPanel",
+          "name": "Chat",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "runcode.stopGeneration",
+        "title": "RunCode: Stop generation"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "@blockrun/runcode": "file:.."
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.7.0"
+  }
+}

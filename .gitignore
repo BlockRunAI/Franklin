@@ -5,3 +5,7 @@ node_modules
 .env.*
 *.log
 .gstack/
+dist/
+.vscode/
+vscode-extension/out/
+*.vsix
