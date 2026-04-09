@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.6.0 (2026-04-09)
+
+### Added
+
+- **`runcode social`** — AI social growth workflow
+  - Search Reddit/X for relevant posts (Exa neural search + WebSearch)
+  - Multi-model reply generation: free models for warmup, cheap for filtering, premium for high-value leads
+  - Interactive onboarding: 4 questions → auto-generate keywords, subreddits, config
+  - Lead scoring and tracking with SQLite
+  - Dry-run mode: preview drafts before posting
+  - `runcode social init` / `run` / `stats` / `leads`
+
+- **Workflow Engine** — shared framework for vertical AI workflows
+  - Reusable base: model routing, dedup, tracking, display, scheduling
+  - Designed for future `runcode trading`, `runcode content` etc.
+  - Multi-model tier system: free / cheap / premium per step
+
+### Fixed
+
+- Text wrapping: long responses no longer overflow terminal width
+- Payment fallback: cascading free model chain (qwen3-coder → nemotron → devstral)
+- Fallback ping-pong loop prevented (session-level failed model tracking)
+- Input box: second message no longer eaten (stale `ready` closure)
+- Duplicate short response display removed
+- AskUser restricted to destructive actions only
+
 ## 2.5.32 (2026-04-08)
 
 ### Performance
