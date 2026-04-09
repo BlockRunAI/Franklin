@@ -117,6 +117,16 @@ program
   .option('--clear', 'Delete log file')
   .action(logsCommand);
 
+program
+  .command('social [action]')
+  .description('AI social growth — auto-find and reply to relevant posts on Reddit/X')
+  .option('--dry', 'Dry run — generate drafts without posting')
+  .option('--debug', 'Enable debug logging')
+  .action(async (action: string, opts: { dry?: boolean; debug?: boolean }) => {
+    const { socialCommand } = await import('./commands/social.js');
+    await socialCommand(action, { dryRun: opts.dry, debug: opts.debug });
+  });
+
 // Default action: if no subcommand given, run 'start'
 const args = process.argv.slice(2);
 const knownCommands = program.commands.map(c => c.name());
