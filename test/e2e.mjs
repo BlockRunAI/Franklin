@@ -29,7 +29,9 @@ const TIMEOUT_MS = 90_000; // 90s per test — model calls can be slow
 function runcode(prompt, { cwd, timeoutMs = TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const workDir = cwd ?? tmpdir();
-    const model = process.env.E2E_MODEL || 'nvidia/nemotron-ultra-253b';
+    // Default to GLM for better reliability than free-tier models.
+    // Override with E2E_MODEL when needed.
+    const model = process.env.E2E_MODEL || 'zai/glm-5.1';
     const proc = spawn('node', [DIST, '--model', model, '--trust'], {
       cwd: workDir,
       env: { ...process.env },
@@ -68,11 +70,27 @@ function runcode(prompt, { cwd, timeoutMs = TIMEOUT_MS } = {}) {
  */
 function skipIfRateLimited(t, result) {
   const combined = (result.stdout || '') + (result.stderr || '');
-  if (combined.includes('max 60 requests/hour') || combined.includes('rate limit') || combined.includes('Free tier')) {
+  if (
+    combined.includes('max 60 requests/hour') ||
+    combined.includes('rate limit') ||
+    combined.includes('Free tier')
+  ) {
     t.skip('Free tier rate limited (60 req/hr) — retry later');
     return true;
   }
+  if (
+    combined.toLowerCase().includes('insufficient') ||
+    combined.toLowerCase().includes('payment required') ||
+    combined.toLowerCase().includes('verification failed')
+  ) {
+    t.skip('Model unavailable due to payment/balance constraints — retry with E2E_MODEL or funded wallet');
+    return true;
+  }
   return false;
+}
+
+function parseTokenCount(raw) {
+  return parseInt(raw.replace(/,/g, ''), 10);
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
@@ -233,10 +251,10 @@ test('session cost: token usage reported at session end', { timeout: 60_000 }, a
     result.stderr.includes('Tokens:'),
     `Expected "Tokens:" summary in stderr.\nstderr:\n${result.stderr}`
   );
-  const match = result.stderr.match(/Tokens:\s*(\d+)\s*in\s*\/\s*(\d+)\s*out/);
+  const match = result.stderr.match(/Tokens:\s*([\d,]+)\s*in\s*\/\s*([\d,]+)\s*out/);
   assert.ok(match, `Could not parse token line from: ${result.stderr}`);
-  const inputTokens = parseInt(match[1], 10);
-  const outputTokens = parseInt(match[2], 10);
+  const inputTokens = parseTokenCount(match[1]);
+  const outputTokens = parseTokenCount(match[2]);
   assert.ok(inputTokens > 0, `Expected input tokens > 0, got ${inputTokens}`);
   assert.ok(outputTokens > 0, `Expected output tokens > 0, got ${outputTokens}`);
 });
@@ -249,10 +267,10 @@ test('session cost: accumulates across multiple turns', { timeout: 120_000 }, as
   if (skipIfRateLimited(t, result)) return;
   assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr: ${result.stderr}`);
 
-  const match = result.stderr.match(/Tokens:\s*(\d+)\s*in\s*\/\s*(\d+)\s*out/);
+  const match = result.stderr.match(/Tokens:\s*([\d,]+)\s*in\s*\/\s*([\d,]+)\s*out/);
   assert.ok(match, `Could not parse token line from: ${result.stderr}`);
-  const inputTokens = parseInt(match[1], 10);
-  const outputTokens = parseInt(match[2], 10);
+  const inputTokens = parseTokenCount(match[1]);
+  const outputTokens = parseTokenCount(match[2]);
   assert.ok(inputTokens >= 20, `Expected ≥20 input tokens for 2 turns, got ${inputTokens}`);
   assert.ok(outputTokens >= 2, `Expected ≥2 output tokens for 2 turns, got ${outputTokens}`);
 });
