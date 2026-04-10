@@ -13,27 +13,48 @@ import {
   COMPACTION_SUMMARY_RESERVE,
 } from './tokens.js';
 
-const COMPACT_SYSTEM_PROMPT = `You are a conversation summarizer. Your task is to create a concise but comprehensive summary of the conversation so far. This summary will replace the original messages to save context space.
+// Structured compaction prompt (pattern from nousresearch/hermes-agent
+// `agent/context_compressor.py`). The structured sections preserve more
+// signal than free-form summaries and make it easier for the model to
+// continue work from where it left off.
+export const COMPACT_HEADER = `[CONTEXT COMPACTION] Earlier turns in this conversation were compacted to save context space. The summary below describes work that was already completed, and the current session state may still reflect that work (for example, files may already be changed). Use the summary and the current state to continue from where things left off, and avoid repeating work:`;
 
-Rules:
-- Preserve ALL important technical details: file paths, function names, variable names, error messages, decisions made
-- Preserve the current state of any ongoing task (what's done, what's remaining)
-- Preserve any user preferences or instructions that were given
-- Keep tool results that are still relevant (e.g., file contents that were read and are being worked on)
-- Be specific — "edited src/foo.ts" not "made some changes"
-- Use bullet points for clarity
-- Do NOT include thinking/reasoning that led to decisions — only the decisions themselves
-- Do NOT include pleasantries or meta-commentary
+const COMPACT_SYSTEM_PROMPT = `You are a conversation summarizer. Produce a STRUCTURED summary of the conversation so far that preserves all decision-relevant context for continuing the task.
 
-Output format:
-## Conversation Summary
-[your summary here]
+Critical rules:
+- Preserve EXACT file paths, function names, line numbers, variable names
+- Preserve EXACT error messages (verbatim)
+- Preserve user preferences and corrections (especially "don't do X" instructions)
+- Preserve decisions with their rationale (not just the decision)
+- DO NOT include reasoning that led to decisions — only the decisions themselves
+- DO NOT include pleasantries, meta-commentary, or apologies
+- Use bullet points inside each section
+- Be specific: "edited src/foo.ts:42 to add error handling" not "made some changes"
 
-## Current Task State
-[what the user is working on, what's been done, what's remaining]
+REQUIRED output format (use these exact section headers):
 
-## Key Files & Paths
-[any important file paths, configurations, or references mentioned]`;
+## Goal
+[One clear sentence: what the user is trying to accomplish]
+
+## Progress
+[Chronological bullet list of what has been done so far]
+
+## Decisions
+[Key decisions made, each with its rationale]
+
+## Files Modified
+[Each file touched, with a one-line description of what changed]
+
+## Tool Results Still Relevant
+[Any tool output (file reads, grep matches, bash output) that later steps still depend on — include the actual content, not a reference]
+
+## User Preferences & Corrections
+[Anything the user explicitly asked for or corrected — these are load-bearing]
+
+## Next Steps
+[What comes next, in priority order]
+
+If there's an existing [CONTEXT COMPACTION] summary in the messages being compacted, MERGE its content into your output rather than nesting. Do not produce a summary of a summary.`;
 
 /**
  * Check if compaction is needed and perform it if so.
@@ -172,15 +193,17 @@ async function compactHistory(
     throw new Error('Empty summary returned from model');
   }
 
-  // Build compacted history: summary as first message, then kept messages
+  // Build compacted history: summary as first message, then kept messages.
+  // The COMPACT_HEADER prefix lets future compactions detect and merge rather
+  // than nest summaries.
   const compacted: Dialogue[] = [
     {
       role: 'user',
-      content: `[Context from earlier conversation — auto-compacted]\n\n${summaryText}`,
+      content: `${COMPACT_HEADER}\n\n${summaryText}`,
     },
     {
       role: 'assistant',
-      content: 'Understood. I have the context from our earlier conversation. Continuing from where we left off.',
+      content: 'Got it. I have the structured context from earlier work and will continue from where things left off.',
     },
     ...toKeep,
   ];

@@ -1,8 +1,19 @@
 {
   "name": "@blockrun/runcode",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "description": "RunCode — AI coding agent powered by 55+ models. Pay per use with USDC.",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./plugin-sdk": {
+      "types": "./dist/plugin-sdk/index.d.ts",
+      "default": "./dist/plugin-sdk/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "runcode": "./dist/index.js"
   },

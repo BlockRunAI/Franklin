@@ -117,6 +117,29 @@ program
   .option('--clear', 'Delete log file')
   .action(logsCommand);
 
+program
+  .command('insights')
+  .description('Show rich usage insights — cost breakdown, trends, projections')
+  .option('-d, --days <n>', 'Window size in days (default: 30)', '30')
+  .action(async (opts: { days?: string }) => {
+    const { generateInsights, formatInsights } = await import('./stats/insights.js');
+    const days = parseInt(opts.days ?? '30', 10) || 30;
+    const report = generateInsights(days);
+    process.stdout.write(formatInsights(report, days));
+  });
+
+program
+  .command('search <query>')
+  .description('Search past sessions by keyword (use quotes for phrases)')
+  .option('-l, --limit <n>', 'Max results to show (default: 10)', '10')
+  .option('-m, --model <substring>', 'Filter by model name substring')
+  .action(async (query: string, opts: { limit?: string; model?: string }) => {
+    const { searchSessions, formatSearchResults } = await import('./session/search.js');
+    const limit = parseInt(opts.limit ?? '10', 10) || 10;
+    const matches = searchSessions(query, { limit, model: opts.model });
+    process.stdout.write(formatSearchResults(matches, query));
+  });
+
 // Plugin commands — dynamically registered from discovered plugins.
 // Core stays plugin-agnostic: this loop adds a command for each installed plugin.
 {

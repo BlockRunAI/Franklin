@@ -83,12 +83,15 @@ export interface WorkflowResult {
         name: string;
         summary: string;
         cost: number;
+        status?: WorkflowStepStatus;
     }>;
     totalCost: number;
     itemsProcessed: number;
     durationMs: number;
     dryRun: boolean;
 }
+/** Normalized status for step rendering/reporting */
+export type WorkflowStepStatus = 'ok' | 'error' | 'aborted' | 'skipped';
 /**
  * The Workflow interface plugins implement.
  * Core's WorkflowRunner orchestrates execution of any Workflow.
