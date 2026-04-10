@@ -89,14 +89,30 @@ program
     .option('-n, --lines <count>', 'Number of lines to show (default: 50)')
     .option('--clear', 'Delete log file')
     .action(logsCommand);
+// Plugin commands — dynamically registered from discovered plugins.
+// Core stays plugin-agnostic: this loop adds a command for each installed plugin.
+{
+    const { loadAllPlugins, listWorkflowPlugins } = await import('./plugins/registry.js');
+    await loadAllPlugins();
+    for (const lp of listWorkflowPlugins()) {
+        const { manifest } = lp;
+        program
+            .command(`${manifest.id} [action]`)
+            .description(manifest.description)
+            .option('--dry', 'Dry run — preview without side effects')
+            .option('--debug', 'Enable debug logging')
+            .action(async (action, opts) => {
+            const { pluginCommand } = await import('./commands/plugin.js');
+            await pluginCommand(manifest.id, action, { dryRun: opts.dry, debug: opts.debug });
+        });
+    }
+}
 program
-    .command('social [action]')
-    .description('AI social growth — auto-find and reply to relevant posts on Reddit/X')
-    .option('--dry', 'Dry run — generate drafts without posting')
-    .option('--debug', 'Enable debug logging')
-    .action(async (action, opts) => {
-    const { socialCommand } = await import('./commands/social.js');
-    await socialCommand(action, { dryRun: opts.dry, debug: opts.debug });
+    .command('plugins')
+    .description('List installed plugins')
+    .action(async () => {
+    const { listAvailablePlugins } = await import('./commands/plugin.js');
+    listAvailablePlugins();
 });
 // Default action: if no subcommand given, run 'start'
 const args = process.argv.slice(2);

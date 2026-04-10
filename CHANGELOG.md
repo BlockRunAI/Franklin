@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.7.0 (2026-04-10)
+
+### Architecture: Plugin SDK
+
+Major refactor inspired by OpenClaw's plugin-first architecture.
+
+- **`src/plugin-sdk/`** — public contract for plugins (Workflow, Channel, Plugin, Tracker)
+- **`src/plugins/`** — core plugin runtime: registry, loader, runner (plugin-agnostic)
+- **`src/plugins-bundled/`** — plugins shipped with runcode (currently: social)
+- **Core stays plugin-agnostic** — adding a plugin never requires editing core
+- **Dynamic CLI registration** — plugins discovered at startup, commands registered automatically
+- **Strict boundaries** — plugins import ONLY from `@blockrun/runcode/plugin-sdk`, never from core internals
+
+### Added
+
+- `runcode plugins` — list installed plugins
+- Plugin discovery from 3 locations: `$RUNCODE_PLUGINS_DIR`, `~/.blockrun/plugins/`, bundled
+- `docs/plugin-sdk.md` — full plugin development guide
+- Channel abstraction for messaging platforms (Reddit, X, Telegram — channels coming next)
+
+### Changed
+
+- `runcode social` is now a bundled plugin (`src/plugins-bundled/social/`)
+- Removed hardcoded `src/social/` and `src/workflow/` directories
+- `src/commands/social.ts` → `src/commands/plugin.ts` (generic dispatcher)
+- Build now copies plugin assets via `scripts/copy-plugin-assets.mjs`
+
+### Migration
+
+No user-facing breaking changes. All `runcode social *` commands work identically.
+Future workflows (`runcode trading`, `runcode content`) follow the same plugin pattern.
+
 ## 2.6.0 (2026-04-09)
 
 ### Added

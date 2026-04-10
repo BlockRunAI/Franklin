@@ -1,9 +1,9 @@
 /**
- * E2E tests for runcode CLI.
+ * Live E2E tests for runcode CLI.
  * Uses Node's built-in test runner (node:test) — no extra dependencies.
  *
- * Run:  node --test test/e2e.mjs
- *       node --test --test-reporter=spec test/e2e.mjs
+ * Run:  npm run test:e2e
+ *       E2E_MODEL=<provider/model> npm run test:e2e
  *
  * Each test pipes a prompt into runcode's piped (non-TTY) mode
  * and asserts the output contains expected content.
@@ -217,7 +217,7 @@ test('bash tool: error exit code is captured', { timeout: 90_000 }, async (t) =>
   );
 });
 
-test('multi-tool: write then read a file in same session', { timeout: 90_000 }, async (t) => {
+test('multi-tool: write then read a file in same session', { timeout: 150_000 }, async (t) => {
   const testDir = join(tmpdir(), `rc-e2e-multi-${Date.now()}`);
   mkdirSync(testDir, { recursive: true });
   const targetFile = join(testDir, 'roundtrip.txt');
@@ -227,7 +227,7 @@ test('multi-tool: write then read a file in same session', { timeout: 90_000 }, 
       `Step 1: Use the Write tool to create ${targetFile} with content: ROUNDTRIP_OK_789\n` +
       `Step 2: Use the Read tool to read that file back.\n` +
       `Step 3: Tell me the content you read.`,
-      { cwd: testDir }
+      { cwd: testDir, timeoutMs: 140_000 }
     );
     if (skipIfRateLimited(t, result)) return;
     assert.equal(result.exitCode, 0, `Non-zero exit. stdout:\n${result.stdout}`);
