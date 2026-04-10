@@ -8,6 +8,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import { estimateCost } from '../pricing.js';
+import { USER_AGENT } from '../config.js';
 import { DEFAULT_MODEL_TIERS } from '../plugin-sdk/workflow.js';
 // ─── Storage ──────────────────────────────────────────────────────────────
 const WORKFLOW_DIR = path.join(os.homedir(), '.blockrun', 'workflows');
@@ -132,14 +133,118 @@ function resolveModel(tier, tiers) {
 }
 // ─── Channel Search Adapter ───────────────────────────────────────────────
 import { listChannelPlugins } from './registry.js';
-/** Default web search using Exa via BlockRun API */
-async function defaultWebSearch(client, query, options) {
-    // Use ModelClient's underlying API to call Exa or WebSearch
-    // For now, return empty — channels handle platform-specific search
-    void client;
-    void query;
-    void options;
-    return [];
+/** Default web search fallback using DuckDuckGo HTML */
+async function defaultWebSearch(query, options) {
+    const maxResults = Math.min(Math.max(options?.maxResults ?? 8, 1), 20);
+    const domainHints = (options?.sources ?? [])
+        .map(sourceToDomainHint)
+        .filter((domain) => Boolean(domain));
+    const scopedQueries = Array.from(new Set([
+        ...domainHints.map((domain) => `${query} site:${domain}`),
+        query,
+    ])).slice(0, 3);
+    const merged = [];
+    const seenUrls = new Set();
+    for (const scoped of scopedQueries) {
+        const results = await searchDuckDuckGo(scoped, maxResults);
+        for (const result of results) {
+            if (seenUrls.has(result.url))
+                continue;
+            seenUrls.add(result.url);
+            merged.push(result);
+            if (merged.length >= maxResults)
+                return merged;
+        }
+    }
+    if (merged.length === 0 && scopedQueries[scopedQueries.length - 1] !== query) {
+        return searchDuckDuckGo(query, maxResults);
+    }
+    return merged;
+}
+function sourceToDomainHint(source) {
+    const normalized = source.toLowerCase();
+    if (normalized === 'reddit')
+        return 'reddit.com';
+    if (normalized === 'x' || normalized === 'twitter')
+        return 'x.com';
+    if (normalized === 'web')
+        return null;
+    return null;
+}
+async function searchDuckDuckGo(query, maxResults) {
+    try {
+        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15_000);
+        const response = await fetch(url, {
+            signal: controller.signal,
+            headers: { 'User-Agent': USER_AGENT },
+        });
+        clearTimeout(timer);
+        if (!response.ok)
+            return [];
+        const html = await response.text();
+        return parseDuckDuckGoResults(html, maxResults);
+    }
+    catch {
+        return [];
+    }
+}
+function parseDuckDuckGoResults(html, maxResults) {
+    const results = [];
+    const linkRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+    let links = [...html.matchAll(linkRegex)];
+    const snippets = [...html.matchAll(snippetRegex)];
+    if (links.length === 0) {
+        const fallbackLink = /<a[^>]*class="[^"]*result[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+        links = [...html.matchAll(fallbackLink)];
+    }
+    for (let i = 0; i < Math.min(links.length, maxResults); i++) {
+        const link = links[i];
+        const snippet = snippets[i];
+        const decodedUrl = decodeDuckDuckGoUrl(link[1] ?? '');
+        if (!decodedUrl || decodedUrl.startsWith('/') || decodedUrl.includes('duckduckgo.com'))
+            continue;
+        results.push({
+            title: stripHtml(link[2] ?? '').trim(),
+            url: decodedUrl,
+            snippet: stripHtml(snippet?.[1] ?? '').trim(),
+            source: inferSource(decodedUrl),
+        });
+    }
+    return results;
+}
+function decodeDuckDuckGoUrl(url) {
+    const uddg = url.match(/[?&]uddg=([^&]+)/);
+    if (uddg?.[1]) {
+        try {
+            return decodeURIComponent(uddg[1]);
+        }
+        catch {
+            return url;
+        }
+    }
+    return url;
+}
+function inferSource(url) {
+    const lower = url.toLowerCase();
+    if (lower.includes('reddit.com'))
+        return 'reddit';
+    if (lower.includes('x.com') || lower.includes('twitter.com'))
+        return 'x';
+    return 'web';
+}
+function stripHtml(input) {
+    return input
+        .replace(/<[^>]+>/g, '')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, '\'')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\s+/g, ' ');
 }
 /** Resolve channel by id and call its search method */
 async function searchViaChannel(channelId, query, options) {
@@ -224,7 +329,7 @@ export async function runWorkflow(workflow, config, client, options = {}) {
                         return results;
                 }
             }
-            return defaultWebSearch(client, query, opts);
+            return defaultWebSearch(query, opts);
         },
         sendMessage: async (channelId, message) => {
             if (dryRun) {
@@ -252,7 +357,7 @@ export async function runWorkflow(workflow, config, client, options = {}) {
     };
     for (const step of workflow.steps) {
         if (dryRun && step.skipInDryRun) {
-            stepResults.push({ name: step.name, summary: '[dry-run] skipped', cost: 0 });
+            stepResults.push({ name: step.name, summary: '[dry-run] skipped', cost: 0, status: 'skipped' });
             continue;
         }
         process.stderr.write(`[${workflow.id}] → ${step.name}...\n`);
@@ -268,6 +373,7 @@ export async function runWorkflow(workflow, config, client, options = {}) {
                 name: step.name,
                 summary: result.summary ?? 'done',
                 cost: stepCost,
+                status: result.abort ? 'aborted' : 'ok',
             });
             if (result.abort) {
                 process.stderr.write(`[${workflow.id}] ⚠ ${step.name}: ${result.summary ?? 'aborted'}\n`);
@@ -277,7 +383,7 @@ export async function runWorkflow(workflow, config, client, options = {}) {
         catch (err) {
             const errMsg = err.message;
             process.stderr.write(`[${workflow.id}] ✗ ${step.name}: ${errMsg}\n`);
-            stepResults.push({ name: step.name, summary: `error: ${errMsg}`, cost: 0 });
+            stepResults.push({ name: step.name, summary: `error: ${errMsg}`, cost: 0, status: 'error' });
             break;
         }
     }
@@ -310,7 +416,13 @@ export function formatWorkflowResult(workflow, result) {
     lines.push(sep);
     for (const step of result.steps) {
         const costStr = step.cost > 0 ? ` ($${step.cost.toFixed(4)})` : '';
-        const icon = step.summary.startsWith('error') ? '✗' : '✓';
+        const icon = step.status === 'error'
+            ? '✗'
+            : step.status === 'aborted'
+                ? '⚠'
+                : step.status === 'skipped'
+                    ? '○'
+                    : '✓';
         lines.push(`  ${icon} ${step.name}: ${step.summary}${costStr}`);
     }
     lines.push(sep);

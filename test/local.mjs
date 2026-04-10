@@ -113,3 +113,29 @@ test('error classifier maps common failure modes', async () => {
   assert.deepEqual(classifyAgentError('prompt is too long').category, 'context_limit');
   assert.deepEqual(classifyAgentError('500 internal server error').category, 'server');
 });
+
+test('workflow formatter renders aborted steps with warning icon', async () => {
+  const { formatWorkflowResult } = await import('../dist/plugins/runner.js');
+
+  const output = formatWorkflowResult(
+    { name: 'Social Growth' },
+    {
+      steps: [
+        { name: 'search', summary: 'No posts found', cost: 0, status: 'aborted' },
+      ],
+      totalCost: 0,
+      itemsProcessed: 0,
+      durationMs: 100,
+      dryRun: true,
+    }
+  );
+
+  assert.ok(output.includes('⚠ search: No posts found'), `Expected aborted warning icon.\n${output}`);
+});
+
+test('package exports plugin-sdk subpath', async () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.ok(pkg.exports, 'Expected package.json exports field');
+  assert.ok(pkg.exports['./plugin-sdk'], 'Expected ./plugin-sdk export');
+  assert.equal(pkg.exports['./plugin-sdk'].default, './dist/plugin-sdk/index.js');
+});

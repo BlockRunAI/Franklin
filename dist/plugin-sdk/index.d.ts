@@ -7,7 +7,7 @@
  * Core stays plugin-agnostic: adding a plugin should never require editing core.
  */
 export type { Plugin, PluginManifest, PluginContext, PluginCommand, PluginCommandHandler, } from './plugin.js';
-export type { Workflow, WorkflowStep, WorkflowStepContext, WorkflowStepResult, WorkflowResult, WorkflowConfig, ModelTier, ModelTierConfig, OnboardingQuestion, } from './workflow.js';
+export type { Workflow, WorkflowStep, WorkflowStepContext, WorkflowStepResult, WorkflowResult, WorkflowConfig, ModelTier, ModelTierConfig, WorkflowStepStatus, OnboardingQuestion, } from './workflow.js';
 export { DEFAULT_MODEL_TIERS } from './workflow.js';
 export type { Channel, ChannelContext, ChannelMessage, ChannelPost, ChannelSearchResult, ChannelAuth, } from './channel.js';
 export type { WorkflowTracker, TrackedAction, WorkflowStats, } from './tracker.js';

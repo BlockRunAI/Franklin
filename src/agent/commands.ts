@@ -498,6 +498,36 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
+  // /search <query> — full-text search past sessions
+  if (input === '/search' || input.startsWith('/search ')) {
+    const query = input === '/search' ? '' : input.slice('/search '.length).trim();
+    if (!query) {
+      ctx.onEvent({ kind: 'text_delta', text:
+        'Usage: /search <query>\n' +
+        'Finds past sessions whose messages match the query.\n' +
+        'Use quotes for phrase search: /search "payment loop"\n'
+      });
+      emitDone(ctx);
+      return { handled: true };
+    }
+    const { searchSessions, formatSearchResults } = await import('../session/search.js');
+    const matches = searchSessions(query, { limit: 10 });
+    ctx.onEvent({ kind: 'text_delta', text: formatSearchResults(matches, query) });
+    emitDone(ctx);
+    return { handled: true };
+  }
+
+  // /insights [--days N] — rich usage insights
+  if (input === '/insights' || input.startsWith('/insights ')) {
+    const daysMatch = input.match(/--days\s+(\d+)/);
+    const days = daysMatch ? parseInt(daysMatch[1], 10) : 30;
+    const { generateInsights, formatInsights } = await import('../stats/insights.js');
+    const report = generateInsights(days);
+    ctx.onEvent({ kind: 'text_delta', text: formatInsights(report, days) });
+    emitDone(ctx);
+    return { handled: true };
+  }
+
   // /model — show current model or switch with /model <name>
   if (input === '/model' || input.startsWith('/model ')) {
     if (input === '/model') {
