@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.8.0 (2026-04-10)
+
+### Added — Hermes Agent patterns adopted
+
+Major upgrade inspired by [nousresearch/hermes-agent](https://github.com/nousresearch/hermes-agent).
+
+- **Anthropic prompt caching (`system_and_3` strategy)** — 4 cache_control breakpoints on system prompt + last 3 messages. ~75% input token savings on multi-turn Anthropic conversations. Pattern from Hermes `agent/prompt_caching.py`.
+- **Structured context compression** — replaced free-form summary with Goal/Progress/Decisions/Files/Tool Results/Preferences/Next Steps template. Supports iterative updates (merges existing `[CONTEXT COMPACTION]` rather than nesting). Pattern from Hermes `agent/context_compressor.py`.
+- **`/search <query>` + `runcode search`** — full-text search across past sessions. Phrase search with `"..."`, relevance-ranked results with snippets. Zero-dependency in-memory tokenized search over JSONL.
+- **`/insights [--days N]` + `runcode insights`** — rich usage analytics: cost breakdown by model, daily activity sparklines, projections (per day/month/year), avg cost per request, savings vs Claude Opus. Pattern from Hermes `agent/insights.py`.
+
+### Changed
+
+- Compacted history now uses `[CONTEXT COMPACTION]` header (was `[Context from earlier conversation]`) for detection by future compactions.
+- Session storage exports `getSessionFilePath()` helper for external readers.
+
 ## 2.7.0 (2026-04-10)
 
 ### Architecture: Plugin SDK

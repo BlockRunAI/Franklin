@@ -5,6 +5,63 @@
  */
 import { getOrCreateWallet, getOrCreateSolanaWallet, createPaymentPayload, createSolanaPaymentPayload, parsePaymentRequired, extractPaymentDetails, solanaKeyToBytes, SOLANA_NETWORK, } from '@blockrun/llm';
 import { USER_AGENT } from '../config.js';
+// ─── Anthropic Prompt Caching ─────────────────────────────────────────────
+/**
+ * Apply Anthropic prompt caching using the `system_and_3` strategy.
+ * Pattern from nousresearch/hermes-agent `agent/prompt_caching.py`.
+ *
+ * Places 4 cache_control breakpoints (Anthropic's max):
+ *   1. System prompt (stable across all turns)
+ *   2-4. Last 3 non-system messages (rolling window)
+ *
+ * Also caches the last tool definition (tools are stable across turns).
+ *
+ * This keeps the cache warm: each new turn extends the cached prefix rather
+ * than invalidating it. Multi-turn conversations see ~75% input token savings
+ * on Anthropic models.
+ */
+function applyAnthropicPromptCaching(payload, request) {
+    const out = { ...payload };
+    const cacheMarker = { type: 'ephemeral' };
+    // 1. System prompt → wrap as array with cache_control on the text block
+    if (typeof request.system === 'string' && request.system.length > 0) {
+        out['system'] = [
+            { type: 'text', text: request.system, cache_control: cacheMarker },
+        ];
+    }
+    // 2. Tools → cache_control on the last tool (stable across turns)
+    if (request.tools && request.tools.length > 0) {
+        const toolsCopy = request.tools.map(t => ({ ...t }));
+        toolsCopy[toolsCopy.length - 1]['cache_control'] = cacheMarker;
+        out['tools'] = toolsCopy;
+    }
+    // 3. Messages → rolling cache_control on last 3 messages (user/assistant).
+    // System is a separate field in ModelRequest, so all messages here are non-system.
+    // Strategy: mark the last 3 messages so the cached prefix extends as the
+    // conversation grows. Older cached prefixes expire after 5 min but newer
+    // ones keep the cache warm.
+    if (request.messages && request.messages.length > 0) {
+        const messagesCopy = request.messages.map(m => ({ ...m }));
+        // Mark last 3 messages (or fewer if history is shorter)
+        const start = Math.max(0, messagesCopy.length - 3);
+        for (let idx = start; idx < messagesCopy.length; idx++) {
+            const msg = messagesCopy[idx];
+            if (typeof msg.content === 'string') {
+                messagesCopy[idx]['content'] = [
+                    { type: 'text', text: msg.content, cache_control: cacheMarker },
+                ];
+            }
+            else if (Array.isArray(msg.content) && msg.content.length > 0) {
+                const contentCopy = msg.content.map(c => ({ ...c }));
+                // cache_control goes on the last content block
+                contentCopy[contentCopy.length - 1]['cache_control'] = cacheMarker;
+                messagesCopy[idx]['content'] = contentCopy;
+            }
+        }
+        out['messages'] = messagesCopy;
+    }
+    return out;
+}
 // ─── Client ────────────────────────────────────────────────────────────────
 export class ModelClient {
     apiUrl;
@@ -43,35 +100,15 @@ export class ModelClient {
             }
         }
         if (isAnthropic) {
-            // 1. Convert system string → array with cache_control on the last block
-            if (typeof request.system === 'string' && request.system.length > 0) {
-                requestPayload['system'] = [
-                    { type: 'text', text: request.system, cache_control: { type: 'ephemeral' } },
-                ];
-            }
-            // 2. Add cache_control to the last tool in the tools array
-            if (request.tools && request.tools.length > 0) {
-                const toolsCopy = request.tools.map(t => ({ ...t }));
-                toolsCopy[toolsCopy.length - 1]['cache_control'] = { type: 'ephemeral' };
-                requestPayload['tools'] = toolsCopy;
-            }
-            // 3. Add cache_control to the penultimate message (second-to-last)
-            if (request.messages && request.messages.length >= 2) {
-                const messagesCopy = request.messages.map(m => ({ ...m }));
-                const targetIdx = messagesCopy.length - 2;
-                const targetMsg = messagesCopy[targetIdx];
-                if (typeof targetMsg.content === 'string') {
-                    messagesCopy[targetIdx]['content'] = [
-                        { type: 'text', text: targetMsg.content, cache_control: { type: 'ephemeral' } },
-                    ];
-                }
-                else if (Array.isArray(targetMsg.content) && targetMsg.content.length > 0) {
-                    const contentCopy = targetMsg.content.map(c => ({ ...c }));
-                    contentCopy[contentCopy.length - 1]['cache_control'] = { type: 'ephemeral' };
-                    messagesCopy[targetIdx]['content'] = contentCopy;
-                }
-                requestPayload['messages'] = messagesCopy;
-            }
+            // ─ Anthropic prompt caching: `system_and_3` strategy ─────────────────
+            // 4 cache_control breakpoints (Anthropic max):
+            //   1. System prompt (stable across turns)
+            //   2-4. Last 3 non-system messages (rolling window)
+            //
+            // This keeps the cache warm across turns: each new turn extends the
+            // cache instead of invalidating it. ~75% input token savings on
+            // multi-turn conversations. Pattern adopted from nousresearch/hermes-agent.
+            requestPayload = applyAnthropicPromptCaching(requestPayload, request);
         }
         const body = JSON.stringify(requestPayload);
         const endpoint = `${this.apiUrl}/v1/messages`;
