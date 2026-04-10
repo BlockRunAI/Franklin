@@ -306,6 +306,8 @@ git clone https://github.com/BlockRunAI/runcode.git
 cd runcode
 npm install
 npm run build
+npm test             # Deterministic local test suite (no live model required)
+npm run test:e2e     # Live end-to-end suite (hits real model API)
 node dist/index.js --help
 ```
 

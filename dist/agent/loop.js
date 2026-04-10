@@ -11,6 +11,7 @@ import { reduceTokens } from './reduce.js';
 import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
+import { classifyAgentError } from './error-classifier.js';
 import { recordUsage } from '../stats/tracker.js';
 import { estimateCost } from '../pricing.js';
 import { createSessionId, appendToSession, updateSessionMeta, pruneOldSessions, } from '../session/storage.js';
@@ -191,9 +192,9 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     break;
                 }
                 const errMsg = err.message || '';
-                const errLower = errMsg.toLowerCase();
+                const classified = classifyAgentError(errMsg);
                 // ── Prompt too long recovery ──
-                if (errLower.includes('prompt is too long') && recoveryAttempts < 3) {
+                if (classified.category === 'context_limit' && recoveryAttempts < 3) {
                     recoveryAttempts++;
                     if (config.debug) {
                         console.error(`[runcode] Prompt too long — forcing compact (attempt ${recoveryAttempts})`);
@@ -204,28 +205,25 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     continue; // Retry
                 }
                 // ── Transient error recovery (network, rate limit, server errors) ──
-                const isTransient = errLower.includes('429') || errLower.includes('rate')
-                    || errLower.includes('500') || errLower.includes('502') || errLower.includes('503')
-                    || errLower.includes('timeout') || errLower.includes('econnrefused')
-                    || errLower.includes('econnreset') || errLower.includes('fetch failed');
-                if (isTransient && recoveryAttempts < 3) {
+                if (classified.isTransient && recoveryAttempts < 3) {
                     recoveryAttempts++;
                     const backoffMs = Math.pow(2, recoveryAttempts) * 1000;
                     if (config.debug) {
-                        console.error(`[runcode] Transient error — retrying in ${backoffMs / 1000}s (attempt ${recoveryAttempts}): ${errMsg.slice(0, 100)}`);
+                        console.error(`[runcode] ${classified.label} error — retrying in ${backoffMs / 1000}s (attempt ${recoveryAttempts}): ${errMsg.slice(0, 100)}`);
                     }
-                    onEvent({ kind: 'text_delta', text: `\n*Retrying (${recoveryAttempts}/3)...*\n` });
+                    onEvent({
+                        kind: 'text_delta',
+                        text: `\n*Retrying (${recoveryAttempts}/3) after ${classified.label} error...*\n`,
+                    });
                     await new Promise(r => setTimeout(r, backoffMs));
                     continue;
                 }
                 // Add recovery suggestions based on error type
                 let suggestion = '';
-                if (errLower.includes('429') || errLower.includes('rate')) {
+                if (classified.category === 'rate_limit') {
                     suggestion = '\nTip: Try /model to switch to a different model, or wait a moment and /retry.';
                 }
-                else if (errLower.includes('balance') || errLower.includes('insufficient') || errLower.includes('402')
-                    || errLower.includes('payment') || errLower.includes('verification failed')
-                    || errLower.includes('free tier')) {
+                else if (classified.category === 'payment') {
                     // Auto-fallback to free models on payment/rate limit failure
                     // Track failed models at session level to prevent ping-pong loops
                     failedModels.add(config.model);
@@ -240,13 +238,17 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     }
                     suggestion = '\nTip: Run `runcode balance` to check funds. Try /model free for free models.';
                 }
-                else if (errLower.includes('timeout') || errLower.includes('econnrefused')) {
+                else if (classified.category === 'timeout' || classified.category === 'network') {
                     suggestion = '\nTip: Check your network connection. Use /retry to try again.';
                 }
-                else if (errLower.includes('prompt is too long')) {
+                else if (classified.category === 'context_limit') {
                     suggestion = '\nTip: Run /compact to compress conversation history.';
                 }
-                onEvent({ kind: 'turn_done', reason: 'error', error: errMsg + suggestion });
+                onEvent({
+                    kind: 'turn_done',
+                    reason: 'error',
+                    error: `[${classified.label}] ${errMsg}${suggestion}`,
+                });
                 break;
             }
             // When API doesn't return input tokens (some models return 0), estimate from history
