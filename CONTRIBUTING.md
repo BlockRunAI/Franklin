@@ -14,6 +14,8 @@ npm run build
 ```bash
 npm run dev              # Watch mode — recompiles on save
 npm start                # Run the agent
+npm test                 # Deterministic local tests
+npm run test:e2e         # Live E2E tests (model API required)
 ```
 
 ## Code Standards
@@ -28,6 +30,7 @@ npm start                # Run the agent
 2. Create a feature branch
 3. Make your changes
 4. Run `npm run build` to verify compilation
+5. Run `npm test` before opening a PR (`npm run test:e2e` if relevant to your change)
 5. Submit a PR with a clear description
 
 ## Architecture

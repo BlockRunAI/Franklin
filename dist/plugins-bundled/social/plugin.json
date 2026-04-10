@@ -1,0 +1,14 @@
+{
+  "id": "social",
+  "name": "Social Growth",
+  "description": "AI-powered social engagement — find relevant posts on Reddit/X, generate quality replies with multi-model routing",
+  "version": "1.0.0",
+  "provides": {
+    "workflows": ["social"]
+  },
+  "entry": "index.js",
+  "author": "BlockRun",
+  "homepage": "https://github.com/BlockRunAI/runcode",
+  "license": "Apache-2.0",
+  "runcodeVersion": ">=2.6.0"
+}
