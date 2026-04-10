@@ -12,6 +12,35 @@ interface WriteInput {
   content: string;
 }
 
+function withTrailingSep(value: string): string {
+  return value.endsWith(path.sep) ? value : value + path.sep;
+}
+
+function isWithinDir(target: string, dir: string): boolean {
+  const normalizedTarget = path.resolve(target);
+  const normalizedDir = withTrailingSep(path.resolve(dir));
+  return normalizedTarget === normalizedDir.slice(0, -1) || normalizedTarget.startsWith(normalizedDir);
+}
+
+function getAllowedTempDirs(): string[] {
+  const candidates = new Set<string>([path.resolve(os.tmpdir())]);
+
+  for (const dir of [...candidates]) {
+    try {
+      candidates.add(path.resolve(fs.realpathSync(dir)));
+    } catch {
+      // Best effort only.
+    }
+    if (dir.startsWith('/private/')) {
+      candidates.add(dir.slice('/private'.length));
+    } else {
+      candidates.add(path.join('/private', dir));
+    }
+  }
+
+  return [...candidates];
+}
+
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
   const { file_path: filePath, content } = input as unknown as WriteInput;
 
@@ -27,6 +56,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   // Safety: block system paths and sensitive home directories
   // Resolve symlinks to prevent traversal attacks
   const home = os.homedir();
+  const allowedTempDirs = getAllowedTempDirs();
   const dangerousPaths = [
     '/etc/', '/usr/', '/bin/', '/sbin/', '/var/', '/System/',
     path.join(home, '.ssh') + '/',
@@ -36,7 +66,9 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     path.join(home, '.config/gcloud') + '/',
   ];
   // Check both the resolved path and the real path (after symlink resolution)
-  const checkPath = (p: string) => dangerousPaths.some(dp => p.startsWith(dp));
+  const checkPath = (p: string) =>
+    !allowedTempDirs.some(dir => isWithinDir(p, dir)) &&
+    dangerousPaths.some(dp => p.startsWith(dp));
   if (checkPath(resolved)) {
     return { output: `Error: refusing to write to sensitive path: ${resolved}`, isError: true };
   }

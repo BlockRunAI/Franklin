@@ -78,8 +78,8 @@ function skipIfRateLimited(t, result) {
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 test('startup: banner and model line printed', { timeout: 10_000 }, async () => {
-  // Use a prompt that gets rejected quickly — just check startup output
-  const { stdout } = await runcode('say exactly: PING_OK', { timeoutMs: 60_000 });
+  // Startup should be observable without waiting on a model response.
+  const { stdout } = await runcode('/exit', { timeoutMs: 10_000 });
   assert.ok(stdout.includes('RunCode'), `Missing banner. stdout:\n${stdout}`);
   assert.ok(stdout.includes('Model:'), `Missing model line. stdout:\n${stdout}`);
 });
@@ -243,8 +243,8 @@ test('session cost: token usage reported at session end', { timeout: 60_000 }, a
 
 test('session cost: accumulates across multiple turns', { timeout: 120_000 }, async (t) => {
   const result = await runcode([
-    'say exactly: TURN_ONE',
-    'say exactly: TURN_TWO',
+    'say exactly and only this word: TURN_ONE',
+    'say exactly and only this word: TURN_TWO',
   ]);
   if (skipIfRateLimited(t, result)) return;
   assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr: ${result.stderr}`);

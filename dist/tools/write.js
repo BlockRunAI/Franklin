@@ -4,6 +4,32 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+function withTrailingSep(value) {
+    return value.endsWith(path.sep) ? value : value + path.sep;
+}
+function isWithinDir(target, dir) {
+    const normalizedTarget = path.resolve(target);
+    const normalizedDir = withTrailingSep(path.resolve(dir));
+    return normalizedTarget === normalizedDir.slice(0, -1) || normalizedTarget.startsWith(normalizedDir);
+}
+function getAllowedTempDirs() {
+    const candidates = new Set([path.resolve(os.tmpdir())]);
+    for (const dir of [...candidates]) {
+        try {
+            candidates.add(path.resolve(fs.realpathSync(dir)));
+        }
+        catch {
+            // Best effort only.
+        }
+        if (dir.startsWith('/private/')) {
+            candidates.add(dir.slice('/private'.length));
+        }
+        else {
+            candidates.add(path.join('/private', dir));
+        }
+    }
+    return [...candidates];
+}
 async function execute(input, ctx) {
     const { file_path: filePath, content } = input;
     if (!filePath) {
@@ -16,6 +42,7 @@ async function execute(input, ctx) {
     // Safety: block system paths and sensitive home directories
     // Resolve symlinks to prevent traversal attacks
     const home = os.homedir();
+    const allowedTempDirs = getAllowedTempDirs();
     const dangerousPaths = [
         '/etc/', '/usr/', '/bin/', '/sbin/', '/var/', '/System/',
         path.join(home, '.ssh') + '/',
@@ -25,7 +52,8 @@ async function execute(input, ctx) {
         path.join(home, '.config/gcloud') + '/',
     ];
     // Check both the resolved path and the real path (after symlink resolution)
-    const checkPath = (p) => dangerousPaths.some(dp => p.startsWith(dp));
+    const checkPath = (p) => !allowedTempDirs.some(dir => isWithinDir(p, dir)) &&
+        dangerousPaths.some(dp => p.startsWith(dp));
     if (checkPath(resolved)) {
         return { output: `Error: refusing to write to sensitive path: ${resolved}`, isError: true };
     }
