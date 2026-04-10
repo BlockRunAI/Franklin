@@ -24,6 +24,7 @@ export type {
   WorkflowConfig,
   ModelTier,
   ModelTierConfig,
+  WorkflowStepStatus,
   OnboardingQuestion,
 } from './workflow.js';
 

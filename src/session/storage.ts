@@ -48,6 +48,11 @@ function sessionPath(id: string): string {
   return path.join(getSessionsDir(), `${id}.jsonl`);
 }
 
+/** Get the absolute path to a session's JSONL file (for external readers like search). */
+export function getSessionFilePath(id: string): string {
+  return sessionPath(id);
+}
+
 function metaPath(id: string): string {
   return path.join(getSessionsDir(), `${id}.meta.json`);
 }

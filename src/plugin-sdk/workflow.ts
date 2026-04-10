@@ -97,12 +97,20 @@ export interface WorkflowConfig {
 // ─── Workflow Result ──────────────────────────────────────────────────────
 
 export interface WorkflowResult {
-  steps: Array<{ name: string; summary: string; cost: number }>;
+  steps: Array<{
+    name: string;
+    summary: string;
+    cost: number;
+    status?: WorkflowStepStatus;
+  }>;
   totalCost: number;
   itemsProcessed: number;
   durationMs: number;
   dryRun: boolean;
 }
+
+/** Normalized status for step rendering/reporting */
+export type WorkflowStepStatus = 'ok' | 'error' | 'aborted' | 'skipped';
 
 // ─── Workflow Interface ───────────────────────────────────────────────────
 

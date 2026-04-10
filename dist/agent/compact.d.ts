@@ -5,6 +5,7 @@
  */
 import { ModelClient } from './llm.js';
 import type { Dialogue } from './types.js';
+export declare const COMPACT_HEADER = "[CONTEXT COMPACTION] Earlier turns in this conversation were compacted to save context space. The summary below describes work that was already completed, and the current session state may still reflect that work (for example, files may already be changed). Use the summary and the current state to continue from where things left off, and avoid repeating work:";
 /**
  * Check if compaction is needed and perform it if so.
  * Returns the (possibly compacted) history.

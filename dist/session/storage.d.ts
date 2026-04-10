@@ -12,6 +12,8 @@ export interface SessionMeta {
     turnCount: number;
     messageCount: number;
 }
+/** Get the absolute path to a session's JSONL file (for external readers like search). */
+export declare function getSessionFilePath(id: string): string;
 /**
  * Create a new session ID based on timestamp.
  */
