@@ -11,9 +11,10 @@ const FRANKLIN_ART = [
 ];
 
 // Franklin brand colors
-// Gold is the brand anchor — $100 bill, "Benjamins", wealth, Benjamin Franklin himself
+// Metallic gold (#D4AF37) — traditional gold bar / royal insignia color
+// Warmer and more premium than CSS gold (#FFD700); better on dark terminals
 // Emerald is the secondary, reserved for franklin.bet (trading) product color
-const GOLD = '#FFD700';
+const GOLD = '#D4AF37';
 const EMERALD = '#10B981';
 
 export function printBanner(version: string) {
