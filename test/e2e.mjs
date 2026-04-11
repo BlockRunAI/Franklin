@@ -98,7 +98,10 @@ function parseTokenCount(raw) {
 test('startup: banner and model line printed', { timeout: 10_000 }, async () => {
   // Startup should be observable without waiting on a model response.
   const { stdout } = await runcode('/exit', { timeoutMs: 10_000 });
-  assert.ok(stdout.includes('Franklin'), `Missing banner. stdout:\n${stdout}`);
+  assert.ok(
+    stdout.includes('blockrun.ai') && stdout.includes('The AI agent with a wallet'),
+    `Missing banner tagline. stdout:\n${stdout}`
+  );
   assert.ok(stdout.includes('Model:'), `Missing model line. stdout:\n${stdout}`);
 });
 
