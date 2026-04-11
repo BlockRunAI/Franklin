@@ -216,8 +216,8 @@ src/
 ## Development
 
 ```bash
-git clone https://github.com/BlockRunAI/runcode.git
-cd runcode
+git clone https://github.com/BlockRunAI/franklin.git
+cd franklin
 npm install
 npm run build
 npm test             # Deterministic local tests (no API calls)
