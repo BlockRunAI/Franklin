@@ -1,303 +1,217 @@
+<h1 align="center">Franklin</h1>
+
 <p align="center">
-  <img src="assets/banner.png" alt="RunCode" width="600">
+  <strong>The AI agent with a wallet.</strong>
 </p>
 
-<div align="center">
+<p align="center">
+  While others chat, Franklin spends — turning your USDC into real work.
+</p>
 
-<p><strong>Open-source AI coding agent. 55+ models. Pay per use with USDC.</strong></p>
-
-<br>
-
-[![npm version](https://img.shields.io/npm/v/@blockrun/runcode.svg?style=flat-square&color=cb3837)](https://npmjs.com/package/@blockrun/runcode)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![x402](https://img.shields.io/badge/x402-Payments-purple?style=flat-square)](https://x402.org)
-[![Telegram](https://img.shields.io/badge/Telegram-Community-26A5E4?style=flat-square&logo=telegram)](https://t.me/blockrunAI)
-
-</div>
+<p align="center">
+  <a href="https://npmjs.com/package/@blockrun/franklin"><img src="https://img.shields.io/npm/v/@blockrun/franklin.svg?style=flat-square&color=FFD700" alt="npm version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="License: Apache-2.0"></a>
+  <a href="https://x402.org"><img src="https://img.shields.io/badge/x402-Payments-10B981?style=flat-square" alt="x402"></a>
+  <a href="https://franklin.run"><img src="https://img.shields.io/badge/Marketing-franklin.run-06B6D4?style=flat-square" alt="franklin.run"></a>
+  <a href="https://franklin.bet"><img src="https://img.shields.io/badge/Trading-franklin.bet-10B981?style=flat-square" alt="franklin.bet"></a>
+</p>
 
 ---
 
-## Why RunCode?
+## Franklin runs your money
 
-| | Claude Code | Cursor | Aider | **RunCode** |
+Franklin is the first AI agent that can actually **spend money** to get work done. Not just write text about it.
+
+```bash
+$ franklin marketing campaign "Launch my AI coding app to indie hackers"
+  Budget cap: $10
+
+  ✓ $0.50  Research competitors via Exa
+  ✓ $1.20  Write 5 blog post drafts (Claude Sonnet 4.6)
+  ✓ $0.48  Generate 3 hero images (DALL-E 3)
+  ✓ $3.50  Generate 15-second launch video (Runway)
+  ✓ $0.80  Generate background music (Suno)
+  ✓ $0.30  Find 20 relevant Reddit discussions
+  ✓ $1.50  Draft Reddit comments (Claude Sonnet 4.6)
+  ✓ $0.10  Post 3 casts to Farcaster
+
+  Total spent: $8.58 · Time: 4m 32s
+  Deliverables: 5 blog posts, 3 hero images, 1 launch video, 1 music
+                track, 20 Reddit drafts, 3 Farcaster casts (live)
+```
+
+**One wallet. Every model. Every paid API. No subscriptions. No accounts.**
+
+---
+
+## Two products, one Franklin
+
+| | | |
+|---|---|---|
+| 🎯 | **[franklin.run](https://franklin.run)** | **Marketing agent** — campaigns, content, outreach, growth |
+| 📈 | **[franklin.bet](https://franklin.bet)** | **Trading agent** — signals, research, risk analysis |
+
+Both paid per action in USDC. Both backed by the same [BlockRun gateway](https://blockrun.ai) and x402 protocol.
+
+---
+
+## Why Franklin is different
+
+| | Claude Code | Hermes | OpenClaw | **Franklin** |
 |---|---|---|---|---|
-| Models | Claude only | Mixed (limited) | Bring your key | **55+ models, one tool** |
-| Pricing | $200/mo subscription | $20/mo + usage | Free + API costs | **Pay per request** |
-| Payment | Credit card | Credit card | API keys | **USDC — no accounts** |
-| Open source | No | No | Yes | **Yes** |
-| Switch models mid-session | No | No | Yes | **Yes** |
+| Writes text | ✅ | ✅ | ✅ | ✅ |
+| Reads code | ✅ | ✅ | ✅ | ✅ |
+| Multi-model | ❌ Claude only | ✅ BYOK | ✅ BYOK | ✅ **55+ via one wallet** |
+| **Spends money autonomously** | ❌ | ❌ | ❌ | ✅ |
+| **Wallet-native identity** | ❌ | ❌ | ❌ | ✅ |
+| **Pay per action** | ❌ subscription | ❌ BYOK | ❌ BYOK | ✅ USDC |
+| **Marketing workflows** | ❌ | ❌ | ❌ | ✅ franklin.run |
+| **Trading workflows** | ❌ | ❌ | ❌ | ✅ franklin.bet |
+| No account / phone verification | ❌ | ⚠️ BYOK | ⚠️ BYOK | ✅ |
 
-RunCode gives you the same agent capabilities — file editing, shell commands, web search, sub-agents — across every major model provider. You pay only for what you use, with stablecoin. No API keys to manage, no accounts to create, no subscriptions to cancel.
+**Franklin is the first AI agent in the "Autonomous Economic Agent" category** — an agent that receives a goal, decides what to spend on, and executes autonomously within a hard budget cap enforced by the wallet.
+
+---
 
 ## Quick Start
 
 ```bash
-npm install -g @blockrun/runcode
-runcode setup base     # Create a Base wallet (or: runcode setup solana)
-runcode                # Launch — picks model interactively
+# Install
+npm install -g @blockrun/franklin
+
+# Create a wallet (Base or Solana)
+franklin setup base
+
+# Fund wallet with USDC (any amount, $5 gets you started)
+# Check address: franklin balance
+
+# Run
+franklin                           # Interactive agent — code, research, anything
+franklin marketing run             # Marketing workflow
+franklin trading signal "BTC"      # Trading workflow
+franklin plugins                   # List installed plugins
 ```
 
-Fund the wallet address with USDC on Base, or use free models immediately — no funding required to start.
+**Start free:** use `franklin` with NVIDIA's free models (Nemotron, Qwen3 Coder) — zero wallet funding required to try it out.
+
+---
+
+## How it works
+
+```
+┌─────────────────────────────────────────────────┐
+│  Franklin Agent (you)                            │
+│  Plugin SDK · CLI · Multi-model router           │
+├─────────────────────────────────────────────────┤
+│  BlockRun Gateway                                │
+│  Aggregates 55+ LLMs + Exa + DALL-E + (soon)    │
+│  Runway + Suno + CoinGecko + Dune + Apollo       │
+├─────────────────────────────────────────────────┤
+│  x402 + Wallet Infrastructure                    │
+│  HTTP 402 micropayments · USDC on Base/Solana    │
+└─────────────────────────────────────────────────┘
+```
+
+Every API call is paid atomically from your wallet via the x402 protocol. You fund once; Franklin spends per task. The wallet is your identity — no accounts, no API keys, no KYC.
+
+---
 
 ## Features
 
-### Agent Capabilities
+### Core agent (55+ models)
 
-RunCode is a full coding agent with 10 built-in tools:
+- **Multi-model routing** — Claude Sonnet/Opus, GPT-5.4, Gemini 2.5 Pro, DeepSeek, Grok 4, Kimi, GLM-5.1, Llama, NVIDIA free tier
+- **Automatic fallback** — if one model fails, Franklin tries the next
+- **Smart tiers** — free / cheap / premium per task, user-configurable
+- **Prompt caching** — 75% input token savings on Anthropic multi-turn (Hermes pattern)
+- **Structured context compression** — Goal / Progress / Decisions / Files / Next Steps template
+- **Session search** — `franklin search "payment loop"` — full-text across past sessions
+- **Rich insights** — `franklin insights` — cost breakdown, daily activity sparklines, projections
 
-| Tool | Description |
-|------|-------------|
-| **Read** | Read files with line numbers |
-| **Write** | Create or overwrite files |
-| **Edit** | Targeted find-and-replace edits |
-| **Bash** | Run shell commands with timeout |
-| **Glob** | Find files by pattern |
-| **Grep** | Search file contents (uses ripgrep) |
-| **WebSearch** | Search the web |
-| **WebFetch** | Fetch and read web pages |
-| **Agent** | Spawn sub-agents for parallel tasks |
-| **Task** | Track tasks within a session |
+### Plugin SDK
 
-### Model Selection
+Franklin is plugin-first. Core stays workflow-agnostic. Adding a new vertical requires zero core changes.
 
-Launch with the interactive model picker, or specify directly:
+```typescript
+import type { Plugin, Workflow } from '@blockrun/franklin/plugin-sdk';
 
-```bash
-runcode                          # Interactive picker
-runcode -m sonnet                # Claude Sonnet 4.6
-runcode -m gpt                   # GPT-5.4
-runcode -m deepseek              # DeepSeek V3
-runcode -m free                  # Nemotron Ultra 253B (free)
+const myWorkflow: Workflow = {
+  id: 'my-workflow',
+  name: 'My Workflow',
+  description: '...',
+  steps: [
+    { name: 'search', modelTier: 'none', execute: async (ctx) => ({ ... }) },
+    { name: 'filter', modelTier: 'cheap', execute: async (ctx) => ({ ... }) },
+    { name: 'draft',  modelTier: 'premium', execute: async (ctx) => ({ ... }) },
+  ],
+  // ...
+};
 ```
 
-Switch models mid-session:
+Full plugin guide: [docs/plugin-sdk.md](docs/plugin-sdk.md)
 
-```
-/model              # Interactive picker
-/model flash        # Switch to Gemini 2.5 Flash
-/cost               # Check session cost
-```
+### Built-in tools
 
-<details>
-<summary><strong>All model shortcuts (30+)</strong></summary>
+Read · Write · Edit · Bash · Glob · Grep · WebFetch · WebSearch · Task · ImageGen · AskUser · SubAgent (delegated child agents with isolated toolsets)
 
-| Shortcut | Model | Price (in/out per 1M) |
-|----------|-------|----------------------|
-| `sonnet` | Claude Sonnet 4.6 | $3 / $15 |
-| `opus` | Claude Opus 4.6 | $5 / $25 |
-| `gpt` | GPT-5.4 | $2.5 / $15 |
-| `gemini` | Gemini 2.5 Pro | $1.25 / $10 |
-| `flash` | Gemini 2.5 Flash | $0.15 / $0.6 |
-| `deepseek` | DeepSeek V3 | $0.28 / $0.42 |
-| `r1` | DeepSeek R1 | $0.28 / $0.42 |
-| `haiku` | Claude Haiku 4.5 | $0.8 / $4 |
-| `mini` | GPT-5 Mini | $0.25 / $2 |
-| `nano` | GPT-5 Nano | $0.05 / $0.4 |
-| `o3` | O3 | $2 / $8 |
-| `o4` | O4 Mini | $1.1 / $4.4 |
-| `grok` | Grok 3 | varies |
-| `glm` | GLM-5 (Zhipu) | $0.001/call |
-| `glm-turbo` | GLM-5-Turbo (Zhipu) | $0.001/call |
-| `free` | Nemotron Ultra 253B | FREE |
-| `devstral` | Devstral 2 123B | FREE |
-| `qwen-coder` | Qwen3 Coder 480B | FREE |
-| `maverick` | Llama 4 Maverick | FREE |
+### MCP integration
 
-</details>
+Auto-discovers installed MCP servers including `blockrun-mcp` (market data, X data, prediction markets) and `unbrowse` (turn any website into an API). Add your own in `~/.blockrun/mcp.json`.
 
-### Token Optimization
+---
 
-Nine layers of automatic optimization keep context usage low and costs down:
-
-1. **Thinking block stripping** — removes old reasoning from history
-2. **Tool result budgeting** — caps large outputs at 50K chars with preview
-3. **Microcompaction** — clears old tool results (keeps last 8)
-4. **Time-based cleanup** — clears stale results after 60min idle
-5. **Auto-compact** — summarizes history when approaching context limit
-6. **Adaptive max_tokens** — starts at 8K, escalates to 64K on demand
-7. **Prompt-too-long recovery** — auto-compacts and retries up to 3x
-8. **Anthropic prompt caching** — automatically adds `cache_control` markers on system prompt, tools, and recent messages; cuts cached input cost ~90%
-9. **GLM-5 tuning** — sets temperature=0.8 (Zhipu spec), enables thinking mode for `-thinking-` variants; flat $0.001/call billing tracked accurately
-
-### Permission System
-
-By default, read-only tools run automatically. Destructive tools (Write, Edit, Bash) prompt for permission:
-
-```
-  Permission required: Bash
-  Execute: rm -rf node_modules
-
-  Allow? [y]es / [n]o / [a]lways:
-```
-
-Use `--trust` to skip all prompts:
-
-```bash
-runcode --trust
-```
-
-Configure rules in `~/.blockrun/runcode-permissions.json`:
-
-```json
-{
-  "allow": ["Bash(git *)"],
-  "deny": ["Bash(rm -rf *)"]
-}
-```
-
-### Streaming Tool Execution
-
-Concurrent-safe tools (Read, Glob, Grep) start executing while the model is still streaming. Sequential tools (Write, Edit, Bash) wait for the full response. This reduces latency on multi-tool turns.
-
-### Proxy Mode
-
-Use any model through Claude Code by running RunCode as a payment proxy. It translates between OpenAI and Anthropic formats, handles x402 payments, and adds automatic fallback when a model is unavailable.
-
-```bash
-runcode proxy                    # Start payment proxy on :8402
-runcode proxy -m deepseek        # With default model
-```
-
-**One-command setup for Claude Code:**
-
-```bash
-runcode init                     # Auto-configures Claude Code + LaunchAgent
-```
-
-This writes the proxy endpoint into Claude Code's config and installs a macOS LaunchAgent so the proxy starts automatically on login. Run `runcode uninit` to undo.
-
-**How it works:**
-
-```
-Claude Code → RunCode proxy (:8402) → BlockRun API → 55+ models
-                 ↓
-          x402 payment (USDC)
-          SSE format translation
-          Auto-fallback on failure
-```
-
-## Payment
-
-RunCode uses the [x402](https://x402.org) protocol for pay-per-request payments with USDC stablecoins. No accounts, no API keys, no subscriptions.
-
-### Supported chains
-
-| Chain | Default | API endpoint | Gas token |
-|-------|---------|-------------|-----------|
-| **Base** | ✓ | `blockrun.ai/api` | ETH (tiny, ~$0.00) |
-| **Solana** | — | `sol.blockrun.ai/api` | SOL (tiny, ~$0.00) |
-
-Both chains use **USDC** (USD Coin) as the payment token. USDC is a stablecoin pegged 1:1 to USD — $1 USDC = $1.
-
-### Quick setup
-
-**Option A — Base (recommended for most users):**
-```bash
-runcode setup base         # Create an EVM wallet (Base chain)
-runcode balance            # Check USDC balance
-```
-
-Fund with USDC on Base:
-- Buy ETH on Coinbase → bridge to Base → swap to USDC on [Aerodrome](https://aerodrome.finance)
-- Or: buy USDC directly on Coinbase and withdraw to Base network
-- Or: transfer USDC from any Base wallet to the address shown by `runcode balance`
-
-**Option B — Solana:**
-```bash
-runcode setup solana       # Create a Solana wallet
-runcode balance            # Check USDC balance
-```
-
-Fund with USDC on Solana:
-- Buy SOL on Coinbase/Binance → swap to USDC on [Jupiter](https://jup.ag)
-- Or: buy USDC on any exchange and withdraw to Solana network
-- Or: transfer USDC from any Solana wallet (e.g., Phantom, Backpack)
-
-### Switching chains
-
-```bash
-runcode solana             # Switch to Solana
-runcode base               # Switch to Base
-```
-
-Or via environment variable (useful for CI/CD):
-```bash
-RUNCODE_CHAIN=solana runcode
-RUNCODE_CHAIN=base runcode
-```
-
-Wallets are stored locally in `~/.blockrun/`. Each chain has its own wallet — switching doesn't affect the other.
-
-### What does it cost?
-
-| Model | ~Cost per request |
-|-------|-------------------|
-| Free models (Nemotron, Devstral, etc.) | **$0** |
-| DeepSeek V3 / Gemini Flash | ~$0.001 |
-| GLM-5 / GLM-5-Turbo | **$0.001/call** (flat rate, any token count) |
-| Claude Haiku / GPT-5 Mini | ~$0.005 |
-| Claude Sonnet / GPT-5.4 | ~$0.01 |
-| Claude Opus | ~$0.05 |
-
-The balance shown in the status bar updates in real-time as you spend — no need to wait for on-chain confirmation.
-
-Typical usage: **$5-20/month** for active development. Start with free models — no funding required.
-
-### Where to get USDC
-
-| Source | Chain | Notes |
-|--------|-------|-------|
-| [Coinbase](https://coinbase.com) | Base (native) | Cheapest — withdraw directly to Base |
-| [Binance](https://binance.com) | Solana | Withdraw as USDC-SPL |
-| [Jupiter](https://jup.ag) | Solana | Swap any Solana token → USDC |
-| [Aerodrome](https://aerodrome.finance) | Base | Swap ETH/USDC on Base |
-| [Uniswap](https://app.uniswap.org) | Base | Swap on Base network |
-
-## Commands
+## Slash Commands
 
 | Command | Description |
 |---------|-------------|
-| `runcode` | Start the agent (interactive model picker) |
-| `runcode -m <model>` | Start with a specific model |
-| `runcode --trust` | Start in trust mode (no permission prompts) |
-| `runcode --debug` | Start with debug logging |
-| `runcode setup [base\|solana]` | Create payment wallet for Base or Solana |
-| `runcode base` | Switch to Base chain |
-| `runcode solana` | Switch to Solana chain |
-| `runcode balance` | Check USDC balance |
-| `runcode models` | List all models with pricing |
-| `runcode stats` | View usage statistics and savings |
-| `runcode config list` | View configuration |
-| `runcode proxy` | Run as payment proxy for Claude Code |
-| `runcode init` | Auto-configure Claude Code + LaunchAgent |
-| `runcode uninit` | Remove Claude Code proxy config |
+| `/model` | Interactive model picker · `/model <name>` to switch |
+| `/compact` | Compress conversation history (structured summary) |
+| `/search <query>` | Search past sessions by keyword |
+| `/insights` | Rich usage analytics — cost, trends, projections |
+| `/ultrathink` | Deep reasoning mode for hard problems |
+| `/plan` · `/execute` | Read-only planning mode → execution mode |
+| `/history` · `/resume <id>` | Session management |
+| `/commit` · `/push` · `/pr` · `/review` | Git workflow helpers |
+| `/cost` | Session cost and savings vs Claude Opus |
+| `/wallet` | Wallet address and USDC balance |
+| `/help` | Full command list |
 
-### Session Commands
+---
 
-| Command | Description |
-|---------|-------------|
-| `/model` | Interactive model picker |
-| `/model <name>` | Switch model (shortcut or full ID) |
-| `/cost` | Show session cost and savings |
-| `/help` | List all commands |
-| `/exit` | Quit |
+## Migration from RunCode
+
+**Nothing breaks.** If you were using RunCode, your `runcode` command continues to work as an alias for `franklin` for 60 days. Your config at `~/.blockrun/` is unchanged. Your wallet, sessions, and settings all migrate automatically.
+
+The package name is now `@blockrun/franklin`. Update when convenient:
+
+```bash
+npm uninstall -g @blockrun/runcode
+npm install -g @blockrun/franklin
+```
+
+Both commands (`franklin` and `runcode`) work for the next 60 days. After v3.1.0 ships, `runcode` will be removed.
+
+---
 
 ## Architecture
 
 ```
 src/
-├── agent/                  # Core agent loop, LLM client, token optimization
-├── tools/                  # 10 built-in tools (read, write, edit, bash, ...)
-├── ui/                     # Terminal UI + model picker
-├── proxy/                  # Payment proxy for Claude Code
-├── router/                 # Smart model routing
-├── commands/               # CLI commands (setup, balance, stats, ...)
-├── wallet/                 # Wallet management
-├── stats/                  # Usage tracking
-├── config.ts               # Global configuration
-└── index.ts                # Entry point
+├── agent/              # Core agent loop, multi-model LLM client, compaction
+├── tools/              # 12 built-in tools
+├── plugin-sdk/         # Public plugin contract (Workflow, Channel, Plugin)
+├── plugins/            # Plugin registry + runner (plugin-agnostic)
+├── plugins-bundled/    # Ships with Franklin — social, marketing (more coming)
+├── session/            # Persistent sessions + FTS search
+├── stats/              # Usage tracking + insights engine
+├── ui/                 # Terminal UI (Ink-based)
+├── proxy/              # Payment proxy for Claude Code compatibility
+├── router/             # Smart model tier routing
+├── wallet/             # Wallet management (Base + Solana)
+└── commands/           # CLI subcommands
 ```
+
+---
 
 ## Development
 
@@ -306,22 +220,37 @@ git clone https://github.com/BlockRunAI/runcode.git
 cd runcode
 npm install
 npm run build
-npm test             # Deterministic local test suite (no live model required)
-npm run test:e2e     # Live end-to-end suite (hits real model API)
+npm test             # Deterministic local tests (no API calls)
+npm run test:e2e     # Live end-to-end tests (hits real models)
 node dist/index.js --help
 ```
 
+---
+
 ## Contributing
 
-Contributions are welcome. Please open an issue first to discuss what you'd like to change.
+Contributions welcome. Open an issue first to discuss meaningful changes. For plugin ideas, see [docs/plugin-sdk.md](docs/plugin-sdk.md) — the plugin system is how most new features should land.
 
-## License
-
-[Apache License 2.0](LICENSE)
+---
 
 ## Links
 
-- [BlockRun](https://blockrun.ai) — The AI gateway
-- [x402 Protocol](https://x402.org) — Internet-native payments
-- [npm](https://npmjs.com/package/@blockrun/runcode)
-- [Telegram](https://t.me/blockrunAI)
+- **Marketing**: [franklin.run](https://franklin.run)
+- **Trading**: [franklin.bet](https://franklin.bet)
+- **Parent**: [BlockRun](https://blockrun.ai)
+- **npm**: [@blockrun/franklin](https://npmjs.com/package/@blockrun/franklin)
+- **Telegram**: [t.me/blockrunAI](https://t.me/blockrunAI)
+- **x402 protocol**: [x402.org](https://x402.org)
+
+---
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
+
+---
+
+<p align="center">
+  <strong>Franklin runs your money.</strong><br>
+  <sub>Your wallet, your agent, your results.</sub>
+</p>
