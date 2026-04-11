@@ -350,7 +350,11 @@ export class ModelClient {
         }
         case 'error': {
           const errMsg = (chunk.payload['message'] as string) || 'API error';
-          throw new Error(errMsg);
+          const status = chunk.payload['status'] as number | undefined;
+          // Prefix with HTTP status so classifyAgentError() can match on it
+          // (the inner JSON .message field often strips the status code, e.g.
+          // "Service temporarily unavailable" doesn't contain "503").
+          throw new Error(status ? `HTTP ${status}: ${errMsg}` : errMsg);
         }
       }
     }

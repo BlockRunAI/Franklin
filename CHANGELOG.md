@@ -1,5 +1,45 @@
 # Changelog
 
+## 3.1.2 (2026-04-11) — Upstream 503 auto-retry
+
+Reported by user: gateway returned `HTTP 503 "Service temporarily unavailable:
+All workers are busy, please retry later"` and Franklin surfaced the error
+directly instead of retrying. Root cause traced and fixed.
+
+### Fixed
+- **Gateway 503 errors now correctly classify as transient and retry.**
+  `loop.ts` already had an exponential-backoff retry path
+  (1s → 2s → 4s, up to 3 attempts) for any `isTransient` error. But
+  `llm.ts` was extracting only the inner `.message` field from JSON error
+  bodies before throwing — which stripped the HTTP status code AND the
+  literal "Service Unavailable" string. The result: `classifyAgentError`
+  saw only *"Service temporarily unavailable: All workers are busy..."*,
+  which didn't match any of its server-error patterns, so the error was
+  categorised as `unknown / isTransient: false` and the retry branch was
+  skipped. Two fixes stacked for defense-in-depth:
+  1. **`llm.ts`** — the thrown `Error` now includes the HTTP status:
+     `HTTP 503: Service temporarily unavailable: ...`. The classifier's
+     existing `'503'` pattern picks this up directly.
+  2. **`error-classifier.ts`** — broadened the `server` category with
+     `temporarily unavailable`, `workers are busy`, `server busy`,
+     `overloaded`, `please retry later`, `retry in a few`, and
+     `upstream error`. Even if the status prefix is ever lost again,
+     the inner text still classifies correctly.
+- **Regression test added** (`test/local.mjs`) — locks in classification
+  for all three error shapes (with status prefix, inner message only,
+  and just the "workers are busy" fragment).
+
+### What the user sees now
+A 503 from the gateway triggers: `Retrying (1/3) after Server error...`
+in the scrollback, a 2-second wait, then another attempt. If all three
+attempts fail, the final error shows with a recovery tip. Previously,
+the very first 503 was shown to the user with no retry attempt at all.
+
+### Not changed
+- Agent loop, plugin SDK, tools, wallet, session storage — identical to v3.1.1.
+- Token accounting on successful streams is unchanged.
+- The retry count, backoff curve, and max attempts are unchanged (3 / 1s→2s→4s).
+
 ## 3.1.1 (2026-04-11) — /model picker fixes
 
 Two bugs reported by user **Cheetah**, both fixed.

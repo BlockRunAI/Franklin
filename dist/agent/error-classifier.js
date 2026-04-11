@@ -54,6 +54,13 @@ export function classifyAgentError(message) {
         'internal server error',
         'bad gateway',
         'service unavailable',
+        'temporarily unavailable', // "Service temporarily unavailable"
+        'workers are busy', // "All workers are busy"
+        'server busy',
+        'overloaded',
+        'please retry later',
+        'retry in a few',
+        'upstream error',
     ])) {
         return { category: 'server', label: 'Server', isTransient: true };
     }

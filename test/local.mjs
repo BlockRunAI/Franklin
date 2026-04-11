@@ -114,6 +114,33 @@ test('error classifier maps common failure modes', async () => {
   assert.deepEqual(classifyAgentError('500 internal server error').category, 'server');
 });
 
+// Regression: Cheetah saw an upstream 503 that wasn't auto-retried because
+// the JSON-extracted .message field stripped the status code and the literal
+// "Service Unavailable" string. Both forms must now classify as server/transient
+// so loop.ts's backoff retry kicks in.
+test('error classifier catches gateway 503 in all thrown shapes', async () => {
+  const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
+
+  // Form 1: the new thrown format from llm.ts after the v3.1.2 fix
+  const withStatus = classifyAgentError(
+    'HTTP 503: Service temporarily unavailable: All workers are busy, please retry later'
+  );
+  assert.equal(withStatus.category, 'server');
+  assert.equal(withStatus.isTransient, true);
+
+  // Form 2: the raw inner .message if the status prefix is ever lost
+  const inner = classifyAgentError(
+    'Service temporarily unavailable: All workers are busy, please retry later'
+  );
+  assert.equal(inner.category, 'server');
+  assert.equal(inner.isTransient, true);
+
+  // Form 3: just the "workers" fragment
+  const fragment = classifyAgentError('All workers are busy, please retry later');
+  assert.equal(fragment.category, 'server');
+  assert.equal(fragment.isTransient, true);
+});
+
 test('workflow formatter renders aborted steps with warning icon', async () => {
   const { formatWorkflowResult } = await import('../dist/plugins/runner.js');
 
