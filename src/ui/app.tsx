@@ -8,7 +8,11 @@ import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import type { StreamEvent } from '../agent/types.js';
-import { resolveModel } from './model-picker.js';
+import {
+  resolveModel,
+  PICKER_CATEGORIES,
+  PICKER_MODELS_FLAT,
+} from './model-picker.js';
 import { estimateCost } from '../pricing.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
@@ -62,26 +66,9 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
   );
 }
 
-// ─── Model picker data ─────────────────────────────────────────────────────
-
-const PICKER_MODELS = [
-  { id: 'zai/glm-5.1', shortcut: 'glm', label: '🔥 GLM-5.1 (promo til Apr 15)', price: '$0.001/call', highlight: true },
-  { id: 'zai/glm-5.1-turbo', shortcut: 'glm-turbo', label: 'GLM-5.1 Turbo', price: '$0.001/call' },
-  { id: 'anthropic/claude-sonnet-4.6', shortcut: 'sonnet', label: 'Claude Sonnet 4.6', price: '$3/$15' },
-  { id: 'anthropic/claude-opus-4.6', shortcut: 'opus', label: 'Claude Opus 4.6', price: '$5/$25' },
-  { id: 'openai/gpt-5.4', shortcut: 'gpt', label: 'GPT-5.4', price: '$2.5/$15' },
-  { id: 'google/gemini-2.5-pro', shortcut: 'gemini', label: 'Gemini 2.5 Pro', price: '$1.25/$10' },
-  { id: 'deepseek/deepseek-chat', shortcut: 'deepseek', label: 'DeepSeek V3', price: '$0.28/$0.42' },
-  { id: 'google/gemini-2.5-flash', shortcut: 'flash', label: 'Gemini 2.5 Flash', price: '$0.15/$0.6' },
-  { id: 'openai/gpt-5-mini', shortcut: 'mini', label: 'GPT-5 Mini', price: '$0.25/$2' },
-  { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku', label: 'Claude Haiku 4.5', price: '$1/$5' },
-  { id: 'openai/gpt-5-nano', shortcut: 'nano', label: 'GPT-5 Nano', price: '$0.05/$0.4' },
-  { id: 'deepseek/deepseek-reasoner', shortcut: 'r1', label: 'DeepSeek R1', price: '$0.28/$0.42' },
-  { id: 'openai/o4-mini', shortcut: 'o4', label: 'O4 Mini', price: '$1.1/$4.4' },
-  { id: 'nvidia/nemotron-ultra-253b', shortcut: 'free', label: 'Nemotron Ultra 253B', price: 'FREE' },
-  { id: 'nvidia/qwen3-coder-480b', shortcut: 'qwen-coder', label: 'Qwen3 Coder 480B', price: 'FREE' },
-  { id: 'nvidia/devstral-2-123b', shortcut: 'devstral', label: 'Devstral 2 123B', price: 'FREE' },
-] as const satisfies readonly { id: string; shortcut: string; label: string; price: string; highlight?: boolean }[];
+// Picker model list is imported from ./model-picker.js (single source of truth).
+// PICKER_CATEGORIES provides grouped data for rendering; PICKER_MODELS_FLAT
+// provides a flat array for pickerIdx navigation.
 
 interface ToolStatus {
   name: string;
@@ -138,7 +125,7 @@ function RunCodeApp({
   const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number }>>([]);
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
   const [responsePreview, setResponsePreview] = useState('');
-  const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS[0].id);
+  const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS_FLAT[0].id);
   const [ready, setReady] = useState(!startWithPicker);
   const [mode, setMode] = useState<UIMode>(startWithPicker ? 'model-picker' : 'input');
   const [pickerIdx, setPickerIdx] = useState(0);
@@ -235,9 +222,9 @@ function RunCodeApp({
     // Arrow key navigation for model picker
     if (mode !== 'model-picker') return;
     if (key.upArrow) setPickerIdx(i => Math.max(0, i - 1));
-    else if (key.downArrow) setPickerIdx(i => Math.min(PICKER_MODELS.length - 1, i + 1));
+    else if (key.downArrow) setPickerIdx(i => Math.min(PICKER_MODELS_FLAT.length - 1, i + 1));
     else if (key.return) {
-      const selected = PICKER_MODELS[pickerIdx];
+      const selected = PICKER_MODELS_FLAT[pickerIdx];
       setCurrentModel(selected.id);
       onModelChange(selected.id);
       setStatusMsg(`Model → ${selected.label}`);
@@ -312,7 +299,7 @@ function RunCodeApp({
             setStatusMsg(`Model → ${resolved}`);
             setTimeout(() => setStatusMsg(''), 3000);
           } else {
-            const idx = PICKER_MODELS.findIndex(m => m.id === currentModel);
+            const idx = PICKER_MODELS_FLAT.findIndex(m => m.id === currentModel);
             setPickerIdx(idx >= 0 ? idx : 0);
             setMode('model-picker');
           }
@@ -556,39 +543,14 @@ function RunCodeApp({
     };
   }, [handleSubmit]);
 
-  // ── Model Picker ──
-  if (mode === 'model-picker') {
-    return (
-      <Box flexDirection="column">
-        <Text bold>{'\n'}  Select a model  <Text dimColor>(↑↓ navigate, Enter select, Esc cancel)</Text></Text>
-        <Text> </Text>
-        {PICKER_MODELS.map((m, i) => {
-          const isHighlight = 'highlight' in m && m.highlight;
-          const isSelected = i === pickerIdx;
-          const isCurrent = m.id === currentModel;
-          return (
-            <Box key={m.id} marginLeft={2}>
-              <Text
-                inverse={isSelected}
-                color={isSelected ? 'cyan' : isHighlight ? 'yellow' : undefined}
-                bold={isSelected || isHighlight}
-              >
-                {' '}{m.label.padEnd(26)}{' '}
-              </Text>
-              <Text dimColor> {m.shortcut.padEnd(12)}</Text>
-              <Text color={m.price === 'FREE' ? 'green' : isHighlight ? 'yellow' : undefined} dimColor={!isHighlight && m.price !== 'FREE'}>
-                {m.price}
-              </Text>
-              {isCurrent && <Text color="green"> ←</Text>}
-            </Box>
-          );
-        })}
-        <Text> </Text>
-      </Box>
-    );
-  }
+  // ── Render ──
+  // Note: the tree is ALWAYS the same shape across mode changes. Static
+  // components (completedTools, committedResponses) stay mounted so Ink
+  // doesn't discard already-committed scrollback when the model picker
+  // opens/closes. The picker is rendered inline below scrollback, and the
+  // InputBox is hidden while it's active.
+  const inPicker = mode === 'model-picker';
 
-  // ── Normal Mode ──
   return (
     <Box flexDirection="column">
       {/* Status message */}
@@ -784,18 +746,72 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Full-width input box — blocked when permission or askUser dialog is active */}
-      <InputBox
-        input={(permissionRequest || askUserRequest) ? '' : input}
-        setInput={(permissionRequest || askUserRequest) ? () => {} : setInput}
-        onSubmit={(permissionRequest || askUserRequest) ? () => {} : handleSubmit}
-        model={currentModel}
-        balance={liveBalance}
-        sessionCost={totalCost}
-        queued={queuedInput || undefined}
-        focused={!permissionRequest && !askUserRequest}
-        busy={!askUserRequest && (waiting || thinking || tools.size > 0)}
-      />
+      {/* Model picker — rendered inline below scrollback. Categories shown as
+          dim headers, flat cursor (pickerIdx) navigates all non-header rows.
+          Hides the InputBox while active but leaves all Static scrollback
+          above it mounted, so conversation history visually survives a switch. */}
+      {inPicker && (() => {
+        let flatIdx = 0;
+        return (
+          <Box flexDirection="column" marginTop={1}>
+            <Box marginLeft={2}>
+              <Text bold>Select a model </Text>
+              <Text dimColor>(↑↓ navigate, Enter select, Esc cancel)</Text>
+            </Box>
+            {PICKER_CATEGORIES.map((cat) => (
+              <Box key={cat.category} flexDirection="column" marginTop={1}>
+                <Box marginLeft={2}>
+                  <Text dimColor>── {cat.category} ──</Text>
+                </Box>
+                {cat.models.map((m) => {
+                  const myIdx = flatIdx++;
+                  const isSelected = myIdx === pickerIdx;
+                  const isCurrent = m.id === currentModel;
+                  const isHighlight = m.highlight === true;
+                  return (
+                    <Box key={m.id} marginLeft={2}>
+                      <Text
+                        inverse={isSelected}
+                        color={isSelected ? 'cyan' : isHighlight ? 'yellow' : undefined}
+                        bold={isSelected || isHighlight}
+                      >
+                        {' '}{m.label.padEnd(26)}{' '}
+                      </Text>
+                      <Text dimColor> {m.shortcut.padEnd(14)}</Text>
+                      <Text
+                        color={m.price === 'FREE' ? 'green' : isHighlight ? 'yellow' : undefined}
+                        dimColor={!isHighlight && m.price !== 'FREE'}
+                      >
+                        {m.price}
+                      </Text>
+                      {isCurrent && <Text color="green"> ←</Text>}
+                    </Box>
+                  );
+                })}
+              </Box>
+            ))}
+            <Box marginTop={1} marginLeft={2}>
+              <Text dimColor>Your conversation stays above — picking a model keeps all history intact.</Text>
+            </Box>
+          </Box>
+        );
+      })()}
+
+      {/* Full-width input box — blocked when permission or askUser dialog is active
+          or while the model picker is open. */}
+      {!inPicker && (
+        <InputBox
+          input={(permissionRequest || askUserRequest) ? '' : input}
+          setInput={(permissionRequest || askUserRequest) ? () => {} : setInput}
+          onSubmit={(permissionRequest || askUserRequest) ? () => {} : handleSubmit}
+          model={currentModel}
+          balance={liveBalance}
+          sessionCost={totalCost}
+          queued={queuedInput || undefined}
+          focused={!permissionRequest && !askUserRequest}
+          busy={!askUserRequest && (waiting || thinking || tools.size > 0)}
+        />
+      )}
     </Box>
   );
 }
