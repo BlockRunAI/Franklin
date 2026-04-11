@@ -52,7 +52,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/BlockRunAI/runcode"
+    "url": "https://github.com/BlockRunAI/franklin"
   },
   "homepage": "https://franklin.run",
   "engines": {
