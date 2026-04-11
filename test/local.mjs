@@ -47,7 +47,14 @@ function runCli(prompt, { cwd, timeoutMs = 15_000 } = {}) {
 test('cli startup prints banner and model line without model call', { timeout: 20_000 }, async () => {
   const result = await runCli('/exit');
   assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
-  assert.ok(result.stdout.includes('Franklin'), `Missing banner.\nstdout:\n${result.stdout}`);
+  // The tagline line under the FRANKLIN block letters — present in both
+  // side-by-side and text-only layouts. Also uniquely identifies our banner
+  // vs. any other CLI that might print "Franklin" somewhere.
+  assert.ok(
+    result.stdout.includes('blockrun.ai') &&
+    result.stdout.includes('The AI agent with a wallet'),
+    `Missing banner tagline.\nstdout:\n${result.stdout}`
+  );
   assert.ok(result.stdout.includes('Model:'), `Missing model line.\nstdout:\n${result.stdout}`);
 });
 
