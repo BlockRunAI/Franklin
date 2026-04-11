@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.2.2 (2026-04-11) — Bigger portrait + blockrun.ai tagline
+
+Two visual polish fixes on top of v3.2.1's portrait banner.
+
+### Changed
+- **Portrait is now recognizable.** v3.2.1 rendered the full Duplessis
+  painting at 20×10, which put Ben's face in a 17-char-wide × 10-row
+  block — too small, and most of the pixels were spent on the painting's
+  background and Ben's body. User feedback: "看不清" (can't see clearly).
+  Now:
+  1. Source image is pre-cropped with `sips --cropToHeightWidth 1400 1400
+     --cropOffset 400 500` to a square focused on the face.
+  2. chafa renders at `30x14` → actual output is 28 chars × 14 rows, a
+     2× increase in area with all pixels now dedicated to the face.
+  3. Side-by-side layout threshold raised from 90 to 100 terminal cols
+     to accommodate the wider portrait.
+  4. Text is vertically re-centred inside the 14-row portrait (4 rows
+     padding above, 4 below) so the FRANKLIN block sits in the middle.
+- **Tagline: `Franklin` → `blockrun.ai`.** The big block-letter FRANKLIN
+  above already says the product name. The tagline word underneath was
+  redundant. Replacing it with `blockrun.ai` gives readers a real live
+  URL (unlike franklin.run which we own but haven't deployed — see v3.1.0
+  changelog). Both layouts (side-by-side + text-only) updated.
+
+### Test updates
+- `test/local.mjs` and `test/e2e.mjs` now check for `blockrun.ai` +
+  `The AI agent with a wallet` in the startup banner instead of the
+  literal word `Franklin` (which is now only in the block-letter art).
+
+### Not changed
+- Everything else from v3.2.1 — agent loop, `franklin social`, tools,
+  wallet, sessions, Chrome profile location.
+
 ## 3.2.1 (2026-04-11) — Benjamin Franklin portrait banner
 
 Visual upgrade. The startup banner now shows Benjamin Franklin's face
