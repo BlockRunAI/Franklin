@@ -1,5 +1,82 @@
 # Changelog
 
+## 3.2.0 (2026-04-11) — Native X bot (franklin social)
+
+First shipped user-facing workflow: **`franklin social`** is a fully native
+X (Twitter) auto-reply subsystem living in `src/social/`. No MCP dep, no
+plugin SDK indirection, no external CLI. Ships as part of the core npm
+package. Pattern-for-pattern port of mguozhen/social-bot with several
+behavioural fixes; architecture fits Franklin's plugin-first core cleanly.
+
+### Added
+- **`src/social/` subsystem** — ~1,200 lines of native TypeScript across:
+  - `browser.ts` — Playwright-core wrapper with persistent Chrome profile at
+    `~/.blockrun/social-chrome-profile/`. Nine primitives: `open`,
+    `snapshot`, `click`, `clickXY`, `type`, `press`, `scroll`, `screenshot`,
+    `getUrl`. All argv-based — zero shell injection surface even if the
+    LLM emits `$(rm -rf /)` as reply text.
+  - `a11y.ts` — `[depth-idx]` ref tree helpers ported from social-bot's
+    Python regex model. Elements are located by role + label, not CSS —
+    survives X/Reddit DOM changes better than selectors.
+  - `db.ts` — JSONL-backed dedup and reply log at
+    `~/.blockrun/social-replies.jsonl` and `~/.blockrun/social-prekeys.jsonl`.
+    No SQLite dep. In-memory indexes for O(1) lookups. URL canonicalisation
+    (x.com ≡ twitter.com ≡ mobile.twitter.com; strips `?s=20` trackers).
+  - `ai.ts` — Uses Franklin's `ModelClient` so reply generation gets
+    multi-model routing, x402 payments, and automatic fallback for free.
+    `detectProduct()` is a pure keyword-score function (no LLM call).
+  - `x.ts` — End-to-end X flow: search → pre-key dedup → product routing
+    → generate reply → canonical-URL dedup → post → confirmation check.
+  - `config.ts` — Typed config at `~/.blockrun/social-config.json` with
+    handle, products (name + description + trigger_keywords), X search
+    queries, daily target, min delay, reply style rules.
+- **`src/commands/social.ts`** — CLI dispatcher for:
+  - `franklin social setup` — install chromium (`npx playwright install
+    chromium`, one-time ~150MB), scaffold default config.
+  - `franklin social login x` — open browser to x.com, wait for manual
+    login, cookies persist in the profile dir for all future runs.
+  - `franklin social run [--dry-run|--live] [-m <model>]` — search all
+    configured queries, generate drafts, optionally post. Default is dry-run
+    for safety; `--live` required to actually post.
+  - `franklin social stats` — posted/drafted/skipped totals, total cost,
+    by-product breakdown.
+  - `franklin social config [path|show|edit]` — inspect or edit the config.
+- **`playwright-core` dependency** (~2MB). Chromium binary downloaded
+  lazily on first run via `franklin social setup`.
+
+### Improved over social-bot's approach
+1. **Pre-key dedup runs BEFORE the LLM call.** social-bot generates a
+   reply with Sonnet, then opens the tweet, then checks dedup — wasting
+   tokens on every duplicate. Franklin hashes
+   `(author + snippet[0:80] + time)` first and skips duplicates without any
+   LLM spend.
+2. **`'failed'` status does NOT blacklist.** social-bot permanently blocks
+   any URL that failed once, so transient network errors kill the lead
+   forever. Franklin only blacklists `'posted'` — failures can be retried
+   on the next run.
+3. **Multi-model routing.** social-bot hardcodes `claude-sonnet-4-6` for
+   every call, including throwaway filter decisions. Franklin's default
+   runs on NVIDIA Nemotron free tier for zero cost; `--model` or the
+   `reply_style.model_tier` config escalates per-task.
+4. **No shell injection.** social-bot's `browse type '<text>'` with
+   `shell=True` f-string interpolation is an LLM-output→RCE primitive.
+   Franklin's Playwright calls are all argv arrays.
+5. **URL canonicalisation.** x.com/twitter.com/mobile.twitter.com are
+   aliased; `?s=20` tracking params stripped; trailing slashes removed.
+   social-bot stores raw URLs, so the same tweet can be replied-to twice
+   under different URL shapes.
+
+### Retired
+- **`src/plugins-bundled/social/`** — the plugin-SDK-based social
+  scaffold. It was only ever a skeleton; the real implementation never
+  landed in that form. Plugin SDK itself stays for future third-party
+  plugins — only the bundled social dir is removed.
+
+### Not changed
+- Agent loop, tools, plugin SDK contract, wallet, sessions, payment flow —
+  identical to v3.1.2.
+- The `runcode` alias still works through the 60-day window from v3.0.0.
+
 ## 3.1.2 (2026-04-11) — Upstream 503 auto-retry
 
 Reported by user: gateway returned `HTTP 503 "Service temporarily unavailable:

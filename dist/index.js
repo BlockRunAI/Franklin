@@ -111,13 +111,33 @@ program
     const matches = searchSessions(query, { limit, model: opts.model });
     process.stdout.write(formatSearchResults(matches, query));
 });
+// ─── franklin social (native X bot) ───────────────────────────────────────
+// First-class subcommand. Handles setup / login / run / stats / config
+// subactions. No plugin SDK, no MCP — everything lives in src/social/.
+program
+    .command('social [action] [arg]')
+    .description('Native X bot — franklin social setup | login x | run | stats | config')
+    .option('--dry-run', 'Generate drafts without posting (default for run)')
+    .option('--live', 'Actually post to X (overrides dry-run default)')
+    .option('-m, --model <model>', 'Override the model used for reply generation')
+    .option('--debug', 'Enable debug logging')
+    .action(async (action, arg, opts) => {
+    const { socialCommand } = await import('./commands/social.js');
+    await socialCommand(action, arg, opts);
+});
 // Plugin commands — dynamically registered from discovered plugins.
 // Core stays plugin-agnostic: this loop adds a command for each installed plugin.
+// Note: `social` is now a first-class native command above and NOT loaded as a
+// plugin (the bundled social plugin was retired in v3.2.0 in favour of the
+// src/social/ subsystem).
 {
     const { loadAllPlugins, listWorkflowPlugins } = await import('./plugins/registry.js');
     await loadAllPlugins();
     for (const lp of listWorkflowPlugins()) {
         const { manifest } = lp;
+        // Skip any plugin whose id collides with a built-in command (e.g. social)
+        if (manifest.id === 'social')
+            continue;
         program
             .command(`${manifest.id} [action]`)
             .description(manifest.description)
