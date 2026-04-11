@@ -3,48 +3,45 @@ import chalk from 'chalk';
 // ─── Ben Franklin portrait ─────────────────────────────────────────────────
 //
 // Generated once, at build time, from the Joseph Duplessis 1785 oil painting
-// of Benjamin Franklin (same source used for the engraving on the US $100
-// bill). Public domain image from Wikimedia Commons:
+// of Benjamin Franklin (same source as the portrait on the US $100 bill).
+// Public domain image from Wikimedia Commons:
 //   https://commons.wikimedia.org/wiki/File:BenFranklinDuplessis.jpg
 //
 // Pipeline:
 //   1. Crop the 2403×2971 original to a 1400×1400 square centred on the face
 //      (sips --cropToHeightWidth 1400 1400 --cropOffset 400 500)
-//   2. Convert with ascii-image-converter in braille mode:
-//      ascii-image-converter ben-face.jpg --dimensions 34,16 --braille \
-//        --threshold 110
+//   2. Convert via chafa:
+//      chafa --size=30x14 --symbols=block --colors=256 ben-face.jpg
+//   3. Strip cursor visibility control codes (\x1b[?25l / \x1b[?25h)
+//   4. Paste here as hex-escaped string array (readable + diff-friendly)
 //
-// Braille characters (U+2800..U+28FF) encode 2×4 dot matrices per cell, so
-// a 34×16 braille output gives 68×64 = 4,352 effective "pixels" — 2.7× the
-// resolution of chafa half-block mode at the same visible size. For a face,
-// which is all about silhouette + key features, this is a massive win.
+// Visible dimensions: ~28 characters wide × 14 rows tall.
 //
-// The output is pure Unicode — no ANSI escape codes, no color tinting baked
-// in — which means it's trivial to wrap in chalk.hex() at render time for
-// brand tinting, and it ships as a clean readable TS array.
+// Rendered best in a 256-color or truecolor terminal. Degrades gracefully
+// on ancient terminals — but those are long gone and we don't support them.
 const BEN_PORTRAIT_ROWS: readonly string[] = [
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣤⣴⣶⣶⣦⣤⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⣿⣿⠁⣀⠀⠉⣿⣿⣿⠋⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⢀⠀⢠⣿⣿⣿⣾⣤⣴⣴⣿⣿⣷⠀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⢠⡄⠀⠀⠁⢀⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⢾⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠸⡔⠂⠀⠀⠘⣿⣿⣿⣿⣿⣿⣿⣿⣛⣛⠛⠁⠈⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⣿⣿⣿⣿⣿⣿⢿⣿⠿⢷⠄⠀⠙⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⣿⣿⡿⣿⡿⣿⣏⠛⠛⠙⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⡴⠺⠖⢒⣂⢄⡀⣹⣿⣿⣿⣶⣙⠂⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⣶⣤⣄⡀⠈⠻⠿⡙⠗⠸⡻⣿⡻⣿⣿⣷⣦⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⣿⡟⠻⣿⣦⡀⠀⢁⡆⠀⠹⢿⣿⣮⣟⠿⣿⠏⠀⠀⣀⣴⣶⣦⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⣿⣷⣄⠈⠿⣷⡀⣾⣿⡀⢦⢸⣿⡹⣿⣿⡆⣤⡐⠻⡻⣿⣿⣿⣿⣦⠀⠀⠀⠀⠀⠀⠀⠀',
+  '\x1b[0m\x1b[38;5;16;48;5;16m      \x1b[38;5;232m▁\x1b[38;5;235;48;5;232m▂\x1b[38;5;58;48;5;233m▄\x1b[38;5;95;48;5;234m▆\x1b[38;5;137;48;5;58m▄\x1b[38;5;173m▅\x1b[48;5;94m▅\x1b[48;5;58m▆▅\x1b[48;5;237m▄\x1b[38;5;137;48;5;234m▃\x1b[38;5;235;48;5;233m▂   \x1b[38;5;233;48;5;232m▂▅\x1b[48;5;233m     \x1b[0m',
+  '\x1b[38;5;16;48;5;16m     \x1b[38;5;235;48;5;232m▗\x1b[38;5;233;48;5;236m▘\x1b[38;5;8;48;5;239m▌\x1b[38;5;95;48;5;137m▋\x1b[38;5;137;48;5;179m▘  \x1b[38;5;179;48;5;173m▃\x1b[48;5;179m   \x1b[48;5;173m▊\x1b[38;5;58;48;5;137m▝\x1b[38;5;94;48;5;235m▖\x1b[38;5;234;48;5;233m▅▄▂  ▂▗▄▃\x1b[0m',
+  '\x1b[38;5;16;48;5;16m    \x1b[38;5;235;48;5;232m▗\x1b[38;5;236;48;5;237m▍ \x1b[38;5;58;48;5;94m▋\x1b[38;5;95;48;5;173m▌\x1b[48;5;179m \x1b[38;5;179;48;5;215m▍\x1b[48;5;221m▔\x1b[38;5;222;48;5;180m▍\x1b[48;5;179m  \x1b[38;5;173m▕\x1b[38;5;179;48;5;173m▅\x1b[38;5;137m▕\x1b[38;5;95;48;5;58m▍\x1b[38;5;58;48;5;235m▖\x1b[38;5;235;48;5;234m▖▃▄     \x1b[0m',
+  '\x1b[38;5;16;48;5;16m   \x1b[38;5;233m▗\x1b[48;5;235m▏\x1b[38;5;237;48;5;238m▊\x1b[38;5;238;48;5;236m▌\x1b[38;5;236;48;5;58m▖\x1b[38;5;95;48;5;179m▌ \x1b[38;5;137m▗\x1b[38;5;94m▄\x1b[38;5;58m▄\x1b[38;5;94m▄\x1b[38;5;137m▖\x1b[38;5;173m▗\x1b[38;5;131m▗\x1b[38;5;58;48;5;137m▃\x1b[38;5;131;48;5;58m▘\x1b[38;5;234m▕\x1b[48;5;236m▖\x1b[38;5;236;48;5;235m▃    \x1b[38;5;234m▝\x1b[38;5;235;48;5;234m▃\x1b[0m',
+  '\x1b[38;5;16;48;5;16m  \x1b[38;5;235;48;5;232m▂\x1b[38;5;236;48;5;234m▄\x1b[38;5;237;48;5;236m▗\x1b[38;5;8;48;5;239m▖\x1b[38;5;240;48;5;8m▎\x1b[38;5;94;48;5;236m▕\x1b[38;5;137;48;5;179m▍ \x1b[38;5;94;48;5;137m▝\x1b[38;5;173;48;5;94m▂\x1b[38;5;137;48;5;58m▂\x1b[48;5;94m▃\x1b[48;5;179m▘\x1b[38;5;173m▝\x1b[38;5;137;48;5;235m▍\x1b[38;5;94;48;5;236m▝\x1b[38;5;235;48;5;94m▖\x1b[38;5;52;48;5;58m▖\x1b[38;5;235;48;5;233m▝\x1b[48;5;236m▁\x1b[48;5;235m      \x1b[0m',
+  '\x1b[38;5;232;48;5;16m▗\x1b[38;5;233;48;5;236m▌\x1b[38;5;95;48;5;239m▅\x1b[48;5;240m▃\x1b[38;5;94;48;5;238m▖\x1b[38;5;240;48;5;8m▝\x1b[38;5;95;48;5;236m▘\x1b[38;5;236;48;5;95m▘\x1b[38;5;173;48;5;179m▏ \x1b[38;5;215m▄ \x1b[38;5;179;48;5;137m▅\x1b[38;5;137;48;5;179m▘\x1b[38;5;216m▘\x1b[38;5;179;48;5;216m▃\x1b[48;5;94m▌\x1b[38;5;94;48;5;131m▘\x1b[38;5;95;48;5;94m▋\x1b[38;5;94;48;5;52m▃\x1b[38;5;52;48;5;233m▎\x1b[38;5;233;48;5;235m▅\x1b[38;5;234m▂     \x1b[0m',
+  '\x1b[38;5;233;48;5;232m▕\x1b[38;5;234;48;5;236m▘\x1b[38;5;8;48;5;95m▌ \x1b[38;5;236m▃\x1b[38;5;58;48;5;234m▘\x1b[38;5;94m▝\x1b[48;5;137m▎\x1b[38;5;179;48;5;173m▍\x1b[38;5;173;48;5;179m▌▆▖▃▞\x1b[38;5;94;48;5;173m▗\x1b[48;5;179m▄\x1b[38;5;179;48;5;58m▘\x1b[38;5;94;48;5;52m▝\x1b[38;5;130;48;5;131m▃\x1b[38;5;94;48;5;58m▍\x1b[38;5;52;48;5;232m▎\x1b[38;5;232;48;5;233m▌\x1b[38;5;233;48;5;234m▏\x1b[38;5;234;48;5;235m▎\x1b[38;5;236m▌▅▄ \x1b[0m',
+  '\x1b[38;5;232;48;5;235m▋\x1b[38;5;58;48;5;236m▝\x1b[48;5;58m \x1b[38;5;239;48;5;94m▅\x1b[38;5;237;48;5;235m▂\x1b[38;5;235;48;5;233m▂\x1b[38;5;234;48;5;94m▄\x1b[38;5;94;48;5;137m▖\x1b[48;5;173m \x1b[38;5;173;48;5;179m▃  \x1b[38;5;137m▂▃▂\x1b[38;5;131;48;5;137m▃\x1b[38;5;58;48;5;131m▝\x1b[38;5;94;48;5;52m▅\x1b[48;5;94m \x1b[48;5;58m▍\x1b[38;5;235;48;5;232m▎\x1b[38;5;232;48;5;233m▋\x1b[38;5;233;48;5;234m▍\x1b[38;5;235;48;5;236m▏  \x1b[38;5;236;48;5;235m▎ \x1b[0m',
+  '\x1b[38;5;234;48;5;235m▏\x1b[38;5;236;48;5;237m▋\x1b[38;5;237;48;5;8m▃\x1b[38;5;235;48;5;238m▗\x1b[38;5;237m▖\x1b[38;5;58;48;5;234m▌\x1b[38;5;234;48;5;233m▎\x1b[38;5;236;48;5;137m▎\x1b[38;5;137;48;5;173m▄ \x1b[38;5;173;48;5;179m▄▃ \x1b[38;5;179;48;5;215m▅\x1b[38;5;173;48;5;179m▄\x1b[38;5;179;48;5;137m▘\x1b[38;5;137;48;5;131m▌\x1b[48;5;94m \x1b[38;5;58m▗\x1b[38;5;233;48;5;58m▗\x1b[48;5;233m  \x1b[38;5;234;48;5;236m▘ \x1b[38;5;236;48;5;235m▃▞\x1b[38;5;235;48;5;236m▄\x1b[48;5;235m \x1b[0m',
+  '\x1b[38;5;234;48;5;235m▏▆\x1b[38;5;235;48;5;237m▌\x1b[38;5;236m▝\x1b[38;5;237;48;5;234m▍\x1b[38;5;234;48;5;233m▖\x1b[38;5;240;48;5;234m▗\x1b[38;5;101;48;5;186m▌\x1b[38;5;137m▝\x1b[48;5;137m   \x1b[48;5;173m▆▄▃\x1b[38;5;131m▂\x1b[38;5;130;48;5;137m▂\x1b[38;5;58;48;5;94m▃\x1b[48;5;58m \x1b[38;5;234;48;5;233m▏\x1b[38;5;235;48;5;234m▅\x1b[48;5;236m▌   ▝ \x1b[48;5;235m \x1b[0m',
+  '\x1b[38;5;234;48;5;233m▕\x1b[38;5;239;48;5;235m▂\x1b[38;5;95m▃\x1b[48;5;237m▄\x1b[48;5;236m▄\x1b[48;5;235m▄\x1b[38;5;236;48;5;240m▘\x1b[38;5;101;48;5;95m▕\x1b[48;5;186m▖\x1b[38;5;179;48;5;229m▝\x1b[38;5;223;48;5;137m▃\x1b[38;5;137;48;5;131m▁\x1b[38;5;95m▅\x1b[38;5;94m▂\x1b[48;5;94m \x1b[38;5;58m▗\x1b[38;5;94;48;5;58m▔\x1b[38;5;236m▁ \x1b[48;5;235m▆\x1b[38;5;235;48;5;236m▍\x1b[38;5;236;48;5;235m▆\x1b[48;5;236m    \x1b[38;5;235m▅\x1b[48;5;235m \x1b[0m',
+  '\x1b[38;5;237;48;5;95m▔       \x1b[38;5;137;48;5;101m▝\x1b[48;5;187m▅\x1b[38;5;180;48;5;229m▂\x1b[38;5;143;48;5;222m▔\x1b[38;5;186;48;5;58m▅\x1b[38;5;179m▂\x1b[38;5;95m▁\x1b[38;5;235m▂\x1b[38;5;236m▄\x1b[48;5;233m▌\x1b[38;5;235m▔\x1b[38;5;233;48;5;236m▅\x1b[38;5;234m▃\x1b[38;5;235m▁    ▔\x1b[48;5;235m \x1b[0m',
+  '\x1b[38;5;101;48;5;137m▔\x1b[38;5;95;48;5;101m▄▔\x1b[38;5;101;48;5;95m▄  ▗ \x1b[38;5;240m▖\x1b[38;5;95;48;5;101m▘\x1b[38;5;137m▔\x1b[48;5;222m▅\x1b[48;5;186m▃\x1b[48;5;179m▂\x1b[38;5;101;48;5;95m▌\x1b[48;5;58m \x1b[38;5;238;48;5;236m▁\x1b[38;5;180;48;5;234m▃\x1b[48;5;235m▄\x1b[38;5;179;48;5;234m▃\x1b[38;5;95m▁\x1b[38;5;234;48;5;235m▊\x1b[48;5;236m▆\x1b[38;5;235m▃\x1b[38;5;234m▂\x1b[38;5;235m▁ \x1b[38;5;236;48;5;235m▎\x1b[0m',
+  '\x1b[38;5;137;48;5;137m \x1b[48;5;95m▄ \x1b[38;5;95;48;5;101m▖\x1b[48;5;137m▝\x1b[48;5;95m \x1b[38;5;101m▅\x1b[48;5;239m▋\x1b[48;5;95m \x1b[38;5;95;48;5;137m▋\x1b[38;5;101;48;5;95m▍\x1b[38;5;95;48;5;101m▖\x1b[38;5;101;48;5;95m▆\x1b[38;5;239m▗\x1b[38;5;101m▄ \x1b[38;5;95;48;5;137m▅\x1b[38;5;137;48;5;180m▅\x1b[38;5;180;48;5;186m▃\x1b[48;5;143m▆\x1b[38;5;95m▔\x1b[38;5;143;48;5;235m▖\x1b[48;5;234m \x1b[38;5;235m▆\x1b[38;5;234;48;5;235m▝\x1b[38;5;235;48;5;234m▞\x1b[38;5;234;48;5;235m▄ \x1b[0m',
 ];
 
 // ─── FRANKLIN text banner (gold → emerald gradient) ────────────────────────
 //
-// Kept from v3.1.0. 6 block-letter rows, each tinted with an interpolated
-// colour between GOLD_START and EMERALD_END for a smooth vertical gradient.
+// Kept from v3.1.0. The text is laid out as 6 block-letter rows. Each row
+// is tinted with a color interpolated between GOLD_START and EMERALD_END,
+// giving the smooth vertical gradient that's been Franklin's banner since
+// v3.1.0.
 const FRANKLIN_ART: readonly string[] = [
   ' ███████╗██████╗  █████╗ ███╗   ██╗██╗  ██╗██╗     ██╗███╗   ██╗',
   ' ██╔════╝██╔══██╗██╔══██╗████╗  ██║██║ ██╔╝██║     ██║████╗  ██║',
@@ -84,19 +81,23 @@ function interpolateHex(start: string, end: string, t: number): string {
 // ─── Banner layout ─────────────────────────────────────────────────────────
 
 // Minimum terminal width to show the side-by-side portrait + text layout.
-// Portrait: 34 cols braille, FRANKLIN text: ~65 cols, gap: 3 cols,
-// total: ~102 cols. Add a 3-col margin of safety → 105.
-const MIN_WIDTH_FOR_PORTRAIT = 105;
+// The portrait is ~28 chars, the FRANKLIN text is ~65 chars, plus a 3-char
+// gap = 96 chars. We add a small margin so 100 cols is the threshold.
+const MIN_WIDTH_FOR_PORTRAIT = 100;
 
 /**
- * Pad a line to an exact visual width. Braille characters have no ANSI
- * escape codes and are all 1 cell wide, so this is a straightforward
- * codepoint count.
+ * Pad a line to an exact visual width, ignoring ANSI escape codes when
+ * measuring. Used to align the portrait's right edge before the text block.
  */
-function padBraillePortrait(s: string, targetWidth: number): string {
-  const current = [...s].length;
+function padVisible(s: string, targetWidth: number): string {
+  // Strip ANSI color codes to measure visible length
+  // eslint-disable-next-line no-control-regex
+  const visible = s.replace(/\x1b\[[0-9;]*m/g, '');
+  // Unicode block characters are width 1 (they're half-blocks, not double-width)
+  const current = [...visible].length;
   if (current >= targetWidth) return s;
-  return s + ' '.repeat(targetWidth - current);
+  // Append a reset + padding so background colors don't bleed into the gap
+  return s + '\x1b[0m' + ' '.repeat(targetWidth - current);
 }
 
 export function printBanner(version: string): void {
@@ -111,45 +112,39 @@ export function printBanner(version: string): void {
 }
 
 /**
- * Full layout: Ben Franklin braille portrait on the left, FRANKLIN gradient
- * text on the right. Portrait is 16 rows × 34 cols, text is 6 rows + 1-row
- * tagline. Text starts at portrait row 5 so the FRANKLIN block aligns with
- * Ben's face region (head at rows 1-4, face at rows 5-10, shoulders 11-16),
- * giving the classic "portrait and nameplate" composition.
+ * Full layout: Ben Franklin portrait on the left, FRANKLIN text block on the
+ * right. Portrait is 14 rows × ~28 chars, text is 6 rows — text is vertically
+ * centred inside the portrait with 4 rows of padding above and 4 below,
+ * tagline sitting right under the FRANKLIN block.
  *
- *   row  1   ⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣤⣴⣶⣶⣦⣤⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
- *   row  2   ⠀⠀⠀⠀⠀⠀⠀⠀⣰⣿⣿⣿⣿⣿⣿⣿⣿⣷⡄⠀⠀⠀⠀⠀⠀⠀⠀
- *   row  3   ⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⠀⠀⠀⠀⠀⠀⠀
- *   row  4   ⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀
- *   row  5   ⠀⠀⠀⠀⠀⠀⠀⢀⣿⣿⣿⠁...         ███████╗██████╗  █████╗ ...
- *   row  6   ⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣾...         ██╔════╝██╔══██╗██╔══██╗...
- *   row  7   ⠀⠀⠀⢠⡄⠀⠀⠀⢀⣾⣿...            █████╗  ██████╔╝███████║...
- *   row  8   ⠀⠀⠀⠸⡔⠂⠀⠀⠘⣿⣿...            ██╔══╝  ██╔══██╗██╔══██║...
- *   row  9   ⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⣿...            ██║     ██║  ██║██║  ██║...
- *   row 10   ⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿...            ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝...
- *   row 11   ⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⣿...            blockrun.ai · The AI agent with a wallet · vX
- *   row 12   ⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⣿...
- *   row 13-16: neck, collar, body
+ *   [portrait row  1]                (empty)
+ *   [portrait row  2]                (empty)
+ *   [portrait row  3]                (empty)
+ *   [portrait row  4]                (empty)
+ *   [portrait row  5]   ███████╗██████╗  █████╗ ...
+ *   [portrait row  6]   ██╔════╝██╔══██╗██╔══██╗...
+ *   [portrait row  7]   █████╗  ██████╔╝███████║...
+ *   [portrait row  8]   ██╔══╝  ██╔══██╗██╔══██║...
+ *   [portrait row  9]   ██║     ██║  ██║██║  ██║...
+ *   [portrait row 10]   ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝...
+ *   [portrait row 11]   blockrun.ai · The AI agent with a wallet · vX
+ *   [portrait row 12]                (empty)
+ *   [portrait row 13]                (empty)
+ *   [portrait row 14]                (empty)
  */
 function printSideBySide(version: string): void {
-  const TEXT_TOP_OFFSET = 4;  // text block starts at portrait row 5 (0-indexed row 4)
-  const PORTRAIT_WIDTH = 35;  // 34 cols braille + 1 trailing space
-  const GAP = '  ';
+  const TEXT_TOP_OFFSET = 4;  // rows of portrait above the text
+  const PORTRAIT_WIDTH = 29;  // columns (char width) of the portrait + 1 pad
+  const GAP = '  ';           // gap between portrait and text
 
   const portraitRows = BEN_PORTRAIT_ROWS;
   const textRows = FRANKLIN_ART.length;
   const totalRows = Math.max(portraitRows.length, TEXT_TOP_OFFSET + textRows + 2);
 
-  // Tint the braille portrait in dim white for a "pencil portrait" feel.
-  // Braille chars carry no colour on their own — chalk wraps them in an
-  // ANSI colour sequence at render time.
-  const portraitTint = chalk.hex('#E8E8E8');
-
   for (let i = 0; i < totalRows; i++) {
-    const rawPortraitLine = i < portraitRows.length
-      ? padBraillePortrait(portraitRows[i], PORTRAIT_WIDTH)
+    const portraitLine = i < portraitRows.length
+      ? padVisible(portraitRows[i], PORTRAIT_WIDTH)
       : ' '.repeat(PORTRAIT_WIDTH);
-    const portraitLine = portraitTint(rawPortraitLine);
 
     // Text column content
     let textCol = '';
@@ -161,23 +156,26 @@ function printSideBySide(version: string): void {
       textCol = chalk.hex(color)(FRANKLIN_ART[textIdx]);
     } else if (textIdx === textRows) {
       // Tagline row sits right under the FRANKLIN block.
-      // The big block-letter FRANKLIN above already says the product name
-      // — the tagline uses that line for the parent brand URL
-      // (blockrun.ai — a real live domain; see v3.1.0 notes for why
-      // franklin.run is explicitly NOT used here).
+      // The big block-letter "FRANKLIN" above already says the product
+      // name — the tagline uses that real estate for the parent brand URL
+      // (blockrun.ai, which is a real live domain — unlike franklin.run
+      // which we own but haven't deployed yet, see v3.1.0 changelog).
       textCol =
         chalk.bold.hex(GOLD_START)('  blockrun.ai') +
         chalk.dim('  ·  The AI agent with a wallet  ·  v' + version);
     }
 
-    process.stdout.write(portraitLine + GAP + textCol + '\n');
+    // Write with a reset at the very start to prevent stray bg from the
+    // previous line bleeding into the current row's portrait column.
+    process.stdout.write('\x1b[0m' + portraitLine + GAP + textCol + '\x1b[0m\n');
   }
+  // Trailing blank line for breathing room
   process.stdout.write('\n');
 }
 
 /**
  * Compact layout for narrow terminals: just the FRANKLIN text block with
- * its gradient, no portrait.
+ * its gradient, no portrait. Matches the v3.1.0 banner exactly.
  */
 function printTextOnly(version: string): void {
   const textRows = FRANKLIN_ART.length;
