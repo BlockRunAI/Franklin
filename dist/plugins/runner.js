@@ -416,11 +416,12 @@ export function formatWorkflowResult(workflow, result) {
     lines.push(sep);
     for (const step of result.steps) {
         const costStr = step.cost > 0 ? ` ($${step.cost.toFixed(4)})` : '';
-        const icon = step.status === 'error'
+        const status = inferStepStatus(step);
+        const icon = status === 'error'
             ? '✗'
-            : step.status === 'aborted'
+            : status === 'aborted'
                 ? '⚠'
-                : step.status === 'skipped'
+                : status === 'skipped'
                     ? '○'
                     : '✓';
         lines.push(`  ${icon} ${step.name}: ${step.summary}${costStr}`);
@@ -429,6 +430,22 @@ export function formatWorkflowResult(workflow, result) {
     lines.push(`  Items: ${result.itemsProcessed}  Cost: $${result.totalCost.toFixed(4)}  Time: ${(result.durationMs / 1000).toFixed(1)}s`);
     lines.push(`${sep}\n`);
     return lines.join('\n');
+}
+function inferStepStatus(step) {
+    if (step.status)
+        return step.status;
+    const summary = step.summary.toLowerCase();
+    if (summary.startsWith('error'))
+        return 'error';
+    if (summary.includes('abort'))
+        return 'aborted';
+    if (summary.includes('no posts found'))
+        return 'aborted';
+    if (summary.includes('[dry-run] skipped'))
+        return 'skipped';
+    if (summary.includes(' skipped'))
+        return 'skipped';
+    return 'ok';
 }
 export function formatWorkflowStats(workflow, stats) {
     const lines = [];
