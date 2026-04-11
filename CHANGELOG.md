@@ -1,5 +1,43 @@
 # Changelog
 
+## 3.1.1 (2026-04-11) — /model picker fixes
+
+Two bugs reported by user **Cheetah**, both fixed.
+
+### Fixed
+- **`/model` picker only showed 16 models.** The Ink UI had a hardcoded
+  16-entry `PICKER_MODELS` array that was completely disconnected from the
+  canonical list in `src/pricing.ts` (55+ models). Users couldn't reach GLM,
+  Grok, Kimi, Minimax, Gemini 3.1 Pro, O1, O3, Codex, or most of the NVIDIA
+  free tier from the picker at all. Now the picker pulls from a single
+  shared source (`PICKER_CATEGORIES` in `src/ui/model-picker.ts`) with
+  **32 models across 6 categories**: Promo, Smart routing, Premium frontier,
+  Reasoning, Budget, Free. Every ID is verified against `pricing.ts`.
+- **Switching models wiped the scrollback.** When a user typed `/model`
+  mid-session, Ink's `mode === 'model-picker'` branch returned an entirely
+  different render tree, which unmounted the two `<Static>` components
+  holding the conversation scrollback (`completedTools` and
+  `committedResponses`). When the picker closed, they re-mounted fresh —
+  and Ink's `<Static>` doesn't re-commit already-written items, so the
+  screen came back visually empty. The agent's message history was actually
+  intact on the backend, but from the user's seat the context was gone.
+  Now the picker renders inline below the scrollback as an overlay, and
+  the Static components stay mounted across mode transitions.
+
+### Internal
+- Single source of truth: `PICKER_CATEGORIES`, `PICKER_MODELS_FLAT`, and
+  `ModelEntry` are now exported from `src/ui/model-picker.ts` and imported
+  by `src/ui/app.tsx`. Previously the Ink UI and the readline picker had
+  two independent hardcoded lists that could drift.
+- `src/ui/app.tsx` render function always returns the same tree shape
+  regardless of `mode` — safer for future UI modes (settings, wallet
+  details, etc.) to share scrollback instead of unmounting it.
+
+### Not changed
+- Agent loop, plugin SDK, tools, tests, wallet, session storage, payment
+  flow — all identical to v3.1.0.
+- The `runcode` alias still works through the 60-day window from v3.0.0.
+
 ## 3.1.0 (2026-04-11) — Brand cleanup
 
 Remove premature references to `franklin.run` and `franklin.bet` domains

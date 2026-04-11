@@ -65,44 +65,83 @@ export function resolveModel(input) {
     const lower = input.trim().toLowerCase();
     return MODEL_SHORTCUTS[lower] || input.trim();
 }
-const PICKER_MODELS = [
+/**
+ * Single source of truth for the /model picker.
+ * ~30 models across 6 categories. Every ID here is present in src/pricing.ts
+ * and every shortcut is in MODEL_SHORTCUTS above.
+ *
+ * Both the Ink UI picker (src/ui/app.tsx) and the readline picker
+ * (pickModel() below) import from this array. To add or remove models,
+ * edit this one place.
+ */
+export const PICKER_CATEGORIES = [
     {
-        category: 'Popular',
+        category: '🔥 Promo (flat $0.001/call)',
+        models: [
+            { id: 'zai/glm-5.1', shortcut: 'glm', label: 'GLM-5.1', price: '$0.001/call', highlight: true },
+            { id: 'zai/glm-5.1-turbo', shortcut: 'glm-turbo', label: 'GLM-5.1 Turbo', price: '$0.001/call', highlight: true },
+        ],
+    },
+    {
+        category: '🧠 Smart routing (auto-pick)',
+        models: [
+            { id: 'blockrun/auto', shortcut: 'auto', label: 'Auto', price: 'routed' },
+            { id: 'blockrun/eco', shortcut: 'eco', label: 'Eco', price: 'cheapest' },
+            { id: 'blockrun/premium', shortcut: 'premium', label: 'Premium', price: 'best' },
+        ],
+    },
+    {
+        category: '✨ Premium frontier',
         models: [
             { id: 'anthropic/claude-sonnet-4.6', shortcut: 'sonnet', label: 'Claude Sonnet 4.6', price: '$3/$15' },
             { id: 'anthropic/claude-opus-4.6', shortcut: 'opus', label: 'Claude Opus 4.6', price: '$5/$25' },
             { id: 'openai/gpt-5.4', shortcut: 'gpt', label: 'GPT-5.4', price: '$2.5/$15' },
+            { id: 'openai/gpt-5.4-pro', shortcut: 'gpt-5.4-pro', label: 'GPT-5.4 Pro', price: '$30/$180' },
             { id: 'google/gemini-2.5-pro', shortcut: 'gemini', label: 'Gemini 2.5 Pro', price: '$1.25/$10' },
-            { id: 'deepseek/deepseek-chat', shortcut: 'deepseek', label: 'DeepSeek V3', price: '$0.28/$0.42' },
+            { id: 'google/gemini-3.1-pro', shortcut: 'gemini-3', label: 'Gemini 3.1 Pro', price: '$2/$12' },
+            { id: 'xai/grok-4-0709', shortcut: 'grok-4', label: 'Grok 4', price: '$0.2/$1.5' },
+            { id: 'xai/grok-3', shortcut: 'grok', label: 'Grok 3', price: '$3/$15' },
         ],
     },
     {
-        category: 'Budget',
+        category: '🔬 Reasoning',
         models: [
-            { id: 'google/gemini-2.5-flash', shortcut: 'flash', label: 'Gemini 2.5 Flash', price: '$0.15/$0.6' },
-            { id: 'openai/gpt-5-mini', shortcut: 'mini', label: 'GPT-5 Mini', price: '$0.25/$2' },
-            { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku', label: 'Claude Haiku 4.5', price: '$1/$5' },
-            { id: 'openai/gpt-5-nano', shortcut: 'nano', label: 'GPT-5 Nano', price: '$0.05/$0.4' },
-        ],
-    },
-    {
-        category: 'Reasoning',
-        models: [
-            { id: 'deepseek/deepseek-reasoner', shortcut: 'r1', label: 'DeepSeek R1', price: '$0.28/$0.42' },
-            { id: 'openai/o4-mini', shortcut: 'o4', label: 'O4 Mini', price: '$1.1/$4.4' },
             { id: 'openai/o3', shortcut: 'o3', label: 'O3', price: '$2/$8' },
+            { id: 'openai/o4-mini', shortcut: 'o4', label: 'O4 Mini', price: '$1.1/$4.4' },
+            { id: 'openai/o1', shortcut: 'o1', label: 'O1', price: '$15/$60' },
+            { id: 'openai/gpt-5.3-codex', shortcut: 'codex', label: 'GPT-5.3 Codex', price: '$1.75/$14' },
+            { id: 'deepseek/deepseek-reasoner', shortcut: 'r1', label: 'DeepSeek R1', price: '$0.28/$0.42' },
+            { id: 'xai/grok-4-1-fast-reasoning', shortcut: 'grok-fast', label: 'Grok 4.1 Fast R.', price: '$0.2/$0.5' },
         ],
     },
     {
-        category: 'Free (no USDC needed)',
+        category: '💰 Budget',
+        models: [
+            { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku', label: 'Claude Haiku 4.5', price: '$1/$5' },
+            { id: 'openai/gpt-5-mini', shortcut: 'mini', label: 'GPT-5 Mini', price: '$0.25/$2' },
+            { id: 'openai/gpt-5-nano', shortcut: 'nano', label: 'GPT-5 Nano', price: '$0.05/$0.4' },
+            { id: 'google/gemini-2.5-flash', shortcut: 'flash', label: 'Gemini 2.5 Flash', price: '$0.3/$2.5' },
+            { id: 'deepseek/deepseek-chat', shortcut: 'deepseek', label: 'DeepSeek V3', price: '$0.28/$0.42' },
+            { id: 'moonshot/kimi-k2.5', shortcut: 'kimi', label: 'Kimi K2.5', price: '$0.6/$3' },
+            { id: 'minimax/minimax-m2.7', shortcut: 'minimax', label: 'Minimax M2.7', price: '$0.3/$1.2' },
+        ],
+    },
+    {
+        category: '🆓 Free (no USDC needed)',
         models: [
             { id: 'nvidia/nemotron-ultra-253b', shortcut: 'free', label: 'Nemotron Ultra 253B', price: 'FREE' },
             { id: 'nvidia/qwen3-coder-480b', shortcut: 'qwen-coder', label: 'Qwen3 Coder 480B', price: 'FREE' },
             { id: 'nvidia/devstral-2-123b', shortcut: 'devstral', label: 'Devstral 2 123B', price: 'FREE' },
             { id: 'nvidia/llama-4-maverick', shortcut: 'maverick', label: 'Llama 4 Maverick', price: 'FREE' },
+            { id: 'nvidia/deepseek-v3.2', shortcut: 'deepseek-free', label: 'DeepSeek V3.2', price: 'FREE' },
+            { id: 'nvidia/gpt-oss-120b', shortcut: 'gpt-oss', label: 'GPT OSS 120B', price: 'FREE' },
         ],
     },
 ];
+/** Flat list of all picker models (for index-based navigation). */
+export const PICKER_MODELS_FLAT = PICKER_CATEGORIES.flatMap(c => c.models);
+// Kept for backward compatibility with the readline pickModel() below.
+const PICKER_MODELS = PICKER_CATEGORIES;
 /**
  * Show interactive model picker. Returns the selected model ID.
  * Falls back to text input if terminal doesn't support raw mode.
