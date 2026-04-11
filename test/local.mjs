@@ -133,6 +133,28 @@ test('workflow formatter renders aborted steps with warning icon', async () => {
   assert.ok(output.includes('⚠ search: No posts found'), `Expected aborted warning icon.\n${output}`);
 });
 
+test('workflow formatter infers aborted icon when status is missing', async () => {
+  const { formatWorkflowResult } = await import('../dist/plugins/runner.js');
+
+  const output = formatWorkflowResult(
+    { name: 'Social Growth' },
+    {
+      steps: [
+        { name: 'search', summary: 'No posts found (search returned empty)', cost: 0 },
+      ],
+      totalCost: 0,
+      itemsProcessed: 0,
+      durationMs: 100,
+      dryRun: true,
+    }
+  );
+
+  assert.ok(
+    output.includes('⚠ search: No posts found (search returned empty)'),
+    `Expected inferred aborted warning icon.\n${output}`
+  );
+});
+
 test('package exports plugin-sdk subpath', async () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.ok(pkg.exports, 'Expected package.json exports field');
