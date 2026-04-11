@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/franklin",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Franklin — The AI agent with a wallet. Marketing at franklin.run, trading at franklin.bet. Pay per action in USDC.",
   "type": "module",
   "exports": {
