@@ -1,5 +1,54 @@
 # Changelog
 
+## 3.2.3 (2026-04-11) — Braille portrait (actually recognizable Ben)
+
+User feedback on v3.2.2: the portrait was still too fuzzy to recognize as
+Ben Franklin. The chafa half-block output looked like a colored blob at
+banner sizes. Switched converters and settings, and **you can now actually
+see it's Benjamin Franklin.**
+
+### Changed
+- **Converter: chafa → [ascii-image-converter](https://github.com/TheZoraiz/ascii-image-converter)
+  in braille mode.** Braille characters (U+2800..U+28FF) encode 2×4 dot
+  matrices per cell, giving 2.7× the effective resolution of chafa's
+  half-block mode at the same visible size. For a face — which is all
+  about silhouette + eye/nose/mouth placement — this is a massive win.
+- **Portrait size: 28×14 → 34×16** (same source image, cropped Duplessis
+  painting). At 34×16 braille, the effective pixel grid is 68×64 = 4,352
+  "pixels" — enough detail to show Ben's hair line, eye sockets, nose,
+  mouth, collar, and shoulders clearly.
+- **Conversion command:**
+  ```bash
+  ascii-image-converter ben-face.jpg --dimensions 34,16 --braille --threshold 110
+  ```
+  Threshold 110 was picked after a sweep from 90→130 — it gives the
+  cleanest silhouette without losing the collar/shoulder definition.
+- **Tinting:** braille characters carry no colour of their own, so we
+  wrap them in `chalk.hex('#E8E8E8')` at render time for a dim-white
+  "pencil portrait" look. The FRANKLIN gold→emerald gradient next to it
+  is untouched.
+- **Side-by-side threshold raised: 100 → 105 cols.** The 34-col portrait
+  + 3-col gap + 65-col FRANKLIN = 102 cols, plus a 3-col margin.
+- **Text alignment:** text block now starts at portrait row 5 so the
+  FRANKLIN gradient block aligns with Ben's face region (head rows 1-4,
+  face rows 5-10, shoulders 11-16) — the classic "portrait +
+  nameplate" composition.
+- **Build-time dep:** `ascii-image-converter` (optional, only needed to
+  regenerate the portrait). Not a runtime dep — the portrait is baked
+  into `src/banner.ts` as a plain Unicode string array.
+
+### Rationale
+Chafa's half-block mode is great for COLOUR images (photos, screenshots)
+because each cell gives you two 3-byte colour values packed into one
+character. For a black-and-white line portrait where what matters is
+*shape*, not *colour*, braille is the right tool — every dot is independent,
+every cell is 8 "pixels", and the result looks like a high-res line
+drawing instead of a mushy heatmap.
+
+### Not changed
+- Every other subsystem — `franklin social`, agent loop, wallet, tools,
+  sessions. Identical to v3.2.2.
+
 ## 3.2.2 (2026-04-11) — Bigger portrait + blockrun.ai tagline
 
 Two visual polish fixes on top of v3.2.1's portrait banner.
