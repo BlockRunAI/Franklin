@@ -5,8 +5,8 @@
 Franklin is the first AI agent in the **Autonomous Economic Agent** category — it doesn't just write text, it autonomously spends USDC from a user-funded wallet to execute real work: marketing campaigns, trading signals, content generation.
 
 Two products under one brand:
-- **franklin.run** — Marketing agent (campaigns, content, outreach)
-- **franklin.bet** — Trading agent (signals, research, risk)
+- **Marketing agent** — campaigns, content, outreach
+- **Trading agent** — signals, research, risk
 
 Built on three layers:
 1. **x402 micropayment protocol** — HTTP 402 native payments
@@ -68,4 +68,4 @@ src/
 - Does it make Franklin more of "the agent with a wallet"? → yes
 - Does it dilute us back to "another coding tool"? → no
 
-The moat is the payment layer. The category is Autonomous Economic Agent. The verticals are marketing (franklin.run) and trading (franklin.bet). Everything else is execution.
+The moat is the payment layer. The category is Autonomous Economic Agent. The verticals are marketing and trading. Everything else is execution.

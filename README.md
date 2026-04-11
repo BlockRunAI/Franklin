@@ -12,8 +12,6 @@
   <a href="https://npmjs.com/package/@blockrun/franklin"><img src="https://img.shields.io/npm/v/@blockrun/franklin.svg?style=flat-square&color=FFD700" alt="npm version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="License: Apache-2.0"></a>
   <a href="https://x402.org"><img src="https://img.shields.io/badge/x402-Payments-10B981?style=flat-square" alt="x402"></a>
-  <a href="https://franklin.run"><img src="https://img.shields.io/badge/Marketing-franklin.run-06B6D4?style=flat-square" alt="franklin.run"></a>
-  <a href="https://franklin.bet"><img src="https://img.shields.io/badge/Trading-franklin.bet-10B981?style=flat-square" alt="franklin.bet"></a>
 </p>
 
 ---
@@ -48,8 +46,8 @@ $ franklin marketing campaign "Launch my AI coding app to indie hackers"
 
 | | | |
 |---|---|---|
-| 🎯 | **[franklin.run](https://franklin.run)** | **Marketing agent** — campaigns, content, outreach, growth |
-| 📈 | **[franklin.bet](https://franklin.bet)** | **Trading agent** — signals, research, risk analysis |
+| 🎯 | **Marketing agent** | Campaigns, content, outreach, growth |
+| 📈 | **Trading agent** | Signals, research, risk analysis |
 
 Both paid per action in USDC. Both backed by the same [BlockRun gateway](https://blockrun.ai) and x402 protocol.
 
@@ -65,8 +63,8 @@ Both paid per action in USDC. Both backed by the same [BlockRun gateway](https:/
 | **Spends money autonomously** | ❌ | ❌ | ❌ | ✅ |
 | **Wallet-native identity** | ❌ | ❌ | ❌ | ✅ |
 | **Pay per action** | ❌ subscription | ❌ BYOK | ❌ BYOK | ✅ USDC |
-| **Marketing workflows** | ❌ | ❌ | ❌ | ✅ franklin.run |
-| **Trading workflows** | ❌ | ❌ | ❌ | ✅ franklin.bet |
+| **Marketing workflows** | ❌ | ❌ | ❌ | ✅ (built-in) |
+| **Trading workflows** | ❌ | ❌ | ❌ | ✅ (built-in) |
 | No account / phone verification | ❌ | ⚠️ BYOK | ⚠️ BYOK | ✅ |
 
 **Franklin is the first AI agent in the "Autonomous Economic Agent" category** — an agent that receives a goal, decides what to spend on, and executes autonomously within a hard budget cap enforced by the wallet.
@@ -235,8 +233,6 @@ Contributions welcome. Open an issue first to discuss meaningful changes. For pl
 
 ## Links
 
-- **Marketing**: [franklin.run](https://franklin.run)
-- **Trading**: [franklin.bet](https://franklin.bet)
 - **Parent**: [BlockRun](https://blockrun.ai)
 - **npm**: [@blockrun/franklin](https://npmjs.com/package/@blockrun/franklin)
 - **Telegram**: [t.me/blockrunAI](https://t.me/blockrunAI)

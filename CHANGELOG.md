@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.1.0 (2026-04-11) — Brand cleanup
+
+Remove premature references to `franklin.run` and `franklin.bet` domains
+from code and docs. We own both domains but haven't deployed them yet —
+linking to URLs that 404 is worse than not linking at all. When the sites
+are live, the anchors come back in a later release.
+
+### Changed
+- **Banner** — Restored the smooth 6-row gold→emerald gradient
+  (`#FFD700` → `#10B981`), rolling back v3.0.2's pure-gold and v3.0.3's
+  metallic-gold experiments. Dropped the
+  "Marketing: franklin.run · Trading: franklin.bet" tagline line since
+  those domains aren't live yet. Restored the `interpolateHex()` helper
+  for smooth per-row interpolation.
+- **CLI description** — Dropped "Marketing workflows: franklin.run" and
+  "Trading workflows: franklin.bet" lines from `franklin --help` text.
+- **package.json** — `homepage` now points to
+  `https://github.com/BlockRunAI/franklin` (real URL). Description
+  shortened, no domain references.
+- **README** — Removed shields.io badges linking to franklin.run/.bet,
+  removed all markdown links to those URLs, cleaned the competitor
+  comparison table and Links section. Product positioning ("Marketing
+  agent" / "Trading agent") stays intact — only the URL anchors come out.
+- **CLAUDE.md** — Same domain cleanup.
+
+### Not changed
+- Everything else from v3.0.0. This is a pure documentation/brand cleanup.
+- Plugin SDK, agent loop, tools, tests, wallet, sessions all identical.
+- `runcode` alias still works (60-day compatibility window from v3.0.0).
+
 ## 3.0.0 (2026-04-11) — From RunCode to Franklin
 
 **Major rebrand.** RunCode is now **Franklin — The AI agent with a wallet.**

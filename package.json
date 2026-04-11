@@ -1,7 +1,7 @@
 {
   "name": "@blockrun/franklin",
-  "version": "3.0.3",
-  "description": "Franklin — The AI agent with a wallet. Marketing at franklin.run, trading at franklin.bet. Pay per action in USDC.",
+  "version": "3.1.0",
+  "description": "Franklin — The AI agent with a wallet. Spends USDC autonomously to get real work done. Pay per action, no subscriptions.",
   "type": "module",
   "exports": {
     ".": {
@@ -54,7 +54,7 @@
     "type": "git",
     "url": "https://github.com/BlockRunAI/franklin"
   },
-  "homepage": "https://franklin.run",
+  "homepage": "https://github.com/BlockRunAI/franklin",
   "engines": {
     "node": ">=20"
   },
