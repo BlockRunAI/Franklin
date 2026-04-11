@@ -1,5 +1,42 @@
 # Changelog
 
+## 3.2.1 (2026-04-11) — Benjamin Franklin portrait banner
+
+Visual upgrade. The startup banner now shows Benjamin Franklin's face
+next to the FRANKLIN text block, side-by-side.
+
+### Changed
+- **`src/banner.ts`** — Rendered a 10-row × 17-col Ben Franklin portrait
+  from the Joseph Duplessis 1785 oil painting (the same source image as
+  the face on the US $100 bill). Converted via `chafa --size=20x10
+  --symbols=block --colors=256` and baked into the TS source as a
+  hex-escaped string array. No runtime dependency on chafa — it's only
+  used at build time to regenerate the portrait if we ever update it.
+- **Side-by-side layout** when terminal width ≥ 90 columns:
+  ```
+  [portrait 10 rows]   [gap]   [FRANKLIN gradient text]
+                                Franklin · The AI agent with a wallet · vX.Y.Z
+  ```
+  The FRANKLIN text is vertically centred inside the portrait's 10 rows.
+- **Text-only fallback** for narrow terminals (<90 cols): identical to
+  v3.2.0's banner. Nobody gets a wrapped/mangled hero.
+- **Gradient preserved** — gold→emerald (`#FFD700` → `#10B981`) across the
+  6 rows of FRANKLIN block letters, unchanged from v3.1.0.
+
+### Rationale
+Block-letter "FRANKLIN" was generic. Every CLI tool has some block-letter
+ASCII banner. Adding a Ben Franklin face ties the brand to the *person*
+the tool is named after and to the Benjamins / $100 bill cultural anchor
+in one glance. Ben's face is literally the center of the $100 bill, so
+one portrait gives us both identity anchors at once. Docker has a whale,
+Kubernetes has a helm, Laravel has an "L" — Franklin now has Ben's face.
+
+Public domain painting, public domain conversion, zero licensing risk.
+
+### Not changed
+- Every other subsystem — agent loop, `franklin social`, wallet, tools,
+  sessions — identical to v3.2.0.
+
 ## 3.2.0 (2026-04-11) — Native X bot (franklin social)
 
 First shipped user-facing workflow: **`franklin social`** is a fully native
