@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.2.4 (2026-04-11) — Roll back to chafa colour portrait
+
+User preference: the v3.2.2 chafa colour-block portrait looks more like
+an actual oil painting of Ben Franklin. The v3.2.3 braille line-art was
+cleaner but felt abstract — you could see the silhouette but lost the
+skin tones, warm palette, and "painted portrait" feel that made v3.2.2
+feel dignified.
+
+### Reverted
+- **`src/banner.ts`** — portrait data and rendering are restored to
+  v3.2.2's state exactly. 28 chars × 14 rows chafa half-block output
+  with 256-colour palette. Skin tones, dark hair, warm jacket, the
+  whole oil-painting character back.
+- **Layout:** `MIN_WIDTH_FOR_PORTRAIT = 100`, `PORTRAIT_WIDTH = 29`,
+  `TEXT_TOP_OFFSET = 4` (as in v3.2.2).
+- **Tagline** stays at `blockrun.ai · The AI agent with a wallet · vX.Y.Z`.
+
+### Kept from v3.2.3
+- Nothing from the braille experiment ships. Net effect vs v3.2.2 is
+  just the version number (and CHANGELOG / release notes).
+
+### Lesson
+Braille's higher resolution is a win for LINE art (schematics, diagrams,
+sharp silhouettes). For a tonal subject like an oil-painting portrait,
+chafa's half-block + 256-colour palette preserves the character better
+— the colour IS the content, and the "mushy" effect of half-block cells
+acts as natural anti-aliasing rather than a flaw.
+
+### Not changed
+- Every other subsystem — `franklin social`, agent loop, wallet, tools,
+  sessions. Identical to v3.2.3.
+
 ## 3.2.3 (2026-04-11) — Braille portrait (actually recognizable Ben)
 
 User feedback on v3.2.2: the portrait was still too fuzzy to recognize as
