@@ -47,7 +47,7 @@ function runCli(prompt, { cwd, timeoutMs = 15_000 } = {}) {
 test('cli startup prints banner and model line without model call', { timeout: 20_000 }, async () => {
   const result = await runCli('/exit');
   assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
-  assert.ok(result.stdout.includes('RunCode'), `Missing banner.\nstdout:\n${result.stdout}`);
+  assert.ok(result.stdout.includes('Franklin'), `Missing banner.\nstdout:\n${result.stdout}`);
   assert.ok(result.stdout.includes('Model:'), `Missing model line.\nstdout:\n${result.stdout}`);
 });
 

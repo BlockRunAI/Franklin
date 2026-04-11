@@ -1,37 +1,34 @@
 import chalk from 'chalk';
 
-// "Run" and "Code" split for two-tone rendering
-const RUN_ART = [
-  ' ██████╗ ██╗   ██╗███╗   ██╗',
-  ' ██╔══██╗██║   ██║████╗  ██║',
-  ' ██████╔╝██║   ██║██╔██╗ ██║',
-  ' ██╔══██╗██║   ██║██║╚██╗██║',
-  ' ██║  ██║╚██████╔╝██║ ╚████║',
-  ' ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝',
-];
-
-const CODE_ART = [
-  ' ██████╗ ██████╗ ██████╗ ███████╗',
-  '██╔════╝██╔═══██╗██╔══██╗██╔════╝',
-  '██║     ██║   ██║██║  ██║█████╗  ',
-  '██║     ██║   ██║██║  ██║██╔══╝  ',
-  '╚██████╗╚██████╔╝██████╔╝███████╗',
-  ' ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
+// "FRANKLIN" — the AI agent with a wallet
+const FRANKLIN_ART = [
+  ' ███████╗██████╗  █████╗ ███╗   ██╗██╗  ██╗██╗     ██╗███╗   ██╗',
+  ' ██╔════╝██╔══██╗██╔══██╗████╗  ██║██║ ██╔╝██║     ██║████╗  ██║',
+  ' █████╗  ██████╔╝███████║██╔██╗ ██║█████╔╝ ██║     ██║██╔██╗ ██║',
+  ' ██╔══╝  ██╔══██╗██╔══██║██║╚██╗██║██╔═██╗ ██║     ██║██║╚██╗██║',
+  ' ██║     ██║  ██║██║  ██║██║ ╚████║██║  ██╗███████╗██║██║ ╚████║',
+  ' ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝╚═╝╚═╝  ╚═══╝',
 ];
 
 export function printBanner(version: string) {
-  const runColor = chalk.hex('#FFD700');  // Gold for "Run"
-  const codeColor = chalk.cyan;           // Cyan for "Code"
+  // Gold → green gradient: money colors for "the agent with a wallet"
+  const gold = chalk.hex('#FFD700');
+  const green = chalk.hex('#10B981');
 
-  for (let i = 0; i < RUN_ART.length; i++) {
-    console.log(runColor(RUN_ART[i]) + codeColor(CODE_ART[i]));
+  for (let i = 0; i < FRANKLIN_ART.length; i++) {
+    // Alternate lines between gold and green for subtle depth
+    const color = i < 3 ? gold : green;
+    console.log(color(FRANKLIN_ART[i]));
   }
   console.log(
-    chalk.bold.hex('#FFD700')('  Run') +
-      chalk.bold.cyan('Code') +
-      chalk.dim('  ·  AI Coding Agent  ·  blockrun.ai  ·  v' + version)
+    chalk.bold.hex('#FFD700')('  Franklin') +
+      chalk.dim('  ·  The AI agent with a wallet  ·  v' + version)
   );
   console.log(
-    chalk.dim('  55+ models · Pay per use with USDC · /help for commands\n')
+    chalk.dim('  Marketing: ') +
+      chalk.cyan('franklin.run') +
+      chalk.dim('   ·   Trading: ') +
+      chalk.hex('#10B981')('franklin.bet') +
+      chalk.dim('\n')
   );
 }

@@ -1,5 +1,91 @@
 # Changelog
 
+## 3.0.0 (2026-04-11) — From RunCode to Franklin
+
+**Major rebrand.** RunCode is now **Franklin — The AI agent with a wallet.**
+
+### Why the rename
+
+RunCode was positioned as "a better Claude Code with multi-model support." That's defensive — it defines us by what we're not (not rate-limited, not subscription-locked, not Anthropic-only) rather than what we are. The moment Claude Code changes pricing, that entire differentiation evaporates.
+
+Over the last three weeks of building and iterating, we realized the real opportunity isn't being a better coding tool. It's being the first AI agent that can actually **spend money to get work done**, not just write text about it.
+
+- **Claude Code** writes code.
+- **Hermes Agent** grows with you.
+- **OpenClaw** helps personally.
+- **Franklin** takes your USDC and autonomously runs marketing campaigns, trading signals, and content workflows.
+
+Benjamin Franklin was the founding father who said "time is money," printed his own currency, and deployed capital across the Atlantic to fund a revolution. Our Franklin does the same for AI agents: it turns your wallet into an autonomous economic engine.
+
+### Two TLDs, two products
+
+Franklin is not a single domain. It's a brand umbrella with two verticals:
+
+- **[franklin.run](https://franklin.run)** — Marketing agent (Reddit, IG DM, content generation, campaigns)
+- **[franklin.bet](https://franklin.bet)** — Trading agent (signals, market research, risk analysis)
+
+Each TLD is the product definition. `.run` = run campaigns and workflows. `.bet` = place positions and take calculated risks. The URL IS the product.
+
+### Category
+
+**Autonomous Economic Agent** — AI that spends money autonomously within wallet-enforced budget caps to deliver outcomes, not just text.
+
+Built on three layers:
+1. **x402 micropayment protocol** — HTTP 402 native payments, wallet-as-identity
+2. **BlockRun Gateway** — aggregates 55+ LLMs + paid APIs behind one wallet
+3. **Franklin Agent** — reference client with Plugin SDK (this repo)
+
+### What changed
+
+- **Package:** `@blockrun/runcode` → `@blockrun/franklin` (new name on npm)
+- **CLI command:** `franklin` is the primary binary; `runcode` remains as a **60-day alias** so existing scripts don't break
+- **Banner:** new FRANKLIN ASCII art with gold→green "money" gradient
+- **README:** complete rewrite with new positioning, two-TLD architecture, Autonomous Economic Agent category framing
+- **CLI help text:** all mentions of "coding agent" updated to "the AI agent with a wallet"
+- **GitHub repo description:** updated
+- **Version:** 2.8.0 → 3.0.0 (major bump because this is a category-level change, not a feature addition)
+
+### What did NOT change
+
+- **All plugins work identically** — `social`, `marketing`, any future verticals
+- **Plugin SDK v2.7** contract is unchanged — no migration needed for third-party plugins
+- **Hermes patterns from v2.8** (prompt caching, structured compaction, session search, insights) all remain
+- **Config files at `~/.blockrun/`** are unchanged — no migration needed
+- **Wallet, sessions, stats** all preserved
+- **Payment flow, API compatibility, E2E behavior** — identical
+
+### Migration
+
+Zero work required for existing users:
+
+```bash
+# Old command (still works for 60 days)
+runcode marketing run
+
+# New command (recommended)
+franklin marketing run
+```
+
+When you're ready, switch package names:
+
+```bash
+npm uninstall -g @blockrun/runcode
+npm install -g @blockrun/franklin
+```
+
+After v3.1.0, the `runcode` alias will be deprecated. Full removal in v3.2.0 (at least 60 days out).
+
+### The tagline
+
+> **Franklin runs your money.**
+
+Short. Active. Ownership. Economic. Tweet-grade.
+
+Long form:
+> **The AI agent with a wallet. While others chat, Franklin spends — turning your USDC into real work.**
+
+---
+
 ## 2.8.0 (2026-04-10)
 
 ### Added — Hermes Agent patterns adopted

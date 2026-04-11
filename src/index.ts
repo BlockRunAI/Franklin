@@ -32,10 +32,13 @@ import { VERSION as version } from './config.js';
 const program = new Command();
 
 program
-  .name('runcode')
+  .name('franklin')
   .description(
-    'runcode — AI coding agent powered by 55+ models, pay with USDC.\n\n' +
-      'Use /model to switch between models on the fly.'
+    'Franklin — The AI agent with a wallet.\n\n' +
+      'While others chat, Franklin spends — turning your USDC into real work.\n\n' +
+      '  Marketing workflows:  franklin.run\n' +
+      '  Trading workflows:    franklin.bet\n\n' +
+      'Pay per action in USDC on Base or Solana. No subscriptions. No accounts.'
   )
   .version(version);
 
