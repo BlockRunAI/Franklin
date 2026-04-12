@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import readline from 'node:readline';
 import chalk from 'chalk';
 import { BLOCKRUN_DIR } from '../config.js';
 
@@ -337,6 +338,15 @@ function findMemoryFiles(projectsDir: string): string[] {
   return files;
 }
 
+// ─── Interactive prompt ───────────────────────────────────────────────────
+
+function ask(question: string): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => {
+    rl.question(question, answer => { rl.close(); resolve(answer.trim().toLowerCase()); });
+  });
+}
+
 // ─── Main command ─────────────────────────────────────────────────────────
 
 export async function migrateCommand(): Promise<void> {
@@ -359,9 +369,14 @@ export async function migrateCommand(): Promise<void> {
     console.log('');
   }
 
-  // Confirm
   const total = sources.reduce((n, s) => n + s.items.length, 0);
-  console.log(chalk.yellow(`  Importing ${total} item(s) into ~/.blockrun/\n`));
+  const answer = await ask(chalk.yellow(`  Import ${total} item(s) into Franklin? [Y/n] `));
+  if (answer && answer !== 'y' && answer !== 'yes') {
+    console.log(chalk.dim('\n  Cancelled.\n'));
+    return;
+  }
+
+  console.log('');
 
   // Run migrations
   for (const source of sources) {
@@ -376,5 +391,48 @@ export async function migrateCommand(): Promise<void> {
     console.log('');
   }
 
-  console.log(chalk.green('  Done.') + chalk.dim(' Run `franklin --trust` to start with imported data.\n'));
+  console.log(chalk.green('  Done.') + chalk.dim(' Run `franklin --trust` to start.\n'));
+}
+
+// ─── First-run detection (called from start.ts) ──────────────────────────
+
+const MIGRATED_MARKER = path.join(BLOCKRUN_DIR, '.migrated');
+
+/**
+ * Check if other AI tools are installed and suggest migration.
+ * Only runs once — writes a marker file after first check.
+ * Returns true if the user chose to migrate (caller should re-run start after).
+ */
+export async function checkAndSuggestMigration(): Promise<boolean> {
+  // Only suggest once
+  if (fs.existsSync(MIGRATED_MARKER)) return false;
+
+  // Write marker immediately so we never ask again
+  fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+  fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString());
+
+  const sources = detectSources();
+  if (sources.length === 0) return false;
+
+  const names = sources.map(s => s.name).join(', ');
+  const total = sources.reduce((n, s) => n + s.items.length, 0);
+
+  console.log(chalk.bold(`\n  ${chalk.green('●')} Found ${names} — ${total} items available to import.`));
+  const answer = await ask(chalk.yellow(`  Import into Franklin? [Y/n] `));
+
+  if (answer && answer !== 'y' && answer !== 'yes') {
+    console.log(chalk.dim('  Skipped. Run `franklin migrate` anytime.\n'));
+    return false;
+  }
+
+  console.log('');
+  for (const source of sources) {
+    console.log(chalk.bold(`  Migrating from ${source.name}...`));
+    for (const item of source.items) {
+      try { item.transform(); }
+      catch (err) { console.log(chalk.red(`    ✗ ${item.label}: ${(err as Error).message}`)); }
+    }
+  }
+  console.log(chalk.green('\n  Done.') + ' Starting Franklin...\n');
+  return true;
 }
