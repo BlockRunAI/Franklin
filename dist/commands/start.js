@@ -167,8 +167,9 @@ async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, on
             fetchBalance().then(bal => ui.updateBalance(bal)).catch(() => { });
         });
     }
+    let sessionHistory;
     try {
-        await interactiveSession(agentConfig, async () => {
+        sessionHistory = await interactiveSession(agentConfig, async () => {
             const input = await ui.waitForInput();
             if (input === null)
                 return null;
@@ -184,6 +185,19 @@ async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, on
     }
     ui.cleanup();
     flushStats();
+    // Extract learnings from the session (async, 10s timeout, never blocks exit)
+    if (sessionHistory && sessionHistory.length >= 4) {
+        try {
+            const { extractLearnings } = await import('../learnings/extractor.js');
+            const { ModelClient } = await import('../agent/llm.js');
+            const client = new ModelClient({ apiUrl: agentConfig.apiUrl, chain: agentConfig.chain });
+            await Promise.race([
+                extractLearnings(sessionHistory, `session-${new Date().toISOString()}`, client),
+                new Promise(resolve => setTimeout(resolve, 10_000)),
+            ]);
+        }
+        catch { /* extraction is best-effort */ }
+    }
     await disconnectMcpServers();
     console.log(chalk.dim('\nGoodbye.\n'));
 }

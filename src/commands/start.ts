@@ -11,7 +11,7 @@ import { launchInkUI } from '../ui/app.js';
 import { pickModel, resolveModel } from '../ui/model-picker.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { connectMcpServers, disconnectMcpServers } from '../mcp/client.js';
-import type { AgentConfig } from '../agent/types.js';
+import type { AgentConfig, Dialogue } from '../agent/types.js';
 
 interface StartOptions {
   model?: string;
@@ -197,8 +197,9 @@ async function runWithInkUI(
     });
   }
 
+  let sessionHistory: Dialogue[] | undefined;
   try {
-    await interactiveSession(
+    sessionHistory = await interactiveSession(
       agentConfig,
       async () => {
         const input = await ui.waitForInput();
@@ -217,6 +218,20 @@ async function runWithInkUI(
 
   ui.cleanup();
   flushStats();
+
+  // Extract learnings from the session (async, 10s timeout, never blocks exit)
+  if (sessionHistory && sessionHistory.length >= 4) {
+    try {
+      const { extractLearnings } = await import('../learnings/extractor.js');
+      const { ModelClient } = await import('../agent/llm.js');
+      const client = new ModelClient({ apiUrl: agentConfig.apiUrl, chain: agentConfig.chain });
+      await Promise.race([
+        extractLearnings(sessionHistory, `session-${new Date().toISOString()}`, client),
+        new Promise(resolve => setTimeout(resolve, 10_000)),
+      ]);
+    } catch { /* extraction is best-effort */ }
+  }
+
   await disconnectMcpServers();
   console.log(chalk.dim('\nGoodbye.\n'));
 }
