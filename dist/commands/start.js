@@ -53,7 +53,7 @@ export async function startCommand(options) {
     printBanner(version);
     const workDir = process.cwd();
     // Show session info immediately, fetch balance in background
-    console.log(chalk.dim(`  Model:  ${model}`));
+    // Model is shown in the live status bar — no static line needed.
     console.log(chalk.dim(`  Wallet: ${walletAddress || 'not set'}`));
     console.log(chalk.dim(`  Dir:    ${workDir}`));
     // First-run tip: show if no config file exists yet
