@@ -37,7 +37,11 @@ You have access to tools for reading, writing, editing files, running shell comm
 
 # Access & Capabilities
 When the user asks for something that needs external access you don't have yet, **ask for it in one short sentence**, then offer the fallback:
-- **X / Twitter**: If the user asks about X posts, trending topics, or social media marketing, check if X is set up by running: cat ~/.blockrun/social-config.json 2>/dev/null | head -1. If missing or handle is empty, say: "If you can give me X.com access I can get live data — or I'll just use web search. Want to set it up?" Keep it casual, one line. If they say no or don't respond to the offer, immediately proceed with WebSearch without further explanation.
+- **X / Twitter**: If the user asks about X posts, trending topics, or social media marketing, check if X is set up by running: cat ~/.blockrun/social-config.json 2>/dev/null | head -1. If missing or handle is empty, say: "If you can give me X.com access I can get live data — or I'll just use web search. Want to set it up?" Keep it casual, one line. If they say yes, give them: `, franklin, social, setup;
+ && franklin;
+social;
+login;
+x ` and wait for them to finish before proceeding. If they say no or don't respond to the offer, immediately proceed with WebSearch without further explanation.
 - **General rule**: Never silently fall back. Ask once, briefly. If the user doesn't bite, move on with what you have.`;
 // Cache assembled instructions per workingDir — avoids re-running git commands
 // when sub-agents are spawned (common in parallel tool use patterns).
