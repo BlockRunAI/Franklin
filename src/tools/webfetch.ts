@@ -26,28 +26,32 @@ interface CacheEntry {
 
 const fetchCache = new Map<string, CacheEntry>();
 
-function getCached(url: string): string | null {
-  const entry = fetchCache.get(url);
+function cacheKey(url: string, maxLength: number): string {
+  return `${url}::${maxLength}`;
+}
+
+function getCached(key: string): string | null {
+  const entry = fetchCache.get(key);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
-    fetchCache.delete(url);
+    fetchCache.delete(key);
     return null;
   }
   return entry.output;
 }
 
-function setCached(url: string, output: string): void {
+function setCached(key: string, output: string): void {
   // Evict oldest entry if at capacity
   if (fetchCache.size >= MAX_CACHE_ENTRIES) {
     const firstKey = fetchCache.keys().next().value;
     if (firstKey) fetchCache.delete(firstKey);
   }
-  fetchCache.set(url, { output, expiresAt: Date.now() + CACHE_TTL_MS });
+  fetchCache.set(key, { output, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
 // ─── Execute ────────────────────────────────────────────────────────────────
 
-async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Promise<CapabilityResult> {
+async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
   const { url, max_length } = input as unknown as WebFetchInput;
 
   if (!url) {
@@ -66,14 +70,19 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     return { output: `Error: only http/https URLs are supported`, isError: true };
   }
 
+  const maxLen = Math.min(max_length ?? MAX_BODY_BYTES, MAX_BODY_BYTES);
+  const key = cacheKey(url, maxLen);
+
   // Check cache first
-  const cached = getCached(url);
+  const cached = getCached(key);
   if (cached) {
     return { output: cached + '\n\n(cached)' };
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
+  const onAbort = () => controller.abort();
+  ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
 
   try {
     const response = await fetch(url, {
@@ -93,7 +102,6 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     }
 
     const contentType = response.headers.get('content-type') || '';
-    const maxLen = Math.min(max_length ?? MAX_BODY_BYTES, MAX_BODY_BYTES);
 
     // Read body with size limit
     const reader = response.body?.getReader();
@@ -135,17 +143,21 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     }
 
     // Cache successful responses
-    setCached(url, output);
+    setCached(key, output);
 
     return { output };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (ctx.abortSignal.aborted) {
+      return { output: `Error: request aborted for ${url}`, isError: true };
+    }
     if (msg.includes('abort')) {
       return { output: `Error: request timed out after 30s for ${url}`, isError: true };
     }
     return { output: `Error fetching ${url}: ${msg}`, isError: true };
   } finally {
     clearTimeout(timeout);
+    ctx.abortSignal.removeEventListener('abort', onAbort);
   }
 }
 

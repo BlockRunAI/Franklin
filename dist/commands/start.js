@@ -73,10 +73,10 @@ export async function startCommand(options) {
     // After the user's first session, the tip fades and they go straight to the prompt.
     console.log('');
     console.log(chalk.dim('  Try something only Franklin can do:'));
-    console.log(chalk.dim('    ') + chalk.hex('#FFD700')('"what\'s BTC looking like today?"') + chalk.dim('       ← live market signal'));
-    console.log(chalk.dim('    ') + chalk.hex('#10B981')('"find X posts about ai agent"') + chalk.dim(' ← social growth'));
-    console.log(chalk.dim('    ') + chalk.hex('#60A5FA')('"generate a hero image for my app"') + chalk.dim('      ← AI image gen'));
-    console.log(chalk.dim('  Or just code — 55+ models ready, no API keys needed.'));
+    console.log(chalk.dim('    ') + chalk.hex('#FFD700')('"what\'s BTC looking like today?"') + chalk.dim('  ← market signal'));
+    console.log(chalk.dim('    ') + chalk.hex('#10B981')('"find X posts about ai agent"') + chalk.dim('  ← social growth'));
+    console.log(chalk.dim('    ') + chalk.hex('#60A5FA')('"generate a hero image for my app"') + chalk.dim('  ← image gen'));
+    console.log(chalk.dim('  Or just code — 55+ models, no API keys.'));
     console.log('');
     // Balance fetcher — used at startup and after each turn
     const fetchBalance = async () => {

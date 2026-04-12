@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
+import { partiallyReadFiles } from './read.js';
 
 interface WriteInput {
   file_path: string;
@@ -100,6 +101,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
     const existed = fs.existsSync(resolved);
     fs.writeFileSync(resolved, content, 'utf-8');
+    partiallyReadFiles.delete(resolved);
 
     const lineCount = content.split('\n').length;
     const byteCount = Buffer.byteLength(content, 'utf-8');
