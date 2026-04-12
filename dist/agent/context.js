@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { loadLearnings, decayLearnings, saveLearnings, formatForPrompt } from '../learnings/store.js';
 // ─── System Instructions Assembly ──────────────────────────────────────────
 const BASE_INSTRUCTIONS = `You are runcode, an AI coding agent that helps users with software engineering tasks.
 You have access to tools for reading, writing, editing files, running shell commands, searching codebases, web browsing, and more.
@@ -57,6 +58,18 @@ export function assembleInstructions(workingDir) {
     if (gitInfo) {
         parts.push(`# Git Context\n\n${gitInfo}`);
     }
+    // Inject per-user learnings from self-evolution system
+    try {
+        let learnings = loadLearnings();
+        if (learnings.length > 0) {
+            learnings = decayLearnings(learnings);
+            saveLearnings(learnings);
+            const personalContext = formatForPrompt(learnings);
+            if (personalContext)
+                parts.push(personalContext);
+        }
+    }
+    catch { /* learnings are optional — never block startup */ }
     _instructionCache.set(workingDir, parts);
     return parts;
 }

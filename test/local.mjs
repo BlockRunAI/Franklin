@@ -55,7 +55,7 @@ test('cli startup prints banner and model line without model call', { timeout: 2
     result.stdout.includes('The AI agent with a wallet'),
     `Missing banner tagline.\nstdout:\n${result.stdout}`
   );
-  assert.ok(result.stdout.includes('Model:'), `Missing model line.\nstdout:\n${result.stdout}`);
+  assert.ok(result.stdout.includes('Wallet:'), `Missing wallet line.\nstdout:\n${result.stdout}`);
 });
 
 test('write capability allows files under system temp directory', async () => {

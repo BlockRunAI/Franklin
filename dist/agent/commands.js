@@ -198,7 +198,7 @@ const DIRECT_COMMANDS = {
                 `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
                 `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /context /tasks\n` +
                 `  **Power:** /ultrathink [query] /ultraplan /dump\n` +
-                `  **Info:** /model /wallet /cost /tokens /mcp /doctor /version /bug /help\n` +
+                `  **Info:** /model /wallet /cost /tokens /learnings /mcp /doctor /version /bug /help\n` +
                 `  **UI:** /clear /exit\n` +
                 (ultrathinkOn ? `\n  Ultrathink: ON\n` : '')
         });
@@ -510,6 +510,34 @@ export async function handleSlashCommand(input, ctx) {
         const { generateInsights, formatInsights } = await import('../stats/insights.js');
         const report = generateInsights(days);
         ctx.onEvent({ kind: 'text_delta', text: formatInsights(report, days) });
+        emitDone(ctx);
+        return { handled: true };
+    }
+    // /learnings — view or clear per-user learnings
+    if (input === '/learnings' || input.startsWith('/learnings ')) {
+        const { loadLearnings, decayLearnings, saveLearnings } = await import('../learnings/store.js');
+        const arg = input.slice('/learnings'.length).trim();
+        if (arg === 'clear') {
+            saveLearnings([]);
+            ctx.onEvent({ kind: 'text_delta', text: 'All learnings cleared.\n' });
+        }
+        else {
+            let learnings = loadLearnings();
+            if (learnings.length === 0) {
+                ctx.onEvent({ kind: 'text_delta', text: 'No learnings yet. Franklin learns your preferences over time.\n' });
+            }
+            else {
+                learnings = decayLearnings(learnings);
+                const sorted = [...learnings].sort((a, b) => (b.confidence * b.times_confirmed) - (a.confidence * a.times_confirmed));
+                let text = `**Personal Learnings** (${sorted.length})\n\n`;
+                for (const l of sorted) {
+                    const conf = l.confidence >= 0.8 ? 'high' : l.confidence >= 0.5 ? 'mid' : 'low';
+                    text += `  [${conf}] ${l.learning} (×${l.times_confirmed})\n`;
+                }
+                text += '\nUse `/learnings clear` to reset.\n';
+                ctx.onEvent({ kind: 'text_delta', text });
+            }
+        }
         emitDone(ctx);
         return { handled: true };
     }
