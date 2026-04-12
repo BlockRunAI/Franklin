@@ -99,6 +99,10 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         // Agent loop for this user message
         while (loopCount < maxTurns) {
             loopCount++;
+            // Signal UI that a new LLM round is starting (shows spinner between tool results and next response)
+            if (loopCount > 1) {
+                onEvent({ kind: 'thinking_delta', text: '' });
+            }
             // ── Token optimization pipeline ──
             // 1. Strip thinking, budget tool results, time-based cleanup (always — cheap)
             const optimized = optimizeHistory(history, {
