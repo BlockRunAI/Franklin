@@ -2,9 +2,9 @@
 
 <br>
 
-<h1>
-  <code>◆</code> &nbsp; Franklin &nbsp; <code>◆</code>
-</h1>
+<img src="assets/terminal-banner.png" alt="Franklin terminal" width="680">
+
+<br><br>
 
 <h3>The AI agent with a wallet.</h3>
 
