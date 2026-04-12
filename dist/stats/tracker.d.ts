@@ -2,6 +2,7 @@
  * Usage tracking for runcode
  * Records all requests with cost, tokens, and latency for stats display
  */
+export declare function getStatsFilePath(): string;
 export interface UsageRecord {
     timestamp: number;
     model: string;

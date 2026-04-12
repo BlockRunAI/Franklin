@@ -8,6 +8,7 @@ import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import type { StreamEvent } from '../agent/types.js';
+import { renderMarkdown } from './markdown.js';
 import {
   resolveModel,
   PICKER_CATEGORIES,
@@ -634,7 +635,7 @@ function RunCodeApp({
       <Static items={committedResponses}>
         {(r) => (
           <Box key={r.key} flexDirection="column">
-            <Text wrap="wrap">{r.text}</Text>
+            <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
             {(r.tokens.input > 0 || r.tokens.output > 0) && (
               <Box marginLeft={1}>
                 <Text dimColor>
@@ -734,7 +735,7 @@ function RunCodeApp({
       {/* Streaming response — visible while the model is generating */}
       {streamText && (
         <Box marginTop={0} marginBottom={0}>
-          <Text wrap="wrap">{streamText}</Text>
+          <Text wrap="wrap">{renderMarkdown(streamText)}</Text>
         </Box>
       )}
 
@@ -742,7 +743,7 @@ function RunCodeApp({
           Full text is already in Static/scrollback above. Cleared when next turn starts. */}
       {responsePreview && !streamText && (
         <Box flexDirection="column" marginBottom={0}>
-          <Text wrap="wrap">{responsePreview}</Text>
+          <Text wrap="wrap">{renderMarkdown(responsePreview)}</Text>
         </Box>
       )}
 

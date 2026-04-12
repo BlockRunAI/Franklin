@@ -42,7 +42,21 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     const sessionId = createSessionId();
     let turnCount = 0;
     let tokenBudgetWarned = false; // Emit token budget warning at most once per session
+    let lastSessionActivity = Date.now();
+    const persistSessionMeta = () => {
+        updateSessionMeta(sessionId, {
+            model: config.model,
+            workDir,
+            turnCount,
+            messageCount: history.length,
+        });
+    };
+    const persistSessionMessage = (message) => {
+        appendToSession(sessionId, message);
+        persistSessionMeta();
+    };
     pruneOldSessions(sessionId); // Cleanup old sessions on start, protect current
+    persistSessionMeta();
     while (true) {
         let input = await getUserInput();
         if (input === null)
@@ -72,15 +86,16 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         }
         lastUserInput = input;
         history.push({ role: 'user', content: input });
-        appendToSession(sessionId, { role: 'user', content: input });
         turnCount++;
+        persistSessionMessage({ role: 'user', content: input });
         const abort = new AbortController();
         onAbortReady?.(() => abort.abort());
         let loopCount = 0;
         let recoveryAttempts = 0;
         let compactFailures = 0;
         let maxTokensOverride;
-        let lastActivity = Date.now();
+        const turnIdleReference = lastSessionActivity;
+        lastSessionActivity = Date.now();
         // Agent loop for this user message
         while (loopCount < maxTurns) {
             loopCount++;
@@ -88,7 +103,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             // 1. Strip thinking, budget tool results, time-based cleanup (always — cheap)
             const optimized = optimizeHistory(history, {
                 debug: config.debug,
-                lastActivityTimestamp: lastActivity,
+                lastActivityTimestamp: loopCount === 1 ? turnIdleReference : lastSessionActivity,
             });
             if (optimized !== history) {
                 history.length = 0;
@@ -185,9 +200,12 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 if (err.name === 'AbortError' || abort.signal.aborted) {
                     // Save any partial response that was streamed before abort
                     if (responseParts && responseParts.length > 0) {
-                        history.push({ role: 'assistant', content: responseParts });
-                        appendToSession(sessionId, { role: 'assistant', content: responseParts });
+                        const partialAssistant = { role: 'assistant', content: responseParts };
+                        history.push(partialAssistant);
+                        persistSessionMessage(partialAssistant);
                     }
+                    lastSessionActivity = Date.now();
+                    persistSessionMeta();
                     onEvent({ kind: 'turn_done', reason: 'aborted' });
                     break;
                 }
@@ -249,6 +267,8 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     reason: 'error',
                     error: `[${classified.label}] ${errMsg}${suggestion}`,
                 });
+                lastSessionActivity = Date.now();
+                persistSessionMeta();
                 break;
             }
             // When API doesn't return input tokens (some models return 0), estimate from history
@@ -278,11 +298,16 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     }
                 }
                 // Append what we got + a continuation prompt (text already streamed)
-                history.push({ role: 'assistant', content: responseParts });
-                history.push({
+                const partialAssistant = { role: 'assistant', content: responseParts };
+                const continuationPrompt = {
                     role: 'user',
                     content: 'Continue where you left off. Do not repeat what you already said.',
-                });
+                };
+                history.push(partialAssistant);
+                persistSessionMessage(partialAssistant);
+                history.push(continuationPrompt);
+                persistSessionMessage(continuationPrompt);
+                lastSessionActivity = Date.now();
                 continue; // Retry with higher limit
             }
             // Reset recovery counter on successful completion
@@ -294,17 +319,13 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     invocations.push(part);
                 }
             }
-            history.push({ role: 'assistant', content: responseParts });
+            const assistantMessage = { role: 'assistant', content: responseParts };
+            history.push(assistantMessage);
+            persistSessionMessage(assistantMessage);
             // No more capabilities → done with this user message
             if (invocations.length === 0) {
-                // Save session on completed turn
-                appendToSession(sessionId, { role: 'assistant', content: responseParts });
-                updateSessionMeta(sessionId, {
-                    model: config.model,
-                    workDir: config.workingDir || process.cwd(),
-                    turnCount,
-                    messageCount: history.length,
-                });
+                lastSessionActivity = Date.now();
+                persistSessionMeta();
                 // Token budget warning — emit once per session when crossing 70%
                 if (!tokenBudgetWarned) {
                     const { estimated } = getAnchoredTokenCount(history);
@@ -327,7 +348,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 onEvent({ kind: 'capability_done', id: inv.id, result });
             }
             // Refresh activity timestamp after tool execution
-            lastActivity = Date.now();
+            lastSessionActivity = Date.now();
             // Append outcomes
             const outcomeContent = results.map(([inv, result]) => ({
                 type: 'tool_result',
@@ -335,9 +356,13 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 content: result.output,
                 is_error: result.isError,
             }));
-            history.push({ role: 'user', content: outcomeContent });
+            const toolResultMessage = { role: 'user', content: outcomeContent };
+            history.push(toolResultMessage);
+            persistSessionMessage(toolResultMessage);
         }
         if (loopCount >= maxTurns) {
+            lastSessionActivity = Date.now();
+            persistSessionMeta();
             onEvent({ kind: 'turn_done', reason: 'max_turns' });
         }
     }
