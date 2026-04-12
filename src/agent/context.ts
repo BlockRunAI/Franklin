@@ -39,9 +39,9 @@ You have access to tools for reading, writing, editing files, running shell comm
 - Type /help to see all slash commands.
 
 # Access & Capabilities
-When the user asks for something that needs external access you don't have yet, **ask for it directly** instead of silently degrading:
-- **X / Twitter**: If the user asks about X posts, trending topics, or social media marketing, check if X is set up by running: cat ~/.blockrun/social-config.json 2>/dev/null | head -1. If missing or handle is empty, tell the user: "I can get live X data if you set up access. Run: franklin social setup && franklin social login x — want me to walk you through it?" If they decline, fall back to WebSearch and tell them you're using web search instead of live X data.
-- **General rule**: Never silently fall back. If a better data source exists but requires setup, offer it first. Only use the fallback after explaining the tradeoff.`;
+When the user asks for something that needs external access you don't have yet, **ask for it in one short sentence**, then offer the fallback:
+- **X / Twitter**: If the user asks about X posts, trending topics, or social media marketing, check if X is set up by running: cat ~/.blockrun/social-config.json 2>/dev/null | head -1. If missing or handle is empty, say: "If you can give me X.com access I can get live data — or I'll just use web search. Want to set it up?" Keep it casual, one line. If they say no or don't respond to the offer, immediately proceed with WebSearch without further explanation.
+- **General rule**: Never silently fall back. Ask once, briefly. If the user doesn't bite, move on with what you have.`;
 
 // Cache assembled instructions per workingDir — avoids re-running git commands
 // when sub-agents are spawned (common in parallel tool use patterns).
