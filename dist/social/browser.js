@@ -202,6 +202,28 @@ export class SocialBrowser {
         await this.page.waitForTimeout(ms);
     }
     /**
+     * Resolve a ref from the last snapshot to its href attribute.
+     * Returns the href string, or null if the ref isn't a link or has no href.
+     */
+    async getHref(ref) {
+        this.requirePage();
+        const axRef = this.lastRefs.get(ref);
+        if (!axRef)
+            return null;
+        try {
+            const el = this.page.locator(axRef.selector).first();
+            // Try the element itself, then walk up to find the nearest <a>
+            const href = await el.evaluate((node) => {
+                const anchor = node.closest('a') || (node.tagName === 'A' ? node : null);
+                return anchor ? anchor.href : null;
+            });
+            return href;
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
      * Block until the user closes the browser tab (used by the login flow).
      * Resolves when the context is closed.
      */

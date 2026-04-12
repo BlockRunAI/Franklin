@@ -88,6 +88,11 @@ export declare class SocialBrowser {
     getTitle(): Promise<string>;
     waitForTimeout(ms: number): Promise<void>;
     /**
+     * Resolve a ref from the last snapshot to its href attribute.
+     * Returns the href string, or null if the ref isn't a link or has no href.
+     */
+    getHref(ref: string): Promise<string | null>;
+    /**
      * Block until the user closes the browser tab (used by the login flow).
      * Resolves when the context is closed.
      */
