@@ -196,7 +196,7 @@ const DIRECT_COMMANDS = {
                 `  **Coding:** /commit /review /test /fix /debug /explain /search /find /refactor /scaffold\n` +
                 `  **Git:** /push /pr /undo /status /diff /log /branch /stash /unstash\n` +
                 `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
-                `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /context /tasks\n` +
+                `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /session-search /context /tasks\n` +
                 `  **Power:** /ultrathink [query] /ultraplan /dump\n` +
                 `  **Info:** /model /wallet /cost /tokens /learnings /mcp /doctor /version /bug /help\n` +
                 `  **UI:** /clear /exit\n` +
@@ -350,11 +350,12 @@ const DIRECT_COMMANDS = {
             for (const s of sessions.slice(0, 10)) {
                 const date = new Date(s.updatedAt).toLocaleString();
                 const dir = s.workDir ? ` — ${s.workDir.split('/').pop()}` : '';
-                text += `  ${s.id}  ${s.model}  ${s.turnCount} turns  ${date}${dir}\n`;
+                const current = s.id === ctx.sessionId ? '  (current)' : '';
+                text += `  ${s.id}  ${s.model}  ${s.turnCount} turns  ${date}${dir}${current}\n`;
             }
             if (sessions.length > 10)
                 text += `  ... and ${sessions.length - 10} more\n`;
-            text += '\nUse /resume <session-id> to continue a session.\n';
+            text += '\nUse /resume to restore the latest session, or /resume <session-id> for a specific one.\n';
             ctx.onEvent({ kind: 'text_delta', text });
         }
         emitDone(ctx);
@@ -486,13 +487,17 @@ export async function handleSlashCommand(input, ctx) {
         await DIRECT_COMMANDS[input](ctx);
         return { handled: true };
     }
-    // /search <query> — full-text search past sessions
-    if (input === '/search' || input.startsWith('/search ')) {
-        const query = input === '/search' ? '' : input.slice('/search '.length).trim();
+    // /session-search <query> — full-text search past sessions
+    if (input === '/session-search' ||
+        input.startsWith('/session-search ') ||
+        input === '/ssearch' ||
+        input.startsWith('/ssearch ')) {
+        const prefix = input.startsWith('/ssearch') ? '/ssearch' : '/session-search';
+        const query = input === prefix ? '' : input.slice(prefix.length + 1).trim();
         if (!query) {
-            ctx.onEvent({ kind: 'text_delta', text: 'Usage: /search <query>\n' +
+            ctx.onEvent({ kind: 'text_delta', text: 'Usage: /session-search <query>\n' +
                     'Finds past sessions whose messages match the query.\n' +
-                    'Use quotes for phrase search: /search "payment loop"\n'
+                    'Use quotes for phrase search: /session-search "payment loop"\n'
             });
             emitDone(ctx);
             return { handled: true };
@@ -633,9 +638,16 @@ export async function handleSlashCommand(input, ctx) {
         emitDone(ctx);
         return { handled: true };
     }
-    // /resume <id>
-    if (input.startsWith('/resume ')) {
-        const targetId = input.slice(8).trim();
+    // /resume or /resume <id>
+    if (input === '/resume' || input.startsWith('/resume ')) {
+        const targetId = input === '/resume'
+            ? listSessions().find((session) => session.id !== ctx.sessionId)?.id ?? ''
+            : input.slice(8).trim();
+        if (!targetId) {
+            ctx.onEvent({ kind: 'text_delta', text: 'No previous session available to resume.\n' });
+            emitDone(ctx);
+            return { handled: true };
+        }
         const restored = loadSessionHistory(targetId);
         if (restored.length === 0) {
             ctx.onEvent({ kind: 'text_delta', text: `Session "${targetId}" not found or empty.\n` });
@@ -665,7 +677,7 @@ export async function handleSlashCommand(input, ctx) {
         ...Object.keys(DIRECT_COMMANDS),
         ...Object.keys(REWRITE_COMMANDS),
         ...ARG_COMMANDS.map(c => c.prefix.trim()),
-        '/branch', '/resume', '/model', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit',
+        '/branch', '/resume', '/model', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch',
     ];
     const cmd = input.split(/\s/)[0];
     const close = allCommands.filter(c => {
