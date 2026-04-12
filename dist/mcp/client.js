@@ -19,6 +19,7 @@ async function connectStdio(name, config) {
         command: config.command,
         args: config.args || [],
         env: { ...process.env, ...(config.env || {}) },
+        stderr: 'pipe', // Suppress MCP server stderr — don't pollute user's terminal
     });
     const client = new Client({ name: `runcode-mcp-${name}`, version: '1.0.0' }, { capabilities: {} });
     try {
@@ -111,8 +112,10 @@ export async function connectMcpServers(config, debug) {
             }
         }
         catch (err) {
-            // Graceful degradation — log and continue without this server
-            console.error(`[runcode] MCP ${name} failed: ${err.message}`);
+            // Graceful degradation — brief warning, continue without this server
+            if (debug) {
+                console.error(`[runcode] MCP ${name} failed: ${err.message}`);
+            }
         }
     }
     return allTools;
