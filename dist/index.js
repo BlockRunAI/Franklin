@@ -150,6 +150,13 @@ program
     }
 }
 program
+    .command('migrate')
+    .description('Import data from other AI tools (Claude Code, Cline, Cursor)')
+    .action(async () => {
+    const { migrateCommand } = await import('./commands/migrate.js');
+    await migrateCommand();
+});
+program
     .command('plugins')
     .description('List installed plugins')
     .action(async () => {
