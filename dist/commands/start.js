@@ -130,6 +130,14 @@ export async function startCommand(options) {
         permissionMode: (options.trust || !process.stdin.isTTY) ? 'trust' : 'default',
         debug: options.debug,
     };
+    // Bootstrap learnings from Claude Code config on first run (async, non-blocking)
+    Promise.all([
+        import('../learnings/extractor.js'),
+        import('../agent/llm.js'),
+    ]).then(([{ bootstrapFromClaudeConfig }, { ModelClient }]) => {
+        const client = new ModelClient({ apiUrl, chain });
+        bootstrapFromClaudeConfig(client).catch(() => { });
+    }).catch(() => { });
     // Use Ink UI if TTY, fallback to basic readline for piped input
     if (process.stdin.isTTY) {
         await runWithInkUI(agentConfig, model, workDir, version, walletInfo, (cb) => {

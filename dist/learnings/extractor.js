@@ -2,6 +2,9 @@
  * Extract user preferences from a completed session trace.
  * Uses a cheap model to analyze the conversation and produce learnings.
  */
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { loadLearnings, mergeLearning, saveLearnings } from './store.js';
 // Cheapest models that reliably output structured JSON
 const EXTRACTION_MODELS = [
@@ -97,6 +100,93 @@ function parseExtraction(raw) {
         })),
     };
 }
+// ─── Onboarding: bootstrap from Claude Code config ───────────────────────
+const BOOTSTRAP_PROMPT = `You are analyzing a user's AI coding agent configuration file (CLAUDE.md). Extract user preferences that would help personalize a different AI agent's behavior.
+
+Analyze for:
+1. Language — what language do they communicate in?
+2. Coding style — naming conventions, formatting, lint rules, type annotations?
+3. Communication — how do they want the agent to behave? (terse? formal? call them something?)
+4. Domain — what tech stack, frameworks, languages do they work with?
+5. Workflow — any specific git, commit, or deployment preferences?
+6. Corrections — any explicit "do NOT" rules or anti-patterns?
+7. Other — any other clear preferences?
+
+Rules:
+- Extract EVERY explicit preference. These are user-written rules, so confidence is high (0.8-1.0).
+- Each learning should be one clear, actionable sentence.
+- Do NOT include project-specific paths or secrets.
+- Do NOT include things that are tool-specific to Claude Code and wouldn't apply to another agent.
+
+Respond with ONLY a JSON object (no markdown fences, no commentary):
+{"learnings":[{"learning":"...","category":"language|model_preference|tool_pattern|coding_style|communication|domain|correction|workflow|other","confidence":0.9}]}`;
+/**
+ * Scan for Claude Code configuration and bootstrap learnings from it.
+ * Only runs once — skips if learnings already exist.
+ */
+export async function bootstrapFromClaudeConfig(client) {
+    // Only bootstrap if no learnings exist yet (first run)
+    const existing = loadLearnings();
+    if (existing.length > 0)
+        return 0;
+    // Scan for Claude Code config files
+    const configPaths = [
+        path.join(os.homedir(), '.claude', 'CLAUDE.md'),
+        path.join(process.cwd(), 'CLAUDE.md'),
+        path.join(process.cwd(), '.claude', 'CLAUDE.md'),
+    ];
+    const contents = [];
+    for (const p of configPaths) {
+        try {
+            const text = fs.readFileSync(p, 'utf-8').trim();
+            if (text && text.length > 20) {
+                contents.push(`--- ${p} ---\n${text}`);
+            }
+        }
+        catch { /* file doesn't exist */ }
+    }
+    if (contents.length === 0)
+        return 0;
+    // Cap total content
+    let combined = contents.join('\n\n');
+    if (combined.length > 6000)
+        combined = combined.slice(0, 6000) + '\n…(truncated)';
+    // Extract learnings
+    let result = null;
+    for (const model of EXTRACTION_MODELS) {
+        try {
+            const response = await client.complete({
+                model,
+                messages: [{ role: 'user', content: combined }],
+                system: BOOTSTRAP_PROMPT,
+                max_tokens: 1500,
+                temperature: 0.2,
+            });
+            const text = response.content
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('');
+            result = parseExtraction(text);
+            break;
+        }
+        catch {
+            continue;
+        }
+    }
+    if (!result || result.learnings.length === 0)
+        return 0;
+    // Save all bootstrapped learnings
+    let learnings = loadLearnings();
+    for (const entry of result.learnings) {
+        learnings = mergeLearning(learnings, {
+            ...entry,
+            source_session: 'bootstrap:claude-config',
+        });
+    }
+    saveLearnings(learnings);
+    return result.learnings.length;
+}
+// ─── Session extraction ──────────────────────────────────────────────────
 /**
  * Extract learnings from a completed session.
  * Runs asynchronously — caller should fire-and-forget.
