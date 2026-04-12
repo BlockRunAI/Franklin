@@ -59,6 +59,14 @@ export async function startCommand(options: StartOptions) {
     }
   }
 
+  // First-run: detect other AI tools and offer migration
+  if (process.stdin.isTTY) {
+    try {
+      const { checkAndSuggestMigration } = await import('./migrate.js');
+      await checkAndSuggestMigration();
+    } catch { /* migration is optional */ }
+  }
+
   printBanner(version);
 
   const workDir = process.cwd();

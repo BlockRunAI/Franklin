@@ -50,6 +50,14 @@ export async function startCommand(options) {
             console.log(chalk.dim('  Free models work now. Fund with USDC for paid models.\n'));
         }
     }
+    // First-run: detect other AI tools and offer migration
+    if (process.stdin.isTTY) {
+        try {
+            const { checkAndSuggestMigration } = await import('./migrate.js');
+            await checkAndSuggestMigration();
+        }
+        catch { /* migration is optional */ }
+    }
     printBanner(version);
     const workDir = process.cwd();
     // Show session info immediately, fetch balance in background
