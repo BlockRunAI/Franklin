@@ -523,6 +523,7 @@ export async function handleSlashCommand(input, ctx) {
         else {
             const newModel = resolveModel(input.slice(7).trim());
             ctx.config.model = newModel;
+            ctx.config.onModelChange?.(newModel);
             ctx.onEvent({ kind: 'text_delta', text: `Model → **${newModel}**\n` });
         }
         emitDone(ctx);
