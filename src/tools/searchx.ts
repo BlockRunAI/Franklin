@@ -1,7 +1,10 @@
 /**
  * SearchX capability — search X (Twitter) for posts matching a query.
- * Returns candidate posts with snippets and product relevance scores.
- * Requires social config and X login.
+ * Returns candidate posts with snippets, tweet URLs, and product relevance scores.
+ *
+ * Works in two modes:
+ *   - **Basic** (no config): browser-only search, returns snippets + URLs
+ *   - **Enhanced** (with social config): adds product routing, dedup, login detection
  */
 
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
@@ -14,7 +17,7 @@ import {
 } from '../social/a11y.js';
 import { computePreKey, hasPreKey } from '../social/db.js';
 import { detectProduct } from '../social/ai.js';
-import { loadConfig } from '../social/config.js';
+import { loadConfig, isConfigReady } from '../social/config.js';
 import { browserPool } from '../social/browser-pool.js';
 
 interface SearchXInput {
@@ -26,6 +29,7 @@ interface Candidate {
   index: number;
   snippet: string;
   timeText: string;
+  tweetUrl: string | null;
   preKey: string;
   productMatch: string | null;
   alreadySeen: boolean;
@@ -43,17 +47,19 @@ async function execute(
 
   const maxResults = Math.min(Math.max(max_results ?? 10, 1), 50);
 
-  // ── Preflight: config + login ──────────────────────────────────────────
-  const preflight = await checkSocialReady();
-  if (!preflight.ready) {
-    return {
-      output: `SearchX not ready: ${preflight.reason}`,
-      isError: true,
-    };
-  }
-
+  // ── Config: load if available, degrade gracefully if not ────────────
   const config = loadConfig();
+  const configStatus = isConfigReady(config);
+  const enhanced = configStatus.ready;
   const handle = config.handle || 'unknown';
+
+  // In enhanced mode, verify login via preflight
+  if (enhanced) {
+    const preflight = await checkSocialReady();
+    if (!preflight.ready) {
+      // Login check failed — fall back to basic mode (search still works without login)
+    }
+  }
 
   let browser;
   try {
@@ -89,17 +95,31 @@ async function execute(
       );
       const timeText = timeLinkMatch ? timeLinkMatch[1].trim() : '';
 
-      // Compute pre-key for dedup
-      const preKey = computePreKey({ snippet, time: timeText });
-      const alreadySeen = hasPreKey('x', handle, preKey);
+      // Dedup (enhanced mode only)
+      const preKey = enhanced ? computePreKey({ snippet, time: timeText }) : '';
+      const alreadySeen = enhanced ? hasPreKey('x', handle, preKey) : false;
 
-      // Product routing (zero-cost keyword score)
-      const product = detectProduct(snippet, config.products);
+      // Resolve the actual tweet permalink URL from the time-link ref
+      let tweetUrl: string | null = null;
+      try {
+        const href = await browser.getHref(timeRef);
+        if (href) {
+          tweetUrl = href.startsWith('http')
+            ? href
+            : `https://x.com${href.startsWith('/') ? '' : '/'}${href}`;
+        }
+      } catch {
+        // Non-fatal — we still have the snippet
+      }
+
+      // Product routing (enhanced mode only)
+      const product = enhanced ? detectProduct(snippet, config.products) : null;
 
       candidates.push({
         index: candidates.length + 1,
         snippet,
         timeText,
+        tweetUrl,
         preKey,
         productMatch: product?.name ?? null,
         alreadySeen,
@@ -112,19 +132,31 @@ async function execute(
     }
 
     const lines = candidates.map((c) => {
-      const seen = c.alreadySeen ? ' [SEEN]' : '';
-      const product = c.productMatch ? ` | product: ${c.productMatch}` : ' | product: none';
+      const url = c.tweetUrl ? `\n   url: ${c.tweetUrl}` : '';
+      if (enhanced) {
+        const seen = c.alreadySeen ? ' [SEEN]' : '';
+        const product = c.productMatch ? ` | product: ${c.productMatch}` : ' | product: none';
+        return (
+          `${c.index}. ${c.snippet.slice(0, 200)}${url}\n` +
+          `   time: ${c.timeText} | pre_key: ${c.preKey}${product}${seen}`
+        );
+      }
+      // Basic mode: simpler output
       return (
-        `${c.index}. ${c.snippet.slice(0, 200)}\n` +
-        `   time: ${c.timeText} | pre_key: ${c.preKey}${product}${seen}`
+        `${c.index}. ${c.snippet.slice(0, 200)}${url}\n` +
+        `   time: ${c.timeText}`
       );
     });
 
-    return {
-      output:
-        `SearchX results for "${query}" (${candidates.length} candidates):\n\n` +
-        lines.join('\n\n'),
-    };
+    let output =
+      `SearchX results for "${query}" (${candidates.length} candidates):\n\n` +
+      lines.join('\n\n');
+
+    if (!enhanced) {
+      output += '\n\n---\nTip: Run `franklin social setup` to enable product routing, dedup, and auto-replies.';
+    }
+
+    return { output };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { output: `SearchX error: ${msg}`, isError: true };
@@ -138,7 +170,7 @@ export const searchXCapability: CapabilityHandler = {
     name: 'SearchX',
     description:
       'Search X (Twitter) for posts matching a query. Returns candidate posts ' +
-      'with snippets and product relevance scores. Requires social config and X login.',
+      'with snippets and tweet URLs. Works immediately; social config optional for enhanced features.',
     input_schema: {
       type: 'object' as const,
       properties: {
