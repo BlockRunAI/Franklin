@@ -86,6 +86,15 @@ program
   .action((action, options) => daemonCommand(action, options));
 
 program
+  .command('panel')
+  .description('Open the Franklin dashboard (localhost:3100)')
+  .option('-p, --port <port>', 'Dashboard port', '3100')
+  .action(async (options: { port?: string }) => {
+    const { panelCommand } = await import('./commands/panel.js');
+    await panelCommand(options);
+  });
+
+program
   .command('models')
   .description('List available models and pricing')
   .action(modelsCommand);
