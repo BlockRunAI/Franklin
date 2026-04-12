@@ -86,6 +86,34 @@ export function loadMcpConfig(workDir) {
     catch {
         // Ignore corrupt project config
     }
+    // Filter out servers whose required credential files are missing.
+    // This prevents noisy startup errors from MCP servers that were imported
+    // (e.g. via `franklin migrate`) but don't have credentials configured yet.
+    // The server stays in the config file — it just gets auto-disabled until
+    // the user provides the credentials.
+    for (const [name, config] of Object.entries(servers)) {
+        if (config.disabled)
+            continue;
+        const env = (config.env || {});
+        const args = (config.args || []);
+        const configStr = JSON.stringify(config).toLowerCase();
+        // Check if any env var points to a file that doesn't exist
+        let missingFile = false;
+        for (const [, val] of Object.entries(env)) {
+            if (typeof val === 'string' && (val.endsWith('.json') || val.endsWith('.key') || val.endsWith('.pem'))) {
+                if (!fs.existsSync(val)) {
+                    missingFile = true;
+                    break;
+                }
+            }
+        }
+        // Check for common credential-dependent patterns in config
+        const needsAuth = missingFile ||
+            (configStr.includes('oauth') && !args.some(a => fs.existsSync(a)));
+        if (needsAuth) {
+            servers[name].disabled = true;
+        }
+    }
     return { mcpServers: servers };
 }
 /**
