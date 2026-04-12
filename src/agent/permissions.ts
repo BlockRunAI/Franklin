@@ -28,13 +28,13 @@ export interface PermissionDecision {
 
 // ─── Default Rules ─────────────────────────────────────────────────────────
 
-const READ_ONLY_TOOLS = new Set(['Read', 'Glob', 'Grep', 'WebSearch', 'Task', 'AskUser', 'ImageGen']);
+const READ_ONLY_TOOLS = new Set(['Read', 'Glob', 'Grep', 'WebSearch', 'Task', 'AskUser', 'ImageGen', 'TradingSignal', 'TradingMarket', 'SearchX']);
 const DESTRUCTIVE_TOOLS = new Set(['Write', 'Edit', 'Bash']);
 
 const DEFAULT_RULES: PermissionRules = {
-  allow: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Task', 'AskUser', 'ImageGen'],
+  allow: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Task', 'AskUser', 'ImageGen', 'TradingSignal', 'TradingMarket', 'SearchX'],
   deny: [],
-  ask: ['Write', 'Edit', 'Bash', 'Agent'],
+  ask: ['Write', 'Edit', 'Bash', 'Agent', 'PostToX'],
 };
 
 // ─── Permission Manager ────────────────────────────────────────────────────

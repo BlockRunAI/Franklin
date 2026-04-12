@@ -27,6 +27,9 @@ import {
 import type { SocialConfig } from './config.js';
 import { detectProduct, generateReply } from './ai.js';
 import type { Chain } from '../config.js';
+import { bus } from '../events/bus.js';
+import { makeEvent } from '../events/types.js';
+import type { PostPublishedEvent } from '../events/types.js';
 
 export interface RunOptions {
   config: SocialConfig;
@@ -258,6 +261,12 @@ export async function runX(opts: RunOptions): Promise<RunResult> {
             cost_usd: gen.cost,
           });
           commitPreKey('x', handle, preKey);
+          bus.emit(makeEvent<PostPublishedEvent>({
+            type: 'post.published',
+            source: 'social',
+            costUsd: gen.cost,
+            data: { platform: 'x', url: canonicalUrl, text: gen.reply },
+          }));
           // Respect the rate-limit / anti-spam delay between successes
           await browser.waitForTimeout(opts.config.x.min_delay_seconds * 1000);
         } catch (err) {
@@ -294,7 +303,7 @@ export async function runX(opts: RunOptions): Promise<RunResult> {
  * Enter+Enter), clicks the reply button, confirms the "Your post was sent"
  * banner.
  */
-async function postReply(browser: SocialBrowser, reply: string): Promise<void> {
+export async function postReply(browser: SocialBrowser, reply: string): Promise<void> {
   // Snapshot and find the reply textbox
   const tree = await browser.snapshot();
   const boxRefs = findRefs(tree, 'textbox', 'Post (your reply|text).*');
