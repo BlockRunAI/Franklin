@@ -3,6 +3,7 @@
  * Real-time streaming, thinking animation, tool progress, slash commands.
  */
 
+import chalk from 'chalk';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
@@ -18,7 +19,7 @@ import { estimateCost } from '../pricing.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
-function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, focused, busy }: {
+function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, queuedCount, focused, busy }: {
   input: string;
   setInput: (v: string) => void;
   onSubmit: (v: string) => void;
@@ -26,6 +27,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
   balance: string;
   sessionCost: number;
   queued?: string;
+  queuedCount?: number;
   focused?: boolean;
   busy?: boolean;
 }) {
@@ -34,7 +36,9 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
   const innerWidth = Math.min(Math.max(30, cols - 4), cols - 2);
 
   const placeholder = busy
-    ? (queued ? `⏎ queued: ${queued.slice(0, 40)}` : 'Working...')
+    ? (queued
+        ? `⏎ ${queuedCount ?? 1} queued: ${queued.slice(0, 40)}`
+        : 'Working...')
     : 'Type a message...';
 
   return (
@@ -60,6 +64,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
           {busy ? <Text color="yellow"><Spinner type="dots" /></Text> : null}
           {busy ? ' ' : ''}{model}  ·  {balance}
           {sessionCost > 0.00001 ? <Text color="yellow">  -${sessionCost.toFixed(4)}</Text> : ''}
+          {(queuedCount ?? 0) > 0 ? <Text color="cyan">  ·  {queuedCount} queued</Text> : null}
           {'  ·  esc to abort/quit'}
         </Text>
       </Box>
@@ -94,6 +99,8 @@ interface AskUserRequest {
   options?: string[];
   resolve: (answer: string) => void;
 }
+
+type StatusTone = 'success' | 'warning' | 'error';
 
 // ─── Main App ──────────────────────────────────────────────────────────────
 
@@ -131,6 +138,7 @@ function RunCodeApp({
   const [mode, setMode] = useState<UIMode>(startWithPicker ? 'model-picker' : 'input');
   const [pickerIdx, setPickerIdx] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
+  const [statusTone, setStatusTone] = useState<StatusTone>('success');
   const [turnTokens, setTurnTokens] = useState({ input: 0, output: 0, calls: 0 });
   const [totalCost, setTotalCost] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
@@ -153,21 +161,21 @@ function RunCodeApp({
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [askUserRequest, setAskUserRequest] = useState<AskUserRequest | null>(null);
   const [askUserInput, setAskUserInput] = useState('');
-  // Message queued while agent is busy — auto-submitted when turn completes
-  const [queuedInput, setQueuedInput] = useState('');
+  // Messages queued while agent is busy — auto-submitted FIFO when turns complete.
+  const [queuedInputs, setQueuedInputs] = useState<string[]>([]);
   const turnDoneCallbackRef = useRef<(() => void) | null>(null);
   // Refs to read current state values inside memoized event handlers (avoids stale closures)
   const streamTextRef = useRef('');
   const turnTokensRef = useRef({ input: 0, output: 0, calls: 0 });
   const totalCostRef = useRef(0);
   const turnCostRef = useRef(0); // per-turn cost (reset each turn)
-  const queuedInputRef = useRef('');
+  const queuedInputsRef = useRef<string[]>([]);
 
   // Keep refs in sync so memoized event handlers can read current values
   streamTextRef.current = streamText;
   turnTokensRef.current = turnTokens;
   totalCostRef.current = totalCost;
-  queuedInputRef.current = queuedInput;
+  queuedInputsRef.current = queuedInputs;
   costAtLastFetchRef.current = costAtLastFetch;
   baseBalanceNumRef.current = baseBalanceNum;
 
@@ -175,6 +183,36 @@ function RunCodeApp({
   const liveBalance = baseBalanceNum !== null
     ? `$${Math.max(0, baseBalanceNum - (totalCost - costAtLastFetch)).toFixed(2)} USDC`
     : balance;
+
+  const showStatus = useCallback((text: string, tone: StatusTone = 'success', durationMs = 3000) => {
+    setStatusTone(tone);
+    setStatusMsg(text);
+    if (durationMs > 0) {
+      setTimeout(() => setStatusMsg(''), durationMs);
+    }
+  }, []);
+
+  const commitResponse = useCallback((
+    text: string,
+    tokens = turnTokensRef.current,
+    cost = turnCostRef.current
+  ) => {
+    if (!text.trim()) return;
+
+    setCommittedResponses((rs) => [...rs, {
+      key: String(Date.now() + Math.random()),
+      text,
+      tokens,
+      cost,
+    }]);
+
+    const allLines = text.split('\n');
+    if (allLines.length > 20) {
+      setResponsePreview('  ↑ scroll to see full reply\n' + allLines.slice(-20).join('\n'));
+    } else {
+      setResponsePreview('');
+    }
+  }, []);
 
   // Permission dialog key handler — captures y/n/a when dialog is visible.
   // ink 6.x: useInput handlers all fire regardless of TextInput focus prop,
@@ -205,11 +243,10 @@ function RunCodeApp({
     // Escape during generation → abort current turn (skip if permission dialog open)
     if (key.escape && !ready && !permissionRequest) {
       onAbort();
-      setStatusMsg('Aborted');
+      showStatus('Aborted', 'warning', 3000);
       setReady(true);
       setWaiting(false);
       setThinking(false);
-      setTimeout(() => setStatusMsg(''), 3000);
       return;
     }
 
@@ -228,10 +265,9 @@ function RunCodeApp({
       const selected = PICKER_MODELS_FLAT[pickerIdx];
       setCurrentModel(selected.id);
       onModelChange(selected.id);
-      setStatusMsg(`Model → ${selected.label}`);
+      showStatus(`Model → ${selected.label}`, 'success', 3000);
       setMode('input');
       setReady(true);
-      setTimeout(() => setStatusMsg(''), 3000);
     }
     else if (key.escape) {
       setMode('input');
@@ -263,8 +299,9 @@ function RunCodeApp({
 
     // If agent is busy, queue the message — it will be auto-submitted when the turn finishes
     if (!ready) {
-      setQueuedInput(trimmed);
+      setQueuedInputs(prev => [...prev, trimmed]);
       setInput('');
+      showStatus(`Queued message (${queuedInputsRef.current.length + 1} pending)`, 'warning', 1500);
       return;
     }
 
@@ -297,8 +334,7 @@ function RunCodeApp({
             const resolved = resolveModel(parts[1]);
             setCurrentModel(resolved);
             onModelChange(resolved);
-            setStatusMsg(`Model → ${resolved}`);
-            setTimeout(() => setStatusMsg(''), 3000);
+            showStatus(`Model → ${resolved}`, 'success', 3000);
           } else {
             const idx = PICKER_MODELS_FLAT.findIndex(m => m.id === currentModel);
             setPickerIdx(idx >= 0 ? idx : 0);
@@ -314,8 +350,7 @@ function RunCodeApp({
 
         case '/cost':
         case '/usage':
-          setStatusMsg(`Cost: $${totalCost.toFixed(4)} this session`);
-          setTimeout(() => setStatusMsg(''), 4000);
+          showStatus(`Cost: $${totalCost.toFixed(4)} this session`, 'success', 4000);
           return;
 
         case '/help':
@@ -336,8 +371,7 @@ function RunCodeApp({
 
         case '/retry':
           if (!lastPrompt) {
-            setStatusMsg('No previous prompt to retry');
-            setTimeout(() => setStatusMsg(''), 3000);
+            showStatus('No previous prompt to retry', 'warning', 3000);
             return;
           }
           setStreamText('');
@@ -365,6 +399,13 @@ function RunCodeApp({
     }
 
     // ── Normal prompt ──
+    // Show user message in scrollback so the conversation is readable
+    setCommittedResponses(rs => [...rs, {
+      key: `user-${Date.now()}`,
+      text: chalk.cyan('❯') + ' ' + trimmed,
+      tokens: { input: 0, output: 0, calls: 0 },
+      cost: 0,
+    }]);
     setResponsePreview('');
     setLastPrompt(trimmed);
     setInputHistory(prev => [...prev.slice(-49), trimmed]); // Keep last 50
@@ -383,7 +424,7 @@ function RunCodeApp({
     setTurnTokens({ input: 0, output: 0, calls: 0 });
     turnCostRef.current = 0;
     onSubmit(trimmed);
-  }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory]);
+  }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory, showStatus]);
 
   // Expose event handler, balance updater, and permission bridge
   useEffect(() => {
@@ -491,26 +532,23 @@ function RunCodeApp({
             break;
           }
           case 'turn_done': {
-            // Commit full response to Static immediately — enters terminal scrollback like Claude Code.
-            // Also keep a short preview (last 5 lines) visible in the dynamic area.
             const text = streamTextRef.current;
             if (text.trim()) {
-              setCommittedResponses(rs => [...rs, {
-                key: String(Date.now()),
-                text,
-                tokens: turnTokensRef.current,
-                cost: turnCostRef.current, // per-turn cost, not cumulative
-              }]);
-              // Preview = only show when response is long enough to scroll off screen
-              const allLines = text.split('\n');
-              if (allLines.length > 20) {
-                setResponsePreview('  ↑ scroll to see full reply\n' + allLines.slice(-20).join('\n'));
-              } else {
-                // Short response: already fully visible in scrollback, no preview needed
-                setResponsePreview('');
-              }
+              commitResponse(text, turnTokensRef.current, turnCostRef.current);
               setStreamText('');
             }
+
+            if (event.reason === 'error' && event.error) {
+              commitResponse(`Error: ${event.error}`, turnTokensRef.current, turnCostRef.current);
+              showStatus('Turn failed', 'error', 5000);
+            } else if (event.reason === 'aborted') {
+              showStatus('Aborted', 'warning', 3000);
+            } else if (event.reason === 'max_turns') {
+              showStatus('Stopped after reaching max turns', 'warning', 5000);
+            } else {
+              setStatusMsg('');
+            }
+
             setReady(true);
             setWaiting(false);
             setThinking(false);
@@ -520,10 +558,10 @@ function RunCodeApp({
             // Ring the terminal bell so the user knows the AI finished
             // (shows notification badge in iTerm2/Terminal.app when tabbed away)
             process.stderr.write('\x07');
-            // Auto-submit any message queued while agent was busy
-            const queued = queuedInputRef.current;
+            // Auto-submit any queued message while agent was busy
+            const queued = queuedInputsRef.current[0];
             if (queued) {
-              setQueuedInput('');
+              setQueuedInputs((prev) => prev.slice(1));
               // Small delay so React can flush the ready=true state first
               setTimeout(() => {
                 const fn = (globalThis as Record<string, unknown>).__runcode_submit;
@@ -542,7 +580,7 @@ function RunCodeApp({
       delete (globalThis as Record<string, unknown>).__runcode_ui;
       delete (globalThis as Record<string, unknown>).__runcode_submit;
     };
-  }, [handleSubmit]);
+  }, [handleSubmit, commitResponse, showStatus]);
 
   // ── Render ──
   // Note: the tree is ALWAYS the same shape across mode changes. Static
@@ -556,7 +594,11 @@ function RunCodeApp({
     <Box flexDirection="column">
       {/* Status message */}
       {statusMsg && (
-        <Box marginLeft={2}><Text color="green">{statusMsg}</Text></Box>
+        <Box marginLeft={2}>
+          <Text color={statusTone === 'error' ? 'red' : statusTone === 'warning' ? 'yellow' : 'green'}>
+            {statusMsg}
+          </Text>
+        </Box>
       )}
 
       {/* Help panel */}
@@ -575,6 +617,7 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/review</Text>        Code review</Text>
           <Text>  <Text color="cyan">/explain</Text> file  Explain code</Text>
           <Text>  <Text color="cyan">/search</Text> query  Search codebase</Text>
+          <Text>  <Text color="cyan">/session-search</Text> q  Search past sessions</Text>
           <Text>  <Text color="cyan">/refactor</Text> desc Refactor code</Text>
           <Text>  <Text color="cyan">/scaffold</Text> desc Generate boilerplate</Text>
           <Text dimColor>  ── Git ──</Text>
@@ -599,7 +642,7 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/execute</Text>       Exit plan mode (enable all tools)</Text>
           <Text>  <Text color="cyan">/sessions</Text>      List saved sessions</Text>
           <Text>  <Text color="cyan">/resume</Text> id     Resume a saved session</Text>
-          <Text>  <Text color="cyan">/clear</Text>         Clear conversation display</Text>
+          <Text>  <Text color="cyan">/clear</Text>         Clear conversation history</Text>
           <Text>  <Text color="cyan">/doctor</Text>        Diagnose setup issues</Text>
           <Text>  <Text color="cyan">/help</Text>          This help</Text>
           <Text>  <Text color="cyan">/exit</Text>          Quit</Text>
@@ -808,7 +851,8 @@ function RunCodeApp({
           model={currentModel}
           balance={liveBalance}
           sessionCost={totalCost}
-          queued={queuedInput || undefined}
+          queued={queuedInputs[0] || undefined}
+          queuedCount={queuedInputs.length}
           focused={!permissionRequest && !askUserRequest}
           busy={!askUserRequest && (waiting || thinking || tools.size > 0)}
         />

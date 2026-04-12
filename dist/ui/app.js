@@ -3,6 +3,7 @@ import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
  * RunCode ink-based terminal UI.
  * Real-time streaming, thinking animation, tool progress, slash commands.
  */
+import chalk from 'chalk';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
@@ -285,6 +286,13 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
             }
         }
         // ── Normal prompt ──
+        // Show user message in scrollback so the conversation is readable
+        setCommittedResponses(rs => [...rs, {
+                key: `user-${Date.now()}`,
+                text: chalk.cyan('❯') + ' ' + trimmed,
+                tokens: { input: 0, output: 0, calls: 0 },
+                cost: 0,
+            }]);
         setResponsePreview('');
         setLastPrompt(trimmed);
         setInputHistory(prev => [...prev.slice(-49), trimmed]); // Keep last 50
