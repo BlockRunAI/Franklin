@@ -6,11 +6,11 @@
   <code>◆</code> &nbsp; Franklin &nbsp; <code>◆</code>
 </h1>
 
-<h3>The AI agent with a wallet.</h3>
+<h3>The wallet-native economic agent.</h3>
 
 <p>
-  While others chat, Franklin spends.<br>
-  One wallet. Every model. Every paid API. Pay per action in USDC.
+  While others generate text, Franklin deploys capital.<br>
+  One wallet. Every model. Every paid API. Budgeted execution in USDC.
 </p>
 
 <p>
@@ -27,8 +27,8 @@
 
 <p>
   <a href="#quick-start">Quick&nbsp;start</a> ·
-  <a href="#what-franklin-can-do">What it does</a> ·
-  <a href="#why-franklin">Why</a> ·
+  <a href="#a-new-category">New&nbsp;category</a> ·
+  <a href="#what-franklin-can-execute">What&nbsp;it&nbsp;does</a> ·
   <a href="#the-comparison">Compare</a> ·
   <a href="#features">Features</a> ·
   <a href="#how-it-works">Architecture</a> ·
@@ -41,7 +41,7 @@
 
 ## The pitch in one paragraph
 
-Every AI agent today writes text. `franklin` **spends money** — your USDC, from your wallet, on your behalf, under a hard budget cap — to actually get work done. One agent. 55+ models. Every paid API routed through the [x402](https://x402.org) micropayment protocol. No subscriptions. No API keys. No account. The wallet is your identity.
+`franklin` is not a coding copilot and not just another task runner. Franklin is a **wallet-native economic agent**: software with purchasing power. You give it a goal and a budget. Franklin decides what model to call, what tool to use, what API is worth paying for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
 
 Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships as one npm package.
 
@@ -65,9 +65,32 @@ That's it. Zero signup, zero credit card, zero phone verification. Send **$5 of 
 
 ---
 
-## What Franklin can do
+## A new category
 
-Franklin is **chat-first**. No CLI subcommands to memorize. Just type what you want.
+> **Economic Agent**
+> 
+> Software that can hold a wallet, price its own actions, spend toward an outcome, and stop at a hard budget cap.
+
+That definition matters.
+
+Most AI products fit into one of three buckets:
+- They answer questions.
+- They write code.
+- They automate a fixed workflow.
+
+Franklin does something different. It combines:
+- **Purchasing power** — it can pay for models, tools, and APIs.
+- **Budget awareness** — it knows spend is part of the problem, not an afterthought.
+- **Cross-vertical execution** — marketing, trading, research, code, ops.
+- **Hard stopping conditions** — when the wallet or budget says stop, it stops.
+
+That is why Franklin is an economic agent, not just a task agent.
+
+---
+
+## What Franklin can execute
+
+Franklin is **chat-first**. You do not wire a DAG, configure six API keys, or commit to one model vendor. You state an outcome. Franklin decides what to read, search, fetch, call, and pay for.
 
 ### 📈 Trading signals
 
@@ -95,37 +118,48 @@ Franklin is **chat-first**. No CLI subcommands to memorize. Just type what you w
   Risk/reward to $70K target: 1:2.8 ✓
 ```
 
-Live data from CoinGecko. RSI, MACD, Bollinger, volatility computed locally. No API key needed.
+Live data from CoinGecko. RSI, MACD, Bollinger, and volatility computed locally. No API key needed.
 
 ### 🎯 Social growth
 
 ```text
-> find X posts about ai agent
+> find X posts complaining about AI rate limits
 
-  ✓ SearchX  "ai agent"
+  ✓ SearchX  "AI rate limits"
 
   Found 8 candidates:
-  1. "Just tried 5 different AI coding agents..."  — @dev_sarah (2h)
-     Product match: Franklin (score: 3)
-  2. "Rate limits on Claude Code are killing me..." — @indie_max (5h)
-     Product match: Franklin (score: 2)
+  1. "Claude keeps throttling me in the middle of shipping..." — @buildermax (2h)
+  2. "I need an agent that can switch models automatically." — @indiedev (5h)
   ...
 
-> write a reply to #2 — mention that Franklin has no rate limits
+> write a reply to #2 — mention Franklin uses a wallet instead of subscriptions
 
   Draft:
-  "Been there. I switched to an agent that routes across 55+ models
-   with no rate limits — pays per action from a USDC wallet instead
-   of a monthly sub. Night and day difference for long sessions."
+  "That was my pain too. Franklin routes across 55+ models,
+   pays per action from a USDC wallet, and doesn't trap you
+   inside a monthly seat. Better economics, better uptime."
 
 > looks good, post it
 
-  ✓ PostToX  Reply posted to x.com/indie_max/status/...
+  ✓ PostToX  Reply posted to x.com/indiedev/status/...
 ```
 
-Search X, generate contextual replies, post with one confirmation. Uses Playwright for browser automation — no X API key, no OAuth, no $100/month developer account.
+Search X, generate contextual replies, and post with confirmation. Uses Playwright for browser automation, so there is no X API key, no OAuth maze, and no $100/month developer account.
 
-### 🛠 Code, research, anything
+### 🔎 Research, code, anything with a budget
+
+```text
+> compare the top 5 AI agent pricing models, summarize the patterns, and save a note for me
+
+  ✓ WebSearch  ai agent pricing models
+  ✓ WebFetch   5 articles
+  ✓ Write      notes/agent-pricing.md
+
+  Summary:
+  - Most agents hide pricing behind monthly seats
+  - Usage-based products win with power users and teams
+  - Wallet-based billing is still basically empty whitespace
+```
 
 ```text
 > refactor src/auth.ts to use the new jwt helper, then run the tests
@@ -139,7 +173,9 @@ Search X, generate contextual replies, post with one confirmation. Uses Playwrig
   Done in 18s · $0.011
 ```
 
-Every tool call is itemised. Every token is priced. When the wallet hits zero, Franklin stops. No overdraft, no surprise bill, no rate-limit wall at 3am.
+Code is still first-class. It is just **one workload**, not the category.
+
+Every tool call is itemized. Every token is priced. When the wallet hits zero, Franklin stops. No overdraft, no surprise bill, no rate-limit wall at 3am.
 
 ---
 
@@ -149,23 +185,23 @@ Every tool call is itemised. Every token is priced. When the wallet hits zero, F
 <tr>
 <td width="33%" valign="top">
 
-### 💳 &nbsp;Pay per action
+### 💳 &nbsp;Budget is native
 
-No subscriptions. No "Pro" tier. You fund a wallet once and Franklin spends atomically per API call via HTTP 402. Cheap models cost fractions of a cent. Frontier models cost what they cost. When the wallet is empty, Franklin stops.
+Franklin does not bolt spend tracking on afterward. Cost is part of the loop. The agent can choose free, cheap, or premium paths per step, and every paid action settles against your wallet.
 
 </td>
 <td width="33%" valign="top">
 
 ### 🔐 &nbsp;Wallet is identity
 
-No email. No phone. No KYC. Your Base or Solana address is your account. Portable across machines — `franklin setup` imports an existing wallet in one command. Your sessions, your config, your money.
+No email. No phone. No KYC. Your Base or Solana address is your account. Portable across machines. Your sessions, your config, your money.
 
 </td>
 <td width="33%" valign="top">
 
-### 🧠 &nbsp;55+ models, one interface
+### 🧠 &nbsp;One runtime, many verticals
 
-Claude Sonnet/Opus 4.6, GPT-5.4, Gemini 2.5 Pro, Grok 4, DeepSeek V3, GLM-5.1, Kimi, Minimax, plus NVIDIA's free tier. Switch mid-session with `/model`. Automatic fallback if one provider is down.
+Marketing, trading, research, code, and anything else you can express as tools plus budgeted execution. Franklin is a runtime for economic workflows, not a single-purpose copilot.
 
 </td>
 </tr>
@@ -175,20 +211,18 @@ Claude Sonnet/Opus 4.6, GPT-5.4, Gemini 2.5 Pro, Grok 4, DeepSeek V3, GLM-5.1, K
 
 ## The comparison
 
-|                                    | Claude Code    | Hermes        | OpenClaw       | **Franklin**          |
-| ---------------------------------- | -------------- | ------------- | -------------- | --------------------- |
-| Writes and edits code              | ✅             | ✅            | ✅             | ✅                    |
-| Multi-model support                | ❌ Claude only | ✅ BYOK        | ✅ BYOK         | ✅ **55+ via 1 wallet** |
-| Pricing model                      | Subscription   | BYOK          | BYOK           | **Pay per action**    |
-| Identity                           | Account        | API keys      | API keys       | **Wallet**            |
-| Start free, no signup              | ❌             | ⚠️ need keys   | ⚠️ need keys    | ✅                    |
-| **Trading signals in chat**        | ❌             | ❌            | ❌             | ✅ live BTC/ETH/...   |
-| **Social growth (search + reply)** | ❌             | ❌            | ❌             | ✅ X native           |
-| **Image generation (DALL-E)**      | ❌             | ❌ BYOK       | ❌             | ✅ via x402           |
-| Budget cap enforced on-chain       | ❌             | ❌            | ❌             | ✅                    |
-| Plugin SDK                         | ❌             | ⚠️            | ✅             | ✅                    |
+|                                      | Chatbots        | Coding agents    | Workflow tools   | **Franklin**                    |
+| ------------------------------------ | --------------- | ---------------- | ---------------- | ------------------------------- |
+| Main unit of value                   | Answers         | Code changes     | Fixed automations| **Budgeted outcomes**           |
+| Has purchasing power                 | ❌              | ❌               | ❌               | ✅ **wallet-native**            |
+| Can choose tools/models per step     | ⚠️ limited      | ✅ mostly coding | ❌ usually fixed | ✅ **yes**                      |
+| Works across marketing/trading/code  | ⚠️              | ❌ code-first    | ⚠️ integration-bound | ✅ **cross-vertical**       |
+| Hard spend cap                       | ❌              | ❌               | ⚠️ external billing | ✅ **wallet balance**        |
+| Identity                             | Account         | Account / API key| Account          | ✅ **wallet**                   |
+| Start free, no signup                | ⚠️              | ❌ / BYOK        | ❌               | ✅                              |
+| Paid APIs through one interface      | ❌              | ⚠️               | ❌               | ✅ **55+ models + paid tools**  |
 
-**Franklin is the first Autonomous Economic Agent** — an agent that takes a goal, decides what to spend on, and executes within a hard budget cap enforced by the wallet.
+**Franklin is the economic agent category in one sentence:** software with a wallet that can spend toward a result.
 
 ---
 
@@ -198,23 +232,23 @@ Claude Sonnet/Opus 4.6, GPT-5.4, Gemini 2.5 Pro, Grok 4, DeepSeek V3, GLM-5.1, K
 <tr>
 <td width="50%" valign="top">
 
+**💼 Wallet-native economic execution**
+Franklin can decide what is worth paying for, route the call, sign the micropayment, and keep going until the goal is done or the budget is exhausted.
+
 **📈 Trading signals**
-Ask "what's BTC looking like?" — Franklin fetches live price from CoinGecko, computes RSI/MACD/Bollinger/volatility, and synthesizes a signal. No API key needed.
+Ask "what's BTC looking like?" — Franklin fetches live price data, computes RSI/MACD/Bollinger/volatility, and synthesizes a signal.
 
 **🎯 Social growth**
-Ask "find X posts about my product" — Franklin searches X via browser automation, generates contextual replies, posts with your confirmation. No X API key. No OAuth.
+Ask "find X posts about my category" — Franklin searches X, drafts replies, and posts with your confirmation.
 
 **🧠 55+ models via one wallet**
-Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, NVIDIA free tier. One URL, one wallet, automatic fallback.
+Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, NVIDIA free tier. One wallet, one interface, automatic fallback.
 
 **💳 x402 micropayments**
-HTTP 402 native. Every tool call is a tiny signed transaction against your USDC balance. No escrow, no refund API, no subscription.
+HTTP 402 native. Every paid action is a signed micropayment against your USDC balance. No subscriptions. No refund loop. No account lock-in.
 
-**🚦 Smart tier routing**
-Free / cheap / premium per task. Franklin picks the best model per tier. Configurable defaults in `franklin config`.
-
-**🔌 Plugin SDK**
-Core is workflow-agnostic. Ship a new vertical without touching the agent loop. See [docs/plugin-sdk.md](docs/plugin-sdk.md).
+**🚦 Smart spend routing**
+Free / cheap / premium per step. Franklin picks the cheapest model that can do the job, then escalates when quality matters.
 
 </td>
 <td width="50%" valign="top">
@@ -223,19 +257,19 @@ Core is workflow-agnostic. Ship a new vertical without touching the agent loop. 
 Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch, Task, ImageGen, AskUser, SubAgent, TradingSignal, TradingMarket, SearchX, PostToX.
 
 **💾 Persistent sessions**
-Every turn is streamed to disk with full metadata. Resume any session by ID. Survives crashes, reboots, context compaction.
+Every turn is streamed to disk with metadata. Resume any session by ID. Survives crashes, reboots, and compaction.
 
 **🔍 Full-text session search**
-`franklin search "payment loop"` — tokenised search across every past session. No SQLite, no indexing daemon, just fast.
+`franklin search "payment loop"` from the CLI, or `/session-search "payment loop"` in chat.
 
 **📊 Cost insights**
-`franklin insights` — daily spend sparklines, per-model breakdown, projections. Never wonder where the USDC went.
+`franklin insights` shows spend breakdowns, trends, and projections. Never wonder where the USDC went.
 
 **⚡ Anthropic prompt caching**
-Multi-turn Sonnet/Opus sessions use ephemeral cache breakpoints. Large input savings on long conversations.
+Multi-turn Sonnet/Opus sessions use ephemeral cache breakpoints to reduce input spend on long conversations.
 
-**🔗 MCP auto-discovery**
-Drop-in Model Context Protocol servers from `~/.blockrun/mcp.json`. Auto-discovers `blockrun-mcp` (markets, X) and `unbrowse` (any site to API).
+**🔌 Plugin SDK + MCP**
+Core is workflow-agnostic. Add new verticals without touching the loop. Discover external tools automatically through MCP.
 
 </td>
 </tr>
@@ -247,15 +281,16 @@ Drop-in Model Context Protocol servers from `~/.blockrun/mcp.json`. Auto-discove
 
 | Command                          | What it does                                         |
 | -------------------------------- | ---------------------------------------------------- |
-| `/model [name]`                  | Interactive model picker (32 models), or switch directly |
-| `/plan` / `/execute`             | Read-only planning mode / commit mode                |
+| `/model [name]`                  | Interactive model picker, or switch directly         |
+| `/plan` / `/execute`             | Read-only planning mode / execution mode             |
 | `/ultrathink <q>`                | Deep reasoning mode for hard problems                |
-| `/compact`                       | Structured context compression (Goal/Progress/Next)  |
-| `/search <q>`                    | Full-text search across past sessions                |
-| `/history` / `/resume <id>`      | Session management                                   |
+| `/compact`                       | Structured context compression                       |
+| `/search <q>`                    | Search the codebase                                  |
+| `/session-search <q>`            | Search past sessions                                 |
+| `/history` / `/resume [id]`      | Inspect or restore conversation state                |
 | `/commit` / `/push` / `/pr`      | Git workflow helpers                                 |
-| `/review` / `/fix` / `/test`     | One-shot code review, bugfix, or test generation     |
-| `/cost` / `/wallet`              | Session cost, wallet address & balance               |
+| `/review` / `/fix` / `/test`     | One-shot code review, bugfix, or test runs           |
+| `/cost` / `/wallet`              | Session cost, wallet address, and balance            |
 | `/insights [--days N]`           | Rich usage analytics                                 |
 | `/help`                          | Full command list                                    |
 
@@ -263,16 +298,19 @@ Drop-in Model Context Protocol servers from `~/.blockrun/mcp.json`. Auto-discove
 
 ## How it works
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────┐
-│  Franklin Agent                                              │
-│  16 tools · Router · Session · Compaction · Plugin SDK        │
+│  Franklin Runtime                                            │
+│  Intent → Routing → Tool Use → Spend Decisions → Result      │
+├──────────────────────────────────────────────────────────────┤
+│  Agent Loop                                                  │
+│  16 tools · Sessions · Compaction · Pricing · Plugin SDK     │
 ├──────────────────────────────────────────────────────────────┤
 │  BlockRun Gateway                                            │
-│  55+ LLMs · CoinGecko · Exa · DALL-E · (soon) Runway · Suno  │
+│  55+ LLMs · CoinGecko · Search · Image APIs · paid services  │
 ├──────────────────────────────────────────────────────────────┤
 │  x402 Micropayment Protocol                                  │
-│  HTTP 402 · USDC on Base & Solana · on-chain budget cap      │
+│  HTTP 402 · USDC on Base & Solana · signed payment payloads  │
 └──────────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -282,13 +320,19 @@ Drop-in Model Context Protocol servers from `~/.blockrun/mcp.json`. Auto-discove
                      └─────────────┘
 ```
 
-Every API call resolves to a signed micropayment against your wallet. You fund once; Franklin spends per task, priced by the upstream provider. No middlemen, no refund loop, no subscription renewal date.
+The loop is simple:
+1. You state an outcome.
+2. Franklin chooses what to read, call, and pay for.
+3. The payment settles against your wallet.
+4. Franklin reports the result and the spend.
+
+That economic loop is the product.
 
 ---
 
 ## Project layout
 
-```
+```text
 src/
 ├── index.ts           CLI entry (franklin + runcode alias)
 ├── banner.ts          Ben Franklin portrait + FRANKLIN gradient text
@@ -298,14 +342,14 @@ src/
 │                      TradingSignal/TradingMarket/SearchX/PostToX)
 ├── trading/           Market data (CoinGecko) + technical indicators
 ├── social/            X browser automation (Playwright) + reply engine
-├── events/            Internal event bus (signal events, post events)
+├── events/            Internal event bus (signals, posting, workflow events)
 ├── plugin-sdk/        Public plugin contract (Workflow/Plugin/Channel)
 ├── plugins/           Plugin registry + runner (plugin-agnostic)
-├── session/           Persistent sessions + FTS search
+├── session/           Persistent sessions + search
 ├── stats/             Usage tracking + insights engine
 ├── ui/                Ink-based terminal UI
-├── proxy/             Payment proxy for Claude Code compatibility
-├── router/            Smart model tier routing (free/cheap/premium)
+├── proxy/             Payment proxy for external tools
+├── router/            Smart model routing (free/cheap/premium)
 ├── wallet/            Wallet management (Base + Solana)
 ├── mcp/               MCP server auto-discovery
 └── commands/          CLI subcommands
@@ -315,13 +359,13 @@ src/
 
 ## Free tier, for real
 
-Start with **zero dollars**. Franklin defaults to free NVIDIA models (Nemotron 253B, Qwen3 Coder 480B) that need no wallet funding. Rate-limited to 60 requests/hour on the gateway, but genuinely free.
+Start with **zero dollars**. Franklin defaults to free NVIDIA models that need no wallet funding.
 
 ```bash
 franklin --model nvidia/nemotron-ultra-253b
 ```
 
-Only fund a wallet when you want Claude, GPT, Gemini, Grok, or paid tools like Exa, DALL-E, and CoinGecko Pro.
+When you fund the wallet, Franklin gets more purchasing power: Claude, GPT, Gemini, Grok, and paid tools like Exa, DALL-E, and CoinGecko Pro.
 
 ---
 
@@ -344,7 +388,7 @@ The chat-based social tools (`SearchX`, `PostToX`) and the batch CLI (`franklin 
 
 ## Documentation
 
-- [Plugin SDK guide](docs/plugin-sdk.md) — build your own workflow
+- [Plugin SDK guide](docs/plugin-sdk.md) — build your own workflow vertical
 - [Changelog](CHANGELOG.md) — every release explained
 - [Roadmap](docs/ROADMAP.md) — what's coming next
 - [Claude Code compatibility](docs/) — use Franklin as a payment proxy
@@ -396,8 +440,8 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 <div align="center">
 
-**Franklin runs your money.**<br>
-<sub>Your wallet. Your agent. Your results.</sub>
+**Franklin is the economic agent.**<br>
+<sub>Your wallet. Your budget. Your results.</sub>
 
 <br>
 

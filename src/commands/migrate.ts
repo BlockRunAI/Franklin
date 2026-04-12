@@ -126,8 +126,29 @@ function migrateMcp(source: string): void {
   // Claude Code format: { mcpServers: { name: { command, args, env } } }
   // Franklin format:    { mcpServers: { name: { transport, command, args, label } } }
   const servers: Record<string, unknown> = {};
+  const skipped: string[] = [];
   if (raw.mcpServers) {
     for (const [name, config] of Object.entries(raw.mcpServers as Record<string, Record<string, unknown>>)) {
+      // Skip MCP servers that require external credentials (OAuth, API keys,
+      // tokens) — importing them causes noisy startup errors because the
+      // credentials aren't available in Franklin's context. Users can add
+      // these manually via ~/.blockrun/mcp.json if they set up the credentials.
+      const configStr = JSON.stringify(config).toLowerCase();
+      const needsCredentials =
+        configStr.includes('oauth') ||
+        configStr.includes('credential') ||
+        configStr.includes('api_key') ||
+        configStr.includes('api-key') ||
+        configStr.includes('token') ||
+        name.includes('calendar') ||
+        name.includes('gmail') ||
+        name.includes('google') ||
+        name.includes('slack') ||
+        name.includes('notion');
+      if (needsCredentials) {
+        skipped.push(name);
+        continue;
+      }
       servers[name] = {
         transport: (config.transport as string) || 'stdio',
         command: config.command,
@@ -155,7 +176,11 @@ function migrateMcp(source: string): void {
 
   fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
   fs.writeFileSync(target, JSON.stringify(merged, null, 2));
-  console.log(chalk.green(`    ✓ ${Object.keys(servers).length} MCP server(s) imported`));
+  const importedCount = Object.keys(servers).length;
+  console.log(chalk.green(`    ✓ ${importedCount} MCP server(s) imported`));
+  if (skipped.length > 0) {
+    console.log(chalk.dim(`    · ${skipped.length} skipped (need credentials): ${skipped.join(', ')}`));
+  }
 }
 
 function migrateInstructions(source: string): void {

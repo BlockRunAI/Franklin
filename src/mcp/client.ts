@@ -60,7 +60,11 @@ async function connectStdio(
     command: config.command,
     args: config.args || [],
     env: { ...process.env, ...(config.env || {}) } as Record<string, string>,
-    stderr: 'pipe', // Suppress MCP server stderr — don't pollute user's terminal
+    // 'ignore' discards subprocess stderr completely so a misconfigured MCP
+    // server (e.g. missing OAuth keys) can't dump multi-line stack traces
+    // into the user's terminal. 'pipe' didn't fully work because some SDK
+    // versions read piped stderr and re-emit it.
+    stderr: 'ignore',
   });
 
   const client = new Client(
@@ -171,10 +175,10 @@ export async function connectMcpServers(
         console.error(`[runcode] MCP ${name}: ${connected.tools.length} tools discovered`);
       }
     } catch (err) {
-      // Graceful degradation — brief warning, continue without this server
-      if (debug) {
-        console.error(`[runcode] MCP ${name} failed: ${(err as Error).message}`);
-      }
+      // Graceful degradation — one-line warning, continue without this server.
+      // Always visible (not debug-only) so the user knows why tools are missing.
+      const shortMsg = (err as Error).message?.split('\n')[0]?.slice(0, 100) || 'unknown error';
+      console.error(`  ${name}: ${shortMsg} ${debug ? '' : '(--debug for details)'}`);
     }
   }
 
