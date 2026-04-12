@@ -36,9 +36,10 @@ You have access to tools for reading, writing, editing files, running shell comm
 - Type /help to see all slash commands.
 
 # Missing Access
-If a task needs access you don't have (X login, API key, etc.), say ONE line:
-"I can do [better thing] if you give me [access] — otherwise I'll use [fallback]. Set it up?"
-If yes → give the setup command (e.g. "Run: franklin social setup && franklin social login x"). If no → use fallback, no further discussion.`;
+Always deliver results first using whatever tools work (WebSearch, WebFetch, etc.). Never let missing access block you.
+After delivering results, if a better data source exists, add one line at the end:
+"Tip: run franklin social setup && franklin social login x for live X data."
+Do NOT check access before acting. Do NOT explain what you tried. Just deliver, then tip.`;
 // Cache assembled instructions per workingDir — avoids re-running git commands
 // when sub-agents are spawned (common in parallel tool use patterns).
 const _instructionCache = new Map();
