@@ -15,6 +15,9 @@ import { webSearchCapability } from './websearch.js';
 import { taskCapability } from './task.js';
 import { imageGenCapability } from './imagegen.js';
 import { askUserCapability } from './askuser.js';
+import { tradingSignalCapability, tradingMarketCapability } from './trading.js';
+import { searchXCapability } from './searchx.js';
+import { postToXCapability } from './posttox.js';
 
 /** All capabilities available to the runcode agent (excluding sub-agent, which needs config). */
 export const allCapabilities: CapabilityHandler[] = [
@@ -29,6 +32,10 @@ export const allCapabilities: CapabilityHandler[] = [
   taskCapability,
   imageGenCapability,
   askUserCapability,
+  tradingSignalCapability,
+  tradingMarketCapability,
+  searchXCapability,
+  postToXCapability,
 ];
 
 export {

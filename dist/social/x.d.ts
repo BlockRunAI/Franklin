@@ -13,6 +13,7 @@
  * Every browser interaction uses argv-based Playwright calls — zero shell
  * injection surface even if the LLM emits `$(rm -rf /)` in reply text.
  */
+import { SocialBrowser } from './browser.js';
 import type { SocialConfig } from './config.js';
 import type { Chain } from '../config.js';
 export interface RunOptions {
@@ -44,3 +45,10 @@ export interface CandidatePost {
  * and processes every visible candidate until the daily target is hit.
  */
 export declare function runX(opts: RunOptions): Promise<RunResult>;
+/**
+ * Post a reply to the currently-open tweet page.
+ * Locates the reply textbox, types the reply (paragraphs joined with
+ * Enter+Enter), clicks the reply button, confirms the "Your post was sent"
+ * banner.
+ */
+export declare function postReply(browser: SocialBrowser, reply: string): Promise<void>;

@@ -17,6 +17,8 @@ import { SocialBrowser } from './browser.js';
 import { findRefs, findStaticText, extractArticleBlocks, X_TIME_LINK_PATTERN } from './a11y.js';
 import { computePreKey, hasPreKey, commitPreKey, hasPosted, countPostedToday, logReply, } from './db.js';
 import { detectProduct, generateReply } from './ai.js';
+import { bus } from '../events/bus.js';
+import { makeEvent } from '../events/types.js';
 /**
  * Main entry point. Iterates every search query in config.x.search_queries
  * and processes every visible candidate until the daily target is hit.
@@ -202,6 +204,12 @@ export async function runX(opts) {
                         cost_usd: gen.cost,
                     });
                     commitPreKey('x', handle, preKey);
+                    bus.emit(makeEvent({
+                        type: 'post.published',
+                        source: 'social',
+                        costUsd: gen.cost,
+                        data: { platform: 'x', url: canonicalUrl, text: gen.reply },
+                    }));
                     // Respect the rate-limit / anti-spam delay between successes
                     await browser.waitForTimeout(opts.config.x.min_delay_seconds * 1000);
                 }
@@ -238,7 +246,7 @@ export async function runX(opts) {
  * Enter+Enter), clicks the reply button, confirms the "Your post was sent"
  * banner.
  */
-async function postReply(browser, reply) {
+export async function postReply(browser, reply) {
     // Snapshot and find the reply textbox
     const tree = await browser.snapshot();
     const boxRefs = findRefs(tree, 'textbox', 'Post (your reply|text).*');
