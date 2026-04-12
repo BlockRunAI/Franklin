@@ -60,6 +60,7 @@ async function connectStdio(
     command: config.command,
     args: config.args || [],
     env: { ...process.env, ...(config.env || {}) } as Record<string, string>,
+    stderr: 'pipe', // Suppress MCP server stderr — don't pollute user's terminal
   });
 
   const client = new Client(
@@ -170,8 +171,10 @@ export async function connectMcpServers(
         console.error(`[runcode] MCP ${name}: ${connected.tools.length} tools discovered`);
       }
     } catch (err) {
-      // Graceful degradation — log and continue without this server
-      console.error(`[runcode] MCP ${name} failed: ${(err as Error).message}`);
+      // Graceful degradation — brief warning, continue without this server
+      if (debug) {
+        console.error(`[runcode] MCP ${name} failed: ${(err as Error).message}`);
+      }
     }
   }
 
