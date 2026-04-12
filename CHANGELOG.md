@@ -1,5 +1,87 @@
 # Changelog
 
+## 3.3.0 (2026-04-11) — Chat-first trading + social tools + welcome
+
+**The version that makes Franklin different from every other AI agent.**
+
+Franklin is no longer just a coding agent with a wallet. As of v3.3.0,
+users can ask "what's BTC looking like?" or "find X posts about my
+product" directly in the chat — and Franklin uses real tools to answer.
+No CLI subcommands to memorize. No config files. Just talk.
+
+### Added
+
+**Trading tools (chat-native)**
+- **`TradingSignal`** — `"what's BTC looking like?"` → fetches live price
+  from CoinGecko, computes RSI(14), MACD, Bollinger Bands, and annualized
+  volatility over a configurable lookback period. Returns raw data + a
+  directional signal (bullish/bearish/neutral with confidence score) for
+  the LLM to interpret and explain in natural language.
+- **`TradingMarket`** — `"what's trending in crypto?"` → three actions:
+  `price` (single ticker lookup), `trending` (CoinGecko trending coins),
+  `overview` (top 20 by market cap with 24h change).
+- **Supporting modules:**
+  - `src/trading/data.ts` — CoinGecko REST client (free tier, no API key)
+    with price, OHLCV, trending, and market overview endpoints.
+  - `src/trading/metrics.ts` — pure-math indicator implementations:
+    RSI, MACD (12/26/9 default), Bollinger Bands (20-period SMA ± 2σ),
+    annualized volatility. Zero external dependencies.
+- **Event bus:** `src/events/bus.ts` + `src/events/types.ts` — internal
+  publish/subscribe for signal events. TradingSignal emits
+  `signal.detected` events; future features (alerts, webhooks) can
+  subscribe without coupling to the tool.
+
+**Social tools (chat-native, reuse src/social/ infrastructure)**
+- **`SearchX`** — `"find X posts about ai agent"` → opens a
+  headless Chrome session (via the existing Playwright-core browser pool),
+  searches x.com/search, parses the a11y tree, returns candidate posts
+  with snippets, product-relevance scores, and dedup status.
+- **`PostToX`** — `"post that reply"` → takes a pre_key from SearchX +
+  the reply text, navigates to the tweet, types the reply, confirms the
+  send banner. Requires explicit user confirmation via the agent's
+  permission system — Franklin will NOT post without the user saying yes.
+- **Supporting modules:**
+  - `src/social/preflight.ts` — checks social config + X login readiness.
+  - `src/social/browser-pool.ts` — singleton Playwright browser instance
+    management (lazy launch, persistent Chrome profile reuse).
+
+**Welcome message (wow moment)**
+- On startup, Franklin now shows 3 example prompts that showcase things
+  Hermes and OpenClaw can't do:
+  ```
+  Try something only Franklin can do:
+    "what's BTC looking like today?"        ← live market signal
+    "find X posts about ai agent" ← social growth
+    "generate a hero image for my app"       ← AI image gen
+  Or just code — 55+ models ready, no API keys needed.
+  ```
+  This makes the first 60 seconds feel different from every other agent
+  CLI. The user immediately sees that Franklin is not "just another coding
+  tool."
+
+### Architecture note
+
+All 4 new tools are registered in `src/tools/index.ts` alongside the
+existing 12 (Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch,
+Task, ImageGen, AskUser, SubAgent). The LLM decides when to call them
+based on the user's natural language. No CLI subcommands, no config
+files, no separate "trading mode" — just conversation.
+
+The `franklin social` CLI (v3.2.0) still works for automated batch runs.
+The new chat-based social tools are the INTERACTIVE counterpart — users
+learn Franklin's style in chat, then graduate to automated mode when
+they trust it.
+
+### Dependencies
+
+- Zero new npm dependencies. CoinGecko free API needs no key. Technical
+  indicators are pure math. Social tools reuse existing playwright-core.
+
+### Not changed
+
+- Agent loop, wallet, sessions, payment flow, plugin SDK — identical to
+  v3.2.4.
+
 ## 3.2.4 (2026-04-11) — Roll back to chafa colour portrait
 
 User preference: the v3.2.2 chafa colour-block portrait looks more like
