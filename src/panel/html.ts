@@ -84,8 +84,45 @@ a:hover { text-decoration:underline; }
 .wallet-mini { font-family:var(--mono); font-size:11px; color:var(--text-dim); }
 .wallet-mini .bal { color:var(--gold); font-weight:600; font-size:13px; display:block; margin-bottom:2px; }
 
-/* ── Content ── */
-.content { flex:1; overflow-y:auto; padding:28px 32px; }
+/* ── Currency watermark ── */
+.content {
+  flex:1; overflow-y:auto; padding:28px 32px; position:relative;
+}
+.content::before {
+  content:''; position:fixed; top:0; right:0; bottom:0; width:calc(100% - 220px);
+  pointer-events:none; z-index:0;
+  background:
+    /* Guilloche concentric rings — top right (gold) */
+    radial-gradient(ellipse 700px 700px at 90% 8%, oklch(0.82 0.15 85 / 6%) 0%, oklch(0.82 0.15 85 / 3%) 15%, transparent 45%),
+    radial-gradient(ellipse 600px 600px at 90% 8%, transparent 12%, oklch(0.82 0.15 85 / 5%) 12.5%, transparent 13.5%),
+    radial-gradient(ellipse 600px 600px at 90% 8%, transparent 18%, oklch(0.82 0.15 85 / 4.5%) 18.5%, transparent 19.5%),
+    radial-gradient(ellipse 600px 600px at 90% 8%, transparent 24%, oklch(0.82 0.15 85 / 4%) 24.5%, transparent 25.5%),
+    radial-gradient(ellipse 600px 600px at 90% 8%, transparent 30%, oklch(0.82 0.15 85 / 3.5%) 30.5%, transparent 31.5%),
+    radial-gradient(ellipse 600px 600px at 90% 8%, transparent 36%, oklch(0.82 0.15 85 / 3%) 36.5%, transparent 37.5%),
+    radial-gradient(ellipse 600px 600px at 90% 8%, transparent 42%, oklch(0.82 0.15 85 / 2.5%) 42.5%, transparent 43.5%),
+    /* Guilloche concentric rings — bottom left (green) */
+    radial-gradient(ellipse 550px 550px at 15% 90%, oklch(0.65 0.15 145 / 5%) 0%, transparent 35%),
+    radial-gradient(ellipse 450px 450px at 15% 90%, transparent 15%, oklch(0.65 0.15 145 / 3.5%) 15.5%, transparent 16.5%),
+    radial-gradient(ellipse 450px 450px at 15% 90%, transparent 25%, oklch(0.65 0.15 145 / 3%) 25.5%, transparent 26.5%),
+    radial-gradient(ellipse 450px 450px at 15% 90%, transparent 35%, oklch(0.65 0.15 145 / 2.5%) 35.5%, transparent 36.5%),
+    /* Center rosette (very subtle) */
+    radial-gradient(ellipse 300px 300px at 55% 50%, oklch(0.82 0.15 85 / 3%) 0%, transparent 30%),
+    radial-gradient(ellipse 250px 250px at 55% 50%, transparent 20%, oklch(0.82 0.15 85 / 2.5%) 20.5%, transparent 21.5%),
+    radial-gradient(ellipse 250px 250px at 55% 50%, transparent 30%, oklch(0.82 0.15 85 / 2%) 30.5%, transparent 31.5%),
+    /* Fine crosshatch engraving */
+    repeating-linear-gradient(45deg, oklch(1 0 0 / 2%) 0px, oklch(1 0 0 / 2%) 1px, transparent 1px, transparent 6px),
+    repeating-linear-gradient(-45deg, oklch(1 0 0 / 1.5%) 0px, oklch(1 0 0 / 1.5%) 1px, transparent 1px, transparent 8px),
+    repeating-linear-gradient(90deg, oklch(1 0 0 / 0.8%) 0px, oklch(1 0 0 / 0.8%) 1px, transparent 1px, transparent 16px);
+}
+.content::after {
+  content:'$'; position:fixed; top:50%; right:calc((100% - 220px) / 2 + 110px);
+  transform:translate(50%, -50%);
+  font-family:var(--mono); font-size:420px; font-weight:900;
+  color:oklch(0.82 0.15 85 / 6%); pointer-events:none; z-index:0;
+  line-height:1;
+  text-shadow:0 0 80px oklch(0.82 0.15 85 / 3%);
+}
+.content > * { position:relative; z-index:1; }
 .content-header { margin-bottom:24px; }
 .content-header h2 { font-size:20px; font-weight:600; letter-spacing:-0.02em; }
 .content-header p { font-size:13px; color:var(--text-dim); margin-top:4px; }
