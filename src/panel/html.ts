@@ -54,10 +54,10 @@ a:hover { text-decoration:underline; }
 .sidebar-header { padding:0 20px 24px; }
 .sidebar-brand { display:flex; align-items:center; gap:10px; margin-bottom:2px; }
 .sidebar-brand .icon {
-  width:28px; height:28px; background:linear-gradient(135deg, var(--gold), var(--gold-dim));
-  border-radius:7px; display:flex; align-items:center; justify-content:center;
-  font-size:14px; font-weight:800; color:var(--bg); font-family:var(--sans);
+  width:32px; height:32px; border-radius:50%; overflow:hidden;
+  border:1px solid oklch(0.85 0.13 85 / 30%); flex-shrink:0;
 }
+.sidebar-brand .icon img { width:100%; height:100%; object-fit:cover; object-position:top; }
 .sidebar-brand h1 { font-size:16px; font-weight:700; letter-spacing:-0.02em; }
 .sidebar-sub { font-size:10px; color:var(--text-dim); margin-left:38px; margin-top:-1px; letter-spacing:0.3px; }
 .sidebar-status {
@@ -136,10 +136,19 @@ a:hover { text-decoration:underline; }
     repeating-linear-gradient(-55deg, oklch(1 0 0 / 1%) 0px, oklch(1 0 0 / 1%) 1px, transparent 1px, transparent 7px);
 }
 
+/* Franklin portrait — right side (same treatment as website hero) */
 .watermark-portrait {
-  position:absolute; right:5%; top:50%; transform:translateY(-50%);
-  width:420px; height:525px; color:var(--gold);
-  opacity:0.6; filter:saturate(0.3);
+  position:absolute; inset:0 0 0 auto; width:55%;
+  background:url(/assets/franklin-bill.jpg) top/cover no-repeat;
+  opacity:0.5; filter:brightness(1.4);
+}
+.watermark-portrait-fade {
+  position:absolute; inset:0 0 0 auto; width:55%;
+  background:linear-gradient(to right, var(--bg), transparent);
+}
+.watermark-portrait-bottom {
+  position:absolute; inset:auto 0 0 0; height:120px;
+  background:linear-gradient(to top, var(--bg), transparent);
 }
 
 .content-header { margin-bottom:24px; }
@@ -281,10 +290,10 @@ a:hover { text-decoration:underline; }
 <aside class="sidebar">
   <div class="sidebar-header">
     <div class="sidebar-brand">
-      <div class="icon">F</div>
+      <div class="icon"><img src="/assets/franklin-portrait.jpg" alt="F"></div>
       <h1>Franklin</h1>
     </div>
-    <div class="sidebar-sub">by BlockRun.ai</div>
+    <div class="sidebar-sub">by <span style="color:var(--success)">BlockRun.ai</span></div>
     <div class="sidebar-status">
       <span class="dot off" id="dot"></span>
       <span id="status">connecting</span>
@@ -324,65 +333,9 @@ a:hover { text-decoration:underline; }
   <div class="watermark-guilloche"></div>
   <div class="watermark-text">FRANKLIN</div>
   <div class="watermark-line2">THE AI AGENT WITH A WALLET</div>
-  <!-- Benjamin Franklin portrait — engraving style -->
-  <svg class="watermark-portrait" viewBox="0 0 400 500" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <radialGradient id="glow" cx="50%" cy="40%" r="50%">
-        <stop offset="0%" stop-color="currentColor" stop-opacity="0.06"/>
-        <stop offset="100%" stop-color="currentColor" stop-opacity="0"/>
-      </radialGradient>
-    </defs>
-    <ellipse cx="200" cy="200" rx="180" ry="200" fill="url(#glow)"/>
-    <g stroke="currentColor" stroke-linecap="round" fill="none">
-      <!-- Head outline -->
-      <path d="M200 60 C145 60 110 95 105 140 C100 175 105 195 115 215 C120 230 118 250 115 265 C112 280 115 300 125 315 C135 330 155 345 175 355 C190 362 210 362 225 355 C245 345 265 330 275 315 C285 300 288 280 285 265 C282 250 280 230 285 215 C295 195 300 175 295 140 C290 95 255 60 200 60Z" stroke-width="1.5" opacity="0.5"/>
-      <!-- Bald dome -->
-      <path d="M140 120 C150 85 175 68 200 65 C225 68 250 85 260 120" stroke-width="1" opacity="0.35"/>
-      <path d="M148 115 C157 88 178 74 200 72 C222 74 243 88 252 115" stroke-width="0.8" opacity="0.25"/>
-      <!-- Hair — sides flowing down -->
-      <path d="M108 145 C100 165 95 195 92 225 C90 250 92 275 98 290 C95 300 90 315 88 330 C85 350 88 370 95 385" stroke-width="1.2" opacity="0.4"/>
-      <path d="M115 140 C108 160 103 190 100 215 C98 240 100 265 105 280 C102 295 97 310 95 325 C92 345 95 365 100 380" stroke-width="1" opacity="0.35"/>
-      <path d="M122 138 C116 155 112 180 110 205 C108 230 110 255 113 270 C110 285 107 300 105 315 C103 335 105 355 108 370" stroke-width="0.8" opacity="0.3"/>
-      <!-- Hair — right side -->
-      <path d="M292 145 C300 165 305 195 308 225 C310 250 308 275 302 290 C305 300 310 315 312 330 C315 350 312 370 305 385" stroke-width="1.2" opacity="0.4"/>
-      <path d="M285 140 C292 160 297 190 300 215 C302 240 300 265 295 280 C298 295 303 310 305 325 C308 345 305 365 300 380" stroke-width="1" opacity="0.35"/>
-      <path d="M278 138 C284 155 288 180 290 205 C292 230 290 255 287 270 C290 285 293 300 295 315 C297 335 295 355 292 370" stroke-width="0.8" opacity="0.3"/>
-      <!-- Eyes -->
-      <ellipse cx="170" cy="185" rx="18" ry="10" stroke-width="1" opacity="0.4"/>
-      <ellipse cx="230" cy="185" rx="18" ry="10" stroke-width="1" opacity="0.4"/>
-      <circle cx="170" cy="185" r="5" stroke-width="0.8" opacity="0.3"/>
-      <circle cx="230" cy="185" r="5" stroke-width="0.8" opacity="0.3"/>
-      <!-- Glasses -->
-      <path d="M145 185 C142 175 148 168 160 168 C172 168 182 172 185 180" stroke-width="1" opacity="0.35"/>
-      <path d="M215 180 C218 172 228 168 240 168 C252 168 258 175 255 185" stroke-width="1" opacity="0.35"/>
-      <path d="M185 178 L215 178" stroke-width="0.8" opacity="0.3"/>
-      <path d="M145 182 L125 175" stroke-width="0.8" opacity="0.25"/>
-      <path d="M255 182 L275 175" stroke-width="0.8" opacity="0.25"/>
-      <!-- Nose -->
-      <path d="M200 190 C200 200 195 215 190 225 C187 230 185 235 188 238 C192 242 200 243 208 242 C215 240 218 235 215 230 C210 220 205 205 200 190" stroke-width="1" opacity="0.35"/>
-      <!-- Mouth -->
-      <path d="M175 262 C180 258 190 255 200 255 C210 255 220 258 225 262" stroke-width="1" opacity="0.35"/>
-      <path d="M178 265 C185 270 195 272 200 272 C205 272 215 270 222 265" stroke-width="0.8" opacity="0.25"/>
-      <!-- Chin -->
-      <path d="M170 280 C180 295 195 302 200 305 C205 302 220 295 230 280" stroke-width="0.8" opacity="0.3"/>
-      <!-- Jawline wrinkles -->
-      <path d="M165 275 C155 290 150 310 155 325" stroke-width="0.6" opacity="0.2"/>
-      <path d="M235 275 C245 290 250 310 245 325" stroke-width="0.6" opacity="0.2"/>
-      <!-- Collar / coat -->
-      <path d="M145 340 C140 350 125 365 110 380 C100 390 85 400 75 405" stroke-width="1.5" opacity="0.4"/>
-      <path d="M255 340 C260 350 275 365 290 380 C300 390 315 400 325 405" stroke-width="1.5" opacity="0.4"/>
-      <path d="M155 345 C148 355 135 370 120 385 C112 393 100 400 90 405" stroke-width="1" opacity="0.3"/>
-      <path d="M245 345 C252 355 265 370 280 385 C288 393 300 400 310 405" stroke-width="1" opacity="0.3"/>
-      <!-- Engraving lines on face (horizontal) -->
-      <path d="M130 160 C155 155 175 152 200 150 C225 152 245 155 270 160" stroke-width="0.4" opacity="0.15"/>
-      <path d="M128 175 C155 170 178 168 200 167 C222 168 245 170 272 175" stroke-width="0.4" opacity="0.15"/>
-      <path d="M130 200 C155 197 178 195 200 195 C222 195 245 197 270 200" stroke-width="0.4" opacity="0.15"/>
-      <path d="M135 220 C158 217 180 215 200 215 C220 215 242 217 265 220" stroke-width="0.4" opacity="0.15"/>
-      <path d="M140 240 C162 237 182 235 200 235 C218 235 238 237 260 240" stroke-width="0.4" opacity="0.15"/>
-      <path d="M150 260 C168 257 185 256 200 256 C215 256 232 257 250 260" stroke-width="0.4" opacity="0.12"/>
-      <path d="M155 280 C172 278 188 277 200 277 C212 277 228 278 245 280" stroke-width="0.4" opacity="0.12"/>
-    </g>
-  </svg>
+  <div class="watermark-portrait"></div>
+  <div class="watermark-portrait-fade"></div>
+  <div class="watermark-portrait-bottom"></div>
 </div>
 
 <!-- Content -->
