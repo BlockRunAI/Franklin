@@ -6,7 +6,47 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { OPUS_PRICING } from '../pricing.js';
-const STATS_FILE = path.join(os.homedir(), '.blockrun', 'runcode-stats.json');
+import { BLOCKRUN_DIR } from '../config.js';
+let resolvedStatsFile = null;
+function preferredStatsFile() {
+    return path.join(BLOCKRUN_DIR, 'runcode-stats.json');
+}
+function fallbackStatsFile() {
+    return path.join(os.tmpdir(), 'runcode', 'runcode-stats.json');
+}
+export function getStatsFilePath() {
+    if (resolvedStatsFile)
+        return resolvedStatsFile;
+    for (const file of [preferredStatsFile(), fallbackStatsFile()]) {
+        try {
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            resolvedStatsFile = file;
+            return file;
+        }
+        catch {
+            // Try the next candidate.
+        }
+    }
+    resolvedStatsFile = preferredStatsFile();
+    return resolvedStatsFile;
+}
+function withWritableStatsFile(action) {
+    const preferred = preferredStatsFile();
+    const fallback = fallbackStatsFile();
+    try {
+        action(getStatsFilePath());
+    }
+    catch (err) {
+        const code = err.code;
+        const shouldFallback = (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') &&
+            resolvedStatsFile === preferred;
+        if (!shouldFallback)
+            throw err;
+        fs.mkdirSync(path.dirname(fallback), { recursive: true });
+        resolvedStatsFile = fallback;
+        action(fallback);
+    }
+}
 const EMPTY_STATS = {
     version: 1,
     totalRequests: 0,
@@ -19,8 +59,9 @@ const EMPTY_STATS = {
 };
 export function loadStats() {
     try {
-        if (fs.existsSync(STATS_FILE)) {
-            const data = JSON.parse(fs.readFileSync(STATS_FILE, 'utf-8'));
+        const statsFile = getStatsFilePath();
+        if (fs.existsSync(statsFile)) {
+            const data = JSON.parse(fs.readFileSync(statsFile, 'utf-8'));
             // Migration: add missing fields
             return {
                 ...EMPTY_STATS,
@@ -36,10 +77,12 @@ export function loadStats() {
 }
 export function saveStats(stats) {
     try {
-        fs.mkdirSync(path.dirname(STATS_FILE), { recursive: true });
-        // Keep only last 1000 history records
-        stats.history = stats.history.slice(-1000);
-        fs.writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2));
+        withWritableStatsFile((statsFile) => {
+            fs.mkdirSync(path.dirname(statsFile), { recursive: true });
+            // Keep only last 1000 history records
+            stats.history = stats.history.slice(-1000);
+            fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
+        });
     }
     catch {
         /* ignore write errors */
@@ -51,13 +94,16 @@ export function clearStats() {
         clearTimeout(flushTimer);
         flushTimer = null;
     }
-    try {
-        if (fs.existsSync(STATS_FILE)) {
-            fs.unlinkSync(STATS_FILE);
+    resolvedStatsFile = null;
+    for (const statsFile of new Set([preferredStatsFile(), fallbackStatsFile()])) {
+        try {
+            if (fs.existsSync(statsFile)) {
+                fs.unlinkSync(statsFile);
+            }
         }
-    }
-    catch {
-        /* ignore */
+        catch {
+            /* ignore */
+        }
     }
 }
 // ─── In-memory stats cache with debounced write ─────────────────────────

@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { BLOCKRUN_DIR } from '../config.js';
 const MAX_SESSIONS = 20; // Keep last 20 sessions
 let resolvedSessionsDir = null;
@@ -60,8 +61,9 @@ function withWritableSessionDir(action) {
  */
 export function createSessionId() {
     const now = new Date();
-    const ts = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    return `session-${ts}`;
+    const ts = now.toISOString().replace(/[:.]/g, '-');
+    const suffix = randomUUID().slice(0, 8);
+    return `session-${ts}-${suffix}`;
 }
 /**
  * Save a message to the session transcript (append-only JSONL).

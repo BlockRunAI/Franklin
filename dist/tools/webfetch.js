@@ -9,27 +9,30 @@ const MAX_BODY_BYTES = 256 * 1024; // 256KB
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const MAX_CACHE_ENTRIES = 50;
 const fetchCache = new Map();
-function getCached(url) {
-    const entry = fetchCache.get(url);
+function cacheKey(url, maxLength) {
+    return `${url}::${maxLength}`;
+}
+function getCached(key) {
+    const entry = fetchCache.get(key);
     if (!entry)
         return null;
     if (Date.now() > entry.expiresAt) {
-        fetchCache.delete(url);
+        fetchCache.delete(key);
         return null;
     }
     return entry.output;
 }
-function setCached(url, output) {
+function setCached(key, output) {
     // Evict oldest entry if at capacity
     if (fetchCache.size >= MAX_CACHE_ENTRIES) {
         const firstKey = fetchCache.keys().next().value;
         if (firstKey)
             fetchCache.delete(firstKey);
     }
-    fetchCache.set(url, { output, expiresAt: Date.now() + CACHE_TTL_MS });
+    fetchCache.set(key, { output, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 // ─── Execute ────────────────────────────────────────────────────────────────
-async function execute(input, _ctx) {
+async function execute(input, ctx) {
     const { url, max_length } = input;
     if (!url) {
         return { output: 'Error: url is required', isError: true };
@@ -45,13 +48,17 @@ async function execute(input, _ctx) {
     if (!['http:', 'https:'].includes(parsed.protocol)) {
         return { output: `Error: only http/https URLs are supported`, isError: true };
     }
+    const maxLen = Math.min(max_length ?? MAX_BODY_BYTES, MAX_BODY_BYTES);
+    const key = cacheKey(url, maxLen);
     // Check cache first
-    const cached = getCached(url);
+    const cached = getCached(key);
     if (cached) {
         return { output: cached + '\n\n(cached)' };
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
+    const onAbort = () => controller.abort();
+    ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
     try {
         const response = await fetch(url, {
             signal: controller.signal,
@@ -68,7 +75,6 @@ async function execute(input, _ctx) {
             };
         }
         const contentType = response.headers.get('content-type') || '';
-        const maxLen = Math.min(max_length ?? MAX_BODY_BYTES, MAX_BODY_BYTES);
         // Read body with size limit
         const reader = response.body?.getReader();
         if (!reader) {
@@ -106,11 +112,14 @@ async function execute(input, _ctx) {
             output += '\n\n... (content truncated)';
         }
         // Cache successful responses
-        setCached(url, output);
+        setCached(key, output);
         return { output };
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        if (ctx.abortSignal.aborted) {
+            return { output: `Error: request aborted for ${url}`, isError: true };
+        }
         if (msg.includes('abort')) {
             return { output: `Error: request timed out after 30s for ${url}`, isError: true };
         }
@@ -118,6 +127,7 @@ async function execute(input, _ctx) {
     }
     finally {
         clearTimeout(timeout);
+        ctx.abortSignal.removeEventListener('abort', onAbort);
     }
 }
 function stripHtml(html) {

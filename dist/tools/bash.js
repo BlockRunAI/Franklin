@@ -193,6 +193,7 @@ async function execute(input, ctx) {
         let outputBytes = 0;
         let truncated = false;
         let killed = false;
+        let abortedByUser = false;
         const timer = setTimeout(() => {
             killed = true;
             child.kill('SIGTERM');
@@ -206,6 +207,7 @@ async function execute(input, ctx) {
         // Handle abort signal
         const onAbort = () => {
             killed = true;
+            abortedByUser = true;
             child.kill('SIGTERM');
         };
         ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
@@ -293,8 +295,11 @@ async function execute(input, ctx) {
                 result = `... (${omitted.toLocaleString()} chars omitted from start)\n${trimmed}`;
             }
             if (killed) {
+                const reason = abortedByUser
+                    ? 'aborted by user'
+                    : `timeout after ${timeoutMs / 1000}s. Set timeout param up to 600000ms for longer.`;
                 resolve({
-                    output: result + `\n\n(command killed — timeout after ${timeoutMs / 1000}s. Set timeout param up to 600000ms for longer.)`,
+                    output: result + `\n\n(command killed — ${reason})`,
                     isError: true,
                 });
                 return;

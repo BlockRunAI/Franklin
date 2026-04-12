@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { partiallyReadFiles } from './read.js';
 function withTrailingSep(value) {
     return value.endsWith(path.sep) ? value : value + path.sep;
 }
@@ -84,6 +85,7 @@ async function execute(input, ctx) {
         fs.mkdirSync(parentDir, { recursive: true });
         const existed = fs.existsSync(resolved);
         fs.writeFileSync(resolved, content, 'utf-8');
+        partiallyReadFiles.delete(resolved);
         const lineCount = content.split('\n').length;
         const byteCount = Buffer.byteLength(content, 'utf-8');
         const sizeStr = byteCount >= 1024 ? `${(byteCount / 1024).toFixed(1)}KB` : `${byteCount}B`;
