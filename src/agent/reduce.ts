@@ -265,7 +265,79 @@ export function deduplicateToolResultLines(history: Dialogue[]): Dialogue[] {
   return modified ? result : history;
 }
 
-// ─── Pipeline ───────���───────────────────���─────────────────────────────────
+// ─── 6. Repetitive Tool Collapse ─────────────────────────────────────────
+
+/**
+ * When the same tool (WebSearch, Grep, etc.) is called 6+ times,
+ * collapse all but the last 3 results to one-line summaries.
+ * Prevents context snowball from search spam (e.g. 96 WebSearches).
+ */
+export function collapseRepetitiveTools(history: Dialogue[]): Dialogue[] {
+  // Count tool_use by name
+  const toolCounts: Map<string, number> = new Map();
+  for (const msg of history) {
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+    for (const part of msg.content as ContentPart[]) {
+      if (part.type === 'tool_use') {
+        const name = part.name ?? '';
+        toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
+      }
+    }
+  }
+
+  // Only for tools called 6+ times
+  const repetitive = new Set<string>();
+  for (const [name, count] of toolCounts) {
+    if (count >= 6) repetitive.add(name);
+  }
+  if (repetitive.size === 0) return history;
+
+  // Map tool_use_id → name, track call order per tool
+  const idToName: Map<string, string> = new Map();
+  const callOrder: Map<string, string[]> = new Map(); // name → [tool_use_id, ...]
+  for (const msg of history) {
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+    for (const part of msg.content as ContentPart[]) {
+      if (part.type === 'tool_use' && repetitive.has(part.name ?? '')) {
+        const name = part.name ?? '';
+        idToName.set(part.id, name);
+        if (!callOrder.has(name)) callOrder.set(name, []);
+        callOrder.get(name)!.push(part.id);
+      }
+    }
+  }
+
+  // Mark old IDs (all but last 3 per tool)
+  const oldIds = new Set<string>();
+  for (const [, ids] of callOrder) {
+    for (let i = 0; i < ids.length - 3; i++) {
+      oldIds.add(ids[i]);
+    }
+  }
+  if (oldIds.size === 0) return history;
+
+  // Collapse old results
+  let modified = false;
+  const result = history.map(msg => {
+    if (msg.role !== 'user' || !Array.isArray(msg.content)) return msg;
+    let changed = false;
+    const parts = (msg.content as UserContentPart[]).map(part => {
+      if (part.type !== 'tool_result' || !oldIds.has(part.tool_use_id)) return part;
+      const content = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
+      if (content.length <= 80) return part;
+      changed = true;
+      const first = content.split('\n')[0].slice(0, 60);
+      return { ...part, content: `[${first}...]` };
+    });
+    if (!changed) return msg;
+    modified = true;
+    return { ...msg, content: parts };
+  });
+
+  return modified ? result : history;
+}
+
+// ─── Pipeline ────────────────────────────────────────────────────────────
 
 /**
  * Run all token reduction passes on conversation history.
@@ -276,6 +348,14 @@ export function reduceTokens(history: Dialogue[], debug?: boolean): Dialogue[] {
 
   let current = history;
   let totalSaved = 0;
+
+  // Pass 0: Collapse repetitive tool results (e.g. 96 WebSearches with similar queries)
+  const collapsed = collapseRepetitiveTools(current);
+  if (collapsed !== current) {
+    const before = estimateChars(current);
+    current = collapsed;
+    totalSaved += before - estimateChars(current);
+  }
 
   // Pass 1: Age old tool results
   const aged = ageToolResults(current);
