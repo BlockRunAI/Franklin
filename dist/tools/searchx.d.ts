@@ -7,4 +7,5 @@
  *   - **Enhanced** (with social config): adds product routing, dedup, login detection
  */
 import type { CapabilityHandler } from '../agent/types.js';
+export declare function detectNotificationsIntent(query: string | undefined, handle: string, knownHandles?: string[]): boolean;
 export declare const searchXCapability: CapabilityHandler;
