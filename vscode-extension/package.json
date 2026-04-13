@@ -1,0 +1,64 @@
+{
+  "name": "franklin-vscode",
+  "displayName": "Franklin Chat",
+  "description": "Side panel chat with Franklin agent (same engine as CLI)",
+  "version": "0.1.0",
+  "publisher": "franklin-local",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:franklin.chatPanel",
+    "onCommand:franklin.openInNewTab"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "franklin-chat",
+          "title": "Franklin",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "franklin-chat": [
+        {
+          "type": "webview",
+          "id": "franklin.chatPanel",
+          "name": "Chat",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "franklin.stopGeneration",
+        "title": "Franklin: Stop generation"
+      },
+      {
+        "command": "franklin.openInNewTab",
+        "title": "Franklin: Open Chat in New Tab"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "@blockrun/franklin": "file:.."
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.7.0"
+  }
+}
