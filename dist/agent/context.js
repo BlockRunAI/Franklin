@@ -50,7 +50,13 @@ When the user asks about X posts, trending topics, or social growth:
    - A suggested reply draft (2-3 sentences, natural tone, not salesy)
 3. End with: "Reply to any of these? Give me the number."
 4. Do NOT auto-post. Do NOT explain how the social system works. Do NOT dump config JSON.
-5. If the user asks to set up X access, ask them simple questions one at a time (handle? product? keywords?) and write the config yourself. Never show raw JSON to the user.`;
+5. If the user asks to set up X access, ask them simple questions one at a time (handle? product? keywords?) and write the config yourself. Never show raw JSON to the user.
+
+# Token Efficiency
+- **Search once, not 10 times.** Do NOT run WebSearch with slight query variations. 3-5 searches MAX per topic. If results are empty, stop searching — do not rephrase and retry.
+- **Read files once.** Do NOT re-read files you already read in this conversation. The content is already in your context.
+- **Parallel tool calls.** When you need multiple independent pieces of information, call all tools in a single response. Never call them one-by-one in separate turns.
+- **Present results early.** After 3 searches, present what you found. Do not keep searching for "more" — the user can ask if they want more.`;
 // Cache assembled instructions per workingDir — avoids re-running git commands
 // when sub-agents are spawned (common in parallel tool use patterns).
 const _instructionCache = new Map();

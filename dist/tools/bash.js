@@ -217,8 +217,8 @@ async function execute(input, ctx) {
             if (!ctx.onProgress)
                 return;
             const now = Date.now();
-            if (now - lastProgressEmit < 500)
-                return; // max 2 updates/sec
+            if (now - lastProgressEmit < 200)
+                return; // max 5 updates/sec
             lastProgressEmit = now;
             const lastLine = text.split('\n').map(l => l.trim()).filter(Boolean).pop();
             if (lastLine)
