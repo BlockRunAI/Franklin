@@ -266,7 +266,13 @@ async function execute(
         const sample = articles[0].text.slice(0, 600);
         diag = `Found ${articles.length} article blocks but extracted 0 candidates.\nFirst article AX dump:\n${sample}`;
       }
-      return { output: `No candidate posts found for query: "${query}"\n\n[debug] ${diag}` };
+      return {
+        output: `No candidate posts found for query: "${query}"\n\n` +
+          'Tell the user: "No X posts found for this query. Try a different keyword or check back later."\n' +
+          'Do NOT use WebSearch or WebFetch as a fallback — they cannot access X.com content.\n' +
+          'Do NOT fabricate or invent X post links.\n\n' +
+          `[debug] ${diag}`,
+      };
     }
 
     const lines = candidates.map((c) => {
@@ -291,8 +297,15 @@ async function execute(
       : `SearchX results for "${query}" (${candidates.length} candidates):`;
     let output = `${header}\n\n${lines.join('\n\n')}`;
 
+    // Explicit instructions to prevent model from hallucinating additional posts
+    output += '\n\n---\n';
+    output += 'IMPORTANT: The posts above are the ONLY real X posts found. ';
+    output += 'Present ONLY these posts to the user. Do NOT fabricate additional posts. ';
+    output += 'Do NOT use WebSearch or WebFetch to find X posts — they cannot access X.com content. ';
+    output += 'If the user wants more, suggest refining the search query.';
+
     if (!enhanced) {
-      output += '\n\n---\nTip: Run `franklin social setup` to enable product routing, dedup, and auto-replies.';
+      output += '\nTip: Run `franklin social setup` to enable product routing, dedup, and auto-replies.';
     }
 
     return { output };
@@ -308,10 +321,9 @@ export const searchXCapability: CapabilityHandler = {
   spec: {
     name: 'SearchX',
     description:
-      'Search X (Twitter) for posts, or check notifications for interactions that need replies. ' +
-      'Use mode "notifications" to check mentions/replies/interactions. ' +
-      'Use mode "search" (default) to search for posts by keyword. ' +
-      'Works immediately; social config optional for enhanced features.',
+      'The ONLY tool that can access X (Twitter). Returns real posts with URLs. ' +
+      'Use mode "search" to find posts by keyword. Use mode "notifications" to check mentions/replies. ' +
+      'Call ONCE per topic — do not retry. WebSearch/WebFetch CANNOT access X.com.',
     input_schema: {
       type: 'object' as const,
       properties: {
