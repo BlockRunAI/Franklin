@@ -42,6 +42,13 @@ export declare class ModelClient {
      * Yields parsed SSE chunks as they arrive.
      * Handles x402 payment automatically on 402 responses.
      */
+    /**
+     * Resolve virtual routing profiles (blockrun/auto, blockrun/eco, etc.)
+     * to concrete models. This is the final safety net — if the router in
+     * loop.ts didn't resolve it (e.g. old global install without router),
+     * we resolve it here before hitting the API.
+     */
+    private resolveVirtualModel;
     streamCompletion(request: ModelRequest, signal?: AbortSignal): AsyncGenerator<StreamChunk>;
     /**
      * Non-streaming completion for simple requests.
