@@ -11,6 +11,8 @@ interface WebFetchInput {
 }
 
 const MAX_BODY_BYTES = 256 * 1024; // 256KB
+const DEFAULT_MAX_LENGTH = 12_288;
+const HTML_READ_AHEAD_BYTES = 8_192;
 
 // ─── Session cache ──────────────────────────────────────────────────────────
 // Avoids re-fetching the same URL within a session (common in research tasks).
@@ -70,7 +72,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     return { output: `Error: only http/https URLs are supported`, isError: true };
   }
 
-  const maxLen = Math.min(max_length ?? MAX_BODY_BYTES, MAX_BODY_BYTES);
+  const maxLen = Math.min(max_length ?? DEFAULT_MAX_LENGTH, MAX_BODY_BYTES);
   const key = cacheKey(url, maxLen);
 
   // Check cache first
@@ -112,8 +114,12 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     const chunks: Uint8Array[] = [];
     let totalBytes = 0;
 
+    const readBudget = contentType.includes('html')
+      ? Math.min(maxLen + HTML_READ_AHEAD_BYTES, MAX_BODY_BYTES)
+      : maxLen;
+
     try {
-      while (totalBytes < maxLen) {
+      while (totalBytes < readBudget) {
         const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value);
@@ -124,21 +130,24 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     }
 
     const decoder = new TextDecoder();
-    let body = decoder.decode(Buffer.concat(chunks)).slice(0, maxLen);
+    const rawBody = decoder.decode(Buffer.concat(chunks));
+    let body = rawBody;
 
     // Format response based on content type
     if (contentType.includes('json')) {
       try {
-        const parsedJson = JSON.parse(body);
+        const parsedJson = JSON.parse(rawBody.slice(0, maxLen));
         body = JSON.stringify(parsedJson, null, 2).slice(0, maxLen);
       } catch { /* leave as-is if not valid JSON */ }
     } else if (contentType.includes('html')) {
-      body = stripHtml(body);
+      body = stripHtml(rawBody).slice(0, maxLen);
+    } else {
+      body = rawBody.slice(0, maxLen);
     }
 
     let output = `URL: ${url}\nStatus: ${response.status}\nContent-Type: ${contentType}\n\n${body}`;
 
-    if (totalBytes >= maxLen) {
+    if (totalBytes >= readBudget || rawBody.length > maxLen) {
       output += '\n\n... (content truncated)';
     }
 
@@ -172,11 +181,13 @@ function stripHtml(html: string): string {
     .replace(/<aside[^>]*>[\s\S]*?<\/aside>/gi, '')
     .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '')
     .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, '')
+    .replace(/<(path|g|defs|clipPath|symbol|use|mask|rect|circle|ellipse|polygon|polyline|line)\b[^>]*>/gi, ' ')
     .replace(/<form[^>]*>[\s\S]*?<\/form>/gi, '')
     // Convert block elements to newlines for readability
     .replace(/<\/?(p|div|h[1-6]|li|br|tr)[^>]*>/gi, '\n')
     // Strip remaining tags
     .replace(/<[^>]+>/g, ' ')
+    .replace(/<[^>\n]*$/g, '')
     // Decode entities
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
