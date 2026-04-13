@@ -1,6 +1,19 @@
 /**
  * Model selector for the learned router.
- * Picks the best model for a category using Elo scores and cost-quality tradeoff.
+ *
+ * Scoring formula:
+ *   score = w_quality * norm_quality
+ *         + w_cost    * (1 - norm_cost)
+ *         + w_latency * (1 - norm_latency)
+ *
+ * Quality is the weakest signal (popularity-based Elo, until we have benchmarks).
+ * Cost and latency are hard data from the gateway. They carry more weight.
+ *
+ * Profile weights:
+ *   auto    — balanced: quality 0.3, cost 0.4, latency 0.3
+ *   eco     — cost-first: quality 0.1, cost 0.7, latency 0.2
+ *   premium — quality-first: quality 0.6, cost 0.1, latency 0.3
+ *   free    — best latency among free models
  */
 import type { Category } from './categories.js';
 import type { RoutingProfile } from './index.js';
@@ -9,6 +22,8 @@ export interface ModelScore {
     elo: number;
     avg_cost_per_1k?: number;
     avg_latency_ms?: number;
+    requests?: number;
+    unique_users?: number;
 }
 export interface LearnedWeights {
     version: number;
@@ -20,17 +35,9 @@ export interface LearnedWeights {
 }
 export interface SelectionResult {
     model: string;
-    elo: number;
+    score: number;
     expectedCost: number;
+    expectedLatency: number;
     category: Category;
 }
-/**
- * Select the best model for a category and routing profile.
- *
- * Profiles:
- *   auto    — best α*quality + (1-α)*(1-cost), α=0.7
- *   eco     — best elo among cheapest 30%
- *   premium — highest elo regardless of cost
- *   free    — best elo among free models (cost=0)
- */
 export declare function selectModel(category: Category, profile: RoutingProfile, weights: LearnedWeights): SelectionResult | null;

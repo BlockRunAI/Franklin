@@ -68,8 +68,10 @@ function isNoSignalSearchResult(output, isError) {
     const lower = output.toLowerCase();
     return Boolean(isError ||
         lower.startsWith('no results found for:') ||
+        lower.startsWith('no candidate posts found') ||
         lower.startsWith('search timed out') ||
-        lower.startsWith('search error:'));
+        lower.startsWith('search error:') ||
+        lower.startsWith('searchx error:'));
 }
 function readKey(resolved, offset, limit) {
     return `${resolved}::${offset ?? 1}::${limit ?? 2000}`;
@@ -97,6 +99,7 @@ export class SessionToolGuard {
     async beforeExecute(invocation, scope) {
         switch (invocation.name) {
             case 'WebSearch':
+            case 'SearchX':
                 return this.beforeWebSearch(invocation);
             case 'Read':
                 return this.beforeRead(invocation, scope);
@@ -109,6 +112,7 @@ export class SessionToolGuard {
     afterExecute(invocation, result) {
         switch (invocation.name) {
             case 'WebSearch':
+            case 'SearchX':
                 this.afterWebSearch(invocation, result);
                 break;
             case 'Read':
