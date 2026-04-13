@@ -23,6 +23,7 @@ import { browserPool } from '../social/browser-pool.js';
 interface SearchXInput {
   query: string;
   max_results?: number;
+  mode?: 'search' | 'notifications';
 }
 
 interface Candidate {
@@ -39,10 +40,10 @@ async function execute(
   input: Record<string, unknown>,
   _ctx: ExecutionScope,
 ): Promise<CapabilityResult> {
-  const { query, max_results } = input as unknown as SearchXInput;
+  const { query, max_results, mode } = input as unknown as SearchXInput;
 
-  if (!query) {
-    return { output: 'Error: query is required', isError: true };
+  if (!query && mode !== 'notifications') {
+    return { output: 'Error: query is required (or set mode to "notifications")', isError: true };
   }
 
   const maxResults = Math.min(Math.max(max_results ?? 10, 1), 50);
@@ -65,10 +66,12 @@ async function execute(
   try {
     browser = await browserPool.getBrowser();
 
-    // ── Navigate to X search ───────────────────────────────────────────
-    const searchUrl =
-      `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query&f=live`;
-    await browser.open(searchUrl);
+    // ── Choose page: notifications vs search ──────────────────────────
+    const isNotifications = mode === 'notifications';
+    const targetUrl = isNotifications
+      ? 'https://x.com/notifications'
+      : `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query&f=live`;
+    await browser.open(targetUrl);
     await browser.waitForTimeout(4000);
     const tree = await browser.snapshot();
 
@@ -195,9 +198,10 @@ async function execute(
       );
     });
 
-    let output =
-      `SearchX results for "${query}" (${candidates.length} candidates):\n\n` +
-      lines.join('\n\n');
+    const header = isNotifications
+      ? `X Notifications (${candidates.length} items):`
+      : `SearchX results for "${query}" (${candidates.length} candidates):`;
+    let output = `${header}\n\n${lines.join('\n\n')}`;
 
     if (!enhanced) {
       output += '\n\n---\nTip: Run `franklin social setup` to enable product routing, dedup, and auto-replies.';
@@ -216,18 +220,25 @@ export const searchXCapability: CapabilityHandler = {
   spec: {
     name: 'SearchX',
     description:
-      'Search X (Twitter) for posts matching a query. Returns candidate posts ' +
-      'with snippets and tweet URLs. Works immediately; social config optional for enhanced features.',
+      'Search X (Twitter) for posts, or check notifications for interactions that need replies. ' +
+      'Use mode "notifications" to check mentions/replies/interactions. ' +
+      'Use mode "search" (default) to search for posts by keyword. ' +
+      'Works immediately; social config optional for enhanced features.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        query: { type: 'string', description: 'Search query' },
+        query: { type: 'string', description: 'Search query (required for search mode, optional for notifications mode)' },
         max_results: {
           type: 'number',
           description: 'Max posts to return (default 10)',
         },
+        mode: {
+          type: 'string',
+          enum: ['search', 'notifications'],
+          description: 'Mode: "search" to find posts by keyword, "notifications" to check your mentions/replies/interactions that need response. Default: search',
+        },
       },
-      required: ['query'],
+      required: [],
     },
   },
   execute,
