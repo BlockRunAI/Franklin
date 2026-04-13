@@ -113,10 +113,26 @@ export class StreamingExecutor {
             const preview = this.inputPreview(invocation);
             this.onStart(invocation.id, invocation.name, preview);
         }
-        const handler = this.handlers.get(invocation.name);
+        let handler = this.handlers.get(invocation.name);
         if (!handler) {
-            this.guard?.cancelInvocation(invocation.id);
-            return { output: `Unknown capability: ${invocation.name}`, isError: true };
+            // Attempt repair: lowercase, normalize hyphens/spaces → match
+            const attempted = invocation.name;
+            const lower = attempted.toLowerCase();
+            for (const [name, h] of this.handlers) {
+                if (name.toLowerCase() === lower || name.toLowerCase().replace(/[-_ ]/g, '') === lower.replace(/[-_ ]/g, '')) {
+                    handler = h;
+                    invocation = { ...invocation, name };
+                    break;
+                }
+            }
+            if (!handler) {
+                this.guard?.cancelInvocation(invocation.id);
+                const available = [...this.handlers.keys()].join(', ');
+                return {
+                    output: `Unknown tool "${attempted}". Available tools: ${available}. Check spelling and try again.`,
+                    isError: true,
+                };
+            }
         }
         // Wire per-invocation progress to onProgress callback
         const progressScope = this.onProgress
