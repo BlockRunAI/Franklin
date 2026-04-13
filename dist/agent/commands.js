@@ -198,7 +198,7 @@ const DIRECT_COMMANDS = {
                 `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
                 `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /session-search /context /tasks\n` +
                 `  **Power:** /ultrathink [query] /ultraplan /dump\n` +
-                `  **Info:** /model /wallet /cost /tokens /learnings /mcp /doctor /version /bug /help\n` +
+                `  **Info:** /model /wallet /cost /tokens /learnings /brain /mcp /doctor /version /bug /help\n` +
                 `  **UI:** /clear /exit\n` +
                 (ultrathinkOn ? `\n  Ultrathink: ON\n` : '')
         });
@@ -595,6 +595,57 @@ export async function handleSlashCommand(input, ctx) {
                     text += `  [${conf}] ${l.learning} (×${l.times_confirmed})\n`;
                 }
                 text += '\nUse `/learnings clear` to reset.\n';
+                ctx.onEvent({ kind: 'text_delta', text });
+            }
+        }
+        emitDone(ctx);
+        return { handled: true };
+    }
+    // /brain — view knowledge graph entities
+    if (input === '/brain' || input.startsWith('/brain ')) {
+        const { searchEntities, loadEntities, getEntityObservations, getEntityRelations, getBrainStats, loadObservations } = await import('../brain/store.js');
+        const arg = input.slice('/brain'.length).trim();
+        if (!arg) {
+            const stats = getBrainStats();
+            if (stats.entities === 0) {
+                ctx.onEvent({ kind: 'text_delta', text: 'Brain is empty. Franklin learns entities (people, projects, companies) from your conversations over time.\n' });
+            }
+            else {
+                const entities = loadEntities().sort((a, b) => b.reference_count - a.reference_count);
+                let text = `**Franklin Brain** (${stats.entities} entities, ${stats.observations} facts, ${stats.relations} relations)\n\n`;
+                for (const e of entities.slice(0, 20)) {
+                    text += `  ${e.type === 'person' ? '👤' : e.type === 'company' ? '🏢' : e.type === 'project' ? '📦' : '💡'} **${e.name}** (${e.type}, ×${e.reference_count})\n`;
+                }
+                if (entities.length > 20)
+                    text += `  ... and ${entities.length - 20} more\n`;
+                text += '\nSearch: `/brain <name>` for details.\n';
+                ctx.onEvent({ kind: 'text_delta', text });
+            }
+        }
+        else {
+            const results = searchEntities(arg, 5);
+            if (results.length === 0) {
+                ctx.onEvent({ kind: 'text_delta', text: `No entities matching "${arg}".\n` });
+            }
+            else {
+                let text = '';
+                for (const e of results) {
+                    text += `**${e.name}** (${e.type})\n`;
+                    if (e.aliases.length > 0)
+                        text += `  Aliases: ${e.aliases.join(', ')}\n`;
+                    const obs = getEntityObservations(e.id).slice(0, 5);
+                    for (const o of obs) {
+                        text += `  - ${o.content}\n`;
+                    }
+                    const rels = getEntityRelations(e.id);
+                    const allEntities = loadEntities();
+                    for (const r of rels.slice(0, 3)) {
+                        const other = allEntities.find(x => x.id === (r.from_id === e.id ? r.to_id : r.from_id));
+                        if (other)
+                            text += `  → ${r.type} ${other.name}\n`;
+                    }
+                    text += '\n';
+                }
                 ctx.onEvent({ kind: 'text_delta', text });
             }
         }
