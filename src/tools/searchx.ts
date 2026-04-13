@@ -69,8 +69,26 @@ async function execute(
     const searchUrl =
       `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query&f=live`;
     await browser.open(searchUrl);
-    await browser.waitForTimeout(3500);
+    await browser.waitForTimeout(4000);
     const tree = await browser.snapshot();
+
+    // ── Diagnose page state ───────────────────────────────────────────
+    const isLoginWall = tree.includes('Sign in') && tree.includes('Create account');
+    const isRateLimit = tree.includes('Rate limit') || tree.includes('Something went wrong');
+    const treeLen = tree.length;
+
+    if (isLoginWall) {
+      return {
+        output: `SearchX: X is showing a login wall. Run \`franklin social login x\` to authenticate.\n\nTree preview (${treeLen} chars):\n${tree.slice(0, 500)}`,
+        isError: true,
+      };
+    }
+    if (isRateLimit) {
+      return {
+        output: `SearchX: X returned an error page (rate limit or server issue). Try again in a minute.\n\nTree preview (${treeLen} chars):\n${tree.slice(0, 500)}`,
+        isError: true,
+      };
+    }
 
     // ── Extract articles ───────────────────────────────────────────────
     const articles = extractArticleBlocks(tree);
@@ -128,7 +146,11 @@ async function execute(
 
     // ── Format output ──────────────────────────────────────────────────
     if (candidates.length === 0) {
-      return { output: `No candidate posts found for query: "${query}"` };
+      // Include diagnostic info so we can see what the page looks like
+      const diag = articles.length === 0
+        ? `No article blocks found in AX tree (${treeLen} chars). Tree preview:\n${tree.slice(0, 800)}`
+        : `Found ${articles.length} article blocks but none had valid time-links/snippets.`;
+      return { output: `No candidate posts found for query: "${query}"\n\n[debug] ${diag}` };
     }
 
     const lines = candidates.map((c) => {
