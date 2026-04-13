@@ -126,8 +126,17 @@ export class StreamingExecutor {
             }
             : this.scope;
         try {
-            const result = await handler.execute(invocation.input, progressScope);
+            let result = await handler.execute(invocation.input, progressScope);
             this.guard?.afterExecute(invocation, result);
+            // Cap tool result size to prevent context bloat (inspired by Hermes 200KB budget)
+            const MAX_RESULT_CHARS = 50_000;
+            if (result.output.length > MAX_RESULT_CHARS) {
+                result = {
+                    output: result.output.slice(0, MAX_RESULT_CHARS) +
+                        `\n\n[Truncated: original was ${result.output.length.toLocaleString()} chars. Use Read tool to access full content.]`,
+                    isError: result.isError,
+                };
+            }
             return result;
         }
         catch (err) {

@@ -35,6 +35,12 @@ You have access to tools for reading, writing, editing files, running shell comm
 - Never write to /etc, /usr, ~/.ssh, ~/.aws. Don't commit secrets.
 - Type /help to see all slash commands.
 
+# Tool-Use Enforcement
+You MUST use tools to take action — do not describe what you would do without doing it.
+Never end your turn with a promise of future action — execute it now.
+Every response should either (a) contain tool calls that make progress, or (b) deliver a final result to the user.
+Responses that only describe intentions without acting are not acceptable.
+
 # Missing Access
 Always deliver results first using whatever tools work (WebSearch, WebFetch, etc.). Never let missing access block you.
 After delivering results, if a better data source exists, add one line at the end:
@@ -60,7 +66,13 @@ When checking notifications/mentions: Use SearchX with mode="notifications". One
 - **Stop after repeated misses.** If 2 similar searches for the same topic return empty/low-signal results, stop and synthesize what you have.
 - **Read files once.** Do NOT re-read files you already read in this conversation. The content is already in your context.
 - **Parallel tool calls.** When you need multiple independent pieces of information, call all tools in a single response. Never call them one-by-one in separate turns.
-- **Present results early.** After 3 searches, present what you found. Do not keep searching for "more" — the user can ask if they want more.`;
+- **Present results early.** After 3 searches, present what you found. Do not keep searching for "more" — the user can ask if they want more.
+
+# Before Responding (verification checklist)
+- Correctness: does your output satisfy the user's request?
+- Grounding: are all factual claims backed by tool results, not your memory?
+- URLs: does every link come from a tool result? NEVER fabricate URLs.
+- Conciseness: is the response direct and actionable, not verbose filler?`;
 // Cache assembled instructions per workingDir — avoids re-running git commands
 // when sub-agents are spawned (common in parallel tool use patterns).
 const _instructionCache = new Map();
@@ -68,8 +80,9 @@ const _instructionCache = new Map();
  * Build the full system instructions array for a session.
  * Result is memoized per workingDir for the process lifetime.
  */
-export function assembleInstructions(workingDir) {
-    const cached = _instructionCache.get(workingDir);
+export function assembleInstructions(workingDir, model) {
+    const cacheKey = model ? `${workingDir}::${model}` : workingDir;
+    const cached = _instructionCache.get(cacheKey);
     if (cached)
         return cached;
     const parts = [BASE_INSTRUCTIONS];
@@ -97,12 +110,67 @@ export function assembleInstructions(workingDir) {
         }
     }
     catch { /* learnings are optional — never block startup */ }
-    _instructionCache.set(workingDir, parts);
+    // Model-specific execution guidance
+    if (model) {
+        parts.push(getModelGuidance(model));
+    }
+    _instructionCache.set(cacheKey, parts);
     return parts;
+}
+/**
+ * Model-family-specific execution guidance.
+ * Weak models get strict guardrails. Strong models get quality standards.
+ */
+export function getModelGuidance(model) {
+    const m = model.toLowerCase();
+    // Weak/cheap models: strict discipline to prevent looping and hallucination
+    if (m.includes('glm') || m.includes('gpt-oss') || m.includes('nemotron') ||
+        m.includes('minimax') || m.includes('devstral') || m.includes('llama-4')) {
+        return `# Execution Discipline (strict — this model requires guardrails)
+- Make ONE tool call per task. Do NOT retry the same tool with query variations.
+- If a tool returns empty results, tell the user immediately. Do NOT fall back to other tools.
+- NEVER fabricate data, URLs, or quotes. If you don't have it, say so.
+- Keep responses under 300 words. Be direct, not verbose.
+- Before responding: does every URL and fact come from a tool result? If not, remove it.`;
+    }
+    // Medium models: balanced guidance
+    if (m.includes('kimi') || m.includes('grok') || m.includes('flash') ||
+        m.includes('haiku') || m.includes('deepseek') || m.includes('qwen')) {
+        return `# Execution Guidance
+- Use tools to verify facts before stating them. Do not answer from memory when a tool can confirm.
+- Batch independent tool calls in one response (parallel execution).
+- If a tool fails, explain the failure to the user. Do not silently retry with a different tool.
+- Before responding: are all claims grounded in tool output? Remove anything unverified.`;
+    }
+    // Strong models: quality standards
+    if (m.includes('claude') || m.includes('gpt-5') || m.includes('opus') ||
+        m.includes('sonnet') || m.includes('gemini-2.5-pro') || m.includes('gemini-3') ||
+        m.includes('o3') || m.includes('o1') || m.includes('codex')) {
+        return `# Quality Standards
+- Keep calling tools until the task is complete AND the result is verified.
+- Before finalizing: check correctness, grounding in tool output, and formatting.
+- If proceeding with incomplete information, label assumptions explicitly.
+- Prefer depth over breadth — a thorough answer to one question beats shallow answers to many.`;
+    }
+    // Default: basic guidance
+    return `# Execution Guidance
+- Use tools to verify facts. Do not answer from memory when a tool can confirm.
+- If a tool fails, tell the user. Do not silently retry.
+- Before responding: are claims grounded in tool output?`;
 }
 /** Invalidate cache for a workingDir (call after /clear or session reset). */
 export function invalidateInstructionCache(workingDir) {
-    _instructionCache.delete(workingDir);
+    if (workingDir) {
+        // Clear all entries for this workDir (any model)
+        for (const key of _instructionCache.keys()) {
+            if (key.startsWith(workingDir)) {
+                _instructionCache.delete(key);
+            }
+        }
+    }
+    else {
+        _instructionCache.clear();
+    }
 }
 // ─── Project Config ────────────────────────────────────────────────────────
 /**
