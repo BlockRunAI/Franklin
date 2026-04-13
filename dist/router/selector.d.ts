@@ -1,19 +1,21 @@
 /**
  * Model selector for the learned router.
  *
- * Scoring formula:
- *   score = w_quality * norm_quality
- *         + w_cost    * (1 - norm_cost)
- *         + w_latency * (1 - norm_latency)
+ * Scoring formula (4 factors):
+ *   score = w_quality    * norm_quality
+ *         + w_cost       * (1 - norm_cost)
+ *         + w_latency    * (1 - norm_latency)
+ *         + w_efficiency * norm_efficiency
  *
- * Quality is the weakest signal (popularity-based Elo, until we have benchmarks).
- * Cost and latency are hard data from the gateway. They carry more weight.
+ * Efficiency = how few tool calls a model needs to complete a task.
+ * A model that does it in 5 calls is better than one that loops 85 times.
+ * Measured as 1/avg_tool_calls_per_turn (higher = more efficient).
  *
  * Profile weights:
- *   auto    — balanced: quality 0.3, cost 0.4, latency 0.3
- *   eco     — cost-first: quality 0.1, cost 0.7, latency 0.2
- *   premium — quality-first: quality 0.6, cost 0.1, latency 0.3
- *   free    — best latency among free models
+ *   auto    — balanced: quality 0.2, cost 0.3, latency 0.25, efficiency 0.25
+ *   eco     — cost-first: quality 0.1, cost 0.6, latency 0.15, efficiency 0.15
+ *   premium — quality-first: quality 0.4, cost 0.1, latency 0.25, efficiency 0.25
+ *   free    — best efficiency among free models
  */
 import type { Category } from './categories.js';
 import type { RoutingProfile } from './index.js';
@@ -22,6 +24,7 @@ export interface ModelScore {
     elo: number;
     avg_cost_per_1k?: number;
     avg_latency_ms?: number;
+    avg_tool_calls_per_turn?: number;
     requests?: number;
     unique_users?: number;
 }

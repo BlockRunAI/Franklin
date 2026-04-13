@@ -1,19 +1,21 @@
 /**
  * Model selector for the learned router.
  *
- * Scoring formula:
- *   score = w_quality * norm_quality
- *         + w_cost    * (1 - norm_cost)
- *         + w_latency * (1 - norm_latency)
+ * Scoring formula (4 factors):
+ *   score = w_quality    * norm_quality
+ *         + w_cost       * (1 - norm_cost)
+ *         + w_latency    * (1 - norm_latency)
+ *         + w_efficiency * norm_efficiency
  *
- * Quality is the weakest signal (popularity-based Elo, until we have benchmarks).
- * Cost and latency are hard data from the gateway. They carry more weight.
+ * Efficiency = how few tool calls a model needs to complete a task.
+ * A model that does it in 5 calls is better than one that loops 85 times.
+ * Measured as 1/avg_tool_calls_per_turn (higher = more efficient).
  *
  * Profile weights:
- *   auto    — balanced: quality 0.3, cost 0.4, latency 0.3
- *   eco     — cost-first: quality 0.1, cost 0.7, latency 0.2
- *   premium — quality-first: quality 0.6, cost 0.1, latency 0.3
- *   free    — best latency among free models
+ *   auto    — balanced: quality 0.2, cost 0.3, latency 0.25, efficiency 0.25
+ *   eco     — cost-first: quality 0.1, cost 0.6, latency 0.15, efficiency 0.15
+ *   premium — quality-first: quality 0.4, cost 0.1, latency 0.25, efficiency 0.25
+ *   free    — best efficiency among free models
  */
 
 import type { Category } from './categories.js';
@@ -25,6 +27,7 @@ export interface ModelScore {
   elo: number;
   avg_cost_per_1k?: number;
   avg_latency_ms?: number;
+  avg_tool_calls_per_turn?: number; // lower = more efficient
   requests?: number;
   unique_users?: number;
 }
@@ -50,12 +53,13 @@ interface ProfileWeights {
   quality: number;
   cost: number;
   latency: number;
+  efficiency: number;
 }
 
 const PROFILE_WEIGHTS: Record<string, ProfileWeights> = {
-  auto:    { quality: 0.3, cost: 0.4, latency: 0.3 },
-  eco:     { quality: 0.1, cost: 0.7, latency: 0.2 },
-  premium: { quality: 0.6, cost: 0.1, latency: 0.3 },
+  auto:    { quality: 0.20, cost: 0.30, latency: 0.25, efficiency: 0.25 },
+  eco:     { quality: 0.10, cost: 0.60, latency: 0.15, efficiency: 0.15 },
+  premium: { quality: 0.40, cost: 0.10, latency: 0.25, efficiency: 0.25 },
 };
 
 export function selectModel(
@@ -66,28 +70,38 @@ export function selectModel(
   const candidates = weights.model_scores[category];
   if (!candidates || candidates.length === 0) return null;
 
-  // Enrich with pricing data
+  // Enrich with pricing data and defaults
   const enriched = candidates.map(c => {
     const pricing = MODEL_PRICING[c.model];
     const costPer1K = pricing
       ? (pricing.input + pricing.output) / 2 / 1000
       : c.avg_cost_per_1k ?? 0.005;
-    const latencyMs = c.avg_latency_ms ?? 2000; // default 2s if unknown
-    return { ...c, costPer1K, latencyMs };
+    const latencyMs = c.avg_latency_ms ?? 2000;
+    // Efficiency: 1/avg_tool_calls (higher = better). Default 10 calls/turn if unknown.
+    const toolCallsPerTurn = c.avg_tool_calls_per_turn ?? 10;
+    const efficiency = 1 / Math.max(1, toolCallsPerTurn);
+    return { ...c, costPer1K, latencyMs, efficiency };
   });
 
   // Filter to models we can actually route to
   const available = enriched.filter(c => MODEL_PRICING[c.model]);
   if (available.length === 0) return null;
 
-  // ── Free profile: best latency among free models ──
+  // ── Free profile: best efficiency + latency among free models ──
   if (profile === 'free') {
     const free = available.filter(c => c.costPer1K === 0);
     if (free.length === 0) return null;
-    const selected = free.reduce((best, c) => c.latencyMs < best.latencyMs ? c : best);
+    // Score free models by efficiency (60%) + latency (40%)
+    const maxLat = Math.max(...free.map(c => c.latencyMs)) || 1;
+    const maxEff = Math.max(...free.map(c => c.efficiency)) || 1;
+    const selected = free.reduce((best, c) => {
+      const s = 0.6 * (c.efficiency / maxEff) + 0.4 * (1 - c.latencyMs / maxLat);
+      const bestS = 0.6 * (best.efficiency / maxEff) + 0.4 * (1 - best.latencyMs / maxLat);
+      return s > bestS ? c : best;
+    });
     return {
       model: selected.model,
-      score: selected.elo,
+      score: selected.efficiency,
       expectedCost: 0,
       expectedLatency: selected.latencyMs,
       category,
@@ -101,15 +115,18 @@ export function selectModel(
   const elos = available.map(c => c.elo);
   const costs = available.map(c => c.costPer1K);
   const latencies = available.map(c => c.latencyMs);
+  const efficiencies = available.map(c => c.efficiency);
 
   const minElo = Math.min(...elos);
   const maxElo = Math.max(...elos);
   const maxCost = Math.max(...costs);
   const maxLatency = Math.max(...latencies);
+  const maxEfficiency = Math.max(...efficiencies);
 
   const eloRange = maxElo - minElo || 1;
   const costRange = maxCost || 1;
   const latencyRange = maxLatency || 1;
+  const efficiencyRange = maxEfficiency || 1;
 
   let bestScore = -Infinity;
   let selected = available[0];
@@ -118,11 +135,13 @@ export function selectModel(
     const normQuality = (c.elo - minElo) / eloRange;
     const normCost = c.costPer1K / costRange;
     const normLatency = c.latencyMs / latencyRange;
+    const normEfficiency = c.efficiency / efficiencyRange;
 
     const score =
-      w.quality * normQuality +
-      w.cost    * (1 - normCost) +
-      w.latency * (1 - normLatency);
+      w.quality    * normQuality +
+      w.cost       * (1 - normCost) +
+      w.latency    * (1 - normLatency) +
+      w.efficiency * normEfficiency;
 
     if (score > bestScore) {
       bestScore = score;
