@@ -222,11 +222,16 @@ async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, on
     if (sessionHistory && sessionHistory.length >= 4) {
         try {
             const { extractLearnings } = await import('../learnings/extractor.js');
+            const { extractBrainEntities } = await import('../brain/extract.js');
             const { ModelClient } = await import('../agent/llm.js');
             const client = new ModelClient({ apiUrl: agentConfig.apiUrl, chain: agentConfig.chain });
+            const sid = `session-${new Date().toISOString()}`;
             await Promise.race([
-                extractLearnings(sessionHistory, `session-${new Date().toISOString()}`, client),
-                new Promise(resolve => setTimeout(resolve, 10_000)),
+                Promise.all([
+                    extractLearnings(sessionHistory, sid, client),
+                    extractBrainEntities(sessionHistory, sid, client),
+                ]),
+                new Promise(resolve => setTimeout(resolve, 15_000)),
             ]);
         }
         catch { /* extraction is best-effort */ }
