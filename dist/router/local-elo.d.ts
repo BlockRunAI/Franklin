@@ -9,7 +9,7 @@ export type Outcome = 'continued' | 'switched' | 'retried' | 'error' | 'max_turn
 /**
  * Record a model outcome for local learning.
  */
-export declare function recordOutcome(category: string, model: string, outcome: Outcome): void;
+export declare function recordOutcome(category: string, model: string, outcome: Outcome, toolCalls?: number): void;
 /**
  * Compute local Elo adjustments from history.
  * Returns a map of (category → model → elo_delta).

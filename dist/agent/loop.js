@@ -409,9 +409,9 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                         });
                     }
                 }
-                // Record success for local Elo learning
+                // Record success for local Elo learning (include tool call count for efficiency)
                 if (lastRoutedCategory && lastRoutedModel) {
-                    recordOutcome(lastRoutedCategory, lastRoutedModel, 'continued');
+                    recordOutcome(lastRoutedCategory, lastRoutedModel, 'continued', turnToolCalls);
                 }
                 onEvent({ kind: 'turn_done', reason: 'completed' });
                 break;
@@ -493,7 +493,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             lastSessionActivity = Date.now();
             persistSessionMeta();
             if (lastRoutedCategory && lastRoutedModel) {
-                recordOutcome(lastRoutedCategory, lastRoutedModel, 'max_turns');
+                recordOutcome(lastRoutedCategory, lastRoutedModel, 'max_turns', turnToolCalls);
             }
             onEvent({ kind: 'turn_done', reason: 'max_turns' });
         }

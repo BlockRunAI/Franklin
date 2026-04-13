@@ -14,10 +14,10 @@ const K_FACTOR = 32; // Elo K-factor — how much each outcome shifts the rating
 /**
  * Record a model outcome for local learning.
  */
-export function recordOutcome(category, model, outcome) {
+export function recordOutcome(category, model, outcome, toolCalls) {
     try {
         fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
-        const record = { ts: Date.now(), category, model, outcome };
+        const record = { ts: Date.now(), category, model, outcome, toolCalls };
         fs.appendFileSync(HISTORY_FILE, JSON.stringify(record) + '\n');
         // Trim periodically (10% chance)
         if (Math.random() < 0.1) {

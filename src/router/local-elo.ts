@@ -17,6 +17,7 @@ interface HistoryRecord {
   category: string;
   model: string;
   outcome: Outcome;
+  toolCalls?: number; // tool calls this turn (for efficiency tracking)
 }
 
 const HISTORY_FILE = path.join(BLOCKRUN_DIR, 'router-history.jsonl');
@@ -26,10 +27,10 @@ const K_FACTOR = 32; // Elo K-factor — how much each outcome shifts the rating
 /**
  * Record a model outcome for local learning.
  */
-export function recordOutcome(category: string, model: string, outcome: Outcome): void {
+export function recordOutcome(category: string, model: string, outcome: Outcome, toolCalls?: number): void {
   try {
     fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
-    const record: HistoryRecord = { ts: Date.now(), category, model, outcome };
+    const record: HistoryRecord = { ts: Date.now(), category, model, outcome, toolCalls };
     fs.appendFileSync(HISTORY_FILE, JSON.stringify(record) + '\n');
 
     // Trim periodically (10% chance)
