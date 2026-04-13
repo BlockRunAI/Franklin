@@ -7,6 +7,7 @@ import { printBanner } from '../banner.js';
 import { assembleInstructions } from '../agent/context.js';
 import { interactiveSession } from '../agent/loop.js';
 import { allCapabilities, createSubAgentCapability } from '../tools/index.js';
+import { validateToolDescriptions } from '../tools/validate.js';
 import { launchInkUI } from '../ui/app.js';
 import { pickModel, resolveModel } from '../ui/model-picker.js';
 import { loadMcpConfig } from '../mcp/config.js';
@@ -133,6 +134,13 @@ export async function startCommand(options) {
     // Build capabilities (built-in + MCP + sub-agent)
     const subAgent = createSubAgentCapability(apiUrl, chain, allCapabilities);
     const capabilities = [...allCapabilities, ...mcpTools, subAgent];
+    // Validate tool descriptions (self-evolution: detect SearchX-style description bugs)
+    if (options.debug) {
+        const issues = validateToolDescriptions(capabilities);
+        for (const issue of issues) {
+            console.error(`[validate] ${issue.severity}: ${issue.toolName} — ${issue.issue}`);
+        }
+    }
     // Agent config
     const agentConfig = {
         model,

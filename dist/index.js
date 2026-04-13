@@ -173,10 +173,25 @@ program
 });
 // Default action: if no subcommand given, run 'start'
 const args = process.argv.slice(2);
-const knownCommands = program.commands.map(c => c.name());
 const firstArg = args[0];
+const HELP_FLAGS = new Set(['-h', '--help']);
+const VERSION_FLAGS = new Set(['-V', '--version']);
+const START_ONLY_FLAGS = new Set(['--trust', '--debug', '-m', '--model']);
+function hasAnyFlag(argv, flags) {
+    return argv.some(arg => flags.has(arg));
+}
+function hasStartOnlyFlag(argv) {
+    return argv.some(arg => START_ONLY_FLAGS.has(arg));
+}
 // Handle chain shortcuts: `runcode solana` or `runcode base`
 if (firstArg === 'solana' || firstArg === 'base') {
+    if (hasAnyFlag(args, HELP_FLAGS)) {
+        program.parse(['node', 'franklin', 'start', '--help']);
+    }
+    if (hasAnyFlag(args, VERSION_FLAGS)) {
+        console.log(version);
+        process.exit(0);
+    }
     const { saveChain } = await import('./config.js');
     saveChain(firstArg);
     const startOpts = { version };
@@ -192,7 +207,17 @@ if (firstArg === 'solana' || firstArg === 'base') {
     await startCommand(startOpts);
     process.exit(0);
 }
-else if (!firstArg || (firstArg.startsWith('-') && !['-h', '--help', '-V', '--version'].includes(firstArg))) {
+else if (!firstArg || firstArg.startsWith('-')) {
+    if (hasAnyFlag(args, HELP_FLAGS) && hasStartOnlyFlag(args)) {
+        program.parse(['node', 'franklin', 'start', '--help']);
+    }
+    if (hasAnyFlag(args, VERSION_FLAGS) && hasStartOnlyFlag(args)) {
+        console.log(version);
+        process.exit(0);
+    }
+    if (hasAnyFlag(args, HELP_FLAGS) || hasAnyFlag(args, VERSION_FLAGS)) {
+        program.parse();
+    }
     // No subcommand or only flags — treat as 'start' with flags
     const startOpts = { version };
     for (let i = 0; i < args.length; i++) {

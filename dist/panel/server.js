@@ -44,6 +44,25 @@ export function createPanelServer(port) {
             res.end(html);
             return;
         }
+        // ─── Static assets ──
+        if (p.startsWith('/assets/') && p.endsWith('.jpg')) {
+            const filename = path.basename(p);
+            const assetsDir = path.join(path.dirname(path.dirname(new URL(import.meta.url).pathname)), '..', 'assets');
+            const imgPath = path.join(assetsDir, filename);
+            try {
+                const img = fs.readFileSync(imgPath);
+                res.writeHead(200, {
+                    'Content-Type': 'image/jpeg',
+                    'Cache-Control': 'public, max-age=86400',
+                });
+                res.end(img);
+            }
+            catch {
+                res.writeHead(404);
+                res.end('Not found');
+            }
+            return;
+        }
         // ─── SSE ──
         if (p === '/api/events') {
             res.writeHead(200, {
