@@ -1,6 +1,13 @@
 /**
- * Smart Router for runcode
- * Smart Router - 15-dimension weighted scoring for tier classification
+ * Smart Router for Franklin
+ *
+ * Two routing modes:
+ *   1. Learned — uses Elo scores from 2M+ gateway requests (router-weights.json)
+ *   2. Classic — 15-dimension keyword scoring (fallback when no weights)
+ *
+ * The learned router detects request category (coding, trading, reasoning, etc.)
+ * and picks the model with the best quality-to-cost ratio for that category.
+ * Local Elo adjustments personalize routing per user over time.
  */
 export type Tier = 'SIMPLE' | 'MEDIUM' | 'COMPLEX' | 'REASONING';
 export type RoutingProfile = 'auto' | 'eco' | 'premium' | 'free';

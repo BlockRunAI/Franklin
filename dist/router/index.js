@@ -1,8 +1,37 @@
 /**
- * Smart Router for runcode
- * Smart Router - 15-dimension weighted scoring for tier classification
+ * Smart Router for Franklin
+ *
+ * Two routing modes:
+ *   1. Learned — uses Elo scores from 2M+ gateway requests (router-weights.json)
+ *   2. Classic — 15-dimension keyword scoring (fallback when no weights)
+ *
+ * The learned router detects request category (coding, trading, reasoning, etc.)
+ * and picks the model with the best quality-to-cost ratio for that category.
+ * Local Elo adjustments personalize routing per user over time.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { MODEL_PRICING, OPUS_PRICING } from '../pricing.js';
+import { BLOCKRUN_DIR } from '../config.js';
+import { detectCategory, mapCategoryToTier } from './categories.js';
+import { selectModel } from './selector.js';
+import { computeLocalElo, blendElo } from './local-elo.js';
+// ─── Learned Weights Loading ───
+const WEIGHTS_FILE = path.join(BLOCKRUN_DIR, 'router-weights.json');
+let cachedWeights; // undefined = not loaded yet
+function loadLearnedWeights() {
+    if (cachedWeights !== undefined)
+        return cachedWeights;
+    try {
+        if (fs.existsSync(WEIGHTS_FILE)) {
+            cachedWeights = JSON.parse(fs.readFileSync(WEIGHTS_FILE, 'utf-8'));
+            return cachedWeights;
+        }
+    }
+    catch { /* fall through */ }
+    cachedWeights = null;
+    return null;
+}
 // ─── Tier Model Configs ───
 const AUTO_TIERS = {
     SIMPLE: {
@@ -187,18 +216,8 @@ function classifyRequest(prompt, tokenCount) {
     const confidence = Math.min(0.95, 0.7 + Math.abs(score) * 0.3);
     return { tier, confidence, signals };
 }
-// ─── Main Router ───
-export function routeRequest(prompt, profile = 'auto') {
-    // Free profile - always use free model
-    if (profile === 'free') {
-        return {
-            model: 'nvidia/nemotron-ultra-253b',
-            tier: 'SIMPLE',
-            confidence: 1.0,
-            signals: ['free-profile'],
-            savings: 1.0,
-        };
-    }
+// ─── Classic Router (keyword-based fallback) ───
+function classicRouteRequest(prompt, profile) {
     // Estimate token count (use byte length / 4 for better accuracy with non-ASCII)
     const byteLen = Buffer.byteLength(prompt, 'utf-8');
     const tokenCount = Math.ceil(byteLen / 4);
@@ -217,20 +236,65 @@ export function routeRequest(prompt, profile = 'auto') {
             tierConfigs = AUTO_TIERS;
     }
     const model = tierConfigs[tier].primary;
-    // Calculate savings estimate vs Claude Opus
+    const savings = computeSavings(model);
+    return { model, tier, confidence, signals, savings };
+}
+// ─── Main Router ───
+export function routeRequest(prompt, profile = 'auto') {
+    // Free profile — always use free model
+    if (profile === 'free') {
+        return {
+            model: 'nvidia/nemotron-ultra-253b',
+            tier: 'SIMPLE',
+            confidence: 1.0,
+            signals: ['free-profile'],
+            savings: 1.0,
+        };
+    }
+    // ── Learned routing (if weights available) ──
+    const weights = loadLearnedWeights();
+    if (weights) {
+        const { category, confidence } = detectCategory(prompt, weights.category_keywords);
+        // Apply local Elo adjustments
+        const localElo = computeLocalElo();
+        const localCatMap = localElo.get(category);
+        // Create adjusted weights with blended Elo scores
+        const adjustedWeights = localCatMap
+            ? {
+                ...weights,
+                model_scores: {
+                    ...weights.model_scores,
+                    [category]: (weights.model_scores[category] || []).map(s => ({
+                        ...s,
+                        elo: blendElo(s.elo, localCatMap.get(s.model) ?? 0),
+                    })),
+                },
+            }
+            : weights;
+        const selected = selectModel(category, profile, adjustedWeights);
+        if (selected) {
+            const tier = mapCategoryToTier(category);
+            const savings = computeSavings(selected.model);
+            return {
+                model: selected.model,
+                tier,
+                confidence,
+                signals: [category],
+                savings,
+            };
+        }
+        // Fall through to classic if selectModel returns null (no candidates for category)
+    }
+    // ── Classic routing (keyword-based fallback) ──
+    return classicRouteRequest(prompt, profile);
+}
+function computeSavings(model) {
     const opusCostPer1K = (OPUS_PRICING.input + OPUS_PRICING.output) / 2 / 1000;
     const modelPricing = MODEL_PRICING[model];
     const modelCostPer1K = modelPricing
         ? (modelPricing.input + modelPricing.output) / 2 / 1000
         : 0.005;
-    const savings = Math.max(0, (opusCostPer1K - modelCostPer1K) / opusCostPer1K);
-    return {
-        model,
-        tier,
-        confidence,
-        signals,
-        savings,
-    };
+    return Math.max(0, (opusCostPer1K - modelCostPer1K) / opusCostPer1K);
 }
 /**
  * Get fallback models for a tier
