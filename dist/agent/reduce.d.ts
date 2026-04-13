@@ -43,6 +43,12 @@ export declare function deduplicateMessages(history: Dialogue[]): Dialogue[];
  */
 export declare function deduplicateToolResultLines(history: Dialogue[]): Dialogue[];
 /**
+ * When the same tool (WebSearch, Grep, etc.) is called 6+ times,
+ * collapse all but the last 3 results to one-line summaries.
+ * Prevents context snowball from search spam (e.g. 96 WebSearches).
+ */
+export declare function collapseRepetitiveTools(history: Dialogue[]): Dialogue[];
+/**
  * Run all token reduction passes on conversation history.
  * Returns same reference if nothing changed (cheap identity check).
  */
