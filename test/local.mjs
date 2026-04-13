@@ -436,6 +436,103 @@ test('webfetch cache key includes max_length to avoid stale truncated responses'
   }
 });
 
+test('session tool guard stops repetitive low-signal web searches', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  guard.startTurn();
+
+  const first = {
+    type: 'tool_use',
+    id: 'search-1',
+    name: 'WebSearch',
+    input: { query: 'x.com "x402" building developer agent recent tweet April 2026 -from:BlockRunAI' },
+  };
+  const second = {
+    type: 'tool_use',
+    id: 'search-2',
+    name: 'WebSearch',
+    input: { query: 'site:x.com x402 developer agent building payment tweet April 2026' },
+  };
+  const third = {
+    type: 'tool_use',
+    id: 'search-3',
+    name: 'WebSearch',
+    input: { query: 'x402 developer build agent payment launch tweet april 2026' },
+  };
+
+  assert.equal(await guard.beforeExecute(first, ctx), null);
+  guard.afterExecute(first, { output: 'No results found for: first query' });
+
+  assert.equal(await guard.beforeExecute(second, ctx), null);
+  guard.afterExecute(second, { output: 'No results found for: second query' });
+
+  const blocked = await guard.beforeExecute(third, ctx);
+  assert.ok(blocked, 'Expected repetitive low-signal search to be blocked');
+  assert.ok(
+    blocked.output.includes('Search stopped'),
+    `Expected early-stop guidance.\n${blocked.output}`
+  );
+});
+
+test('session tool guard skips duplicate reads of unchanged files', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const target = join(tmpdir(), `rc-guard-read-${Date.now()}.ts`);
+  writeFileSync(target, 'export const value = 1;\n');
+
+  try {
+    const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+    const readInvocation = {
+      type: 'tool_use',
+      id: 'read-1',
+      name: 'Read',
+      input: { file_path: target },
+    };
+
+    guard.startTurn();
+    assert.equal(await guard.beforeExecute(readInvocation, ctx), null);
+    guard.afterExecute(readInvocation, { output: '1\texport const value = 1;\n' });
+
+    const duplicate = await guard.beforeExecute(
+      { ...readInvocation, id: 'read-2' },
+      ctx
+    );
+    assert.ok(duplicate, 'Expected duplicate read to be skipped');
+    assert.ok(
+      duplicate.output.includes('Skipped duplicate Read'),
+      `Expected duplicate read warning.\n${duplicate.output}`
+    );
+  } finally {
+    rmSync(target, { force: true });
+  }
+});
+
+test('webfetch strips truncated html tags before returning content', async () => {
+  const hugePath = 'M '.repeat(10_000);
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(`<html><body><path d="${hugePath}"></path><p>Important body text</p></body></html>`);
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object', 'Expected HTTP server address');
+  const url = `http://127.0.0.1:${address.port}/html`;
+
+  try {
+    const { webFetchCapability } = await import('../dist/tools/webfetch.js');
+    const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+    const result = await webFetchCapability.execute({ url, max_length: 512 }, ctx);
+
+    assert.ok(result.output.includes('Important body text'), `Expected HTML body text.\n${result.output}`);
+    assert.ok(!result.output.includes('<path'), `Expected truncated tag to be stripped.\n${result.output}`);
+  } finally {
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
 test('stats tracker falls back to temp dir when HOME is not writable', async () => {
   const originalHome = process.env.HOME;
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-home-stats-ro-'));

@@ -12,6 +12,7 @@ import type {
 } from './types.js';
 import type { PermissionManager } from './permissions.js';
 import { recordFailure } from '../stats/failures.js';
+import type { SessionToolGuard } from './tool-guard.js';
 
 interface PendingTool {
   invocation: CapabilityInvocation;
@@ -22,6 +23,7 @@ export class StreamingExecutor {
   private handlers: Map<string, CapabilityHandler>;
   private scope: ExecutionScope;
   private permissions?: PermissionManager;
+  private guard?: SessionToolGuard;
   private onStart: (id: string, name: string, preview?: string) => void;
   private onProgress?: (id: string, text: string) => void;
   private pending: PendingTool[] = [];
@@ -30,12 +32,14 @@ export class StreamingExecutor {
     handlers: Map<string, CapabilityHandler>;
     scope: ExecutionScope;
     permissions?: PermissionManager;
+    guard?: SessionToolGuard;
     onStart: (id: string, name: string, preview?: string) => void;
     onProgress?: (id: string, text: string) => void;
   }) {
     this.handlers = opts.handlers;
     this.scope = opts.scope;
     this.permissions = opts.permissions;
+    this.guard = opts.guard;
     this.onStart = opts.onStart;
     this.onProgress = opts.onProgress;
   }
@@ -113,10 +117,18 @@ export class StreamingExecutor {
     pendingCount = 1,
     callStart = true  // false for concurrent tools (already called in onToolReceived)
   ): Promise<CapabilityResult> {
+    const guardResult = this.guard
+      ? await this.guard.beforeExecute(invocation, this.scope)
+      : null;
+    if (guardResult) {
+      return guardResult;
+    }
+
     // Permission check
     if (this.permissions) {
       const decision = await this.permissions.check(invocation.name, invocation.input);
       if (decision.behavior === 'deny') {
+        this.guard?.cancelInvocation(invocation.id);
         return {
           output: `Permission denied for ${invocation.name}: ${decision.reason || 'denied by policy'}. Do not retry — explain to the user what you were trying to do and ask how they'd like to proceed.`,
           isError: true,
@@ -125,6 +137,7 @@ export class StreamingExecutor {
       if (decision.behavior === 'ask') {
         const allowed = await this.permissions.promptUser(invocation.name, invocation.input, pendingCount);
         if (!allowed) {
+          this.guard?.cancelInvocation(invocation.id);
           return {
             output: `User denied permission for ${invocation.name}. Do not retry — ask the user what they'd like to do instead.`,
             isError: true,
@@ -141,6 +154,7 @@ export class StreamingExecutor {
 
     const handler = this.handlers.get(invocation.name);
     if (!handler) {
+      this.guard?.cancelInvocation(invocation.id);
       return { output: `Unknown capability: ${invocation.name}`, isError: true };
     }
 
@@ -153,8 +167,11 @@ export class StreamingExecutor {
       : this.scope;
 
     try {
-      return await handler.execute(invocation.input, progressScope);
+      const result = await handler.execute(invocation.input, progressScope);
+      this.guard?.afterExecute(invocation, result);
+      return result;
     } catch (err) {
+      this.guard?.cancelInvocation(invocation.id);
       recordFailure({
         timestamp: Date.now(),
         model: '', // not available at tool level
@@ -166,7 +183,7 @@ export class StreamingExecutor {
         output: `Error executing ${invocation.name}: ${(err as Error).message}`,
         isError: true,
       };
-    }
+      }
   }
 
   /** Extract a short preview string from a tool invocation's input. */
