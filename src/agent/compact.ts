@@ -17,7 +17,7 @@ import {
 // `agent/context_compressor.py`). The structured sections preserve more
 // signal than free-form summaries and make it easier for the model to
 // continue work from where it left off.
-export const COMPACT_HEADER = `[CONTEXT COMPACTION] Earlier turns in this conversation were compacted to save context space. The summary below describes work that was already completed, and the current session state may still reflect that work (for example, files may already be changed). Use the summary and the current state to continue from where things left off, and avoid repeating work:`;
+export const COMPACT_HEADER = `[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary.`;
 
 const COMPACT_SYSTEM_PROMPT = `You are a conversation summarizer. Produce a STRUCTURED summary of the conversation so far that preserves all decision-relevant context for continuing the task.
 
@@ -28,6 +28,7 @@ Critical rules:
 - Preserve decisions with their rationale (not just the decision)
 - DO NOT include reasoning that led to decisions — only the decisions themselves
 - DO NOT include pleasantries, meta-commentary, or apologies
+- DO NOT include active questions or requests — only include resolved facts
 - Use bullet points inside each section
 - Be specific: "edited src/foo.ts:42 to add error handling" not "made some changes"
 
