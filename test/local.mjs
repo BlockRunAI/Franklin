@@ -532,6 +532,30 @@ test('session tool guard blocks repetitive SearchX the same as WebSearch', async
   assert.ok(blocked.output.includes('Search stopped'), `Expected early-stop.\n${blocked.output}`);
 });
 
+test('SearchX auto-detects notifications intent from query (no LLM needed)', async () => {
+  const { detectNotificationsIntent } = await import('../dist/tools/searchx.js');
+
+  // Real scenario: personal handle is @bc1beat, org handle is @BlockRunAI
+  const personalHandle = '@bc1beat';
+  const orgHandles = ['@BlockRunAI', 'BlockRunAI'];
+
+  // Should route to notifications — personal handle
+  assert.ok(detectNotificationsIntent('看看我的@bc1beat 有什么互动', personalHandle));
+  assert.ok(detectNotificationsIntent('check my @bc1beat mentions', personalHandle));
+  assert.ok(detectNotificationsIntent('bc1beat', personalHandle)); // bare handle
+
+  // Should route to notifications — org handle via knownHandles
+  assert.ok(detectNotificationsIntent('看看我的@blockrunai 有什么互动', personalHandle, orgHandles));
+  assert.ok(detectNotificationsIntent('check @BlockRunAI notifications', personalHandle, orgHandles));
+  assert.ok(detectNotificationsIntent('blockrunai', personalHandle, orgHandles)); // bare org handle
+  assert.ok(detectNotificationsIntent('to:blockrunai', personalHandle, orgHandles));
+
+  // Should NOT route to notifications (topic searches, no handle match)
+  assert.ok(!detectNotificationsIntent('AI agent wallet payments', personalHandle, orgHandles));
+  assert.ok(!detectNotificationsIntent('x402 protocol micropayments', personalHandle, orgHandles));
+  assert.ok(!detectNotificationsIntent(undefined, personalHandle, orgHandles));
+});
+
 test('webfetch strips truncated html tags before returning content', async () => {
   const hugePath = 'M '.repeat(10_000);
   const server = createServer((_req, res) => {
