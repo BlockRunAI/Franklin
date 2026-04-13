@@ -2,12 +2,15 @@
  * WebSearch capability — search the web via BlockRun API or DuckDuckGo fallback.
  */
 import { VERSION } from '../config.js';
+const MAX_RESULTS_CAP = 8;
+const MAX_SNIPPET_CHARS = 220;
+const MAX_OUTPUT_CHARS = 3_200;
 async function execute(input, _ctx) {
     const { query, max_results } = input;
     if (!query) {
         return { output: 'Error: query is required', isError: true };
     }
-    const maxResults = Math.min(Math.max(max_results ?? 5, 1), 20);
+    const maxResults = Math.min(Math.max(max_results ?? 5, 1), MAX_RESULTS_CAP);
     // Try DuckDuckGo HTML search (no API key needed)
     try {
         const encoded = encodeURIComponent(query);
@@ -29,10 +32,22 @@ async function execute(input, _ctx) {
         if (results.length === 0) {
             return { output: `No results found for: ${query}` };
         }
-        const formatted = results
-            .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
-            .join('\n\n');
-        return { output: `Search results for "${query}":\n\n${formatted}` };
+        const lines = [];
+        let totalChars = `Search results for "${query}":\n\n`.length;
+        for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            const snippet = r.snippet.length > MAX_SNIPPET_CHARS
+                ? r.snippet.slice(0, MAX_SNIPPET_CHARS - 3) + '...'
+                : r.snippet;
+            const block = `${i + 1}. ${r.title}\n   ${r.url}\n   ${snippet}`;
+            if (lines.length > 0 && totalChars + block.length + 2 > MAX_OUTPUT_CHARS) {
+                lines.push(`... (${results.length - i} more results omitted)`);
+                break;
+            }
+            lines.push(block);
+            totalChars += block.length + 2;
+        }
+        return { output: `Search results for "${query}":\n\n${lines.join('\n\n')}` };
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -44,6 +59,7 @@ async function execute(input, _ctx) {
 }
 function parseDuckDuckGoResults(html, maxResults) {
     const results = [];
+    const seenUrls = new Set();
     // Primary parser: match result blocks by class names
     const linkRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
     const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
@@ -66,6 +82,9 @@ function parseDuckDuckGoResults(html, maxResults) {
         // Skip internal DDG links
         if (url.startsWith('/') || url.includes('duckduckgo.com'))
             continue;
+        if (seenUrls.has(url))
+            continue;
+        seenUrls.add(url);
         results.push({
             title: stripTags(link[2] || '').trim(),
             url,

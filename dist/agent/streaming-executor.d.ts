@@ -5,10 +5,12 @@
  */
 import type { CapabilityHandler, CapabilityInvocation, CapabilityResult, ExecutionScope } from './types.js';
 import type { PermissionManager } from './permissions.js';
+import type { SessionToolGuard } from './tool-guard.js';
 export declare class StreamingExecutor {
     private handlers;
     private scope;
     private permissions?;
+    private guard?;
     private onStart;
     private onProgress?;
     private pending;
@@ -16,6 +18,7 @@ export declare class StreamingExecutor {
         handlers: Map<string, CapabilityHandler>;
         scope: ExecutionScope;
         permissions?: PermissionManager;
+        guard?: SessionToolGuard;
         onStart: (id: string, name: string, preview?: string) => void;
         onProgress?: (id: string, text: string) => void;
     });

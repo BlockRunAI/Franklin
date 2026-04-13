@@ -12,6 +12,7 @@ import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
 import { classifyAgentError } from './error-classifier.js';
+import { SessionToolGuard } from './tool-guard.js';
 import { recordUsage } from '../stats/tracker.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
@@ -52,6 +53,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     let sessionOutputTokens = 0;
     let sessionCostUsd = 0;
     let sessionSavedVsOpus = 0;
+    const toolGuard = new SessionToolGuard();
     const persistSessionMeta = () => {
         updateSessionMeta(sessionId, {
             model: config.model,
@@ -104,6 +106,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         lastUserInput = input;
         history.push({ role: 'user', content: input });
         turnCount++;
+        toolGuard.startTurn();
         persistSessionMessage({ role: 'user', content: input });
         const abort = new AbortController();
         onAbortReady?.(() => abort.abort());
@@ -113,6 +116,12 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         let maxTokensOverride;
         const turnIdleReference = lastSessionActivity;
         lastSessionActivity = Date.now();
+        // ── Tool call guardrails (inspired by hermes-agent) ──
+        let turnToolCalls = 0; // Total tool calls this user turn
+        const turnToolCounts = new Map(); // Per-tool-name counts this turn
+        const readFileCache = new Set(); // Files already read (dedup)
+        const MAX_TOOL_CALLS_PER_TURN = 25; // Hard cap per user turn
+        const SAME_TOOL_WARN_THRESHOLD = 5; // Warn after N calls to same tool
         // Agent loop for this user message
         while (loopCount < maxTurns) {
             loopCount++;
@@ -189,6 +198,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 handlers: capabilityMap,
                 scope: { workingDir: workDir, abortSignal: abort.signal, onAskUser: config.onAskUser },
                 permissions,
+                guard: toolGuard,
                 onStart: (id, name, preview) => onEvent({ kind: 'capability_start', id, name, preview }),
                 onProgress: (id, text) => onEvent({ kind: 'capability_progress', id, text }),
             });
@@ -410,18 +420,73 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             for (const [inv, result] of results) {
                 onEvent({ kind: 'capability_done', id: inv.id, result });
             }
+            // ── Tool call guardrails ──
+            turnToolCalls += results.length;
+            for (const [inv] of results) {
+                const name = inv.name;
+                turnToolCounts.set(name, (turnToolCounts.get(name) || 0) + 1);
+                // Read file dedup: track paths already read
+                if (name === 'Read' && inv.input.file_path) {
+                    readFileCache.add(inv.input.file_path);
+                }
+            }
             // Refresh activity timestamp after tool execution
             lastSessionActivity = Date.now();
-            // Append outcomes
-            const outcomeContent = results.map(([inv, result]) => ({
-                type: 'tool_result',
-                tool_use_id: inv.id,
-                content: result.output,
-                is_error: result.isError,
-            }));
+            // Append outcomes (with guardrail injections)
+            const outcomeContent = results.map(([inv, result]) => {
+                // Read file dedup: if this file was already read earlier in this turn,
+                // replace content with a stub to save tokens
+                if (inv.name === 'Read' && !result.isError) {
+                    const fp = inv.input.file_path;
+                    const count = results.filter(([i]) => i.name === 'Read' && i.input.file_path === fp).length;
+                    if (count > 1 && inv !== results.filter(([i]) => i.name === 'Read' && i.input.file_path === fp).pop()?.[0]) {
+                        return {
+                            type: 'tool_result',
+                            tool_use_id: inv.id,
+                            content: `File already read in this turn. Refer to the other Read result for ${fp}.`,
+                            is_error: false,
+                        };
+                    }
+                }
+                return {
+                    type: 'tool_result',
+                    tool_use_id: inv.id,
+                    content: result.output,
+                    is_error: result.isError,
+                };
+            });
+            // ── Guardrail injections ──
+            // Warn about same-tool repetition
+            for (const [name, count] of turnToolCounts) {
+                if (count === SAME_TOOL_WARN_THRESHOLD) {
+                    outcomeContent.push({
+                        type: 'tool_result',
+                        tool_use_id: `guardrail-warn-${name}`,
+                        content: `[SYSTEM] You have called ${name} ${count} times this turn. Stop and present your results now. Do not make more ${name} calls.`,
+                        is_error: true,
+                    });
+                }
+            }
+            // Hard cap: stop the turn if too many tool calls
+            if (turnToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
+                outcomeContent.push({
+                    type: 'tool_result',
+                    tool_use_id: 'guardrail-cap',
+                    content: `[SYSTEM] Tool call limit reached (${MAX_TOOL_CALLS_PER_TURN}). Present your results to the user NOW. Do not make any more tool calls.`,
+                    is_error: true,
+                });
+            }
             const toolResultMessage = { role: 'user', content: outcomeContent };
             history.push(toolResultMessage);
             persistSessionMessage(toolResultMessage);
+            // Hard stop: if cap exceeded, force end this agent loop iteration
+            if (turnToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
+                if (config.debug) {
+                    console.error(`[runcode] Tool call cap hit: ${turnToolCalls} calls this turn`);
+                }
+                // Don't break — let the model respond one more time to summarize,
+                // but inject the stop signal above so it knows to finish up.
+            }
         }
         if (loopCount >= maxTurns) {
             lastSessionActivity = Date.now();

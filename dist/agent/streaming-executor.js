@@ -8,6 +8,7 @@ export class StreamingExecutor {
     handlers;
     scope;
     permissions;
+    guard;
     onStart;
     onProgress;
     pending = [];
@@ -15,6 +16,7 @@ export class StreamingExecutor {
         this.handlers = opts.handlers;
         this.scope = opts.scope;
         this.permissions = opts.permissions;
+        this.guard = opts.guard;
         this.onStart = opts.onStart;
         this.onProgress = opts.onProgress;
     }
@@ -79,10 +81,17 @@ export class StreamingExecutor {
     }
     async executeWithPermissions(invocation, pendingCount = 1, callStart = true // false for concurrent tools (already called in onToolReceived)
     ) {
+        const guardResult = this.guard
+            ? await this.guard.beforeExecute(invocation, this.scope)
+            : null;
+        if (guardResult) {
+            return guardResult;
+        }
         // Permission check
         if (this.permissions) {
             const decision = await this.permissions.check(invocation.name, invocation.input);
             if (decision.behavior === 'deny') {
+                this.guard?.cancelInvocation(invocation.id);
                 return {
                     output: `Permission denied for ${invocation.name}: ${decision.reason || 'denied by policy'}. Do not retry — explain to the user what you were trying to do and ask how they'd like to proceed.`,
                     isError: true,
@@ -91,6 +100,7 @@ export class StreamingExecutor {
             if (decision.behavior === 'ask') {
                 const allowed = await this.permissions.promptUser(invocation.name, invocation.input, pendingCount);
                 if (!allowed) {
+                    this.guard?.cancelInvocation(invocation.id);
                     return {
                         output: `User denied permission for ${invocation.name}. Do not retry — ask the user what they'd like to do instead.`,
                         isError: true,
@@ -105,6 +115,7 @@ export class StreamingExecutor {
         }
         const handler = this.handlers.get(invocation.name);
         if (!handler) {
+            this.guard?.cancelInvocation(invocation.id);
             return { output: `Unknown capability: ${invocation.name}`, isError: true };
         }
         // Wire per-invocation progress to onProgress callback
@@ -115,9 +126,12 @@ export class StreamingExecutor {
             }
             : this.scope;
         try {
-            return await handler.execute(invocation.input, progressScope);
+            const result = await handler.execute(invocation.input, progressScope);
+            this.guard?.afterExecute(invocation, result);
+            return result;
         }
         catch (err) {
+            this.guard?.cancelInvocation(invocation.id);
             recordFailure({
                 timestamp: Date.now(),
                 model: '', // not available at tool level
