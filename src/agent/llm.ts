@@ -141,10 +141,49 @@ export class ModelClient {
    * Yields parsed SSE chunks as they arrive.
    * Handles x402 payment automatically on 402 responses.
    */
+  /**
+   * Resolve virtual routing profiles (blockrun/auto, blockrun/eco, etc.)
+   * to concrete models. This is the final safety net — if the router in
+   * loop.ts didn't resolve it (e.g. old global install without router),
+   * we resolve it here before hitting the API.
+   */
+  private resolveVirtualModel(model: string): string {
+    if (!model.startsWith('blockrun/')) return model;
+
+    // Import router dynamically to avoid circular deps
+    try {
+      const { routeRequest, parseRoutingProfile } = require('../router/index.js');
+      const profile = parseRoutingProfile(model);
+      if (profile) {
+        const result = routeRequest('', profile);
+        if (result?.model && !result.model.startsWith('blockrun/')) {
+          return result.model;
+        }
+      }
+    } catch {
+      // Router not available (e.g. old build) — use hardcoded fallback table
+    }
+
+    // Static fallback if router is unavailable
+    const FALLBACKS: Record<string, string> = {
+      'blockrun/auto': 'zai/glm-5.1',
+      'blockrun/eco': 'nvidia/nemotron-ultra-253b',
+      'blockrun/premium': 'anthropic/claude-sonnet-4.6',
+      'blockrun/free': 'nvidia/nemotron-ultra-253b',
+    };
+    return FALLBACKS[model] || 'zai/glm-5.1';
+  }
+
   async *streamCompletion(
     request: ModelRequest,
     signal?: AbortSignal
   ): AsyncGenerator<StreamChunk> {
+    // Resolve virtual models before any API call
+    const resolvedModel = this.resolveVirtualModel(request.model);
+    if (resolvedModel !== request.model) {
+      request = { ...request, model: resolvedModel };
+    }
+
     const isAnthropic = request.model.startsWith('anthropic/');
     const isGLM = request.model.startsWith('zai/') || request.model.includes('glm');
 

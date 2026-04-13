@@ -227,15 +227,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 lastRoutedModel = routing.model;
                 lastRoutedCategory = routing.signals[0] || '';
             }
-            // Safety net: routing profiles (blockrun/auto, blockrun/eco, etc.) are
-            // virtual — never send them to the API. If router somehow didn't resolve,
-            // fall back to a concrete model.
-            if (resolvedModel.startsWith('blockrun/')) {
-                if (config.debug) {
-                    console.error(`[runcode] Router did not resolve ${resolvedModel} — falling back to default`);
-                }
-                resolvedModel = 'zai/glm-5.1';
-            }
+            // Safety net: handled in llm.ts resolveVirtualModel()
             try {
                 const result = await client.complete({
                     model: resolvedModel,
