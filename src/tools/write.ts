@@ -119,7 +119,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 export const writeCapability: CapabilityHandler = {
   spec: {
     name: 'Write',
-    description: 'Create or overwrite a file.',
+    description: 'Create a new file or completely overwrite an existing one. For targeted edits to existing files, prefer Edit (sends only the diff). Use this instead of echo/heredoc in Bash.',
     input_schema: {
       type: 'object',
       properties: {

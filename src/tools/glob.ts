@@ -166,7 +166,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 export const globCapability: CapabilityHandler = {
   spec: {
     name: 'Glob',
-    description: 'Find files by glob pattern (e.g. "**/*.ts", "src/**/*.tsx"). Returns up to 500 paths sorted by modification time. Skips node_modules, .git, hidden dirs.',
+    description: 'Find files by glob pattern (e.g. \'**/*.ts\'). Returns up to 200 paths sorted by modification time. Skips node_modules/.git. Use this instead of find/ls in Bash. Use Grep to search file contents.',
     input_schema: {
       type: 'object',
       properties: {

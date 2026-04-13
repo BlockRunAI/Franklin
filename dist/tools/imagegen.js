@@ -155,7 +155,7 @@ async function extractPaymentReq(response) {
 export const imageGenCapability = {
     spec: {
         name: 'ImageGen',
-        description: 'Generate an image from a text prompt using AI (DALL-E, etc). Saves the image to a file.',
+        description: 'Generate an image from a text prompt using DALL-E. Costs USDC from the user\'s wallet — confirm before generating. Saves to a local file. Default size: 1024x1024. Do NOT call repeatedly to iterate on style — ask the user first.',
         input_schema: {
             type: 'object',
             properties: {

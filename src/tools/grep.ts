@@ -224,7 +224,7 @@ function runNativeGrep(
 export const grepCapability: CapabilityHandler = {
   spec: {
     name: 'Grep',
-    description: 'Search file contents by regex. Default output: file paths. output_mode "content" returns matching lines. Skips node_modules/.git/dist.',
+    description: 'Search file contents by regex. Use this instead of grep/rg in Bash. Default: returns file paths. Use output_mode=\'content\' for matching lines with context. Use Glob to find files by name pattern.',
     input_schema: {
       type: 'object',
       properties: {
