@@ -97,38 +97,59 @@ async function execute(
     for (const article of articles) {
       if (candidates.length >= maxResults) break;
 
-      // Find time-link ref (permalink to the tweet)
-      const timeRefs = findRefs(article.text, 'link', X_TIME_LINK_PATTERN);
-      if (timeRefs.length === 0) continue;
-      const timeRef = timeRefs[0];
-
       // Extract snippet from static text (first 3 lines)
       const texts = findStaticText(article.text);
       const snippet = texts.slice(0, 3).join(' ').trim();
       if (!snippet || snippet.length < 10) continue;
 
-      // Extract time text from the ref line
-      const timeLinkMatch = new RegExp(`\\[${timeRef}\\]\\s+link:\\s*(.+)`).exec(
-        article.text,
-      );
-      const timeText = timeLinkMatch ? timeLinkMatch[1].trim() : '';
+      // Find time-link ref (permalink to the tweet) — optional
+      const timeRefs = findRefs(article.text, 'link', X_TIME_LINK_PATTERN);
+      const timeRef = timeRefs[0] ?? null;
+
+      // Fallback: if no time-link, try to find ANY link in the article
+      // that looks like a tweet permalink (/username/status/...)
+      let tweetUrl: string | null = null;
+      let timeText = '';
+
+      if (timeRef) {
+        const timeLinkMatch = new RegExp(`\\[${timeRef}\\]\\s+link:\\s*(.+)`).exec(
+          article.text,
+        );
+        timeText = timeLinkMatch ? timeLinkMatch[1].trim() : '';
+        try {
+          const href = await browser.getHref(timeRef);
+          if (href) {
+            tweetUrl = href.startsWith('http')
+              ? href
+              : `https://x.com${href.startsWith('/') ? '' : '/'}${href}`;
+          }
+        } catch {
+          // Non-fatal — we still have the snippet
+        }
+      } else {
+        // No time-link matched — try all links in the article for a permalink
+        const allLinks = findRefs(article.text, 'link');
+        for (const linkRef of allLinks.slice(0, 5)) {
+          try {
+            const href = await browser.getHref(linkRef);
+            if (href && /\/status\/\d+/.test(href)) {
+              tweetUrl = href.startsWith('http')
+                ? href
+                : `https://x.com${href.startsWith('/') ? '' : '/'}${href}`;
+              // Extract time text from this link's label
+              const labelMatch = new RegExp(`\\[${linkRef}\\]\\s+link:\\s*(.+)`).exec(
+                article.text,
+              );
+              timeText = labelMatch ? labelMatch[1].trim() : '';
+              break;
+            }
+          } catch { /* try next */ }
+        }
+      }
 
       // Dedup (enhanced mode only)
       const preKey = enhanced ? computePreKey({ snippet, time: timeText }) : '';
       const alreadySeen = enhanced ? hasPreKey('x', handle, preKey) : false;
-
-      // Resolve the actual tweet permalink URL from the time-link ref
-      let tweetUrl: string | null = null;
-      try {
-        const href = await browser.getHref(timeRef);
-        if (href) {
-          tweetUrl = href.startsWith('http')
-            ? href
-            : `https://x.com${href.startsWith('/') ? '' : '/'}${href}`;
-        }
-      } catch {
-        // Non-fatal — we still have the snippet
-      }
 
       // Product routing (enhanced mode only)
       const product = enhanced ? detectProduct(snippet, config.products) : null;
@@ -146,10 +167,14 @@ async function execute(
 
     // ── Format output ──────────────────────────────────────────────────
     if (candidates.length === 0) {
-      // Include diagnostic info so we can see what the page looks like
-      const diag = articles.length === 0
-        ? `No article blocks found in AX tree (${treeLen} chars). Tree preview:\n${tree.slice(0, 800)}`
-        : `Found ${articles.length} article blocks but none had valid time-links/snippets.`;
+      // Include diagnostic info — show first article block so we can debug the parser
+      let diag: string;
+      if (articles.length === 0) {
+        diag = `No article blocks found in AX tree (${treeLen} chars). Tree preview:\n${tree.slice(0, 800)}`;
+      } else {
+        const sample = articles[0].text.slice(0, 600);
+        diag = `Found ${articles.length} article blocks but extracted 0 candidates.\nFirst article AX dump:\n${sample}`;
+      }
       return { output: `No candidate posts found for query: "${query}"\n\n[debug] ${diag}` };
     }
 
