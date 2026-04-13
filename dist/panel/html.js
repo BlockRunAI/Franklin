@@ -11,6 +11,7 @@ export function getHTML() {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Franklin Panel</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Crect x='30' y='20' width='55' height='60' rx='14' stroke='white' stroke-width='8' fill='none'/%3E%3Cpath d='M15 35 L25 35' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M10 50 L25 50' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M15 65 L25 65' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -157,9 +158,9 @@ a:hover { text-decoration:underline; }
 .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
 .grid-4 { grid-template-columns:repeat(4,1fr); }
 .card {
-  background:var(--bg-card); border:1px solid var(--border);
+  background:oklch(0.19 0.006 286 / 80%); border:1px solid var(--border);
   border-radius:var(--radius); padding:20px;
-  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+  backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
   transition:border-color .15s, background .15s;
 }
 .card:hover { border-color:var(--border-strong); }
@@ -176,11 +177,12 @@ a:hover { text-decoration:underline; }
 
 /* ── Savings Hero ── */
 .savings-hero {
-  background:linear-gradient(135deg, oklch(0.22 0.04 150), oklch(0.19 0.006 286) 70%);
+  background:linear-gradient(135deg, oklch(0.22 0.04 150 / 85%), oklch(0.19 0.006 286 / 80%) 70%);
   border:1px solid oklch(0.72 0.17 150 / 12%);
   border-radius:var(--radius); padding:28px; margin-bottom:12px;
   display:flex; align-items:center; gap:28px;
   box-shadow:0 4px 24px oklch(0 0 0 / 20%), inset 0 1px 0 oklch(1 0 0 / 4%);
+  backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
 }
 .savings-amount { font-size:44px; font-weight:800; font-family:var(--mono); color:var(--success); line-height:1; }
 .savings-detail { flex:1; }
@@ -225,8 +227,9 @@ a:hover { text-decoration:underline; }
 /* ── Sessions ── */
 .session-list { display:flex; flex-direction:column; gap:6px; }
 .session-item {
-  background:var(--bg-card); border:1px solid var(--border); border-radius:8px;
+  background:oklch(0.19 0.006 286 / 75%); border:1px solid var(--border); border-radius:8px;
   padding:14px 18px; cursor:pointer; transition:all .15s ease;
+  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
 }
 .session-item:hover { background:var(--bg-card-hover); border-color:var(--border-strong); transform:translateY(-1px); }
 .session-item .title { font-size:13px; font-weight:500; }
