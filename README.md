@@ -29,6 +29,7 @@
   <a href="#quick-start">Quick&nbsp;start</a> ·
   <a href="#a-new-category">New&nbsp;category</a> ·
   <a href="#what-franklin-can-execute">What&nbsp;it&nbsp;does</a> ·
+  <a href="#smart-router">Smart&nbsp;Router</a> ·
   <a href="#the-comparison">Compare</a> ·
   <a href="#features">Features</a> ·
   <a href="#how-it-works">Architecture</a> ·
@@ -179,6 +180,52 @@ Every tool call is itemized. Every token is priced. When the wallet hits zero, F
 
 ---
 
+## Smart Router
+
+**55+ models. One decision. Zero guesswork.**
+
+You don't pick models. Franklin picks for you.
+
+The Smart Router classifies every request — coding, trading, reasoning, research — and selects the model with the best quality-to-cost ratio. Trained on **2M+ real requests** from the BlockRun gateway, continuously updated.
+
+```text
+> refactor this auth module to use JWT
+
+  CODING kimi-k2.5  ·  12.4K in / 2.1K out  ·  $0.0023  saved 84%
+
+> what's the BTC outlook for the week?
+
+  TRADING grok-4-1-fast-reasoning  ·  8.2K in / 1.8K out  ·  $0.0008  saved 95%
+
+> prove that this algorithm is O(n log n)
+
+  REASONING claude-sonnet-4.6  ·  15.1K in / 3.4K out  ·  $0.0312
+```
+
+Every response shows which model was chosen, why, and how much you saved vs. always using the most expensive option.
+
+**Four profiles:**
+
+| Profile | Strategy | Use case |
+|---------|----------|----------|
+| `auto` | Best quality-to-cost ratio | Default — smart spend |
+| `eco` | Cheapest model with decent quality | Budget-conscious |
+| `premium` | Highest quality regardless of cost | Mission-critical |
+| `free` | Free NVIDIA models only | Zero wallet balance |
+
+**Per-session breakdown** — run `/cost` to see exactly where your USDC went:
+
+```text
+Session Cost: $0.0847 (23 requests)
+  gemini-2.5-flash       $0.0012   14 req   CODING
+  kimi-k2.5              $0.0423    6 req   CODING
+  claude-sonnet-4.6      $0.0412    3 req   REASONING
+```
+
+The router also learns from **your** usage. If you keep retrying a model for coding tasks, Franklin adapts and picks a better one next time. Your router gets smarter the more you use it.
+
+---
+
 ## Why Franklin
 
 <table>
@@ -215,6 +262,7 @@ Marketing, trading, research, code, and anything else you can express as tools p
 | ------------------------------------ | --------------- | ---------------- | ---------------- | ------------------------------- |
 | Main unit of value                   | Answers         | Code changes     | Fixed automations| **Budgeted outcomes**           |
 | Has purchasing power                 | ❌              | ❌               | ❌               | ✅ **wallet-native**            |
+| Picks best model per task            | ❌              | ❌               | ❌               | ✅ **learned router**           |
 | Can choose tools/models per step     | ⚠️ limited      | ✅ mostly coding | ❌ usually fixed | ✅ **yes**                      |
 | Works across marketing/trading/code  | ⚠️              | ❌ code-first    | ⚠️ integration-bound | ✅ **cross-vertical**       |
 | Hard spend cap                       | ❌              | ❌               | ⚠️ external billing | ✅ **wallet balance**        |
@@ -247,8 +295,8 @@ Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, NVIDIA free tier. 
 **💳 x402 micropayments**
 HTTP 402 native. Every paid action is a signed micropayment against your USDC balance. No subscriptions. No refund loop. No account lock-in.
 
-**🚦 Smart spend routing**
-Free / cheap / premium per step. Franklin picks the cheapest model that can do the job, then escalates when quality matters.
+**🧠 Learned model router**
+Trained on 2M+ real requests. Classifies your task and picks the best model from 55+ LLMs. Four profiles (auto/eco/premium/free). Adapts to your usage over time.
 
 </td>
 <td width="50%" valign="top">
@@ -301,7 +349,10 @@ Core is workflow-agnostic. Add new verticals without touching the loop. Discover
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │  Franklin Runtime                                            │
-│  Intent → Routing → Tool Use → Spend Decisions → Result      │
+│  Intent → Smart Router → Tool Use → Spend Control → Result   │
+├──────────────────────────────────────────────────────────────┤
+│  Learned Router                                              │
+│  2M+ requests · 55+ models · category detection · Elo scores │
 ├──────────────────────────────────────────────────────────────┤
 │  Agent Loop                                                  │
 │  16 tools · Sessions · Compaction · Pricing · Plugin SDK     │
@@ -349,7 +400,7 @@ src/
 ├── stats/             Usage tracking + insights engine
 ├── ui/                Ink-based terminal UI
 ├── proxy/             Payment proxy for external tools
-├── router/            Smart model routing (free/cheap/premium)
+├── router/            Learned model router (2M+ requests, Elo scoring)
 ├── wallet/            Wallet management (Base + Solana)
 ├── mcp/               MCP server auto-discovery
 └── commands/          CLI subcommands
