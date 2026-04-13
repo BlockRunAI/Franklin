@@ -67,7 +67,7 @@ async function execute(input, _ctx) {
 export const taskCapability = {
     spec: {
         name: 'Task',
-        description: 'Manage in-session tasks. Actions: create, update (status/subject), list (with summary), delete.',
+        description: 'Track multi-step work within a session. Use for complex tasks with 3+ steps to maintain progress. Do NOT use for simple single-step requests. Actions: create, update (status/subject), list, delete. Tasks are ephemeral — they reset when the session ends.',
         input_schema: {
             type: 'object',
             properties: {

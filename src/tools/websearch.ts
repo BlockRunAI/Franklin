@@ -141,7 +141,7 @@ function stripTags(html: string): string {
 export const webSearchCapability: CapabilityHandler = {
   spec: {
     name: 'WebSearch',
-    description: 'Search the web and return results with titles, URLs, and snippets.',
+    description: 'Search the web via DuckDuckGo. Returns titles, URLs, and snippets. Cannot access X.com content (use SearchX for X posts). Do NOT rephrase and retry the same search — if results are empty, stop. Max 3-5 searches per topic.',
     input_schema: {
       type: 'object',
       properties: {

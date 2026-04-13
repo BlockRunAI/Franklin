@@ -204,7 +204,7 @@ function stripHtml(html: string): string {
 export const webFetchCapability: CapabilityHandler = {
   spec: {
     name: 'WebFetch',
-    description: 'Fetch a web page and return its content. HTML tags are stripped for readability. Results are cached for 15 minutes.',
+    description: 'Fetch a web page and return its content as text. For searching the web, use WebSearch instead. Cannot access X.com (use SearchX). Large pages are truncated. Prefer WebSearch for discovery, WebFetch for reading a specific known URL.',
     input_schema: {
       type: 'object',
       properties: {
