@@ -98,9 +98,10 @@ export function extractArticleBlocks(tree: string): Array<{
  */
 // Matches all known X time-link formats:
 //   "Mar 16", "Apr 12, 2026", "5h", "5m", "2d", "30s", "just now", "now"
+//   "31 seconds ago", "35 minutes ago", "4 hours ago" (full-word format)
 //   "Yesterday", "Apr 12", "12:30 AM", "2026年4月12日" (CJK)
 export const X_TIME_LINK_PATTERN =
-  '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d+(?:,?\\s+\\d{4})?|\\d+[smhd]|just now|now|yesterday|\\d{1,2}:\\d{2}\\s*[AaPp][Mm]|\\d{4}年\\d{1,2}月\\d{1,2}日';
+  '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d+(?:,?\\s+\\d{4})?|\\d+[smhd]|\\d+\\s+(?:second|minute|hour|day|week|month|year)s?\\s+ago|just now|now|yesterday|\\d{1,2}:\\d{2}\\s*[AaPp][Mm]|\\d{4}年\\d{1,2}月\\d{1,2}日';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
