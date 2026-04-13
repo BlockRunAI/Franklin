@@ -125,7 +125,7 @@ export async function startCommand(options: StartOptions) {
   })();
 
   // Assemble system instructions
-  const systemInstructions = assembleInstructions(workDir);
+  const systemInstructions = assembleInstructions(workDir, model);
 
   // Connect MCP servers (non-blocking — add tools if servers are available)
   const mcpConfig = loadMcpConfig(workDir);
