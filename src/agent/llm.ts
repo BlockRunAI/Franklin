@@ -215,6 +215,21 @@ export class ModelClient {
       requestPayload = applyAnthropicPromptCaching(requestPayload, request);
     }
 
+    // ── GPT-5 / Codex: use "developer" role for system prompt ──────────────
+    // OpenAI GPT models give stronger instruction-following weight to the
+    // "developer" role. Move the top-level system prompt into messages[0]
+    // with role "developer" instead of the default "system".
+    const isGPT5OrCodex = request.model.includes('gpt-5') || request.model.includes('codex');
+    if (isGPT5OrCodex && typeof request.system === 'string' && request.system.length > 0) {
+      const systemRole = 'developer';
+      const existingMessages = (requestPayload['messages'] as unknown[]) || [];
+      requestPayload['messages'] = [
+        { role: systemRole, content: request.system },
+        ...existingMessages,
+      ];
+      delete requestPayload['system'];
+    }
+
     const body = JSON.stringify(requestPayload);
 
     const endpoint = `${this.apiUrl}/v1/messages`;
