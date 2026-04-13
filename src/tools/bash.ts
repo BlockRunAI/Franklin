@@ -355,7 +355,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 export const bashCapability: CapabilityHandler = {
   spec: {
     name: 'Bash',
-    description: 'Execute a shell command and return stdout+stderr. Runs in working directory with user env. Output capped at 512KB. Default timeout: 2min, max: 10min (set via timeout param in ms).',
+    description: 'Execute shell commands. Do NOT use cat/head/tail to read files — use Read instead. Do NOT use grep/rg to search — use Grep instead. Do NOT use sed/awk to edit — use Edit instead. Do NOT use echo/heredoc to create files — use Write instead. Reserve Bash for: builds, installs, git, npm/pip, processes, scripts, network, and anything needing a shell. Output capped at 512KB. Default timeout 2min, max 10min.',
     input_schema: {
       type: 'object',
       properties: {

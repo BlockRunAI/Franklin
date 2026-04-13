@@ -74,7 +74,7 @@ async function execute(input, ctx) {
 export const readCapability = {
     spec: {
         name: 'Read',
-        description: 'Read file with line numbers. Use offset/limit for large files.',
+        description: 'Read a file with line numbers. Use offset/limit for large files (>2000 lines). Use this instead of cat/head/tail in Bash. Reads over 2MB are rejected. Cannot read binary files or images.',
         input_schema: {
             type: 'object',
             properties: {

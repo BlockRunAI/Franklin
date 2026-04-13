@@ -157,7 +157,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 export const editCapability: CapabilityHandler = {
   spec: {
     name: 'Edit',
-    description: 'Replace exact string in a file. old_string must be unique (or use replace_all).',
+    description: 'Replace an exact string in a file. old_string must appear exactly once unless replace_all=true. Preferred over Write for modifying existing files — sends only the diff. Always Read a file before editing it.',
     input_schema: {
       type: 'object',
       properties: {
