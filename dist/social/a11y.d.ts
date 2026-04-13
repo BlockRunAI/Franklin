@@ -51,4 +51,4 @@ export declare function extractArticleBlocks(tree: string): Array<{
  * This doubles as the "this is a tweet" signal in social-bot — the only link
  * inside an article block with this label shape is the permalink to the tweet.
  */
-export declare const X_TIME_LINK_PATTERN = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d+(?:,?\\s+\\d{4})?|\\d+[smhd]|just now|now|yesterday|\\d{1,2}:\\d{2}\\s*[AaPp][Mm]|\\d{4}\u5E74\\d{1,2}\u6708\\d{1,2}\u65E5";
+export declare const X_TIME_LINK_PATTERN = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d+(?:,?\\s+\\d{4})?|\\d+[smhd]|\\d+\\s+(?:second|minute|hour|day|week|month|year)s?\\s+ago|just now|now|yesterday|\\d{1,2}:\\d{2}\\s*[AaPp][Mm]|\\d{4}\u5E74\\d{1,2}\u6708\\d{1,2}\u65E5";
