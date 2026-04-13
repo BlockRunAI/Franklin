@@ -36,6 +36,58 @@ interface Candidate {
   alreadySeen: boolean;
 }
 
+// ─── Intent detection (code-level, not LLM-level) ──────────────────────────
+// When the user asks "check my @handle mentions/notifications/互动",
+// the tool itself routes to x.com/notifications. No LLM judgment needed.
+
+const NOTIFICATION_KEYWORDS = [
+  'notification', 'notifications',
+  'mention', 'mentions', 'mentioned',
+  'reply', 'replies',
+  'interact', 'interaction', 'interactions',
+  '互动', '通知', '提及', '回复', '看看',
+  'check my', 'my account', 'my x',
+  'to:', 'from:', '@',
+];
+
+export function detectNotificationsIntent(
+  query: string | undefined,
+  handle: string,
+  knownHandles?: string[],
+): boolean {
+  if (!query) return false;
+  const q = query.toLowerCase();
+
+  // Collect all handles the user might reference (personal + org accounts)
+  const handles = new Set<string>();
+  const addHandle = (h: string) => {
+    const clean = h.replace(/^@/, '').toLowerCase().trim();
+    if (clean.length >= 3) handles.add(clean);
+  };
+  addHandle(handle);
+  if (knownHandles) knownHandles.forEach(addHandle);
+
+  // Check if query mentions any known handle
+  let mentionsOwnHandle = false;
+  let matchedHandle = '';
+  for (const h of handles) {
+    if (q.includes(h)) {
+      mentionsOwnHandle = true;
+      matchedHandle = h;
+      break;
+    }
+  }
+
+  const hasInteractionKeyword = NOTIFICATION_KEYWORDS.some(kw => q.includes(kw));
+
+  // Route to notifications if: mentions own handle + interaction keyword
+  // OR query is literally just the handle (e.g. "blockrunai", "@BlockRunAI")
+  if (mentionsOwnHandle && hasInteractionKeyword) return true;
+  if (mentionsOwnHandle && q.replace(/[@:]/g, '').trim() === matchedHandle) return true;
+
+  return false;
+}
+
 async function execute(
   input: Record<string, unknown>,
   _ctx: ExecutionScope,
@@ -54,11 +106,36 @@ async function execute(
   const enhanced = configStatus.ready;
   const handle = config.handle || 'unknown';
 
+  // ── Auto-detect notifications intent from query ─────────────────────
+  // Skill-level routing: the code decides, not the LLM.
+  // If the query mentions any known handle + interaction keywords,
+  // or explicitly asks for notifications, route to notifications page.
+  // Extract known handles from config: search queries may contain org handles
+  // like "BlockRunAI" even if the personal handle is "@bc1beat".
+  const knownHandles: string[] = [];
+  if (config.x?.search_queries) {
+    for (const sq of config.x.search_queries) {
+      // Extract @-handles and capitalized brand names from search queries
+      const atHandles = sq.match(/@\w+/g);
+      if (atHandles) knownHandles.push(...atHandles);
+      // Also add single-word brand tokens (like "BlockRunAI")
+      const words = sq.split(/\s+/).filter(w => /^[A-Z]/.test(w) && w.length >= 5);
+      knownHandles.push(...words);
+    }
+  }
+  const isNotifications = mode === 'notifications' || detectNotificationsIntent(query, handle, knownHandles);
+
   // In enhanced mode, verify login via preflight
   if (enhanced) {
     const preflight = await checkSocialReady();
     if (!preflight.ready) {
-      // Login check failed — fall back to basic mode (search still works without login)
+      if (isNotifications) {
+        return {
+          output: 'Not logged in to X. Run `franklin social login x` first — notifications require authentication.',
+          isError: true,
+        };
+      }
+      // Search can sometimes work without login — fall through
     }
   }
 
@@ -67,7 +144,6 @@ async function execute(
     browser = await browserPool.getBrowser();
 
     // ── Choose page: notifications vs search ──────────────────────────
-    const isNotifications = mode === 'notifications';
     const targetUrl = isNotifications
       ? 'https://x.com/notifications'
       : `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query&f=live`;
