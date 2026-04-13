@@ -471,6 +471,42 @@ node dist/index.js --help
 
 ---
 
+## VS Code Extension
+
+Franklin ships with a VS Code sidebar extension — the same agent engine as the CLI, inside your editor.
+
+### Install from source (dev)
+
+```bash
+cd franklin
+npm run build                          # build the main package first
+cd vscode-extension
+npm install
+npm run compile
+```
+
+Then open the `franklin` root folder in VS Code and press **F5** to launch the Extension Development Host.
+
+### Usage
+
+1. **Open the sidebar** — click the Franklin icon in the Activity Bar (left), or click `$(sparkle) Franklin` in the Status Bar (bottom-right).
+2. **Type a message** and press Enter. The agent streams its response in real-time, just like the CLI.
+3. **Switch models** — click the model name in the composer toolbar to open the model picker. 35+ models available.
+4. **Stop generation** — press `Esc` or click the stop button.
+5. **Open in a new tab** — run `Franklin: Open Chat in New Tab` from the Command Palette (`Cmd+Shift+P`).
+
+The extension works without a workspace folder (falls back to your home directory), but opening a project folder enables full tool support (file editing, search, shell commands, etc.).
+
+### Features
+
+- Streaming chat with real-time token output
+- 35+ models across 7 categories (Promo, Smart Routing, Premium, Reasoning, Budget, Free)
+- Live USDC balance + context window usage ring
+- Model picker with pricing and context tooltips
+- Works in sidebar or editor tab
+
+---
+
 ## Star history
 
 <a href="https://star-history.com/#BlockRunAI/franklin&Date">

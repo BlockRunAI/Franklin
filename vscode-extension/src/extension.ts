@@ -15,28 +15,48 @@ function getWorkDir(): { dir: string; hasWorkspace: boolean } {
   return { dir: os.homedir(), hasWorkspace: false };
 }
 
-/** Inline model shortcuts — avoids importing model-picker.ts which pulls in chalk/readline */
+/** Inline model shortcuts — synced with src/ui/model-picker.ts MODEL_SHORTCUTS */
 const MODEL_SHORTCUTS: Record<string, string> = {
+  // Routing
+  auto: 'blockrun/auto',
+  eco: 'blockrun/eco',
+  premium: 'blockrun/premium',
+  // Anthropic
   sonnet: 'anthropic/claude-sonnet-4.6',
   claude: 'anthropic/claude-sonnet-4.6',
   opus: 'anthropic/claude-opus-4.6',
   haiku: 'anthropic/claude-haiku-4.5-20251001',
+  // OpenAI
   gpt: 'openai/gpt-5.4',
+  'gpt-5.4-pro': 'openai/gpt-5.4-pro',
+  codex: 'openai/gpt-5.3-codex',
   mini: 'openai/gpt-5-mini',
   nano: 'openai/gpt-5-nano',
   o3: 'openai/o3',
   o4: 'openai/o4-mini',
+  o1: 'openai/o1',
+  // Google
   gemini: 'google/gemini-2.5-pro',
+  'gemini-3': 'google/gemini-3.1-pro',
   flash: 'google/gemini-2.5-flash',
+  // xAI
+  grok: 'xai/grok-3',
+  'grok-4': 'xai/grok-4-0709',
+  'grok-fast': 'xai/grok-4-1-fast-reasoning',
+  // DeepSeek
   deepseek: 'deepseek/deepseek-chat',
   r1: 'deepseek/deepseek-reasoner',
+  // Others
+  kimi: 'moonshot/kimi-k2.5',
+  minimax: 'minimax/minimax-m2.7',
+  glm: 'zai/glm-5.1',
+  'glm-turbo': 'zai/glm-5.1-turbo',
+  // Free
   free: 'nvidia/nemotron-ultra-253b',
   devstral: 'nvidia/devstral-2-123b',
   'qwen-coder': 'nvidia/qwen3-coder-480b',
   maverick: 'nvidia/llama-4-maverick',
-  glm: 'zai/glm-5',
-  'glm-turbo': 'zai/glm-5-turbo',
-  grok: 'xai/grok-3',
+  'deepseek-free': 'nvidia/deepseek-v3.2',
 };
 function resolveModel(input: string): string {
   return MODEL_SHORTCUTS[input.trim().toLowerCase()] || input.trim();
@@ -372,9 +392,10 @@ function getWebviewHtml(): string {
       position: absolute;
       bottom: calc(100% + 4px);
       left: 0;
-      min-width: 200px;
-      max-height: 260px;
+      min-width: 220px;
+      max-height: 300px;
       overflow-y: auto;
+      overscroll-behavior: contain;
       background: var(--vscode-dropdown-background, #1e1e1e);
       border: 1px solid var(--vscode-dropdown-border, #444);
       border-radius: 6px;
@@ -406,10 +427,9 @@ function getWebviewHtml(): string {
     #model-dropdown .md-price { font-size: 9px; color: var(--vscode-descriptionForeground); margin-left: 8px; }
     .md-item .md-free { font-size: 9px; color: var(--vscode-terminal-ansiGreen, #3fb950); font-weight: 600; }
     #model-dropdown .md-tooltip {
-      display: none;
-      position: absolute;
-      left: calc(100% + 6px);
-      top: -4px;
+      visibility: hidden;
+      opacity: 0;
+      position: fixed;
       width: 190px;
       padding: 10px 12px;
       background: var(--vscode-editorHoverWidget-background, #252526);
@@ -418,8 +438,9 @@ function getWebviewHtml(): string {
       box-shadow: 0 4px 12px rgba(0,0,0,0.4);
       z-index: 200;
       pointer-events: none;
+      transition: opacity 0.12s;
     }
-    #model-dropdown .md-item:hover .md-tooltip { display: block; }
+    #model-dropdown .md-item:hover .md-tooltip { visibility: visible; opacity: 1; }
     .md-tooltip .md-tt-name { font-weight: 600; font-size: 12px; margin-bottom: 4px; color: var(--vscode-foreground); }
     .md-tooltip .md-tt-desc { font-size: 11px; color: var(--vscode-descriptionForeground); line-height: 1.4; margin-bottom: 8px; }
     .md-tooltip .md-tt-ctx { font-size: 10px; color: var(--vscode-descriptionForeground); }
@@ -439,10 +460,10 @@ function getWebviewHtml(): string {
       transition: opacity 0.15s, background 0.15s;
     }
     .composer-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-    #send { background: var(--vscode-foreground, #ccc); color: var(--vscode-editor-background, #1e1e1e); }
-    #send:hover:not(:disabled) { opacity: 0.85; }
-    #stop { background: transparent; color: var(--vscode-foreground, #ccc); border: 1.5px solid var(--vscode-foreground, #ccc); }
-    #stop:hover:not(:disabled) { background: rgba(128,128,128,0.15); }
+    #send { background: rgba(160,160,160,0.4); color: var(--vscode-editor-background, #1e1e1e); }
+    #send:hover:not(:disabled) { background: rgba(160,160,160,0.55); }
+    #stop { background: rgba(160,160,160,0.4); color: var(--vscode-editor-background, #1e1e1e); border: none; }
+    #stop:hover:not(:disabled) { background: rgba(160,160,160,0.55); }
     #stop.hidden-btn { display: none; }
     #welcome {
       flex-shrink: 0;
@@ -657,6 +678,7 @@ function getWebviewHtml(): string {
     const activity = document.getElementById('activity');
     const activityText = document.getElementById('activityText');
     let assistantBuf = '';
+    var assistantEl = null;
     var agentBusy = false;
     var activityMode = 'waiting';
     var toolNameStr = '';
@@ -684,33 +706,48 @@ function getWebviewHtml(): string {
 
     // ── Model dropdown ──
     var MODEL_LIST = [
-      {group: 'Zhipu', items: [
-        {label: 'GLM-5', shortcut: 'glm', price: '$0.001/call', desc: 'Zhipu flagship model. Strong multilingual and reasoning.', ctx: '128k'},
-        {label: 'GLM-5 Turbo', shortcut: 'glm-turbo', price: '$0.001/call', desc: 'Fast variant of GLM-5. Good balance of speed and quality.', ctx: '128k'}
+      {group: 'Promo ($0.001/call)', items: [
+        {label: 'GLM-5.1', shortcut: 'glm', price: '$0.001/call', desc: 'Zhipu flagship model. Strong multilingual and reasoning.', ctx: '128k'},
+        {label: 'GLM-5.1 Turbo', shortcut: 'glm-turbo', price: '$0.001/call', desc: 'Fast variant of GLM-5.1. Good balance of speed and quality.', ctx: '128k'}
       ]},
-      {group: 'Claude', items: [
+      {group: 'Smart Routing', items: [
+        {label: 'Auto', shortcut: 'auto', price: 'routed', desc: 'Auto-pick the best model for each task.', ctx: 'varies'},
+        {label: 'Eco', shortcut: 'eco', price: 'cheapest', desc: 'Route to cheapest capable model.', ctx: 'varies'},
+        {label: 'Premium', shortcut: 'premium', price: 'best', desc: 'Route to the best available model.', ctx: 'varies'}
+      ]},
+      {group: 'Premium Frontier', items: [
         {label: 'Claude Sonnet 4.6', shortcut: 'sonnet', price: '$3/$15', desc: 'Anthropic best-value model. Great for everyday coding tasks.', ctx: '200k'},
         {label: 'Claude Opus 4.6', shortcut: 'opus', price: '$5/$25', desc: 'Anthropic most capable model. Best for complex reasoning.', ctx: '200k'},
-        {label: 'Claude Haiku 4.5', shortcut: 'haiku', price: '$1/$5', desc: 'Anthropic fastest model. Quick responses at low cost.', ctx: '200k'}
-      ]},
-      {group: 'OpenAI', items: [
         {label: 'GPT-5.4', shortcut: 'gpt', price: '$2.5/$15', desc: 'OpenAI latest flagship model. Great for complex tasks.', ctx: '272k'},
-        {label: 'GPT-5 Mini', shortcut: 'mini', price: '$0.25/$2', desc: 'Compact and fast. Good for simpler tasks at low cost.', ctx: '1M'},
-        {label: 'GPT-5 Nano', shortcut: 'nano', price: '$0.05/$0.4', desc: 'Smallest OpenAI model. Ultra-low cost for basic tasks.', ctx: '1M'},
-        {label: 'O4 Mini', shortcut: 'o4', price: '$1.1/$4.4', desc: 'OpenAI reasoning model. Strong at math and logic.', ctx: '200k'}
+        {label: 'GPT-5.4 Pro', shortcut: 'gpt-5.4-pro', price: '$30/$180', desc: 'OpenAI most capable. Best for hardest problems.', ctx: '272k'},
+        {label: 'Gemini 2.5 Pro', shortcut: 'gemini', price: '$1.25/$10', desc: 'Google flagship model. Strong at code and multimodal.', ctx: '1M'},
+        {label: 'Gemini 3.1 Pro', shortcut: 'gemini-3', price: '$2/$12', desc: 'Google next-gen flagship. Improved reasoning.', ctx: '1M'},
+        {label: 'Grok 4', shortcut: 'grok-4', price: '$0.2/$1.5', desc: 'xAI latest model. Strong general reasoning.', ctx: '128k'},
+        {label: 'Grok 3', shortcut: 'grok', price: '$3/$15', desc: 'xAI flagship model. Capable general-purpose.', ctx: '128k'}
       ]},
-      {group: 'Google', items: [
-        {label: 'Gemini 2.5 Pro', shortcut: 'gemini', price: '$1.25/$10', desc: 'Google flagship model. Strong at code and multimodal tasks.', ctx: '1M'},
-        {label: 'Gemini 2.5 Flash', shortcut: 'flash', price: '$0.15/$0.6', desc: 'Google fast model. Very low cost with solid quality.', ctx: '1M'}
+      {group: 'Reasoning', items: [
+        {label: 'O3', shortcut: 'o3', price: '$2/$8', desc: 'OpenAI reasoning model. Strong at math and logic.', ctx: '200k'},
+        {label: 'O4 Mini', shortcut: 'o4', price: '$1.1/$4.4', desc: 'OpenAI compact reasoning. Good cost/performance.', ctx: '200k'},
+        {label: 'O1', shortcut: 'o1', price: '$15/$60', desc: 'OpenAI advanced reasoning. Best for complex problems.', ctx: '200k'},
+        {label: 'GPT-5.3 Codex', shortcut: 'codex', price: '$1.75/$14', desc: 'OpenAI code-specialized model.', ctx: '272k'},
+        {label: 'DeepSeek R1', shortcut: 'r1', price: '$0.28/$0.42', desc: 'DeepSeek reasoning. Chain-of-thought for hard problems.', ctx: '128k'},
+        {label: 'Grok 4.1 Fast R.', shortcut: 'grok-fast', price: '$0.2/$0.5', desc: 'xAI fast reasoning model.', ctx: '128k'}
       ]},
-      {group: 'DeepSeek', items: [
-        {label: 'DeepSeek V3', shortcut: 'deepseek', price: '$0.28/$0.42', desc: 'DeepSeek latest model. Excellent code generation at low cost.', ctx: '128k'},
-        {label: 'DeepSeek R1', shortcut: 'r1', price: '$0.28/$0.42', desc: 'DeepSeek reasoning model. Chain-of-thought for hard problems.', ctx: '128k'}
+      {group: 'Budget', items: [
+        {label: 'Claude Haiku 4.5', shortcut: 'haiku', price: '$1/$5', desc: 'Anthropic fastest model. Quick responses at low cost.', ctx: '200k'},
+        {label: 'GPT-5 Mini', shortcut: 'mini', price: '$0.25/$2', desc: 'Compact and fast. Good for simpler tasks.', ctx: '1M'},
+        {label: 'GPT-5 Nano', shortcut: 'nano', price: '$0.05/$0.4', desc: 'Smallest OpenAI. Ultra-low cost for basic tasks.', ctx: '1M'},
+        {label: 'Gemini 2.5 Flash', shortcut: 'flash', price: '$0.3/$2.5', desc: 'Google fast model. Low cost with solid quality.', ctx: '1M'},
+        {label: 'DeepSeek V3', shortcut: 'deepseek', price: '$0.28/$0.42', desc: 'DeepSeek latest. Excellent code generation.', ctx: '128k'},
+        {label: 'Kimi K2.5', shortcut: 'kimi', price: '$0.6/$3', desc: 'Moonshot model. Strong multilingual support.', ctx: '128k'},
+        {label: 'Minimax M2.7', shortcut: 'minimax', price: '$0.3/$1.2', desc: 'Minimax model. Good general-purpose budget option.', ctx: '128k'}
       ]},
-      {group: 'Free', items: [
+      {group: 'Free (no USDC needed)', items: [
         {label: 'Nemotron Ultra 253B', shortcut: 'free', price: '', desc: 'NVIDIA large model. Free tier, no funding required.', ctx: '128k'},
-        {label: 'Qwen3 Coder 480B', shortcut: 'qwen-coder', price: '', desc: 'Alibaba coding model. Free tier, specialized for code.', ctx: '256k'},
-        {label: 'Devstral 2 123B', shortcut: 'devstral', price: '', desc: 'Mistral coding model. Free tier, strong at code tasks.', ctx: '128k'}
+        {label: 'Qwen3 Coder 480B', shortcut: 'qwen-coder', price: '', desc: 'Alibaba coding model. Free, specialized for code.', ctx: '256k'},
+        {label: 'Devstral 2 123B', shortcut: 'devstral', price: '', desc: 'Mistral coding model. Free, strong at code tasks.', ctx: '128k'},
+        {label: 'Llama 4 Maverick', shortcut: 'maverick', price: '', desc: 'Meta Llama 4. Free, strong multilingual.', ctx: '128k'},
+        {label: 'DeepSeek V3.2', shortcut: 'deepseek-free', price: '', desc: 'DeepSeek free tier via NVIDIA.', ctx: '128k'}
       ]}
     ];
 
@@ -763,6 +800,11 @@ function getWebviewHtml(): string {
           var td = document.createElement('div'); td.className = 'md-tt-desc'; td.textContent = item.desc || ''; tip.appendChild(td);
           var tc = document.createElement('div'); tc.className = 'md-tt-ctx'; tc.textContent = (item.ctx || '?') + ' context window'; tip.appendChild(tc);
           row.appendChild(tip);
+          row.addEventListener('mouseenter', function() {
+            var rect = row.getBoundingClientRect();
+            tip.style.left = (rect.right + 6) + 'px';
+            tip.style.top = rect.top + 'px';
+          });
           row.addEventListener('click', function() {
             closeDropdown();
             vscode.postMessage({ type: 'switchModel', text: item.shortcut });
@@ -954,10 +996,8 @@ function getWebviewHtml(): string {
     }
 
     function flushAssistant() {
-      if (assistantBuf) {
-        appendLine('assistant', assistantBuf);
-        assistantBuf = '';
-      }
+      assistantBuf = '';
+      assistantEl = null;
     }
 
     window.addEventListener('message', (e) => {
@@ -1001,6 +1041,13 @@ function getWebviewHtml(): string {
       switch (ev.kind) {
         case 'text_delta':
           assistantBuf += ev.text;
+          if (!assistantEl) {
+            assistantEl = document.createElement('div');
+            assistantEl.className = 'assistant';
+            log.appendChild(assistantEl);
+          }
+          assistantEl.textContent = assistantBuf;
+          log.scrollTop = log.scrollHeight;
           activityMode = 'generating';
           updateActivityRow();
           break;
@@ -1056,6 +1103,7 @@ function getWebviewHtml(): string {
       if (!t) return;
       appendLine('user', '> ' + t);
       assistantBuf = '';
+      assistantEl = null;
       agentBusy = true;
       activityMode = 'waiting';
       toolNameStr = '';
