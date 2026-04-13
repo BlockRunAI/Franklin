@@ -11,6 +11,7 @@ import type {
   ExecutionScope,
 } from './types.js';
 import type { PermissionManager } from './permissions.js';
+import { recordFailure } from '../stats/failures.js';
 
 interface PendingTool {
   invocation: CapabilityInvocation;
@@ -154,6 +155,13 @@ export class StreamingExecutor {
     try {
       return await handler.execute(invocation.input, progressScope);
     } catch (err) {
+      recordFailure({
+        timestamp: Date.now(),
+        model: '', // not available at tool level
+        failureType: 'tool_error',
+        toolName: invocation.name,
+        errorMessage: (err as Error).message,
+      });
       return {
         output: `Error executing ${invocation.name}: ${(err as Error).message}`,
         isError: true,

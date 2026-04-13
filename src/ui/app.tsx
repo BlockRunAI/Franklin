@@ -16,10 +16,11 @@ import {
   PICKER_MODELS_FLAT,
 } from './model-picker.js';
 import { estimateCost } from '../pricing.js';
+import { formatTokens, shortModelName } from '../stats/format.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
-function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, queuedCount, focused, busy }: {
+function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, queuedCount, focused, busy, contextPct }: {
   input: string;
   setInput: (v: string) => void;
   onSubmit: (v: string) => void;
@@ -30,6 +31,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
   queuedCount?: number;
   focused?: boolean;
   busy?: boolean;
+  contextPct?: number;
 }) {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
@@ -64,8 +66,13 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
           {busy ? <Text color="yellow"><Spinner type="dots" /></Text> : null}
           {busy ? ' ' : ''}{model}  ·  {balance}
           {sessionCost > 0.00001 ? <Text color="yellow">  -${sessionCost.toFixed(4)}</Text> : ''}
+          {contextPct !== undefined && contextPct > 0 ? (
+            <Text color={contextPct > 85 ? 'red' : contextPct > 70 ? 'yellow' : undefined}>
+              {'  ·  ctx '}{contextPct}{'%'}
+            </Text>
+          ) : null}
           {(queuedCount ?? 0) > 0 ? <Text color="cyan">  ·  {queuedCount} queued</Text> : null}
-          {'  ·  esc to abort/quit'}
+          {'  ·  esc'}
         </Text>
       </Box>
     </Box>
@@ -130,7 +137,7 @@ function RunCodeApp({
   // Completed tool results committed to Static (permanent scrollback — no re-render artifacts)
   const [completedTools, setCompletedTools] = useState<Array<ToolStatus & { key: string }>>([]);
   // Full responses committed to Static immediately — goes into terminal scrollback like Claude Code
-  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number }>>([]);
+  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number }>>([]);
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
   const [responsePreview, setResponsePreview] = useState('');
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS_FLAT[0].id);
@@ -140,6 +147,7 @@ function RunCodeApp({
   const [statusMsg, setStatusMsg] = useState('');
   const [statusTone, setStatusTone] = useState<StatusTone>('success');
   const [turnTokens, setTurnTokens] = useState({ input: 0, output: 0, calls: 0 });
+  const [contextPct, setContextPct] = useState(0);
   const [totalCost, setTotalCost] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
@@ -169,6 +177,9 @@ function RunCodeApp({
   const turnTokensRef = useRef({ input: 0, output: 0, calls: 0 });
   const totalCostRef = useRef(0);
   const turnCostRef = useRef(0); // per-turn cost (reset each turn)
+  const turnModelRef = useRef<string | undefined>(undefined);
+  const turnTierRef = useRef<string | undefined>(undefined);
+  const turnSavingsRef = useRef<number | undefined>(undefined);
   const queuedInputsRef = useRef<string[]>([]);
 
   // Keep refs in sync so memoized event handlers can read current values
@@ -204,6 +215,9 @@ function RunCodeApp({
       text,
       tokens,
       cost,
+      model: turnModelRef.current,
+      tier: turnTierRef.current,
+      savings: turnSavingsRef.current,
     }]);
 
     const allLines = text.split('\n');
@@ -363,6 +377,9 @@ function RunCodeApp({
           setTools(new Map());
           setTurnTokens({ input: 0, output: 0, calls: 0 });
           turnCostRef.current = 0;
+          turnModelRef.current = undefined;
+          turnTierRef.current = undefined;
+          turnSavingsRef.current = undefined;
           setWaiting(true);
           setReady(false);
           // Pass through to agent loop to clear the actual conversation history
@@ -382,6 +399,9 @@ function RunCodeApp({
           setWaiting(true);
           setTurnTokens({ input: 0, output: 0, calls: 0 });
           turnCostRef.current = 0;
+          turnModelRef.current = undefined;
+          turnTierRef.current = undefined;
+          turnSavingsRef.current = undefined;
           onSubmit(lastPrompt);
           return;
 
@@ -423,6 +443,9 @@ function RunCodeApp({
     setShowWallet(false);
     setTurnTokens({ input: 0, output: 0, calls: 0 });
     turnCostRef.current = 0;
+    turnModelRef.current = undefined;
+    turnTierRef.current = undefined;
+    turnSavingsRef.current = undefined;
     onSubmit(trimmed);
   }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory, showStatus]);
 
@@ -529,6 +552,11 @@ function RunCodeApp({
             const turnCallCost = estimateCost(event.model, event.inputTokens, event.outputTokens, event.calls ?? 1);
             turnCostRef.current += turnCallCost;
             setTotalCost(prev => prev + turnCallCost);
+            // Capture routing metadata for this turn
+            turnModelRef.current = event.model;
+            if (event.tier) turnTierRef.current = event.tier;
+            if (event.savings !== undefined) turnSavingsRef.current = event.savings;
+            if (event.contextPct !== undefined) setContextPct(event.contextPct);
             break;
           }
           case 'turn_done': {
@@ -682,10 +710,14 @@ function RunCodeApp({
             {(r.tokens.input > 0 || r.tokens.output > 0) && (
               <Box marginLeft={1}>
                 <Text dimColor>
+                  {r.tier && <Text color="cyan">{r.tier} </Text>}
+                  {r.model ? shortModelName(r.model) : ''}
+                  {r.model ? '  ·  ' : ''}
                   {r.tokens.calls > 0 && r.tokens.input === 0
                     ? `${r.tokens.calls} calls`
-                    : `${r.tokens.input.toLocaleString()} in / ${r.tokens.output.toLocaleString()} out${r.tokens.calls > 0 ? ` / ${r.tokens.calls} calls` : ''}`}
+                    : `${formatTokens(r.tokens.input)} in / ${formatTokens(r.tokens.output)} out`}
                   {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)}` : ''}
+                  {r.savings !== undefined && r.savings > 0 ? <Text color="green">  saved {Math.round(r.savings * 100)}%</Text> : ''}
                 </Text>
               </Box>
             )}
@@ -855,6 +887,7 @@ function RunCodeApp({
           queuedCount={queuedInputs.length}
           focused={!permissionRequest && !askUserRequest}
           busy={!askUserRequest && (waiting || thinking || tools.size > 0)}
+          contextPct={contextPct}
         />
       )}
     </Box>

@@ -14,7 +14,10 @@ import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
 import { classifyAgentError } from './error-classifier.js';
 import { recordUsage } from '../stats/tracker.js';
-import { estimateCost } from '../pricing.js';
+import { recordSessionUsage } from '../stats/session-tracker.js';
+import { estimateCost, OPUS_PRICING } from '../pricing.js';
+import { routeRequest, parseRoutingProfile } from '../router/index.js';
+import type { Tier } from '../router/index.js';
 import {
   createSessionId,
   appendToSession,
@@ -71,12 +74,20 @@ export async function interactiveSession(
   let turnCount = 0;
   let tokenBudgetWarned = false; // Emit token budget warning at most once per session
   let lastSessionActivity = Date.now();
+  let sessionInputTokens = 0;
+  let sessionOutputTokens = 0;
+  let sessionCostUsd = 0;
+  let sessionSavedVsOpus = 0;
   const persistSessionMeta = () => {
     updateSessionMeta(sessionId, {
       model: config.model,
       workDir,
       turnCount,
       messageCount: history.length,
+      inputTokens: sessionInputTokens,
+      outputTokens: sessionOutputTokens,
+      costUsd: sessionCostUsd,
+      savedVsOpusUsd: sessionSavedVsOpus,
     });
   };
   const persistSessionMessage = (message: Dialogue) => {
@@ -213,10 +224,34 @@ export async function interactiveSession(
         onProgress: (id, text) => onEvent({ kind: 'capability_progress', id, text }),
       });
 
+      // ── Router: resolve routing profiles to concrete models ──
+      const routingProfile = parseRoutingProfile(config.model);
+      let resolvedModel = config.model;
+      let routingTier: Tier | undefined;
+      let routingConfidence: number | undefined;
+      let routingSavings: number | undefined;
+      if (routingProfile) {
+        // Extract latest user text for classification
+        const lastUser = [...history].reverse().find((m: Dialogue) => m.role === 'user');
+        const userText = typeof lastUser?.content === 'string'
+          ? lastUser.content
+          : Array.isArray(lastUser?.content)
+            ? (lastUser!.content as Array<{ type: string; text?: string }>)
+                .filter(p => p.type === 'text')
+                .map(p => p.text ?? '')
+                .join(' ')
+            : '';
+        const routing = routeRequest(userText, routingProfile);
+        resolvedModel = routing.model;
+        routingTier = routing.tier;
+        routingConfidence = routing.confidence;
+        routingSavings = routing.savings;
+      }
+
       try {
         const result = await client.complete(
           {
-            model: config.model,
+            model: resolvedModel,
             messages: history,
             system: systemPrompt,
             tools: toolDefs,
@@ -327,17 +362,31 @@ export async function interactiveSession(
       // Anchor token tracking to actual API counts
       updateActualTokens(inputTokens, usage.outputTokens, history.length);
 
+      const { contextUsagePct } = getAnchoredTokenCount(history);
       onEvent({
         kind: 'usage',
         inputTokens,
         outputTokens: usage.outputTokens,
-        model: config.model,
+        model: resolvedModel,
         calls: 1,
+        tier: routingTier,
+        confidence: routingConfidence,
+        savings: routingSavings,
+        contextPct: Math.round(contextUsagePct),
       });
 
       // Record usage for stats tracking (runcode stats command)
-      const costEstimate = estimateCost(config.model, inputTokens, usage.outputTokens, 1);
-      recordUsage(config.model, inputTokens, usage.outputTokens, costEstimate, 0);
+      const costEstimate = estimateCost(resolvedModel, inputTokens, usage.outputTokens, 1);
+      recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, 0);
+      recordSessionUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, routingTier);
+
+      // Accumulate session-level totals for session meta
+      sessionInputTokens += inputTokens;
+      sessionOutputTokens += usage.outputTokens;
+      sessionCostUsd += costEstimate;
+      const opusCost = (inputTokens / 1_000_000) * OPUS_PRICING.input
+        + (usage.outputTokens / 1_000_000) * OPUS_PRICING.output;
+      sessionSavedVsOpus += Math.max(0, opusCost - costEstimate);
 
       // ── Max output tokens recovery ──
       if (stopReason === 'max_tokens' && recoveryAttempts < 3) {

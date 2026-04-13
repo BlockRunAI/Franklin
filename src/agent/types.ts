@@ -125,6 +125,12 @@ export interface StreamUsageInfo {
   outputTokens: number;
   model: string;
   calls: number;
+  // Routing transparency — populated when using a routing profile
+  tier?: 'SIMPLE' | 'MEDIUM' | 'COMPLEX' | 'REASONING';
+  confidence?: number;
+  savings?: number; // 0-1, percentage savings vs Opus
+  // Context window utilization
+  contextPct?: number; // 0-100
 }
 
 export type StreamEvent =

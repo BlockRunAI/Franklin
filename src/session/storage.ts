@@ -21,6 +21,11 @@ export interface SessionMeta {
   updatedAt: number;
   turnCount: number;
   messageCount: number;
+  // Token & cost tracking (added for per-session insights)
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  savedVsOpusUsd?: number;
 }
 
 function getSessionsDir(): string {
@@ -118,6 +123,10 @@ export function updateSessionMeta(
       updatedAt: Date.now(),
       turnCount: meta.turnCount ?? existing?.turnCount ?? 0,
       messageCount: meta.messageCount ?? existing?.messageCount ?? 0,
+      inputTokens: meta.inputTokens ?? existing?.inputTokens ?? 0,
+      outputTokens: meta.outputTokens ?? existing?.outputTokens ?? 0,
+      costUsd: meta.costUsd ?? existing?.costUsd ?? 0,
+      savedVsOpusUsd: meta.savedVsOpusUsd ?? existing?.savedVsOpusUsd ?? 0,
     };
     fs.writeFileSync(metaPath(sessionId), JSON.stringify(updated, null, 2));
   });
