@@ -509,6 +509,29 @@ test('session tool guard skips duplicate reads of unchanged files', async () => 
   }
 });
 
+test('session tool guard blocks repetitive SearchX the same as WebSearch', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  guard.startTurn();
+
+  // SearchX queries that are similar but not identical after normalization
+  const q1 = { type: 'tool_use', id: 'sx-1', name: 'SearchX', input: { query: 'blockrunai agent wallet mentions' } };
+  const q2 = { type: 'tool_use', id: 'sx-2', name: 'SearchX', input: { query: 'blockrunai wallet payment agent' } };
+  const q3 = { type: 'tool_use', id: 'sx-3', name: 'SearchX', input: { query: 'blockrunai agent wallet payment crypto' } };
+
+  assert.equal(await guard.beforeExecute(q1, ctx), null);
+  guard.afterExecute(q1, { output: 'No candidate posts found for query: "blockrunai agent wallet mentions"' });
+
+  assert.equal(await guard.beforeExecute(q2, ctx), null);
+  guard.afterExecute(q2, { output: 'No candidate posts found for query: "blockrunai wallet payment agent"' });
+
+  const blocked = await guard.beforeExecute(q3, ctx);
+  assert.ok(blocked, 'Expected third similar SearchX to be blocked');
+  assert.ok(blocked.output.includes('Search stopped'), `Expected early-stop.\n${blocked.output}`);
+});
+
 test('webfetch strips truncated html tags before returning content', async () => {
   const hugePath = 'M '.repeat(10_000);
   const server = createServer((_req, res) => {
