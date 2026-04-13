@@ -781,11 +781,11 @@ function RunCodeApp({
         <Box key={id} flexDirection="column" marginLeft={1}>
           <Text color="cyan">
             {'  '}<Spinner type="dots" />{' '}{tool.name}
-            {tool.preview ? <Text dimColor>: {tool.preview}</Text> : null}
+            {tool.preview ? <Text dimColor>: {tool.preview.slice(0, 60)}</Text> : null}
             <Text dimColor>{(() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? ` ${s}s` : ''; })()}</Text>
           </Text>
           {tool.liveOutput ? (
-            <Text dimColor>  └ {tool.liveOutput}</Text>
+            <Text color="yellow">{'    '}{tool.liveOutput.slice(0, 100)}</Text>
           ) : null}
         </Box>
       ))}
@@ -793,9 +793,9 @@ function RunCodeApp({
       {/* Thinking */}
       {thinking && (
         <Box flexDirection="column" marginLeft={1}>
-          <Text color="magenta">  <Spinner type="dots" /> thinking...</Text>
+          <Text color="magenta">  <Spinner type="dots" /> thinking{completedTools.length > 0 ? <Text dimColor>{' '}(step {completedTools.length + 1})</Text> : null}</Text>
           {thinkingText && (
-            <Text dimColor wrap="truncate-end">  {thinkingText.split('\n').pop()?.slice(0, 80)}</Text>
+            <Text dimColor wrap="truncate-end">{'    '}{thinkingText.split('\n').pop()?.slice(0, 100)}</Text>
           )}
         </Box>
       )}
@@ -803,7 +803,7 @@ function RunCodeApp({
       {/* Waiting */}
       {waiting && !thinking && tools.size === 0 && (
         <Box marginLeft={1}>
-          <Text color="yellow">  <Spinner type="dots" /> <Text dimColor>{currentModel}</Text></Text>
+          <Text color="yellow">  <Spinner type="dots" /> <Text dimColor>{currentModel}{completedTools.length > 0 ? ` · step ${completedTools.length + 1}` : ''}</Text></Text>
         </Box>
       )}
 
