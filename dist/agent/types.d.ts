@@ -97,6 +97,10 @@ export interface StreamUsageInfo {
     outputTokens: number;
     model: string;
     calls: number;
+    tier?: 'SIMPLE' | 'MEDIUM' | 'COMPLEX' | 'REASONING';
+    confidence?: number;
+    savings?: number;
+    contextPct?: number;
 }
 export type StreamEvent = StreamTextDelta | StreamThinkingDelta | StreamCapabilityStart | StreamCapabilityInputDelta | StreamCapabilityProgress | StreamCapabilityDone | StreamTurnDone | StreamUsageInfo;
 export interface AgentConfig {

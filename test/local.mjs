@@ -7,17 +7,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unwatchFile, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 
 const DIST = new URL('../dist/index.js', import.meta.url).pathname;
 
-function runCli(prompt, { cwd, timeoutMs = 15_000 } = {}) {
+function runCli(prompt = '', { cwd, timeoutMs = 15_000, args, env } = {}) {
   return new Promise((resolve, reject) => {
-    const proc = spawn('node', [DIST, '--model', 'zai/glm-5.1', '--trust'], {
+    const proc = spawn('node', args ?? [DIST, '--model', 'zai/glm-5.1', '--trust'], {
       cwd: cwd ?? tmpdir(),
-      env: { ...process.env },
+      env: { ...process.env, ...env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -45,6 +45,20 @@ function runCli(prompt, { cwd, timeoutMs = 15_000 } = {}) {
   });
 }
 
+async function listenOnRandomPort(server) {
+  await new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error(`Unexpected server address: ${String(address)}`);
+  }
+  return address.port;
+}
+
 test('cli startup prints banner and model line without model call', { timeout: 20_000 }, async () => {
   const result = await runCli('/exit');
   assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
@@ -57,6 +71,135 @@ test('cli startup prints banner and model line without model call', { timeout: 2
     `Missing banner tagline.\nstdout:\n${result.stdout}`
   );
   assert.ok(result.stdout.includes('Wallet:'), `Missing wallet line.\nstdout:\n${result.stdout}`);
+  assert.ok(result.stderr.includes('Model:'), `Missing model line.\nstderr:\n${result.stderr}`);
+});
+
+test('flags-only start options still honor --help without launching the agent', async () => {
+  const result = await runCli('', {
+    args: [DIST, '--model', 'zai/glm-5.1', '--help'],
+  });
+
+  assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
+  assert.ok(result.stdout.includes('Usage: franklin start [options]'), `Expected start help.\nstdout:\n${result.stdout}`);
+  assert.ok(!result.stdout.includes('blockrun.ai'), `Help path should not print startup banner.\nstdout:\n${result.stdout}`);
+});
+
+test('flags-only start options still honor --version without launching the agent', async () => {
+  const result = await runCli('', {
+    args: [DIST, '--model', 'zai/glm-5.1', '--version'],
+  });
+
+  assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
+  assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+$/, `Expected plain version output.\nstdout:\n${result.stdout}`);
+  assert.ok(!result.stdout.includes('blockrun.ai'), `Version path should not print startup banner.\nstdout:\n${result.stdout}`);
+});
+
+test('chain shortcut --help does not mutate saved chain or launch the agent', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-chain-help-'));
+  const chainFile = join(fakeHome, '.blockrun', 'payment-chain');
+
+  try {
+    const result = await runCli('', {
+      args: [DIST, 'base', '--help'],
+      env: { HOME: fakeHome },
+    });
+
+    assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
+    assert.ok(result.stdout.includes('Usage: franklin start [options]'), `Expected start help.\nstdout:\n${result.stdout}`);
+    assert.ok(!existsSync(chainFile), `Help path should not persist chain config at ${chainFile}`);
+    assert.ok(!result.stdout.includes('blockrun.ai'), `Help path should not print startup banner.\nstdout:\n${result.stdout}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('chain shortcut --version does not mutate saved chain or launch the agent', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-chain-version-'));
+  const chainFile = join(fakeHome, '.blockrun', 'payment-chain');
+
+  try {
+    const result = await runCli('', {
+      args: [DIST, 'solana', '--version'],
+      env: { HOME: fakeHome },
+    });
+
+    assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
+    assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+$/, `Expected plain version output.\nstdout:\n${result.stdout}`);
+    assert.ok(!existsSync(chainFile), `Version path should not persist chain config at ${chainFile}`);
+    assert.ok(!result.stdout.includes('blockrun.ai'), `Version path should not print startup banner.\nstdout:\n${result.stdout}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('panel server serves dashboard HTML and stats JSON', async () => {
+  const panelUrl = new URL('../dist/panel/server.js', import.meta.url);
+  const { createPanelServer } = await import(`${panelUrl.href}?t=${Date.now()}`);
+  const server = createPanelServer(0);
+  const port = await listenOnRandomPort(server);
+
+  try {
+    const htmlRes = await fetch(`http://127.0.0.1:${port}/`);
+    assert.equal(htmlRes.status, 200, `Expected dashboard HTML, got ${htmlRes.status}`);
+    const html = await htmlRes.text();
+    assert.ok(html.includes('<title>Franklin Panel</title>'), 'Missing panel title in HTML');
+    assert.ok(html.includes('Overview'), 'Missing Overview section in HTML');
+
+    const statsRes = await fetch(`http://127.0.0.1:${port}/api/stats`);
+    assert.equal(statsRes.status, 200, `Expected stats JSON, got ${statsRes.status}`);
+    const stats = await statsRes.json();
+    assert.equal(typeof stats.totalRequests, 'number');
+    assert.equal(typeof stats.totalCostUsd, 'number');
+    assert.equal(typeof stats.byModel, 'object');
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve()));
+    unwatchFile(join(homedir(), '.blockrun', 'runcode-stats.json'));
+  }
+});
+
+test('proxy server handles OPTIONS and local model switching without backend calls', async () => {
+  const originalHome = process.env.HOME;
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-proxy-home-'));
+  const proxyUrl = new URL('../dist/proxy/server.js', import.meta.url);
+
+  let server;
+  try {
+    process.env.HOME = fakeHome;
+    const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
+    server = createProxy({
+      port: 0,
+      apiUrl: 'http://127.0.0.1:9',
+      chain: 'base',
+      modelOverride: 'zai/glm-5.1',
+      fallbackEnabled: false,
+    });
+    const port = await listenOnRandomPort(server);
+
+    const optionsRes = await fetch(`http://127.0.0.1:${port}/api/messages`, { method: 'OPTIONS' });
+    assert.equal(optionsRes.status, 200, `Expected OPTIONS 200, got ${optionsRes.status}`);
+
+    const switchRes = await fetch(`http://127.0.0.1:${port}/api/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'use sonnet' }],
+      }),
+    });
+    assert.equal(switchRes.status, 200, `Expected switch response 200, got ${switchRes.status}`);
+    const payload = await switchRes.json();
+    assert.equal(payload.model, 'anthropic/claude-sonnet-4.6');
+    assert.ok(
+      payload.content?.[0]?.text?.includes('Switched to **anthropic/claude-sonnet-4.6**'),
+      `Unexpected switch payload: ${JSON.stringify(payload)}`
+    );
+  } finally {
+    if (server) {
+      await new Promise((resolve) => server.close(() => resolve()));
+    }
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 });
 
 test('write capability allows files under system temp directory', async () => {
@@ -83,20 +226,39 @@ test('session storage falls back to temp dir when HOME is not writable', async (
   try {
     mkdirSync(fakeHome, { recursive: true });
     chmodSync(fakeHome, 0o500); // read+execute, no write
-    process.env.HOME = fakeHome;
+    const storageHref = new URL('../dist/session/storage.js', import.meta.url).href;
+    const script = `
+      const storage = await import(${JSON.stringify(storageHref)} + '?t=' + Date.now());
+      const sessionId = storage.createSessionId();
+      storage.appendToSession(sessionId, { role: 'user', content: 'fallback-check' });
+      storage.updateSessionMeta(sessionId, {
+        model: 'local/test',
+        workDir: process.cwd(),
+        turnCount: 1,
+        messageCount: 1,
+      });
+      console.log(JSON.stringify({ sessionId }));
+    `;
 
-    const storageUrl = new URL('../dist/session/storage.js', import.meta.url);
-    const storage = await import(`${storageUrl.href}?t=${Date.now()}`);
-    const sessionId = storage.createSessionId();
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
 
-    storage.appendToSession(sessionId, { role: 'user', content: 'fallback-check' });
-    storage.updateSessionMeta(sessionId, {
-      model: 'local/test',
-      workDir: process.cwd(),
-      turnCount: 1,
-      messageCount: 1,
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (d) => { stdout += d.toString(); });
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stdout, stderr });
+        else reject(new Error(`session storage subprocess failed (${code})\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      });
+      proc.on('error', reject);
     });
 
+    const { sessionId } = JSON.parse(result.stdout.trim());
     const jsonl = join(fallbackDir, `${sessionId}.jsonl`);
     const meta = join(fallbackDir, `${sessionId}.meta.json`);
     assert.ok(existsSync(jsonl), `Expected fallback session file at ${jsonl}`);

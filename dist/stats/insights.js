@@ -13,6 +13,7 @@
  */
 import { loadStats } from './tracker.js';
 import { OPUS_PRICING, MODEL_PRICING } from '../pricing.js';
+import { formatTokens, formatUsd, shortModelName } from './format.js';
 // ─── Generate Report ──────────────────────────────────────────────────────
 export function generateInsights(days = 30) {
     const stats = loadStats();
@@ -112,27 +113,6 @@ function sparkline(values) {
         return '▁'.repeat(values.length);
     const chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     return values.map(v => chars[Math.min(7, Math.floor((v / max) * 8))]).join('');
-}
-function formatUsd(n) {
-    if (n === 0)
-        return '$0';
-    if (n < 0.01)
-        return `$${n.toFixed(4)}`;
-    if (n < 1)
-        return `$${n.toFixed(3)}`;
-    return `$${n.toFixed(2)}`;
-}
-function formatTokens(n) {
-    if (n < 1000)
-        return String(n);
-    if (n < 1_000_000)
-        return `${(n / 1000).toFixed(1)}K`;
-    return `${(n / 1_000_000).toFixed(2)}M`;
-}
-function shortModelName(model) {
-    // Strip provider prefix for display
-    const idx = model.indexOf('/');
-    return idx > -1 ? model.slice(idx + 1) : model;
 }
 export function formatInsights(report, days) {
     const sep = '─'.repeat(60);

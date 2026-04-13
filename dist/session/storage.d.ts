@@ -11,6 +11,10 @@ export interface SessionMeta {
     updatedAt: number;
     turnCount: number;
     messageCount: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    costUsd?: number;
+    savedVsOpusUsd?: number;
 }
 /** Get the absolute path to a session's JSONL file (for external readers like search). */
 export declare function getSessionFilePath(id: string): string;

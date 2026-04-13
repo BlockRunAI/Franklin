@@ -3,6 +3,7 @@
  * Starts executing concurrent-safe tools while the model is still streaming.
  * Non-concurrent tools wait until the full response is received.
  */
+import { recordFailure } from '../stats/failures.js';
 export class StreamingExecutor {
     handlers;
     scope;
@@ -117,6 +118,13 @@ export class StreamingExecutor {
             return await handler.execute(invocation.input, progressScope);
         }
         catch (err) {
+            recordFailure({
+                timestamp: Date.now(),
+                model: '', // not available at tool level
+                failureType: 'tool_error',
+                toolName: invocation.name,
+                errorMessage: err.message,
+            });
             return {
                 output: `Error executing ${invocation.name}: ${err.message}`,
                 isError: true,

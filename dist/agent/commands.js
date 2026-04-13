@@ -340,34 +340,57 @@ const DIRECT_COMMANDS = {
         }
         emitDone(ctx);
     },
-    '/sessions': (ctx) => {
+    '/sessions': async (ctx) => {
         const sessions = listSessions();
         if (sessions.length === 0) {
             ctx.onEvent({ kind: 'text_delta', text: 'No saved sessions.\n' });
         }
         else {
+            const { formatTokens, formatUsd, shortModelName } = await import('../stats/format.js');
             let text = `**${sessions.length} saved sessions:**\n\n`;
             for (const s of sessions.slice(0, 10)) {
                 const date = new Date(s.updatedAt).toLocaleString();
-                const dir = s.workDir ? ` — ${s.workDir.split('/').pop()}` : '';
-                const current = s.id === ctx.sessionId ? '  (current)' : '';
-                text += `  ${s.id}  ${s.model}  ${s.turnCount} turns  ${date}${dir}${current}\n`;
+                const dir = s.workDir ? path.basename(s.workDir) : '';
+                const current = s.id === ctx.sessionId ? ' (current)' : '';
+                const model = shortModelName(s.model);
+                const tokens = (s.inputTokens || s.outputTokens)
+                    ? `  ${formatTokens(s.inputTokens ?? 0)} in / ${formatTokens(s.outputTokens ?? 0)} out`
+                    : '';
+                const cost = s.costUsd ? `  ${formatUsd(s.costUsd)}` : '';
+                const saved = s.savedVsOpusUsd && s.savedVsOpusUsd > 0.001
+                    ? `  saved ${formatUsd(s.savedVsOpusUsd)}`
+                    : '';
+                text += `  ${model} — ${s.messageCount} messages${tokens}${cost}${saved}\n`;
+                text += `  ${date} · ${dir}${current}\n\n`;
             }
             if (sessions.length > 10)
                 text += `  ... and ${sessions.length - 10} more\n`;
-            text += '\nUse /resume to restore the latest session, or /resume <session-id> for a specific one.\n';
+            text += 'Use /resume to restore the latest session, or /resume <session-id> for a specific one.\n';
             ctx.onEvent({ kind: 'text_delta', text });
         }
         emitDone(ctx);
     },
     '/cost': async (ctx) => {
         const { stats, saved } = getStatsSummary();
-        ctx.onEvent({ kind: 'text_delta', text: `**Session Cost**\n` +
-                `  Requests: ${stats.totalRequests}\n` +
-                `  Cost:     $${stats.totalCostUsd.toFixed(4)} USDC\n` +
-                `  Saved:    $${saved.toFixed(2)} vs Claude Opus\n` +
-                `  Tokens:   ${stats.totalInputTokens.toLocaleString()} in / ${stats.totalOutputTokens.toLocaleString()} out\n`
-        });
+        const { getSessionModelBreakdown } = await import('../stats/session-tracker.js');
+        const { formatTokens, formatUsd, shortModelName } = await import('../stats/format.js');
+        const breakdown = getSessionModelBreakdown();
+        let text = `**Session Cost**\n` +
+            `  Requests: ${stats.totalRequests}\n` +
+            `  Cost:     $${stats.totalCostUsd.toFixed(4)} USDC\n` +
+            `  Saved:    $${saved.toFixed(2)} vs Claude Opus\n` +
+            `  Tokens:   ${formatTokens(stats.totalInputTokens)} in / ${formatTokens(stats.totalOutputTokens)} out\n`;
+        if (breakdown.length > 0) {
+            text += `\n  **By model:**\n`;
+            for (const m of breakdown) {
+                const name = shortModelName(m.model).padEnd(28);
+                const cost = formatUsd(m.costUsd).padStart(8);
+                const reqs = `${m.requests} req`.padStart(6);
+                const tier = m.lastTier ? `  ${m.lastTier}` : '';
+                text += `    ${name} ${cost}  ${reqs}${tier}\n`;
+            }
+        }
+        ctx.onEvent({ kind: 'text_delta', text });
         emitDone(ctx);
     },
     '/wallet': async (ctx) => {
@@ -417,6 +440,38 @@ const DIRECT_COMMANDS = {
         ctx.history.length = 0;
         resetTokenAnchor();
         ctx.onEvent({ kind: 'text_delta', text: 'Conversation history cleared.\n' });
+        emitDone(ctx);
+    },
+    '/failures': async (ctx) => {
+        const { getFailureStats } = await import('../stats/failures.js');
+        const stats = getFailureStats();
+        if (stats.total === 0) {
+            ctx.onEvent({ kind: 'text_delta', text: 'No failures recorded.\n' });
+            emitDone(ctx);
+            return;
+        }
+        let text = `**Failure Log** (${stats.total} total)\n\n`;
+        if (stats.byType.size > 0) {
+            text += '  **By type:**\n';
+            for (const [type, count] of [...stats.byType.entries()].sort((a, b) => b[1] - a[1])) {
+                text += `    ${type.padEnd(20)} ${count}\n`;
+            }
+        }
+        if (stats.byTool.size > 0) {
+            text += '\n  **By tool:**\n';
+            for (const [tool, count] of [...stats.byTool.entries()].sort((a, b) => b[1] - a[1])) {
+                text += `    ${tool.padEnd(20)} ${count}\n`;
+            }
+        }
+        if (stats.recentFailures.length > 0) {
+            text += '\n  **Recent:**\n';
+            for (const f of stats.recentFailures.slice(-5)) {
+                const date = new Date(f.timestamp).toLocaleDateString();
+                const tool = f.toolName ? ` ${f.toolName}:` : '';
+                text += `    [${date}]${tool} ${f.errorMessage.slice(0, 80)}\n`;
+            }
+        }
+        ctx.onEvent({ kind: 'text_delta', text });
         emitDone(ctx);
     },
     '/compact': async (ctx) => {
@@ -677,7 +732,7 @@ export async function handleSlashCommand(input, ctx) {
         ...Object.keys(DIRECT_COMMANDS),
         ...Object.keys(REWRITE_COMMANDS),
         ...ARG_COMMANDS.map(c => c.prefix.trim()),
-        '/branch', '/resume', '/model', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch',
+        '/branch', '/resume', '/model', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures',
     ];
     const cmd = input.split(/\s/)[0];
     const close = allCommands.filter(c => {
