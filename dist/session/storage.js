@@ -146,7 +146,9 @@ export function listSessions() {
             }
             catch { /* skip corrupted */ }
         }
-        return metas.sort((a, b) => b.updatedAt - a.updatedAt);
+        // Filter out ghost sessions (0 messages)
+        const filtered = metas.filter(m => m.messageCount > 0);
+        return filtered.sort((a, b) => b.updatedAt - a.updatedAt);
     }
     catch {
         return [];
@@ -175,5 +177,21 @@ export function pruneOldSessions(activeSessionId) {
             fs.unlinkSync(metaPath(s.id));
         }
         catch { /* ok */ }
+    }
+    // Also clean up ghost sessions (0 messages, older than 5 minutes)
+    const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+    for (const s of sessions) {
+        if (s.id === activeSessionId)
+            continue;
+        if (s.messageCount === 0 && s.createdAt < fiveMinAgo) {
+            try {
+                fs.unlinkSync(sessionPath(s.id));
+            }
+            catch { /* ok */ }
+            try {
+                fs.unlinkSync(metaPath(s.id));
+            }
+            catch { /* ok */ }
+        }
     }
 }

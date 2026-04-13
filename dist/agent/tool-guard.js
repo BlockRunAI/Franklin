@@ -89,6 +89,7 @@ export class SessionToolGuard {
     pendingReads = new Map();
     recentFetches = new Map();
     pendingFetches = new Map();
+    toolErrorCounts = new Map();
     startTurn() {
         this.turn++;
         this.webSearchesThisTurn = 0;
@@ -97,6 +98,15 @@ export class SessionToolGuard {
         }
     }
     async beforeExecute(invocation, scope) {
+        // Hard-block tools that have failed too many times this session
+        const errorCount = this.toolErrorCounts.get(invocation.name) ?? 0;
+        if (errorCount >= 3) {
+            return {
+                output: `${invocation.name} has failed ${errorCount} times this session and is now disabled. ` +
+                    'Tell the user what went wrong and suggest alternatives.',
+                isError: true,
+            };
+        }
         switch (invocation.name) {
             case 'WebSearch':
             case 'SearchX':
@@ -110,6 +120,10 @@ export class SessionToolGuard {
         }
     }
     afterExecute(invocation, result) {
+        // Track per-tool error counts across the session
+        if (result.isError) {
+            this.toolErrorCounts.set(invocation.name, (this.toolErrorCounts.get(invocation.name) ?? 0) + 1);
+        }
         switch (invocation.name) {
             case 'WebSearch':
             case 'SearchX':

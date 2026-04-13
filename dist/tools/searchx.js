@@ -107,7 +107,20 @@ async function execute(input, _ctx) {
         const targetUrl = isNotifications
             ? 'https://x.com/notifications'
             : `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query&f=live`;
-        await browser.open(targetUrl);
+        try {
+            await browser.open(targetUrl);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            browserPool.releaseBrowser();
+            if (msg.includes('Timeout') || msg.includes('timeout')) {
+                return {
+                    output: `SearchX: X.com timed out (network issue or blocked). Try again later or check your connection.`,
+                    isError: true,
+                };
+            }
+            return { output: `SearchX: Failed to open X.com: ${msg.slice(0, 200)}`, isError: true };
+        }
         await browser.waitForTimeout(4000);
         const tree = await browser.snapshot();
         // ── Diagnose page state ───────────────────────────────────────────
