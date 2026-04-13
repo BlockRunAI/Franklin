@@ -16,6 +16,7 @@ import { recordUsage } from '../stats/tracker.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
+import { recordOutcome } from '../router/local-elo.js';
 import { createSessionId, appendToSession, updateSessionMeta, pruneOldSessions, } from '../session/storage.js';
 // ─── Interactive Session ───────────────────────────────────────────────────
 /**
@@ -45,6 +46,8 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     let turnCount = 0;
     let tokenBudgetWarned = false; // Emit token budget warning at most once per session
     let lastSessionActivity = Date.now();
+    let lastRoutedModel = ''; // last model chosen by router (for local elo)
+    let lastRoutedCategory = ''; // last category detected (for local elo)
     let sessionInputTokens = 0;
     let sessionOutputTokens = 0;
     let sessionCostUsd = 0;
@@ -77,6 +80,10 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         if (input.startsWith('/')) {
             // /retry re-sends the last user message
             if (input === '/retry') {
+                // Record retry as negative signal for local elo
+                if (lastRoutedCategory && lastRoutedModel) {
+                    recordOutcome(lastRoutedCategory, lastRoutedModel, 'retried');
+                }
                 if (!lastUserInput) {
                     onEvent({ kind: 'text_delta', text: 'No previous message to retry.\n' });
                     onEvent({ kind: 'turn_done', reason: 'completed' });
@@ -207,6 +214,8 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 routingTier = routing.tier;
                 routingConfidence = routing.confidence;
                 routingSavings = routing.savings;
+                lastRoutedModel = routing.model;
+                lastRoutedCategory = routing.signals[0] || '';
             }
             try {
                 const result = await client.complete({
@@ -389,6 +398,10 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                         });
                     }
                 }
+                // Record success for local Elo learning
+                if (lastRoutedCategory && lastRoutedModel) {
+                    recordOutcome(lastRoutedCategory, lastRoutedModel, 'continued');
+                }
                 onEvent({ kind: 'turn_done', reason: 'completed' });
                 break;
             }
@@ -413,6 +426,9 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         if (loopCount >= maxTurns) {
             lastSessionActivity = Date.now();
             persistSessionMeta();
+            if (lastRoutedCategory && lastRoutedModel) {
+                recordOutcome(lastRoutedCategory, lastRoutedModel, 'max_turns');
+            }
             onEvent({ kind: 'turn_done', reason: 'max_turns' });
         }
     }
