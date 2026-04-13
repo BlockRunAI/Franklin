@@ -5,7 +5,7 @@
  */
 import { ModelClient } from './llm.js';
 import type { Dialogue } from './types.js';
-export declare const COMPACT_HEADER = "[CONTEXT COMPACTION] Earlier turns in this conversation were compacted to save context space. The summary below describes work that was already completed, and the current session state may still reflect that work (for example, files may already be changed). Use the summary and the current state to continue from where things left off, and avoid repeating work:";
+export declare const COMPACT_HEADER = "[CONTEXT COMPACTION \u2014 REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window \u2014 treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary.";
 /**
  * Check if compaction is needed and perform it if so.
  * Returns the (possibly compacted) history.

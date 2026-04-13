@@ -36,6 +36,49 @@ import type {
   UserContentPart,
 } from './types.js';
 
+/**
+ * Sanitize history: fix orphaned tool results and missing results.
+ * Inspired by Hermes _sanitize_api_messages().
+ */
+function sanitizeHistory(history: Dialogue[]): Dialogue[] {
+  // Collect all tool_use IDs from assistant messages
+  const callIds = new Set<string>();
+  // Collect all tool_result IDs from user messages
+  const resultIds = new Set<string>();
+
+  for (const msg of history) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if ((part as any).type === 'tool_use' && (part as any).id) {
+          callIds.add((part as any).id);
+        }
+      }
+    }
+    if (msg.role === 'user' && Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if ((part as any).type === 'tool_result' && (part as any).tool_use_id) {
+          resultIds.add((part as any).tool_use_id);
+        }
+      }
+    }
+  }
+
+  // Remove orphaned tool results (results without matching calls)
+  const orphaned = new Set([...resultIds].filter(id => !callIds.has(id)));
+  if (orphaned.size === 0) return history;
+
+  return history.map(msg => {
+    if (msg.role === 'user' && Array.isArray(msg.content)) {
+      const filtered = (msg.content as any[]).filter(
+        p => !(p.type === 'tool_result' && orphaned.has(p.tool_use_id))
+      );
+      if (filtered.length === 0) return null;
+      return { ...msg, content: filtered };
+    }
+    return msg;
+  }).filter(Boolean) as Dialogue[];
+}
+
 // ─── Interactive Session ───────────────────────────────────────────────────
 
 /**
@@ -270,6 +313,13 @@ export async function interactiveSession(
 
       // Safety net: handled in llm.ts resolveVirtualModel()
 
+      // Sanitize: remove orphaned tool results that could confuse the API
+      const sanitized = sanitizeHistory(history);
+      if (sanitized.length !== history.length) {
+        history.length = 0;
+        history.push(...sanitized);
+      }
+
       try {
         const result = await client.complete(
           {
@@ -295,6 +345,19 @@ export async function interactiveSession(
         responseParts = result.content;
         usage = result.usage;
         stopReason = result.stopReason;
+
+        // ── Empty response recovery (inspired by Hermes _empty_content_retries) ──
+        const hasText = responseParts.some(p => p.type === 'text' && (p as any).text?.trim());
+        const hasTools = responseParts.some(p => p.type === 'tool_use');
+        const hasThinking = responseParts.some(p => p.type === 'thinking');
+        if (!hasText && !hasTools && !hasThinking && recoveryAttempts < 3) {
+          recoveryAttempts++;
+          if (config.debug) {
+            console.error(`[runcode] Empty response — retrying (${recoveryAttempts}/3)`);
+          }
+          onEvent({ kind: 'text_delta', text: `\n*Empty response — retrying (${recoveryAttempts}/3)...*\n` });
+          continue;
+        }
       } catch (err) {
         // ── User abort (Esc key) ──
         if ((err as Error).name === 'AbortError' || abort.signal.aborted) {
