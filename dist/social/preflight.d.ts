@@ -6,6 +6,10 @@ import type { SocialBrowser } from './browser.js';
 /**
  * Verify that social config is ready and the user is logged in to X.
  * Returns the browser instance on success so callers can reuse it.
+ *
+ * Login detection order:
+ * 1. Check Cookies DB for auth_token (fast, no browser needed)
+ * 2. Fallback: open x.com/home and check AX tree for login_detection string
  */
 export declare function checkSocialReady(): Promise<{
     ready: boolean;
