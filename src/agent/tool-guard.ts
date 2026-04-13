@@ -130,6 +130,7 @@ export class SessionToolGuard {
   private pendingReads = new Map<string, FileSnapshot>();
   private recentFetches = new Map<string, FetchSnapshot>();
   private pendingFetches = new Map<string, FetchSnapshot>();
+  private toolErrorCounts = new Map<string, number>();
 
   startTurn(): void {
     this.turn++;
@@ -143,6 +144,16 @@ export class SessionToolGuard {
     invocation: CapabilityInvocation,
     scope: ExecutionScope
   ): Promise<CapabilityResult | null> {
+    // Hard-block tools that have failed too many times this session
+    const errorCount = this.toolErrorCounts.get(invocation.name) ?? 0;
+    if (errorCount >= 3) {
+      return {
+        output: `${invocation.name} has failed ${errorCount} times this session and is now disabled. ` +
+          'Tell the user what went wrong and suggest alternatives.',
+        isError: true,
+      };
+    }
+
     switch (invocation.name) {
       case 'WebSearch':
       case 'SearchX':
@@ -157,6 +168,14 @@ export class SessionToolGuard {
   }
 
   afterExecute(invocation: CapabilityInvocation, result: CapabilityResult): void {
+    // Track per-tool error counts across the session
+    if (result.isError) {
+      this.toolErrorCounts.set(
+        invocation.name,
+        (this.toolErrorCounts.get(invocation.name) ?? 0) + 1,
+      );
+    }
+
     switch (invocation.name) {
       case 'WebSearch':
       case 'SearchX':

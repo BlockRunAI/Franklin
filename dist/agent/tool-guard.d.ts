@@ -13,6 +13,7 @@ export declare class SessionToolGuard {
     private pendingReads;
     private recentFetches;
     private pendingFetches;
+    private toolErrorCounts;
     startTurn(): void;
     beforeExecute(invocation: CapabilityInvocation, scope: ExecutionScope): Promise<CapabilityResult | null>;
     afterExecute(invocation: CapabilityInvocation, result: CapabilityResult): void;
