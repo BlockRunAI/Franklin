@@ -105,8 +105,10 @@ function isNoSignalSearchResult(output: string, isError?: boolean): boolean {
   return Boolean(
     isError ||
     lower.startsWith('no results found for:') ||
+    lower.startsWith('no candidate posts found') ||
     lower.startsWith('search timed out') ||
-    lower.startsWith('search error:')
+    lower.startsWith('search error:') ||
+    lower.startsWith('searchx error:')
   );
 }
 
@@ -143,6 +145,7 @@ export class SessionToolGuard {
   ): Promise<CapabilityResult | null> {
     switch (invocation.name) {
       case 'WebSearch':
+      case 'SearchX':
         return this.beforeWebSearch(invocation);
       case 'Read':
         return this.beforeRead(invocation, scope);
@@ -156,6 +159,7 @@ export class SessionToolGuard {
   afterExecute(invocation: CapabilityInvocation, result: CapabilityResult): void {
     switch (invocation.name) {
       case 'WebSearch':
+      case 'SearchX':
         this.afterWebSearch(invocation, result);
         break;
       case 'Read':
