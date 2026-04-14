@@ -138,7 +138,7 @@ function extractText(msg: Dialogue): string {
 // Direct-handled commands (don't go to agent)
 const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | void> = {
   '/stash': (ctx) => {
-    const r = gitCmd(ctx, 'git stash push -m "runcode auto-stash"', 10000);
+    const r = gitCmd(ctx, 'git stash push -m "franklin auto-stash"', 10000);
     if (r !== null) ctx.onEvent({ kind: 'text_delta', text: r ? `${r}\n` : 'No changes to stash.\n' });
     emitDone(ctx);
   },
@@ -244,7 +244,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
     emitDone(ctx);
   },
   '/bug': (ctx) => {
-    ctx.onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/runcode/issues\n' });
+    ctx.onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/Franklin/issues\n' });
     emitDone(ctx);
   },
   '/version': (ctx) => {

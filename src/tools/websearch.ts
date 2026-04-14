@@ -34,7 +34,7 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        'User-Agent': `runcode/${VERSION} (coding-agent)`,
+        'User-Agent': `franklin/${VERSION} (coding-agent)`,
       },
     });
 

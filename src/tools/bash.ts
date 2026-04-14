@@ -205,7 +205,9 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
         cwd: ctx.workingDir,
         env: {
           ...process.env,
-          RUNCODE: '1', // Let scripts detect they're running inside runcode
+          FRANKLIN: '1', // Let scripts detect they're running inside Franklin
+          FRANKLIN_WORKDIR: ctx.workingDir,
+          RUNCODE: '1', // Backwards compat
           RUNCODE_WORKDIR: ctx.workingDir,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -357,26 +359,31 @@ export const bashCapability: CapabilityHandler = {
     name: 'Bash',
     description: `Execute shell commands and return output.
 
-The working directory persists between commands, but shell state does not.
+The working directory persists between commands, but shell state does not. The shell environment is initialized from the user's profile.
 
 IMPORTANT: Do NOT use Bash when a dedicated tool exists:
-- Read files: use Read (NOT cat/head/tail)
+- Read files: use Read (NOT cat/head/tail/sed)
 - Edit files: use Edit (NOT sed/awk)
 - Create files: use Write (NOT echo/heredoc)
 - Search content: use Grep (NOT grep/rg)
 - Find files: use Glob (NOT find/ls)
+Using dedicated tools allows the user to better understand and review your work.
 
 Reserve Bash for: builds, installs, git, npm/pip, processes, scripts, network, and anything requiring a shell.
 
 When issuing multiple commands:
 - Independent commands: make multiple parallel Bash calls in one response.
 - Sequential dependent commands: chain with && in a single call.
-- Do NOT use newlines to separate commands.
+- Do NOT use newlines to separate commands (newlines are ok inside quoted strings).
+- Use ; only when you need sequential execution but don't care if earlier commands fail.
 
 For git commands:
 - Prefer creating a new commit rather than amending.
 - Never skip hooks (--no-verify) unless the user explicitly asked.
 - Never force push to main/master without user confirmation.
+- Before running destructive operations (git reset --hard, git checkout --), consider safer alternatives.
+
+Avoid unnecessary sleep commands. Do not retry failing commands in a sleep loop — diagnose the root cause.
 
 Output is capped at 512KB capture / 32KB return. Default timeout 2min, max 10min.`,
     input_schema: {

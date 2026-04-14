@@ -11,7 +11,7 @@ try {
 catch { /* use default */ }
 export const VERSION = _version;
 // Shared User-Agent string for all outbound HTTP requests
-export const USER_AGENT = `runcode/${_version} (node/${process.versions.node}; ${process.platform}; ${process.arch})`;
+export const USER_AGENT = `franklin/${_version} (node/${process.versions.node}; ${process.platform}; ${process.arch})`;
 export const BLOCKRUN_DIR = path.join(os.homedir(), '.blockrun');
 export const CHAIN_FILE = path.join(BLOCKRUN_DIR, 'payment-chain');
 export const API_URLS = {

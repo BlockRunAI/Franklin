@@ -53,7 +53,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'User-Agent': `runcode/${VERSION}`,
+    'User-Agent': `franklin/${VERSION}`,
   };
 
   const controller = new AbortController();

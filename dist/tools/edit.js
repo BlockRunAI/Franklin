@@ -157,10 +157,11 @@ export const editCapability = {
 
 Usage:
 - You MUST use Read at least once before editing. This tool will error if you attempt an edit without reading the file first.
-- When editing text from Read output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that is the actual file content to match.
+- When editing text from Read output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
 - ALWAYS prefer editing existing files. NEVER write new files unless explicitly required.
+- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
 - The edit will FAIL if old_string is not unique in the file. Either provide a larger string with more surrounding context to make it unique, or use replace_all to change every instance.
-- Use replace_all for replacing and renaming strings across the file.
+- Use replace_all for replacing and renaming strings across the file. This is useful for renaming a variable, for instance.
 - old_string and new_string must be different.
 
 IMPORTANT: Always use Edit instead of sed or awk via Bash.`,
