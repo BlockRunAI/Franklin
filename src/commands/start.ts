@@ -272,6 +272,19 @@ async function runWithInkUI(
   }
 
   await disconnectMcpServers();
+
+  // Session summary — show cost and usage before goodbye
+  try {
+    const { getStatsSummary } = await import('../stats/tracker.js');
+    const { stats, saved } = getStatsSummary();
+    if (stats.totalRequests > 0) {
+      const cost = stats.totalCostUsd.toFixed(4);
+      const savedStr = saved > 0.001 ? ` · saved $${saved.toFixed(2)} vs Opus` : '';
+      const tokens = `${(stats.totalInputTokens / 1000).toFixed(0)}k in / ${(stats.totalOutputTokens / 1000).toFixed(0)}k out`;
+      console.log(chalk.dim(`\n  Session: ${stats.totalRequests} requests · $${cost} USDC${savedStr} · ${tokens}`));
+    }
+  } catch { /* stats unavailable */ }
+
   console.log(chalk.dim('\nGoodbye.\n'));
 }
 
@@ -330,6 +343,18 @@ async function runWithBasicUI(
       console.error(chalk.red(`\nError: ${(err as Error).message}`));
     }
   }
+
+  // Session summary for piped mode
+  try {
+    const { getStatsSummary } = await import('../stats/tracker.js');
+    const { stats, saved } = getStatsSummary();
+    if (stats.totalRequests > 0) {
+      const cost = stats.totalCostUsd.toFixed(4);
+      const savedStr = saved > 0.001 ? ` · saved $${saved.toFixed(2)} vs Opus` : '';
+      const tokens = `${(stats.totalInputTokens / 1000).toFixed(0)}k in / ${(stats.totalOutputTokens / 1000).toFixed(0)}k out`;
+      console.error(`Session: ${stats.totalRequests} requests · $${cost} USDC${savedStr} · ${tokens}`);
+    }
+  } catch { /* stats unavailable */ }
 
   ui.printGoodbye();
   flushStats();
