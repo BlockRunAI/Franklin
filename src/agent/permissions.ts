@@ -8,6 +8,34 @@ import path from 'node:path';
 import readline from 'node:readline';
 import chalk from 'chalk';
 import { BLOCKRUN_DIR } from '../config.js';
+import { classifyBashRisk } from './bash-guard.js';
+
+// ─── Common dev command patterns (auto-allow without prompting) ──────────
+// These are "normal" risk commands that are too common to interrupt the user.
+// Only applied when --trust flag is set (user explicitly opted into auto-mode).
+
+const COMMON_DEV_PATTERNS = [
+  /^npm\s+(install|i|ci|run|exec|test|start|build|lint|format|outdated|ls|list|info|view|pack)\b/,
+  /^(pnpm|yarn|bun)\s+(install|add|run|test|build|lint|exec)\b/,
+  /^pip3?\s+install\b/,
+  /^python3?\s+/,
+  /^node\s+/,
+  /^(pytest|jest|vitest|mocha)\b/,
+  /^(tsc|eslint|prettier|biome)\b/,
+  /^git\s+(add|commit|push|pull|fetch|status|diff|log|branch|checkout|switch|merge|rebase|stash|tag|remote|show)\b/,
+  /^(cat|head|tail|wc|sort|uniq|diff|file|which|whoami|hostname|uname|date|echo)\b/,
+  /^(ls|pwd|cd|mkdir|touch)\b/,
+  /^(docker|docker-compose)\s+(ps|logs|images|inspect|stats|exec|build|run|pull)\b/,
+  /^(curl|wget)\s+/,
+  /^make\b/,
+  /^cargo\s+(build|test|check|clippy|run|bench|doc|fmt)\b/,
+  /^go\s+(build|test|run|vet|fmt|mod)\b/,
+];
+
+function isCommonDevCommand(cmd: string): boolean {
+  const trimmed = cmd.trim();
+  return COMMON_DEV_PATTERNS.some(p => p.test(trimmed));
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -98,8 +126,17 @@ export class PermissionManager {
       return { behavior: 'allow', reason: 'allowed by rule' };
     }
 
-    // Check explicit ask rules
+    // Check explicit ask rules — with Bash risk classification
     if (this.matchesRule(toolName, input, this.rules.ask)) {
+      // Bash Guardian: classify risk before blindly asking
+      if (toolName === 'Bash') {
+        const cmd = (input.command as string) || '';
+        const risk = classifyBashRisk(cmd);
+        if (risk.level === 'safe') {
+          return { behavior: 'allow', reason: 'safe command' };
+        }
+        // dangerous and normal both ask, but dangerous gets a warning in describeAction
+      }
       return { behavior: 'ask' };
     }
 
@@ -244,7 +281,12 @@ export class PermissionManager {
     switch (toolName) {
       case 'Bash': {
         const cmd = (input.command as string) || '';
-        return `Execute: ${cmd.length > 100 ? cmd.slice(0, 100) + '...' : cmd}`;
+        const preview = cmd.length > 100 ? cmd.slice(0, 100) + '...' : cmd;
+        const risk = classifyBashRisk(cmd);
+        if (risk.level === 'dangerous') {
+          return `\x1b[31m⚠ DANGEROUS: ${risk.reason}\x1b[0m\n  │ Execute: ${preview}`;
+        }
+        return `Execute: ${preview}`;
       }
       case 'Write': {
         const fp = (input.file_path as string) || '';
