@@ -433,6 +433,21 @@ export async function interactiveSession(
           'Prioritize correctness and thoroughness over speed.'
         );
       }
+
+      // ── Context awareness injection ──
+      // Tell the model how full its context window is so it can self-regulate.
+      // At high usage, nudge it to be concise and avoid unnecessary tool calls.
+      const { contextUsagePct: preCallPct } = getAnchoredTokenCount(history);
+      if (preCallPct > 50) {
+        let contextNote = `# Context Window Status\nYou have used approximately ${Math.round(preCallPct)}% of your context window.`;
+        if (preCallPct > 80) {
+          contextNote += ' Context is critically full. Be extremely concise. Avoid re-reading files already in context. Prioritize completing the current task over exploring new questions.';
+        } else if (preCallPct > 65) {
+          contextNote += ' Be concise in responses. Avoid unnecessary tool calls. Do not re-read files you already have in context.';
+        }
+        systemParts.push(contextNote);
+      }
+
       const systemPrompt = systemParts.join('\n\n');
       const modelMaxOut = getMaxOutputTokens(config.model);
       let maxTokens = Math.min(maxTokensOverride ?? CAPPED_MAX_TOKENS, modelMaxOut);

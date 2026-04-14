@@ -161,15 +161,49 @@ function compressBuild(out) {
     });
     return collapseBlankLines(kept.join('\n')).trim() || out.trim();
 }
+const backgroundTasks = new Map();
+let bgTaskCounter = 0;
+/** Get a background task's result (called by the agent to check status). */
+export function getBackgroundTask(id) {
+    return backgroundTasks.get(id);
+}
+/** List all background tasks. */
+export function listBackgroundTasks() {
+    return [...backgroundTasks.values()];
+}
 const MAX_OUTPUT_BYTES = 512 * 1024; // 512KB capture buffer (prevents OOM)
 const MAX_RETURN_CHARS = 32_000; // 32KB return cap (~8,000 tokens) — prevents context bloat
 const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes
 async function execute(input, ctx) {
-    const { command, timeout } = input;
+    const { command, timeout, run_in_background: runInBackground } = input;
     if (!command || typeof command !== 'string') {
         return { output: 'Error: command is required', isError: true };
     }
     const timeoutMs = Math.min(timeout ?? DEFAULT_TIMEOUT_MS, 600_000);
+    // Background execution: spawn and return immediately with a task ID
+    if (runInBackground) {
+        const taskId = `bg-${++bgTaskCounter}`;
+        const desc = input.description || command.slice(0, 60);
+        const task = {
+            id: taskId,
+            command,
+            description: desc,
+            startedAt: Date.now(),
+            status: 'running',
+        };
+        backgroundTasks.set(taskId, task);
+        // Run in background — don't await
+        executeCommand(command, timeoutMs, ctx).then(result => {
+            task.status = result.isError ? 'failed' : 'completed';
+            task.result = result;
+        });
+        return {
+            output: `Background task started: ${taskId}\nCommand: ${command.slice(0, 100)}\n\nYou will be notified when it completes. Do not poll or sleep — continue with other work.`,
+        };
+    }
+    return executeCommand(command, timeoutMs, ctx);
+}
+function executeCommand(command, timeoutMs, ctx) {
     return new Promise((resolve) => {
         const shell = process.env.SHELL || '/bin/bash';
         let child;
@@ -418,6 +452,7 @@ Output is capped at 512KB capture / 32KB return.`,
                 command: { type: 'string', description: 'The command to execute' },
                 description: { type: 'string', description: 'Clear, concise description of what this command does in active voice. For simple commands (git, npm), keep it brief (5-10 words): "Show working tree status", "Install dependencies". For complex commands (piped, obscure flags), add enough context: "Find and delete all .tmp files recursively"' },
                 timeout: { type: 'number', description: 'Timeout in milliseconds (default: 120000, max: 600000)' },
+                run_in_background: { type: 'boolean', description: 'Set to true to run this command in the background. Returns immediately with a task ID. Use this for long-running commands (builds, installs, deploys) when you don\'t need the result immediately. You will be notified when it completes — do NOT sleep or poll.' },
             },
             required: ['command'],
         },
