@@ -508,7 +508,9 @@ function RunCodeApp({
     // Show user message in scrollback so the conversation is readable
     setCommittedResponses(rs => [...rs, {
       key: `user-${Date.now()}`,
-      text: chalk.bold.cyan('❯ ') + chalk.bold(trimmed),
+      // Gold matches the top of the Franklin banner gradient (#FFD700).
+      // Brand-consistent, readable on dark terminals, evokes $100-bill identity.
+      text: chalk.hex('#FFD700').bold('❯ ') + chalk.hex('#FFD700').bold(trimmed),
       tokens: { input: 0, output: 0, calls: 0 },
       cost: 0,
     }]);
