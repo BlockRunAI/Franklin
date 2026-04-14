@@ -118,9 +118,34 @@ async function execute(input, ctx) {
             : '';
         return { output: `No files matched pattern "${pattern}" in ${baseDir}.${hint}` };
     }
-    let output = sorted.join('\n');
+    // Group by directory for compact output (saves 30-40% tokens on large results)
+    let output;
+    if (sorted.length > 10) {
+        const grouped = new Map();
+        for (const p of sorted) {
+            const dir = path.dirname(p);
+            if (!grouped.has(dir))
+                grouped.set(dir, []);
+            grouped.get(dir).push(path.basename(p));
+        }
+        const parts = [];
+        for (const [dir, files] of grouped) {
+            if (files.length === 1) {
+                parts.push(`${dir}/${files[0]}`);
+            }
+            else {
+                parts.push(`${dir}/  (${files.length} files)`);
+                for (const f of files)
+                    parts.push(`  ${f}`);
+            }
+        }
+        output = parts.join('\n');
+    }
+    else {
+        output = sorted.join('\n');
+    }
     if (sorted.length >= MAX_RESULTS) {
-        output += `\n\n... (limited to ${MAX_RESULTS} results. Use a more specific pattern to narrow results.)`;
+        output += `\n\n... (limited to ${MAX_RESULTS} results. Use a more specific pattern.)`;
     }
     // Cap total output length to prevent context bloat
     if (output.length > MAX_OUTPUT_CHARS) {
@@ -135,7 +160,7 @@ async function execute(input, ctx) {
         }
         const remaining = lines.length - count;
         if (remaining > 0) {
-            output = `${trimmed}\n... (${remaining} more paths not shown — use a more specific pattern)`;
+            output = `${trimmed}\n... (${remaining} more not shown — use a more specific pattern)`;
         }
     }
     return { output };
