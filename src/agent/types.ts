@@ -59,6 +59,8 @@ export interface CapabilityHandler {
   spec: CapabilityDefinition;
   execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult>;
   concurrent?: boolean; // safe to run in parallel with other concurrent capabilities
+  /** Dynamic concurrency check — called per-invocation. Overrides `concurrent` when provided. */
+  isConcurrentSafe?: (input: Record<string, unknown>) => boolean;
 }
 
 export interface CapabilityResult {

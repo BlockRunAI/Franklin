@@ -386,6 +386,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 guard: toolGuard,
                 onStart: (id, name, preview) => onEvent({ kind: 'capability_start', id, name, preview }),
                 onProgress: (id, text) => onEvent({ kind: 'capability_progress', id, text }),
+                sessionId,
             });
             // ── Router: resolve routing profiles to concrete models ──
             const routingProfile = parseRoutingProfile(config.model);

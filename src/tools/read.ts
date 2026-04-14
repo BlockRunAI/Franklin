@@ -14,10 +14,11 @@ interface ReadInput {
 
 /**
  * Tracks files that were only partially read (offset or limit applied).
- * Edit tool uses this to warn when editing without full context.
+ * Stores the read range so Edit tool can give smarter warnings —
+ * only warns if the edit target is near/beyond the boundary of what was read.
  * Exported so edit.ts can check and clear entries.
  */
-export const partiallyReadFiles = new Set<string>();
+export const partiallyReadFiles = new Map<string, { startLine: number; endLine: number; totalLines: number }>();
 
 /**
  * Tracks files that have been read in this session — enables read-before-edit enforcement.
@@ -68,10 +69,14 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     const endLine = Math.min(allLines.length, startLine + maxLines);
     const slice = allLines.slice(startLine, endLine);
 
-    // Track partial reads — file was not read from the beginning or was truncated
+    // Track partial reads — store the range so Edit can give smarter warnings
     const isPartial = startLine > 0 || endLine < allLines.length;
     if (isPartial) {
-      partiallyReadFiles.add(resolved);
+      partiallyReadFiles.set(resolved, {
+        startLine: startLine + 1, // 1-based
+        endLine,
+        totalLines: allLines.length,
+      });
     } else {
       // Full read — clear any stale partial flag
       partiallyReadFiles.delete(resolved);

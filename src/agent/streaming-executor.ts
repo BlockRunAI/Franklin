@@ -4,6 +4,8 @@
  * Non-concurrent tools wait until the full response is received.
  */
 
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type {
   CapabilityHandler,
   CapabilityInvocation,
@@ -13,10 +15,38 @@ import type {
 import type { PermissionManager } from './permissions.js';
 import { recordFailure } from '../stats/failures.js';
 import type { SessionToolGuard } from './tool-guard.js';
+import { BLOCKRUN_DIR } from '../config.js';
 
 interface PendingTool {
   invocation: CapabilityInvocation;
   promise: Promise<CapabilityResult>;
+}
+
+/** Persist a large tool result to disk and return a preview string.
+ * Inspired by Claude Code's toolResultStorage.ts. */
+const PERSIST_THRESHOLD = 50_000;
+const PREVIEW_SIZE = 2_000;
+
+function persistLargeResult(sessionId: string, toolUseId: string, output: string): string {
+  const dir = join(BLOCKRUN_DIR, 'tool-results', sessionId);
+  try {
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, `${toolUseId}.txt`);
+    writeFileSync(filePath, output, { flag: 'wx' }); // write-once (skip if exists)
+
+    // Generate preview — truncate at line boundary for clean output
+    let preview = output.slice(0, PREVIEW_SIZE);
+    const lastNl = preview.lastIndexOf('\n');
+    if (lastNl > PREVIEW_SIZE * 0.5) {
+      preview = preview.slice(0, lastNl);
+    }
+
+    return `<persisted-output>\nOutput too large (${(output.length / 1024).toFixed(1)}KB). Full output saved to: ${filePath}\n\nPreview (first ${PREVIEW_SIZE / 1000}KB):\n${preview}\n...\n</persisted-output>`;
+  } catch {
+    // Fallback: simple truncation if disk write fails
+    return output.slice(0, PERSIST_THRESHOLD) +
+      `\n\n[Truncated: original was ${output.length.toLocaleString()} chars]`;
+  }
 }
 
 export class StreamingExecutor {
@@ -27,6 +57,7 @@ export class StreamingExecutor {
   private onStart: (id: string, name: string, preview?: string) => void;
   private onProgress?: (id: string, text: string) => void;
   private pending: PendingTool[] = [];
+  private sessionId: string;
 
   constructor(opts: {
     handlers: Map<string, CapabilityHandler>;
@@ -35,6 +66,7 @@ export class StreamingExecutor {
     guard?: SessionToolGuard;
     onStart: (id: string, name: string, preview?: string) => void;
     onProgress?: (id: string, text: string) => void;
+    sessionId?: string;
   }) {
     this.handlers = opts.handlers;
     this.scope = opts.scope;
@@ -42,6 +74,7 @@ export class StreamingExecutor {
     this.guard = opts.guard;
     this.onStart = opts.onStart;
     this.onProgress = opts.onProgress;
+    this.sessionId = opts.sessionId || 'default';
   }
 
   /**
@@ -51,7 +84,10 @@ export class StreamingExecutor {
    */
   onToolReceived(invocation: CapabilityInvocation): void {
     const handler = this.handlers.get(invocation.name);
-    const isConcurrent = handler?.concurrent ?? false;
+    // Dynamic concurrency check (e.g., Bash is concurrent only for read-only commands)
+    const isConcurrent = handler?.isConcurrentSafe
+      ? handler.isConcurrentSafe(invocation.input)
+      : (handler?.concurrent ?? false);
 
     if (isConcurrent) {
       // Concurrent tools are auto-allowed — start immediately and time from here
@@ -186,12 +222,11 @@ export class StreamingExecutor {
       let result = await handler.execute(invocation.input, progressScope);
       this.guard?.afterExecute(invocation, result);
 
-      // Cap tool result size to prevent context bloat (inspired by Hermes 200KB budget)
-      const MAX_RESULT_CHARS = 50_000;
-      if (result.output.length > MAX_RESULT_CHARS) {
+      // Persist large results to disk with preview (inspired by Claude Code toolResultStorage)
+      // Instead of just truncating, save the full result to disk so it can be re-read later.
+      if (result.output.length > PERSIST_THRESHOLD) {
         result = {
-          output: result.output.slice(0, MAX_RESULT_CHARS) +
-            `\n\n[Truncated: original was ${result.output.length.toLocaleString()} chars. Use Read tool to access full content.]`,
+          output: persistLargeResult(this.sessionId, invocation.id, result.output),
           isError: result.isError,
         };
       }
