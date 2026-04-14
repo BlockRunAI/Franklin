@@ -457,6 +457,13 @@ async function loadOverview() {
     api('wallet'), api('stats'), api('insights?days=30')
   ]);
 
+  // Surface API errors so users see "offline" instead of silent "—"
+  if (!wallet && !stats) {
+    const err = document.getElementById('total-cost');
+    if (err) err.textContent = 'API offline';
+    return;
+  }
+
   if (wallet) {
     document.getElementById('balance').textContent = usdBig(wallet.balance) + ' USDC';
     document.getElementById('wallet-chain').textContent = wallet.chain;
@@ -496,11 +503,14 @@ async function loadOverview() {
     ).join('');
   }
 
-  if (insights && insights.dailyCosts) {
-    const days = insights.dailyCosts.slice(-30);
-    const maxDay = Math.max(...days.map(d => d.cost), 0.001);
+  // Backend returns insights.daily with [{date, requests, costUsd}]
+  const dailyData = insights && (insights.daily || insights.dailyCosts);
+  if (dailyData && dailyData.length) {
+    const days = dailyData.slice(-30);
+    const getCost = (d) => d.costUsd !== undefined ? d.costUsd : d.cost || 0;
+    const maxDay = Math.max(...days.map(getCost), 0.001);
     document.getElementById('daily-chart').innerHTML = days.map(d =>
-      '<div class="daily-bar" data-tip="' + d.date + ': ' + usd(d.cost) + '" style="height:' + Math.max(d.cost/maxDay*100, 2) + '%"></div>'
+      '<div class="daily-bar" data-tip="' + d.date + ': ' + usd(getCost(d)) + '" style="height:' + Math.max(getCost(d)/maxDay*100, 2) + '%"></div>'
     ).join('');
   }
 }
