@@ -12,6 +12,7 @@ import { resolveModel } from '../ui/model-picker.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { connectMcpServers, disconnectMcpServers } from '../mcp/client.js';
 export { estimateCost } from '../pricing.js';
+export { listSessions, loadSessionHistory, loadSessionMeta } from '../session/storage.js';
 // ─── FRANKLIN plain-text banner for webview (no ANSI) ──────────────────────
 const FRANKLIN_ART = [
     ' ███████╗██████╗  █████╗ ███╗   ██╗██╗  ██╗██╗     ██╗███╗   ██╗',

@@ -5,7 +5,11 @@ import {
   getVsCodeWelcomeInfo,
   getVsCodeWalletStatus,
   estimateCost,
+  listSessions,
+  loadSessionHistory,
   type StreamEvent,
+  type SessionMeta,
+  type Dialogue,
 } from '@blockrun/franklin/vscode-session';
 
 /** Resolve the working directory: workspace folder if available, else home dir */
@@ -100,10 +104,77 @@ export function activate(context: vscode.ExtensionContext) {
       tabProvider.resolveWebviewPanel(panel);
     })
   );
+
+  // ── History ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand('franklin.refreshHistory', () => {
+      provider.sendHistoryList();
+    })
+  );
 }
 
 export function deactivate() {
   latestAbort = undefined;
+}
+
+function formatTimeAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function getSessionTitle(m: SessionMeta): string {
+  // Try to get first user message as title
+  try {
+    const history = loadSessionHistory(m.id);
+    for (const d of history) {
+      if (d.role === 'user') {
+        const text = typeof d.content === 'string'
+          ? d.content
+          : Array.isArray(d.content)
+            ? d.content
+                .filter((p): p is { type: 'text'; text: string } => (p as unknown as Record<string, unknown>).type === 'text')
+                .map(p => p.text).join(' ')
+            : '';
+        if (text) return text.length > 40 ? text.slice(0, 40) + '...' : text;
+      }
+    }
+  } catch { /* fall through */ }
+  return m.workDir ? m.workDir.split('/').pop() || m.id.slice(0, 8) : m.id.slice(0, 8);
+}
+
+function getHistoryList(): { id: string; title: string; ago: string; model: string; turns: number }[] {
+  try {
+    const sessions = listSessions().filter(s => s.turnCount > 0 && s.messageCount > 0).slice(0, 20);
+    const result: { id: string; title: string; ago: string; model: string; turns: number }[] = [];
+    for (const m of sessions) {
+      try {
+        result.push({
+          id: m.id,
+          title: getSessionTitle(m),
+          ago: formatTimeAgo(m.updatedAt),
+          model: m.model.split('/').pop() || m.model,
+          turns: m.turnCount,
+        });
+      } catch {
+        result.push({
+          id: m.id,
+          title: m.id.slice(0, 8),
+          ago: formatTimeAgo(m.updatedAt),
+          model: m.model.split('/').pop() || m.model,
+          turns: m.turnCount,
+        });
+      }
+    }
+    return result;
+  } catch {
+    return [];
+  }
 }
 
 class FranklinChatProvider implements vscode.WebviewViewProvider {
@@ -126,6 +197,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     });
 
     void this.pushWelcome();
+    this.sendHistoryList();
     void this.runAgentSession();
   }
 
@@ -139,6 +211,31 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
 
     void this.pushWelcome();
     void this.runAgentSession();
+  }
+
+  /** Send the history list to the webview */
+  sendHistoryList(): void {
+    const items = getHistoryList();
+    void this.webview?.postMessage({ type: 'historyList', items });
+  }
+
+  /** Load a historical session into the chat view */
+  loadHistory(dialogues: Dialogue[], title?: string): void {
+    if (!this.webview) return;
+    const messages: { role: string; text: string }[] = [];
+    for (const d of dialogues) {
+      let text = '';
+      if (typeof d.content === 'string') {
+        text = d.content;
+      } else if (Array.isArray(d.content)) {
+        text = d.content
+          .filter((p): p is { type: 'text'; text: string } => (p as unknown as Record<string, unknown>).type === 'text')
+          .map(p => p.text)
+          .join('\n');
+      }
+      if (text) messages.push({ role: d.role, text });
+    }
+    void this.webview.postMessage({ type: 'loadHistory', messages, title: title || 'History' });
   }
 
   private initWebview(webview: vscode.Webview): void {
@@ -235,6 +332,23 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
         });
       }
     }
+    if (msg.type === 'requestHistory') {
+      this.sendHistoryList();
+    }
+    if (msg.type === 'loadSession' && msg.text) {
+      const history = loadSessionHistory(msg.text);
+      if (history.length > 0) {
+        // Find title from first user message
+        let title = msg.text.slice(0, 8);
+        for (const d of history) {
+          if (d.role === 'user') {
+            const text = typeof d.content === 'string' ? d.content : '';
+            if (text) { title = text.length > 30 ? text.slice(0, 30) + '...' : text; break; }
+          }
+        }
+        this.loadHistory(history, title);
+      }
+    }
   }
 
   private async runAgentSession() {
@@ -322,22 +436,124 @@ function getWebviewHtml(): string {
       overflow-y: auto;
       white-space: pre-wrap;
       word-break: break-word;
-      border: 1px solid var(--vscode-widget-border, #444);
-      border-radius: 4px;
+      border: none;
       padding: 8px;
       margin-bottom: 8px;
       font-family: var(--vscode-editor-font-family);
       font-size: 12px;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
-    body.session-busy #log {
-      border-color: var(--vscode-focusBorder, #007fd4);
-      box-shadow: inset 0 0 0 1px rgba(0, 127, 212, 0.22);
+    .user {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 10px;
     }
-    .user { color: var(--vscode-textLink-foreground); margin-top: 8px; }
-    .assistant { color: var(--vscode-foreground); margin-top: 8px; }
-    .meta { color: var(--vscode-descriptionForeground); font-size: 11px; }
-    .tool { color: var(--vscode-symbolIcon-functionForeground); font-size: 11px; }
+    .user .bubble {
+      background: rgba(128,128,128,0.2);
+      border-radius: 12px;
+      padding: 8px 14px;
+      max-width: 80%;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--vscode-foreground);
+      word-break: break-word;
+    }
+    .assistant {
+      color: var(--vscode-foreground);
+      margin-top: 10px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .assistant .msg-content { }
+    .msg-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      padding-top: 4px;
+    }
+    .msg-actions button {
+      background: none;
+      border: none;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      opacity: 0.6;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .msg-actions button:hover { opacity: 1; background: rgba(128,128,128,0.15); }
+    .msg-actions button.active { opacity: 1; color: var(--vscode-foreground); }
+    .msg-actions .msg-model {
+      margin-left: auto;
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .meta { color: var(--vscode-descriptionForeground); font-size: 10px; margin-top: 6px; }
+    .tool { color: var(--vscode-symbolIcon-functionForeground); font-size: 10px; margin-top: 4px; }
+    /* ── Markdown rendering ── */
+    .assistant code {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      background: rgba(128,128,128,0.15);
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    .assistant .code-block {
+      position: relative;
+      background: var(--vscode-textCodeBlock-background, rgba(128,128,128,0.1));
+      border: 1px solid var(--vscode-widget-border, #444);
+      border-radius: 6px;
+      margin: 8px 0;
+      overflow: hidden;
+    }
+    .assistant .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 10px;
+      background: rgba(128,128,128,0.08);
+      border-bottom: 1px solid var(--vscode-widget-border, #444);
+    }
+    .assistant .code-lang {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .assistant .code-copy {
+      background: none;
+      border: none;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      opacity: 0.7;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .assistant .code-copy:hover { opacity: 1; background: rgba(128,128,128,0.2); }
+    .assistant pre {
+      margin: 0;
+      padding: 10px 12px;
+      overflow-x: auto;
+      white-space: pre;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      line-height: 1.45;
+      background: none;
+    }
+    .assistant pre code {
+      background: none;
+      padding: 0;
+      border-radius: 0;
+    }
+    .assistant strong { font-weight: 600; }
+    .assistant em { font-style: italic; }
     /* ── Composer (Cursor-style) ── */
     #composer {
       flex-shrink: 0;
@@ -465,131 +681,31 @@ function getWebviewHtml(): string {
     #stop { background: rgba(160,160,160,0.4); color: var(--vscode-editor-background, #1e1e1e); border: none; }
     #stop:hover:not(:disabled) { background: rgba(160,160,160,0.55); }
     #stop.hidden-btn { display: none; }
-    #welcome {
-      flex-shrink: 0;
-      border: 1px solid var(--vscode-widget-border, #444);
-      border-radius: 4px;
-      padding: 10px 8px;
-      margin-bottom: 8px;
-      background: var(--vscode-sideBar-background, var(--vscode-editor-background));
-      max-height: 42vh;
-      overflow: auto;
-    }
-    #welcome .banner-pre {
-      margin: 0 0 8px 0;
-      padding: 0;
-      font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Monaco, Consolas, monospace;
-      font-size: 8.5px;
-      line-height: 1.12;
-      letter-spacing: 0;
-      tab-size: 8;
-      color: var(--vscode-descriptionForeground);
-      white-space: pre;
-      overflow-x: auto;
-      word-break: keep-all;
-      overflow-wrap: normal;
-    }
-    #welcome .footer {
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      margin: 6px 0 8px 0;
-      line-height: 1.35;
-    }
-    #welcome dl {
-      margin: 0;
-      font-size: 11px;
-      line-height: 1.5;
-      display: grid;
-      grid-template-columns: auto 1fr;
-      column-gap: 10px;
-      row-gap: 4px;
-      align-items: start;
-    }
-    #welcome dt {
-      margin: 0;
-      color: var(--vscode-descriptionForeground);
-      white-space: nowrap;
-    }
-    #welcome dd {
-      margin: 0;
-      word-break: break-all;
-      color: var(--vscode-foreground);
-    }
-    #welcome .welcome-hint {
-      margin-top: 8px;
-      font-size: 10px;
-      color: var(--vscode-descriptionForeground);
-    }
-    .status-strip {
-      flex-shrink: 0;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      gap: 6px 10px;
-      padding: 6px 8px;
-      margin-bottom: 8px;
-      font-size: 11px;
-      line-height: 1.35;
-      border: 1px solid var(--vscode-widget-border, #444);
-      border-radius: 4px;
-      background: var(--vscode-editor-inactiveSelectionBackground, rgba(128,128,128,0.12));
-    }
-    .status-strip .st-label {
-      color: var(--vscode-descriptionForeground);
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      margin-right: 4px;
-    }
-    .status-strip code {
-      font-family: var(--vscode-editor-font-family);
-      font-size: 11px;
-    }
-    .status-strip .st-sep {
-      color: var(--vscode-widget-border, #666);
-      user-select: none;
-    }
-    .status-strip #stWallet {
-      word-break: break-all;
-      max-width: 100%;
-    }
-    /* Activity row */
-    #activity {
-      flex-shrink: 0;
+    /* Activity row (inline in log) */
+    .activity {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 6px 10px;
-      margin-bottom: 8px;
-      font-size: 12px;
+      padding: 6px 0;
+      margin-top: 8px;
+      font-size: 11px;
       line-height: 1.4;
-      border-radius: 4px;
-      border: 1px solid var(--vscode-widget-border, #444);
-      background: var(--vscode-sideBar-background, var(--vscode-editor-background));
-      color: var(--vscode-editorWarning-foreground, #cca700);
+      color: var(--vscode-descriptionForeground);
     }
-    #activity.hidden {
-      display: none !important;
-    }
-    #activity.thinking {
+    .activity.thinking {
       color: var(--vscode-charts-purple, #b48ead);
-      border-color: var(--vscode-charts-purple, #6b4c7a);
     }
-    #activity.tool {
+    .activity.tool {
       color: var(--vscode-symbolIcon-functionForeground, #cca700);
     }
-    #activity.generating {
-      color: var(--vscode-terminal-ansiGreen, #3fb950);
-      border-color: rgba(63, 185, 80, 0.45);
-    }
-    #activity .dots {
+    .activity .dots {
       display: inline-flex;
       gap: 4px;
       align-items: center;
       height: 14px;
       flex-shrink: 0;
     }
-    #activity .dots span {
+    .activity .dots span {
       width: 5px;
       height: 5px;
       border-radius: 50%;
@@ -617,31 +733,150 @@ function getWebviewHtml(): string {
         transform: translateY(-3px);
       }
     }
-    #activityText {
+    .activity-text {
       flex: 1;
       min-width: 0;
+    }
+    /* ── Views: history list / chat ── */
+    #view-history { display: flex; flex-direction: column; height: 100vh; }
+    #view-chat { display: none; flex-direction: column; height: 100vh; }
+    body.show-chat #view-history { display: none; }
+    body.show-chat #view-chat { display: flex; }
+
+    /* ── History list ── */
+    .history-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px 8px;
+      flex-shrink: 0;
+    }
+    .history-header h3 {
+      margin: 0;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--vscode-foreground);
+    }
+    .history-header .history-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .history-header button {
+      background: none;
+      border: none;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      padding: 2px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+    }
+    .history-header button:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.15); }
+    #history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 4px;
+    }
+    .history-item {
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-bottom: 2px;
+    }
+    .history-item:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.12)); }
+    .history-item .hi-title {
+      font-size: 12px;
+      color: var(--vscode-foreground);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .history-item .hi-meta {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 2px;
+    }
+    .history-empty {
+      padding: 20px 12px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      text-align: center;
+    }
+    #new-chat-btn {
+      margin: 8px 12px;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid var(--vscode-widget-border, #444);
+      background: rgba(128,128,128,0.08);
+      color: var(--vscode-foreground);
+      font-size: 12px;
+      cursor: pointer;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    #new-chat-btn:hover { background: rgba(128,128,128,0.2); }
+
+    /* ── Chat nav header ── */
+    #nav-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--vscode-widget-border, #444);
+      flex-shrink: 0;
+    }
+    #nav-back {
+      background: none;
+      border: none;
+      color: var(--vscode-foreground);
+      cursor: pointer;
+      font-size: 16px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+    }
+    #nav-back:hover { background: rgba(128,128,128,0.2); }
+    #nav-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--vscode-foreground);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
     }
   </style>
 </head>
 <body>
-  <div id="welcome"></div>
-  <div id="statusStrip" class="status-strip" role="status">
-    <span><span class="st-label">Model</span><code id="stModel">\u2014</code></span>
-    <span class="st-sep">\u00b7</span>
-    <span><span class="st-label">Balance</span><code id="stBal">\u2014</code></span>
-    <span class="st-sep">\u00b7</span>
-    <span><span class="st-label">Wallet</span><span id="stWallet">\u2014</span></span>
-    <span class="st-sep">\u00b7</span>
-    <span><span class="st-label">Chain</span><span id="stChain">\u2014</span></span>
-    <span class="st-sep">\u00b7</span>
-    <span><span class="st-label">Workspace</span><span id="stWs" title="">\u2014</span></span>
+  <!-- ── History view ── -->
+  <div id="view-history">
+    <div class="history-header">
+      <h3>History</h3>
+      <div class="history-actions">
+        <button id="history-refresh" title="Refresh">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 1 1-1.3-3.5M13.5 2v2.5H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button id="history-new" title="New chat">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+    <div id="history-list"></div>
   </div>
-  <div id="activity" class="activity hidden" role="status" aria-live="polite">
-    <span class="dots" aria-hidden="true"><span></span><span></span><span></span></span>
-    <span id="activityText"></span>
-  </div>
-  <div id="log"></div>
-  <div class="meta" id="status">Ready \u2014 type a message and press Enter to send (/exit to end session)</div>
+
+  <!-- ── Chat view ── -->
+  <div id="view-chat">
+    <div id="nav-header">
+      <button id="nav-back" title="Back to history">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span id="nav-title">New Chat</span>
+    </div>
+    <div id="log"></div>
+    <div class="meta" id="status">Ready \u2014 type a message and press Enter</div>
   <div id="composer">
     <input type="text" id="in" placeholder="Plan, @ for context, / for commands" autocomplete="off" />
     <div id="composer-toolbar">
@@ -669,19 +904,95 @@ function getWebviewHtml(): string {
       </div>
     </div>
   </div>
+  </div><!-- /view-chat -->
   <script>
     const vscode = acquireVsCodeApi();
-    const welcome = document.getElementById('welcome');
+    const historyList = document.getElementById('history-list');
     const log = document.getElementById('log');
     const input = document.getElementById('in');
     const status = document.getElementById('status');
-    const activity = document.getElementById('activity');
-    const activityText = document.getElementById('activityText');
+    const navTitle = document.getElementById('nav-title');
+    var inlineActivity = null; // activity element inside log
     let assistantBuf = '';
     var assistantEl = null;
     var agentBusy = false;
     var activityMode = 'waiting';
     var toolNameStr = '';
+    var streamingModelName = '';
+
+    var currentChatTitle = 'New Chat';
+    var isLiveChat = true; // true = current live session, false = viewing old history
+    function showChat(title) {
+      if (title) currentChatTitle = title;
+      document.body.classList.add('show-chat');
+      navTitle.textContent = currentChatTitle;
+    }
+    function showHistory() {
+      document.body.classList.remove('show-chat');
+      vscode.postMessage({ type: 'requestHistory' });
+    }
+
+    // Nav buttons — back just switches view, preserves chat DOM
+    document.getElementById('nav-back').addEventListener('click', showHistory);
+    document.getElementById('history-refresh').addEventListener('click', function() {
+      vscode.postMessage({ type: 'requestHistory' });
+    });
+    document.getElementById('history-new').addEventListener('click', function() {
+      log.textContent = '';
+      assistantBuf = '';
+      assistantEl = null;
+      showChat('New Chat');
+    });
+
+    function renderHistoryList(items) {
+      historyList.textContent = '';
+      // "Current Chat" entry to resume live session
+      if (isLiveChat && log.children.length > 0) {
+        var cur = document.createElement('div');
+        cur.className = 'history-item';
+        cur.style.borderBottom = '1px solid var(--vscode-widget-border, #333)';
+        cur.style.marginBottom = '4px';
+        var curTitle = document.createElement('div');
+        curTitle.className = 'hi-title';
+        curTitle.textContent = currentChatTitle;
+        cur.appendChild(curTitle);
+        var curMeta = document.createElement('div');
+        curMeta.className = 'hi-meta';
+        curMeta.textContent = 'Current session';
+        cur.appendChild(curMeta);
+        cur.addEventListener('click', function() { showChat(); });
+        historyList.appendChild(cur);
+      }
+      if (!items || items.length === 0) {
+        if (!isLiveChat || log.children.length === 0) {
+          var empty = document.createElement('div');
+          empty.className = 'history-empty';
+          empty.textContent = 'No conversations yet. Start a new chat!';
+          historyList.appendChild(empty);
+        }
+        return;
+      }
+      items.forEach(function(item) {
+        var el = document.createElement('div');
+        el.className = 'history-item';
+        var title = document.createElement('div');
+        title.className = 'hi-title';
+        title.textContent = item.title;
+        el.appendChild(title);
+        var meta = document.createElement('div');
+        meta.className = 'hi-meta';
+        meta.textContent = item.ago;
+        el.appendChild(meta);
+        el.addEventListener('click', function() {
+          isLiveChat = false;
+          vscode.postMessage({ type: 'loadSession', text: item.id });
+        });
+        historyList.appendChild(el);
+      });
+    }
+
+    // Start on history view
+    vscode.postMessage({ type: 'requestHistory' });
 
     // Live balance tracking
     var baseBalance = null;
@@ -770,7 +1081,7 @@ function getWebviewHtml(): string {
 
     function buildModelDropdown() {
       modelDropdown.textContent = '';
-      var currentModel = (document.getElementById('stModel').textContent || '').toLowerCase();
+      var currentModel = (modelPickerLabel.textContent || '').toLowerCase();
       MODEL_LIST.forEach(function(grp) {
         var g = document.createElement('div');
         g.className = 'md-group';
@@ -847,13 +1158,6 @@ function getWebviewHtml(): string {
     }
     updateContextRing();
 
-    function setActivityClass() {
-      activity.classList.remove('thinking', 'tool', 'generating');
-      if (activityMode === 'thinking') activity.classList.add('thinking');
-      if (activityMode === 'tool') activity.classList.add('tool');
-      if (activityMode === 'generating') activity.classList.add('generating');
-    }
-
     function syncChromeState() {
       document.body.classList.toggle('session-busy', agentBusy);
       var stopBtn = document.getElementById('stop');
@@ -874,134 +1178,199 @@ function getWebviewHtml(): string {
       }
     }
 
+    function ensureInlineActivity() {
+      if (!inlineActivity) {
+        inlineActivity = document.createElement('div');
+        inlineActivity.className = 'activity';
+        inlineActivity.innerHTML = '<span class="dots" aria-hidden="true"><span></span><span></span><span></span></span><span class="activity-text"></span>';
+        log.appendChild(inlineActivity);
+      }
+      return inlineActivity;
+    }
+
+    function removeInlineActivity() {
+      if (inlineActivity && inlineActivity.parentNode) {
+        inlineActivity.parentNode.removeChild(inlineActivity);
+      }
+      inlineActivity = null;
+    }
+
     function updateActivityRow() {
       if (!agentBusy) {
-        activity.classList.add('hidden');
+        removeInlineActivity();
         syncChromeState();
         return;
       }
-      activity.classList.remove('hidden');
-      setActivityClass();
-      var model = document.getElementById('stModel').textContent || 'model';
+      var el = ensureInlineActivity();
+      el.classList.remove('thinking', 'tool', 'generating');
+      if (activityMode === 'thinking') el.classList.add('thinking');
+      if (activityMode === 'tool') el.classList.add('tool');
+      if (activityMode === 'generating') el.classList.add('generating');
+      var txt = el.querySelector('.activity-text');
+      var model = modelPickerLabel.textContent || 'model';
       if (activityMode === 'waiting') {
-        activityText.textContent = 'Waiting for ' + model + '\\u2026';
+        txt.textContent = 'Waiting for ' + model + '\\u2026';
       } else if (activityMode === 'thinking') {
-        activityText.textContent = 'Thinking\\u2026';
+        txt.textContent = 'Thinking\\u2026';
       } else if (activityMode === 'tool') {
-        activityText.textContent = 'Running tool: ' + toolNameStr + '\\u2026';
+        txt.textContent = 'Running tool: ' + toolNameStr + '\\u2026';
       } else if (activityMode === 'generating') {
-        activityText.textContent = 'Generating response\\u2026';
+        // Hide activity row once text starts streaming
+        removeInlineActivity();
+        syncChromeState();
+        return;
       }
+      log.scrollTop = log.scrollHeight;
       syncChromeState();
     }
 
+    var currentModelId = '';
     function applyStatus(p) {
       if (p.model != null) {
+        currentModelId = p.model;
         var short = shortModelName(p.model);
-        document.getElementById('stModel').textContent = short;
         modelPickerLabel.textContent = short;
-      }
-      if (p.balance != null) document.getElementById('stBal').textContent = p.balance;
-      if (p.walletAddress != null) document.getElementById('stWallet').textContent = p.walletAddress;
-      if (p.chain != null) document.getElementById('stChain').textContent = p.chain;
-      if (p.workDir != null) {
-        var w = p.workDir;
-        var el = document.getElementById('stWs');
-        el.textContent = w.length > 40 ? '\\u2026' + w.slice(-38) : w;
-        el.title = w;
       }
     }
 
     function renderWelcome(info, errMsg, hasWorkspace) {
-      welcome.textContent = '';
-      if (errMsg) {
-        const p = document.createElement('p');
-        p.className = 'meta';
-        p.textContent = 'Could not load session info: ' + errMsg;
-        welcome.appendChild(p);
-        return;
-      }
-      if (!info) {
-        const p = document.createElement('p');
-        p.className = 'meta';
-        p.textContent = 'Loading Franklin...';
-        welcome.appendChild(p);
-        return;
-      }
-      const pre = document.createElement('pre');
-      pre.className = 'banner-pre';
-      // Franklin banner: gold-to-emerald gradient
-      var GOLD = [255, 215, 0];
-      var EMERALD = [16, 185, 129];
-      info.bannerLines.forEach(function (line, i) {
-        if (i > 0) pre.appendChild(document.createTextNode(String.fromCharCode(10)));
-        var t = info.bannerLines.length <= 1 ? 0 : i / (info.bannerLines.length - 1);
-        var r = Math.round(GOLD[0] + (EMERALD[0] - GOLD[0]) * t);
-        var g = Math.round(GOLD[1] + (EMERALD[1] - GOLD[1]) * t);
-        var b = Math.round(GOLD[2] + (EMERALD[2] - GOLD[2]) * t);
-        var span = document.createElement('span');
-        span.style.color = 'rgb(' + r + ',' + g + ',' + b + ')';
-        span.textContent = line;
-        pre.appendChild(span);
-      });
-      welcome.appendChild(pre);
-      const foot = document.createElement('div');
-      foot.className = 'footer';
-      info.footerLines.forEach(function (line) {
-        const lineEl = document.createElement('div');
-        var fi = line.indexOf('Franklin');
-        if (fi !== -1) {
-          lineEl.appendChild(document.createTextNode(line.slice(0, fi)));
-          var fw = document.createElement('span');
-          fw.style.color = '#FFD700';
-          fw.style.fontWeight = 'bold';
-          fw.textContent = 'Franklin';
-          lineEl.appendChild(fw);
-          lineEl.appendChild(document.createTextNode(line.slice(fi + 8)));
-        } else {
-          lineEl.textContent = line;
-        }
-        foot.appendChild(lineEl);
-      });
-      welcome.appendChild(foot);
+      if (!info) return;
       syncBaseBalance(info.balance);
-      applyStatus({
-        model: info.model,
-        balance: info.balance,
-        walletAddress: info.walletAddress || '\\u2014',
-        chain: info.chain,
-        workDir: info.workDir
-      });
-      if (!hasWorkspace) {
-        const warn = document.createElement('div');
-        warn.className = 'welcome-hint';
-        warn.style.color = 'var(--vscode-editorWarning-foreground, #cca700)';
-        warn.style.marginTop = '8px';
-        warn.textContent = 'No workspace folder open \\u2014 running in home directory. Open a folder (File \\u2192 Open Folder) for full tool support.';
-        welcome.appendChild(warn);
-      }
-      const hint = document.createElement('div');
-      hint.className = 'welcome-hint';
-      hint.textContent =
-        'Tip: /model to switch models \\u00b7 /compact to save tokens \\u00b7 /help for commands';
-      welcome.appendChild(hint);
+      applyStatus({ model: info.model });
     }
 
-    function appendLine(className, text) {
+    var BT = String.fromCharCode(96); // backtick
+    var BT3 = BT+BT+BT;
+    var codeBlockIdx = 0;
+    function renderMarkdown(text) {
+      // Code blocks → wrapped in .code-block with header + copy button
+      var codeBlockRe = new RegExp(BT3+'(\\\\w*)\\\\n([\\\\s\\\\S]*?)'+BT3, 'g');
+      text = text.replace(codeBlockRe, function(_, lang, code) {
+        var id = 'cb-' + (codeBlockIdx++);
+        var langLabel = lang || 'code';
+        return '<div class="code-block"><div class="code-header"><span class="code-lang">' + langLabel + '</span><button class="code-copy" data-code-id="' + id + '"><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 10.5H3a1.5 1.5 0 0 1-1.5-1.5V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5" stroke="currentColor" stroke-width="1.5"/></svg> Copy</button></div><pre><code id="' + id + '">' + code + '</code></pre></div>';
+      });
+      // Inline code
+      var inlineRe = new RegExp(BT+'([^'+BT+']+)'+BT, 'g');
+      text = text.replace(inlineRe, '<code>$1</code>');
+      // Bold
+      text = text.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');
+      // Bullet lists: lines starting with - or *
+      text = text.replace(/(?:^|\\n)[\\-\\*] (.+)/g, '<br>\\u2022 $1');
+      // Line breaks (but not inside pre — handled by pre's white-space)
+      text = text.replace(/\\n/g, '<br>');
+      return text;
+    }
+    function escHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // Delegate click for code-copy buttons
+    document.addEventListener('click', function(e) {
+      var btn = (e.target && e.target.closest) ? e.target.closest('.code-copy') : null;
+      if (!btn) return;
+      var codeId = btn.getAttribute('data-code-id');
+      var codeEl = codeId ? document.getElementById(codeId) : null;
+      if (codeEl) {
+        navigator.clipboard.writeText(codeEl.textContent || '');
+        btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Copied!';
+        setTimeout(function() {
+          btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 10.5H3a1.5 1.5 0 0 1-1.5-1.5V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5" stroke="currentColor" stroke-width="1.5"/></svg> Copy';
+        }, 1500);
+      }
+    });
+
+    function appendLine(className, text, modelName) {
       const d = document.createElement('div');
       d.className = className;
-      d.textContent = text;
+      if (className === 'user') {
+        var bubble = document.createElement('span');
+        bubble.className = 'bubble';
+        bubble.textContent = text;
+        d.appendChild(bubble);
+      } else if (className === 'assistant') {
+        var content = document.createElement('div');
+        content.className = 'msg-content';
+        try {
+          content.innerHTML = renderMarkdown(escHtml(text));
+        } catch(err) {
+          content.textContent = text;
+        }
+        d.appendChild(content);
+        d.appendChild(createMsgActions(text, modelName || ''));
+      } else {
+        d.textContent = text;
+      }
       log.appendChild(d);
       log.scrollTop = log.scrollHeight;
     }
 
+    function createMsgActions(text, modelName) {
+      var bar = document.createElement('div');
+      bar.className = 'msg-actions';
+      // Copy
+      var copyBtn = document.createElement('button');
+      copyBtn.title = 'Copy';
+      copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 10.5H3a1.5 1.5 0 0 1-1.5-1.5V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5" stroke="currentColor" stroke-width="1.5"/></svg>';
+      copyBtn.addEventListener('click', function() {
+        navigator.clipboard.writeText(text);
+        copyBtn.classList.add('active');
+        setTimeout(function() { copyBtn.classList.remove('active'); }, 1500);
+      });
+      bar.appendChild(copyBtn);
+      // Thumbs up
+      var upBtn = document.createElement('button');
+      upBtn.title = 'Good response';
+      upBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 14H3a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h2m0 7V7m0 7h6.3a2 2 0 0 0 2-1.7l.7-4.3a1 1 0 0 0-1-1.2H10V3.5A1.5 1.5 0 0 0 8.5 2L5 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      upBtn.addEventListener('click', function() { upBtn.classList.toggle('active'); });
+      bar.appendChild(upBtn);
+      // Thumbs down
+      var downBtn = document.createElement('button');
+      downBtn.title = 'Bad response';
+      downBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M11 2h2a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-2m0-7v7m0-7H4.7a2 2 0 0 0-2 1.7L2 8.3a1 1 0 0 0 1 1.2H6v3.2a1.5 1.5 0 0 0 1.5 1.5L11 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      downBtn.addEventListener('click', function() { downBtn.classList.toggle('active'); });
+      bar.appendChild(downBtn);
+      // Model name
+      var modelSpan = document.createElement('span');
+      modelSpan.className = 'msg-model';
+      modelSpan.textContent = modelName !== undefined ? modelName : (modelPickerLabel.textContent || '');
+      bar.appendChild(modelSpan);
+      return bar;
+    }
+
     function flushAssistant() {
+      if (assistantEl && assistantBuf) {
+        var mc = assistantEl.querySelector('.msg-content');
+        if (mc) mc.innerHTML = renderMarkdown(escHtml(assistantBuf));
+        // Add action bar on completion
+        if (!assistantEl.querySelector('.msg-actions')) {
+          assistantEl.appendChild(createMsgActions(assistantBuf, streamingModelName));
+        }
+      }
       assistantBuf = '';
       assistantEl = null;
     }
 
     window.addEventListener('message', (e) => {
       const m = e.data;
+      if (m.type === 'historyList') {
+        renderHistoryList(m.items);
+        return;
+      }
+      if (m.type === 'loadHistory') {
+        log.textContent = '';
+        assistantBuf = '';
+        assistantEl = null;
+        showChat(m.title || 'History');
+        (m.messages || []).forEach(function(msg) {
+          if (msg.role === 'user') {
+            appendLine('user', msg.text);
+          } else {
+            appendLine('assistant', msg.text);
+          }
+        });
+        return;
+      }
       if (m.type === 'welcome') {
         renderWelcome(m.info, null, m.hasWorkspace !== false);
         return;
@@ -1042,11 +1411,16 @@ function getWebviewHtml(): string {
         case 'text_delta':
           assistantBuf += ev.text;
           if (!assistantEl) {
+            streamingModelName = modelPickerLabel.textContent || '';
             assistantEl = document.createElement('div');
             assistantEl.className = 'assistant';
+            var contentEl = document.createElement('div');
+            contentEl.className = 'msg-content';
+            assistantEl.appendChild(contentEl);
             log.appendChild(assistantEl);
           }
-          assistantEl.textContent = assistantBuf;
+          var mc = assistantEl.querySelector('.msg-content');
+          if (mc) mc.innerHTML = renderMarkdown(escHtml(assistantBuf));
           log.scrollTop = log.scrollHeight;
           activityMode = 'generating';
           updateActivityRow();
@@ -1088,6 +1462,11 @@ function getWebviewHtml(): string {
           if (typeof ev.cost === 'number') sessionCost += ev.cost;
           var liveBal = computeLiveBalance();
           applyStatus({ model: ev.model, balance: liveBal });
+          // Update model name on the current assistant message's action bar
+          if (ev.model && assistantEl) {
+            var mSpan = assistantEl.querySelector('.msg-model');
+            if (mSpan) mSpan.textContent = shortModelName(ev.model);
+          }
           if (typeof ev.inputTokens === 'number') {
             totalInputTokens += ev.inputTokens;
             updateContextRing();
@@ -1101,7 +1480,15 @@ function getWebviewHtml(): string {
     function send() {
       const t = input.value.trim();
       if (!t) return;
-      appendLine('user', '> ' + t);
+      isLiveChat = true;
+      if (!document.body.classList.contains('show-chat')) {
+        showChat('New Chat');
+      }
+      if (!currentChatTitle || currentChatTitle === 'New Chat') {
+        currentChatTitle = t.length > 30 ? t.slice(0, 30) + '...' : t;
+        navTitle.textContent = currentChatTitle;
+      }
+      appendLine('user', t);
       assistantBuf = '';
       assistantEl = null;
       agentBusy = true;

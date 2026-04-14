@@ -16,7 +16,10 @@ import { connectMcpServers, disconnectMcpServers } from '../mcp/client.js';
 import type { AgentConfig, StreamEvent } from '../agent/types.js';
 
 export type { StreamEvent } from '../agent/types.js';
+export type { Dialogue } from '../agent/types.js';
 export { estimateCost } from '../pricing.js';
+export { listSessions, loadSessionHistory, loadSessionMeta } from '../session/storage.js';
+export type { SessionMeta } from '../session/storage.js';
 
 /** Welcome panel: same branding as CLI, plus live wallet / model / workspace. */
 export interface VsCodeWelcomeInfo {

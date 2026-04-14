@@ -45,6 +45,10 @@
       {
         "command": "franklin.openInNewTab",
         "title": "Franklin: Open Chat in New Tab"
+      },
+      {
+        "command": "franklin.refreshHistory",
+        "title": "Franklin: Refresh History"
       }
     ]
   },
