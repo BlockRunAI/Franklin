@@ -35,4 +35,25 @@ export interface ExtractionResult {
     category: LearningCategory;
     confidence: number;
   }>;
+  /** Procedural skills extracted from complex task patterns. */
+  skills?: Array<{
+    name: string;
+    description: string;
+    triggers: string[];
+    steps: string;       // Multi-line procedure
+  }>;
+}
+
+// ─── Skills (procedural memory) ───────────────────────────────────────────
+// Skills are reusable multi-step procedures learned from complex tasks.
+// Stored separately from learnings (markdown files) because they're larger.
+
+export interface Skill {
+  name: string;
+  description: string;
+  triggers: string[];
+  steps: string;          // Multi-line procedure in markdown
+  created: string;        // ISO date
+  uses: number;
+  source_session: string;
 }

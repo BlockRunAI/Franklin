@@ -15,6 +15,11 @@ export declare function bootstrapFromClaudeConfig(client: ModelClient): Promise<
  */
 export declare function extractLearnings(history: Dialogue[], sessionId: string, client: ModelClient): Promise<void>;
 /**
+ * Try to extract a reusable skill from the recent work.
+ * Called from maybeMidSessionExtract when enough tool calls happened.
+ */
+export declare function maybeExtractSkill(history: Dialogue[], turnToolCalls: number, sessionId: string, client: ModelClient): Promise<void>;
+/**
  * Check if mid-session extraction should run, and if so, run it in background.
  * Called from the agent loop after tool execution completes.
  *

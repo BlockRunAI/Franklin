@@ -219,7 +219,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     const permissions = new PermissionManager(config.permissionMode ?? 'default', config.permissionPromptFn);
     const history = [];
     let lastUserInput = ''; // For /retry
-    const originalModel = config.model; // Preserve original model/routing profile for recovery
+    config.baseModel = config.model; // User's intended model — /model command updates this
     let turnFailedModels = new Set(); // Models that failed this turn (cleared each new turn)
     // Track models that failed with 402 (payment required) across turns.
     // These persist until the session ends — unlike transient errors, payment failures
@@ -295,9 +295,10 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         // ── Model recovery: try original model at the start of each new turn ──
         // If we fell back to a free model last turn due to a transient error, try original again.
         // But DON'T reset if the original model had a payment failure — it will just fail again.
-        if (config.model !== originalModel && !paymentFailedModels.has(originalModel)) {
-            config.model = originalModel;
-            config.onModelChange?.(originalModel);
+        const baseModel = config.baseModel ?? config.model;
+        if (config.model !== baseModel && !paymentFailedModels.has(baseModel)) {
+            config.model = baseModel;
+            config.onModelChange?.(baseModel);
         }
         turnFailedModels = new Set(); // Fresh slate for transient failures this turn
         const abort = new AbortController();

@@ -142,4 +142,6 @@ export interface AgentConfig {
     onAskUser?: (question: string, options?: string[]) => Promise<string>;
     /** Notify UI when agent switches model (e.g. payment fallback) */
     onModelChange?: (model: string) => void;
+    /** The user's intended model — updated by /model command, used for turn recovery */
+    baseModel?: string;
 }
