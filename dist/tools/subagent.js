@@ -8,10 +8,28 @@ let registeredApiUrl = '';
 let registeredChain = 'base';
 let registeredParentModel = '';
 let registeredCapabilities = [];
+// Heuristic: which model IDs are free?
+function isFreeModel(m) {
+    return m.startsWith('nvidia/') || m === 'blockrun/free' || m === '';
+}
 async function execute(input, ctx) {
     const { prompt, description, model } = input;
     if (!prompt) {
         return { output: 'Error: prompt is required', isError: true };
+    }
+    // Resolve which model the sub-agent will actually run on
+    const subModel = model || registeredParentModel || 'nvidia/nemotron-ultra-253b';
+    // Cost gate: if parent is free but sub-agent wants paid, ask user first.
+    // Prevents silent charges when the agent decides to spawn a more capable sub-agent.
+    if (isFreeModel(registeredParentModel) && !isFreeModel(subModel) && ctx.onAskUser) {
+        const shortLabel = subModel.split('/').pop() || subModel;
+        const answer = await ctx.onAskUser(`Sub-agent wants to use ${shortLabel} (paid). Approve?`, ['y', 'n']);
+        if (answer.toLowerCase() !== 'y' && answer.toLowerCase() !== 'yes') {
+            return {
+                output: `Sub-agent skipped — user declined paid model (${shortLabel}). Retry with a free model like nemotron.`,
+                isError: true,
+            };
+        }
     }
     const client = new ModelClient({
         apiUrl: registeredApiUrl,
@@ -55,9 +73,7 @@ async function execute(input, ctx) {
         }
         turn++;
         const { content: parts } = await client.complete({
-            // Inherit parent model by default. If parent is on a free model, subagent stays free.
-            // User can explicitly pass `model` to override.
-            model: model || registeredParentModel || 'nvidia/nemotron-ultra-253b',
+            model: subModel,
             messages: history,
             system: systemPrompt,
             tools: toolDefs,
