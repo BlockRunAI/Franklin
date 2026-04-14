@@ -67,6 +67,11 @@ export interface ExecutionScope {
     onProgress?: (text: string) => void;
     /** Routes AskUser questions through ink UI input to avoid raw-mode stdin conflict */
     onAskUser?: (question: string, options?: string[]) => Promise<string>;
+    /** Context from parent agent — helps sub-agents avoid duplicate work */
+    parentContext?: {
+        goal?: string;
+        recentFiles?: string[];
+    };
 }
 export interface StreamTextDelta {
     kind: 'text_delta';
