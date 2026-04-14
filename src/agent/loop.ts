@@ -663,6 +663,11 @@ export async function interactiveSession(
         if (classified.category === 'payment') {
           turnFailedModels.add(config.model);
           paymentFailedModels.set(config.model, Date.now());
+          // Bound the Map so long sessions don't leak. LRU-evict oldest by timestamp.
+          if (paymentFailedModels.size > 100) {
+            const oldest = [...paymentFailedModels.entries()].sort((a, b) => a[1] - b[1])[0];
+            if (oldest) paymentFailedModels.delete(oldest[0]);
+          }
           // Record to local Elo so the router learns to avoid this model
           if (lastRoutedCategory) {
             recordOutcome(lastRoutedCategory, config.model, 'payment');
