@@ -1,5 +1,5 @@
 /**
- * Token Reduction for runcode.
+ * Token Reduction for Franklin.
  * Original implementation — reduces context size through intelligent pruning.
  *
  * Strategy: instead of compression/encoding, we PRUNE redundant content.
@@ -400,7 +400,7 @@ export function reduceTokens(history: Dialogue[], debug?: boolean): Dialogue[] {
 
   if (debug && totalSaved > 500) {
     const tokensSaved = Math.round(totalSaved / 4);
-    console.error(`[runcode] Token reduction: ~${tokensSaved} tokens saved`);
+    console.error(`[franklin] Token reduction: ~${tokensSaved} tokens saved`);
   }
 
   return current;

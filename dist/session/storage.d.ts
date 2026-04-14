@@ -1,5 +1,5 @@
 /**
- * Session persistence for runcode.
+ * Session persistence for Franklin.
  * Saves conversation history as JSONL for resume capability.
  */
 import type { Dialogue } from '../agent/types.js';

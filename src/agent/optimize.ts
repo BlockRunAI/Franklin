@@ -1,5 +1,5 @@
 /**
- * Token optimization strategies for runcode.
+ * Token optimization strategies for Franklin.
  *
  * Five layers of optimization to minimize token usage:
  * 1. Tool result size budgeting — cap large outputs, keep preview
@@ -300,7 +300,7 @@ export function optimizeHistory(
   if (stripped !== result) {
     result = stripped;
     changed = true;
-    if (opts?.debug) console.error('[runcode] Stripped old thinking blocks');
+    if (opts?.debug) console.error('[franklin] Stripped old thinking blocks');
   }
 
   // 2. Budget tool results
@@ -308,7 +308,7 @@ export function optimizeHistory(
   if (budgeted !== result) {
     result = budgeted;
     changed = true;
-    if (opts?.debug) console.error('[runcode] Budgeted oversized tool results');
+    if (opts?.debug) console.error('[franklin] Budgeted oversized tool results');
   }
 
   // 3. Time-based cleanup
@@ -319,7 +319,7 @@ export function optimizeHistory(
   if (didClean) {
     result = cleaned;
     changed = true;
-    if (opts?.debug) console.error('[runcode] Cleared stale tool results after idle gap');
+    if (opts?.debug) console.error('[franklin] Cleared stale tool results after idle gap');
   }
 
   return result;

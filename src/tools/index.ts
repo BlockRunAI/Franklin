@@ -19,7 +19,7 @@ import { tradingSignalCapability, tradingMarketCapability } from './trading.js';
 import { searchXCapability } from './searchx.js';
 import { postToXCapability } from './posttox.js';
 
-/** All capabilities available to the runcode agent (excluding sub-agent, which needs config). */
+/** All capabilities available to the Franklin agent (excluding sub-agent, which needs config). */
 export const allCapabilities: CapabilityHandler[] = [
   readCapability,
   writeCapability,

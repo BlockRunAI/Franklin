@@ -134,7 +134,7 @@ async function signPayment(response, chain, endpoint) {
         }
     }
     catch (err) {
-        console.error(`[runcode] Image payment error: ${err.message}`);
+        console.error(`[franklin] Image payment error: ${err.message}`);
         return null;
     }
 }

@@ -1,5 +1,5 @@
 /**
- * Core types for the runcode agent system.
+ * Core types for the Franklin agent system.
  * All type names and structures are original designs.
  */
 export {};

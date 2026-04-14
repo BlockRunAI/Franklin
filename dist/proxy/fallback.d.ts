@@ -1,5 +1,5 @@
 /**
- * Fallback chain for runcode
+ * Fallback chain for Franklin
  * Automatically switches to backup models when primary fails (429, 5xx, etc.)
  */
 export interface FallbackConfig {

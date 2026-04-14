@@ -1,5 +1,5 @@
 /**
- * Context compaction for runcode.
+ * Context compaction for Franklin.
  * When conversation history approaches the context window limit,
  * summarize older messages and replace them with the summary.
  */
@@ -21,39 +21,49 @@ export const COMPACT_HEADER = `[CONTEXT COMPACTION — REFERENCE ONLY] Earlier t
 
 const COMPACT_SYSTEM_PROMPT = `You are a conversation summarizer. Produce a STRUCTURED summary of the conversation so far that preserves all decision-relevant context for continuing the task.
 
+CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
+
 Critical rules:
 - Preserve EXACT file paths, function names, line numbers, variable names
-- Preserve EXACT error messages (verbatim)
+- Preserve EXACT error messages and stack traces (verbatim)
 - Preserve user preferences and corrections (especially "don't do X" instructions)
 - Preserve decisions with their rationale (not just the decision)
+- Include full code snippets and function signatures when they are load-bearing
 - DO NOT include reasoning that led to decisions — only the decisions themselves
 - DO NOT include pleasantries, meta-commentary, or apologies
-- DO NOT include active questions or requests — only include resolved facts
 - Use bullet points inside each section
 - Be specific: "edited src/foo.ts:42 to add error handling" not "made some changes"
 
-REQUIRED output format (use these exact section headers):
+First, analyze the conversation chronologically inside <analysis> tags. This is your drafting space — it will be stripped from the final output. Think through what matters before writing the summary.
+
+Then produce the summary inside <summary> tags using these exact section headers:
 
 ## Goal
 [One clear sentence: what the user is trying to accomplish]
 
+## Key Technical Context
+[Important technical details, architecture patterns, constraints, or domain knowledge established during the conversation that future work depends on]
+
 ## Progress
-[Chronological bullet list of what has been done so far]
+[Chronological bullet list of what has been done so far, with specific file paths and line numbers]
+
+## Errors and Fixes
+[Any errors encountered, their root causes, and how they were resolved — this prevents re-investigating the same issues]
 
 ## Decisions
 [Key decisions made, each with its rationale]
 
 ## Files Modified
-[Each file touched, with a one-line description of what changed]
+[Each file touched, with a one-line description of what changed and why]
 
 ## Tool Results Still Relevant
-[Any tool output (file reads, grep matches, bash output) that later steps still depend on — include the actual content, not a reference]
+[Any tool output (file reads, grep matches, bash output) that later steps still depend on — include the actual content, not just a reference to it]
 
-## User Preferences & Corrections
-[Anything the user explicitly asked for or corrected — these are load-bearing]
+## User Messages and Feedback
+[Chronological summary of what the user said, asked for, and corrected — these are load-bearing and must not be lost]
 
 ## Next Steps
-[What comes next, in priority order]
+[What comes next, in priority order, with enough detail to continue without re-reading the original conversation]
 
 If there's an existing [CONTEXT COMPACTION] summary in the messages being compacted, MERGE its content into your output rather than nesting. Do not produce a summary of a summary.`;
 
@@ -76,7 +86,7 @@ export async function autoCompactIfNeeded(
 
   if (debug) {
     console.error(
-      `[runcode] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}`
+      `[franklin] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}`
     );
   }
 
@@ -86,14 +96,14 @@ export async function autoCompactIfNeeded(
     const afterTokens = estimateHistoryTokens(compacted);
     if (afterTokens >= beforeTokens) {
       if (debug) {
-        console.error(`[runcode] Auto-compaction grew history (${beforeTokens} → ${afterTokens}) — skipping`);
+        console.error(`[franklin] Auto-compaction grew history (${beforeTokens} → ${afterTokens}) — skipping`);
       }
       return { history, compacted: false };
     }
     return { history: compacted, compacted: true };
   } catch (err) {
     if (debug) {
-      console.error(`[runcode] Compaction failed: ${(err as Error).message}`);
+      console.error(`[franklin] Compaction failed: ${(err as Error).message}`);
     }
     // Fallback: truncate oldest messages instead of crashing
     const truncated = emergencyTruncate(history, threshold);
@@ -120,14 +130,14 @@ export async function forceCompact(
     // Only accept compaction if it actually reduces tokens
     if (afterTokens >= beforeTokens) {
       if (debug) {
-        console.error(`[runcode] Compaction produced larger history (${beforeTokens} → ${afterTokens}) — reverting`);
+        console.error(`[franklin] Compaction produced larger history (${beforeTokens} → ${afterTokens}) — reverting`);
       }
       return { history, compacted: false };
     }
     return { history: compacted, compacted: true };
   } catch (err) {
     if (debug) {
-      console.error(`[runcode] Force compaction failed: ${(err as Error).message}`);
+      console.error(`[franklin] Force compaction failed: ${(err as Error).message}`);
     }
     const threshold = getCompactionThreshold(model);
     const truncated = emergencyTruncate(history, threshold);
@@ -160,7 +170,7 @@ async function compactHistory(
 
   if (debug) {
     console.error(
-      `[runcode] Summarizing ${toSummarize.length} messages, keeping ${toKeep.length}`
+      `[franklin] Summarizing ${toSummarize.length} messages, keeping ${toKeep.length}`
     );
   }
 
@@ -182,17 +192,19 @@ async function compactHistory(
     }
   );
 
-  // Extract summary text
-  let summaryText = '';
+  // Extract summary text and strip analysis scratchpad
+  let rawSummary = '';
   for (const part of summaryParts) {
     if (part.type === 'text') {
-      summaryText += part.text;
+      rawSummary += part.text;
     }
   }
 
-  if (!summaryText) {
+  if (!rawSummary) {
     throw new Error('Empty summary returned from model');
   }
+
+  const summaryText = formatCompactSummary(rawSummary);
 
   // Build compacted history: summary as first message, then kept messages.
   // The COMPACT_HEADER prefix lets future compactions detect and merge rather
@@ -212,7 +224,7 @@ async function compactHistory(
   if (debug) {
     const newTokens = estimateHistoryTokens(compacted);
     console.error(
-      `[runcode] Compacted: ${estimateHistoryTokens(history)} → ${newTokens} tokens`
+      `[franklin] Compacted: ${estimateHistoryTokens(history)} → ${newTokens} tokens`
     );
   }
 
@@ -295,6 +307,25 @@ function formatForSummarization(messages: Dialogue[]): string {
   }
 
   return parts.join('\n\n');
+}
+
+/**
+ * Strip the analysis scratchpad from compaction output and extract the summary.
+ * The model drafts in <analysis> tags (for quality), then writes the final
+ * summary in <summary> tags. We keep only the summary.
+ */
+function formatCompactSummary(raw: string): string {
+  // Strip <analysis>...</analysis> (the drafting scratchpad)
+  let cleaned = raw.replace(/<analysis>[\s\S]*?<\/analysis>/gi, '').trim();
+
+  // Extract content from <summary>...</summary> if present
+  const summaryMatch = cleaned.match(/<summary>([\s\S]*?)<\/summary>/i);
+  if (summaryMatch) {
+    cleaned = summaryMatch[1].trim();
+  }
+
+  // If neither tag was used, the model gave us raw output — use as-is
+  return cleaned || raw.trim();
 }
 
 /**

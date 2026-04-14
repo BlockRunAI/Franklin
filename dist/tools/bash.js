@@ -326,11 +326,35 @@ async function execute(input, ctx) {
 export const bashCapability = {
     spec: {
         name: 'Bash',
-        description: 'Execute shell commands. Do NOT use cat/head/tail to read files — use Read instead. Do NOT use grep/rg to search — use Grep instead. Do NOT use sed/awk to edit — use Edit instead. Do NOT use echo/heredoc to create files — use Write instead. Reserve Bash for: builds, installs, git, npm/pip, processes, scripts, network, and anything needing a shell. Output capped at 512KB. Default timeout 2min, max 10min.',
+        description: `Execute shell commands and return output.
+
+The working directory persists between commands, but shell state does not.
+
+IMPORTANT: Do NOT use Bash when a dedicated tool exists:
+- Read files: use Read (NOT cat/head/tail)
+- Edit files: use Edit (NOT sed/awk)
+- Create files: use Write (NOT echo/heredoc)
+- Search content: use Grep (NOT grep/rg)
+- Find files: use Glob (NOT find/ls)
+
+Reserve Bash for: builds, installs, git, npm/pip, processes, scripts, network, and anything requiring a shell.
+
+When issuing multiple commands:
+- Independent commands: make multiple parallel Bash calls in one response.
+- Sequential dependent commands: chain with && in a single call.
+- Do NOT use newlines to separate commands.
+
+For git commands:
+- Prefer creating a new commit rather than amending.
+- Never skip hooks (--no-verify) unless the user explicitly asked.
+- Never force push to main/master without user confirmation.
+
+Output is capped at 512KB capture / 32KB return. Default timeout 2min, max 10min.`,
         input_schema: {
             type: 'object',
             properties: {
                 command: { type: 'string', description: 'The shell command to execute' },
+                description: { type: 'string', description: 'Short description of what this command does (e.g. "Run test suite", "Install dependencies")' },
                 timeout: { type: 'number', description: 'Timeout in milliseconds (default: 120000, max: 600000)' },
             },
             required: ['command'],

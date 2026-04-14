@@ -1,5 +1,5 @@
 /**
- * MCP Client for runcode.
+ * MCP Client for Franklin.
  * Connects to MCP servers, discovers tools, and wraps them as CapabilityHandlers.
  * Supports stdio and HTTP (SSE) transports.
  */
@@ -68,7 +68,7 @@ async function connectStdio(
   });
 
   const client = new Client(
-    { name: `runcode-mcp-${name}`, version: '1.0.0' },
+    { name: `franklin-mcp-${name}`, version: '1.0.0' },
     { capabilities: {} }
   );
 
@@ -153,12 +153,12 @@ export async function connectMcpServers(
 
     try {
       if (debug) {
-        console.error(`[runcode] Connecting to MCP server: ${name}...`);
+        console.error(`[franklin] Connecting to MCP server: ${name}...`);
       }
 
       if (serverConfig.transport !== 'stdio') {
         if (debug) {
-          console.error(`[runcode] MCP HTTP transport not yet supported for ${name}`);
+          console.error(`[franklin] MCP HTTP transport not yet supported for ${name}`);
         }
         continue;
       }
@@ -172,7 +172,7 @@ export async function connectMcpServers(
       allTools.push(...connected.tools);
 
       if (debug) {
-        console.error(`[runcode] MCP ${name}: ${connected.tools.length} tools discovered`);
+        console.error(`[franklin] MCP ${name}: ${connected.tools.length} tools discovered`);
       }
     } catch (err) {
       // Graceful degradation — one-line warning, continue without this server.
