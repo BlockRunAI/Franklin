@@ -784,23 +784,30 @@ test('error classifier catches gateway 503 in all thrown shapes', async () => {
   const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
 
   // Form 1: the new thrown format from llm.ts after the v3.1.2 fix
+  // "All workers are busy" now correctly maps to 'overloaded' (shorter retry budget)
   const withStatus = classifyAgentError(
     'HTTP 503: Service temporarily unavailable: All workers are busy, please retry later'
   );
-  assert.equal(withStatus.category, 'server');
+  assert.equal(withStatus.category, 'overloaded');
   assert.equal(withStatus.isTransient, true);
+  assert.equal(withStatus.maxRetries, 3);  // Overloaded errors get fewer retries
 
   // Form 2: the raw inner .message if the status prefix is ever lost
   const inner = classifyAgentError(
     'Service temporarily unavailable: All workers are busy, please retry later'
   );
-  assert.equal(inner.category, 'server');
+  assert.equal(inner.category, 'overloaded');
   assert.equal(inner.isTransient, true);
 
   // Form 3: just the "workers" fragment
   const fragment = classifyAgentError('All workers are busy, please retry later');
-  assert.equal(fragment.category, 'server');
+  assert.equal(fragment.category, 'overloaded');
   assert.equal(fragment.isTransient, true);
+
+  // Form 4: plain 503 without "workers busy" → still server category
+  const plain503 = classifyAgentError('HTTP 503: Internal server error');
+  assert.equal(plain503.category, 'server');
+  assert.equal(plain503.isTransient, true);
 });
 
 test('workflow formatter renders aborted steps with warning icon', async () => {
