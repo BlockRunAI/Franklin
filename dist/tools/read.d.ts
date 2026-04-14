@@ -22,4 +22,6 @@ export declare const fileReadTracker: Map<string, {
     mtimeMs: number;
     readAt: number;
 }>;
+/** Invalidate the content cache for a file (call after Edit/Write modifies it). */
+export declare function invalidateFileCache(resolvedPath: string): void;
 export declare const readCapability: CapabilityHandler;

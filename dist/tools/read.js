@@ -16,6 +16,24 @@ export const partiallyReadFiles = new Map();
  * Exported so edit.ts and write.ts can check.
  */
 export const fileReadTracker = new Map();
+/**
+ * File state cache — avoids re-reading unchanged files across turns.
+ * Stores mtime + line count for each file. If the model requests a Read
+ * and the file hasn't changed (same mtime), return a short stub instead
+ * of the full content. This saves thousands of tokens on repeated reads.
+ *
+ * Cache is invalidated when:
+ * - File mtime changes (edited externally or by Edit/Write tool)
+ * - Different offset/limit is requested (user wants a different section)
+ */
+const fileContentCache = new Map();
+function cacheKey(resolved, offset, limit) {
+    return `${offset ?? 0}:${limit ?? 2000}`;
+}
+/** Invalidate the content cache for a file (call after Edit/Write modifies it). */
+export function invalidateFileCache(resolvedPath) {
+    fileContentCache.delete(resolvedPath);
+}
 async function execute(input, ctx) {
     const { file_path: filePath, offset, limit } = input;
     if (!filePath) {
@@ -24,6 +42,14 @@ async function execute(input, ctx) {
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.workingDir, filePath);
     try {
         const stat = fs.statSync(resolved);
+        // File state cache: if file hasn't changed and same range requested, return stub
+        const range = cacheKey(resolved, offset, limit);
+        const cached = fileContentCache.get(resolved);
+        if (cached && cached.mtimeMs === stat.mtimeMs && cached.readRange === range) {
+            return {
+                output: `File unchanged since last read (${cached.lineCount} lines). Content is already in your context — do not re-read it.`,
+            };
+        }
         if (stat.isDirectory()) {
             // Helpfully list directory contents instead of just erroring
             const entries = fs.readdirSync(resolved, { withFileTypes: true });
@@ -65,6 +91,8 @@ async function execute(input, ctx) {
         }
         // Record this read for read-before-edit/write enforcement
         fileReadTracker.set(resolved, { mtimeMs: stat.mtimeMs, readAt: Date.now() });
+        // Update file state cache (for cross-turn dedup)
+        fileContentCache.set(resolved, { mtimeMs: stat.mtimeMs, lineCount: allLines.length, readRange: range });
         // Format with line numbers (cat -n style)
         const numbered = slice.map((line, i) => `${startLine + i + 1}\t${line}`);
         let result = numbered.join('\n');
