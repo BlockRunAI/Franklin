@@ -28,9 +28,12 @@ export function classifyAgentError(message) {
     if (includesAny(err, [
         '401',
         'unauthorized',
+        'unauthenticated',
+        'not authenticated',
         'invalid api key',
         'invalid x-api-key',
         'authentication failed',
+        'authentication required',
     ])) {
         return {
             category: 'auth', label: 'Auth', isTransient: false,

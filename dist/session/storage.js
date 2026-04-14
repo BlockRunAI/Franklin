@@ -95,10 +95,27 @@ export function updateSessionMeta(sessionId, meta) {
         };
         // Atomic write: tmp file + rename. Prevents corruption when parent
         // and sub-agent update the same session meta concurrently.
+        // On Windows, renameSync can throw EEXIST/EPERM on older filesystems —
+        // fall back to a direct write (non-atomic but still functional) and
+        // clean up the orphan tmp file.
         const target = metaPath(sessionId);
         const tmp = target + '.tmp';
-        fs.writeFileSync(tmp, JSON.stringify(updated, null, 2));
-        fs.renameSync(tmp, target);
+        const payload = JSON.stringify(updated, null, 2);
+        try {
+            fs.writeFileSync(tmp, payload);
+            fs.renameSync(tmp, target);
+        }
+        catch {
+            // Best-effort: clean up the orphan tmp, then write target directly.
+            try {
+                fs.unlinkSync(tmp);
+            }
+            catch { /* may not exist */ }
+            try {
+                fs.writeFileSync(target, payload);
+            }
+            catch { /* give up; stats just get stale */ }
+        }
     });
 }
 /**
