@@ -31,13 +31,18 @@ const REFERENCE_TIMEOUT_MS = 60_000;
 // These will be injected at registration time
 let registeredApiUrl = '';
 let registeredChain = 'base';
+let registeredParentModel = '';
 async function execute(input, ctx) {
     const { prompt, models, aggregator, include_reasoning } = input;
     if (!prompt) {
         return { output: 'Error: prompt is required', isError: true };
     }
     const referenceModels = models || REFERENCE_MODELS;
-    const aggregatorModel = aggregator || AGGREGATOR_MODEL;
+    // If parent agent is on a free model, default aggregator to a free model too
+    // so MoA doesn't silently charge the user. Explicit `aggregator` arg wins.
+    const parentIsFree = registeredParentModel.startsWith('nvidia/') ||
+        registeredParentModel === 'blockrun/free';
+    const aggregatorModel = aggregator || (parentIsFree ? 'nvidia/nemotron-ultra-253b' : AGGREGATOR_MODEL);
     const client = new ModelClient({
         apiUrl: registeredApiUrl,
         chain: registeredChain,
@@ -167,7 +172,9 @@ Parameters:
     concurrent: true,
 };
 /** Register the API URL for MoA tool (called during agent setup). */
-export function registerMoAConfig(apiUrl, chain) {
+export function registerMoAConfig(apiUrl, chain, parentModel) {
     registeredApiUrl = apiUrl;
     registeredChain = chain;
+    if (parentModel)
+        registeredParentModel = parentModel;
 }

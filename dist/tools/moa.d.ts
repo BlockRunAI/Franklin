@@ -13,4 +13,4 @@
 import type { CapabilityHandler } from '../agent/types.js';
 export declare const moaCapability: CapabilityHandler;
 /** Register the API URL for MoA tool (called during agent setup). */
-export declare function registerMoAConfig(apiUrl: string, chain: 'base' | 'solana'): void;
+export declare function registerMoAConfig(apiUrl: string, chain: 'base' | 'solana', parentModel?: string): void;
