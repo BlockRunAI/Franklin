@@ -137,12 +137,36 @@ export function createSubAgentCapability(
   return {
     spec: {
       name: 'Agent',
-      description: 'Launch a sub-agent for independent tasks. The sub-agent has its own context and tools.',
+      description: `Launch a sub-agent to handle complex, multi-step tasks autonomously. Each sub-agent gets its own context window, tools, and reasoning loop.
+
+## When to use
+- Tasks requiring 3+ tool calls that are independent of your current work
+- Research or exploration where intermediate output isn't worth keeping in your context
+- Parallel execution: launch multiple agents in a single response for independent tasks
+
+## When NOT to use
+- Simple, single-tool operations (just call the tool directly)
+- Tasks that depend on results from other pending tool calls
+
+## Writing the prompt
+Brief the agent like a smart colleague who just walked into the room — it hasn't seen your conversation, doesn't know what you've tried, doesn't understand why this task matters.
+- Explain what you're trying to accomplish and why
+- Describe what you've already learned or ruled out
+- Give enough context for the agent to make judgment calls
+- For lookups: hand over the exact command. For investigations: hand over the question
+- **Never delegate understanding** — don't write "based on your findings, fix the bug." Write prompts that prove you understood: include file paths, what specifically to change
+
+## Usage notes
+- Always include a short description (3-5 words) summarizing the task
+- The agent's result is returned to you, not shown to the user. Summarize it for the user.
+- Trust but verify: the agent describes intent, not necessarily outcome. Check actual changes before reporting.
+- If launching multiple agents for independent work, send them all in a single response.
+- Terse command-style prompts produce shallow, generic work. Be specific.`,
       input_schema: {
         type: 'object',
         properties: {
-          prompt: { type: 'string', description: 'The task for the sub-agent to perform' },
-          description: { type: 'string', description: 'Short description of what the sub-agent will do' },
+          prompt: { type: 'string', description: 'The task for the sub-agent to perform. Must be self-contained — the agent has no memory of your conversation.' },
+          description: { type: 'string', description: 'Short (3-5 word) description of the task (e.g. "Research auth patterns", "Fix import errors")' },
           model: { type: 'string', description: 'Model for the sub-agent. Default: claude-sonnet-4.6' },
         },
         required: ['prompt'],

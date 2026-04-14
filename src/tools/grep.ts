@@ -224,16 +224,17 @@ function runNativeGrep(
 export const grepCapability: CapabilityHandler = {
   spec: {
     name: 'Grep',
-    description: `Search file contents by regex pattern.
+    description: `A powerful search tool built on ripgrep.
 
-ALWAYS use Grep for search tasks. NEVER invoke grep or rg as a Bash command.
+ALWAYS use Grep for search tasks. NEVER invoke grep or rg as a Bash command. The Grep tool has been optimized for correct permissions and access.
 
 Usage:
 - Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
 - Filter files with glob parameter (e.g., "*.js", "**/*.tsx")
 - Output modes: "content" shows matching lines with context, "files_with_matches" shows only file paths (default), "count" shows match counts
 - Use context/before_context/after_context for surrounding lines (requires output_mode: "content")
-- Multiline matching: use multiline: true for patterns that span across lines
+- Pattern syntax: Uses ripgrep (not grep) — literal braces need escaping (use \`interface\\{\\}\` to find \`interface{}\` in Go code)
+- Multiline matching: By default patterns match within single lines only. For cross-line patterns like \`struct \\{[\\s\\S]*?field\`, use multiline: true
 - Use Agent tool for open-ended searches requiring multiple rounds of exploration`,
     input_schema: {
       type: 'object',

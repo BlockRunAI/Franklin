@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-const LOG_FILE = path.join(os.homedir(), '.blockrun', 'runcode-debug.log');
+const LOG_FILE = path.join(os.homedir(), '.blockrun', 'franklin-debug.log');
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1B\[[0-9;]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B[()][A-B]|\r/g;
 function appendLog(msg) {

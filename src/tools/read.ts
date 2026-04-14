@@ -104,12 +104,14 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 export const readCapability: CapabilityHandler = {
   spec: {
     name: 'Read',
-    description: `Read a file from the local filesystem.
+    description: `Read a file from the local filesystem. You can access any file directly by using this tool.
+
+Assume this tool is able to read all files on the machine. If the user provides a path to a file, assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
 
 Usage:
 - The file_path parameter must be an absolute path, not a relative path.
 - By default, reads up to 2000 lines starting from the beginning of the file.
-- When you already know which part of the file you need, only read that part using offset/limit. This is important for large files.
+- When you already know which part of the file you need, only read that part using offset/limit. This can be important for larger files.
 - Results are returned in cat -n format, with line numbers starting at 1.
 - This tool can only read files, not directories. To list a directory, use Glob or ls via Bash.
 - If you read a file that exists but has empty contents you will receive a warning.
