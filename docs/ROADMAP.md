@@ -305,7 +305,7 @@ ANTHROPIC_API_KEY      # API key (set by proxy mode)
 
 ## Links
 
-- [GitHub](https://github.com/BlockRunAI/runcode)
+- [Website](https://Franklin.run)
 - [npm](https://npmjs.com/package/@blockrun/runcode)
 - [BlockRun](https://blockrun.ai)
 - [Telegram](https://t.me/blockrunAI)
