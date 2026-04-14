@@ -21,6 +21,7 @@ import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import type { Tier, RoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
+import { shouldVerify, runVerification } from './verification.js';
 import {
   createSessionId,
   appendToSession,
@@ -810,6 +811,36 @@ export async function interactiveSession(
               kind: 'text_delta',
               text: `\n\n> **Token budget: ${pct.toFixed(0)}% used** (~${estimated.toLocaleString()} / ${(contextWindow / 1000).toFixed(0)}k tokens). Run \`/compact\` to free up space.\n`,
             });
+          }
+        }
+
+        // ── Verification gate: run adversarial checks on substantial work ──
+        if (shouldVerify(turnToolCalls, turnToolCounts, lastUserInput || '')) {
+          try {
+            const vResult = await runVerification(history, capabilityMap, client, {
+              model: config.model,
+              workDir,
+              abortSignal: abort.signal,
+              onEvent: (e) => { if (e.kind === 'text_delta' && e.text) onEvent({ kind: 'text_delta', text: e.text }); },
+            });
+
+            if (vResult.verdict === 'FAIL' && vResult.issues.length > 0) {
+              // Inject verification feedback — agent will see this and continue fixing
+              const feedbackMsg: Dialogue = {
+                role: 'user',
+                content: `[VERIFICATION FAILED]\n${vResult.summary}\n\nFix the issues above and verify your fixes work.`,
+              };
+              history.push(feedbackMsg);
+              persistSessionMessage(feedbackMsg);
+              onEvent({ kind: 'text_delta', text: `\n⚠️ *Verification found issues — fixing...*\n` });
+              continue; // Re-enter the loop to fix issues
+            }
+
+            if (vResult.verdict === 'PASS') {
+              onEvent({ kind: 'text_delta', text: '\n✓ *Verified*\n' });
+            }
+          } catch {
+            // Verification errors never block the main flow
           }
         }
 
