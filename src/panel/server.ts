@@ -42,7 +42,11 @@ export function createPanelServer(port: number): http.Server {
 
     // ─── HTML ──
     if (p === '/') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+      });
       res.end(html);
       return;
     }
