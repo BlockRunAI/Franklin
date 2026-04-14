@@ -104,6 +104,11 @@ function extractText(msg) {
 // ─── Command Definitions ──────────────────────────────────────────────────
 // Direct-handled commands (don't go to agent)
 const DIRECT_COMMANDS = {
+    '/noplan': (ctx) => {
+        ctx.config.planDisabled = true;
+        ctx.onEvent({ kind: 'text_delta', text: 'Plan-then-execute disabled for this session. Complex tasks will use a single model.\n' });
+        emitDone(ctx);
+    },
     '/stash': (ctx) => {
         const r = gitCmd(ctx, 'git stash push -m "franklin auto-stash"', 10000);
         if (r !== null)
@@ -197,7 +202,7 @@ const DIRECT_COMMANDS = {
                 `  **Git:** /push /pr /undo /status /diff /log /branch /stash /unstash\n` +
                 `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
                 `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /session-search /context /tasks\n` +
-                `  **Power:** /ultrathink [query] /ultraplan /dump\n` +
+                `  **Power:** /ultrathink [query] /ultraplan /noplan /dump\n` +
                 `  **Info:** /model /wallet /cost /tokens /learnings /brain /mcp /doctor /version /bug /help\n` +
                 `  **UI:** /clear /exit\n` +
                 (ultrathinkOn ? `\n  Ultrathink: ON\n` : '')

@@ -17,6 +17,7 @@ import { recordSessionUsage } from '../stats/session-tracker.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
+import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
 import { createSessionId, appendToSession, updateSessionMeta, pruneOldSessions, } from '../session/storage.js';
 /**
  * Atomically replace all elements in a history array.
@@ -222,6 +223,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     // These persist until the session ends — unlike transient errors, payment failures
     // will keep failing until the user adds funds. Map stores failure timestamp for future TTL.
     const paymentFailedModels = new Map(); // model → timestamp
+    // Plan-then-execute: session-level disable flag lives on config (set by /noplan command)
     // Session persistence
     const sessionId = createSessionId();
     let turnCount = 0;
@@ -305,6 +307,13 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         let maxTokensOverride;
         const turnIdleReference = lastSessionActivity;
         lastSessionActivity = Date.now();
+        // ── Plan-then-execute state (per turn) ──
+        let planActive = false;
+        let planPlannerModel = '';
+        let planExecutorModel = '';
+        let planEscalationCount = 0;
+        let planConsecutiveErrors = 0;
+        let lastToolSig = ''; // For same-tool repeat detection
         // ── Tool call guardrails (inspired by hermes-agent) ──
         let turnToolCalls = 0; // Total tool calls this user turn
         const turnToolCounts = new Map(); // Per-tool-name counts this turn
@@ -429,6 +438,28 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             }
             // Update token estimation model for more accurate byte-per-token ratio
             setEstimationModel(resolvedModel);
+            // ── Plan-then-execute: detect and activate ──
+            if (loopCount === 1 && !planActive && routingProfile &&
+                shouldPlan(routingTier, routingProfile, lastUserInput, !!config.ultrathink, !!config.planDisabled)) {
+                planActive = true;
+                planPlannerModel = resolvedModel;
+                planExecutorModel = getExecutorModel(routingProfile);
+                onEvent({ kind: 'text_delta', text: '\n*Planning...*\n' });
+            }
+            // Plan-then-execute: override model on execution iterations
+            if (planActive && loopCount > 1) {
+                resolvedModel = planExecutorModel;
+            }
+            // Build per-call tool defs, max_tokens, and system prompt
+            // (planning calls get no tools + short output + planning prompt)
+            let callToolDefs = toolDefs;
+            let callMaxTokens = maxTokens;
+            let callSystemPrompt = systemPrompt;
+            if (planActive && loopCount === 1) {
+                callToolDefs = []; // No tools during planning
+                callMaxTokens = 2048; // Short plan output
+                callSystemPrompt = systemPrompt + '\n\n' + getPlanningPrompt();
+            }
             // Safety net: handled in llm.ts resolveVirtualModel()
             // Sanitize: remove orphaned tool results that could confuse the API
             const sanitized = sanitizeHistory(history);
@@ -439,9 +470,9 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 const result = await client.complete({
                     model: resolvedModel,
                     messages: history,
-                    system: systemPrompt,
-                    tools: toolDefs,
-                    max_tokens: maxTokens,
+                    system: callSystemPrompt,
+                    tools: callToolDefs,
+                    max_tokens: callMaxTokens,
                     stream: true,
                 }, abort.signal, 
                 // Start concurrent tools as soon as their input is fully received
@@ -634,6 +665,18 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             const assistantMessage = { role: 'assistant', content: responseParts };
             history.push(assistantMessage);
             persistSessionMessage(assistantMessage);
+            // ── Plan-then-execute: transition from planning to execution ──
+            if (planActive && loopCount === 1 && invocations.length === 0) {
+                // Planning call completed — inject execution kickoff
+                const execKickoff = {
+                    role: 'user',
+                    content: 'Execute the plan above step by step. Use tools to complete each step. After each step, briefly state what you did and move to the next.',
+                };
+                history.push(execKickoff);
+                persistSessionMessage(execKickoff);
+                onEvent({ kind: 'text_delta', text: `\n*Executing with ${planExecutorModel}...*\n` });
+                continue; // Next iteration uses the cheap executor model
+            }
             // No more capabilities → done with this user message
             if (invocations.length === 0) {
                 lastSessionActivity = Date.now();
@@ -722,6 +765,36 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             const toolResultMessage = { role: 'user', content: outcomeContent };
             history.push(toolResultMessage);
             persistSessionMessage(toolResultMessage);
+            // ── Plan-then-execute: stuck detection ──
+            if (planActive && loopCount > 1) {
+                const hasErrors = results.some(([, r]) => r.isError);
+                planConsecutiveErrors = hasErrors ? planConsecutiveErrors + 1 : 0;
+                // Check for same-tool repeat (model calling the exact same thing twice)
+                const currentSig = results.length === 1
+                    ? toolCallSignature(results[0][0].name, results[0][0].input)
+                    : '';
+                const sameToolRepeat = currentSig !== '' && currentSig === lastToolSig;
+                lastToolSig = currentSig;
+                if (isExecutorStuck(planConsecutiveErrors, sameToolRepeat)) {
+                    if (planEscalationCount < 2) {
+                        planEscalationCount++;
+                        // One-shot escalation: next iteration uses the planner model
+                        resolvedModel = planPlannerModel;
+                        const escalation = {
+                            role: 'user',
+                            content: '[ESCALATION] The executor got stuck on repeated errors. You are a stronger model. Review what happened and either fix the approach or continue from where execution stopped.',
+                        };
+                        history.push(escalation);
+                        persistSessionMessage(escalation);
+                        onEvent({ kind: 'text_delta', text: '\n*Escalating to stronger model...*\n' });
+                    }
+                    else {
+                        // Abandon plan — strong model finishes the task directly
+                        planActive = false;
+                        onEvent({ kind: 'text_delta', text: '\n*Plan abandoned — switching to full model...*\n' });
+                    }
+                }
+            }
             // Hard stop: if cap exceeded, force end this agent loop iteration
             if (turnToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
                 if (config.debug) {
