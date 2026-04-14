@@ -80,7 +80,25 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
         }
       }
 
-      return { output: `Updated task #${task.id} status` };
+      // Rich feedback: show status transition and dependency impact
+      let feedback = `Updated task #${task.id}`;
+      if (status) {
+        feedback += ` → ${status}`;
+        // If completed, show which tasks are now unblocked
+        if (status === 'completed' && task.blocks.length > 0) {
+          const nowUnblocked = task.blocks
+            .map(id => tasks.find(t => t.id === id))
+            .filter(t => t && t.blockedBy.every(bid => {
+              const blocker = tasks.find(bt => bt.id === bid);
+              return blocker?.status === 'completed';
+            }))
+            .map(t => `#${t!.id} ${t!.subject}`);
+          if (nowUnblocked.length > 0) {
+            feedback += ` — unblocked: ${nowUnblocked.join(', ')}`;
+          }
+        }
+      }
+      return { output: feedback };
     }
 
     case 'list': {
