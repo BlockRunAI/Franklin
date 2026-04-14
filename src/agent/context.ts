@@ -1,5 +1,5 @@
 /**
- * Context Manager for runcode
+ * Context Manager for Franklin
  * Assembles system instructions, reads project config, injects environment info.
  */
 
@@ -10,7 +10,7 @@ import { loadLearnings, decayLearnings, saveLearnings, formatForPrompt } from '.
 
 // ─── System Instructions Assembly ──────────────────────────────────────────
 
-const BASE_INSTRUCTIONS = `You are runcode, an AI coding agent that helps users with software engineering tasks.
+const BASE_INSTRUCTIONS = `You are Franklin, an AI coding agent that helps users with software engineering tasks.
 You have access to tools for reading, writing, editing files, running shell commands, searching codebases, web browsing, and more.
 
 # Core Principles
