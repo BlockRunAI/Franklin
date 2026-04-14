@@ -13,7 +13,7 @@ import { renderMarkdown } from './markdown.js';
 import { resolveModel, PICKER_CATEGORIES, PICKER_MODELS_FLAT, } from './model-picker.js';
 import { estimateCost } from '../pricing.js';
 import { formatTokens, shortModelName } from '../stats/format.js';
-import { mouse } from './mouse.js';
+import { mouse, forceDisableMouseTracking } from './mouse.js';
 // ─── Full-width input box ──────────────────────────────────────────────────
 function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, queuedCount, focused, busy, contextPct, vimMode, onVimModeChange }) {
     const { stdout } = useStdout();
@@ -395,8 +395,14 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         turnSavingsRef.current = undefined;
         onSubmit(trimmed);
     }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory, showStatus]);
-    // Mouse support — clicks toggle tool results, drag selects text
+    // Mouse support — OFF by default because Node stdin is shared: mouse escape
+    // sequences leak into Ink's input handler as typed text. Opt in with
+    // FRANKLIN_MOUSE=1 if you want click-to-expand-tool + drag-to-copy.
     useEffect(() => {
+        // Always disable any leftover mouse tracking from a previous session
+        forceDisableMouseTracking();
+        if (process.env.FRANKLIN_MOUSE !== '1')
+            return;
         const cleanup = mouse.enable();
         const handleClick = (event) => {
             // Ignore clicks in the input area (bottom 4 rows of the terminal)
