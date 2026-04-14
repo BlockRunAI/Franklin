@@ -54,7 +54,7 @@
     "type": "git",
     "url": "https://github.com/BlockRunAI/franklin"
   },
-  "homepage": "https://github.com/BlockRunAI/franklin",
+  "homepage": "https://Franklin.run",
   "engines": {
     "node": ">=20"
   },
