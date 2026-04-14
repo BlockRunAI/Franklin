@@ -3,7 +3,8 @@ import path from 'node:path';
 import chalk from 'chalk';
 import { BLOCKRUN_DIR } from '../config.js';
 
-const CONFIG_FILE = path.join(BLOCKRUN_DIR, 'runcode-config.json');
+const CONFIG_FILE = path.join(BLOCKRUN_DIR, 'franklin-config.json');
+const LEGACY_CONFIG_FILE = path.join(BLOCKRUN_DIR, 'runcode-config.json');
 
 const VALID_KEYS = [
   'default-model',
@@ -38,7 +39,13 @@ export function loadConfig(): AppConfig {
     const content = fs.readFileSync(CONFIG_FILE, 'utf-8');
     return JSON.parse(content) as AppConfig;
   } catch {
-    return {};
+    // Fall back to legacy config file
+    try {
+      const legacy = fs.readFileSync(LEGACY_CONFIG_FILE, 'utf-8');
+      return JSON.parse(legacy) as AppConfig;
+    } catch {
+      return {};
+    }
   }
 }
 
@@ -72,7 +79,7 @@ export function configCommand(
       );
       return;
     }
-    console.log(chalk.bold('runcode config\n'));
+    console.log(chalk.bold('franklin config\n'));
     for (const [k, v] of entries) {
       console.log(`  ${chalk.cyan(k)} = ${chalk.green(v)}`);
     }
@@ -82,7 +89,7 @@ export function configCommand(
 
   if (action === 'get') {
     if (!keyOrUndefined) {
-      console.log(chalk.red('Usage: runcode config get <key>'));
+      console.log(chalk.red('Usage: franklin config get <key>'));
       process.exit(1);
     }
     const config = loadConfig();
@@ -97,7 +104,7 @@ export function configCommand(
 
   if (action === 'set') {
     if (!keyOrUndefined || value === undefined) {
-      console.log(chalk.red('Usage: runcode config set <key> <value>'));
+      console.log(chalk.red('Usage: franklin config set <key> <value>'));
       process.exit(1);
     }
     if (!isValidKey(keyOrUndefined)) {
@@ -120,7 +127,7 @@ export function configCommand(
 
   if (action === 'unset') {
     if (!keyOrUndefined) {
-      console.log(chalk.red('Usage: runcode config unset <key>'));
+      console.log(chalk.red('Usage: franklin config unset <key>'));
       process.exit(1);
     }
     if (!isValidKey(keyOrUndefined)) {
@@ -136,6 +143,6 @@ export function configCommand(
   }
 
   console.log(chalk.red(`Unknown action: ${action}`));
-  console.log('Usage: runcode config <set|get|unset|list> [key] [value]');
+  console.log('Usage: franklin config <set|get|unset|list> [key] [value]');
   process.exit(1);
 }
