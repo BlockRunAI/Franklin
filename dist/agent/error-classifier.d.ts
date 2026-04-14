@@ -13,5 +13,7 @@ export interface AgentErrorInfo {
     isTransient: boolean;
     /** Max retries for this error type (overrides default). undefined = use default. */
     maxRetries?: number;
+    /** User-facing suggestion for how to recover. Appended to error message in UI. */
+    suggestion?: string;
 }
 export declare function classifyAgentError(message: string): AgentErrorInfo;

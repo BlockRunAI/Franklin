@@ -11,12 +11,14 @@ interface GrepInput {
   pattern: string;
   path?: string;
   glob?: string;
+  type?: string;
   output_mode?: 'content' | 'files_with_matches' | 'count';
   context?: number;
   before_context?: number;
   after_context?: number;
   case_insensitive?: boolean;
   head_limit?: number;
+  offset?: number;
   multiline?: boolean;
 }
 
@@ -96,6 +98,7 @@ function runRipgrep(
   if (opts.case_insensitive) args.push('-i');
   if (opts.multiline) args.push('-U', '--multiline-dotall');
   if (opts.glob) args.push(`--glob=${opts.glob}`);
+  if (opts.type) args.push(`--type=${opts.type}`);
 
   // Always exclude common noise + lock files (huge, rarely useful)
   args.push('--glob=!node_modules', '--glob=!.git', '--glob=!dist',
@@ -112,7 +115,9 @@ function runRipgrep(
     });
 
     const lines = result.split('\n').filter(Boolean);
-    const limited = limit > 0 ? lines.slice(0, limit) : lines;
+    const offset = opts.offset ?? 0;
+    const sliced = offset > 0 ? lines.slice(offset) : lines;
+    const limited = limit > 0 ? sliced.slice(0, limit) : sliced;
 
     // Convert absolute paths to relative paths to save tokens (same as Claude Code)
     const relativized = limited.map(line => {
@@ -230,25 +235,28 @@ ALWAYS use Grep for search tasks. NEVER invoke grep or rg as a Bash command. The
 
 Usage:
 - Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
-- Filter files with glob parameter (e.g., "*.js", "**/*.tsx")
+- Filter files with glob parameter (e.g., "*.js", "**/*.tsx") or type parameter (e.g., "js", "py", "rust") — more efficient than searching all files
 - Output modes: "content" shows matching lines with context, "files_with_matches" shows only file paths (default), "count" shows match counts
 - Use context/before_context/after_context for surrounding lines (requires output_mode: "content")
 - Pattern syntax: Uses ripgrep (not grep) — literal braces need escaping (use \`interface\\{\\}\` to find \`interface{}\` in Go code)
 - Multiline matching: By default patterns match within single lines only. For cross-line patterns like \`struct \\{[\\s\\S]*?field\`, use multiline: true
-- Use Agent tool for open-ended searches requiring multiple rounds of exploration`,
+- Use Agent tool for open-ended searches requiring multiple rounds of exploration
+- Default head_limit is 250 results. Pass 0 for unlimited (use sparingly — large results waste context)`,
     input_schema: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: 'The regex pattern to search for in file contents' },
+        pattern: { type: 'string', description: 'The regular expression pattern to search for in file contents' },
         path: { type: 'string', description: 'File or directory to search in. Defaults to working directory.' },
-        glob: { type: 'string', description: 'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}")' },
-        output_mode: { type: 'string', description: '"content" | "files_with_matches" | "count". Default: files_with_matches' },
-        context: { type: 'number', description: 'Lines of context around each match (requires output_mode: "content")' },
-        before_context: { type: 'number', description: 'Lines before each match' },
-        after_context: { type: 'number', description: 'Lines after each match' },
-        case_insensitive: { type: 'boolean', description: 'Case insensitive search' },
-        head_limit: { type: 'number', description: 'Max results to return (default 250)' },
-        multiline: { type: 'boolean', description: 'Enable multiline mode where patterns can span lines' },
+        glob: { type: 'string', description: 'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}") — maps to rg --glob' },
+        type: { type: 'string', description: 'File type to search (rg --type). Common types: js, py, rust, go, java, ts. More efficient than glob for standard file types.' },
+        output_mode: { type: 'string', description: 'Output mode: "content" shows matching lines, "files_with_matches" shows file paths (default), "count" shows match counts' },
+        context: { type: 'number', description: 'Number of lines to show before and after each match (rg -C). Requires output_mode: "content"' },
+        before_context: { type: 'number', description: 'Number of lines to show before each match (rg -B). Requires output_mode: "content"' },
+        after_context: { type: 'number', description: 'Number of lines to show after each match (rg -A). Requires output_mode: "content"' },
+        case_insensitive: { type: 'boolean', description: 'Case insensitive search (rg -i)' },
+        head_limit: { type: 'number', description: 'Limit output to first N entries. Defaults to 250. Pass 0 for unlimited (use sparingly — large results waste context).' },
+        offset: { type: 'number', description: 'Skip first N entries before applying head_limit. Defaults to 0.' },
+        multiline: { type: 'boolean', description: 'Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false.' },
       },
       required: ['pattern'],
     },
