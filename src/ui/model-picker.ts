@@ -57,7 +57,7 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   // Others
   minimax: 'minimax/minimax-m2.7',
   glm: 'zai/glm-5.1',
-  'glm-turbo': 'zai/glm-5.1-turbo',
+  'glm-turbo': 'zai/glm-5-turbo',
   'glm5': 'zai/glm-5.1',
   kimi: 'moonshot/kimi-k2.5',
 };
@@ -99,7 +99,7 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
     category: '🔥 Promo (flat $0.001/call)',
     models: [
       { id: 'zai/glm-5.1',       shortcut: 'glm',       label: 'GLM-5.1',       price: '$0.001/call', highlight: true },
-      { id: 'zai/glm-5.1-turbo', shortcut: 'glm-turbo', label: 'GLM-5.1 Turbo', price: '$0.001/call', highlight: true },
+      { id: 'zai/glm-5-turbo', shortcut: 'glm-turbo', label: 'GLM-5 Turbo', price: '$0.001/call', highlight: true },
     ],
   },
   {
