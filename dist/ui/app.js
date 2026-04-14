@@ -8,12 +8,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
+import VimInput from './vim-input.js';
 import { renderMarkdown } from './markdown.js';
 import { resolveModel, PICKER_CATEGORIES, PICKER_MODELS_FLAT, } from './model-picker.js';
 import { estimateCost } from '../pricing.js';
 import { formatTokens, shortModelName } from '../stats/format.js';
 // ─── Full-width input box ──────────────────────────────────────────────────
-function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, queuedCount, focused, busy, contextPct }) {
+function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, queuedCount, focused, busy, contextPct, vimMode, onVimModeChange }) {
     const { stdout } = useStdout();
     const cols = stdout?.columns ?? 80;
     const innerWidth = Math.min(Math.max(30, cols - 4), cols - 2);
@@ -22,7 +23,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
             ? `⏎ ${queuedCount ?? 1} queued: ${queued.slice(0, 40)}`
             : 'Working...')
         : 'Type a message...';
-    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, children: [_jsx(Text, { dimColor: true, children: '╭' + '─'.repeat(cols - 2) + '╮' }), _jsxs(Box, { children: [_jsx(Text, { dimColor: true, children: "\u2502 " }), busy && !input ? _jsxs(Text, { color: "yellow", children: [_jsx(Spinner, { type: "dots" }), " "] }) : null, _jsx(Box, { width: busy && !input ? innerWidth - 4 : innerWidth, children: _jsx(TextInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: placeholder, focus: focused !== false }) }), _jsxs(Text, { dimColor: true, children: [' '.repeat(Math.max(0, cols - innerWidth - 4)), "\u2502"] })] }), _jsx(Text, { dimColor: true, children: '╰' + '─'.repeat(cols - 2) + '╯' }), _jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [busy ? _jsx(Text, { color: "yellow", children: _jsx(Spinner, { type: "dots" }) }) : null, busy ? ' ' : '', shortModelName(model), "  \u00B7  ", balance, sessionCost > 0.00001 ? _jsxs(Text, { color: "yellow", children: ["  -$", sessionCost.toFixed(4)] }) : '', contextPct !== undefined && contextPct > 0 ? (() => {
+    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, children: [_jsx(Text, { dimColor: true, children: '╭' + '─'.repeat(cols - 2) + '╮' }), _jsxs(Box, { children: [_jsx(Text, { dimColor: true, children: "\u2502 " }), busy && !input ? _jsxs(Text, { color: "yellow", children: [_jsx(Spinner, { type: "dots" }), " "] }) : null, _jsx(Box, { width: busy && !input ? innerWidth - 4 : innerWidth, children: vimMode ? (_jsx(VimInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: placeholder, focus: focused !== false, showMode: true, onModeChange: onVimModeChange })) : (_jsx(TextInput, { value: input, onChange: setInput, onSubmit: onSubmit, placeholder: placeholder, focus: focused !== false })) }), _jsxs(Text, { dimColor: true, children: [' '.repeat(Math.max(0, cols - innerWidth - 4)), "\u2502"] })] }), _jsx(Text, { dimColor: true, children: '╰' + '─'.repeat(cols - 2) + '╯' }), _jsx(Box, { marginLeft: 1, children: _jsxs(Text, { dimColor: true, children: [busy ? _jsx(Text, { color: "yellow", children: _jsx(Spinner, { type: "dots" }) }) : null, busy ? ' ' : '', shortModelName(model), "  \u00B7  ", balance, sessionCost > 0.00001 ? _jsxs(Text, { color: "yellow", children: ["  -$", sessionCost.toFixed(4)] }) : '', contextPct !== undefined && contextPct > 0 ? (() => {
                             // Visual context bar: ▓▓▓▓▓▓░░░░ 75%
                             const filled = Math.round(contextPct / 10);
                             const empty = 10 - filled;
@@ -39,6 +40,8 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const [tools, setTools] = useState(new Map());
     // Completed tool results committed to Static (permanent scrollback — no re-render artifacts)
     const [completedTools, setCompletedTools] = useState([]);
+    // Last completed tool — shown in dynamic area so it can be expanded/collapsed with Tab
+    const [expandableTool, setExpandableTool] = useState(null);
     // Full responses committed to Static immediately — goes into terminal scrollback like Claude Code
     const [committedResponses, setCommittedResponses] = useState([]);
     // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
@@ -54,6 +57,8 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     const [totalCost, setTotalCost] = useState(0);
     const [showHelp, setShowHelp] = useState(false);
     const [showWallet, setShowWallet] = useState(false);
+    const [vimEnabled, setVimEnabled] = useState(false);
+    const [currentVimMode, setCurrentVimMode] = useState('insert');
     const [balance, setBalance] = useState(walletBalance);
     // Parse the fetched balance to a number so we can compute live balance = fetchedBalance - sessionCost.
     // costAtLastFetch tracks totalCost when balance was last fetched, to avoid double-subtracting.
@@ -185,6 +190,12 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
             setReady(true);
         }
     }, { isActive: isPickerOrEsc });
+    // Tab key: toggle expand/collapse on the last completed tool
+    useInput((_ch, key) => {
+        if (key.tab && expandableTool) {
+            setExpandableTool(prev => prev ? { ...prev, expanded: !prev.expanded } : null);
+        }
+    }, { isActive: mode === 'input' && !permissionRequest && !askUserRequest });
     // Input history: Up/Down arrow when in ready input mode
     useInput((_ch, key) => {
         if (key.upArrow && inputHistory.length > 0) {
@@ -262,6 +273,10 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     setShowHelp(true);
                     setShowWallet(false);
                     return;
+                case '/vim':
+                    setVimEnabled(prev => !prev);
+                    showStatus(vimEnabled ? 'Vim mode OFF' : 'Vim mode ON — Esc for normal, i for insert', 'success', 3000);
+                    return;
                 case '/clear':
                     setStreamText('');
                     setTools(new Map());
@@ -322,6 +337,12 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         setThinking(false);
         setThinkingText('');
         setTools(new Map());
+        // Flush expandable tool to Static before clearing
+        setExpandableTool(prev => {
+            if (prev)
+                setCompletedTools(prev2 => [...prev2, { ...prev, expanded: false }]);
+            return null;
+        });
         setCompletedTools([]);
         setReady(false);
         setWaiting(true);
@@ -389,6 +410,8 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                                 preview: event.preview || '',
                                 liveOutput: '',
                                 liveLines: [],
+                                fullOutput: '',
+                                expanded: false,
                                 elapsed: 0,
                             });
                             return next;
@@ -426,10 +449,19 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                                     error: !!event.result.isError,
                                     preview: resultPreview,
                                     liveOutput: '',
+                                    liveLines: [],
+                                    fullOutput: event.result.output || '',
+                                    diff: event.result.diff,
+                                    expanded: false,
                                     elapsed: Date.now() - t.startTime,
                                 };
-                                // Move to Static (permanent scrollback) — prevents re-render artifacts
-                                setCompletedTools(prev2 => [...prev2, completed]);
+                                // Move previous expandable tool to Static, set new one as expandable
+                                setExpandableTool(prevExpTool => {
+                                    if (prevExpTool) {
+                                        setCompletedTools(prev2 => [...prev2, { ...prevExpTool, expanded: false }]);
+                                    }
+                                    return completed;
+                                });
                                 next.delete(event.id);
                             }
                             return next;
@@ -457,6 +489,12 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                         break;
                     }
                     case 'turn_done': {
+                        // Flush expandable tool to Static before committing response
+                        setExpandableTool(prev => {
+                            if (prev)
+                                setCompletedTools(prev2 => [...prev2, { ...prev, expanded: false }]);
+                            return null;
+                        });
                         const text = streamTextRef.current;
                         if (text.trim()) {
                             commitResponse(text, turnTokensRef.current, turnCostRef.current);
@@ -515,13 +553,13 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
     // opens/closes. The picker is rendered inline below scrollback, and the
     // InputBox is hidden while it's active.
     const inPicker = mode === 'model-picker';
-    return (_jsxs(Box, { flexDirection: "column", children: [statusMsg && (_jsx(Box, { marginLeft: 2, children: _jsx(Text, { color: statusTone === 'error' ? 'red' : statusTone === 'warning' ? 'yellow' : 'green', children: statusMsg }) })), showHelp && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Commands" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/model" }), " [name]  Switch model (picker if no name)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/wallet" }), "        Show wallet address & balance"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/cost" }), "          Session cost & savings"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/retry" }), "         Retry the last prompt"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/compact" }), "       Compress conversation history"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Coding \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/test" }), "          Run tests"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/fix" }), "           Fix last error"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/review" }), "        Code review"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/explain" }), " file  Explain code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/search" }), " query  Search codebase"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/session-search" }), " q  Search past sessions"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/refactor" }), " desc Refactor code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/scaffold" }), " desc Generate boilerplate"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Git \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/commit" }), "        Commit changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/push" }), "          Push to remote"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/pr" }), "            Create pull request"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/status" }), "        Git status"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/diff" }), "          Git diff"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/log" }), "           Git log"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/branch" }), " [name] Branches"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/stash" }), "         Stash changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/undo" }), "          Undo last commit"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Analysis \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/security" }), "      Security audit"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/lint" }), "          Quality check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/optimize" }), "      Performance check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/todo" }), "          Find TODOs"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/deps" }), "          Dependencies"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clean" }), "         Dead code removal"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/context" }), "       Session info (model, tokens, mode)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/plan" }), "          Enter plan mode (read-only tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/execute" }), "       Exit plan mode (enable all tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/sessions" }), "      List saved sessions"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/resume" }), " id     Resume a saved session"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clear" }), "         Clear conversation history"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/doctor" }), "        Diagnose setup issues"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/help" }), "          This help"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/exit" }), "          Quit"] }), _jsx(Text, { children: " " }), _jsx(Text, { dimColor: true, children: "  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4, nano, mini, haiku" })] })), showWallet && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Wallet" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  Chain:   ", _jsx(Text, { color: "magenta", children: chain })] }), _jsxs(Text, { children: ["  Address: ", _jsx(Text, { color: "cyan", children: walletAddress })] }), _jsxs(Text, { children: ["  Balance: ", _jsx(Text, { color: "green", children: balance })] })] })), _jsx(Static, { items: completedTools, children: (tool) => {
+    return (_jsxs(Box, { flexDirection: "column", children: [statusMsg && (_jsx(Box, { marginLeft: 2, children: _jsx(Text, { color: statusTone === 'error' ? 'red' : statusTone === 'warning' ? 'yellow' : 'green', children: statusMsg }) })), showHelp && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Commands" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/model" }), " [name]  Switch model (picker if no name)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/wallet" }), "        Show wallet address & balance"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/cost" }), "          Session cost & savings"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/retry" }), "         Retry the last prompt"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/compact" }), "       Compress conversation history"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Coding \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/test" }), "          Run tests"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/fix" }), "           Fix last error"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/review" }), "        Code review"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/explain" }), " file  Explain code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/search" }), " query  Search codebase"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/session-search" }), " q  Search past sessions"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/refactor" }), " desc Refactor code"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/scaffold" }), " desc Generate boilerplate"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Git \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/commit" }), "        Commit changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/push" }), "          Push to remote"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/pr" }), "            Create pull request"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/status" }), "        Git status"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/diff" }), "          Git diff"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/log" }), "           Git log"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/branch" }), " [name] Branches"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/stash" }), "         Stash changes"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/undo" }), "          Undo last commit"] }), _jsx(Text, { dimColor: true, children: "  \u2500\u2500 Analysis \u2500\u2500" }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/security" }), "      Security audit"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/lint" }), "          Quality check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/optimize" }), "      Performance check"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/todo" }), "          Find TODOs"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/deps" }), "          Dependencies"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clean" }), "         Dead code removal"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/context" }), "       Session info (model, tokens, mode)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/plan" }), "          Enter plan mode (read-only tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/execute" }), "       Exit plan mode (enable all tools)"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/sessions" }), "      List saved sessions"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/resume" }), " id     Resume a saved session"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/clear" }), "         Clear conversation history"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/doctor" }), "        Diagnose setup issues"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/vim" }), "           Toggle Vim input mode"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/help" }), "          This help"] }), _jsxs(Text, { children: ["  ", _jsx(Text, { color: "cyan", children: "/exit" }), "          Quit"] }), _jsx(Text, { children: " " }), _jsx(Text, { dimColor: true, children: "  Shortcuts: sonnet, opus, gpt, gemini, deepseek, flash, free, r1, o4, nano, mini, haiku" })] })), showWallet && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginTop: 1, marginBottom: 1, children: [_jsx(Text, { bold: true, children: "Wallet" }), _jsx(Text, { children: " " }), _jsxs(Text, { children: ["  Chain:   ", _jsx(Text, { color: "magenta", children: chain })] }), _jsxs(Text, { children: ["  Address: ", _jsx(Text, { color: "cyan", children: walletAddress })] }), _jsxs(Text, { children: ["  Balance: ", _jsx(Text, { color: "green", children: balance })] })] })), _jsx(Static, { items: completedTools, children: (tool) => {
                     const elapsedFmt = tool.elapsed >= 1000
                         ? `${(tool.elapsed / 1000).toFixed(1)}s`
                         : `${tool.elapsed}ms`;
-                    return (_jsx(Box, { flexDirection: "column", marginLeft: 2, children: _jsxs(Text, { children: [tool.error
-                                    ? _jsx(Text, { color: "red", children: "\u2717" })
-                                    : _jsx(Text, { color: "green", children: "\u2713" }), ' ', _jsx(Text, { bold: true, children: tool.name }), tool.preview ? _jsxs(Text, { dimColor: true, children: ["(", tool.preview.slice(0, 80), ")"] }) : null, _jsxs(Text, { dimColor: true, children: [" ", elapsedFmt] })] }) }, tool.key));
+                    return (_jsxs(Box, { flexDirection: "column", marginLeft: 2, children: [_jsxs(Text, { children: [tool.error
+                                        ? _jsx(Text, { color: "red", children: "\u2717" })
+                                        : _jsx(Text, { color: "green", children: "\u2713" }), ' ', _jsx(Text, { bold: true, children: tool.name }), tool.preview ? _jsxs(Text, { dimColor: true, children: ["(", tool.preview.slice(0, 80), ")"] }) : null, _jsxs(Text, { dimColor: true, children: [" ", elapsedFmt] })] }), tool.diff && !tool.error && tool.diff.oldLines.length <= 8 && tool.diff.newLines.length <= 8 && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, children: [tool.diff.oldLines.map((line, i) => (_jsxs(Text, { color: "red", wrap: "truncate-end", children: ['⎿  ', "- ", line.slice(0, 120)] }, `old-${i}`))), tool.diff.newLines.map((line, i) => (_jsxs(Text, { color: "green", wrap: "truncate-end", children: ['⎿  ', "+ ", line.slice(0, 120)] }, `new-${i}`)))] })), tool.diff && !tool.error && (tool.diff.oldLines.length > 8 || tool.diff.newLines.length > 8) && (_jsx(Box, { marginLeft: 2, children: _jsxs(Text, { dimColor: true, children: ['⎿  ', tool.diff.oldLines.length, " lines \u2192 ", tool.diff.newLines.length, " lines"] }) })), tool.error && tool.fullOutput && (_jsx(Box, { flexDirection: "column", marginLeft: 2, children: tool.fullOutput.split('\n').filter(Boolean).slice(0, 3).map((line, i) => (_jsxs(Text, { color: "red", wrap: "truncate-end", children: ['⎿  ', line.slice(0, 120)] }, i))) }))] }, tool.key));
                 } }), _jsx(Static, { items: committedResponses, children: (r) => {
                     const isUserMsg = r.key.startsWith('user-');
                     return (_jsxs(Box, { flexDirection: "column", children: [!isUserMsg && (r.tokens.input > 0 || r.tokens.output > 0) && (_jsx(Box, { marginTop: 1, children: _jsx(Text, { dimColor: true, children: '─'.repeat(60) }) })), _jsx(Text, { wrap: "wrap", children: renderMarkdown(r.text) }), (r.tokens.input > 0 || r.tokens.output > 0) && (_jsx(Box, { marginLeft: 1, marginBottom: 1, children: _jsxs(Text, { dimColor: true, children: [r.tier && _jsxs(Text, { color: "cyan", children: ["[", r.tier, "] "] }), r.model ? shortModelName(r.model) : '', r.model ? '  ·  ' : '', r.tokens.calls > 0 && r.tokens.input === 0
@@ -533,7 +571,14 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                                     setAskUserRequest(null);
                                     setAskUserInput('');
                                     r(answer);
-                                }, focus: true })] })] })), Array.from(tools.entries()).map(([id, tool]) => {
+                                }, focus: true })] })] })), expandableTool && (() => {
+                const tool = expandableTool;
+                const elapsedFmt = tool.elapsed >= 1000
+                    ? `${(tool.elapsed / 1000).toFixed(1)}s`
+                    : `${tool.elapsed}ms`;
+                const hasExpandableContent = !!(tool.diff || (tool.fullOutput && tool.fullOutput.split('\n').length > 1));
+                return (_jsxs(Box, { flexDirection: "column", marginLeft: 2, children: [_jsxs(Text, { children: [tool.error ? _jsx(Text, { color: "red", children: "\u2717" }) : _jsx(Text, { color: "green", children: "\u2713" }), ' ', _jsx(Text, { bold: true, children: tool.name }), tool.preview ? _jsxs(Text, { dimColor: true, children: ["(", tool.preview.slice(0, 80), ")"] }) : null, _jsxs(Text, { dimColor: true, children: [" ", elapsedFmt] }), hasExpandableContent && (_jsxs(Text, { dimColor: true, children: [" ", tool.expanded ? '(tab to collapse)' : '(tab to expand)'] }))] }), !tool.expanded && tool.diff && !tool.error && tool.diff.oldLines.length <= 8 && tool.diff.newLines.length <= 8 && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, children: [tool.diff.oldLines.map((line, i) => (_jsxs(Text, { color: "red", wrap: "truncate-end", children: ['⎿  ', "- ", line.slice(0, 120)] }, `old-${i}`))), tool.diff.newLines.map((line, i) => (_jsxs(Text, { color: "green", wrap: "truncate-end", children: ['⎿  ', "+ ", line.slice(0, 120)] }, `new-${i}`)))] })), tool.expanded && tool.fullOutput && (_jsxs(Box, { flexDirection: "column", marginLeft: 2, children: [tool.fullOutput.split('\n').slice(0, 30).map((line, i) => (_jsxs(Text, { dimColor: true, wrap: "truncate-end", children: ['⎿  ', line.slice(0, 120)] }, i))), tool.fullOutput.split('\n').length > 30 && (_jsxs(Text, { dimColor: true, children: ['⎿  ', "... ", tool.fullOutput.split('\n').length - 30, " more lines"] }))] })), tool.error && !tool.expanded && tool.fullOutput && (_jsx(Box, { flexDirection: "column", marginLeft: 2, children: tool.fullOutput.split('\n').filter(Boolean).slice(0, 3).map((line, i) => (_jsxs(Text, { color: "red", wrap: "truncate-end", children: ['⎿  ', line.slice(0, 120)] }, i))) }))] }));
+            })(), Array.from(tools.entries()).map(([id, tool]) => {
                 const elapsed = Math.round((Date.now() - tool.startTime) / 1000);
                 const elapsedStr = elapsed > 0 ? ` ${elapsed}s` : '';
                 return (_jsxs(Box, { flexDirection: "column", marginLeft: 2, children: [_jsxs(Text, { children: [_jsx(Text, { color: "cyan", children: _jsx(Spinner, { type: "dots" }) }), ' ', _jsx(Text, { bold: true, color: "cyan", children: tool.name }), tool.preview ? _jsxs(Text, { dimColor: true, children: ["(", tool.preview.slice(0, 70), ")"] }) : null, _jsx(Text, { dimColor: true, children: elapsedStr })] }), tool.liveLines.length > 0 && (_jsx(Box, { flexDirection: "column", marginLeft: 2, children: tool.liveLines.map((line, i) => (_jsxs(Text, { dimColor: true, wrap: "truncate-end", children: ['⎿  ', line.slice(0, 120)] }, i))) }))] }, id));
@@ -549,7 +594,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                                     const isHighlight = m.highlight === true;
                                     return (_jsxs(Box, { marginLeft: 2, children: [_jsxs(Text, { inverse: isSelected, color: isSelected ? 'cyan' : isHighlight ? 'yellow' : undefined, bold: isSelected || isHighlight, children: [' ', m.label.padEnd(26), ' '] }), _jsxs(Text, { dimColor: true, children: [" ", m.shortcut.padEnd(14)] }), _jsx(Text, { color: m.price === 'FREE' ? 'green' : isHighlight ? 'yellow' : undefined, dimColor: !isHighlight && m.price !== 'FREE', children: m.price }), isCurrent && _jsx(Text, { color: "green", children: " \u2190" })] }, m.id));
                                 })] }, cat.category))), _jsx(Box, { marginTop: 1, marginLeft: 2, children: _jsx(Text, { dimColor: true, children: "Your conversation stays above \u2014 picking a model keeps all history intact." }) })] }));
-            })(), !inPicker && (_jsx(InputBox, { input: (permissionRequest || askUserRequest) ? '' : input, setInput: (permissionRequest || askUserRequest) ? () => { } : setInput, onSubmit: (permissionRequest || askUserRequest) ? () => { } : handleSubmit, model: currentModel, balance: liveBalance, sessionCost: totalCost, queued: queuedInputs[0] || undefined, queuedCount: queuedInputs.length, focused: !permissionRequest && !askUserRequest, busy: !askUserRequest && (waiting || thinking || tools.size > 0), contextPct: contextPct }))] }));
+            })(), !inPicker && (_jsx(InputBox, { input: (permissionRequest || askUserRequest) ? '' : input, setInput: (permissionRequest || askUserRequest) ? () => { } : setInput, onSubmit: (permissionRequest || askUserRequest) ? () => { } : handleSubmit, model: currentModel, balance: liveBalance, sessionCost: totalCost, queued: queuedInputs[0] || undefined, queuedCount: queuedInputs.length, focused: !permissionRequest && !askUserRequest, busy: !askUserRequest && (waiting || thinking || tools.size > 0), contextPct: contextPct, vimMode: vimEnabled, onVimModeChange: setCurrentVimMode }))] }));
 }
 export function launchInkUI(opts) {
     let resolveInput = null;

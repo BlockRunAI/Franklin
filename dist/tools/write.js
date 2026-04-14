@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { partiallyReadFiles, fileReadTracker } from './read.js';
+import { partiallyReadFiles, fileReadTracker, invalidateFileCache } from './read.js';
 function withTrailingSep(value) {
     return value.endsWith(path.sep) ? value : value + path.sep;
 }
@@ -93,6 +93,7 @@ async function execute(input, ctx) {
         fs.mkdirSync(parentDir, { recursive: true });
         fs.writeFileSync(resolved, content, 'utf-8');
         partiallyReadFiles.delete(resolved);
+        invalidateFileCache(resolved);
         // Update read tracker so subsequent edits don't trigger stale detection
         const newStat = fs.statSync(resolved);
         fileReadTracker.set(resolved, { mtimeMs: newStat.mtimeMs, readAt: Date.now() });
