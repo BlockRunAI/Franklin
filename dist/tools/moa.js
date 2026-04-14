@@ -19,8 +19,8 @@ const REFERENCE_MODELS = [
     'google/gemini-2.5-flash', // Fast, cheap
     'deepseek/deepseek-chat', // Cheap, good reasoning
 ];
-/** Aggregator model — strong model that synthesizes the best answer. */
-const AGGREGATOR_MODEL = 'anthropic/claude-sonnet-4.6';
+/** Aggregator model — free by default. Users explicitly pass `aggregator` to upgrade. */
+const AGGREGATOR_MODEL = 'nvidia/nemotron-ultra-253b';
 /** Max tokens per reference response. */
 const REFERENCE_MAX_TOKENS = 4096;
 /** Max tokens for aggregator. */
@@ -38,11 +38,8 @@ async function execute(input, ctx) {
         return { output: 'Error: prompt is required', isError: true };
     }
     const referenceModels = models || REFERENCE_MODELS;
-    // If parent agent is on a free model, default aggregator to a free model too
-    // so MoA doesn't silently charge the user. Explicit `aggregator` arg wins.
-    const parentIsFree = registeredParentModel.startsWith('nvidia/') ||
-        registeredParentModel === 'blockrun/free';
-    const aggregatorModel = aggregator || (parentIsFree ? 'nvidia/nemotron-ultra-253b' : AGGREGATOR_MODEL);
+    // Aggregator defaults to free. Pass `aggregator: 'sonnet'` to explicitly upgrade.
+    const aggregatorModel = aggregator || AGGREGATOR_MODEL;
     const client = new ModelClient({
         apiUrl: registeredApiUrl,
         chain: registeredChain,

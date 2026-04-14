@@ -26,10 +26,10 @@ export function statsCommand(options) {
         return;
     }
     // Pretty output
-    console.log(chalk.bold('\n📊 runcode Usage Statistics\n'));
+    console.log(chalk.bold('\n📊 Franklin Usage Statistics\n'));
     console.log('─'.repeat(55));
     if (stats.totalRequests === 0) {
-        console.log(chalk.gray('\n  No requests recorded yet. Start using runcode!\n'));
+        console.log(chalk.gray('\n  No requests recorded yet. Start using franklin!\n'));
         console.log('─'.repeat(55) + '\n');
         return;
     }

@@ -3,7 +3,10 @@ import path from 'node:path';
 import os from 'node:os';
 import chalk from 'chalk';
 const CLAUDE_SETTINGS_FILE = path.join(os.homedir(), '.claude', 'settings.json');
-const LAUNCH_AGENT_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', 'ai.blockrun.runcode.plist');
+const LAUNCH_AGENT_PLISTS = [
+    path.join(os.homedir(), 'Library', 'LaunchAgents', 'ai.blockrun.franklin.plist'),
+    path.join(os.homedir(), 'Library', 'LaunchAgents', 'ai.blockrun.runcode.plist'), // legacy
+];
 export async function uninitCommand() {
     let changed = false;
     // ── 1. Remove env section from ~/.claude/settings.json ──────────────────
@@ -31,7 +34,7 @@ export async function uninitCommand() {
                     delete settings.env;
                 if (removed) {
                     fs.writeFileSync(CLAUDE_SETTINGS_FILE, JSON.stringify(settings, null, 2));
-                    console.log(chalk.green(`✓ Removed runcode env from ${CLAUDE_SETTINGS_FILE}`));
+                    console.log(chalk.green(`✓ Removed franklin env from ${CLAUDE_SETTINGS_FILE}`));
                     changed = true;
                 }
             }
@@ -40,24 +43,28 @@ export async function uninitCommand() {
     catch (e) {
         console.log(chalk.yellow(`Could not update settings.json: ${e.message}`));
     }
-    // ── 2. Unload and remove LaunchAgent ────────────────────────────────────
-    if (process.platform === 'darwin' && fs.existsSync(LAUNCH_AGENT_PLIST)) {
-        try {
-            const { execSync } = await import('node:child_process');
-            execSync(`launchctl unload -w "${LAUNCH_AGENT_PLIST}"`, { stdio: 'pipe' });
+    // ── 2. Unload and remove LaunchAgent(s) — new + legacy ─────────────────
+    if (process.platform === 'darwin') {
+        for (const plist of LAUNCH_AGENT_PLISTS) {
+            if (fs.existsSync(plist)) {
+                try {
+                    const { execSync } = await import('node:child_process');
+                    execSync(`launchctl unload -w "${plist}"`, { stdio: 'pipe' });
+                }
+                catch { /* already unloaded */ }
+                fs.unlinkSync(plist);
+                console.log(chalk.green(`✓ Removed LaunchAgent: ${path.basename(plist)}`));
+                changed = true;
+            }
         }
-        catch { /* already unloaded */ }
-        fs.unlinkSync(LAUNCH_AGENT_PLIST);
-        console.log(chalk.green(`✓ Removed LaunchAgent`));
-        changed = true;
     }
     if (!changed) {
-        console.log(chalk.dim('Nothing to uninit — runcode was not initialized.'));
+        console.log(chalk.dim('Nothing to uninit — franklin was not initialized.'));
     }
     else {
         console.log('');
-        console.log(chalk.bold('runcode uninitialized.'));
+        console.log(chalk.bold('franklin uninitialized.'));
         console.log(`Claude Code will use its default Anthropic API settings again.`);
-        console.log(`Run ${chalk.bold('runcode daemon stop')} to stop any running proxy.`);
+        console.log(`Run ${chalk.bold('franklin daemon stop')} to stop any running proxy.`);
     }
 }
