@@ -63,9 +63,22 @@ src/
 
 ## Positioning
 
-**Franklin runs your money.** Every feature decision should be tested against this positioning:
+**Franklin runs your money.** Three layers, from external to internal:
+
+| Layer | Message | Audience |
+|-------|---------|----------|
+| External (X, YouTube, KOL) | **The AI Agent with a Wallet** — it holds your USDC and actually spends it for you | Everyone |
+| Core users / docs | **Autonomous Economic Agent** powered by x402 payment layer | Developers, crypto AI community |
+| Product direction | **Marketing Agent + Trading Agent** — scenarios where spending money = value | Power users |
+
+Every feature decision should be tested against this positioning:
 
 - Does it make Franklin more of "the agent with a wallet"? → yes
 - Does it dilute us back to "another coding tool"? → no
 
-The moat is the payment layer. The category is Autonomous Economic Agent. The verticals are marketing and trading. Everything else is execution.
+The moat is the payment layer. The category is Autonomous Economic Agent. The verticals are marketing and trading. Coding intelligence is table stakes — necessary but not the differentiator.
+
+**vs competitors:**
+- Claude Code / Cursor: writes great code, but can't spend money to buy APIs, data, or ads
+- Hermes: strong memory and self-evolution, but no wallet or economic autonomy
+- Franklin: you fund the wallet, it decides what's worth spending on
