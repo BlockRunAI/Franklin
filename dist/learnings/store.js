@@ -111,20 +111,49 @@ const MAX_PROMPT_CHARS = 2000; // ~500 tokens
 export function formatForPrompt(learnings) {
     if (learnings.length === 0)
         return '';
-    const sorted = [...learnings].sort((a, b) => score(b) - score(a));
-    const lines = [];
+    // Separate negative learnings (highest priority) from others
+    const negative = learnings.filter(l => l.category === 'negative');
+    const projectCtx = learnings.filter(l => l.category === 'project_context');
+    const preferences = learnings.filter(l => l.category !== 'negative' && l.category !== 'project_context');
+    const sections = [];
     let chars = 0;
-    const header = '# Personal Context\nPreferences learned from previous sessions:\n';
-    chars += header.length;
-    for (const l of sorted) {
-        const conf = l.confidence >= 0.8 ? '●' : l.confidence >= 0.5 ? '◐' : '○';
-        const line = `- ${conf} ${l.learning}`;
-        if (chars + line.length + 1 > MAX_PROMPT_CHARS)
-            break;
-        lines.push(line);
-        chars += line.length + 1;
+    // Negative learnings first (most important — prevents repeating mistakes)
+    if (negative.length > 0) {
+        const negSorted = [...negative].sort((a, b) => score(b) - score(a));
+        const negLines = negSorted
+            .filter(l => { if (chars + l.learning.length + 5 > MAX_PROMPT_CHARS)
+            return false; chars += l.learning.length + 5; return true; })
+            .map(l => `- ⛔ ${l.learning}`);
+        if (negLines.length > 0) {
+            sections.push('## Rules (from past corrections)\n' + negLines.join('\n'));
+        }
     }
-    if (lines.length === 0)
+    // Project context
+    if (projectCtx.length > 0) {
+        const ctxSorted = [...projectCtx].sort((a, b) => score(b) - score(a));
+        const ctxLines = ctxSorted
+            .filter(l => { if (chars + l.learning.length + 5 > MAX_PROMPT_CHARS)
+            return false; chars += l.learning.length + 5; return true; })
+            .map(l => `- ${l.learning}`);
+        if (ctxLines.length > 0) {
+            sections.push('## Project Context\n' + ctxLines.join('\n'));
+        }
+    }
+    // General preferences
+    if (preferences.length > 0) {
+        const prefSorted = [...preferences].sort((a, b) => score(b) - score(a));
+        const prefLines = prefSorted
+            .filter(l => { if (chars + l.learning.length + 5 > MAX_PROMPT_CHARS)
+            return false; chars += l.learning.length + 5; return true; })
+            .map(l => {
+            const conf = l.confidence >= 0.8 ? '●' : l.confidence >= 0.5 ? '◐' : '○';
+            return `- ${conf} ${l.learning}`;
+        });
+        if (prefLines.length > 0) {
+            sections.push('## Preferences\n' + prefLines.join('\n'));
+        }
+    }
+    if (sections.length === 0)
         return '';
-    return header + lines.join('\n');
+    return '# Personal Context\nLearned from previous sessions:\n\n' + sections.join('\n\n');
 }
