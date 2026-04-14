@@ -18,7 +18,7 @@ import {
 } from './model-picker.js';
 import { estimateCost } from '../pricing.js';
 import { formatTokens, shortModelName } from '../stats/format.js';
-import { mouse, type MouseEvent as TermMouseEvent } from './mouse.js';
+import { mouse, forceDisableMouseTracking, type MouseEvent as TermMouseEvent } from './mouse.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
@@ -540,8 +540,14 @@ function RunCodeApp({
     onSubmit(trimmed);
   }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory, showStatus]);
 
-  // Mouse support — clicks toggle tool results, drag selects text
+  // Mouse support — OFF by default because Node stdin is shared: mouse escape
+  // sequences leak into Ink's input handler as typed text. Opt in with
+  // FRANKLIN_MOUSE=1 if you want click-to-expand-tool + drag-to-copy.
   useEffect(() => {
+    // Always disable any leftover mouse tracking from a previous session
+    forceDisableMouseTracking();
+    if (process.env.FRANKLIN_MOUSE !== '1') return;
+
     const cleanup = mouse.enable();
 
     const handleClick = (event: TermMouseEvent) => {
