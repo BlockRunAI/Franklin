@@ -142,10 +142,11 @@ export async function startCommand(options) {
         }
     }
     // Build capabilities (built-in + MCP + sub-agent + MoA)
-    const subAgent = createSubAgentCapability(apiUrl, chain, allCapabilities);
+    // Pass parent model so sub-agents inherit it (no silent paid spawns from free parents)
+    const subAgent = createSubAgentCapability(apiUrl, chain, allCapabilities, model);
     // Register MoA tool config (needs API URL for parallel model queries)
     const { registerMoAConfig } = await import('../tools/moa.js');
-    registerMoAConfig(apiUrl, chain);
+    registerMoAConfig(apiUrl, chain, model);
     const capabilities = [...allCapabilities, ...mcpTools, subAgent];
     // Validate tool descriptions (self-evolution: detect SearchX-style description bugs)
     if (options.debug) {
