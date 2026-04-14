@@ -131,7 +131,17 @@ const TECHNICAL_KEYWORDS = [
 const AGENTIC_KEYWORDS = [
   'read file', 'edit', 'modify', 'update', 'create file', 'execute',
   'deploy', 'install', 'npm', 'pip', 'fix', 'debug', 'verify',
+  'commit', 'push', 'pull', 'merge', 'rename', 'replace', 'delete',
+  'remove', 'add', 'change', 'move', 'refactor', 'migrate',
   '编辑', '修改', '部署', '安装', '修复', '调试',
+  '更新', '替换', '删除', '添加', '提交', '改',
+];
+
+// URL patterns that signal agentic/coding tasks
+const AGENTIC_URL_PATTERNS = [
+  /github\.com/i, /gitlab\.com/i, /bitbucket\.org/i,
+  /npmjs\.com/i, /pypi\.org/i, /crates\.io/i,
+  /stackoverflow\.com/i, /docs\.\w+/i,
 ];
 
 // ─── Classifier ───
@@ -203,14 +213,19 @@ function classifyRequest(prompt: string, tokenCount: number): ClassifyResult {
     signals.push('technical-light');
   }
 
-  // Agentic detection (weight: 0.10) - increased
+  // Agentic detection — lowered thresholds (real tasks often have just 1-2 action words)
   const agenticMatches = countMatches(prompt, AGENTIC_KEYWORDS);
-  if (agenticMatches >= 3) {
+  const hasAgenticUrl = AGENTIC_URL_PATTERNS.some(p => p.test(prompt));
+  const agenticScore = agenticMatches + (hasAgenticUrl ? 1 : 0);
+  if (agenticScore >= 3) {
     score += 0.35;
     signals.push('agentic');
-  } else if (agenticMatches >= 2) {
-    score += 0.2;
+  } else if (agenticScore >= 2) {
+    score += 0.25;
     signals.push('agentic-light');
+  } else if (agenticScore >= 1) {
+    score += 0.15;
+    signals.push('agentic-hint');
   }
 
   // Multi-step patterns
