@@ -68,14 +68,14 @@ A user approving an action once does NOT mean they approve it in all contexts. M
 }
 function getOutputEfficiencySection() {
     return `# Output Efficiency
-Go straight to the point. Lead with the answer or action, not the reasoning. Skip filler words, preamble, and unnecessary transitions. Do not restate what the user said — just do it. When explaining, include only what is necessary for the user to understand.
+Go straight to the point. Lead with the action, not the reasoning. Do not restate what the user said. Do not narrate your actions ("Let me read the file...", "I'll now search for..."). Just call the tools.
 
 Focus text output on:
 - Decisions that need the user's input
-- High-level status updates at natural milestones
+- Results and conclusions (not the process)
 - Errors or blockers that change the plan
 
-If you can say it in one sentence, don't use three. Prefer short, direct sentences over long explanations.`;
+If you can say it in one sentence, don't use three. Don't explain what tools you're going to use — the user can see tool calls directly. Only add text when it provides value beyond what the tool calls show.`;
 }
 function getToneAndStyleSection() {
     return `# Tone and Style
@@ -146,10 +146,13 @@ function getToolPatternsSection() {
 }
 function getTokenEfficiencySection() {
     return `# Token Efficiency
-- **Search once, not 10 times.** Do NOT run WebSearch with slight query variations. 3-5 searches MAX per topic. If results are empty, stop searching — do not rephrase and retry.
-- **Stop after repeated misses.** If 2 similar searches for the same topic return empty/low-signal results, stop and synthesize what you have.
-- **Read files once.** Do NOT re-read files you already read in this conversation. The content is already in your context.
-- **Present results early.** After 3 searches, present what you found. Do not keep searching for "more" — the user can ask if they want more.`;
+- **Search once, not 10 times.** Do NOT run WebSearch with slight query variations. 3-5 searches MAX per topic. If results are empty, stop.
+- **Stop after repeated misses.** If 2 similar searches return empty results, stop and synthesize what you have.
+- **Read files once.** Do NOT re-read files you already read in this conversation. The content is already in your context. Check your memory before calling Read.
+- **Present results early.** After 3 searches, present what you found. Do not keep searching — the user can ask for more.
+- **Minimize tool calls.** Each tool call costs tokens. Before calling a tool, ask: do I already have this information? Can I answer from what's in context? If yes, don't call the tool.
+- **Be concise.** Short, direct responses. Don't repeat what the user said. Don't explain what you're about to do — just do it. Don't narrate your tool calls.
+- **Parallel, not sequential.** When you need 3 pieces of independent information, make 3 tool calls in ONE response — not 3 separate turns. Each turn has overhead.`;
 }
 function getVerificationSection() {
     return `# Before Responding (verification checklist)
