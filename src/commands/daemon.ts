@@ -24,14 +24,22 @@ function isRunning(pid: number): boolean {
   } catch {
     return false;
   }
-  // PID may have been recycled to an unrelated process. Confirm the
-  // command line actually looks like Franklin before trusting the PID.
+  // PID may have been recycled. Try to confirm command line looks like Franklin.
+  // Platform fallbacks (some env lack `ps`): Linux /proc → ps → give up.
+  try {
+    // Linux (including Alpine/busybox containers) exposes /proc/<pid>/cmdline
+    const procCmdline = `/proc/${pid}/cmdline`;
+    if (fs.existsSync(procCmdline)) {
+      const raw = fs.readFileSync(procCmdline, 'utf-8').replace(/\0/g, ' ').trim();
+      return /franklin|runcode|node.*dist\/index/.test(raw);
+    }
+  } catch { /* fall through to ps */ }
   try {
     const { execSync } = require('node:child_process') as typeof import('node:child_process');
     const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
     return /franklin|runcode|node.*dist\/index/.test(cmd);
   } catch {
-    // ps failed — fall back to assuming PID is ours (conservative, avoids false "running")
+    // No ps, no /proc — give up and trust the kill-0 check
     return true;
   }
 }
