@@ -105,14 +105,15 @@ export class ModelClient {
         catch {
             // Router not available (e.g. old build) — use hardcoded fallback table
         }
-        // Static fallback if router is unavailable
+        // Static fallback if router is unavailable. Default to FREE model so
+        // users aren't silently charged when their intended model can't resolve.
         const FALLBACKS = {
-            'blockrun/auto': 'zai/glm-5.1',
+            'blockrun/auto': 'nvidia/nemotron-ultra-253b',
             'blockrun/eco': 'nvidia/nemotron-ultra-253b',
             'blockrun/premium': 'anthropic/claude-sonnet-4.6',
             'blockrun/free': 'nvidia/nemotron-ultra-253b',
         };
-        return FALLBACKS[model] || 'zai/glm-5.1';
+        return FALLBACKS[model] || 'nvidia/nemotron-ultra-253b';
     }
     async *streamCompletion(request, signal) {
         // Resolve virtual models before any API call
