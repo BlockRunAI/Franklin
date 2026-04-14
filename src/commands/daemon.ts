@@ -56,7 +56,8 @@ export async function daemonCommand(action: string, options: { port?: string }) 
 
       const child = spawn(runcodeBin, ['proxy', '--port', String(port)], {
         detached: true,
-        stdio: ['ignore', fs.openSync(LOG_FILE, 'a'), fs.openSync(LOG_FILE, 'a')],
+        // stdout → /dev/null (banner + startup messages), stderr → log file (debug/errors only)
+        stdio: ['ignore', 'ignore', fs.openSync(LOG_FILE, 'a')],
       });
       child.unref();
 

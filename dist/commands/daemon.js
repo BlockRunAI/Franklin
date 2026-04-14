@@ -50,7 +50,8 @@ export async function daemonCommand(action, options) {
             fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
             const child = spawn(runcodeBin, ['proxy', '--port', String(port)], {
                 detached: true,
-                stdio: ['ignore', fs.openSync(LOG_FILE, 'a'), fs.openSync(LOG_FILE, 'a')],
+                // stdout → /dev/null (banner + startup messages), stderr → log file (debug/errors only)
+                stdio: ['ignore', 'ignore', fs.openSync(LOG_FILE, 'a')],
             });
             child.unref();
             fs.writeFileSync(PID_FILE, String(child.pid));

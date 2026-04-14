@@ -4,6 +4,27 @@
  * Anchors to actual API counts when available, estimates on top for new messages.
  */
 const DEFAULT_BYTES_PER_TOKEN = 4;
+/**
+ * Model-specific bytes-per-token ratios for more accurate estimation.
+ * Claude tokenizes more efficiently (~3.5 bytes/token), GPT at ~4, Gemini at ~3.
+ */
+const MODEL_BYTES_PER_TOKEN = {
+    'anthropic': 3.5,
+    'openai': 4,
+    'google': 3,
+    'deepseek': 3.5,
+    'xai': 4,
+    'zai': 4,
+};
+/** Get bytes-per-token ratio for a model. Falls back to DEFAULT_BYTES_PER_TOKEN. */
+function getModelBytesPerToken(model) {
+    if (!model)
+        return DEFAULT_BYTES_PER_TOKEN;
+    const provider = model.split('/')[0];
+    return MODEL_BYTES_PER_TOKEN[provider] ?? DEFAULT_BYTES_PER_TOKEN;
+}
+// Store current model for token estimation context
+let _currentModel;
 // ─── API-anchored token tracking ───────────────────────���──────────────────
 /** Last known actual token count from API response */
 let lastApiInputTokens = 0;
@@ -60,12 +81,24 @@ export function resetTokenAnchor() {
     lastApiMessageCount = 0;
 }
 /**
- * Estimate token count for a string using byte-length heuristic.
- * JSON-heavy content uses 2 bytes/token; general text uses 4.
+ * Set the current model for token estimation context.
+ * Called when the model is resolved in the agent loop.
  */
-export function estimateTokens(text, bytesPerToken = DEFAULT_BYTES_PER_TOKEN) {
-    // Pad by 4/3 (~33%) for conservative estimation — better to over-count than under-count
-    return Math.ceil(Buffer.byteLength(text, 'utf-8') / bytesPerToken * 1.33);
+export function setEstimationModel(model) {
+    _currentModel = model;
+}
+/**
+ * Estimate token count for a string using byte-length heuristic.
+ * JSON-heavy content uses 2 bytes/token; general text uses model-specific ratio.
+ *
+ * Padding reduced from 1.33x to 1.15x to prevent premature compaction.
+ * The old 1.33x + ceil() combo caused ~36% overestimation, triggering
+ * auto-compact when context was still 15-20% below the actual limit.
+ */
+export function estimateTokens(text, bytesPerToken) {
+    const effectiveBPT = bytesPerToken ?? getModelBytesPerToken(_currentModel);
+    // Pad by 15% for safety margin — still conservative but not premature
+    return Math.ceil(Buffer.byteLength(text, 'utf-8') / effectiveBPT * 1.15);
 }
 /**
  * Estimate tokens for a content part.

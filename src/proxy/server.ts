@@ -18,6 +18,7 @@ import {
   fetchWithFallback,
   buildFallbackChain,
   DEFAULT_FALLBACK_CONFIG,
+  ROUTING_PROFILES,
   type FallbackConfig,
 } from './fallback.js';
 import {
@@ -351,6 +352,24 @@ export function createProxy(options: ProxyOptions): http.Server {
             value
           ) {
             headers[key] = Array.isArray(value) ? value[0] : value;
+          }
+        }
+
+        // Safety net: if requestModel is still a routing profile (blockrun/auto etc.)
+        // after all resolution attempts, force-route it to a concrete model.
+        // This prevents 404s from the backend which doesn't recognize virtual model names.
+        if (ROUTING_PROFILES.has(requestModel) && body) {
+          const virtualName = requestModel;
+          const profile = parseRoutingProfile(requestModel);
+          if (profile) {
+            const fallbackRouting = routeRequest('', profile);
+            requestModel = fallbackRouting.model;
+            try {
+              const parsed = JSON.parse(body);
+              parsed.model = requestModel;
+              body = JSON.stringify(parsed);
+            } catch { /* body not JSON, skip */ }
+            log(`⚠️  Safety net: resolved unrouted ${virtualName} → ${requestModel}`);
           }
         }
 

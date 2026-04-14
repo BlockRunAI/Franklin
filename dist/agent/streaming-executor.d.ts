@@ -14,6 +14,7 @@ export declare class StreamingExecutor {
     private onStart;
     private onProgress?;
     private pending;
+    private sessionId;
     constructor(opts: {
         handlers: Map<string, CapabilityHandler>;
         scope: ExecutionScope;
@@ -21,6 +22,7 @@ export declare class StreamingExecutor {
         guard?: SessionToolGuard;
         onStart: (id: string, name: string, preview?: string) => void;
         onProgress?: (id: string, text: string) => void;
+        sessionId?: string;
     });
     /**
      * Called when a tool_use block is fully received from the stream.
