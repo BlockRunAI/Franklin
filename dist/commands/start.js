@@ -184,8 +184,13 @@ async function runWithInkUI(agentConfig, model, workDir, version, walletInfo, on
         walletAddress: walletInfo?.address,
         walletBalance: walletInfo?.balance,
         chain: walletInfo?.chain,
-        onModelChange: (newModel) => {
+        onModelChange: (newModel, reason) => {
             agentConfig.model = newModel;
+            // User-initiated switch must also update baseModel so the agent loop
+            // doesn't revert to the previous model on the next turn.
+            if (reason === 'user') {
+                agentConfig.baseModel = newModel;
+            }
         },
     });
     // Wire permission prompts through Ink UI to avoid stdin/readline conflict.
@@ -329,12 +334,14 @@ async function handleSlashCommand(cmd, config, ui) {
             const newModel = parts[1];
             if (newModel) {
                 config.model = resolveModel(newModel);
+                config.baseModel = config.model;
                 console.error(chalk.green(`  Model → ${config.model}`));
                 return null;
             }
             const picked = await pickModel(config.model);
             if (picked) {
                 config.model = picked;
+                config.baseModel = picked;
                 console.error(chalk.green(`  Model → ${config.model}`));
             }
             return null;
@@ -343,6 +350,7 @@ async function handleSlashCommand(cmd, config, ui) {
             const picked = await pickModel(config.model);
             if (picked) {
                 config.model = picked;
+                config.baseModel = picked;
                 console.error(chalk.green(`  Model → ${config.model}`));
             }
             return null;

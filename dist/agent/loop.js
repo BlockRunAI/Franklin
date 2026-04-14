@@ -298,7 +298,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         const baseModel = config.baseModel ?? config.model;
         if (config.model !== baseModel && !paymentFailedModels.has(baseModel)) {
             config.model = baseModel;
-            config.onModelChange?.(baseModel);
+            config.onModelChange?.(baseModel, 'system');
         }
         turnFailedModels = new Set(); // Fresh slate for transient failures this turn
         const abort = new AbortController();
@@ -589,7 +589,7 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     if (nextFree) {
                         const oldModel = config.model;
                         config.model = nextFree;
-                        config.onModelChange?.(nextFree);
+                        config.onModelChange?.(nextFree, 'system');
                         onEvent({ kind: 'text_delta', text: `\n*${oldModel} failed — switching to ${nextFree}*\n` });
                         continue; // Retry with next model
                     }

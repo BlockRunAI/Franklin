@@ -140,8 +140,10 @@ export interface AgentConfig {
     permissionPromptFn?: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
     /** Routes AskUser questions through ink UI input to avoid raw-mode stdin conflict */
     onAskUser?: (question: string, options?: string[]) => Promise<string>;
-    /** Notify UI when agent switches model (e.g. payment fallback) */
-    onModelChange?: (model: string) => void;
+    /** Notify UI when agent switches model. `reason` is 'user' for explicit /model
+     *  commands and 'system' for payment fallbacks or recovery. User-initiated
+     *  changes must also update `baseModel`. */
+    onModelChange?: (model: string, reason?: 'user' | 'system') => void;
     /** The user's intended model — updated by /model command, used for turn recovery */
     baseModel?: string;
 }

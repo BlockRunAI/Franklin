@@ -627,7 +627,7 @@ export async function handleSlashCommand(input, ctx) {
             const newModel = resolveModel(input.slice(7).trim());
             ctx.config.model = newModel;
             ctx.config.baseModel = newModel; // Update recovery target so loop doesn't reset
-            ctx.config.onModelChange?.(newModel);
+            ctx.config.onModelChange?.(newModel, 'user');
             ctx.onEvent({ kind: 'text_delta', text: `Model → **${newModel}**\n` });
         }
         emitDone(ctx);

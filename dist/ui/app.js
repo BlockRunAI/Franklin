@@ -219,7 +219,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
         else if (key.return) {
             const selected = PICKER_MODELS_FLAT[pickerIdx];
             setCurrentModel(selected.id);
-            onModelChange(selected.id);
+            onModelChange(selected.id, 'user');
             showStatus(`Model → ${selected.label}`, 'success', 3000);
             setMode('input');
             setReady(true);
@@ -290,7 +290,7 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
                     if (parts[1]) {
                         const resolved = resolveModel(parts[1]);
                         setCurrentModel(resolved);
-                        onModelChange(resolved);
+                        onModelChange(resolved, 'user');
                         showStatus(`Model → ${resolved}`, 'success', 3000);
                     }
                     else {
@@ -685,7 +685,7 @@ export function launchInkUI(opts) {
                 // Agent loop hasn't called waitForInput yet — queue the input
                 pendingInput = value;
             }
-        }, onModelChange: (model) => { opts.onModelChange?.(model); }, onAbort: () => { abortCallback?.(); }, onExit: () => {
+        }, onModelChange: (model, reason) => { opts.onModelChange?.(model, reason); }, onAbort: () => { abortCallback?.(); }, onExit: () => {
             exiting = true;
             if (resolveInput) {
                 resolveInput(null);
