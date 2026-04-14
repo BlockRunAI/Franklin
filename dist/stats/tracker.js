@@ -1,5 +1,5 @@
 /**
- * Usage tracking for runcode
+ * Usage tracking for Franklin
  * Records all requests with cost, tokens, and latency for stats display
  */
 import fs from 'node:fs';

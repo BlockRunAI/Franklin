@@ -1,5 +1,5 @@
 /**
- * Permission system for runcode.
+ * Permission system for Franklin.
  * Controls which tools can execute automatically vs. require user approval.
  */
 

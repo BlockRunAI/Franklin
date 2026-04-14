@@ -62,7 +62,7 @@ function debug(options: ProxyOptions, ...args: unknown[]) {
 }
 
 function log(...args: unknown[]) {
-  const msg = `[runcode] ${args.map(String).join(' ')}`;
+  const msg = `[franklin] ${args.map(String).join(' ')}`;
   // Do NOT print to stdout — Claude Code owns the terminal (stdio: inherit).
   // Use `runcode logs` to read runtime messages.
   try {

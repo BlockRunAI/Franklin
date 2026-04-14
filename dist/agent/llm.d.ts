@@ -1,5 +1,5 @@
 /**
- * LLM Client for runcode
+ * LLM Client for Franklin
  * Calls BlockRun API directly with x402 payment handling and streaming.
  * Original implementation — not derived from any existing codebase.
  */

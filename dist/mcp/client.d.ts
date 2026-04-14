@@ -1,5 +1,5 @@
 /**
- * MCP Client for runcode.
+ * MCP Client for Franklin.
  * Connects to MCP servers, discovers tools, and wraps them as CapabilityHandlers.
  * Supports stdio and HTTP (SSE) transports.
  */

@@ -1,5 +1,5 @@
 /**
- * Streaming Tool Executor for runcode.
+ * Streaming Tool Executor for Franklin.
  * Starts executing concurrent-safe tools while the model is still streaming.
  * Non-concurrent tools wait until the full response is received.
  */

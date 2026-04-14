@@ -1,5 +1,5 @@
 /**
- * Context compaction for runcode.
+ * Context compaction for Franklin.
  * When conversation history approaches the context window limit,
  * summarize older messages and replace them with the summary.
  */

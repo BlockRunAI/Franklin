@@ -224,20 +224,30 @@ function runNativeGrep(
 export const grepCapability: CapabilityHandler = {
   spec: {
     name: 'Grep',
-    description: 'Search file contents by regex. Use this instead of grep/rg in Bash. Default: returns file paths. Use output_mode=\'content\' for matching lines with context. Use Glob to find files by name pattern.',
+    description: `Search file contents by regex pattern.
+
+ALWAYS use Grep for search tasks. NEVER invoke grep or rg as a Bash command.
+
+Usage:
+- Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
+- Filter files with glob parameter (e.g., "*.js", "**/*.tsx")
+- Output modes: "content" shows matching lines with context, "files_with_matches" shows only file paths (default), "count" shows match counts
+- Use context/before_context/after_context for surrounding lines (requires output_mode: "content")
+- Multiline matching: use multiline: true for patterns that span across lines
+- Use Agent tool for open-ended searches requiring multiple rounds of exploration`,
     input_schema: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: 'Regex pattern' },
-        path: { type: 'string', description: 'File or dir to search (default: cwd)' },
-        glob: { type: 'string', description: 'File filter e.g. "*.ts"' },
+        pattern: { type: 'string', description: 'The regex pattern to search for in file contents' },
+        path: { type: 'string', description: 'File or directory to search in. Defaults to working directory.' },
+        glob: { type: 'string', description: 'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}")' },
         output_mode: { type: 'string', description: '"content" | "files_with_matches" | "count". Default: files_with_matches' },
-        context: { type: 'number', description: 'Context lines around match' },
-        before_context: { type: 'number', description: 'Lines before match' },
-        after_context: { type: 'number', description: 'Lines after match' },
-        case_insensitive: { type: 'boolean' },
-        head_limit: { type: 'number', description: 'Max results (default 250)' },
-        multiline: { type: 'boolean', description: 'Match across lines' },
+        context: { type: 'number', description: 'Lines of context around each match (requires output_mode: "content")' },
+        before_context: { type: 'number', description: 'Lines before each match' },
+        after_context: { type: 'number', description: 'Lines after each match' },
+        case_insensitive: { type: 'boolean', description: 'Case insensitive search' },
+        head_limit: { type: 'number', description: 'Max results to return (default 250)' },
+        multiline: { type: 'boolean', description: 'Enable multiline mode where patterns can span lines' },
       },
       required: ['pattern'],
     },
