@@ -8,6 +8,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
+import VimInput, { type VimMode } from './vim-input.js';
 import type { StreamEvent } from '../agent/types.js';
 import { renderMarkdown } from './markdown.js';
 import {
@@ -20,7 +21,7 @@ import { formatTokens, shortModelName } from '../stats/format.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
-function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, queuedCount, focused, busy, contextPct }: {
+function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, queuedCount, focused, busy, contextPct, vimMode, onVimModeChange }: {
   input: string;
   setInput: (v: string) => void;
   onSubmit: (v: string) => void;
@@ -32,6 +33,8 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
   focused?: boolean;
   busy?: boolean;
   contextPct?: number;
+  vimMode?: boolean;
+  onVimModeChange?: (mode: VimMode) => void;
 }) {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
@@ -50,13 +53,25 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
         <Text dimColor>│ </Text>
         {busy && !input ? <Text color="yellow"><Spinner type="dots" /> </Text> : null}
         <Box width={busy && !input ? innerWidth - 4 : innerWidth}>
-          <TextInput
-            value={input}
-            onChange={setInput}
-            onSubmit={onSubmit}
-            placeholder={placeholder}
-            focus={focused !== false}
-          />
+          {vimMode ? (
+            <VimInput
+              value={input}
+              onChange={setInput}
+              onSubmit={onSubmit}
+              placeholder={placeholder}
+              focus={focused !== false}
+              showMode={true}
+              onModeChange={onVimModeChange}
+            />
+          ) : (
+            <TextInput
+              value={input}
+              onChange={setInput}
+              onSubmit={onSubmit}
+              placeholder={placeholder}
+              focus={focused !== false}
+            />
+          )}
         </Box>
         <Text dimColor>{' '.repeat(Math.max(0, cols - innerWidth - 4))}│</Text>
       </Box>
@@ -101,6 +116,9 @@ interface ToolStatus {
   liveOutput: string; // latest output line while running
   liveLines: string[]; // accumulated output lines (last 5) for multi-line display
   elapsed: number;
+  fullOutput: string; // complete tool output for expandable display
+  diff?: { file: string; oldLines: string[]; newLines: string[]; count: number }; // structured diff for Edit
+  expanded: boolean;  // whether this tool result is expanded (shows full output)
 }
 
 type UIMode = 'input' | 'model-picker';
@@ -146,6 +164,8 @@ function RunCodeApp({
   const [tools, setTools] = useState<Map<string, ToolStatus>>(new Map());
   // Completed tool results committed to Static (permanent scrollback — no re-render artifacts)
   const [completedTools, setCompletedTools] = useState<Array<ToolStatus & { key: string }>>([]);
+  // Last completed tool — shown in dynamic area so it can be expanded/collapsed with Tab
+  const [expandableTool, setExpandableTool] = useState<(ToolStatus & { key: string }) | null>(null);
   // Full responses committed to Static immediately — goes into terminal scrollback like Claude Code
   const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number }>>([]);
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
@@ -161,6 +181,8 @@ function RunCodeApp({
   const [totalCost, setTotalCost] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
+  const [vimEnabled, setVimEnabled] = useState(false);
+  const [currentVimMode, setCurrentVimMode] = useState<VimMode>('insert');
   const [balance, setBalance] = useState(walletBalance);
   // Parse the fetched balance to a number so we can compute live balance = fetchedBalance - sessionCost.
   // costAtLastFetch tracks totalCost when balance was last fetched, to avoid double-subtracting.
@@ -275,7 +297,9 @@ function RunCodeApp({
     }
 
     // Esc to quit (only when input is empty and in input mode)
+    // In Vim mode: Esc goes to normal mode (handled by VimInput), only quit on Esc in normal mode with empty input
     if (key.escape && mode === 'input' && ready && !input) {
+      if (vimEnabled && currentVimMode === 'insert') return; // Let VimInput handle Esc → normal
       onExit();
       exit();
       return;
@@ -298,6 +322,13 @@ function RunCodeApp({
       setReady(true);
     }
   }, { isActive: isPickerOrEsc });
+
+  // Tab key: toggle expand/collapse on the last completed tool
+  useInput((_ch, key) => {
+    if (key.tab && expandableTool) {
+      setExpandableTool(prev => prev ? { ...prev, expanded: !prev.expanded } : null);
+    }
+  }, { isActive: mode === 'input' && !permissionRequest && !askUserRequest });
 
   // Input history: Up/Down arrow when in ready input mode
   useInput((_ch, key) => {
@@ -382,6 +413,11 @@ function RunCodeApp({
           setShowWallet(false);
           return;
 
+        case '/vim':
+          setVimEnabled(prev => !prev);
+          showStatus(vimEnabled ? 'Vim mode OFF' : 'Vim mode ON — Esc for normal, i for insert', 'success', 3000);
+          return;
+
         case '/clear':
           setStreamText('');
           setTools(new Map());
@@ -445,6 +481,11 @@ function RunCodeApp({
     setThinking(false);
     setThinkingText('');
     setTools(new Map());
+    // Flush expandable tool to Static before clearing
+    setExpandableTool(prev => {
+      if (prev) setCompletedTools(prev2 => [...prev2, { ...prev, expanded: false }]);
+      return null;
+    });
     setCompletedTools([]);
     setReady(false);
     setWaiting(true);
@@ -513,6 +554,8 @@ function RunCodeApp({
                 preview: event.preview || '',
                 liveOutput: '',
                 liveLines: [],
+                fullOutput: '',
+                expanded: false,
                 elapsed: 0,
               });
               return next;
@@ -548,10 +591,19 @@ function RunCodeApp({
                   error: !!event.result.isError,
                   preview: resultPreview,
                   liveOutput: '',
+                  liveLines: [],
+                  fullOutput: event.result.output || '',
+                  diff: event.result.diff,
+                  expanded: false,
                   elapsed: Date.now() - t.startTime,
                 };
-                // Move to Static (permanent scrollback) — prevents re-render artifacts
-                setCompletedTools(prev2 => [...prev2, completed]);
+                // Move previous expandable tool to Static, set new one as expandable
+                setExpandableTool(prevExpTool => {
+                  if (prevExpTool) {
+                    setCompletedTools(prev2 => [...prev2, { ...prevExpTool, expanded: false }]);
+                  }
+                  return completed;
+                });
                 next.delete(event.id);
               }
               return next;
@@ -576,6 +628,12 @@ function RunCodeApp({
             break;
           }
           case 'turn_done': {
+            // Flush expandable tool to Static before committing response
+            setExpandableTool(prev => {
+              if (prev) setCompletedTools(prev2 => [...prev2, { ...prev, expanded: false }]);
+              return null;
+            });
+
             const text = streamTextRef.current;
             if (text.trim()) {
               commitResponse(text, turnTokensRef.current, turnCostRef.current);
@@ -688,6 +746,7 @@ function RunCodeApp({
           <Text>  <Text color="cyan">/resume</Text> id     Resume a saved session</Text>
           <Text>  <Text color="cyan">/clear</Text>         Clear conversation history</Text>
           <Text>  <Text color="cyan">/doctor</Text>        Diagnose setup issues</Text>
+          <Text>  <Text color="cyan">/vim</Text>           Toggle Vim input mode</Text>
           <Text>  <Text color="cyan">/help</Text>          This help</Text>
           <Text>  <Text color="cyan">/exit</Text>          Quit</Text>
           <Text> </Text>
@@ -706,7 +765,7 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Completed tools — Claude Code-style bordered display with rich previews */}
+      {/* Completed tools — rich display with structured diffs for Edit */}
       <Static items={completedTools}>
         {(tool) => {
           const elapsedFmt = tool.elapsed >= 1000
@@ -723,6 +782,31 @@ function RunCodeApp({
                 {tool.preview ? <Text dimColor>({tool.preview.slice(0, 80)})</Text> : null}
                 <Text dimColor> {elapsedFmt}</Text>
               </Text>
+              {/* Structured diff for Edit tool — colored red/green lines */}
+              {tool.diff && !tool.error && tool.diff.oldLines.length <= 8 && tool.diff.newLines.length <= 8 && (
+                <Box flexDirection="column" marginLeft={2}>
+                  {tool.diff.oldLines.map((line, i) => (
+                    <Text key={`old-${i}`} color="red" wrap="truncate-end">{'⎿  '}- {line.slice(0, 120)}</Text>
+                  ))}
+                  {tool.diff.newLines.map((line, i) => (
+                    <Text key={`new-${i}`} color="green" wrap="truncate-end">{'⎿  '}+ {line.slice(0, 120)}</Text>
+                  ))}
+                </Box>
+              )}
+              {/* Large diff summary */}
+              {tool.diff && !tool.error && (tool.diff.oldLines.length > 8 || tool.diff.newLines.length > 8) && (
+                <Box marginLeft={2}>
+                  <Text dimColor>{'⎿  '}{tool.diff.oldLines.length} lines → {tool.diff.newLines.length} lines</Text>
+                </Box>
+              )}
+              {/* Error output preview */}
+              {tool.error && tool.fullOutput && (
+                <Box flexDirection="column" marginLeft={2}>
+                  {tool.fullOutput.split('\n').filter(Boolean).slice(0, 3).map((line, i) => (
+                    <Text key={i} color="red" wrap="truncate-end">{'⎿  '}{line.slice(0, 120)}</Text>
+                  ))}
+                </Box>
+              )}
             </Box>
           );
         }}
@@ -810,6 +894,58 @@ function RunCodeApp({
           </Box>
         </Box>
       )}
+
+      {/* Expandable tool — last completed tool, can be toggled with Tab */}
+      {expandableTool && (() => {
+        const tool = expandableTool;
+        const elapsedFmt = tool.elapsed >= 1000
+          ? `${(tool.elapsed / 1000).toFixed(1)}s`
+          : `${tool.elapsed}ms`;
+        const hasExpandableContent = !!(tool.diff || (tool.fullOutput && tool.fullOutput.split('\n').length > 1));
+        return (
+          <Box flexDirection="column" marginLeft={2}>
+            <Text>
+              {tool.error ? <Text color="red">✗</Text> : <Text color="green">✓</Text>}
+              {' '}<Text bold>{tool.name}</Text>
+              {tool.preview ? <Text dimColor>({tool.preview.slice(0, 80)})</Text> : null}
+              <Text dimColor> {elapsedFmt}</Text>
+              {hasExpandableContent && (
+                <Text dimColor> {tool.expanded ? '(tab to collapse)' : '(tab to expand)'}</Text>
+              )}
+            </Text>
+            {/* Collapsed: show diff summary or nothing */}
+            {!tool.expanded && tool.diff && !tool.error && tool.diff.oldLines.length <= 8 && tool.diff.newLines.length <= 8 && (
+              <Box flexDirection="column" marginLeft={2}>
+                {tool.diff.oldLines.map((line, i) => (
+                  <Text key={`old-${i}`} color="red" wrap="truncate-end">{'⎿  '}- {line.slice(0, 120)}</Text>
+                ))}
+                {tool.diff.newLines.map((line, i) => (
+                  <Text key={`new-${i}`} color="green" wrap="truncate-end">{'⎿  '}+ {line.slice(0, 120)}</Text>
+                ))}
+              </Box>
+            )}
+            {/* Expanded: show full output */}
+            {tool.expanded && tool.fullOutput && (
+              <Box flexDirection="column" marginLeft={2}>
+                {tool.fullOutput.split('\n').slice(0, 30).map((line, i) => (
+                  <Text key={i} dimColor wrap="truncate-end">{'⎿  '}{line.slice(0, 120)}</Text>
+                ))}
+                {tool.fullOutput.split('\n').length > 30 && (
+                  <Text dimColor>{'⎿  '}... {tool.fullOutput.split('\n').length - 30} more lines</Text>
+                )}
+              </Box>
+            )}
+            {/* Error output */}
+            {tool.error && !tool.expanded && tool.fullOutput && (
+              <Box flexDirection="column" marginLeft={2}>
+                {tool.fullOutput.split('\n').filter(Boolean).slice(0, 3).map((line, i) => (
+                  <Text key={i} color="red" wrap="truncate-end">{'⎿  '}{line.slice(0, 120)}</Text>
+                ))}
+              </Box>
+            )}
+          </Box>
+        );
+      })()}
 
       {/* Active (in-progress) tools — bordered box with multi-line streaming output */}
       {Array.from(tools.entries()).map(([id, tool]) => {
@@ -946,6 +1082,8 @@ function RunCodeApp({
           focused={!permissionRequest && !askUserRequest}
           busy={!askUserRequest && (waiting || thinking || tools.size > 0)}
           contextPct={contextPct}
+          vimMode={vimEnabled}
+          onVimModeChange={setCurrentVimMode}
         />
       )}
     </Box>
