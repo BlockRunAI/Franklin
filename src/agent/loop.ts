@@ -349,7 +349,7 @@ export async function interactiveSession(
     const baseModel = config.baseModel ?? config.model;
     if (config.model !== baseModel && !paymentFailedModels.has(baseModel)) {
       config.model = baseModel;
-      config.onModelChange?.(baseModel);
+      config.onModelChange?.(baseModel, 'system');
     }
     turnFailedModels = new Set<string>(); // Fresh slate for transient failures this turn
 
@@ -672,7 +672,7 @@ export async function interactiveSession(
           if (nextFree) {
             const oldModel = config.model;
             config.model = nextFree;
-            config.onModelChange?.(nextFree);
+            config.onModelChange?.(nextFree, 'system');
             onEvent({ kind: 'text_delta', text: `\n*${oldModel} failed — switching to ${nextFree}*\n` });
             continue; // Retry with next model
           }
