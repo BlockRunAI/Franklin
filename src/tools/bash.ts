@@ -181,7 +181,35 @@ function compressBuild(out: string): string {
 
 interface BashInput {
   command: string;
+  description?: string;
   timeout?: number;
+  run_in_background?: boolean;
+}
+
+// ─── Background Task Tracker ─────────────────────────────────────────────
+// When run_in_background=true, we spawn the command and return immediately.
+// The result is stored here and can be queried later.
+
+interface BackgroundTask {
+  id: string;
+  command: string;
+  description: string;
+  startedAt: number;
+  status: 'running' | 'completed' | 'failed';
+  result?: CapabilityResult;
+}
+
+const backgroundTasks = new Map<string, BackgroundTask>();
+let bgTaskCounter = 0;
+
+/** Get a background task's result (called by the agent to check status). */
+export function getBackgroundTask(id: string): BackgroundTask | undefined {
+  return backgroundTasks.get(id);
+}
+
+/** List all background tasks. */
+export function listBackgroundTasks(): BackgroundTask[] {
+  return [...backgroundTasks.values()];
 }
 
 const MAX_OUTPUT_BYTES = 512 * 1024; // 512KB capture buffer (prevents OOM)
@@ -189,7 +217,7 @@ const MAX_RETURN_CHARS = 32_000;    // 32KB return cap (~8,000 tokens) — preve
 const DEFAULT_TIMEOUT_MS = 120_000;  // 2 minutes
 
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
-  const { command, timeout } = input as unknown as BashInput;
+  const { command, timeout, run_in_background: runInBackground } = input as unknown as BashInput;
 
   if (!command || typeof command !== 'string') {
     return { output: 'Error: command is required', isError: true };
@@ -197,6 +225,34 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   const timeoutMs = Math.min(timeout ?? DEFAULT_TIMEOUT_MS, 600_000);
 
+  // Background execution: spawn and return immediately with a task ID
+  if (runInBackground) {
+    const taskId = `bg-${++bgTaskCounter}`;
+    const desc = (input.description as string) || command.slice(0, 60);
+    const task: BackgroundTask = {
+      id: taskId,
+      command,
+      description: desc,
+      startedAt: Date.now(),
+      status: 'running',
+    };
+    backgroundTasks.set(taskId, task);
+
+    // Run in background — don't await
+    executeCommand(command, timeoutMs, ctx).then(result => {
+      task.status = result.isError ? 'failed' : 'completed';
+      task.result = result;
+    });
+
+    return {
+      output: `Background task started: ${taskId}\nCommand: ${command.slice(0, 100)}\n\nYou will be notified when it completes. Do not poll or sleep — continue with other work.`,
+    };
+  }
+
+  return executeCommand(command, timeoutMs, ctx);
+}
+
+function executeCommand(command: string, timeoutMs: number, ctx: ExecutionScope): Promise<CapabilityResult> {
   return new Promise<CapabilityResult>((resolve) => {
     const shell = process.env.SHELL || '/bin/bash';
     let child: ReturnType<typeof spawn>;
@@ -452,6 +508,7 @@ Output is capped at 512KB capture / 32KB return.`,
         command: { type: 'string', description: 'The command to execute' },
         description: { type: 'string', description: 'Clear, concise description of what this command does in active voice. For simple commands (git, npm), keep it brief (5-10 words): "Show working tree status", "Install dependencies". For complex commands (piped, obscure flags), add enough context: "Find and delete all .tmp files recursively"' },
         timeout: { type: 'number', description: 'Timeout in milliseconds (default: 120000, max: 600000)' },
+        run_in_background: { type: 'boolean', description: 'Set to true to run this command in the background. Returns immediately with a task ID. Use this for long-running commands (builds, installs, deploys) when you don\'t need the result immediately. You will be notified when it completes — do NOT sleep or poll.' },
       },
       required: ['command'],
     },
