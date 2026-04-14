@@ -85,8 +85,8 @@ export async function startCommand(options: StartOptions) {
   const workDir = process.cwd();
 
   // Session info — aligned, minimal. Model + balance live in the input bar below.
-  const short = (s: string) => s.length > 14 ? s.slice(0, 6) + '...' + s.slice(-4) : s;
-  console.log(chalk.dim('  Wallet:    ') + (walletAddress ? short(walletAddress) : chalk.yellow('not set')));
+  // Full wallet address is shown so the user can copy-paste it to fund the wallet.
+  console.log(chalk.dim('  Wallet:    ') + (walletAddress || chalk.yellow('not set')));
   console.log(chalk.dim('  Dir:       ') + workDir);
   console.log(chalk.dim('  Dashboard: ') + chalk.cyan('franklin panel') + chalk.dim(' → http://localhost:3100'));
   console.log(chalk.dim('  Help:      ') + chalk.cyan('/help'));
