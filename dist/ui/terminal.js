@@ -74,12 +74,29 @@ class MarkdownRenderer {
             }
             else {
                 this.inCodeBlock = true;
-                this.codeBlockLang = line.slice(3).trim();
-                return chalk.dim('```' + this.codeBlockLang);
+                const lang = line.slice(3).trim().split(/\s/)[0].toLowerCase();
+                this.codeBlockLang = lang;
+                const LANG_LABELS = {
+                    ts: 'TypeScript', typescript: 'TypeScript', js: 'JavaScript', javascript: 'JavaScript',
+                    py: 'Python', python: 'Python', rs: 'Rust', rust: 'Rust', go: 'Go',
+                    sh: 'Shell', bash: 'Shell', zsh: 'Shell', json: 'JSON', yaml: 'YAML',
+                    sql: 'SQL', html: 'HTML', css: 'CSS', diff: 'Diff',
+                    tsx: 'TSX', jsx: 'JSX',
+                };
+                const label = LANG_LABELS[lang] || (lang ? lang.toUpperCase() : '');
+                return chalk.dim('```') + (label ? chalk.dim.italic(` ${label}`) : '');
             }
         }
-        // Inside code block — render dim
+        // Inside code block — diff highlighting + cyan
         if (this.inCodeBlock) {
+            if (this.codeBlockLang === 'diff') {
+                if (line.startsWith('+'))
+                    return chalk.green(line);
+                if (line.startsWith('-'))
+                    return chalk.red(line);
+                if (line.startsWith('@@'))
+                    return chalk.cyan(line);
+            }
             return chalk.cyan(line);
         }
         // Headers
@@ -232,38 +249,38 @@ export class TerminalUI {
                 const capName = cap?.name || 'unknown';
                 const elapsed = cap ? Date.now() - cap.startTime : 0;
                 this.activeCapabilities.delete(event.id);
-                const timeStr = elapsed > 100 ? chalk.dim(` ${elapsed}ms`) : '';
+                const elapsedFmt = elapsed >= 1000
+                    ? `${(elapsed / 1000).toFixed(1)}s`
+                    : `${elapsed}ms`;
+                const timeStr = elapsed > 100 ? chalk.dim(` ${elapsedFmt}`) : '';
                 if (event.result.isError) {
-                    console.error(chalk.red(`  ✗ ${capName}`) +
-                        timeStr +
-                        chalk.red(`: ${truncateOutput(event.result.output, 200)}`));
+                    console.error(chalk.red(`  ✗ `) + chalk.bold(capName) +
+                        timeStr);
+                    // Show error preview lines
+                    const errLines = event.result.output.split('\n').filter(Boolean).slice(0, 3);
+                    for (const line of errLines) {
+                        console.error(chalk.red(`    ⎿  ${line.slice(0, 120)}`));
+                    }
                 }
                 else {
-                    // Show diff-like output for Edit tool
                     const output = event.result.output;
-                    if (capName === 'Edit' && output.includes('replacement')) {
-                        console.error(chalk.green(`  ✓ ${capName}`) + timeStr + chalk.dim(` — ${output}`));
-                    }
-                    else if (capName === 'Write') {
-                        console.error(chalk.green(`  ✓ ${capName}`) + timeStr + chalk.dim(` — ${output}`));
-                    }
-                    else if (capName === 'Bash') {
-                        // Show command output preview
-                        const preview = truncateOutput(output, 120);
-                        console.error(chalk.green(`  ✓ ${capName}`) + timeStr);
-                        if (preview && preview !== '(no output)') {
-                            const lines = output.split('\n').slice(0, 5);
-                            for (const line of lines) {
-                                console.error(chalk.dim(`    │ ${line.slice(0, 100)}`));
-                            }
-                            if (output.split('\n').length > 5) {
-                                console.error(chalk.dim(`    │ ... (${output.split('\n').length - 5} more lines)`));
-                            }
+                    const icon = chalk.green('✓');
+                    console.error(`  ${icon} ${chalk.bold(capName)}${timeStr}`);
+                    if (capName === 'Bash') {
+                        // Show last 5 lines of command output
+                        const outLines = output.split('\n').filter(Boolean);
+                        const show = outLines.slice(-5);
+                        for (const line of show) {
+                            console.error(chalk.dim(`    ⎿  ${line.slice(0, 120)}`));
+                        }
+                        if (outLines.length > 5) {
+                            console.error(chalk.dim(`    ⎿  ... ${outLines.length - 5} more lines`));
                         }
                     }
-                    else {
+                    else if (output.trim()) {
+                        // Other tools: show first line as preview
                         const preview = truncateOutput(output, 120);
-                        console.error(chalk.green(`  ✓ ${capName}`) + timeStr + chalk.dim(` — ${preview}`));
+                        console.error(chalk.dim(`    ⎿  ${preview}`));
                     }
                 }
                 break;

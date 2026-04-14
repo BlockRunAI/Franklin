@@ -64,13 +64,22 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
       <Box marginLeft={1}>
         <Text dimColor>
           {busy ? <Text color="yellow"><Spinner type="dots" /></Text> : null}
-          {busy ? ' ' : ''}{model}  ·  {balance}
+          {busy ? ' ' : ''}{shortModelName(model)}  ·  {balance}
           {sessionCost > 0.00001 ? <Text color="yellow">  -${sessionCost.toFixed(4)}</Text> : ''}
-          {contextPct !== undefined && contextPct > 0 ? (
-            <Text color={contextPct > 85 ? 'red' : contextPct > 70 ? 'yellow' : undefined}>
-              {'  ·  ctx '}{contextPct}{'%'}
-            </Text>
-          ) : null}
+          {contextPct !== undefined && contextPct > 0 ? (() => {
+            // Visual context bar: ▓▓▓▓▓▓░░░░ 75%
+            const filled = Math.round(contextPct / 10);
+            const empty = 10 - filled;
+            const barColor = contextPct > 85 ? 'red' : contextPct > 70 ? 'yellow' : 'green';
+            return (
+              <Text>
+                {'  '}
+                <Text color={barColor}>{'▓'.repeat(filled)}</Text>
+                <Text dimColor>{'░'.repeat(empty)}</Text>
+                <Text color={barColor}>{' '}{contextPct}%</Text>
+              </Text>
+            );
+          })() : null}
           {(queuedCount ?? 0) > 0 ? <Text color="cyan">  ·  {queuedCount} queued</Text> : null}
           {'  ·  esc'}
         </Text>
@@ -90,6 +99,7 @@ interface ToolStatus {
   error: boolean;
   preview: string;    // input preview (command/path) shown in spinner
   liveOutput: string; // latest output line while running
+  liveLines: string[]; // accumulated output lines (last 5) for multi-line display
   elapsed: number;
 }
 
@@ -502,6 +512,7 @@ function RunCodeApp({
                 done: false, error: false,
                 preview: event.preview || '',
                 liveOutput: '',
+                liveLines: [],
                 elapsed: 0,
               });
               return next;
@@ -512,7 +523,12 @@ function RunCodeApp({
               const t = prev.get(event.id);
               if (!t || t.done) return prev;
               const next = new Map(prev);
-              next.set(event.id, { ...t, liveOutput: event.text });
+              // Accumulate output lines for multi-line display (keep last 5)
+              const newLines = [...t.liveLines];
+              const incoming = event.text.split('\n').filter(Boolean);
+              newLines.push(...incoming);
+              while (newLines.length > 5) newLines.shift();
+              next.set(event.id, { ...t, liveOutput: event.text, liveLines: newLines });
               return next;
             });
             break;
@@ -690,39 +706,58 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Completed tools — Static commits them permanently to scrollback, no re-render artifacts */}
+      {/* Completed tools — Claude Code-style bordered display with rich previews */}
       <Static items={completedTools}>
-        {(tool) => (
-          <Box key={tool.key} marginLeft={1}>
-            {tool.error
-              ? <Text color="red">  ✗ {tool.name} <Text dimColor>{tool.elapsed}ms{tool.preview ? ` — ${tool.preview}` : ''}</Text></Text>
-              : <Text color="green">  ✓ {tool.name} <Text dimColor>{tool.elapsed}ms{tool.preview ? ` — ${tool.preview}` : ''}</Text></Text>
-            }
-          </Box>
-        )}
+        {(tool) => {
+          const elapsedFmt = tool.elapsed >= 1000
+            ? `${(tool.elapsed / 1000).toFixed(1)}s`
+            : `${tool.elapsed}ms`;
+          return (
+            <Box key={tool.key} flexDirection="column" marginLeft={2}>
+              <Text>
+                {tool.error
+                  ? <Text color="red">✗</Text>
+                  : <Text color="green">✓</Text>
+                }
+                {' '}<Text bold>{tool.name}</Text>
+                {tool.preview ? <Text dimColor>({tool.preview.slice(0, 80)})</Text> : null}
+                <Text dimColor> {elapsedFmt}</Text>
+              </Text>
+            </Box>
+          );
+        }}
       </Static>
 
-      {/* Full responses — committed to Static immediately so all content enters terminal scrollback */}
+      {/* Full responses — committed to Static with turn separators for readability */}
       <Static items={committedResponses}>
-        {(r) => (
-          <Box key={r.key} flexDirection="column">
-            <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
-            {(r.tokens.input > 0 || r.tokens.output > 0) && (
-              <Box marginLeft={1}>
-                <Text dimColor>
-                  {r.tier && <Text color="cyan">{r.tier} </Text>}
-                  {r.model ? shortModelName(r.model) : ''}
-                  {r.model ? '  ·  ' : ''}
-                  {r.tokens.calls > 0 && r.tokens.input === 0
-                    ? `${r.tokens.calls} calls`
-                    : `${formatTokens(r.tokens.input)} in / ${formatTokens(r.tokens.output)} out`}
-                  {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)}` : ''}
-                  {r.savings !== undefined && r.savings > 0 ? <Text color="green">  saved {Math.round(r.savings * 100)}%</Text> : ''}
-                </Text>
-              </Box>
-            )}
-          </Box>
-        )}
+        {(r) => {
+          const isUserMsg = r.key.startsWith('user-');
+          return (
+            <Box key={r.key} flexDirection="column">
+              {/* Turn separator — thin line before assistant responses */}
+              {!isUserMsg && (r.tokens.input > 0 || r.tokens.output > 0) && (
+                <Box marginTop={1}>
+                  <Text dimColor>{'─'.repeat(60)}</Text>
+                </Box>
+              )}
+              <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
+              {(r.tokens.input > 0 || r.tokens.output > 0) && (
+                <Box marginLeft={1} marginBottom={1}>
+                  <Text dimColor>
+                    {r.tier && <Text color="cyan">[{r.tier}] </Text>}
+                    {r.model ? shortModelName(r.model) : ''}
+                    {r.model ? '  ·  ' : ''}
+                    {r.tokens.calls > 0 && r.tokens.input === 0
+                      ? `${r.tokens.calls} calls`
+                      : `${formatTokens(r.tokens.input)} in / ${formatTokens(r.tokens.output)} out`}
+                    {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)}` : ''}
+                    {r.savings !== undefined && r.savings > 0 ? <Text color="green">  saved {Math.round(r.savings * 100)}%</Text> : ''}
+                  </Text>
+                </Box>
+              )}
+            </Box>
+          );
+        }}
       </Static>
 
       {/* Permission dialog — rendered inline, captured via useInput above */}
@@ -776,34 +811,57 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Active (in-progress) tools — shows command preview + live output line */}
-      {Array.from(tools.entries()).map(([id, tool]) => (
-        <Box key={id} flexDirection="column" marginLeft={1}>
-          <Text color="cyan">
-            {'  '}<Spinner type="dots" />{' '}{tool.name}
-            {tool.preview ? <Text dimColor>: {tool.preview.slice(0, 60)}</Text> : null}
-            <Text dimColor>{(() => { const s = Math.round((Date.now() - tool.startTime) / 1000); return s > 0 ? ` ${s}s` : ''; })()}</Text>
-          </Text>
-          {tool.liveOutput ? (
-            <Text color="yellow">{'    '}{tool.liveOutput.slice(0, 100)}</Text>
-          ) : null}
-        </Box>
-      ))}
+      {/* Active (in-progress) tools — bordered box with multi-line streaming output */}
+      {Array.from(tools.entries()).map(([id, tool]) => {
+        const elapsed = Math.round((Date.now() - tool.startTime) / 1000);
+        const elapsedStr = elapsed > 0 ? ` ${elapsed}s` : '';
+        return (
+          <Box key={id} flexDirection="column" marginLeft={2}>
+            <Text>
+              <Text color="cyan"><Spinner type="dots" /></Text>
+              {' '}<Text bold color="cyan">{tool.name}</Text>
+              {tool.preview ? <Text dimColor>({tool.preview.slice(0, 70)})</Text> : null}
+              <Text dimColor>{elapsedStr}</Text>
+            </Text>
+            {tool.liveLines.length > 0 && (
+              <Box flexDirection="column" marginLeft={2}>
+                {tool.liveLines.map((line, i) => (
+                  <Text key={i} dimColor wrap="truncate-end">{'⎿  '}{line.slice(0, 120)}</Text>
+                ))}
+              </Box>
+            )}
+          </Box>
+        );
+      })}
 
-      {/* Thinking */}
+      {/* Thinking — show last 3 lines of thinking stream for transparency */}
       {thinking && (
-        <Box flexDirection="column" marginLeft={1}>
-          <Text color="magenta">  <Spinner type="dots" /> thinking{completedTools.length > 0 ? <Text dimColor>{' '}(step {completedTools.length + 1})</Text> : null}</Text>
-          {thinkingText && (
-            <Text dimColor wrap="truncate-end">{'    '}{thinkingText.split('\n').pop()?.slice(0, 100)}</Text>
-          )}
+        <Box flexDirection="column" marginLeft={2}>
+          <Text color="magenta">
+            <Spinner type="dots" />{' '}
+            <Text bold>thinking</Text>
+            {completedTools.length > 0 ? <Text dimColor>{' '}· step {completedTools.length + 1}</Text> : null}
+          </Text>
+          {thinkingText && (() => {
+            const lines = thinkingText.split('\n').filter(Boolean).slice(-3);
+            return (
+              <Box flexDirection="column" marginLeft={2}>
+                {lines.map((line, i) => (
+                  <Text key={i} dimColor wrap="truncate-end">{'⎿  '}{line.slice(0, 120)}</Text>
+                ))}
+              </Box>
+            );
+          })()}
         </Box>
       )}
 
-      {/* Waiting */}
+      {/* Waiting — model name and step counter */}
       {waiting && !thinking && tools.size === 0 && (
-        <Box marginLeft={1}>
-          <Text color="yellow">  <Spinner type="dots" /> <Text dimColor>{currentModel}{completedTools.length > 0 ? ` · step ${completedTools.length + 1}` : ''}</Text></Text>
+        <Box marginLeft={2}>
+          <Text color="yellow">
+            <Spinner type="dots" />{' '}
+            <Text dimColor>{shortModelName(currentModel)}{completedTools.length > 0 ? ` · step ${completedTools.length + 1}` : ''}</Text>
+          </Text>
         </Box>
       )}
 
