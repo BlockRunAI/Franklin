@@ -14,7 +14,7 @@ async function execute(input, ctx) {
     const chain = loadChain();
     const apiUrl = API_URLS[chain];
     const endpoint = `${apiUrl}/v1/images/generations`;
-    const imageModel = model || 'dall-e-3';
+    const imageModel = model || 'openai/gpt-image-1';
     const imageSize = size || '1024x1024';
     // Default output path
     const outPath = output_path
@@ -162,7 +162,7 @@ export const imageGenCapability = {
                 prompt: { type: 'string', description: 'Text description of the image to generate' },
                 output_path: { type: 'string', description: 'Where to save the image. Default: generated-<timestamp>.png in working directory' },
                 size: { type: 'string', description: 'Image size: 1024x1024, 1792x1024, or 1024x1792. Default: 1024x1024' },
-                model: { type: 'string', description: 'Image model to use. Default: dall-e-3' },
+                model: { type: 'string', description: 'Image model to use. Default: openai/gpt-image-1' },
             },
             required: ['prompt'],
         },
