@@ -219,6 +219,34 @@ export class StreamingExecutor {
       : this.scope;
 
     try {
+      // Runtime input validation: check required fields and types
+      const schema = handler.spec.input_schema;
+      if (schema?.required) {
+        for (const field of schema.required) {
+          if (invocation.input[field] === undefined || invocation.input[field] === null) {
+            const desc = (schema.properties?.[field] as { description?: string } | undefined)?.description || '';
+            return {
+              output: `Error: missing required parameter "${field}" for ${handler.spec.name}. ${desc}`,
+              isError: true,
+            };
+          }
+        }
+      }
+      // Type coercion for common model mistakes (string↔number, string↔boolean)
+      if (schema?.properties) {
+        for (const [key, value] of Object.entries(invocation.input)) {
+          if (value == null) continue;
+          const prop = schema.properties[key] as { type?: string } | undefined;
+          if (!prop?.type) continue;
+          if (prop.type === 'number' && typeof value === 'string' && !isNaN(Number(value))) {
+            invocation.input[key] = Number(value);
+          } else if (prop.type === 'boolean' && typeof value === 'string') {
+            if (value === 'true') invocation.input[key] = true;
+            else if (value === 'false') invocation.input[key] = false;
+          }
+        }
+      }
+
       let result = await handler.execute(invocation.input, progressScope);
       this.guard?.afterExecute(invocation, result);
 

@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { partiallyReadFiles, fileReadTracker } from './read.js';
+import { partiallyReadFiles, fileReadTracker, invalidateFileCache } from './read.js';
 
 interface EditInput {
   file_path: string;
@@ -167,8 +167,9 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     }
 
     fs.writeFileSync(resolved, updated, 'utf-8');
-    // File has been modified — remove from partial-read tracking so next read is fresh
+    // File has been modified — invalidate caches so next read is fresh
     partiallyReadFiles.delete(resolved);
+    invalidateFileCache(resolved);
     // Update read tracker mtime so subsequent edits don't trigger stale-write detection
     const newStat = fs.statSync(resolved);
     fileReadTracker.set(resolved, { mtimeMs: newStat.mtimeMs, readAt: Date.now() });
@@ -198,6 +199,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
     return {
       output: `Updated ${resolved} — ${matchCount} replacement${matchCount > 1 ? 's' : ''} made.${diffPreview}${partialWarning}`,
+      diff: { file: resolved, oldLines, newLines, count: matchCount },
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
