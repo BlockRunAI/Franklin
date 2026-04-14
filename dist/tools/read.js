@@ -95,8 +95,9 @@ Usage:
 - If you read a file that exists but has empty contents you will receive a warning.
 - Reads over 2MB are rejected — use offset/limit to read portions.
 - Cannot read binary files (images, PDFs, archives).
+- You will regularly be asked to read screenshots or images. If the user provides a path, ALWAYS use this tool to view it.
 
-IMPORTANT: Always use Read instead of cat, head, or tail via Bash.`,
+IMPORTANT: Always use Read instead of cat, head, or tail via Bash. This tool provides line numbers and integrates with Edit's read-before-edit enforcement.`,
         input_schema: {
             type: 'object',
             properties: {

@@ -137,31 +137,41 @@ export function createSubAgentCapability(
   return {
     spec: {
       name: 'Agent',
-      description: `Launch a sub-agent to handle complex, multi-step tasks autonomously. Each sub-agent gets its own context window, tools, and reasoning loop.
+      description: `Launch a new agent to handle complex, multi-step tasks. Each agent gets its own context window, tools, and reasoning loop.
 
 ## When to use
-- Tasks requiring 3+ tool calls that are independent of your current work
-- Research or exploration where intermediate output isn't worth keeping in your context
+- Tasks requiring 3+ independent tool calls (research, exploration, implementation)
+- Work that benefits from a separate context (won't pollute your main conversation)
 - Parallel execution: launch multiple agents in a single response for independent tasks
+- Open-ended codebase exploration that may require multiple rounds of globbing and grepping
 
 ## When NOT to use
+- If you want to read a specific file path, use Read directly — faster and cheaper
+- If you are searching for a specific symbol like "class Foo", use Grep directly
+- If you are searching within 2-3 specific files, use Read directly
 - Simple, single-tool operations (just call the tool directly)
 - Tasks that depend on results from other pending tool calls
 
 ## Writing the prompt
-Brief the agent like a smart colleague who just walked into the room — it hasn't seen your conversation, doesn't know what you've tried, doesn't understand why this task matters.
+Brief the agent like a smart colleague who just walked into the room — it hasn't seen this conversation, doesn't know what you've tried, doesn't understand why this task matters.
 - Explain what you're trying to accomplish and why
 - Describe what you've already learned or ruled out
-- Give enough context for the agent to make judgment calls
-- For lookups: hand over the exact command. For investigations: hand over the question
-- **Never delegate understanding** — don't write "based on your findings, fix the bug." Write prompts that prove you understood: include file paths, what specifically to change
+- Give enough context about the surrounding problem that the agent can make judgment calls rather than just following a narrow instruction
+- If you need a short response, say so ("report in under 200 words")
+- For lookups: hand over the exact command. For investigations: hand over the question — prescribed steps become dead weight when the premise is wrong
+- Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches), since it is not aware of the user's intent
+
+Terse command-style prompts produce shallow, generic work.
+
+**Never delegate understanding.** Don't write "based on your findings, fix the bug" or "based on the research, implement it." Those phrases push synthesis onto the agent instead of doing it yourself. Write prompts that prove you understood: include file paths, line numbers, what specifically to change.
 
 ## Usage notes
-- Always include a short description (3-5 words) summarizing the task
-- The agent's result is returned to you, not shown to the user. Summarize it for the user.
-- Trust but verify: the agent describes intent, not necessarily outcome. Check actual changes before reporting.
-- If launching multiple agents for independent work, send them all in a single response.
-- Terse command-style prompts produce shallow, generic work. Be specific.`,
+- Always include a short description (3-5 words) summarizing what the agent will do
+- The agent's result is returned to you, NOT shown to the user. To show the user the result, you must send a text message summarizing it
+- Trust but verify: the agent's summary describes what it intended, not necessarily what it did. When an agent writes or edits code, check the actual changes before reporting success
+- If launching multiple agents for independent work, send them ALL in a single response with multiple Agent tool calls — this runs them in parallel
+- Use foreground (default) when you need results before you can proceed. The agent completes before your response continues
+- Do not re-read files or re-search for things the agent already found — trust its output`,
       input_schema: {
         type: 'object',
         properties: {

@@ -36,6 +36,16 @@ import type {
 } from './types.js';
 
 /**
+ * Atomically replace all elements in a history array.
+ * Safer than `history.length = 0; history.push(...)` because if push throws
+ * (e.g., OOM), the array is already in its new state — not empty.
+ * Uses splice to do a single atomic operation on the array.
+ */
+function replaceHistory(target: Dialogue[], replacement: Dialogue[]): void {
+  target.splice(0, target.length, ...replacement);
+}
+
+/**
  * Sanitize history: fix orphaned tool results AND inject missing results.
  * Inspired by Claude Code's yieldMissingToolResultBlocks + Hermes _sanitize_api_messages().
  *
@@ -366,23 +376,20 @@ export async function interactiveSession(
         lastActivityTimestamp: loopCount === 1 ? turnIdleReference : lastSessionActivity,
       });
       if (optimized !== history) {
-        history.length = 0;
-        history.push(...optimized);
+        replaceHistory(history, optimized);
       }
 
       // 2. Token reduction: age old results, normalize whitespace, trim verbose messages
       const reduced = reduceTokens(history, config.debug);
       if (reduced !== history) {
-        history.length = 0;
-        history.push(...reduced);
+        replaceHistory(history, reduced);
       }
 
       // 3. Microcompact: clear old tool results to prevent context snowball
       if (history.length > 6) {
         const microCompacted = microCompact(history, 3);
         if (microCompacted !== history) {
-          history.length = 0;
-          history.push(...microCompacted);
+          replaceHistory(history, microCompacted);
           resetTokenAnchor(); // History shrunk — resync token tracking
         }
       }
@@ -394,8 +401,7 @@ export async function interactiveSession(
           const { history: compacted, compacted: didCompact } =
             await autoCompactIfNeeded(history, config.model, client, config.debug);
           if (didCompact) {
-            history.length = 0;
-            history.push(...compacted);
+            replaceHistory(history, compacted);
             resetTokenAnchor();
             compactFailures = 0;
             if (config.debug) {
@@ -471,8 +477,7 @@ export async function interactiveSession(
       // Sanitize: remove orphaned tool results that could confuse the API
       const sanitized = sanitizeHistory(history);
       if (sanitized.length !== history.length) {
-        history.length = 0;
-        history.push(...sanitized);
+        replaceHistory(history, sanitized);
       }
 
       try {
@@ -539,8 +544,7 @@ export async function interactiveSession(
           }
           const { history: stripped, stripped: didStrip } = stripMediaFromHistory(history);
           if (didStrip) {
-            history.length = 0;
-            history.push(...stripped);
+            replaceHistory(history, stripped);
             onEvent({ kind: 'text_delta', text: '\n*Media too large — retrying without images/documents...*\n' });
             continue;
           }
@@ -559,8 +563,7 @@ export async function interactiveSession(
           onEvent({ kind: 'text_delta', text: '\n*Context limit hit — compacting conversation...*\n' });
           const { history: compactedAgain } =
             await forceCompact(history, config.model, client, config.debug);
-          history.length = 0;
-          history.push(...compactedAgain);
+          replaceHistory(history, compactedAgain);
           resetTokenAnchor(); // History mutated — resync tracking
           continue; // Retry
         }
@@ -584,18 +587,10 @@ export async function interactiveSession(
           continue;
         }
 
-        // Add recovery suggestions based on error type
-        let suggestion = '';
-        if (classified.category === 'auth') {
-          suggestion = '\nTip: Check your API key or wallet configuration. Run `franklin setup` to reconfigure.';
-        } else if (classified.category === 'rate_limit') {
-          suggestion = '\nTip: Try /model to switch to a different model, or wait a moment and /retry.';
-        } else if (classified.category === 'overloaded') {
-          suggestion = '\nTip: The model is overloaded. Try /model to switch, or wait and /retry.';
-        } else if (classified.category === 'payment') {
-          // Auto-fallback to free models on payment/rate limit failure
-          // Track failed models per-turn — cleared at start of each new user turn
-          // so the original model gets retried next turn (transient failures recover)
+        // ── Payment failure: auto-fallback to free models ──
+        // Track failed models per-turn — cleared at start of each new user turn
+        // so the original model gets retried next turn (transient failures recover)
+        if (classified.category === 'payment') {
           turnFailedModels.add(config.model);
           const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/nemotron-ultra-253b', 'nvidia/devstral-2-123b'];
           const nextFree = FREE_MODELS.find(m => !turnFailedModels.has(m));
@@ -606,12 +601,10 @@ export async function interactiveSession(
             onEvent({ kind: 'text_delta', text: `\n*${oldModel} failed — switching to ${nextFree}*\n` });
             continue; // Retry with next model
           }
-          suggestion = '\nTip: Run `franklin balance` to check funds. Try /model free for free models.';
-        } else if (classified.category === 'timeout' || classified.category === 'network') {
-          suggestion = '\nTip: Check your network connection. Use /retry to try again.';
-        } else if (classified.category === 'context_limit') {
-          suggestion = '\nTip: Run /compact to compress conversation history.';
         }
+
+        // ── Unrecoverable: show error with suggestion from classifier ──
+        const suggestion = classified.suggestion ? `\nTip: ${classified.suggestion}` : '';
         onEvent({
           kind: 'turn_done',
           reason: 'error',
