@@ -367,8 +367,14 @@ function formatCompactSummary(raw) {
 }
 /**
  * Pick a cheaper/faster model for compaction to save cost.
+ * If the primary model is free (NVIDIA), compaction also stays free
+ * so users don't get silent charges when their context fills up.
  */
 function pickCompactionModel(primaryModel) {
+    // Free parent → free compaction (no silent charge)
+    if (primaryModel.startsWith('nvidia/') || primaryModel === 'blockrun/free') {
+        return 'nvidia/nemotron-ultra-253b';
+    }
     // Use cheapest capable model for summarization to save cost
     // Tier down: opus/pro → sonnet, sonnet → haiku, everything else → flash (cheapest capable)
     if (primaryModel.includes('opus') || primaryModel.includes('pro')) {
@@ -380,7 +386,7 @@ function pickCompactionModel(primaryModel) {
     if (primaryModel.includes('haiku') || primaryModel.includes('mini') || primaryModel.includes('nano')) {
         return 'google/gemini-2.5-flash'; // Cheapest capable model
     }
-    // Free/unknown models — use flash
+    // Unknown models — use flash
     return 'google/gemini-2.5-flash';
 }
 /**
