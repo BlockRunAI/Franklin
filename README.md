@@ -6,11 +6,11 @@
 
 <br><br>
 
-<h3>The wallet-native economic agent.</h3>
+<h3>The AI agent with a wallet.</h3>
 
 <p>
-  While others generate text, Franklin deploys capital.<br>
-  One wallet. Every model. Every paid API. Budgeted execution in USDC.
+  Other agents write code. Franklin writes code <em>and spends money</em> to get things done.<br>
+  One wallet. Every model. Every paid API. Pay only for outcomes — not subscriptions.
 </p>
 
 <p>

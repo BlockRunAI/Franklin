@@ -624,7 +624,15 @@ export async function handleSlashCommand(input, ctx) {
             });
         }
         else {
-            const newModel = resolveModel(input.slice(7).trim());
+            const raw = input.slice(7).trim();
+            // Reject obvious garbage before resolveModel gets it — prevents wedge
+            // strings with shell metacharacters or newlines ending up in config.
+            if (!/^[a-zA-Z0-9/_.-]+$/.test(raw)) {
+                ctx.onEvent({ kind: 'text_delta', text: `Invalid model name. Use shortcut (sonnet, free, gemini) or full id (vendor/model).\n` });
+                emitDone(ctx);
+                return { handled: true };
+            }
+            const newModel = resolveModel(raw);
             ctx.config.model = newModel;
             ctx.config.baseModel = newModel; // Update recovery target so loop doesn't reset
             ctx.config.onModelChange?.(newModel, 'user');
@@ -654,8 +662,13 @@ export async function handleSlashCommand(input, ctx) {
     if (input === '/wallet' || input.startsWith('/wallet ')) {
         const chain = (await import('../config.js')).loadChain();
         const args = input.slice(7).trim();
-        // /wallet export — show private key
-        if (args === 'export') {
+        // /wallet export [--show]  — key masked by default; --show prints the full key
+        // Rationale: terminal scrollback, screen recordings, and shared tmux sessions
+        // can leak keys. Default to masked so users can confirm which wallet they have
+        // without exposing the key; they opt in to the full key with --show.
+        if (args === 'export' || args === 'export --show') {
+            const showKey = args === 'export --show';
+            const mask = (key) => key.length > 10 ? key.slice(0, 6) + '…' + key.slice(-4) : '••••••';
             try {
                 if (chain === 'solana') {
                     const { loadSolanaWallet, getOrCreateSolanaWallet } = await import('@blockrun/llm');
@@ -668,8 +681,10 @@ export async function handleSlashCommand(input, ctx) {
                     const w = await getOrCreateSolanaWallet();
                     ctx.onEvent({ kind: 'text_delta', text: `**Wallet Export (Solana)**\n` +
                             `  Address:     ${w.address}\n` +
-                            `  Private Key: ${key}\n\n` +
-                            `⚠️  Keep this key safe. Anyone with it controls your funds.\n`
+                            `  Private Key: ${showKey ? key : mask(key)}\n\n` +
+                            (showKey
+                                ? `⚠️  Anyone with this key controls your funds. Clear terminal history after copying.\n`
+                                : `(key masked — use \`/wallet export --show\` to reveal)\n`)
                     });
                 }
                 else {
@@ -683,8 +698,10 @@ export async function handleSlashCommand(input, ctx) {
                     const w = getOrCreateWallet();
                     ctx.onEvent({ kind: 'text_delta', text: `**Wallet Export (Base)**\n` +
                             `  Address:     ${w.address}\n` +
-                            `  Private Key: ${key}\n\n` +
-                            `⚠️  Keep this key safe. Anyone with it controls your funds.\n`
+                            `  Private Key: ${showKey ? key : mask(key)}\n\n` +
+                            (showKey
+                                ? `⚠️  Anyone with this key controls your funds. Clear terminal history after copying.\n`
+                                : `(key masked — use \`/wallet export --show\` to reveal)\n`)
                     });
                 }
             }
@@ -696,7 +713,10 @@ export async function handleSlashCommand(input, ctx) {
         }
         // /wallet import <private-key>
         if (args.startsWith('import')) {
-            const key = args.slice(6).trim();
+            // Strip ALL whitespace (including newlines/tabs from accidental paste),
+            // not just leading/trailing. Otherwise a pasted key with embedded newlines
+            // sneaks through validators and corrupts the stored wallet file.
+            const key = args.slice(6).replace(/\s/g, '');
             if (!key) {
                 ctx.onEvent({ kind: 'text_delta', text: `**Usage:** \`/wallet import <private-key>\`\n\n` +
                         `  Base:   \`/wallet import 0x...\`  (hex, 66 chars)\n` +
@@ -704,6 +724,22 @@ export async function handleSlashCommand(input, ctx) {
                 });
                 emitDone(ctx);
                 return { handled: true };
+            }
+            // Shape-validate before touching disk
+            if (chain === 'base') {
+                if (!/^0x[0-9a-fA-F]{64}$/.test(key)) {
+                    ctx.onEvent({ kind: 'text_delta', text: 'Import error: Base key must be 0x + 64 hex chars (66 total).\n' });
+                    emitDone(ctx);
+                    return { handled: true };
+                }
+            }
+            else {
+                // Solana bs58 keys are 87-88 chars; reject anything wildly off
+                if (key.length < 80 || key.length > 100 || !/^[1-9A-HJ-NP-Za-km-z]+$/.test(key)) {
+                    ctx.onEvent({ kind: 'text_delta', text: 'Import error: Solana key must be base58 (80-100 chars).\n' });
+                    emitDone(ctx);
+                    return { handled: true };
+                }
             }
             try {
                 if (chain === 'solana') {

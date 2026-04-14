@@ -19,7 +19,17 @@ export function recordOutcome(category, model, outcome, toolCalls) {
         fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
         const record = { ts: Date.now(), category, model, outcome, toolCalls };
         fs.appendFileSync(HISTORY_FILE, JSON.stringify(record) + '\n');
-        // Trim periodically (10% chance)
+        // Hard cap: if file ballooned past 2× max (e.g. parallel sub-agents
+        // all appending before a trim fires), force a trim right now.
+        try {
+            const { size } = fs.statSync(HISTORY_FILE);
+            if (size > 2 * 1024 * 1024) { // 2MB hard cap
+                trimHistory();
+                return;
+            }
+        }
+        catch { /* stat failed — trim on random instead */ }
+        // Trim periodically (10% chance) during normal operation
         if (Math.random() < 0.1) {
             trimHistory();
         }

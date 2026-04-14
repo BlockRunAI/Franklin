@@ -96,8 +96,13 @@ export function saveStats(stats) {
             fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
         });
     }
-    catch {
-        /* ignore write errors */
+    catch (err) {
+        // Surface write failures (disk full, permission) to stderr so users
+        // aren't silently losing usage data.
+        try {
+            process.stderr.write(`[franklin-stats] flush failed: ${err.message}\n`);
+        }
+        catch { /* stderr gone */ }
     }
 }
 export function clearStats() {
