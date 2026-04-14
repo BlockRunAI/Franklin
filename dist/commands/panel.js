@@ -5,18 +5,19 @@ import chalk from 'chalk';
 import { createPanelServer } from '../panel/server.js';
 export async function panelCommand(options) {
     const requestedPort = parseInt(options.port || '3100', 10);
-    // Handle port-in-use by trying up to 10 subsequent ports.
+    // Handle port-in-use by trying up to 20 subsequent ports.
+    const MAX_ATTEMPTS = 20;
     const tryListen = (port, attempt) => {
         const server = createPanelServer(port);
         server.on('error', (err) => {
-            if (err.code === 'EADDRINUSE' && attempt < 10) {
+            if (err.code === 'EADDRINUSE' && attempt < MAX_ATTEMPTS) {
                 console.log(chalk.yellow(`  Port ${port} busy — trying ${port + 1}...`));
                 tryListen(port + 1, attempt + 1);
                 return;
             }
             console.error(chalk.red(`\n  Panel failed to start: ${err.message}`));
             if (err.code === 'EADDRINUSE') {
-                console.error(chalk.dim(`  All ports from ${requestedPort} to ${requestedPort + 9} are busy.`));
+                console.error(chalk.dim(`  All ports from ${requestedPort} to ${requestedPort + MAX_ATTEMPTS - 1} are busy.`));
                 console.error(chalk.dim(`  Try: franklin panel --port 4000`));
             }
             process.exit(1);
