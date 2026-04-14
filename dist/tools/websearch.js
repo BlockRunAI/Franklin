@@ -91,6 +91,31 @@ function parseDuckDuckGoResults(html, maxResults) {
             snippet: stripTags(snippet?.[1] || '').trim(),
         });
     }
+    // Last resort: if both parsers failed, extract ANY external links from the page
+    // Partial results are better than "No results found" when the page loaded OK
+    if (results.length === 0) {
+        const allLinks = /<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+        let match;
+        while ((match = allLinks.exec(html)) !== null && results.length < maxResults) {
+            let url = match[1] || '';
+            const text = stripTags(match[2]).trim();
+            // Must be a real external URL with meaningful text
+            if (!text || text.length < 4)
+                continue;
+            if (url.startsWith('/') || url.includes('duckduckgo.com'))
+                continue;
+            // Extract from DDG redirect wrapper
+            const uddg = url.match(/uddg=([^&]+)/);
+            if (uddg)
+                url = decodeURIComponent(uddg[1]);
+            if (!url.startsWith('http'))
+                continue;
+            if (seenUrls.has(url))
+                continue;
+            seenUrls.add(url);
+            results.push({ title: text, url, snippet: '' });
+        }
+    }
     return results;
 }
 function stripTags(html) {

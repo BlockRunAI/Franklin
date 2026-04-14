@@ -24,7 +24,22 @@ async function execute(input, ctx) {
     }
     const toolDefs = subTools.map(c => c.spec);
     const systemInstructions = assembleInstructions(ctx.workingDir);
-    const systemPrompt = systemInstructions.join('\n\n');
+    // Inject parent context so sub-agent avoids duplicate work
+    let parentContextSection = '';
+    if (ctx.parentContext) {
+        const parts = [];
+        if (ctx.parentContext.goal) {
+            parts.push(`Parent task: ${ctx.parentContext.goal}`);
+        }
+        if (ctx.parentContext.recentFiles && ctx.parentContext.recentFiles.length > 0) {
+            parts.push(`Files already read by parent: ${ctx.parentContext.recentFiles.join(', ')}`);
+            parts.push('Do not re-read these files unless you need to verify a change.');
+        }
+        if (parts.length > 0) {
+            parentContextSection = '\n\n# Parent Agent Context\n' + parts.join('\n');
+        }
+    }
+    const systemPrompt = systemInstructions.join('\n\n') + parentContextSection;
     const history = [
         { role: 'user', content: prompt },
     ];
