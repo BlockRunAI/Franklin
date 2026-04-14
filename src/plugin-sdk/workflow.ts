@@ -22,7 +22,7 @@ export interface ModelTierConfig {
 
 export const DEFAULT_MODEL_TIERS: ModelTierConfig = {
   free: 'nvidia/nemotron-ultra-253b',
-  cheap: 'zai/glm-5.1',
+  cheap: 'nvidia/nemotron-ultra-253b', // Was glm-5.1 ($0.001/call). Free by default; opt-in to paid.
   premium: 'anthropic/claude-sonnet-4.6',
 };
 

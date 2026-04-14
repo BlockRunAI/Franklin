@@ -224,6 +224,6 @@ export function formatSearchResults(matches, query) {
         lines.push(`     [${m.matchedRole}] ${m.snippet}`);
         lines.push('');
     }
-    lines.push(`  Resume: runcode  (then /resume <session-id>)\n`);
+    lines.push(`  Resume: franklin  (then /resume <session-id>)\n`);
     return lines.join('\n');
 }
