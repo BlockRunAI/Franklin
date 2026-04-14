@@ -63,9 +63,9 @@ export async function initCommand(options) {
   <key>KeepAlive</key>
   <false/>
   <key>StandardOutPath</key>
-  <string>${os.homedir()}/.blockrun/runcode-debug.log</string>
+  <string>${os.homedir()}/.blockrun/franklin-debug.log</string>
   <key>StandardErrorPath</key>
-  <string>${os.homedir()}/.blockrun/runcode-debug.log</string>
+  <string>${os.homedir()}/.blockrun/franklin-debug.log</string>
 </dict>
 </plist>`;
             fs.mkdirSync(LAUNCH_AGENT_DIR, { recursive: true });

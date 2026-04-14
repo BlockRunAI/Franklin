@@ -153,6 +153,7 @@ test('panel server serves dashboard HTML and stats JSON', async () => {
     assert.equal(typeof stats.byModel, 'object');
   } finally {
     await new Promise((resolve) => server.close(() => resolve()));
+    unwatchFile(join(homedir(), '.blockrun', 'franklin-stats.json'));
     unwatchFile(join(homedir(), '.blockrun', 'runcode-stats.json'));
   }
 });
@@ -613,7 +614,7 @@ test('stats tracker falls back to temp dir when HOME is not writable', async () 
     });
 
     const statsFile = result.stdout.trim();
-    assert.equal(statsFile, join(tmpdir(), 'runcode', 'runcode-stats.json'));
+    assert.equal(statsFile, join(tmpdir(), 'franklin', 'franklin-stats.json'));
     assert.ok(existsSync(statsFile), `Expected fallback stats file at ${statsFile}`);
 
     rmSync(statsFile, { force: true });

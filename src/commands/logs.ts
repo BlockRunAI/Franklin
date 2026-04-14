@@ -3,7 +3,8 @@ import path from 'node:path';
 import chalk from 'chalk';
 import { BLOCKRUN_DIR } from '../config.js';
 
-const LOG_FILE = path.join(BLOCKRUN_DIR, 'runcode-debug.log');
+const LOG_FILE = path.join(BLOCKRUN_DIR, 'franklin-debug.log');
+const LEGACY_LOG_FILE = path.join(BLOCKRUN_DIR, 'runcode-debug.log');
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB auto-rotate threshold
 
 export function logsCommand(options: {
@@ -21,9 +22,14 @@ export function logsCommand(options: {
     return;
   }
 
+  // Migrate legacy log file
+  if (!fs.existsSync(LOG_FILE) && fs.existsSync(LEGACY_LOG_FILE)) {
+    try { fs.renameSync(LEGACY_LOG_FILE, LOG_FILE); } catch { /* best effort */ }
+  }
+
   if (!fs.existsSync(LOG_FILE)) {
-    console.log(chalk.dim('No logs yet. Start runcode with --debug to enable logging:'));
-    console.log(chalk.bold('  runcode start --debug'));
+    console.log(chalk.dim('No logs yet. Start franklin with --debug to enable logging:'));
+    console.log(chalk.bold('  franklin start --debug'));
     return;
   }
 
