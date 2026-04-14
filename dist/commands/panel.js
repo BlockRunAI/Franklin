@@ -5,13 +5,13 @@ import chalk from 'chalk';
 import { createPanelServer } from '../panel/server.js';
 export async function panelCommand(options) {
     const requestedPort = parseInt(options.port || '3100', 10);
-    // Handle port-in-use by trying up to 20 subsequent ports.
+    // Handle port-in-use by trying up to 20 subsequent ports silently.
+    // Only log when we finally bind (or fail completely) — no per-attempt spam.
     const MAX_ATTEMPTS = 20;
     const tryListen = (port, attempt) => {
         const server = createPanelServer(port);
         server.on('error', (err) => {
             if (err.code === 'EADDRINUSE' && attempt < MAX_ATTEMPTS) {
-                console.log(chalk.yellow(`  Port ${port} busy — trying ${port + 1}...`));
                 tryListen(port + 1, attempt + 1);
                 return;
             }
@@ -25,7 +25,8 @@ export async function panelCommand(options) {
         server.listen(port, () => {
             console.log('');
             console.log(chalk.bold('  Franklin Panel'));
-            console.log(chalk.dim(`  http://localhost:${port}`));
+            console.log(chalk.dim(`  http://localhost:${port}`) +
+                (port !== requestedPort ? chalk.yellow(`  (fell back from ${requestedPort})`) : ''));
             console.log('');
             console.log(chalk.dim('  Press Ctrl+C to stop.'));
             console.log('');
