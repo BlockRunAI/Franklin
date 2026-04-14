@@ -27,11 +27,11 @@
 
 <p>
   <a href="#quick-start">Quick&nbsp;start</a> ·
-  <a href="#a-new-category">New&nbsp;category</a> ·
+  <a href="#yopo">YOPO</a> ·
+  <a href="#a-new-category">Category</a> ·
   <a href="#what-franklin-can-execute">What&nbsp;it&nbsp;does</a> ·
   <a href="#smart-router">Smart&nbsp;Router</a> ·
-  <a href="#the-comparison">Compare</a> ·
-  <a href="#features">Features</a> ·
+  <a href="#the-comparison">vs.&nbsp;Claude&nbsp;Code</a> ·
   <a href="#how-it-works">Architecture</a> ·
   <a href="#community">Community</a>
 </p>
@@ -42,9 +42,15 @@
 
 ## The pitch in one paragraph
 
-`franklin` is not a coding copilot and not just another task runner. Franklin is a **wallet-native economic agent**: software with purchasing power. You give it a goal and a budget. Franklin decides what model to call, what tool to use, what API is worth paying for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
+Claude Code writes code. Cursor writes code. Franklin writes code **and spends money to get the job done**. It holds a USDC wallet, picks the best model per task from 55+ providers, purchases trading data, generates images, pays for web search — all autonomously. You state an outcome and set a budget. Franklin decides what to call, what to pay for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
 
 Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships as one npm package.
+
+> **YOPO — You Only Pay Outcome**
+>
+> Not a subscription (pay for access). Not a generic pay-per-call (pay for trying).
+> You pay only for the work Franklin delivers. Provider cost + 5%, settled per action
+> in USDC. No monthly fees. No rate limits. No overdraft.
 
 ---
 
@@ -66,24 +72,41 @@ That's it. Zero signup, zero credit card, zero phone verification. Send **$5 of 
 
 ---
 
+## YOPO
+
+**You Only Pay Outcome.** This is Franklin's pricing model, and it is the opposite of almost every other AI product you use.
+
+|                         | You pay for...                               | Result                               |
+| ----------------------- | -------------------------------------------- | ------------------------------------ |
+| Subscription (ChatGPT Plus, Claude Max, Cursor Pro) | Access. Paid whether you use it or not. | $20–200/month, rate-limited.         |
+| Pay-per-call (OpenAI API, etc.) | Every attempt — even failed ones.    | Hidden cost from retries, dead ends. |
+| **Franklin (YOPO)**     | **The outcome.** Each signed micropayment.  | **Provider cost + 5%. No more.**     |
+
+Three consequences fall out of this:
+
+1. **No subscriptions.** Use Franklin for $0.50 one week and $50 the next — you pay for compute actually consumed, nothing more.
+2. **No rate limits.** Subscriptions throttle you when you need AI most. YOPO has no artificial caps — if you have USDC, you have access.
+3. **No overdraft.** The wallet balance IS the hard limit. When it's empty, Franklin stops. No surprise bills, no 3 a.m. rate-limit walls.
+
+Concretely — $1 in USDC gets you roughly:
+- ~400K GPT-4o input tokens
+- ~7M DeepSeek tokens
+- ~13M Gemini Flash tokens
+- ~20 DALL-E 3 images
+- ~40 Exa neural web searches
+- Unlimited NVIDIA GPT-OSS (free tier, no wallet needed)
+
+---
+
 ## A new category
 
 > **Economic Agent**
-> 
+>
 > Software that can hold a wallet, price its own actions, spend toward an outcome, and stop at a hard budget cap.
 
-That definition matters.
+Most AI products fit into one of three buckets: they answer questions, write code, or automate a fixed workflow. None of them can spend money.
 
-Most AI products fit into one of three buckets:
-- They answer questions.
-- They write code.
-- They automate a fixed workflow.
-
-Franklin does something different. It combines:
-- **Purchasing power** — it can pay for models, tools, and APIs.
-- **Budget awareness** — it knows spend is part of the problem, not an afterthought.
-- **Cross-vertical execution** — marketing, trading, research, code, ops.
-- **Hard stopping conditions** — when the wallet or budget says stop, it stops.
+Franklin can. It combines **purchasing power** (it pays for models, tools, and APIs), **budget awareness** (cost is part of the loop, not an afterthought), **cross-vertical execution** (code, trading, research, marketing, ops), and **hard stopping conditions** (wallet balance is a real constraint, not a suggestion).
 
 That is why Franklin is an economic agent, not just a task agent.
 
@@ -165,7 +188,7 @@ After running `franklin social setup && franklin social login x`, Franklin can s
 
 Code is still first-class. It is just **one workload**, not the category.
 
-Every tool call is itemized. Every token is priced. When the wallet hits zero, Franklin stops. No overdraft, no surprise bill, no rate-limit wall at 3am.
+Every tool call is itemized. Every token is priced. When the wallet hits zero, Franklin stops. No overdraft, no surprise bill, no rate-limit wall at 3 a.m. — this is YOPO in practice.
 
 ---
 
@@ -221,23 +244,23 @@ The router also learns from **your** usage. If you keep retrying a model for cod
 <tr>
 <td width="33%" valign="top">
 
-### 💳 &nbsp;Budget is native
+### 💳 &nbsp;AI is utility, not SaaS
 
-Franklin does not bolt spend tracking on afterward. Cost is part of the loop. The agent can choose free, cheap, or premium paths per step, and every paid action settles against your wallet.
+You don't subscribe to electricity, you pay for what you use. Franklin brings the same model to AI. YOPO settlement means Franklin never bills you for access, only for outcomes. No monthly fees, no rate limits, no overdraft.
+
+</td>
+<td width="33%" valign="top">
+
+### 🧠 &nbsp;Multi-model is the future
+
+No single model is best at everything. Claude writes better code, Gemini handles longer context, DeepSeek costs 20x less for simple tasks. The Smart Router routes every request to the optimal model in <1ms — up to 89% savings vs. always using Opus.
 
 </td>
 <td width="33%" valign="top">
 
 ### 🔐 &nbsp;Wallet is identity
 
-No email. No phone. No KYC. Your Base or Solana address is your account. Portable across machines. Your sessions, your config, your money.
-
-</td>
-<td width="33%" valign="top">
-
-### 🧠 &nbsp;One runtime, many verticals
-
-Marketing, trading, research, code, and anything else you can express as tools plus budgeted execution. Franklin is a runtime for economic workflows, not a single-purpose copilot.
+No email. No phone. No KYC. Your Base or Solana address is your account — portable, permissionless, global. API keys require US banking and account approval. A wallet requires only USDC.
 
 </td>
 </tr>
@@ -247,17 +270,19 @@ Marketing, trading, research, code, and anything else you can express as tools p
 
 ## The comparison
 
-|                                      | Chatbots        | Coding agents    | Workflow tools   | **Franklin**                    |
-| ------------------------------------ | --------------- | ---------------- | ---------------- | ------------------------------- |
-| Main unit of value                   | Answers         | Code changes     | Fixed automations| **Budgeted outcomes**           |
-| Has purchasing power                 | ❌              | ❌               | ❌               | ✅ **wallet-native**            |
-| Picks best model per task            | ❌              | ❌               | ❌               | ✅ **learned router**           |
-| Can choose tools/models per step     | ⚠️ limited      | ✅ mostly coding | ❌ usually fixed | ✅ **yes**                      |
-| Works across marketing/trading/code  | ⚠️              | ❌ code-first    | ⚠️ integration-bound | ✅ **cross-vertical**       |
-| Hard spend cap                       | ❌              | ❌               | ⚠️ external billing | ✅ **wallet balance**        |
-| Identity                             | Account         | Account / API key| Account          | ✅ **wallet**                   |
-| Start free, no signup                | ⚠️              | ❌ / BYOK        | ❌               | ✅                              |
-| Paid APIs through one interface      | ❌              | ⚠️               | ❌               | ✅ **55+ models + paid tools**  |
+|                                        | Claude Code     | Cursor           | Chatbots         | **Franklin**                    |
+| -------------------------------------- | --------------- | ---------------- | ---------------- | ------------------------------- |
+| Writes code                            | ✅              | ✅               | ⚠️                | ✅                              |
+| **Spends money for you**               | ❌              | ❌               | ❌               | ✅ **USDC wallet, x402**        |
+| **Buys data + APIs + images + search** | ❌              | ❌               | ❌               | ✅ **55+ APIs, one wallet**     |
+| Picks best model per task              | ❌ Anthropic only | ❌ plan-tied    | ❌               | ✅ **Smart Router, 55+ models** |
+| Pricing model                          | Subscription    | Subscription     | Subscription     | **YOPO** — per outcome, USDC    |
+| Monthly fee                            | $20–$200        | $20–$40          | $20+             | **$0**                          |
+| Rate-limited                           | Yes             | Yes              | Yes              | No — limited only by wallet     |
+| Works when provider goes down          | ❌              | ❌               | ❌               | ✅ **routes to another**        |
+| Identity                               | Anthropic account | Cursor account | Account / email | ✅ **wallet, no signup**        |
+| Start free, no KYC                     | ❌              | ❌               | ❌               | ✅                              |
+| Source                                 | Closed          | Closed           | Closed           | **Apache 2.0, local-first**     |
 
 **Franklin is the economic agent category in one sentence:** software with a wallet that can spend toward a result.
 
@@ -281,8 +306,8 @@ Ask "generate a logo" — Franklin calls DALL-E / GPT Image, saves the result lo
 **🧠 55+ models via one wallet**
 Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, NVIDIA free tier. One wallet, one interface, automatic fallback.
 
-**💳 x402 micropayments**
-HTTP 402 native. Every paid action is a signed micropayment against your USDC balance. No subscriptions. No refund loop. No account lock-in.
+**💳 x402 micropayments (YOPO)**
+HTTP 402 native. Every paid action is a signed USDC micropayment via EIP-712 — non-custodial, your keys never leave your machine. YOPO: you pay only for outcomes.
 
 **🧠 Learned model router**
 Trained on 2M+ real requests. Classifies your task and picks the best model from 55+ LLMs. Four profiles (auto/eco/premium/free). Adapts to your usage over time.
@@ -516,8 +541,8 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 <div align="center">
 
-**Franklin is the economic agent.**<br>
-<sub>Your wallet. Your budget. Your results.</sub>
+**The AI agent with a wallet.**<br>
+<sub>YOPO — You Only Pay Outcome. Your wallet. Your budget. Your results.</sub>
 
 <br>
 
