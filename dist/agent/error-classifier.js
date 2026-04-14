@@ -103,6 +103,24 @@ export function classifyAgentError(message) {
             suggestion: 'The model is overloaded. Try /model to switch, or wait and /retry.',
         };
     }
+    // Schema / tool-definition errors — NOT transient, retrying won't help.
+    // These can be wrapped in 5xx responses (e.g. '503: 400 Invalid schema'),
+    // so classify them BEFORE the generic server-error branch below.
+    if (includesAny(err, [
+        'invalid schema',
+        'array schema missing items',
+        'schema missing',
+        'invalid tool_use',
+        'invalid function',
+        'tool_use_id',
+        'unsupported parameter',
+        'invalid request',
+    ])) {
+        return {
+            category: 'schema', label: 'Schema', isTransient: false, maxRetries: 0,
+            suggestion: 'Tool schema rejected by this model. Try /model to switch to a more permissive model (e.g. sonnet), or upgrade Franklin.',
+        };
+    }
     if (includesAny(err, [
         '500',
         '502',

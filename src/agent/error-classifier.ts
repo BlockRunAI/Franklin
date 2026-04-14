@@ -16,11 +16,12 @@ export type AgentErrorCategory =
   | 'overloaded'
   | 'server'
   | 'auth'
+  | 'schema'
   | 'unknown';
 
 export interface AgentErrorInfo {
   category: AgentErrorCategory;
-  label: 'RateLimit' | 'Payment' | 'Network' | 'Timeout' | 'Context' | 'Overloaded' | 'Server' | 'Auth' | 'Unknown';
+  label: 'RateLimit' | 'Payment' | 'Network' | 'Timeout' | 'Context' | 'Overloaded' | 'Server' | 'Auth' | 'Schema' | 'Unknown';
   isTransient: boolean;
   /** Max retries for this error type (overrides default). undefined = use default. */
   maxRetries?: number;
@@ -131,6 +132,25 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     return {
       category: 'overloaded', label: 'Overloaded', isTransient: true, maxRetries: 3,
       suggestion: 'The model is overloaded. Try /model to switch, or wait and /retry.',
+    };
+  }
+
+  // Schema / tool-definition errors — NOT transient, retrying won't help.
+  // These can be wrapped in 5xx responses (e.g. '503: 400 Invalid schema'),
+  // so classify them BEFORE the generic server-error branch below.
+  if (includesAny(err, [
+    'invalid schema',
+    'array schema missing items',
+    'schema missing',
+    'invalid tool_use',
+    'invalid function',
+    'tool_use_id',
+    'unsupported parameter',
+    'invalid request',
+  ])) {
+    return {
+      category: 'schema', label: 'Schema', isTransient: false, maxRetries: 0,
+      suggestion: 'Tool schema rejected by this model. Try /model to switch to a more permissive model (e.g. sonnet), or upgrade Franklin.',
     };
   }
 
