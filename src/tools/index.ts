@@ -18,6 +18,7 @@ import { askUserCapability } from './askuser.js';
 import { tradingSignalCapability, tradingMarketCapability } from './trading.js';
 import { searchXCapability } from './searchx.js';
 import { postToXCapability } from './posttox.js';
+import { moaCapability } from './moa.js';
 
 /** All capabilities available to the Franklin agent (excluding sub-agent, which needs config). */
 export const allCapabilities: CapabilityHandler[] = [
@@ -36,6 +37,7 @@ export const allCapabilities: CapabilityHandler[] = [
   tradingMarketCapability,
   searchXCapability,
   postToXCapability,
+  moaCapability,
 ];
 
 export {

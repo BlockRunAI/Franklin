@@ -1,3 +1,3 @@
-export type { Learning, LearningCategory, ExtractionResult } from './types.js';
-export { loadLearnings, saveLearnings, mergeLearning, decayLearnings, formatForPrompt } from './store.js';
-export { extractLearnings, bootstrapFromClaudeConfig, maybeMidSessionExtract } from './extractor.js';
+export type { Learning, LearningCategory, ExtractionResult, Skill } from './types.js';
+export { loadLearnings, saveLearnings, mergeLearning, decayLearnings, formatForPrompt, loadSkills, saveSkill, matchSkills, formatSkillsForPrompt } from './store.js';
+export { extractLearnings, bootstrapFromClaudeConfig, maybeMidSessionExtract, maybeExtractSkill } from './extractor.js';
