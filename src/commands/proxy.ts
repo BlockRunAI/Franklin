@@ -39,7 +39,7 @@ export async function proxyCommand(options: ProxyOptions) {
       console.log(chalk.yellow('No Solana wallet found — created a new one.'));
       console.log(`Address: ${chalk.cyan(wallet.address)}`);
       console.log(
-        `\nSend USDC on Solana to this address, then run ${chalk.bold('runcode proxy')} again.\n`
+        `\nSend USDC on Solana to this address, then run ${chalk.bold('franklin proxy')} again.\n`
       );
       return;
     }
@@ -68,7 +68,7 @@ export async function proxyCommand(options: ProxyOptions) {
       console.log(chalk.yellow('No wallet found — created a new one.'));
       console.log(`Address: ${chalk.cyan(wallet.address)}`);
       console.log(
-        `\nSend USDC on Base to this address, then run ${chalk.bold('runcode proxy')} again.\n`
+        `\nSend USDC on Base to this address, then run ${chalk.bold('franklin proxy')} again.\n`
       );
       return;
     }

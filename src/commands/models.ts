@@ -64,7 +64,7 @@ export async function modelsCommand() {
     }
 
     console.log(
-      `\n${chalk.dim(`${models.length} models available. Use:`)} ${chalk.bold('runcode start --model <model-id>')}`
+      `\n${chalk.dim(`${models.length} models available. Use:`)} ${chalk.bold('franklin start --model <model-id>')}`
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'unknown error';

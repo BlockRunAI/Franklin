@@ -91,7 +91,10 @@ export function estimateCost(
   outputTokens: number,
   calls = 1
 ): number {
-  const pricing = MODEL_PRICING[model] || { input: 2.0, output: 10.0 };
+  // Unknown models: assume free (0). Prevents false cost accumulation in the UI
+  // for models not yet listed — better to under-estimate than scare users with
+  // fake charges. Real on-chain charges are tracked separately in cost_log.jsonl.
+  const pricing = MODEL_PRICING[model] || { input: 0, output: 0 };
   if (pricing.perCall) {
     return pricing.perCall * calls;
   }
