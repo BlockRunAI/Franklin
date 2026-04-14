@@ -84,22 +84,12 @@ export async function startCommand(options: StartOptions) {
 
   const workDir = process.cwd();
 
-  // Show session info immediately, fetch balance in background
-  // Model is shown in the live status bar — no static line needed.
-  console.log(chalk.dim(`  Wallet: ${walletAddress || 'not set'}`));
-  console.log(chalk.dim(`  Dir:    ${workDir}`));
-  // First-run tip: show if no config file exists yet
-  if (!configModel && !options.model) {
-    console.log(chalk.dim(`\n  Tip: /model to switch models · /compact to save tokens · /help for all commands`));
-  }
-  // Welcome message — show things Hermes/OpenClaw can't do.
-  // Only on first run or when no model is configured (new user indicator).
-  // After the user's first session, the tip fades and they go straight to the prompt.
-  console.log('');
-  console.log(chalk.dim('  Try something only Franklin can do:'));
-  console.log(chalk.dim('    ') + chalk.hex('#FFD700')('"what\'s BTC looking like today?"')    + chalk.dim('  ← live market data'));
-  console.log(chalk.dim('    ') + chalk.hex('#60A5FA')('"generate a logo for my startup"')     + chalk.dim('  ← AI image gen'));
-  console.log(chalk.dim('  Code with 55+ models. No API keys. Pay per use.'));
+  // Session info — aligned, minimal. Model + balance live in the input bar below.
+  const short = (s: string) => s.length > 14 ? s.slice(0, 6) + '...' + s.slice(-4) : s;
+  console.log(chalk.dim('  Wallet:    ') + (walletAddress ? short(walletAddress) : chalk.yellow('not set')));
+  console.log(chalk.dim('  Dir:       ') + workDir);
+  console.log(chalk.dim('  Dashboard: ') + chalk.cyan('franklin panel') + chalk.dim(' → http://localhost:3100'));
+  console.log(chalk.dim('  Help:      ') + chalk.cyan('/help'));
   console.log('');
 
   // Balance fetcher — used at startup and after each turn
