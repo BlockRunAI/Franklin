@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { getOrCreateWallet, getOrCreateSolanaWallet, createPaymentPayload, createSolanaPaymentPayload, parsePaymentRequired, extractPaymentDetails, solanaKeyToBytes, SOLANA_NETWORK, } from '@blockrun/llm';
 import { recordUsage } from '../stats/tracker.js';
-import { fetchWithFallback, buildFallbackChain, DEFAULT_FALLBACK_CONFIG, } from './fallback.js';
+import { fetchWithFallback, buildFallbackChain, DEFAULT_FALLBACK_CONFIG, ROUTING_PROFILES, } from './fallback.js';
 import { routeRequest, parseRoutingProfile, } from '../router/index.js';
 import { estimateCost } from '../pricing.js';
 import { VERSION } from '../config.js';
@@ -285,6 +285,24 @@ export function createProxy(options) {
                         key.toLowerCase() !== 'user-agent' && // Don't forward client's user-agent
                         value) {
                         headers[key] = Array.isArray(value) ? value[0] : value;
+                    }
+                }
+                // Safety net: if requestModel is still a routing profile (blockrun/auto etc.)
+                // after all resolution attempts, force-route it to a concrete model.
+                // This prevents 404s from the backend which doesn't recognize virtual model names.
+                if (ROUTING_PROFILES.has(requestModel) && body) {
+                    const virtualName = requestModel;
+                    const profile = parseRoutingProfile(requestModel);
+                    if (profile) {
+                        const fallbackRouting = routeRequest('', profile);
+                        requestModel = fallbackRouting.model;
+                        try {
+                            const parsed = JSON.parse(body);
+                            parsed.model = requestModel;
+                            body = JSON.stringify(parsed);
+                        }
+                        catch { /* body not JSON, skip */ }
+                        log(`⚠️  Safety net: resolved unrouted ${virtualName} → ${requestModel}`);
                     }
                 }
                 // Build request init

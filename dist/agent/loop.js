@@ -4,7 +4,7 @@
  */
 import { ModelClient } from './llm.js';
 import { autoCompactIfNeeded, forceCompact, microCompact } from './compact.js';
-import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor, getAnchoredTokenCount, getContextWindow } from './tokens.js';
+import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor, getAnchoredTokenCount, getContextWindow, setEstimationModel } from './tokens.js';
 import { handleSlashCommand } from './commands.js';
 import { reduceTokens } from './reduce.js';
 import { PermissionManager } from './permissions.js';
@@ -218,6 +218,10 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     let lastUserInput = ''; // For /retry
     const originalModel = config.model; // Preserve original model/routing profile for recovery
     let turnFailedModels = new Set(); // Models that failed this turn (cleared each new turn)
+    // Track models that failed with 402 (payment required) across turns.
+    // These persist until the session ends — unlike transient errors, payment failures
+    // will keep failing until the user adds funds. Map stores failure timestamp for future TTL.
+    const paymentFailedModels = new Map(); // model → timestamp
     // Session persistence
     const sessionId = createSessionId();
     let turnCount = 0;
@@ -285,13 +289,13 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
         toolGuard.startTurn();
         persistSessionMessage({ role: 'user', content: input });
         // ── Model recovery: try original model at the start of each new turn ──
-        // If we fell back to a free model last turn, try the original again.
-        // This prevents a single payment hiccup from permanently downgrading the session.
-        if (config.model !== originalModel) {
+        // If we fell back to a free model last turn due to a transient error, try original again.
+        // But DON'T reset if the original model had a payment failure — it will just fail again.
+        if (config.model !== originalModel && !paymentFailedModels.has(originalModel)) {
             config.model = originalModel;
             config.onModelChange?.(originalModel);
         }
-        turnFailedModels = new Set(); // Fresh slate for this turn
+        turnFailedModels = new Set(); // Fresh slate for transient failures this turn
         const abort = new AbortController();
         onAbortReady?.(() => abort.abort());
         let loopCount = 0;
@@ -408,6 +412,8 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                 lastRoutedModel = routing.model;
                 lastRoutedCategory = routing.signals[0] || '';
             }
+            // Update token estimation model for more accurate byte-per-token ratio
+            setEstimationModel(resolvedModel);
             // Safety net: handled in llm.ts resolveVirtualModel()
             // Sanitize: remove orphaned tool results that could confuse the API
             const sanitized = sanitizeHistory(history);
@@ -512,10 +518,15 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
                     continue;
                 }
                 // ── Payment failure: auto-fallback to free models ──
-                // Track failed models per-turn — cleared at start of each new user turn
-                // so the original model gets retried next turn (transient failures recover)
+                // Track payment-failed models for the entire session — unlike transient errors,
+                // 402s will keep failing until the user adds funds.
                 if (classified.category === 'payment') {
                     turnFailedModels.add(config.model);
+                    paymentFailedModels.set(config.model, Date.now());
+                    // Record to local Elo so the router learns to avoid this model
+                    if (lastRoutedCategory) {
+                        recordOutcome(lastRoutedCategory, config.model, 'payment');
+                    }
                     const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/nemotron-ultra-253b', 'nvidia/devstral-2-123b'];
                     const nextFree = FREE_MODELS.find(m => !turnFailedModels.has(m));
                     if (nextFree) {

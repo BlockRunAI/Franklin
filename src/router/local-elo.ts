@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BLOCKRUN_DIR } from '../config.js';
 
-export type Outcome = 'continued' | 'switched' | 'retried' | 'error' | 'max_turns';
+export type Outcome = 'continued' | 'switched' | 'retried' | 'error' | 'max_turns' | 'payment';
 
 interface HistoryRecord {
   ts: number;
@@ -61,6 +61,7 @@ function trimHistory(): void {
  *   switched  → loss (-K * 1.0)
  *   retried   → loss (-K * 0.8)
  *   error     → loss (-K * 0.5)
+ *   payment   → loss (-K * 1.5) — heavy penalty, guaranteed to repeat until funded
  *   max_turns → loss (-K * 0.3)
  */
 export function computeLocalElo(): Map<string, Map<string, number>> {
@@ -85,6 +86,7 @@ export function computeLocalElo(): Map<string, Map<string, number>> {
           case 'switched':  delta = -K_FACTOR * 1.0; break;
           case 'retried':   delta = -K_FACTOR * 0.8; break;
           case 'error':     delta = -K_FACTOR * 0.5; break;
+          case 'payment':   delta = -K_FACTOR * 1.5; break;
           case 'max_turns': delta = -K_FACTOR * 0.3; break;
           default: delta = 0;
         }
