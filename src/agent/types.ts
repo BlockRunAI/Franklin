@@ -66,6 +66,10 @@ export interface CapabilityHandler {
 export interface CapabilityResult {
   output: string;
   isError?: boolean;
+  /** Structured diff for Edit tool — enables colored diff display in UI. */
+  diff?: { file: string; oldLines: string[]; newLines: string[]; count: number };
+  /** Full tool output for expandable display — separate from truncated preview. */
+  fullOutput?: string;
 }
 
 // ─── Execution Scope ───────────────────────────────────────────────────────
