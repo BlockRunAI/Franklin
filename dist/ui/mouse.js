@@ -265,3 +265,15 @@ class MouseManager extends EventEmitter {
 }
 /** Singleton mouse manager. */
 export const mouse = new MouseManager();
+/**
+ * Force-disable any leftover mouse tracking from a previous session.
+ * Safe to call unconditionally — if tracking is off, it's a no-op at the terminal level.
+ */
+export function forceDisableMouseTracking() {
+    try {
+        process.stdout.write(DISABLE_MOUSE);
+    }
+    catch {
+        // Ignore — stdout may not be writable in some contexts
+    }
+}

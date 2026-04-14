@@ -40,4 +40,9 @@ declare class MouseManager extends EventEmitter {
 }
 /** Singleton mouse manager. */
 export declare const mouse: MouseManager;
+/**
+ * Force-disable any leftover mouse tracking from a previous session.
+ * Safe to call unconditionally — if tracking is off, it's a no-op at the terminal level.
+ */
+export declare function forceDisableMouseTracking(): void;
 export {};
