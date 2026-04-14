@@ -256,6 +256,16 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     };
     pruneOldSessions(sessionId); // Cleanup old sessions on start, protect current
     persistSessionMeta();
+    // Flush session meta on SIGINT/SIGTERM so mid-stream Ctrl+C doesn't
+    // leave a stale .meta.json (wrong turnCount/messageCount/cost).
+    const exitFlush = () => {
+        try {
+            persistSessionMeta();
+        }
+        catch { /* best effort */ }
+    };
+    process.once('SIGINT', exitFlush);
+    process.once('SIGTERM', exitFlush);
     while (true) {
         let input = await getUserInput();
         if (input === null)

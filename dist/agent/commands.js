@@ -636,7 +636,12 @@ export async function handleSlashCommand(input, ctx) {
             ctx.config.model = newModel;
             ctx.config.baseModel = newModel; // Update recovery target so loop doesn't reset
             ctx.config.onModelChange?.(newModel, 'user');
-            ctx.onEvent({ kind: 'text_delta', text: `Model → **${newModel}**\n` });
+            // Warn when switching from free to paid so users know charges start now
+            const isFree = (m) => m.startsWith('nvidia/') || m === 'blockrun/free';
+            const paidWarning = !isFree(newModel)
+                ? ` ⚠️  (paid — charges from your wallet per call)`
+                : '';
+            ctx.onEvent({ kind: 'text_delta', text: `Model → **${newModel}**${paidWarning}\n` });
         }
         emitDone(ctx);
         return { handled: true };
@@ -748,8 +753,9 @@ export async function handleSlashCommand(input, ctx) {
                     saveSolanaWallet(key);
                     ctx.onEvent({ kind: 'text_delta', text: `**Wallet Imported (Solana)**\n` +
                             `  Address: ${address}\n` +
-                            `  Saved to: ~/.blockrun/\n\n` +
-                            `Restart Franklin to use the new wallet.\n`
+                            `  Saved to: ~/.blockrun/solana-wallet.json\n\n` +
+                            `⚠️  IMPORTANT: This session is still using the OLD wallet.\n` +
+                            `    Run \`/exit\` now, then restart \`franklin\` to use the new wallet.\n`
                     });
                 }
                 else {
@@ -759,8 +765,9 @@ export async function handleSlashCommand(input, ctx) {
                     saveWallet(key);
                     ctx.onEvent({ kind: 'text_delta', text: `**Wallet Imported (Base)**\n` +
                             `  Address: ${account.address}\n` +
-                            `  Saved to: ~/.blockrun/\n\n` +
-                            `Restart Franklin to use the new wallet.\n`
+                            `  Saved to: ~/.blockrun/wallet.json\n\n` +
+                            `⚠️  IMPORTANT: This session is still using the OLD wallet.\n` +
+                            `    Run \`/exit\` now, then restart \`franklin\` to use the new wallet.\n`
                     });
                 }
             }
