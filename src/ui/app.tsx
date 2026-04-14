@@ -18,6 +18,7 @@ import {
 } from './model-picker.js';
 import { estimateCost } from '../pricing.js';
 import { formatTokens, shortModelName } from '../stats/format.js';
+import { mouse, type MouseEvent as TermMouseEvent } from './mouse.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
@@ -204,6 +205,41 @@ function RunCodeApp({
   // Messages queued while agent is busy — auto-submitted FIFO when turns complete.
   const [queuedInputs, setQueuedInputs] = useState<string[]>([]);
   const turnDoneCallbackRef = useRef<(() => void) | null>(null);
+
+  // ── Render throttling: batch rapid text_delta/thinking_delta into 50ms frames ──
+  // Without this, each delta (20-100/sec) triggers a full React re-render.
+  // With this, we accumulate in refs and flush at ~20fps — smooth and efficient.
+  const pendingTextRef = useRef('');
+  const pendingThinkingRef = useRef('');
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushPendingText = useCallback(() => {
+    flushTimerRef.current = null;
+    const text = pendingTextRef.current;
+    const thinking = pendingThinkingRef.current;
+    if (text) {
+      pendingTextRef.current = '';
+      setWaiting(false);
+      setThinking(false);
+      setStreamText(prev => prev + text);
+    }
+    if (thinking) {
+      pendingThinkingRef.current = '';
+      setWaiting(false);
+      setThinking(true);
+      setThinkingText(prev => {
+        const updated = prev + thinking;
+        return updated.length > 500 ? updated.slice(-500) : updated;
+      });
+    }
+  }, []);
+
+  const scheduleFlush = useCallback(() => {
+    if (!flushTimerRef.current) {
+      flushTimerRef.current = setTimeout(flushPendingText, 50);
+    }
+  }, [flushPendingText]);
+
   // Refs to read current state values inside memoized event handlers (avoids stale closures)
   const streamTextRef = useRef('');
   const turnTokensRef = useRef({ input: 0, output: 0, calls: 0 });
@@ -242,15 +278,19 @@ function RunCodeApp({
   ) => {
     if (!text.trim()) return;
 
-    setCommittedResponses((rs) => [...rs, {
-      key: String(Date.now() + Math.random()),
-      text,
-      tokens,
-      cost,
-      model: turnModelRef.current,
-      tier: turnTierRef.current,
-      savings: turnSavingsRef.current,
-    }]);
+    setCommittedResponses((rs) => {
+      const next = [...rs, {
+        key: String(Date.now() + Math.random()),
+        text,
+        tokens,
+        cost,
+        model: turnModelRef.current,
+        tier: turnTierRef.current,
+        savings: turnSavingsRef.current,
+      }];
+      // Cap at 300 items — older items are already in terminal scrollback
+      return next.length > 300 ? next.slice(-300) : next;
+    });
 
     const allLines = text.split('\n');
     if (allLines.length > 20) {
@@ -500,6 +540,26 @@ function RunCodeApp({
     onSubmit(trimmed);
   }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory, showStatus]);
 
+  // Mouse support — enable tracking and handle clicks on tool results
+  useEffect(() => {
+    const cleanup = mouse.enable();
+
+    const handleClick = (_event: TermMouseEvent) => {
+      // Click anywhere toggles the expandable tool (if one exists)
+      // This is intentionally simple — we don't track exact coordinates of components.
+      // The expandable tool is always the most recent tool result, so any click is a
+      // reasonable toggle target. Tab key remains the precise alternative.
+      setExpandableTool(prev => prev ? { ...prev, expanded: !prev.expanded } : null);
+    };
+
+    mouse.on('click', handleClick);
+
+    return () => {
+      mouse.removeListener('click', handleClick);
+      cleanup();
+    };
+  }, []);
+
   // Expose event handler, balance updater, and permission bridge
   useEffect(() => {
     (globalThis as Record<string, unknown>).__runcode_ui = {
@@ -531,18 +591,14 @@ function RunCodeApp({
       handleEvent: (event: StreamEvent) => {
         switch (event.kind) {
           case 'text_delta':
-            setWaiting(false);
-            setThinking(false);
-            setStreamText(prev => prev + event.text);
+            // Throttled: accumulate in ref, flush every 50ms (~20fps)
+            pendingTextRef.current += event.text;
+            scheduleFlush();
             break;
           case 'thinking_delta':
-            setWaiting(false);
-            setThinking(true);
-            setThinkingText(prev => {
-              // Keep last 500 chars of thinking for display
-              const updated = prev + event.text;
-              return updated.length > 500 ? updated.slice(-500) : updated;
-            });
+            // Throttled: accumulate in ref, flush every 50ms
+            pendingThinkingRef.current += event.text;
+            scheduleFlush();
             break;
           case 'capability_start':
             setWaiting(false);
@@ -628,6 +684,18 @@ function RunCodeApp({
             break;
           }
           case 'turn_done': {
+            // Flush any pending throttled text immediately
+            if (flushTimerRef.current) {
+              clearTimeout(flushTimerRef.current);
+              flushTimerRef.current = null;
+            }
+            // Merge pending text into the ref so commitResponse sees the full text
+            if (pendingTextRef.current) {
+              streamTextRef.current += pendingTextRef.current;
+              pendingTextRef.current = '';
+            }
+            pendingThinkingRef.current = '';
+
             // Flush expandable tool to Static before committing response
             setExpandableTool(prev => {
               if (prev) setCompletedTools(prev2 => [...prev2, { ...prev, expanded: false }]);
@@ -1183,7 +1251,7 @@ export function launchInkUI(opts: {
       return new Promise<string | null>((resolve) => { resolveInput = resolve; });
     },
     onAbort: (cb: () => void) => { abortCallback = cb; },
-    cleanup: () => { instance.unmount(); },
+    cleanup: () => { mouse.disable(); instance.unmount(); },
     requestPermission: (toolName: string, description: string) => {
       const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
         requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
