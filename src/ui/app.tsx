@@ -540,22 +540,26 @@ function RunCodeApp({
     onSubmit(trimmed);
   }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory, showStatus]);
 
-  // Mouse support — enable tracking and handle clicks on tool results
+  // Mouse support — clicks toggle tool results, drag selects text
   useEffect(() => {
     const cleanup = mouse.enable();
 
     const handleClick = (_event: TermMouseEvent) => {
-      // Click anywhere toggles the expandable tool (if one exists)
-      // This is intentionally simple — we don't track exact coordinates of components.
-      // The expandable tool is always the most recent tool result, so any click is a
-      // reasonable toggle target. Tab key remains the precise alternative.
+      // Click: toggle expandable tool
       setExpandableTool(prev => prev ? { ...prev, expanded: !prev.expanded } : null);
     };
 
+    const handleCopied = (info: { text: string; length: number }) => {
+      // Show status when text is copied via drag-select
+      showStatus(`Copied ${info.length} chars to clipboard`, 'success', 2000);
+    };
+
     mouse.on('click', handleClick);
+    mouse.on('copied', handleCopied);
 
     return () => {
       mouse.removeListener('click', handleClick);
+      mouse.removeListener('copied', handleCopied);
       cleanup();
     };
   }, []);
