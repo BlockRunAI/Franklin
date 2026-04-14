@@ -121,31 +121,20 @@ Franklin is **chat-first**. You do not wire a DAG, configure six API keys, or co
 
 Live data from CoinGecko. RSI, MACD, Bollinger, and volatility computed locally. No API key needed.
 
-### 🎯 Social growth
+### 🎨 Image generation
 
 ```text
-> find X posts complaining about AI rate limits
+> generate a logo for my AI startup — minimalist, dark background
 
-  ✓ SearchX  "AI rate limits"
-
-  Found 8 candidates:
-  1. "Claude keeps throttling me in the middle of shipping..." — @buildermax (2h)
-  2. "I need an agent that can switch models automatically." — @indiedev (5h)
-  ...
-
-> write a reply to #2 — mention Franklin uses a wallet instead of subscriptions
-
-  Draft:
-  "That was my pain too. Franklin routes across 55+ models,
-   pays per action from a USDC wallet, and doesn't trap you
-   inside a monthly seat. Better economics, better uptime."
-
-> looks good, post it
-
-  ✓ PostToX  Reply posted to x.com/indiedev/status/...
+  ✓ ImageGen  "minimalist AI startup logo, dark background..."
+  Saved: generated-logo-1713052800.png (1024x1024)
 ```
 
-Search X, generate contextual replies, and post with confirmation. Uses Playwright for browser automation, so there is no X API key, no OAuth maze, and no $100/month developer account.
+Generates images via DALL-E / GPT Image directly from the CLI. Paid from your wallet — no OpenAI API key needed.
+
+### 🎯 Social growth (with setup)
+
+After running `franklin social setup && franklin social login x`, Franklin can search X, draft replies, and post with your confirmation — no X API key or developer account needed.
 
 ### 🔎 Research, code, anything with a budget
 
@@ -286,8 +275,8 @@ Franklin can decide what is worth paying for, route the call, sign the micropaym
 **📈 Trading signals**
 Ask "what's BTC looking like?" — Franklin fetches live price data, computes RSI/MACD/Bollinger/volatility, and synthesizes a signal.
 
-**🎯 Social growth**
-Ask "find X posts about my category" — Franklin searches X, drafts replies, and posts with your confirmation.
+**🎨 AI image generation**
+Ask "generate a logo" — Franklin calls DALL-E / GPT Image, saves the result locally, paid from your wallet.
 
 **🧠 55+ models via one wallet**
 Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, NVIDIA free tier. One wallet, one interface, automatic fallback.
