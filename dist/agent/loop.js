@@ -405,7 +405,15 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
             // Create streaming executor for concurrent tool execution
             const streamExec = new StreamingExecutor({
                 handlers: capabilityMap,
-                scope: { workingDir: workDir, abortSignal: abort.signal, onAskUser: config.onAskUser },
+                scope: {
+                    workingDir: workDir,
+                    abortSignal: abort.signal,
+                    onAskUser: config.onAskUser,
+                    parentContext: {
+                        goal: lastUserInput?.slice(0, 200),
+                        recentFiles: [...readFileCache].slice(-10),
+                    },
+                },
                 permissions,
                 guard: toolGuard,
                 onStart: (id, name, preview) => onEvent({ kind: 'capability_start', id, name, preview }),
