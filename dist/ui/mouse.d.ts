@@ -1,23 +1,37 @@
 /**
  * Mouse event support for Ink terminal UI.
- * Enables SGR extended mouse tracking (DECSET 1000+1006) and parses events from stdin.
- * Lightweight — only handles clicks, not drag/hover/selection.
+ * - SGR extended mouse tracking (DECSET 1000+1002+1006)
+ * - Click detection (left click → 'click' event)
+ * - Drag detection with text selection (press → motion → release)
+ * - Stdout interception for screen text buffer
+ * - Clipboard copy on drag-select
  */
 import { EventEmitter } from 'node:events';
 export interface MouseEvent {
     button: 'left' | 'middle' | 'right' | 'wheel-up' | 'wheel-down';
-    action: 'press' | 'release';
+    action: 'press' | 'release' | 'drag';
     col: number;
     row: number;
+}
+export interface Selection {
+    startRow: number;
+    startCol: number;
+    endRow: number;
+    endCol: number;
+    text: string;
 }
 declare class MouseManager extends EventEmitter {
     private enabled;
     private stdinListener;
+    private screen;
+    private dragState;
+    private pressPos;
+    private dragPos;
     /**
-     * Enable mouse tracking. Call once on app startup.
-     * Returns cleanup function to call on unmount.
+     * Enable mouse tracking + screen buffer. Returns cleanup function.
      */
     enable(): () => void;
+    private handleLeftButton;
     /**
      * Disable mouse tracking and clean up.
      */
