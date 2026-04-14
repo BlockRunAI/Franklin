@@ -21,4 +21,20 @@ export interface ExtractionResult {
         category: LearningCategory;
         confidence: number;
     }>;
+    /** Procedural skills extracted from complex task patterns. */
+    skills?: Array<{
+        name: string;
+        description: string;
+        triggers: string[];
+        steps: string;
+    }>;
+}
+export interface Skill {
+    name: string;
+    description: string;
+    triggers: string[];
+    steps: string;
+    created: string;
+    uses: number;
+    source_session: string;
 }
