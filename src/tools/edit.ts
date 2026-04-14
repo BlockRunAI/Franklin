@@ -63,8 +63,8 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     }
   } catch { /* file may have been deleted — will be caught below */ }
 
-  // Warn if the file was only partially read — editing without full context risks mistakes
-  const isPartial = partiallyReadFiles.has(resolved);
+  // Check if the file was only partially read — used for smarter warning below
+  const partialInfo = partiallyReadFiles.get(resolved);
 
   try {
     if (!fs.existsSync(resolved)) {
@@ -79,9 +79,30 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       const normalized = normalizeQuotes(oldStr);
       const contentNormalized = normalizeQuotes(content);
       if (normalized !== oldStr && contentNormalized.includes(normalized)) {
-        // Find the original text in content that corresponds to the normalized match
-        const idx = contentNormalized.indexOf(normalized);
-        effectiveOldStr = content.slice(idx, idx + normalized.length);
+        // Find the original text in content that corresponds to the normalized match.
+        // IMPORTANT: We can't use normalized.length to slice the original content because
+        // smart quotes are multi-byte in UTF-8 (3 bytes) while straight quotes are 1 byte.
+        // Instead, we map the character index from the normalized string back to the original.
+        const normIdx = contentNormalized.indexOf(normalized);
+        // Walk through content character-by-character, mapping normalized positions to original positions
+        let origStart = -1;
+        let origEnd = -1;
+        let normPos = 0;
+        for (let i = 0; i < content.length; i++) {
+          if (normPos === normIdx && origStart === -1) {
+            origStart = i;
+          }
+          if (normPos === normIdx + normalized.length) {
+            origEnd = i;
+            break;
+          }
+          // Both content and contentNormalized have same character count (quote replacement is 1:1 char)
+          normPos++;
+        }
+        if (origStart !== -1) {
+          if (origEnd === -1) origEnd = content.length;
+          effectiveOldStr = content.slice(origStart, origEnd);
+        }
       }
     }
 
@@ -164,9 +185,16 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       diffPreview = ` (${oldLines.length} lines → ${newLines.length} lines)`;
     }
 
-    const partialWarning = isPartial
-      ? '\nNote: file was only partially read before this edit.'
-      : '';
+    // Only warn about partial read if the edit target is near or beyond the read boundary.
+    // A normal Read(limit=2000) on a 10K line file shouldn't warn if editing line 50.
+    let partialWarning = '';
+    if (partialInfo) {
+      const editLine = content.slice(0, content.indexOf(effectiveOldStr)).split('\n').length;
+      const nearBoundary = editLine >= partialInfo.endLine - 10 || editLine < partialInfo.startLine;
+      if (nearBoundary) {
+        partialWarning = `\nWarning: file was only partially read (lines ${partialInfo.startLine}-${partialInfo.endLine} of ${partialInfo.totalLines}). This edit is near the boundary — consider reading more of the file.`;
+      }
+    }
 
     return {
       output: `Updated ${resolved} — ${matchCount} replacement${matchCount > 1 ? 's' : ''} made.${diffPreview}${partialWarning}`,

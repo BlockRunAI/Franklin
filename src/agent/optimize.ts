@@ -46,8 +46,10 @@ export function getMaxOutputTokens(model: string): number {
   return MODEL_MAX_OUTPUT[model] ?? 16_384;
 }
 
-/** Idle gap (minutes) after which old tool results are cleared */
-const IDLE_GAP_THRESHOLD_MINUTES = 5;
+/** Idle gap (minutes) after which old tool results are cleared.
+ * Set to 30 min — a coffee break shouldn't lose tool context.
+ * Was 5 min which was too aggressive (comment said 60, code said 5). */
+const IDLE_GAP_THRESHOLD_MINUTES = 30;
 
 /** Number of recent tool results to keep during time-based cleanup */
 const KEEP_RECENT_TOOL_RESULTS = 3;
@@ -176,7 +178,7 @@ export function stripOldThinking(history: Dialogue[]): Dialogue[] {
 // ─── 3. Time-Based Cleanup ─────────────────────────────────────────────────
 
 /**
- * After an idle gap (>60 min), clear old tool results.
+ * After an idle gap (>30 min), clear old tool results.
  * When the user comes back after being away, old results are stale anyway.
  */
 export function timeBasedCleanup(
