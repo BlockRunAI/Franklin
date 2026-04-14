@@ -246,7 +246,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extensionUri],
     };
 
-    webview.html = getWebviewHtml();
+    webview.html = getWebviewHtml(webview, this.extensionUri);
 
     webview.onDidReceiveMessage((msg) => {
       void this.handleMessage(msg);
@@ -402,10 +402,26 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   }
 }
 
-function getWebviewHtml(): string {
-  const csp = ["default-src 'none'", "style-src 'unsafe-inline'", "script-src 'unsafe-inline'"].join(
-    '; '
+function getNonce(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < 32; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+  const nonce = getNonce();
+  const portraitUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, 'media', 'franklin-portrait.jpg')
   );
+  const csp = [
+    "default-src 'none'",
+    "style-src 'unsafe-inline'",
+    `script-src 'nonce-${nonce}'`,
+    `img-src ${webview.cspSource} data:`,
+  ].join('; ');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -419,7 +435,7 @@ function getWebviewHtml(): string {
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
       color: var(--vscode-foreground);
-      background: var(--vscode-editor-background);
+      background: #1a1a1c;
       margin: 0;
       padding: 8px;
       display: flex;
@@ -429,7 +445,7 @@ function getWebviewHtml(): string {
       transition: background 0.2s ease;
     }
     body.session-busy {
-      background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+      background: #1a1a1c;
     }
     #log {
       flex: 1;
@@ -441,6 +457,9 @@ function getWebviewHtml(): string {
       margin-bottom: 8px;
       font-family: var(--vscode-editor-font-family);
       font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
     }
     .user {
       display: flex;
@@ -568,6 +587,14 @@ function getWebviewHtml(): string {
       border-color: var(--vscode-focusBorder, #007fd4);
       box-shadow: 0 0 0 1px var(--vscode-focusBorder, #007fd4);
     }
+    @keyframes fk-border-flow {
+      0%, 100% { border-color: rgba(128,128,128,0.35); box-shadow: none; }
+      50%       { border-color: var(--vscode-focusBorder, #007fd4);
+                  box-shadow: 0 0 0 1px rgba(0,127,212,0.25); }
+    }
+    body.session-busy #composer:not(:focus-within) {
+      animation: fk-border-flow 2.2s ease-in-out infinite;
+    }
     #in {
       width: 100%;
       padding: 12px 14px 8px 14px;
@@ -660,6 +687,43 @@ function getWebviewHtml(): string {
     .md-tooltip .md-tt-name { font-weight: 600; font-size: 12px; margin-bottom: 4px; color: var(--vscode-foreground); }
     .md-tooltip .md-tt-desc { font-size: 11px; color: var(--vscode-descriptionForeground); line-height: 1.4; margin-bottom: 8px; }
     .md-tooltip .md-tt-ctx { font-size: 10px; color: var(--vscode-descriptionForeground); }
+    #input-area { position: relative; flex-shrink: 0; }
+    #slash-menu {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      max-height: 220px;
+      overflow-y: scroll;
+      overscroll-behavior: contain;
+      background: var(--vscode-dropdown-background, #1e1e1e);
+      border: 1px solid var(--vscode-dropdown-border, #444);
+      border-radius: 6px;
+      padding: 4px 0;
+      z-index: 100;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    }
+    #slash-menu::-webkit-scrollbar { width: 6px; }
+    #slash-menu::-webkit-scrollbar-track { background: transparent; }
+    #slash-menu::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, rgba(128,128,128,0.4)); border-radius: 3px; }
+    #slash-menu::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground, rgba(128,128,128,0.7)); }
+    #slash-menu.open { display: block; }
+    .slash-item {
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      color: var(--vscode-foreground);
+    }
+    .slash-item:hover, .slash-item.selected {
+      background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.15));
+    }
+    .slash-item.selected { background: var(--vscode-list-activeSelectionBackground, rgba(0,127,212,0.25)); }
+    .slash-cmd { font-weight: 600; color: var(--vscode-foreground); min-width: 80px; }
+    .slash-desc { font-size: 11px; color: var(--vscode-descriptionForeground); }
     .composer-right { display: flex; align-items: center; gap: 6px; }
     #context-ring { width: 26px; height: 26px; position: relative; cursor: default; }
     #context-ring svg { display: block; }
@@ -685,9 +749,9 @@ function getWebviewHtml(): string {
     .activity {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 6px 0;
-      margin-top: 8px;
+      gap: 5px;
+      padding: 1px 0;
+      margin-top: 6px;
       font-size: 11px;
       line-height: 1.4;
       color: var(--vscode-descriptionForeground);
@@ -700,27 +764,27 @@ function getWebviewHtml(): string {
     }
     .activity .dots {
       display: inline-flex;
-      gap: 4px;
+      gap: 2px;
       align-items: center;
-      height: 14px;
+      height: 11px;
       flex-shrink: 0;
     }
     .activity .dots span {
-      width: 5px;
-      height: 5px;
+      width: 3px;
+      height: 3px;
       border-radius: 50%;
       background: currentColor;
-      opacity: 0.35;
+      opacity: 0.4;
       animation: fk-dot 1.05s ease-in-out infinite;
     }
-    #activity .dots span:nth-child(1) {
+    .activity .dots span:nth-child(1) {
       animation-delay: 0s;
     }
-    #activity .dots span:nth-child(2) {
-      animation-delay: 0.15s;
+    .activity .dots span:nth-child(2) {
+      animation-delay: 0.18s;
     }
-    #activity .dots span:nth-child(3) {
-      animation-delay: 0.3s;
+    .activity .dots span:nth-child(3) {
+      animation-delay: 0.36s;
     }
     @keyframes fk-dot {
       0%,
@@ -737,11 +801,195 @@ function getWebviewHtml(): string {
       flex: 1;
       min-width: 0;
     }
-    /* ── Views: history list / chat ── */
-    #view-history { display: flex; flex-direction: column; height: 100vh; }
-    #view-chat { display: none; flex-direction: column; height: 100vh; }
-    body.show-chat #view-history { display: none; }
-    body.show-chat #view-chat { display: flex; }
+    /* ── Workflow timeline ── */
+    .wf-turn { margin-top: 12px; }
+    .wf-step {
+      display: flex;
+      align-items: flex-start;
+      position: relative;
+      padding-left: 20px;
+      padding-bottom: 6px;
+      min-height: 18px;
+    }
+    .wf-dot {
+      position: absolute;
+      left: 0;
+      top: 5px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(128,128,128,0.45);
+      flex-shrink: 0;
+    }
+    .wf-step.thinking .wf-dot {
+      background: transparent;
+      border: 1.5px solid rgba(128,128,128,0.35);
+    }
+    .wf-step.tool-active .wf-dot {
+      background: rgba(128,128,128,0.55);
+      animation: wf-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes wf-pulse {
+      0%,100% { transform: scale(1); opacity: 0.7; }
+      50% { transform: scale(1.4); opacity: 1; }
+    }
+    .wf-turn .wf-step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      left: 3px;
+      top: 15px;
+      bottom: 0;
+      width: 1px;
+      background: rgba(128,128,128,0.22);
+    }
+    .wf-body { flex: 1; min-width: 0; }
+    /* Thinking collapsible */
+    .wf-thinking-header {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      user-select: none;
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
+      padding: 1px 0;
+      transition: color 0.15s;
+    }
+    .wf-thinking-header:hover { color: var(--vscode-foreground); }
+    .wf-arrow {
+      font-size: 9px;
+      opacity: 0.7;
+      transition: transform 0.15s;
+      display: inline-block;
+      line-height: 1;
+      margin-top: 1px;
+    }
+    .wf-step.open .wf-arrow { transform: rotate(90deg); }
+    .wf-thinking-detail {
+      overflow: hidden;
+      max-height: 0;
+      transition: max-height 0.25s ease, padding 0.25s ease, margin-top 0.25s ease;
+    }
+    .wf-step.open .wf-thinking-detail {
+      max-height: 260px;
+      overflow-y: auto;
+      margin-top: 5px;
+      padding: 6px 10px;
+      background: rgba(128,128,128,0.06);
+      border-left: 2px solid rgba(128,128,128,0.18);
+      border-radius: 0 4px 4px 0;
+    }
+    .wf-thinking-text {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      line-height: 1.5;
+      word-break: break-word;
+    }
+    /* Animated dots while thinking is live */
+    .wf-think-dots { display: inline-flex; gap: 2px; align-items: center; margin-left: 2px; }
+    .wf-think-dots span {
+      width: 3px; height: 3px; border-radius: 50%;
+      background: var(--vscode-descriptionForeground);
+      opacity: 0.4;
+      animation: fk-dot 1.05s ease-in-out infinite;
+    }
+    .wf-think-dots span:nth-child(2) { animation-delay: 0.18s; }
+    .wf-think-dots span:nth-child(3) { animation-delay: 0.36s; }
+    .wf-think-dots.done { display: none; }
+    /* Tool step */
+    .wf-tool-line {
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+    .wf-tool-name { font-weight: 600; color: var(--vscode-foreground); }
+    .wf-tool-file {
+      color: var(--vscode-descriptionForeground);
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 200px;
+    }
+    .wf-tool-result {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 1px;
+      opacity: 0.75;
+    }
+    /* Tool grouping */
+    .wf-group-header {
+      cursor: pointer; user-select: none;
+      display: flex; align-items: baseline; gap: 5px;
+      font-size: 12px;
+    }
+    .wf-group-count {
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
+      font-weight: normal;
+    }
+    .wf-group-list {
+      display: none;
+      margin-top: 4px;
+      padding-left: 10px;
+      border-left: 1px solid rgba(128,128,128,0.2);
+    }
+    .wf-step.open .wf-group-list { display: block; }
+    .wf-group-item {
+      display: flex; align-items: baseline; gap: 5px;
+      padding: 2px 0;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .wf-group-item .wf-tool-file { max-width: 180px; }
+    .wf-group-item .wf-tool-result { margin-top: 0; font-size: 10px; }
+    /* Text step */
+    .wf-step.text { padding-bottom: 8px; }
+    .wf-text-body { font-size: 13px; line-height: 1.55; }
+    .wf-body .assistant { margin-top: 0; }
+    /* ── Views: chat (default) / history overlay ── */
+    #view-chat { display: flex; flex-direction: column; height: 100vh; }
+    #view-history { display: none; flex-direction: column; height: 100vh; }
+    body.show-history #view-chat { display: none; }
+    body.show-history #view-history { display: flex; }
+
+    /* ── Empty-state brand ── */
+    #empty-state {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      pointer-events: none;
+      padding: 20px;
+    }
+    #empty-state .pixel-portrait {
+      width: 96px;
+      height: 96px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    #empty-state .brand-name {
+      font-size: 40px;
+      font-weight: 900;
+      color: #f5c842;
+      letter-spacing: 0.01em;
+      line-height: 1;
+    }
+    #empty-state .brand-slogan {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      text-align: center;
+      letter-spacing: 0.02em;
+    }
+    #empty-state .brand-slogan .accent { color: #3fb950; font-weight: 500; }
+    body.has-messages #empty-state { display: none; }
 
     /* ── History list ── */
     .history-header {
@@ -827,18 +1075,6 @@ function getWebviewHtml(): string {
       border-bottom: 1px solid var(--vscode-widget-border, #444);
       flex-shrink: 0;
     }
-    #nav-back {
-      background: none;
-      border: none;
-      color: var(--vscode-foreground);
-      cursor: pointer;
-      font-size: 16px;
-      padding: 2px 6px;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-    }
-    #nav-back:hover { background: rgba(128,128,128,0.2); }
     #nav-title {
       font-size: 12px;
       font-weight: 600;
@@ -847,6 +1083,27 @@ function getWebviewHtml(): string {
       text-overflow: ellipsis;
       white-space: nowrap;
       flex: 1;
+    }
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      margin-left: auto;
+    }
+    .nav-actions button {
+      background: none;
+      border: none;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .nav-actions button:hover {
+      color: var(--vscode-foreground);
+      background: rgba(128,128,128,0.18);
     }
   </style>
 </head>
@@ -859,8 +1116,8 @@ function getWebviewHtml(): string {
         <button id="history-refresh" title="Refresh">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 1 1-1.3-3.5M13.5 2v2.5H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
-        <button id="history-new" title="New chat">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <button id="history-close" title="Close">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         </button>
       </div>
     </div>
@@ -870,12 +1127,102 @@ function getWebviewHtml(): string {
   <!-- ── Chat view ── -->
   <div id="view-chat">
     <div id="nav-header">
-      <button id="nav-back" title="Back to history">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-      <span id="nav-title">New Chat</span>
+      <span id="nav-title">Untitled</span>
+      <div class="nav-actions">
+        <button id="btn-history" title="History">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.5V8l2.2 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+        <button id="btn-new" title="New chat">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 5.5v5M5.5 8h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+      </div>
     </div>
-    <div id="log"></div>
+    <div id="log">
+      <div id="empty-state">
+        <svg class="pixel-portrait" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
+          <!-- hair (gray, colonial side-wave) -->
+          <g fill="#c9c9c9">
+            <rect x="4"  y="1" width="8" height="1"/>
+            <rect x="3"  y="2" width="10" height="1"/>
+            <rect x="2"  y="3" width="2" height="1"/>
+            <rect x="12" y="3" width="2" height="1"/>
+            <rect x="2"  y="4" width="1" height="2"/>
+            <rect x="13" y="4" width="1" height="2"/>
+            <rect x="1"  y="6" width="2" height="3"/>
+            <rect x="13" y="6" width="2" height="3"/>
+            <rect x="2"  y="9" width="1" height="1"/>
+            <rect x="13" y="9" width="1" height="1"/>
+          </g>
+          <!-- hair highlight -->
+          <g fill="#e8e8e8">
+            <rect x="5" y="2" width="2" height="1"/>
+            <rect x="9" y="2" width="2" height="1"/>
+          </g>
+          <!-- face skin -->
+          <g fill="#e0b080">
+            <rect x="4"  y="3" width="8" height="1"/>
+            <rect x="3"  y="4" width="10" height="1"/>
+            <rect x="3"  y="5" width="10" height="1"/>
+            <rect x="3"  y="6" width="10" height="1"/>
+            <rect x="3"  y="7" width="10" height="1"/>
+            <rect x="4"  y="8" width="8" height="1"/>
+            <rect x="4"  y="9" width="8" height="1"/>
+            <rect x="5"  y="10" width="6" height="1"/>
+          </g>
+          <!-- cheek blush -->
+          <g fill="#d98f6a">
+            <rect x="3"  y="7" width="1" height="1"/>
+            <rect x="12" y="7" width="1" height="1"/>
+          </g>
+          <!-- glasses frames -->
+          <g fill="#2a2018">
+            <rect x="4" y="5" width="3" height="1"/>
+            <rect x="4" y="7" width="3" height="1"/>
+            <rect x="4" y="6" width="1" height="1"/>
+            <rect x="6" y="6" width="1" height="1"/>
+            <rect x="9"  y="5" width="3" height="1"/>
+            <rect x="9"  y="7" width="3" height="1"/>
+            <rect x="9"  y="6" width="1" height="1"/>
+            <rect x="11" y="6" width="1" height="1"/>
+            <rect x="7" y="6" width="2" height="1"/>
+          </g>
+          <!-- eyes -->
+          <g fill="#1a1a1a">
+            <rect x="5"  y="6" width="1" height="1"/>
+            <rect x="10" y="6" width="1" height="1"/>
+          </g>
+          <!-- mouth -->
+          <g fill="#8a3a20">
+            <rect x="7" y="9" width="2" height="1"/>
+          </g>
+          <!-- white shirt / cravat -->
+          <g fill="#f0e8d0">
+            <rect x="5"  y="11" width="6" height="1"/>
+            <rect x="6"  y="12" width="4" height="1"/>
+            <rect x="7"  y="13" width="2" height="2"/>
+          </g>
+          <!-- coat (brown) -->
+          <g fill="#5a3820">
+            <rect x="1" y="11" width="4" height="5"/>
+            <rect x="11" y="11" width="4" height="5"/>
+            <rect x="5"  y="12" width="1" height="4"/>
+            <rect x="10" y="12" width="1" height="4"/>
+            <rect x="6"  y="13" width="1" height="3"/>
+            <rect x="9"  y="13" width="1" height="3"/>
+            <rect x="7"  y="15" width="2" height="1"/>
+          </g>
+          <!-- coat buttons (gold) -->
+          <g fill="#caa45a">
+            <rect x="5" y="14" width="1" height="1"/>
+            <rect x="10" y="14" width="1" height="1"/>
+          </g>
+        </svg>
+        <div class="brand-name">Franklin</div>
+        <div class="brand-slogan">The AI agent with a <span class="accent">wallet</span>.</div>
+      </div>
+    </div>
+  <div id="input-area">
+    <div id="slash-menu"></div>
     <div class="meta" id="status">Ready \u2014 type a message and press Enter</div>
   <div id="composer">
     <input type="text" id="in" placeholder="Plan, @ for context, / for commands" autocomplete="off" />
@@ -904,8 +1251,10 @@ function getWebviewHtml(): string {
       </div>
     </div>
   </div>
+  </div><!-- /input-area -->
   </div><!-- /view-chat -->
-  <script>
+
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const historyList = document.getElementById('history-list');
     const log = document.getElementById('log');
@@ -919,35 +1268,75 @@ function getWebviewHtml(): string {
     var activityMode = 'waiting';
     var toolNameStr = '';
     var streamingModelName = '';
+    // ── Workflow state ──
+    var thinkingBuf = '';
+    var thinkStartTime = 0;
+    var currentTurnWf = null;
+    var currentThinkingStep = null;
+    var toolStepMap = {};
+    var wfTextStep = null;
+    var currentToolGroup = null; // { name, groupStepEl, countEl, subListEl, items }
 
-    var currentChatTitle = 'New Chat';
+
+    var currentChatTitle = 'Untitled';
     var isLiveChat = true; // true = current live session, false = viewing old history
+
+    function refreshHasMessages() {
+      var has = false;
+      var kids = log.children;
+      for (var i = 0; i < kids.length; i++) {
+        var k = kids[i];
+        if (k.id === 'empty-state') continue;
+        if ((k.textContent || '').trim().length > 0) { has = true; break; }
+      }
+      document.body.classList.toggle('has-messages', has);
+    }
+    function resetChatLog() {
+      // Remove messages but keep empty-state node intact
+      var kids = Array.from(log.children);
+      kids.forEach(function(k) { if (k.id !== 'empty-state') log.removeChild(k); });
+      assistantBuf = '';
+      assistantEl = null;
+      thinkingBuf = '';
+      thinkStartTime = 0;
+      currentTurnWf = null;
+      currentThinkingStep = null;
+      toolStepMap = {};
+      wfTextStep = null;
+      currentToolGroup = null;
+      refreshHasMessages();
+    }
     function showChat(title) {
       if (title) currentChatTitle = title;
-      document.body.classList.add('show-chat');
+      document.body.classList.remove('show-history');
       navTitle.textContent = currentChatTitle;
     }
     function showHistory() {
-      document.body.classList.remove('show-chat');
+      document.body.classList.add('show-history');
       vscode.postMessage({ type: 'requestHistory' });
     }
 
-    // Nav buttons — back just switches view, preserves chat DOM
-    document.getElementById('nav-back').addEventListener('click', showHistory);
+    // Top-right nav buttons
+    document.getElementById('btn-history').addEventListener('click', showHistory);
+    document.getElementById('btn-new').addEventListener('click', function() {
+      resetChatLog();
+      isLiveChat = true;
+      showChat('Untitled');
+    });
     document.getElementById('history-refresh').addEventListener('click', function() {
       vscode.postMessage({ type: 'requestHistory' });
     });
-    document.getElementById('history-new').addEventListener('click', function() {
-      log.textContent = '';
-      assistantBuf = '';
-      assistantEl = null;
-      showChat('New Chat');
+    document.getElementById('history-close').addEventListener('click', function() {
+      showChat();
     });
 
+    function hasLogMessages() {
+      return !!log.querySelector('.user, .assistant, .wf-turn');
+    }
     function renderHistoryList(items) {
       historyList.textContent = '';
       // "Current Chat" entry to resume live session
-      if (isLiveChat && log.children.length > 0) {
+      if (isLiveChat && hasLogMessages()) {
         var cur = document.createElement('div');
         cur.className = 'history-item';
         cur.style.borderBottom = '1px solid var(--vscode-widget-border, #333)';
@@ -964,7 +1353,7 @@ function getWebviewHtml(): string {
         historyList.appendChild(cur);
       }
       if (!items || items.length === 0) {
-        if (!isLiveChat || log.children.length === 0) {
+        if (!isLiveChat || !hasLogMessages()) {
           var empty = document.createElement('div');
           empty.className = 'history-empty';
           empty.textContent = 'No conversations yet. Start a new chat!';
@@ -991,8 +1380,8 @@ function getWebviewHtml(): string {
       });
     }
 
-    // Start on history view
-    vscode.postMessage({ type: 'requestHistory' });
+    // Start directly on the chat view (empty state shows brand)
+    refreshHasMessages();
 
     // Live balance tracking
     var baseBalance = null;
@@ -1066,12 +1455,25 @@ function getWebviewHtml(): string {
     MODEL_LIST.forEach(function(grp) { grp.items.forEach(function(item) { MODEL_LOOKUP.push(item); }); });
     MODEL_LOOKUP.sort(function(a, b) { return b.shortcut.length - a.shortcut.length; });
 
+    // Fallback keyword → label map for models whose shortcut doesn't appear in the full ID
+    var MODEL_ID_KEYWORDS = [
+      ['nemotron', 'Nemotron Ultra 253B'],
+      ['qwen3-coder', 'Qwen3 Coder 480B'],
+      ['devstral', 'Devstral 2 123B'],
+      ['maverick', 'Llama 4 Maverick'],
+      ['deepseek-v3.2', 'DeepSeek V3.2']
+    ];
     function shortModelName(raw) {
       var lower = raw.toLowerCase();
+      var stripped = lower.replace(/^[a-z0-9]+[/]/, '');
       for (var i = 0; i < MODEL_LOOKUP.length; i++) {
-        if (lower.indexOf(MODEL_LOOKUP[i].shortcut) !== -1) return MODEL_LOOKUP[i].label;
+        var sc = MODEL_LOOKUP[i].shortcut;
+        if (lower.indexOf(sc) !== -1 || stripped.indexOf(sc) !== -1) return MODEL_LOOKUP[i].label;
       }
-      return raw;
+      for (var j = 0; j < MODEL_ID_KEYWORDS.length; j++) {
+        if (lower.indexOf(MODEL_ID_KEYWORDS[j][0]) !== -1) return MODEL_ID_KEYWORDS[j][1];
+      }
+      return stripped || raw;
     }
 
     var modelDropdown = document.getElementById('model-dropdown');
@@ -1196,30 +1598,17 @@ function getWebviewHtml(): string {
     }
 
     function updateActivityRow() {
-      if (!agentBusy) {
+      // Thinking, tool, and generating states are shown inline in the workflow — only show activity row while waiting
+      if (!agentBusy || activityMode !== 'waiting') {
         removeInlineActivity();
         syncChromeState();
         return;
       }
       var el = ensureInlineActivity();
       el.classList.remove('thinking', 'tool', 'generating');
-      if (activityMode === 'thinking') el.classList.add('thinking');
-      if (activityMode === 'tool') el.classList.add('tool');
-      if (activityMode === 'generating') el.classList.add('generating');
       var txt = el.querySelector('.activity-text');
       var model = modelPickerLabel.textContent || 'model';
-      if (activityMode === 'waiting') {
-        txt.textContent = 'Waiting for ' + model + '\\u2026';
-      } else if (activityMode === 'thinking') {
-        txt.textContent = 'Thinking\\u2026';
-      } else if (activityMode === 'tool') {
-        txt.textContent = 'Running tool: ' + toolNameStr + '\\u2026';
-      } else if (activityMode === 'generating') {
-        // Hide activity row once text starts streaming
-        removeInlineActivity();
-        syncChromeState();
-        return;
-      }
+      txt.textContent = 'Waiting for ' + model + '\\u2026';
       log.scrollTop = log.scrollHeight;
       syncChromeState();
     }
@@ -1303,6 +1692,7 @@ function getWebviewHtml(): string {
       }
       log.appendChild(d);
       log.scrollTop = log.scrollHeight;
+      refreshHasMessages();
     }
 
     function createMsgActions(text, modelName) {
@@ -1338,6 +1728,187 @@ function getWebviewHtml(): string {
       return bar;
     }
 
+    // ── Workflow helpers ──
+    function startOrGetTurnWf() {
+      if (!currentTurnWf) {
+        currentTurnWf = document.createElement('div');
+        currentTurnWf.className = 'wf-turn';
+        log.appendChild(currentTurnWf);
+        refreshHasMessages();
+      }
+      return currentTurnWf;
+    }
+    function addWfStep(type) {
+      var turn = startOrGetTurnWf();
+      var step = document.createElement('div');
+      step.className = 'wf-step ' + type;
+      var dot = document.createElement('div');
+      dot.className = 'wf-dot';
+      step.appendChild(dot);
+      var body = document.createElement('div');
+      body.className = 'wf-body';
+      step.appendChild(body);
+      turn.appendChild(step);
+      return { step: step, body: body };
+    }
+    function commitThinking() {
+      if (currentThinkingStep) {
+        var tText = currentThinkingStep.querySelector('.wf-thinking-text');
+        if (tText && thinkingBuf.trim()) tText.innerHTML = renderMarkdown(escHtml(thinkingBuf.trim()));
+        // Update header: hide dots, show elapsed time
+        var dots = currentThinkingStep.querySelector('.wf-think-dots');
+        if (dots) dots.classList.add('done');
+        var label = currentThinkingStep.querySelector('.wf-thinking-label');
+        if (label && thinkStartTime) {
+          var elapsed = ((Date.now() - thinkStartTime) / 1000).toFixed(1);
+          label.textContent = 'Thought for ' + elapsed + 's';
+        }
+        currentThinkingStep = null;
+      }
+      thinkingBuf = '';
+      thinkStartTime = 0;
+      currentToolGroup = null; // thinking interrupts consecutive tool groups
+    }
+    function makeGroupItem(preview) {
+      var item = document.createElement('div');
+      item.className = 'wf-group-item';
+      if (preview) {
+        var f = document.createElement('span');
+        f.className = 'wf-tool-file';
+        f.textContent = preview;
+        item.appendChild(f);
+      }
+      var r = document.createElement('div');
+      r.className = 'wf-tool-result';
+      item.appendChild(r);
+      return { itemEl: item, resultEl: r };
+    }
+
+    function addToolStepWf(id, name, preview) {
+      commitThinking();
+
+      // ── Case B: same tool name — group it ──
+      if (currentToolGroup && currentToolGroup.name === name) {
+        var grp = currentToolGroup;
+        grp.items.push(id);
+
+        // On the 2nd call: upgrade single step → group UI
+        if (grp.items.length === 2) {
+          // Build group header (replaces the inline tool line)
+          var oldLine = grp.groupStepEl.querySelector('.wf-tool-line');
+          if (oldLine) {
+            var gh = document.createElement('div');
+            gh.className = 'wf-group-header';
+            var gArrow = document.createElement('span');
+            gArrow.className = 'wf-arrow';
+            gArrow.innerHTML = '&#8250;';
+            var gName = document.createElement('span');
+            gName.className = 'wf-tool-name';
+            gName.textContent = name;
+            var gCount = document.createElement('span');
+            gCount.className = 'wf-group-count';
+            gCount.textContent = '(2)';
+            gh.appendChild(gArrow);
+            gh.appendChild(gName);
+            gh.appendChild(gCount);
+            grp.countEl = gCount;
+            // Create sub-list and move original item into it
+            var gList = document.createElement('div');
+            gList.className = 'wf-group-list';
+            var firstItem = makeGroupItem(oldLine.querySelector('.wf-tool-file') ? oldLine.querySelector('.wf-tool-file').textContent : '');
+            // reroute existing toolStepMap entry to the new resultEl
+            var firstId = grp.items[0];
+            if (toolStepMap[firstId]) toolStepMap[firstId].resultEl = firstItem.resultEl;
+            gList.appendChild(firstItem.itemEl);
+            grp.subListEl = gList;
+            // Replace old line with group header + list
+            grp.groupStepEl.querySelector('.wf-body').replaceChild(gh, oldLine);
+            // Remove old resultDiv (was after oldLine)
+            var oldResult = grp.groupStepEl.querySelector('.wf-tool-result');
+            if (oldResult) oldResult.parentNode.removeChild(oldResult);
+            grp.groupStepEl.querySelector('.wf-body').appendChild(gList);
+            // Toggle on click
+            (function(stepEl) {
+              gh.addEventListener('click', function() { stepEl.classList.toggle('open'); });
+            })(grp.groupStepEl);
+          }
+        } else {
+          // 3rd+ item: just update count
+          if (grp.countEl) grp.countEl.textContent = '(' + grp.items.length + ')';
+        }
+
+        // Add new item to the sub-list
+        var newItem = makeGroupItem(preview);
+        grp.subListEl.appendChild(newItem.itemEl);
+        toolStepMap[id] = { step: grp.groupStepEl, resultEl: newItem.resultEl };
+        // Keep group step active while tools still running
+        grp.groupStepEl.classList.add('tool-active');
+        log.scrollTop = log.scrollHeight;
+        return;
+      }
+
+      // ── Case A: new tool or different name ──
+      currentToolGroup = null;
+      var els = addWfStep('tool tool-active');
+      var line = document.createElement('div');
+      line.className = 'wf-tool-line';
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'wf-tool-name';
+      nameSpan.textContent = name;
+      line.appendChild(nameSpan);
+      if (preview) {
+        var fileSpan = document.createElement('span');
+        fileSpan.className = 'wf-tool-file';
+        fileSpan.textContent = preview;
+        line.appendChild(fileSpan);
+      }
+      els.body.appendChild(line);
+      var resultDiv = document.createElement('div');
+      resultDiv.className = 'wf-tool-result';
+      els.body.appendChild(resultDiv);
+      toolStepMap[id] = { step: els.step, resultEl: resultDiv };
+      currentToolGroup = { name: name, groupStepEl: els.step, countEl: null, subListEl: null, items: [id] };
+      log.scrollTop = log.scrollHeight;
+    }
+    function finishToolStepWf(id, success, result) {
+      var entry = toolStepMap[id];
+      if (!entry) return;
+      if (result && entry.resultEl) entry.resultEl.textContent = result;
+      if (!success) {
+        var dot = entry.step.querySelector('.wf-dot');
+        if (dot) dot.style.background = 'var(--vscode-inputValidation-errorBorder, #f44)';
+      }
+      delete toolStepMap[id];
+      // Remove tool-active only when no more pending tools on this step
+      var stillActive = Object.values(toolStepMap).some(function(e) { return e.step === entry.step; });
+      if (!stillActive) entry.step.classList.remove('tool-active');
+      log.scrollTop = log.scrollHeight;
+    }
+    function getOrCreateTextStepWf() {
+      if (!wfTextStep) {
+        commitThinking();
+        var els = addWfStep('text');
+        var contentDiv = document.createElement('div');
+        contentDiv.className = 'wf-text-body assistant msg-content';
+        els.body.appendChild(contentDiv);
+        wfTextStep = { step: els.step, body: els.body, content: contentDiv };
+        assistantEl = els.step; // keep legacy ref in sync
+      }
+      return wfTextStep;
+    }
+    function flushTextStepWf() {
+      if (wfTextStep && assistantBuf) {
+        var mc = wfTextStep.content;
+        if (mc) mc.innerHTML = renderMarkdown(escHtml(assistantBuf));
+        if (!wfTextStep.step.querySelector('.msg-actions')) {
+          wfTextStep.body.appendChild(createMsgActions(assistantBuf, streamingModelName));
+        }
+      }
+      wfTextStep = null;
+      assistantBuf = '';
+      assistantEl = null;
+    }
+
     function flushAssistant() {
       if (assistantEl && assistantBuf) {
         var mc = assistantEl.querySelector('.msg-content');
@@ -1358,9 +1929,7 @@ function getWebviewHtml(): string {
         return;
       }
       if (m.type === 'loadHistory') {
-        log.textContent = '';
-        assistantBuf = '';
-        assistantEl = null;
+        resetChatLog();
         showChat(m.title || 'History');
         (m.messages || []).forEach(function(msg) {
           if (msg.role === 'user') {
@@ -1409,51 +1978,74 @@ function getWebviewHtml(): string {
       const ev = m.event;
       switch (ev.kind) {
         case 'text_delta':
+          if (!wfTextStep) streamingModelName = modelPickerLabel.textContent || '';
           assistantBuf += ev.text;
-          if (!assistantEl) {
-            streamingModelName = modelPickerLabel.textContent || '';
-            assistantEl = document.createElement('div');
-            assistantEl.className = 'assistant';
-            var contentEl = document.createElement('div');
-            contentEl.className = 'msg-content';
-            assistantEl.appendChild(contentEl);
-            log.appendChild(assistantEl);
-          }
-          var mc = assistantEl.querySelector('.msg-content');
-          if (mc) mc.innerHTML = renderMarkdown(escHtml(assistantBuf));
+          var ts = getOrCreateTextStepWf();
+          if (ts.content) ts.content.innerHTML = renderMarkdown(escHtml(assistantBuf));
           log.scrollTop = log.scrollHeight;
           activityMode = 'generating';
           updateActivityRow();
+          refreshHasMessages();
           break;
         case 'thinking_delta':
+          thinkingBuf += ev.text || '';
+          if (!currentThinkingStep) {
+            thinkStartTime = Date.now();
+            var thinkEls = addWfStep('thinking');
+            thinkEls.body.innerHTML =
+              '<div class="wf-thinking-header">' +
+                '<span class="wf-arrow">&#8250;</span>' +
+                '<span class="wf-thinking-label">Thinking</span>' +
+                '<span class="wf-think-dots"><span></span><span></span><span></span></span>' +
+              '</div>' +
+              '<div class="wf-thinking-detail"><div class="wf-thinking-text assistant"></div></div>';
+            (function(stepEl) {
+              stepEl.querySelector('.wf-thinking-header').addEventListener('click', function() {
+                stepEl.classList.toggle('open');
+              });
+            })(thinkEls.step);
+            currentThinkingStep = thinkEls.step;
+          }
+          var tTextEl = currentThinkingStep.querySelector('.wf-thinking-text');
+          if (tTextEl) tTextEl.innerHTML = renderMarkdown(escHtml(thinkingBuf.trim()));
           activityMode = 'thinking';
           updateActivityRow();
+          log.scrollTop = log.scrollHeight;
           break;
         case 'capability_start':
-          flushAssistant();
+          flushTextStepWf();
           activityMode = 'tool';
           toolNameStr = ev.name;
+          addToolStepWf(ev.id || ev.name, ev.name, ev.preview || '');
           updateActivityRow();
-          appendLine('tool', '\\u23f3 Tool: ' + ev.name + (ev.preview ? ' \\u2014 ' + ev.preview : ''));
           break;
         case 'capability_progress':
-          appendLine('tool', '\\u2026 ' + ev.text);
+          var activeKeys = Object.keys(toolStepMap);
+          if (activeKeys.length > 0 && ev.text) {
+            var activeEntry = toolStepMap[activeKeys[activeKeys.length - 1]];
+            if (activeEntry && activeEntry.resultEl) {
+              activeEntry.resultEl.textContent = String(ev.text).slice(0, 100);
+            }
+          }
           break;
         case 'capability_done':
           activityMode = 'waiting';
+          var doneResult = ev.result ? String(ev.result).slice(0, 80) : '';
+          finishToolStepWf(ev.id || toolNameStr, !ev.error, doneResult);
           updateActivityRow();
-          appendLine('meta', '\\u2713 Tool finished id=' + ev.id);
           break;
         case 'turn_done':
-          flushAssistant();
+          flushTextStepWf();
+          commitThinking();
+          currentTurnWf = null;
+          currentThinkingStep = null;
+          currentToolGroup = null;
           agentBusy = false;
           updateActivityRow();
           if (ev.reason === 'aborted') {
-            status.textContent = 'Stopped \\u2014 generation interrupted.';
             appendLine('meta', '\\u2014 Stopped.');
-          } else {
-            status.textContent = 'Turn finished: ' + ev.reason;
           }
+          status.textContent = '';
           break;
         case 'status_update':
           applyStatus({ model: ev.model });
@@ -1463,8 +2055,8 @@ function getWebviewHtml(): string {
           var liveBal = computeLiveBalance();
           applyStatus({ model: ev.model, balance: liveBal });
           // Update model name on the current assistant message's action bar
-          if (ev.model && assistantEl) {
-            var mSpan = assistantEl.querySelector('.msg-model');
+          if (ev.model && wfTextStep) {
+            var mSpan = wfTextStep.step.querySelector('.msg-model');
             if (mSpan) mSpan.textContent = shortModelName(ev.model);
           }
           if (typeof ev.inputTokens === 'number') {
@@ -1477,24 +2069,131 @@ function getWebviewHtml(): string {
       }
     });
 
+    // ── Slash command menu ──
+    var SLASH_CMDS = [
+      { cmd: '/clear',   desc: 'Clear the current chat log' },
+      { cmd: '/new',     desc: 'Start a new conversation' },
+      { cmd: '/history', desc: 'Browse conversation history' },
+      { cmd: '/model',   desc: 'Switch the active model' },
+      { cmd: '/stop',    desc: 'Stop the current generation' },
+      { cmd: '/compact', desc: 'Compact conversation context' },
+      { cmd: '/cost',    desc: 'Show session cost so far' }
+    ];
+    var slashMenu = document.getElementById('slash-menu');
+    var slashSelected = -1;
+    var slashVisible = [];
+
+    function openSlashMenu(filter) {
+      var q = filter.toLowerCase();
+      slashVisible = SLASH_CMDS.filter(function(c) { return c.cmd.indexOf(q) === 0; });
+      if (slashVisible.length === 0) { closeSlashMenu(); return; }
+      slashMenu.textContent = '';
+      slashSelected = 0;
+      slashVisible.forEach(function(c, i) {
+        var row = document.createElement('div');
+        row.className = 'slash-item' + (i === 0 ? ' selected' : '');
+        var cmdSpan = document.createElement('span');
+        cmdSpan.className = 'slash-cmd';
+        cmdSpan.textContent = c.cmd;
+        var descSpan = document.createElement('span');
+        descSpan.className = 'slash-desc';
+        descSpan.textContent = c.desc;
+        row.appendChild(cmdSpan);
+        row.appendChild(descSpan);
+        row.addEventListener('mousedown', function(e) {
+          e.preventDefault(); // don't blur input
+          applySlashCmd(c.cmd);
+        });
+        row.addEventListener('mouseenter', function() {
+          slashSelected = i;
+          updateSlashSelection();
+        });
+        slashMenu.appendChild(row);
+      });
+      slashMenu.classList.add('open');
+    }
+    function closeSlashMenu() {
+      slashMenu.classList.remove('open');
+      slashMenu.textContent = '';
+      slashSelected = -1;
+      slashVisible = [];
+    }
+    function updateSlashSelection() {
+      var rows = slashMenu.querySelectorAll('.slash-item');
+      for (var i = 0; i < rows.length; i++) {
+        rows[i].classList.toggle('selected', i === slashSelected);
+      }
+    }
+    function applySlashCmd(cmd) {
+      input.value = cmd + ' ';
+      closeSlashMenu();
+      try { input.focus(); } catch(e) {}
+    }
+    function handleSlashInput() {
+      var val = input.value;
+      if (val.charAt(0) === '/' && val.indexOf(' ') === -1) {
+        openSlashMenu(val);
+      } else {
+        closeSlashMenu();
+      }
+    }
+
+    input.addEventListener('input', handleSlashInput);
+
+    // Intercept arrow/enter/esc/tab for slash menu navigation
+    var _origKeydown = null;
+    input.addEventListener('keydown', function(e) {
+      if (!slashMenu.classList.contains('open')) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        slashSelected = Math.min(slashSelected + 1, slashVisible.length - 1);
+        updateSlashSelection();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        slashSelected = Math.max(slashSelected - 1, 0);
+        updateSlashSelection();
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        if (slashSelected >= 0 && slashSelected < slashVisible.length) {
+          applySlashCmd(slashVisible[slashSelected].cmd);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSlashMenu();
+      }
+    }, true); // capture phase so this fires before the send keydown
+
+    document.addEventListener('click', function(e) {
+      if (!slashMenu.classList.contains('open')) return;
+      if (!slashMenu.contains(e.target) && e.target !== input) {
+        closeSlashMenu();
+      }
+    });
+
     function send() {
       const t = input.value.trim();
       if (!t) return;
       isLiveChat = true;
-      if (!document.body.classList.contains('show-chat')) {
-        showChat('New Chat');
+      if (document.body.classList.contains('show-history')) {
+        showChat();
       }
-      if (!currentChatTitle || currentChatTitle === 'New Chat') {
+      if (!currentChatTitle || currentChatTitle === 'Untitled' || currentChatTitle === 'New Chat') {
         currentChatTitle = t.length > 30 ? t.slice(0, 30) + '...' : t;
         navTitle.textContent = currentChatTitle;
       }
       appendLine('user', t);
       assistantBuf = '';
       assistantEl = null;
+      thinkingBuf = '';
+      currentTurnWf = null;
+      currentThinkingStep = null;
+      toolStepMap = {};
+      wfTextStep = null;
+      currentToolGroup = null;
       agentBusy = true;
       activityMode = 'waiting';
       toolNameStr = '';
-      status.textContent = 'Running \\u2014 Stop or Esc to interrupt.';
+      status.textContent = '';
       updateActivityRow();
       vscode.postMessage({ type: 'send', text: t });
       input.value = '';
@@ -1506,7 +2205,7 @@ function getWebviewHtml(): string {
       vscode.postMessage({ type: 'stop' });
     });
     input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') send();
+      if (e.key === 'Enter' && !slashMenu.classList.contains('open')) send();
     });
     document.addEventListener(
       'keydown',

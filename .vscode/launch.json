@@ -5,6 +5,7 @@
       "name": "Run Franklin extension",
       "type": "extensionHost",
       "request": "launch",
+      "preLaunchTask": "compile-extension",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}/vscode-extension"],
       "outFiles": ["${workspaceFolder}/vscode-extension/out/**/*.js"],
       "sourceMaps": true
