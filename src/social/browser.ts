@@ -200,7 +200,9 @@ export class SocialBrowser {
   async snapshot(): Promise<string> {
     this.requirePage();
     // Playwright's accessibility snapshot returns a full AX tree
-    const axRoot = await this.page!.accessibility.snapshot({ interestingOnly: false });
+    // page.accessibility was removed from Playwright types in v1.46 but still works at runtime
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const axRoot = await (this.page! as any).accessibility.snapshot({ interestingOnly: false });
     if (!axRoot) return '';
     const { tree, refs } = serializeAxTree(axRoot as AxNode);
     this.lastRefs = refs;
