@@ -110,9 +110,9 @@ function launchProxy(
 
   server.listen(port, () => {
     console.log(chalk.green(`✓ Proxy running on port ${port}`));
-    console.log(chalk.dim(`  Usage tracking: ~/.blockrun/runcode-stats.json`));
-    if (debug) console.log(chalk.dim(`  Debug log:      ~/.blockrun/runcode-debug.log`));
-    console.log(chalk.dim(`  Run 'runcode stats' to view statistics\n`));
+    console.log(chalk.dim(`  Usage tracking: ~/.blockrun/franklin-stats.json`));
+    if (debug) console.log(chalk.dim(`  Debug log:      ~/.blockrun/franklin-debug.log`));
+    console.log(chalk.dim(`  Run 'franklin stats' to view statistics\n`));
 
     console.log('Set this in your shell to use with Claude Code:\n');
     console.log(

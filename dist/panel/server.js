@@ -158,7 +158,9 @@ export function createPanelServer(port) {
         }
     });
     // Watch stats file for changes → push to SSE clients
-    const statsFile = path.join(BLOCKRUN_DIR, 'runcode-stats.json');
+    const statsFile = fs.existsSync(path.join(BLOCKRUN_DIR, 'franklin-stats.json'))
+        ? path.join(BLOCKRUN_DIR, 'franklin-stats.json')
+        : path.join(BLOCKRUN_DIR, 'runcode-stats.json');
     if (fs.existsSync(statsFile)) {
         fs.watchFile(statsFile, { interval: 2000 }, () => {
             try {

@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import chalk from 'chalk';
 import { BLOCKRUN_DIR, DEFAULT_PROXY_PORT } from '../config.js';
-const PID_FILE = path.join(BLOCKRUN_DIR, 'runcode.pid');
-const LOG_FILE = path.join(BLOCKRUN_DIR, 'runcode-debug.log');
+const PID_FILE = path.join(BLOCKRUN_DIR, 'franklin.pid');
+const LOG_FILE = path.join(BLOCKRUN_DIR, 'franklin-debug.log');
 function readPid() {
     try {
         const raw = fs.readFileSync(PID_FILE, 'utf-8').trim();
