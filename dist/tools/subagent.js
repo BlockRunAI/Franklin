@@ -21,8 +21,16 @@ async function execute(input, ctx) {
     const subModel = model || registeredParentModel || 'nvidia/nemotron-ultra-253b';
     // Cost gate: if parent is free but sub-agent wants paid, ask user first.
     // Prevents silent charges when the agent decides to spawn a more capable sub-agent.
-    if (isFreeModel(registeredParentModel) && !isFreeModel(subModel) && ctx.onAskUser) {
+    if (isFreeModel(registeredParentModel) && !isFreeModel(subModel)) {
         const shortLabel = subModel.split('/').pop() || subModel;
+        if (!ctx.onAskUser) {
+            // No way to prompt the user (daemon/panel/non-interactive mode).
+            // Fail closed — refuse the paid spawn rather than silently charging.
+            return {
+                output: `Sub-agent declined: parent is on a free model but sub-agent requested a paid model (${shortLabel}). No interactive prompt available. Retry with model='nemotron' or run interactively to approve.`,
+                isError: true,
+            };
+        }
         const answer = await ctx.onAskUser(`Sub-agent wants to use ${shortLabel} (paid). Approve?`, ['y', 'n']);
         if (answer.toLowerCase() !== 'y' && answer.toLowerCase() !== 'yes') {
             return {

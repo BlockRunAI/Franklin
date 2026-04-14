@@ -21,9 +21,18 @@ function readPid(): number | null {
 function isRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
+  }
+  // PID may have been recycled to an unrelated process. Confirm the
+  // command line actually looks like Franklin before trusting the PID.
+  try {
+    const { execSync } = require('node:child_process') as typeof import('node:child_process');
+    const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+    return /franklin|runcode|node.*dist\/index/.test(cmd);
+  } catch {
+    // ps failed — fall back to assuming PID is ours (conservative, avoids false "running")
+    return true;
   }
 }
 
@@ -38,7 +47,7 @@ export async function daemonCommand(action: string, options: { port?: string }) 
     case 'start': {
       const existing = readPid();
       if (existing && isRunning(existing)) {
-        console.log(chalk.yellow(`runcode daemon already running (PID ${existing})`));
+        console.log(chalk.yellow(`franklin daemon already running (PID ${existing})`));
         console.log(chalk.dim(`  Proxy: http://localhost:${port}/api`));
         return;
       }
