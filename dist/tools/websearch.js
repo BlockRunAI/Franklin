@@ -20,7 +20,7 @@ async function execute(input, _ctx) {
         const response = await fetch(url, {
             signal: controller.signal,
             headers: {
-                'User-Agent': `runcode/${VERSION} (coding-agent)`,
+                'User-Agent': `franklin/${VERSION} (coding-agent)`,
             },
         });
         clearTimeout(timeout);

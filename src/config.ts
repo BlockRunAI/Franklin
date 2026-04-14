@@ -12,7 +12,7 @@ try {
 export const VERSION = _version;
 
 // Shared User-Agent string for all outbound HTTP requests
-export const USER_AGENT = `runcode/${_version} (node/${process.versions.node}; ${process.platform}; ${process.arch})`;
+export const USER_AGENT = `franklin/${_version} (node/${process.versions.node}; ${process.platform}; ${process.arch})`;
 
 export type Chain = 'base' | 'solana';
 

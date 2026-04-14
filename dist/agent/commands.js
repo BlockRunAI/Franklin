@@ -105,7 +105,7 @@ function extractText(msg) {
 // Direct-handled commands (don't go to agent)
 const DIRECT_COMMANDS = {
     '/stash': (ctx) => {
-        const r = gitCmd(ctx, 'git stash push -m "runcode auto-stash"', 10000);
+        const r = gitCmd(ctx, 'git stash push -m "franklin auto-stash"', 10000);
         if (r !== null)
             ctx.onEvent({ kind: 'text_delta', text: r ? `${r}\n` : 'No changes to stash.\n' });
         emitDone(ctx);
@@ -225,7 +225,7 @@ const DIRECT_COMMANDS = {
         emitDone(ctx);
     },
     '/bug': (ctx) => {
-        ctx.onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/runcode/issues\n' });
+        ctx.onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/Franklin/issues\n' });
         emitDone(ctx);
     },
     '/version': (ctx) => {
