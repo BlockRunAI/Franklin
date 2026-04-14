@@ -74,7 +74,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'zai/glm-5': { input: 0, output: 0, perCall: 0.001 },
   'zai/glm-5.1': { input: 0, output: 0, perCall: 0.001 },
   'zai/glm-5-turbo': { input: 0, output: 0, perCall: 0.001 },
-  'zai/glm-5.1-turbo': { input: 0, output: 0, perCall: 0.001 },
+  'zai/glm-5.1-turbo': { input: 0, output: 0, perCall: 0.001 },  // client alias for zai/glm-5-turbo
 };
 
 /** Opus pricing for savings calculations */
