@@ -12,17 +12,28 @@ import { BLOCKRUN_DIR } from '../config.js';
 let resolvedStatsFile: string | null = null;
 
 function preferredStatsFile(): string {
+  return path.join(BLOCKRUN_DIR, 'franklin-stats.json');
+}
+
+function legacyStatsFile(): string {
   return path.join(BLOCKRUN_DIR, 'runcode-stats.json');
 }
 
 function fallbackStatsFile(): string {
-  return path.join(os.tmpdir(), 'runcode', 'runcode-stats.json');
+  return path.join(os.tmpdir(), 'franklin', 'franklin-stats.json');
 }
 
 export function getStatsFilePath(): string {
   if (resolvedStatsFile) return resolvedStatsFile;
 
-  for (const file of [preferredStatsFile(), fallbackStatsFile()]) {
+  // Migrate legacy stats file if it exists and new one doesn't
+  const preferred = preferredStatsFile();
+  const legacy = legacyStatsFile();
+  if (!fs.existsSync(preferred) && fs.existsSync(legacy)) {
+    try { fs.renameSync(legacy, preferred); } catch { /* best effort */ }
+  }
+
+  for (const file of [preferred, fallbackStatsFile()]) {
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       resolvedStatsFile = file;
