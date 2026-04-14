@@ -83,7 +83,10 @@ export const OPUS_PRICING = MODEL_PRICING['anthropic/claude-opus-4.6'];
  * For per-call models (perCall > 0), uses flat per-call pricing instead of per-token.
  */
 export function estimateCost(model, inputTokens, outputTokens, calls = 1) {
-    const pricing = MODEL_PRICING[model] || { input: 2.0, output: 10.0 };
+    // Unknown models: assume free (0). Prevents false cost accumulation in the UI
+    // for models not yet listed — better to under-estimate than scare users with
+    // fake charges. Real on-chain charges are tracked separately in cost_log.jsonl.
+    const pricing = MODEL_PRICING[model] || { input: 0, output: 0 };
     if (pricing.perCall) {
         return pricing.perCall * calls;
     }

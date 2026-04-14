@@ -37,7 +37,7 @@ program
     .action((chain) => setupCommand(chain));
 program
     .command('start')
-    .description('Start the runcode agent')
+    .description('Start the franklin agent')
     .option('-m, --model <model>', 'Model to use (e.g. openai/gpt-5.4, anthropic/claude-sonnet-4.6). Default from config or claude-sonnet-4.6')
     .option('--debug', 'Enable debug logging')
     .option('--trust', 'Trust mode — skip permission prompts for all tools')
@@ -52,16 +52,16 @@ program
     .action((options) => proxyCommand({ ...options, version }));
 program
     .command('init')
-    .description('Configure runcode auto-start (writes ~/.claude/settings.json + installs LaunchAgent on macOS)')
+    .description('Configure franklin auto-start (writes ~/.claude/settings.json + installs LaunchAgent on macOS)')
     .option('-p, --port <port>', 'Proxy port', '8402')
     .action((options) => initCommand(options));
 program
     .command('uninit')
-    .description('Remove runcode configuration and uninstall LaunchAgent')
+    .description('Remove franklin configuration and uninstall LaunchAgent')
     .action(() => uninitCommand());
 program
     .command('daemon <action>')
-    .description('Manage runcode background proxy (start|stop|status)')
+    .description('Manage franklin background proxy (start|stop|status)')
     .option('-p, --port <port>', 'Proxy port', '8402')
     .action((action, options) => daemonCommand(action, options));
 program
@@ -82,7 +82,7 @@ program
     .action(balanceCommand);
 program
     .command('config <action> [key] [value]')
-    .description('Manage runcode config (set, get, unset, list)\n' +
+    .description('Manage franklin config (set, get, unset, list)\n' +
     'Keys: default-model, sonnet-model, opus-model, haiku-model, smart-routing')
     .action(configCommand);
 program

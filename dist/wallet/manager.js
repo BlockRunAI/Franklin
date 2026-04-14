@@ -18,6 +18,6 @@ export async function setupSolanaWallet() {
 export function getAddress() {
     const addr = getWalletAddress();
     if (!addr)
-        throw new Error('No wallet found. Run `runcode setup` first.');
+        throw new Error('No wallet found. Run `franklin setup` first.');
     return addr;
 }
