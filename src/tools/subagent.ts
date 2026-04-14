@@ -17,6 +17,7 @@ import type {
 // These will be injected at registration time
 let registeredApiUrl = '';
 let registeredChain: 'base' | 'solana' = 'base';
+let registeredParentModel = '';
 let registeredCapabilities: CapabilityHandler[] = [];
 
 interface SubAgentInput {
@@ -83,7 +84,9 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
     const { content: parts } = await client.complete(
       {
-        model: model || 'anthropic/claude-sonnet-4.6',
+        // Inherit parent model by default. If parent is on a free model, subagent stays free.
+        // User can explicitly pass `model` to override.
+        model: model || registeredParentModel || 'nvidia/nemotron-ultra-253b',
         messages: history,
         system: systemPrompt,
         tools: toolDefs,
@@ -145,11 +148,13 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 export function createSubAgentCapability(
   apiUrl: string,
   chain: 'base' | 'solana',
-  capabilities: CapabilityHandler[]
+  capabilities: CapabilityHandler[],
+  parentModel?: string
 ): CapabilityHandler {
   registeredApiUrl = apiUrl;
   registeredChain = chain;
   registeredCapabilities = capabilities;
+  if (parentModel) registeredParentModel = parentModel;
 
   return {
     spec: {

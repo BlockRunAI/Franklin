@@ -6,6 +6,7 @@ import { assembleInstructions } from '../agent/context.js';
 // These will be injected at registration time
 let registeredApiUrl = '';
 let registeredChain = 'base';
+let registeredParentModel = '';
 let registeredCapabilities = [];
 async function execute(input, ctx) {
     const { prompt, description, model } = input;
@@ -54,7 +55,9 @@ async function execute(input, ctx) {
         }
         turn++;
         const { content: parts } = await client.complete({
-            model: model || 'anthropic/claude-sonnet-4.6',
+            // Inherit parent model by default. If parent is on a free model, subagent stays free.
+            // User can explicitly pass `model` to override.
+            model: model || registeredParentModel || 'nvidia/nemotron-ultra-253b',
             messages: history,
             system: systemPrompt,
             tools: toolDefs,
@@ -107,10 +110,12 @@ async function execute(input, ctx) {
         output: finalText || `[${label}] completed after ${turn} turn(s) with no text output.`,
     };
 }
-export function createSubAgentCapability(apiUrl, chain, capabilities) {
+export function createSubAgentCapability(apiUrl, chain, capabilities, parentModel) {
     registeredApiUrl = apiUrl;
     registeredChain = chain;
     registeredCapabilities = capabilities;
+    if (parentModel)
+        registeredParentModel = parentModel;
     return {
         spec: {
             name: 'Agent',
