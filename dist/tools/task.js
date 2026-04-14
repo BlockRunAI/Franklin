@@ -130,10 +130,12 @@ export const taskCapability = {
                 },
                 addBlocks: {
                     type: 'array',
+                    items: { type: 'number' },
                     description: 'Task IDs that cannot start until this task completes (for update)',
                 },
                 addBlockedBy: {
                     type: 'array',
+                    items: { type: 'number' },
                     description: 'Task IDs that must complete before this task can start (for update)',
                 },
             },

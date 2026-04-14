@@ -45,6 +45,41 @@ interface ConnectedServer {
 const connections = new Map<string, ConnectedServer>();
 
 /**
+ * Sanitize a JSON schema for strict LLM providers (OpenAI o3, etc.).
+ * Walks the schema tree and adds `items` to any array missing it.
+ * Without this, models like o3 reject the tool with:
+ *   "Invalid schema: In context=(...), array schema missing items."
+ */
+function sanitizeSchema(schema: unknown): Record<string, unknown> {
+  if (!schema || typeof schema !== 'object') {
+    return { type: 'object', properties: {} };
+  }
+  const s = schema as Record<string, unknown>;
+  // If array type without items, add a permissive default
+  if (s.type === 'array' && !s.items) {
+    s.items = {};
+  }
+  // Recurse into properties
+  if (s.properties && typeof s.properties === 'object') {
+    const props = s.properties as Record<string, unknown>;
+    for (const key of Object.keys(props)) {
+      props[key] = sanitizeSchema(props[key]);
+    }
+  }
+  // Recurse into items (nested arrays)
+  if (s.items && typeof s.items === 'object') {
+    s.items = sanitizeSchema(s.items);
+  }
+  // Recurse into anyOf / oneOf / allOf
+  for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
+    if (Array.isArray(s[key])) {
+      s[key] = (s[key] as unknown[]).map(sanitizeSchema);
+    }
+  }
+  return s;
+}
+
+/**
  * Connect to an MCP server via stdio transport.
  * Discovers tools and returns them as CapabilityHandlers.
  */
@@ -92,10 +127,7 @@ async function connectStdio(
       spec: {
         name: toolName,
         description: toolDescription || `MCP tool from ${name}`,
-        input_schema: (tool.inputSchema as { type: 'object'; properties: Record<string, unknown>; required?: string[] }) || {
-          type: 'object',
-          properties: {},
-        },
+        input_schema: sanitizeSchema(tool.inputSchema as Record<string, unknown> | undefined) as { type: 'object'; properties: Record<string, unknown>; required?: string[] },
       },
       execute: async (input: Record<string, unknown>, _ctx: ExecutionScope): Promise<CapabilityResult> => {
         const MCP_TOOL_TIMEOUT = 30_000;

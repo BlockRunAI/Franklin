@@ -1057,7 +1057,9 @@ function RunCodeApp({
         );
       })}
 
-      {/* Thinking — show last 3 lines of thinking stream for transparency */}
+      {/* Thinking — compact by default (just spinner). Preview shown only when
+          FRANKLIN_SHOW_THINKING=1 is set, so terminal stays clean for reasoning
+          models like o3 that emit long chains of thought. */}
       {thinking && (
         <Box flexDirection="column" marginLeft={2}>
           <Text color="magenta">
@@ -1065,7 +1067,7 @@ function RunCodeApp({
             <Text bold>thinking</Text>
             {completedTools.length > 0 ? <Text dimColor>{' '}· step {completedTools.length + 1}</Text> : null}
           </Text>
-          {thinkingText && (() => {
+          {process.env.FRANKLIN_SHOW_THINKING === '1' && thinkingText && (() => {
             const lines = thinkingText.split('\n').filter(Boolean).slice(-3);
             return (
               <Box flexDirection="column" marginLeft={2}>
