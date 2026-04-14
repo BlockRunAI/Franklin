@@ -145,6 +145,8 @@ export class SocialBrowser {
     async snapshot() {
         this.requirePage();
         // Playwright's accessibility snapshot returns a full AX tree
+        // page.accessibility was removed from Playwright types in v1.46 but still works at runtime
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const axRoot = await this.page.accessibility.snapshot({ interestingOnly: false });
         if (!axRoot)
             return '';
