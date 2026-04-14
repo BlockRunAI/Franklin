@@ -3,7 +3,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { partiallyReadFiles, fileReadTracker } from './read.js';
+import { partiallyReadFiles, fileReadTracker, invalidateFileCache } from './read.js';
 /**
  * Normalize curly/smart quotes to straight quotes.
  * Claude Code does this to handle API-sanitized strings and editor paste artifacts.
@@ -143,8 +143,9 @@ async function execute(input, ctx) {
             updated = content.slice(0, firstIdx) + newStr + content.slice(firstIdx + effectiveOldStr.length);
         }
         fs.writeFileSync(resolved, updated, 'utf-8');
-        // File has been modified — remove from partial-read tracking so next read is fresh
+        // File has been modified — invalidate caches so next read is fresh
         partiallyReadFiles.delete(resolved);
+        invalidateFileCache(resolved);
         // Update read tracker mtime so subsequent edits don't trigger stale-write detection
         const newStat = fs.statSync(resolved);
         fileReadTracker.set(resolved, { mtimeMs: newStat.mtimeMs, readAt: Date.now() });
@@ -172,6 +173,7 @@ async function execute(input, ctx) {
         }
         return {
             output: `Updated ${resolved} — ${matchCount} replacement${matchCount > 1 ? 's' : ''} made.${diffPreview}${partialWarning}`,
+            diff: { file: resolved, oldLines, newLines, count: matchCount },
         };
     }
     catch (err) {
