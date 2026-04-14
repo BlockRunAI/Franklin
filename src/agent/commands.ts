@@ -298,7 +298,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
     const hasWallet = fs.existsSync(path.join(BLOCKRUN_DIR, 'wallet.json'))
       || fs.existsSync(path.join(BLOCKRUN_DIR, 'solana-wallet.json'));
     checks.push(hasWallet ? '✓ wallet configured' : '⚠ no wallet — run: runcode setup');
-    checks.push(fs.existsSync(path.join(BLOCKRUN_DIR, 'runcode-config.json')) ? '✓ config file exists' : '⚠ no config — using defaults');
+    checks.push(fs.existsSync(path.join(BLOCKRUN_DIR, 'franklin-config.json')) || fs.existsSync(path.join(BLOCKRUN_DIR, 'runcode-config.json')) ? '✓ config file exists' : '⚠ no config — using defaults');
     // Check MCP
     const { listMcpServers } = await import('../mcp/client.js');
     const mcpServers = listMcpServers();
@@ -405,44 +405,6 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
     }
 
     ctx.onEvent({ kind: 'text_delta', text });
-    emitDone(ctx);
-  },
-  '/wallet': async (ctx) => {
-    const chain = (await import('../config.js')).loadChain();
-    try {
-      let address: string;
-      let balance: string;
-      const fetchTimeout = (ms: number) => new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error('timeout')), ms)
-      );
-      if (chain === 'solana') {
-        const { getOrCreateSolanaWallet, setupAgentSolanaWallet } = await import('@blockrun/llm');
-        const w = await getOrCreateSolanaWallet();
-        address = w.address;
-        try {
-          const client = await setupAgentSolanaWallet({ silent: true });
-          const bal = await Promise.race([client.getBalance(), fetchTimeout(5000)]) as number;
-          balance = `$${bal.toFixed(2)} USDC`;
-        } catch { balance = '(unavailable)'; }
-      } else {
-        const { getOrCreateWallet, setupAgentWallet } = await import('@blockrun/llm');
-        const w = getOrCreateWallet();
-        address = w.address;
-        try {
-          const client = setupAgentWallet({ silent: true });
-          const bal = await Promise.race([client.getBalance(), fetchTimeout(5000)]) as number;
-          balance = `$${bal.toFixed(2)} USDC`;
-        } catch { balance = '(unavailable)'; }
-      }
-      ctx.onEvent({ kind: 'text_delta', text:
-        `**Wallet**\n` +
-        `  Chain:   ${chain}\n` +
-        `  Address: ${address}\n` +
-        `  Balance: ${balance}\n`
-      });
-    } catch (err) {
-      ctx.onEvent({ kind: 'text_delta', text: `Wallet error: ${(err as Error).message}\n` });
-    }
     emitDone(ctx);
   },
   '/clear': (ctx) => {
@@ -710,6 +672,127 @@ export async function handleSlashCommand(
       const branchName = input.slice(8).trim();
       const r = gitCmd(ctx, `git checkout -b ${branchName}`);
       if (r !== null) ctx.onEvent({ kind: 'text_delta', text: `Created and switched to branch: **${branchName}**\n` });
+    }
+    emitDone(ctx);
+    return { handled: true };
+  }
+
+  // /wallet — show wallet info, import, or export
+  if (input === '/wallet' || input.startsWith('/wallet ')) {
+    const chain = (await import('../config.js')).loadChain();
+    const args = input.slice(7).trim();
+
+    // /wallet export — show private key
+    if (args === 'export') {
+      try {
+        if (chain === 'solana') {
+          const { loadSolanaWallet, getOrCreateSolanaWallet } = await import('@blockrun/llm');
+          const key = loadSolanaWallet();
+          if (!key) { ctx.onEvent({ kind: 'text_delta', text: 'No Solana wallet found. Run `/wallet` first.\n' }); emitDone(ctx); return { handled: true }; }
+          const w = await getOrCreateSolanaWallet();
+          ctx.onEvent({ kind: 'text_delta', text:
+            `**Wallet Export (Solana)**\n` +
+            `  Address:     ${w.address}\n` +
+            `  Private Key: ${key}\n\n` +
+            `⚠️  Keep this key safe. Anyone with it controls your funds.\n`
+          });
+        } else {
+          const { loadWallet, getOrCreateWallet } = await import('@blockrun/llm');
+          const key = loadWallet();
+          if (!key) { ctx.onEvent({ kind: 'text_delta', text: 'No wallet found. Run `/wallet` first.\n' }); emitDone(ctx); return { handled: true }; }
+          const w = getOrCreateWallet();
+          ctx.onEvent({ kind: 'text_delta', text:
+            `**Wallet Export (Base)**\n` +
+            `  Address:     ${w.address}\n` +
+            `  Private Key: ${key}\n\n` +
+            `⚠️  Keep this key safe. Anyone with it controls your funds.\n`
+          });
+        }
+      } catch (err) {
+        ctx.onEvent({ kind: 'text_delta', text: `Export error: ${(err as Error).message}\n` });
+      }
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    // /wallet import <private-key>
+    if (args.startsWith('import')) {
+      const key = args.slice(6).trim();
+      if (!key) {
+        ctx.onEvent({ kind: 'text_delta', text:
+          `**Usage:** \`/wallet import <private-key>\`\n\n` +
+          `  Base:   \`/wallet import 0x...\`  (hex, 66 chars)\n` +
+          `  Solana: \`/wallet import <bs58-key>\`  (base58 encoded)\n`
+        });
+        emitDone(ctx);
+        return { handled: true };
+      }
+      try {
+        if (chain === 'solana') {
+          const { saveSolanaWallet, solanaPublicKey } = await import('@blockrun/llm');
+          const address = await solanaPublicKey(key);
+          saveSolanaWallet(key);
+          ctx.onEvent({ kind: 'text_delta', text:
+            `**Wallet Imported (Solana)**\n` +
+            `  Address: ${address}\n` +
+            `  Saved to: ~/.blockrun/\n\n` +
+            `Restart Franklin to use the new wallet.\n`
+          });
+        } else {
+          const { privateKeyToAccount } = await import('viem/accounts');
+          const { saveWallet } = await import('@blockrun/llm');
+          const account = privateKeyToAccount(key as `0x${string}`);
+          saveWallet(key);
+          ctx.onEvent({ kind: 'text_delta', text:
+            `**Wallet Imported (Base)**\n` +
+            `  Address: ${account.address}\n` +
+            `  Saved to: ~/.blockrun/\n\n` +
+            `Restart Franklin to use the new wallet.\n`
+          });
+        }
+      } catch (err) {
+        ctx.onEvent({ kind: 'text_delta', text: `Import error: ${(err as Error).message}\n` });
+      }
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    // /wallet (no args) — show wallet info
+    try {
+      let address: string;
+      let balance: string;
+      const fetchTimeout = (ms: number) => new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error('timeout')), ms)
+      );
+      if (chain === 'solana') {
+        const { getOrCreateSolanaWallet, setupAgentSolanaWallet } = await import('@blockrun/llm');
+        const w = await getOrCreateSolanaWallet();
+        address = w.address;
+        try {
+          const client = await setupAgentSolanaWallet({ silent: true });
+          const bal = await Promise.race([client.getBalance(), fetchTimeout(5000)]) as number;
+          balance = `$${bal.toFixed(2)} USDC`;
+        } catch { balance = '(unavailable)'; }
+      } else {
+        const { getOrCreateWallet, setupAgentWallet } = await import('@blockrun/llm');
+        const w = getOrCreateWallet();
+        address = w.address;
+        try {
+          const client = setupAgentWallet({ silent: true });
+          const bal = await Promise.race([client.getBalance(), fetchTimeout(5000)]) as number;
+          balance = `$${bal.toFixed(2)} USDC`;
+        } catch { balance = '(unavailable)'; }
+      }
+      ctx.onEvent({ kind: 'text_delta', text:
+        `**Wallet**\n` +
+        `  Chain:   ${chain}\n` +
+        `  Address: ${address}\n` +
+        `  Balance: ${balance}\n\n` +
+        `  \`/wallet import <key>\`  — import a personal wallet\n` +
+        `  \`/wallet export\`        — show private key\n`
+      });
+    } catch (err) {
+      ctx.onEvent({ kind: 'text_delta', text: `Wallet error: ${(err as Error).message}\n` });
     }
     emitDone(ctx);
     return { handled: true };
