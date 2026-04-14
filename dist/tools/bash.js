@@ -51,7 +51,26 @@ function compressOutput(command, output) {
         else if (sub === 'install')
             out = compressInstall(out);
     }
-    // 7. Always collapse excessive blank lines
+    // 7. Python — pip install, pytest, python scripts
+    else if (/^(pip|pip3)\s+install\b/.test(fullCmd)) {
+        out = compressInstall(out);
+    }
+    else if (/^(pytest|python.*-m\s+pytest)\b/.test(fullCmd)) {
+        out = compressTests(out);
+    }
+    // 8. Docker — strip layer hashes, progress bars, keep errors + summary
+    else if (/^docker\s+(build|run|pull|push|compose)\b/.test(fullCmd)) {
+        out = compressDocker(out);
+    }
+    // 9. curl/wget — strip progress bars, keep response
+    else if (/^(curl|wget)\b/.test(fullCmd)) {
+        out = compressDownload(out);
+    }
+    // 10. Make — keep errors/warnings, drop recipe lines
+    else if (cmd === 'make') {
+        out = compressBuild(out);
+    }
+    // 11. Always collapse excessive blank lines
     out = collapseBlankLines(out);
     return out;
 }
@@ -157,6 +176,42 @@ function compressBuild(out) {
                 return true;
             return false;
         }
+        return true;
+    });
+    return collapseBlankLines(kept.join('\n')).trim() || out.trim();
+}
+function compressDocker(out) {
+    const lines = out.split('\n');
+    const kept = lines.filter(l => {
+        const t = l.trim();
+        // Drop layer progress: "sha256:abc123: Pulling fs layer" / "Downloading [==>  ]"
+        if (/^[a-f0-9]{12}:\s*(Pull|Wait|Download|Extract|Verif|Already)/.test(t))
+            return false;
+        // Drop download/upload progress bars
+        if (/^\[[\s=>#]+\]/.test(t) || /\d+(\.\d+)?%/.test(t) && t.length < 80)
+            return false;
+        // Drop "Sending build context" progress
+        if (/^Sending build context/.test(t))
+            return false;
+        return true;
+    });
+    return collapseBlankLines(kept.join('\n')).trim() || out.trim();
+}
+function compressDownload(out) {
+    const lines = out.split('\n');
+    const kept = lines.filter(l => {
+        const t = l.trim();
+        // Drop curl progress bars: "  % Total    % Received..."
+        if (/^\s*%\s+Total/.test(t))
+            return false;
+        if (/^\s*\d+\s+\d+[kMG]?\s+\d+\s+\d+[kMG]?/.test(t) && t.length < 100)
+            return false;
+        // Drop wget progress: "2024-01-01 12:00:00 (1.23 MB/s) - saved"
+        if (/^\d{4}-\d{2}-\d{2}.*saved/.test(t))
+            return false;
+        // Drop download percentage lines
+        if (/^\s*\d+%\s/.test(t))
+            return false;
         return true;
     });
     return collapseBlankLines(kept.join('\n')).trim() || out.trim();
