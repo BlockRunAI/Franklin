@@ -1,5 +1,5 @@
 /**
- * Token optimization strategies for runcode.
+ * Token optimization strategies for Franklin.
  *
  * Five layers of optimization to minimize token usage:
  * 1. Tool result size budgeting — cap large outputs, keep preview
@@ -46,8 +46,10 @@ export function getMaxOutputTokens(model: string): number {
   return MODEL_MAX_OUTPUT[model] ?? 16_384;
 }
 
-/** Idle gap (minutes) after which old tool results are cleared */
-const IDLE_GAP_THRESHOLD_MINUTES = 5;
+/** Idle gap (minutes) after which old tool results are cleared.
+ * Set to 30 min — a coffee break shouldn't lose tool context.
+ * Was 5 min which was too aggressive (comment said 60, code said 5). */
+const IDLE_GAP_THRESHOLD_MINUTES = 30;
 
 /** Number of recent tool results to keep during time-based cleanup */
 const KEEP_RECENT_TOOL_RESULTS = 3;
@@ -176,7 +178,7 @@ export function stripOldThinking(history: Dialogue[]): Dialogue[] {
 // ─── 3. Time-Based Cleanup ─────────────────────────────────────────────────
 
 /**
- * After an idle gap (>60 min), clear old tool results.
+ * After an idle gap (>30 min), clear old tool results.
  * When the user comes back after being away, old results are stale anyway.
  */
 export function timeBasedCleanup(
@@ -300,7 +302,7 @@ export function optimizeHistory(
   if (stripped !== result) {
     result = stripped;
     changed = true;
-    if (opts?.debug) console.error('[runcode] Stripped old thinking blocks');
+    if (opts?.debug) console.error('[franklin] Stripped old thinking blocks');
   }
 
   // 2. Budget tool results
@@ -308,7 +310,7 @@ export function optimizeHistory(
   if (budgeted !== result) {
     result = budgeted;
     changed = true;
-    if (opts?.debug) console.error('[runcode] Budgeted oversized tool results');
+    if (opts?.debug) console.error('[franklin] Budgeted oversized tool results');
   }
 
   // 3. Time-based cleanup
@@ -319,7 +321,7 @@ export function optimizeHistory(
   if (didClean) {
     result = cleaned;
     changed = true;
-    if (opts?.debug) console.error('[runcode] Cleared stale tool results after idle gap');
+    if (opts?.debug) console.error('[franklin] Cleared stale tool results after idle gap');
   }
 
   return result;

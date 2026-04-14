@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { partiallyReadFiles } from './read.js';
+import { partiallyReadFiles, fileReadTracker } from './read.js';
 
 interface WriteInput {
   file_path: string;
@@ -94,21 +94,32 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     }
   } catch { /* file doesn't exist yet, ok */ }
 
+  // Enforce read-before-overwrite for existing files
+  const fileExists = fs.existsSync(resolved);
+  if (fileExists && !fileReadTracker.has(resolved)) {
+    return {
+      output: `Error: this file already exists. You MUST use Read first to understand its current content before overwriting.\nFile: ${resolved}`,
+      isError: true,
+    };
+  }
+
   try {
     // Ensure parent directory exists
     const parentDir = path.dirname(resolved);
     fs.mkdirSync(parentDir, { recursive: true });
 
-    const existed = fs.existsSync(resolved);
     fs.writeFileSync(resolved, content, 'utf-8');
     partiallyReadFiles.delete(resolved);
+    // Update read tracker so subsequent edits don't trigger stale detection
+    const newStat = fs.statSync(resolved);
+    fileReadTracker.set(resolved, { mtimeMs: newStat.mtimeMs, readAt: Date.now() });
 
     const lineCount = content.split('\n').length;
     const byteCount = Buffer.byteLength(content, 'utf-8');
     const sizeStr = byteCount >= 1024 ? `${(byteCount / 1024).toFixed(1)}KB` : `${byteCount}B`;
 
     return {
-      output: `${existed ? 'Updated' : 'Created'} ${resolved} (${lineCount} lines, ${sizeStr})`,
+      output: `${fileExists ? 'Updated' : 'Created'} ${resolved} (${lineCount} lines, ${sizeStr})`,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -119,12 +130,22 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 export const writeCapability: CapabilityHandler = {
   spec: {
     name: 'Write',
-    description: 'Create a new file or completely overwrite an existing one. For targeted edits to existing files, prefer Edit (sends only the diff). Use this instead of echo/heredoc in Bash.',
+    description: `Write a file to the local filesystem.
+
+Usage:
+- This tool will overwrite the existing file if there is one at the provided path.
+- If this is an existing file, you MUST use Read first to read the file's contents. This tool will fail if you did not read an existing file first.
+- Prefer the Edit tool for modifying existing files — it only sends the diff. Only use this tool to create new files or for complete rewrites.
+- NEVER create documentation files (*.md) or README files unless explicitly requested by the user.
+- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
+- Do not create files unless they're absolutely necessary for achieving your goal. Generally prefer editing an existing file to creating a new one, as this prevents file bloat and builds on existing work.
+
+IMPORTANT: Always use Write instead of echo/heredoc/cat redirection via Bash.`,
     input_schema: {
       type: 'object',
       properties: {
-        file_path: { type: 'string', description: 'Absolute path' },
-        content: { type: 'string', description: 'File content' },
+        file_path: { type: 'string', description: 'The absolute path to the file to write (must be absolute, not relative)' },
+        content: { type: 'string', description: 'The content to write to the file' },
       },
       required: ['file_path', 'content'],
     },

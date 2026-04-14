@@ -29,7 +29,7 @@ async function execute(input, ctx) {
     });
     const headers = {
         'Content-Type': 'application/json',
-        'User-Agent': `runcode/${VERSION}`,
+        'User-Agent': `franklin/${VERSION}`,
     };
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60_000); // 60s timeout
@@ -134,7 +134,7 @@ async function signPayment(response, chain, endpoint) {
         }
     }
     catch (err) {
-        console.error(`[runcode] Image payment error: ${err.message}`);
+        console.error(`[franklin] Image payment error: ${err.message}`);
         return null;
     }
 }

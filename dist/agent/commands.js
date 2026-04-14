@@ -1,5 +1,5 @@
 /**
- * Slash command registry for runcode.
+ * Slash command registry for Franklin.
  * Extracted from loop.ts for maintainability.
  *
  * Two types of commands:
@@ -104,8 +104,13 @@ function extractText(msg) {
 // ─── Command Definitions ──────────────────────────────────────────────────
 // Direct-handled commands (don't go to agent)
 const DIRECT_COMMANDS = {
+    '/noplan': (ctx) => {
+        ctx.config.planDisabled = true;
+        ctx.onEvent({ kind: 'text_delta', text: 'Plan-then-execute disabled for this session. Complex tasks will use a single model.\n' });
+        emitDone(ctx);
+    },
     '/stash': (ctx) => {
-        const r = gitCmd(ctx, 'git stash push -m "runcode auto-stash"', 10000);
+        const r = gitCmd(ctx, 'git stash push -m "franklin auto-stash"', 10000);
         if (r !== null)
             ctx.onEvent({ kind: 'text_delta', text: r ? `${r}\n` : 'No changes to stash.\n' });
         emitDone(ctx);
@@ -197,7 +202,7 @@ const DIRECT_COMMANDS = {
                 `  **Git:** /push /pr /undo /status /diff /log /branch /stash /unstash\n` +
                 `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
                 `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /session-search /context /tasks\n` +
-                `  **Power:** /ultrathink [query] /ultraplan /dump\n` +
+                `  **Power:** /ultrathink [query] /ultraplan /noplan /dump\n` +
                 `  **Info:** /model /wallet /cost /tokens /learnings /brain /mcp /doctor /version /bug /help\n` +
                 `  **UI:** /clear /exit\n` +
                 (ultrathinkOn ? `\n  Ultrathink: ON\n` : '')
@@ -225,7 +230,7 @@ const DIRECT_COMMANDS = {
         emitDone(ctx);
     },
     '/bug': (ctx) => {
-        ctx.onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/runcode/issues\n' });
+        ctx.onEvent({ kind: 'text_delta', text: 'Report issues at: https://github.com/BlockRunAI/Franklin/issues\n' });
         emitDone(ctx);
     },
     '/version': (ctx) => {

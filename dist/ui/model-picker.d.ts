@@ -1,5 +1,5 @@
 /**
- * Interactive model picker for runcode.
+ * Interactive model picker for Franklin.
  * Shows categorized model list, supports shortcuts and arrow-key selection.
  */
 export declare const MODEL_SHORTCUTS: Record<string, string>;

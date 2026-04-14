@@ -24,6 +24,8 @@ export type LearningCategory =
   | 'communication'
   | 'domain'
   | 'correction'
+  | 'negative'         // "Don't do X" — things the user explicitly rejected
+  | 'project_context'  // Project-specific: architecture, key files, tech stack decisions
   | 'workflow'
   | 'other';
 

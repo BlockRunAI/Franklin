@@ -1,9 +1,10 @@
 /**
- * Context compaction for runcode.
+ * Context compaction for Franklin.
  * When conversation history approaches the context window limit,
  * summarize older messages and replace them with the summary.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
 import { ModelClient } from './llm.js';
 import type { Dialogue, ContentPart, UserContentPart } from './types.js';
 import {
@@ -13,6 +14,12 @@ import {
   COMPACTION_SUMMARY_RESERVE,
 } from './tokens.js';
 
+/** Max files to restore after compaction (inspired by Claude Code POST_COMPACT_MAX_FILES_TO_RESTORE) */
+const POST_COMPACT_MAX_FILES = 5;
+
+/** Max tokens to spend on post-compact file restoration */
+const POST_COMPACT_TOKEN_BUDGET = 50_000;
+
 // Structured compaction prompt (pattern from nousresearch/hermes-agent
 // `agent/context_compressor.py`). The structured sections preserve more
 // signal than free-form summaries and make it easier for the model to
@@ -21,39 +28,49 @@ export const COMPACT_HEADER = `[CONTEXT COMPACTION — REFERENCE ONLY] Earlier t
 
 const COMPACT_SYSTEM_PROMPT = `You are a conversation summarizer. Produce a STRUCTURED summary of the conversation so far that preserves all decision-relevant context for continuing the task.
 
+CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
+
 Critical rules:
 - Preserve EXACT file paths, function names, line numbers, variable names
-- Preserve EXACT error messages (verbatim)
+- Preserve EXACT error messages and stack traces (verbatim)
 - Preserve user preferences and corrections (especially "don't do X" instructions)
 - Preserve decisions with their rationale (not just the decision)
+- Include full code snippets and function signatures when they are load-bearing
 - DO NOT include reasoning that led to decisions — only the decisions themselves
 - DO NOT include pleasantries, meta-commentary, or apologies
-- DO NOT include active questions or requests — only include resolved facts
 - Use bullet points inside each section
 - Be specific: "edited src/foo.ts:42 to add error handling" not "made some changes"
 
-REQUIRED output format (use these exact section headers):
+First, analyze the conversation chronologically inside <analysis> tags. This is your drafting space — it will be stripped from the final output. Think through what matters before writing the summary.
+
+Then produce the summary inside <summary> tags using these exact section headers:
 
 ## Goal
 [One clear sentence: what the user is trying to accomplish]
 
+## Key Technical Context
+[Important technical details, architecture patterns, constraints, or domain knowledge established during the conversation that future work depends on]
+
 ## Progress
-[Chronological bullet list of what has been done so far]
+[Chronological bullet list of what has been done so far, with specific file paths and line numbers]
+
+## Errors and Fixes
+[Any errors encountered, their root causes, and how they were resolved — this prevents re-investigating the same issues]
 
 ## Decisions
 [Key decisions made, each with its rationale]
 
 ## Files Modified
-[Each file touched, with a one-line description of what changed]
+[Each file touched, with a one-line description of what changed and why]
 
 ## Tool Results Still Relevant
-[Any tool output (file reads, grep matches, bash output) that later steps still depend on — include the actual content, not a reference]
+[Any tool output (file reads, grep matches, bash output) that later steps still depend on — include the actual content, not just a reference to it]
 
-## User Preferences & Corrections
-[Anything the user explicitly asked for or corrected — these are load-bearing]
+## User Messages and Feedback
+[Chronological summary of what the user said, asked for, and corrected — these are load-bearing and must not be lost]
 
 ## Next Steps
-[What comes next, in priority order]
+[What comes next, in priority order, with enough detail to continue without re-reading the original conversation]
 
 If there's an existing [CONTEXT COMPACTION] summary in the messages being compacted, MERGE its content into your output rather than nesting. Do not produce a summary of a summary.`;
 
@@ -76,7 +93,7 @@ export async function autoCompactIfNeeded(
 
   if (debug) {
     console.error(
-      `[runcode] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}`
+      `[franklin] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}`
     );
   }
 
@@ -86,14 +103,14 @@ export async function autoCompactIfNeeded(
     const afterTokens = estimateHistoryTokens(compacted);
     if (afterTokens >= beforeTokens) {
       if (debug) {
-        console.error(`[runcode] Auto-compaction grew history (${beforeTokens} → ${afterTokens}) — skipping`);
+        console.error(`[franklin] Auto-compaction grew history (${beforeTokens} → ${afterTokens}) — skipping`);
       }
       return { history, compacted: false };
     }
     return { history: compacted, compacted: true };
   } catch (err) {
     if (debug) {
-      console.error(`[runcode] Compaction failed: ${(err as Error).message}`);
+      console.error(`[franklin] Compaction failed: ${(err as Error).message}`);
     }
     // Fallback: truncate oldest messages instead of crashing
     const truncated = emergencyTruncate(history, threshold);
@@ -120,14 +137,14 @@ export async function forceCompact(
     // Only accept compaction if it actually reduces tokens
     if (afterTokens >= beforeTokens) {
       if (debug) {
-        console.error(`[runcode] Compaction produced larger history (${beforeTokens} → ${afterTokens}) — reverting`);
+        console.error(`[franklin] Compaction produced larger history (${beforeTokens} → ${afterTokens}) — reverting`);
       }
       return { history, compacted: false };
     }
     return { history: compacted, compacted: true };
   } catch (err) {
     if (debug) {
-      console.error(`[runcode] Force compaction failed: ${(err as Error).message}`);
+      console.error(`[franklin] Force compaction failed: ${(err as Error).message}`);
     }
     const threshold = getCompactionThreshold(model);
     const truncated = emergencyTruncate(history, threshold);
@@ -160,7 +177,7 @@ async function compactHistory(
 
   if (debug) {
     console.error(
-      `[runcode] Summarizing ${toSummarize.length} messages, keeping ${toKeep.length}`
+      `[franklin] Summarizing ${toSummarize.length} messages, keeping ${toKeep.length}`
     );
   }
 
@@ -182,17 +199,19 @@ async function compactHistory(
     }
   );
 
-  // Extract summary text
-  let summaryText = '';
+  // Extract summary text and strip analysis scratchpad
+  let rawSummary = '';
   for (const part of summaryParts) {
     if (part.type === 'text') {
-      summaryText += part.text;
+      rawSummary += part.text;
     }
   }
 
-  if (!summaryText) {
+  if (!rawSummary) {
     throw new Error('Empty summary returned from model');
   }
+
+  const summaryText = formatCompactSummary(rawSummary);
 
   // Build compacted history: summary as first message, then kept messages.
   // The COMPACT_HEADER prefix lets future compactions detect and merge rather
@@ -206,17 +225,127 @@ async function compactHistory(
       role: 'assistant',
       content: 'Got it. I have the structured context from earlier work and will continue from where things left off.',
     },
-    ...toKeep,
   ];
+
+  // Post-compact file restoration (inspired by Claude Code)
+  // Re-read recently modified files to restore working context that was lost
+  // during compaction. This prevents the agent from needing to re-read files
+  // it was actively working on.
+  const restoredFiles = restoreRecentFiles(summaryText, toSummarize, debug);
+  if (restoredFiles) {
+    compacted.push(
+      { role: 'user', content: restoredFiles.prompt },
+      { role: 'assistant', content: 'I have the restored file contents and will use them as context for continuing work.' },
+    );
+  }
+
+  compacted.push(...toKeep);
 
   if (debug) {
     const newTokens = estimateHistoryTokens(compacted);
     console.error(
-      `[runcode] Compacted: ${estimateHistoryTokens(history)} → ${newTokens} tokens`
+      `[franklin] Compacted: ${estimateHistoryTokens(history)} → ${newTokens} tokens`
     );
   }
 
   return compacted;
+}
+
+/**
+ * Restore recently modified files after compaction.
+ * Extracts file paths from the compaction summary and the original messages,
+ * reads the ones that still exist, and builds a context restoration prompt.
+ *
+ * Inspired by Claude Code's POST_COMPACT_MAX_FILES_TO_RESTORE mechanism.
+ */
+function restoreRecentFiles(
+  summaryText: string,
+  compactedMessages: Dialogue[],
+  debug?: boolean
+): { prompt: string } | null {
+  // Extract file paths from multiple sources:
+  // 1. "Files Modified" section in the summary
+  // 2. Edit/Write/Read tool calls in the compacted messages
+
+  const filePaths = new Set<string>();
+
+  // Source 1: Parse "## Files Modified" section from summary
+  const filesSection = summaryText.match(/## Files Modified\n([\s\S]*?)(?=\n## |$)/);
+  if (filesSection) {
+    const pathRegex = /[`"]?([/\w.-]+\.\w{1,10})[`"]?/g;
+    let match;
+    while ((match = pathRegex.exec(filesSection[1])) !== null) {
+      const p = match[1];
+      // Filter: must look like a real file path (has directory separator or extension)
+      if (p.includes('/') || p.includes('.')) {
+        filePaths.add(p);
+      }
+    }
+  }
+
+  // Source 2: Extract from Edit/Write tool_use inputs in compacted messages
+  for (const msg of compactedMessages) {
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+    for (const part of msg.content as ContentPart[]) {
+      if (part.type === 'tool_use' && (part.name === 'Edit' || part.name === 'Write')) {
+        const fp = (part.input as Record<string, unknown>)?.file_path;
+        if (typeof fp === 'string' && fp.startsWith('/')) {
+          filePaths.add(fp);
+        }
+      }
+    }
+  }
+
+  if (filePaths.size === 0) return null;
+
+  // Prioritize: most recently modified files first, limit to POST_COMPACT_MAX_FILES
+  const candidates = [...filePaths].filter(p => {
+    try {
+      return existsSync(p);
+    } catch {
+      return false;
+    }
+  });
+
+  if (candidates.length === 0) return null;
+
+  // Read files within token budget
+  const restoredParts: string[] = [];
+  let tokenBudget = POST_COMPACT_TOKEN_BUDGET;
+  const filesToRestore = candidates.slice(0, POST_COMPACT_MAX_FILES);
+
+  for (const fp of filesToRestore) {
+    try {
+      const content = readFileSync(fp, 'utf-8');
+      const estimatedTokens = Math.ceil(content.length / 4 * 1.33);
+
+      if (estimatedTokens > tokenBudget) {
+        // File too large for remaining budget — take first chunk
+        const maxChars = Math.floor(tokenBudget * 3); // ~3 chars per token
+        if (maxChars > 500) {
+          const truncated = content.slice(0, maxChars);
+          restoredParts.push(`### ${fp}\n\`\`\`\n${truncated}\n... (truncated)\n\`\`\``);
+          tokenBudget = 0;
+        }
+        break;
+      }
+
+      restoredParts.push(`### ${fp}\n\`\`\`\n${content}\n\`\`\``);
+      tokenBudget -= estimatedTokens;
+    } catch {
+      // File unreadable — skip
+    }
+  }
+
+  if (restoredParts.length === 0) return null;
+
+  if (debug) {
+    console.error(`[franklin] Post-compact: restored ${restoredParts.length} files`);
+  }
+
+  return {
+    prompt: `[POST-COMPACT FILE RESTORATION] The following files were being actively worked on before context compaction. Their current contents are provided to restore working context:\n\n${restoredParts.join('\n\n')}`,
+  };
 }
 
 /**
@@ -295,6 +424,25 @@ function formatForSummarization(messages: Dialogue[]): string {
   }
 
   return parts.join('\n\n');
+}
+
+/**
+ * Strip the analysis scratchpad from compaction output and extract the summary.
+ * The model drafts in <analysis> tags (for quality), then writes the final
+ * summary in <summary> tags. We keep only the summary.
+ */
+function formatCompactSummary(raw: string): string {
+  // Strip <analysis>...</analysis> (the drafting scratchpad)
+  let cleaned = raw.replace(/<analysis>[\s\S]*?<\/analysis>/gi, '').trim();
+
+  // Extract content from <summary>...</summary> if present
+  const summaryMatch = cleaned.match(/<summary>([\s\S]*?)<\/summary>/i);
+  if (summaryMatch) {
+    cleaned = summaryMatch[1].trim();
+  }
+
+  // If neither tag was used, the model gave us raw output — use as-is
+  return cleaned || raw.trim();
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * Token optimization strategies for runcode.
+ * Token optimization strategies for Franklin.
  *
  * Five layers of optimization to minimize token usage:
  * 1. Tool result size budgeting — cap large outputs, keep preview
@@ -23,7 +23,7 @@ export declare function getMaxOutputTokens(model: string): number;
 export declare function budgetToolResults(history: Dialogue[]): Dialogue[];
 export declare function stripOldThinking(history: Dialogue[]): Dialogue[];
 /**
- * After an idle gap (>60 min), clear old tool results.
+ * After an idle gap (>30 min), clear old tool results.
  * When the user comes back after being away, old results are stale anyway.
  */
 export declare function timeBasedCleanup(history: Dialogue[], lastActivityTimestamp?: number): {

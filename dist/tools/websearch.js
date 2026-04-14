@@ -20,7 +20,7 @@ async function execute(input, _ctx) {
         const response = await fetch(url, {
             signal: controller.signal,
             headers: {
-                'User-Agent': `runcode/${VERSION} (coding-agent)`,
+                'User-Agent': `franklin/${VERSION} (coding-agent)`,
             },
         });
         clearTimeout(timeout);
@@ -107,7 +107,22 @@ function stripTags(html) {
 export const webSearchCapability = {
     spec: {
         name: 'WebSearch',
-        description: 'Search the web via DuckDuckGo. Returns titles, URLs, and snippets. Cannot access X.com content (use SearchX for X posts). Do NOT rephrase and retry the same search — if results are empty, stop. Max 3-5 searches per topic.',
+        description: `Search the web and use the results to inform responses. Returns titles, URLs, and snippets.
+
+Usage:
+- Provides up-to-date information beyond training data cutoff
+- Cannot access X.com content (use SearchX for X posts)
+- Do NOT rephrase and retry the same search — if results are empty, stop. Max 3-5 searches per topic.
+
+CRITICAL REQUIREMENT — After answering, you MUST include a "Sources:" section at the end of your response listing all relevant URLs as markdown hyperlinks:
+
+Sources:
+- [Source Title 1](https://example.com/1)
+- [Source Title 2](https://example.com/2)
+
+This is MANDATORY — never skip including sources when using web search results.
+
+IMPORTANT — The current date is ${new Date().toISOString().slice(0, 7)} (${new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })}). Use the current year when searching for recent information, documentation, or current events.`,
         input_schema: {
             type: 'object',
             properties: {

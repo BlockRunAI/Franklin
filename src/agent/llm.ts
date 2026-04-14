@@ -1,5 +1,5 @@
 /**
- * LLM Client for runcode
+ * LLM Client for Franklin
  * Calls BlockRun API directly with x402 payment handling and streaming.
  * Original implementation — not derived from any existing codebase.
  */
@@ -204,6 +204,28 @@ export class ModelClient {
     }
 
     if (isAnthropic) {
+      // ─ Anthropic extended thinking ──────────────────────────────────────
+      // Enable thinking for Claude models that support it (Opus 4.6, Sonnet 4.6).
+      // This is the single biggest quality lever — Claude with thinking enabled
+      // is dramatically better at complex multi-step tasks, reasoning, and code.
+      //
+      // Uses adaptive thinking: the model decides how much to think per request.
+      // budget_tokens is the MAX it can use (not a minimum), so the model won't
+      // waste tokens on simple tasks. Set to 80% of max_tokens to leave room
+      // for the actual response.
+      const supportsThinking = request.model.includes('opus') ||
+        request.model.includes('sonnet-4') ||
+        request.model.includes('sonnet-3.7');
+      if (supportsThinking) {
+        const maxOut = (request.max_tokens ?? 16_384);
+        requestPayload['thinking'] = {
+          type: 'enabled',
+          budget_tokens: Math.min(maxOut, 16_384), // Cap thinking budget — most benefit comes from first few K tokens
+        };
+        // Extended thinking requires temperature=1 on Anthropic API
+        requestPayload['temperature'] = 1;
+      }
+
       // ─ Anthropic prompt caching: `system_and_3` strategy ─────────────────
       // 4 cache_control breakpoints (Anthropic max):
       //   1. System prompt (stable across turns)
@@ -240,13 +262,13 @@ export class ModelClient {
       'User-Agent': USER_AGENT,
     };
 
-    // Enable prompt caching beta for Anthropic models
+    // Enable prompt caching + extended thinking betas for Anthropic models
     if (isAnthropic) {
       headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
     }
 
     if (this.debug) {
-      console.error(`[runcode] POST ${endpoint} model=${request.model}`);
+      console.error(`[franklin] POST ${endpoint} model=${request.model}`);
     }
 
     let response = await fetch(endpoint, {
@@ -258,7 +280,7 @@ export class ModelClient {
 
     // Handle x402 payment
     if (response.status === 402) {
-      if (this.debug) console.error('[runcode] Payment required — signing...');
+      if (this.debug) console.error('[franklin] Payment required — signing...');
       const paymentHeader = await this.signPayment(response);
       if (!paymentHeader) {
         yield { kind: 'error', payload: { message: 'Payment signing failed' } };
@@ -308,6 +330,7 @@ export class ModelClient {
     // Accumulate from stream
     let currentText = '';
     let currentThinking = '';
+    let currentThinkingSignature = '';
     let currentToolId = '';
     let currentToolName = '';
     let currentToolInput = '';
@@ -323,6 +346,7 @@ export class ModelClient {
             currentToolInput = '';
           } else if (cblock?.type === 'thinking') {
             currentThinking = '';
+            currentThinkingSignature = '';
           } else if (cblock?.type === 'text') {
             currentText = '';
           }
@@ -339,6 +363,9 @@ export class ModelClient {
             const text = (delta.thinking as string) || '';
             currentThinking += text;
             if (text) onStreamDelta?.({ type: 'thinking', text });
+          } else if (delta.type === 'signature_delta') {
+            // Accumulate signature for multi-turn thinking continuity
+            currentThinkingSignature += (delta.signature as string) || '';
           } else if (delta.type === 'input_json_delta') {
             currentToolInput += (delta.partial_json as string) || '';
           }
@@ -347,23 +374,38 @@ export class ModelClient {
         case 'content_block_stop': {
           if (currentToolId) {
             let parsedInput: Record<string, unknown> = {};
+            let inputParseError = false;
             try {
               parsedInput = JSON.parse(currentToolInput || '{}');
             } catch (parseErr) {
-              // Log malformed JSON instead of silently defaulting to {}
+              // Incomplete JSON from stream abort or model error.
+              // Mark as error so the executor returns an error result
+              // instead of silently invoking the tool with empty/wrong params.
+              inputParseError = true;
               if (this.debug) {
-                console.error(`[runcode] Malformed tool input JSON for ${currentToolName}: ${(parseErr as Error).message}`);
+                console.error(`[franklin] Malformed tool input JSON for ${currentToolName}: ${(parseErr as Error).message}`);
+                console.error(`[franklin] Raw input was: ${currentToolInput.slice(0, 200)}`);
               }
             }
-            const toolInvocation = {
-              type: 'tool_use',
-              id: currentToolId,
-              name: currentToolName,
-              input: parsedInput,
-            } as CapabilityInvocation;
-            collected.push(toolInvocation);
-            // Notify caller so concurrent tools can start immediately
-            onToolReady?.(toolInvocation);
+
+            if (inputParseError) {
+              // Don't invoke the tool — add a text block explaining the error
+              // and skip the tool_use entirely. The model will see the error and retry.
+              collected.push({
+                type: 'text',
+                text: `[Tool call to ${currentToolName} failed: incomplete JSON input from stream. The request may have been interrupted.]`,
+              } as TextSegment);
+            } else {
+              const toolInvocation = {
+                type: 'tool_use',
+                id: currentToolId,
+                name: currentToolName,
+                input: parsedInput,
+              } as CapabilityInvocation;
+              collected.push(toolInvocation);
+              // Notify caller so concurrent tools can start immediately
+              onToolReady?.(toolInvocation);
+            }
             currentToolId = '';
             currentToolName = '';
             currentToolInput = '';
@@ -371,8 +413,10 @@ export class ModelClient {
             collected.push({
               type: 'thinking',
               thinking: currentThinking,
+              ...(currentThinkingSignature ? { signature: currentThinkingSignature } : {}),
             } as ThinkingSegment);
             currentThinking = '';
+            currentThinkingSignature = '';
           } else if (currentText) {
             collected.push({
               type: 'text',
@@ -434,11 +478,11 @@ export class ModelClient {
     } catch (err) {
       const msg = (err as Error).message || '';
       if (msg.includes('insufficient') || msg.includes('balance')) {
-        console.error(`[runcode] Insufficient USDC balance. Run 'runcode balance' to check.`);
+        console.error(`[franklin] Insufficient USDC balance. Run 'franklin balance' to check.`);
       } else if (this.debug) {
-        console.error('[runcode] Payment error:', msg);
+        console.error('[franklin] Payment error:', msg);
       } else {
-        console.error(`[runcode] Payment failed: ${msg.slice(0, 100)}`);
+        console.error(`[franklin] Payment failed: ${msg.slice(0, 100)}`);
       }
       return null;
     }
@@ -559,7 +603,7 @@ export class ModelClient {
         // Safety: if buffer grows too large without newlines, something is wrong
         if (buffer.length > MAX_BUFFER) {
           if (this.debug) {
-            console.error(`[runcode] SSE buffer overflow (${(buffer.length / 1024).toFixed(0)}KB) — truncating to prevent OOM`);
+            console.error(`[franklin] SSE buffer overflow (${(buffer.length / 1024).toFixed(0)}KB) — truncating to prevent OOM`);
           }
           buffer = buffer.slice(-MAX_BUFFER / 2);
         }

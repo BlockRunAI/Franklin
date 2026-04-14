@@ -1,12 +1,11 @@
 /**
- * runcode Agent Loop
+ * Franklin Agent Loop
  * The core reasoning-action cycle: prompt → model → extract capabilities → execute → repeat.
- * Original implementation with different architecture from any reference codebase.
  */
 
 import { ModelClient } from './llm.js';
-import { autoCompactIfNeeded, microCompact } from './compact.js';
-import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor, getAnchoredTokenCount, getContextWindow } from './tokens.js';
+import { autoCompactIfNeeded, forceCompact, microCompact } from './compact.js';
+import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor, getAnchoredTokenCount, getContextWindow, setEstimationModel } from './tokens.js';
 import { handleSlashCommand } from './commands.js';
 import { reduceTokens } from './reduce.js';
 import { PermissionManager } from './permissions.js';
@@ -17,9 +16,11 @@ import { SessionToolGuard } from './tool-guard.js';
 import { recordUsage } from '../stats/tracker.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
+import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
-import type { Tier } from '../router/index.js';
+import type { Tier, RoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
+import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
 import {
   createSessionId,
   appendToSession,
@@ -37,8 +38,25 @@ import type {
 } from './types.js';
 
 /**
- * Sanitize history: fix orphaned tool results and missing results.
- * Inspired by Hermes _sanitize_api_messages().
+ * Atomically replace all elements in a history array.
+ * Safer than `history.length = 0; history.push(...)` because if push throws
+ * (e.g., OOM), the array is already in its new state — not empty.
+ * Uses splice to do a single atomic operation on the array.
+ */
+function replaceHistory(target: Dialogue[], replacement: Dialogue[]): void {
+  target.splice(0, target.length, ...replacement);
+}
+
+/**
+ * Sanitize history: fix orphaned tool results AND inject missing results.
+ * Inspired by Claude Code's yieldMissingToolResultBlocks + Hermes _sanitize_api_messages().
+ *
+ * Two problems this solves:
+ * 1. Orphaned tool_results — results without matching tool_use calls (remove them)
+ * 2. Missing tool_results — tool_use calls without matching results (inject stubs)
+ *    This happens when the model response includes tool calls that weren't executed
+ *    (e.g., abort mid-stream, error before tool execution). The API requires every
+ *    tool_use to have a corresponding tool_result or it rejects the request.
  */
 function sanitizeHistory(history: Dialogue[]): Dialogue[] {
   // Collect all tool_use IDs from assistant messages
@@ -63,20 +81,158 @@ function sanitizeHistory(history: Dialogue[]): Dialogue[] {
     }
   }
 
-  // Remove orphaned tool results (results without matching calls)
-  const orphaned = new Set([...resultIds].filter(id => !callIds.has(id)));
-  if (orphaned.size === 0) return history;
+  // 1. Remove orphaned tool results (results without matching calls)
+  const orphanedResults = new Set([...resultIds].filter(id => !callIds.has(id)));
 
-  return history.map(msg => {
+  // 2. Find missing tool results (calls without matching results)
+  const missingResults = new Set([...callIds].filter(id => !resultIds.has(id)));
+
+  if (orphanedResults.size === 0 && missingResults.size === 0) return history;
+
+  const result: Dialogue[] = [];
+
+  for (let i = 0; i < history.length; i++) {
+    const msg = history[i];
+
     if (msg.role === 'user' && Array.isArray(msg.content)) {
-      const filtered = (msg.content as any[]).filter(
-        p => !(p.type === 'tool_result' && orphaned.has(p.tool_use_id))
-      );
-      if (filtered.length === 0) return null;
-      return { ...msg, content: filtered };
+      // Remove orphaned tool results
+      if (orphanedResults.size > 0) {
+        const filtered = (msg.content as any[]).filter(
+          p => !(p.type === 'tool_result' && orphanedResults.has(p.tool_use_id))
+        );
+        if (filtered.length === 0) continue; // Skip empty messages
+        result.push({ ...msg, content: filtered });
+      } else {
+        result.push(msg);
+      }
+      continue;
     }
-    return msg;
-  }).filter(Boolean) as Dialogue[];
+
+    result.push(msg);
+
+    // After each assistant message with tool_use, check if the next message
+    // contains all the required tool_results. If not, inject stubs.
+    if (msg.role === 'assistant' && Array.isArray(msg.content) && missingResults.size > 0) {
+      const toolUseIds: string[] = [];
+      for (const part of msg.content as any[]) {
+        if (part.type === 'tool_use' && missingResults.has(part.id)) {
+          toolUseIds.push(part.id);
+        }
+      }
+
+      if (toolUseIds.length > 0) {
+        // Check if the next message already has some of these results
+        const nextMsg = history[i + 1];
+        const nextResultIds = new Set<string>();
+        if (nextMsg?.role === 'user' && Array.isArray(nextMsg.content)) {
+          for (const part of nextMsg.content as any[]) {
+            if (part.type === 'tool_result') {
+              nextResultIds.add(part.tool_use_id);
+            }
+          }
+        }
+
+        // Inject stub results for any tool_use IDs that are truly missing
+        const stubParts: UserContentPart[] = [];
+        for (const id of toolUseIds) {
+          if (!nextResultIds.has(id)) {
+            stubParts.push({
+              type: 'tool_result',
+              tool_use_id: id,
+              content: '[Tool execution was interrupted — result not available]',
+              is_error: true,
+            });
+            missingResults.delete(id); // Don't inject twice
+          }
+        }
+
+        if (stubParts.length > 0) {
+          // If next message is a user message, prepend stubs to it
+          if (nextMsg?.role === 'user' && Array.isArray(nextMsg.content)) {
+            // Will be handled when we process that message next
+            const existingContent = orphanedResults.size > 0
+              ? (nextMsg.content as any[]).filter(
+                  p => !(p.type === 'tool_result' && orphanedResults.has(p.tool_use_id))
+                )
+              : [...(nextMsg.content as any[])];
+            // Replace the next message with merged content
+            history[i + 1] = { role: 'user', content: [...stubParts, ...existingContent] };
+          } else {
+            // No user message follows — insert a new one with the stubs
+            result.push({ role: 'user', content: stubParts });
+          }
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Detect media-related errors (image too large, too many images, PDF too large).
+ * These can be recovered by stripping media blocks and retrying.
+ */
+function isMediaSizeError(msg: string): boolean {
+  return (
+    (msg.includes('image exceeds') && msg.includes('maximum')) ||
+    (msg.includes('image dimensions exceed')) ||
+    /maximum of \d+ PDF pages/.test(msg) ||
+    (msg.includes('image') && msg.includes('too large')) ||
+    (msg.includes('PDF') && msg.includes('too large'))
+  );
+}
+
+/**
+ * Strip image and document blocks from history, replacing with text placeholders.
+ * Used for media error recovery — retry without the oversized media.
+ */
+function stripMediaFromHistory(history: Dialogue[]): { history: Dialogue[]; stripped: boolean } {
+  let stripped = false;
+  const result = history.map(msg => {
+    if (typeof msg.content === 'string' || !Array.isArray(msg.content)) return msg;
+
+    let modified = false;
+    const cleaned = msg.content.map((part: any) => {
+      if (part.type === 'image') {
+        modified = true;
+        stripped = true;
+        return { type: 'text' as const, text: '[image removed — too large for context]' };
+      }
+      if (part.type === 'document') {
+        modified = true;
+        stripped = true;
+        return { type: 'text' as const, text: '[document removed — too large for context]' };
+      }
+      // Also strip media nested inside tool_result content arrays
+      if (part.type === 'tool_result' && Array.isArray(part.content)) {
+        const cleanedContent = part.content.map((c: any) => {
+          if (c.type === 'image' || c.type === 'document') {
+            modified = true;
+            stripped = true;
+            return { type: 'text' as const, text: `[${c.type} removed — too large for context]` };
+          }
+          return c;
+        });
+        return modified ? { ...part, content: cleanedContent } : part;
+      }
+      return part;
+    });
+
+    return modified ? { ...msg, content: cleaned } : msg;
+  }) as Dialogue[];
+
+  return { history: stripped ? result : history, stripped };
+}
+
+/**
+ * Calculate backoff delay with jitter to avoid thundering herd.
+ * Base: exponential (2^attempt * 1000ms), jitter: ±25%.
+ */
+function getBackoffDelay(attempt: number, maxDelayMs = 32_000): number {
+  const base = Math.min(Math.pow(2, attempt) * 1000, maxDelayMs);
+  const jitter = base * 0.25 * (Math.random() * 2 - 1); // ±25%
+  return Math.max(500, Math.round(base + jitter));
 }
 
 // ─── Interactive Session ───────────────────────────────────────────────────
@@ -112,7 +268,14 @@ export async function interactiveSession(
   );
   const history: Dialogue[] = [];
   let lastUserInput = ''; // For /retry
-  const failedModels = new Set<string>(); // Models that failed payment/rate-limit (session-level)
+  const originalModel = config.model; // Preserve original model/routing profile for recovery
+  let turnFailedModels = new Set<string>(); // Models that failed this turn (cleared each new turn)
+  // Track models that failed with 402 (payment required) across turns.
+  // These persist until the session ends — unlike transient errors, payment failures
+  // will keep failing until the user adds funds. Map stores failure timestamp for future TTL.
+  const paymentFailedModels = new Map<string, number>(); // model → timestamp
+
+  // Plan-then-execute: session-level disable flag lives on config (set by /noplan command)
 
   // Session persistence
   const sessionId = createSessionId();
@@ -179,14 +342,32 @@ export async function interactiveSession(
     toolGuard.startTurn();
     persistSessionMessage({ role: 'user', content: input });
 
+    // ── Model recovery: try original model at the start of each new turn ──
+    // If we fell back to a free model last turn due to a transient error, try original again.
+    // But DON'T reset if the original model had a payment failure — it will just fail again.
+    if (config.model !== originalModel && !paymentFailedModels.has(originalModel)) {
+      config.model = originalModel;
+      config.onModelChange?.(originalModel);
+    }
+    turnFailedModels = new Set<string>(); // Fresh slate for transient failures this turn
+
     const abort = new AbortController();
     onAbortReady?.(() => abort.abort());
     let loopCount = 0;
     let recoveryAttempts = 0;
+    const MAX_RECOVERY_ATTEMPTS = 5;  // Up from 3 — Claude Code uses 10, we split the difference
     let compactFailures = 0;
     let maxTokensOverride: number | undefined;
     const turnIdleReference = lastSessionActivity;
     lastSessionActivity = Date.now();
+
+    // ── Plan-then-execute state (per turn) ──
+    let planActive = false;
+    let planPlannerModel = '';
+    let planExecutorModel = '';
+    let planEscalationCount = 0;
+    let planConsecutiveErrors = 0;
+    let lastToolSig = '';  // For same-tool repeat detection
 
     // ── Tool call guardrails (inspired by hermes-agent) ──
     let turnToolCalls = 0;                              // Total tool calls this user turn
@@ -211,23 +392,20 @@ export async function interactiveSession(
         lastActivityTimestamp: loopCount === 1 ? turnIdleReference : lastSessionActivity,
       });
       if (optimized !== history) {
-        history.length = 0;
-        history.push(...optimized);
+        replaceHistory(history, optimized);
       }
 
       // 2. Token reduction: age old results, normalize whitespace, trim verbose messages
       const reduced = reduceTokens(history, config.debug);
       if (reduced !== history) {
-        history.length = 0;
-        history.push(...reduced);
+        replaceHistory(history, reduced);
       }
 
       // 3. Microcompact: clear old tool results to prevent context snowball
       if (history.length > 6) {
         const microCompacted = microCompact(history, 3);
         if (microCompacted !== history) {
-          history.length = 0;
-          history.push(...microCompacted);
+          replaceHistory(history, microCompacted);
           resetTokenAnchor(); // History shrunk — resync token tracking
         }
       }
@@ -239,18 +417,17 @@ export async function interactiveSession(
           const { history: compacted, compacted: didCompact } =
             await autoCompactIfNeeded(history, config.model, client, config.debug);
           if (didCompact) {
-            history.length = 0;
-            history.push(...compacted);
+            replaceHistory(history, compacted);
             resetTokenAnchor();
             compactFailures = 0;
             if (config.debug) {
-              console.error(`[runcode] History compacted: ~${estimateHistoryTokens(history)} tokens`);
+              console.error(`[franklin] History compacted: ~${estimateHistoryTokens(history)} tokens`);
             }
           }
         } catch (compactErr) {
           compactFailures++;
           if (config.debug) {
-            console.error(`[runcode] Compaction failed (${compactFailures}/3): ${(compactErr as Error).message}`);
+            console.error(`[franklin] Compaction failed (${compactFailures}/3): ${(compactErr as Error).message}`);
           }
         }
       }
@@ -268,6 +445,21 @@ export async function interactiveSession(
           'Prioritize correctness and thoroughness over speed.'
         );
       }
+
+      // ── Context awareness injection ──
+      // Tell the model how full its context window is so it can self-regulate.
+      // At high usage, nudge it to be concise and avoid unnecessary tool calls.
+      const { contextUsagePct: preCallPct } = getAnchoredTokenCount(history);
+      if (preCallPct > 50) {
+        let contextNote = `# Context Window Status\nYou have used approximately ${Math.round(preCallPct)}% of your context window.`;
+        if (preCallPct > 80) {
+          contextNote += ' Context is critically full. Be extremely concise. Avoid re-reading files already in context. Prioritize completing the current task over exploring new questions.';
+        } else if (preCallPct > 65) {
+          contextNote += ' Be concise in responses. Avoid unnecessary tool calls. Do not re-read files you already have in context.';
+        }
+        systemParts.push(contextNote);
+      }
+
       const systemPrompt = systemParts.join('\n\n');
       const modelMaxOut = getMaxOutputTokens(config.model);
       let maxTokens = Math.min(maxTokensOverride ?? CAPPED_MAX_TOKENS, modelMaxOut);
@@ -283,6 +475,7 @@ export async function interactiveSession(
         guard: toolGuard,
         onStart: (id, name, preview) => onEvent({ kind: 'capability_start', id, name, preview }),
         onProgress: (id, text) => onEvent({ kind: 'capability_progress', id, text }),
+        sessionId,
       });
 
       // ── Router: resolve routing profiles to concrete models ──
@@ -311,13 +504,40 @@ export async function interactiveSession(
         lastRoutedCategory = routing.signals[0] || '';
       }
 
+      // Update token estimation model for more accurate byte-per-token ratio
+      setEstimationModel(resolvedModel);
+
+      // ── Plan-then-execute: detect and activate ──
+      if (loopCount === 1 && !planActive && routingProfile &&
+          shouldPlan(routingTier, routingProfile, lastUserInput, !!(config as { ultrathink?: boolean }).ultrathink, !!(config as unknown as Record<string, unknown>).planDisabled)) {
+        planActive = true;
+        planPlannerModel = resolvedModel;
+        planExecutorModel = getExecutorModel(routingProfile);
+        onEvent({ kind: 'text_delta', text: '\n*Planning...*\n' });
+      }
+
+      // Plan-then-execute: override model on execution iterations
+      if (planActive && loopCount > 1) {
+        resolvedModel = planExecutorModel;
+      }
+
+      // Build per-call tool defs, max_tokens, and system prompt
+      // (planning calls get no tools + short output + planning prompt)
+      let callToolDefs = toolDefs;
+      let callMaxTokens = maxTokens;
+      let callSystemPrompt = systemPrompt;
+      if (planActive && loopCount === 1) {
+        callToolDefs = [];  // No tools during planning
+        callMaxTokens = 2048;  // Short plan output
+        callSystemPrompt = systemPrompt + '\n\n' + getPlanningPrompt();
+      }
+
       // Safety net: handled in llm.ts resolveVirtualModel()
 
       // Sanitize: remove orphaned tool results that could confuse the API
       const sanitized = sanitizeHistory(history);
       if (sanitized.length !== history.length) {
-        history.length = 0;
-        history.push(...sanitized);
+        replaceHistory(history, sanitized);
       }
 
       try {
@@ -325,9 +545,9 @@ export async function interactiveSession(
           {
             model: resolvedModel,
             messages: history,
-            system: systemPrompt,
-            tools: toolDefs,
-            max_tokens: maxTokens,
+            system: callSystemPrompt,
+            tools: callToolDefs,
+            max_tokens: callMaxTokens,
             stream: true,
           },
           abort.signal,
@@ -350,12 +570,12 @@ export async function interactiveSession(
         const hasText = responseParts.some(p => p.type === 'text' && (p as any).text?.trim());
         const hasTools = responseParts.some(p => p.type === 'tool_use');
         const hasThinking = responseParts.some(p => p.type === 'thinking');
-        if (!hasText && !hasTools && !hasThinking && recoveryAttempts < 3) {
+        if (!hasText && !hasTools && !hasThinking && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
           recoveryAttempts++;
           if (config.debug) {
-            console.error(`[runcode] Empty response — retrying (${recoveryAttempts}/3)`);
+            console.error(`[franklin] Empty response — retrying (${recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS})`);
           }
-          onEvent({ kind: 'text_delta', text: `\n*Empty response — retrying (${recoveryAttempts}/3)...*\n` });
+          onEvent({ kind: 'text_delta', text: `\n*Empty response — retrying (${recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS})...*\n` });
           continue;
         }
       } catch (err) {
@@ -376,46 +596,69 @@ export async function interactiveSession(
         const errMsg = (err as Error).message || '';
         const classified = classifyAgentError(errMsg);
 
-        // ── Prompt too long recovery ──
-        if (classified.category === 'context_limit' && recoveryAttempts < 3) {
+        // ── Media size error recovery (strip images/PDFs + retry) ──
+        if (isMediaSizeError(errMsg) && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
           recoveryAttempts++;
           if (config.debug) {
-            console.error(`[runcode] Prompt too long — forcing compact (attempt ${recoveryAttempts})`);
+            console.error(`[franklin] Media too large — stripping and retrying (attempt ${recoveryAttempts})`);
           }
+          const { history: stripped, stripped: didStrip } = stripMediaFromHistory(history);
+          if (didStrip) {
+            replaceHistory(history, stripped);
+            onEvent({ kind: 'text_delta', text: '\n*Media too large — retrying without images/documents...*\n' });
+            continue;
+          }
+          // No media to strip — fall through to other error handling
+        }
+
+        // ── Prompt too long recovery (reactive compaction) ──
+        // Use forceCompact instead of autoCompactIfNeeded — the API already told us
+        // the prompt is too long, so we must compact regardless of our threshold estimate.
+        // This is the key insight from Claude Code: reactive compaction must FORCE compress.
+        if (classified.category === 'context_limit' && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
+          recoveryAttempts++;
+          if (config.debug) {
+            console.error(`[franklin] Prompt too long — force compacting (attempt ${recoveryAttempts})`);
+          }
+          onEvent({ kind: 'text_delta', text: '\n*Context limit hit — compacting conversation...*\n' });
           const { history: compactedAgain } =
-            await autoCompactIfNeeded(history, config.model, client, config.debug);
-          history.length = 0;
-          history.push(...compactedAgain);
+            await forceCompact(history, config.model, client, config.debug);
+          replaceHistory(history, compactedAgain);
+          resetTokenAnchor(); // History mutated — resync tracking
           continue; // Retry
         }
 
         // ── Transient error recovery (network, rate limit, server errors) ──
-        if (classified.isTransient && recoveryAttempts < 3) {
+        // Respect per-error maxRetries (e.g., 529/overloaded gets only 3 retries)
+        const effectiveMaxRetries = classified.maxRetries ?? MAX_RECOVERY_ATTEMPTS;
+        if (classified.isTransient && recoveryAttempts < effectiveMaxRetries) {
           recoveryAttempts++;
-          const backoffMs = Math.pow(2, recoveryAttempts) * 1000;
+          const backoffMs = getBackoffDelay(recoveryAttempts);
           if (config.debug) {
             console.error(
-              `[runcode] ${classified.label} error — retrying in ${backoffMs / 1000}s (attempt ${recoveryAttempts}): ${errMsg.slice(0, 100)}`
+              `[franklin] ${classified.label} error — retrying in ${(backoffMs / 1000).toFixed(1)}s (attempt ${recoveryAttempts}/${effectiveMaxRetries}): ${errMsg.slice(0, 100)}`
             );
           }
           onEvent({
             kind: 'text_delta',
-            text: `\n*Retrying (${recoveryAttempts}/3) after ${classified.label} error...*\n`,
+            text: `\n*Retrying (${recoveryAttempts}/${effectiveMaxRetries}) after ${classified.label} error...*\n`,
           });
           await new Promise(r => setTimeout(r, backoffMs));
           continue;
         }
 
-        // Add recovery suggestions based on error type
-        let suggestion = '';
-        if (classified.category === 'rate_limit') {
-          suggestion = '\nTip: Try /model to switch to a different model, or wait a moment and /retry.';
-        } else if (classified.category === 'payment') {
-          // Auto-fallback to free models on payment/rate limit failure
-          // Track failed models at session level to prevent ping-pong loops
-          failedModels.add(config.model);
+        // ── Payment failure: auto-fallback to free models ──
+        // Track payment-failed models for the entire session — unlike transient errors,
+        // 402s will keep failing until the user adds funds.
+        if (classified.category === 'payment') {
+          turnFailedModels.add(config.model);
+          paymentFailedModels.set(config.model, Date.now());
+          // Record to local Elo so the router learns to avoid this model
+          if (lastRoutedCategory) {
+            recordOutcome(lastRoutedCategory, config.model, 'payment');
+          }
           const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/nemotron-ultra-253b', 'nvidia/devstral-2-123b'];
-          const nextFree = FREE_MODELS.find(m => !failedModels.has(m));
+          const nextFree = FREE_MODELS.find(m => !turnFailedModels.has(m));
           if (nextFree) {
             const oldModel = config.model;
             config.model = nextFree;
@@ -423,12 +666,10 @@ export async function interactiveSession(
             onEvent({ kind: 'text_delta', text: `\n*${oldModel} failed — switching to ${nextFree}*\n` });
             continue; // Retry with next model
           }
-          suggestion = '\nTip: Run `runcode balance` to check funds. Try /model free for free models.';
-        } else if (classified.category === 'timeout' || classified.category === 'network') {
-          suggestion = '\nTip: Check your network connection. Use /retry to try again.';
-        } else if (classified.category === 'context_limit') {
-          suggestion = '\nTip: Run /compact to compress conversation history.';
         }
+
+        // ── Unrecoverable: show error with suggestion from classifier ──
+        const suggestion = classified.suggestion ? `\nTip: ${classified.suggestion}` : '';
         onEvent({
           kind: 'turn_done',
           reason: 'error',
@@ -460,7 +701,7 @@ export async function interactiveSession(
         contextPct: Math.round(contextUsagePct),
       });
 
-      // Record usage for stats tracking (runcode stats command)
+      // Record usage for stats tracking (franklin stats command)
       const costEstimate = estimateCost(resolvedModel, inputTokens, usage.outputTokens, 1);
       recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, 0);
       recordSessionUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, routingTier);
@@ -474,20 +715,27 @@ export async function interactiveSession(
       sessionSavedVsOpus += Math.max(0, opusCost - costEstimate);
 
       // ── Max output tokens recovery ──
-      if (stopReason === 'max_tokens' && recoveryAttempts < 3) {
+      if (stopReason === 'max_tokens' && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
         recoveryAttempts++;
         if (maxTokensOverride === undefined) {
           // First hit: escalate to 64K
           maxTokensOverride = ESCALATED_MAX_TOKENS;
           if (config.debug) {
-            console.error(`[runcode] Max tokens hit — escalating to ${maxTokensOverride}`);
+            console.error(`[franklin] Max tokens hit — escalating to ${maxTokensOverride}`);
           }
         }
         // Append what we got + a continuation prompt (text already streamed)
         const partialAssistant = { role: 'assistant' as const, content: responseParts };
         const continuationPrompt = {
           role: 'user',
-          content: 'Continue where you left off. Do not repeat what you already said.',
+          content: [
+            'Output token limit hit. Continue with these rules:',
+            '1. Resume directly — no apology, no recap of what you already said. Pick up mid-sentence if that is where the cut happened.',
+            '2. Do NOT repeat any text or code that was already output above.',
+            '3. Break remaining work into smaller pieces — use multiple tool calls if needed instead of one large output.',
+            '4. Skip extended reasoning for the continuation — focus on executing.',
+            '5. If you were in the middle of outputting code, finish the code block first.',
+          ].join('\n'),
         } as const;
         history.push(partialAssistant);
         persistSessionMessage(partialAssistant);
@@ -511,6 +759,19 @@ export async function interactiveSession(
       const assistantMessage = { role: 'assistant' as const, content: responseParts };
       history.push(assistantMessage);
       persistSessionMessage(assistantMessage);
+
+      // ── Plan-then-execute: transition from planning to execution ──
+      if (planActive && loopCount === 1 && invocations.length === 0) {
+        // Planning call completed — inject execution kickoff
+        const execKickoff: Dialogue = {
+          role: 'user',
+          content: 'Execute the plan above step by step. Use tools to complete each step. After each step, briefly state what you did and move to the next.',
+        };
+        history.push(execKickoff);
+        persistSessionMessage(execKickoff);
+        onEvent({ kind: 'text_delta', text: `\n*Executing with ${planExecutorModel}...*\n` });
+        continue; // Next iteration uses the cheap executor model
+      }
 
       // No more capabilities → done with this user message
       if (invocations.length === 0) {
@@ -560,6 +821,11 @@ export async function interactiveSession(
 
       // Refresh activity timestamp after tool execution
       lastSessionActivity = Date.now();
+
+      // Mid-session learning extraction (like Claude Code's SessionMemory)
+      // Runs in background — never blocks the conversation
+      const { estimated: currentTokens } = getAnchoredTokenCount(history);
+      maybeMidSessionExtract(history, currentTokens, turnToolCalls, sessionId, client);
 
       // Append outcomes (with guardrail injections)
       const outcomeContent: UserContentPart[] = results.map(
@@ -614,10 +880,42 @@ export async function interactiveSession(
       history.push(toolResultMessage);
       persistSessionMessage(toolResultMessage);
 
+      // ── Plan-then-execute: stuck detection ──
+      if (planActive && loopCount > 1) {
+        const hasErrors = results.some(([, r]) => r.isError);
+        planConsecutiveErrors = hasErrors ? planConsecutiveErrors + 1 : 0;
+
+        // Check for same-tool repeat (model calling the exact same thing twice)
+        const currentSig = results.length === 1
+          ? toolCallSignature(results[0][0].name, results[0][0].input)
+          : '';
+        const sameToolRepeat = currentSig !== '' && currentSig === lastToolSig;
+        lastToolSig = currentSig;
+
+        if (isExecutorStuck(planConsecutiveErrors, sameToolRepeat)) {
+          if (planEscalationCount < 2) {
+            planEscalationCount++;
+            // One-shot escalation: next iteration uses the planner model
+            resolvedModel = planPlannerModel;
+            const escalation: Dialogue = {
+              role: 'user',
+              content: '[ESCALATION] The executor got stuck on repeated errors. You are a stronger model. Review what happened and either fix the approach or continue from where execution stopped.',
+            };
+            history.push(escalation);
+            persistSessionMessage(escalation);
+            onEvent({ kind: 'text_delta', text: '\n*Escalating to stronger model...*\n' });
+          } else {
+            // Abandon plan — strong model finishes the task directly
+            planActive = false;
+            onEvent({ kind: 'text_delta', text: '\n*Plan abandoned — switching to full model...*\n' });
+          }
+        }
+      }
+
       // Hard stop: if cap exceeded, force end this agent loop iteration
       if (turnToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
         if (config.debug) {
-          console.error(`[runcode] Tool call cap hit: ${turnToolCalls} calls this turn`);
+          console.error(`[franklin] Tool call cap hit: ${turnToolCalls} calls this turn`);
         }
         // Don't break — let the model respond one more time to summarize,
         // but inject the stop signal above so it knows to finish up.

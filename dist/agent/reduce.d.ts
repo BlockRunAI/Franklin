@@ -1,5 +1,5 @@
 /**
- * Token Reduction for runcode.
+ * Token Reduction for Franklin.
  * Original implementation — reduces context size through intelligent pruning.
  *
  * Strategy: instead of compression/encoding, we PRUNE redundant content.

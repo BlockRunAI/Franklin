@@ -1,5 +1,5 @@
 /**
- * Context Manager for runcode
+ * Context Manager for Franklin
  * Assembles system instructions, reads project config, injects environment info.
  */
 /**

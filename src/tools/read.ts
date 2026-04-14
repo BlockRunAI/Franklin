@@ -14,10 +14,18 @@ interface ReadInput {
 
 /**
  * Tracks files that were only partially read (offset or limit applied).
- * Edit tool uses this to warn when editing without full context.
+ * Stores the read range so Edit tool can give smarter warnings —
+ * only warns if the edit target is near/beyond the boundary of what was read.
  * Exported so edit.ts can check and clear entries.
  */
-export const partiallyReadFiles = new Set<string>();
+export const partiallyReadFiles = new Map<string, { startLine: number; endLine: number; totalLines: number }>();
+
+/**
+ * Tracks files that have been read in this session — enables read-before-edit enforcement.
+ * Stores the file's mtime at read time so we can detect stale writes.
+ * Exported so edit.ts and write.ts can check.
+ */
+export const fileReadTracker = new Map<string, { mtimeMs: number; readAt: number }>();
 
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
   const { file_path: filePath, offset, limit } = input as unknown as ReadInput;
@@ -61,14 +69,21 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     const endLine = Math.min(allLines.length, startLine + maxLines);
     const slice = allLines.slice(startLine, endLine);
 
-    // Track partial reads — file was not read from the beginning or was truncated
+    // Track partial reads — store the range so Edit can give smarter warnings
     const isPartial = startLine > 0 || endLine < allLines.length;
     if (isPartial) {
-      partiallyReadFiles.add(resolved);
+      partiallyReadFiles.set(resolved, {
+        startLine: startLine + 1, // 1-based
+        endLine,
+        totalLines: allLines.length,
+      });
     } else {
       // Full read — clear any stale partial flag
       partiallyReadFiles.delete(resolved);
     }
+
+    // Record this read for read-before-edit/write enforcement
+    fileReadTracker.set(resolved, { mtimeMs: stat.mtimeMs, readAt: Date.now() });
 
     // Format with line numbers (cat -n style)
     const numbered = slice.map((line, i) => `${startLine + i + 1}\t${line}`);
@@ -94,13 +109,28 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 export const readCapability: CapabilityHandler = {
   spec: {
     name: 'Read',
-    description: 'Read a file with line numbers. Use offset/limit for large files (>2000 lines). Use this instead of cat/head/tail in Bash. Reads over 2MB are rejected. Cannot read binary files or images.',
+    description: `Read a file from the local filesystem. You can access any file directly by using this tool.
+
+Assume this tool is able to read all files on the machine. If the user provides a path to a file, assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
+
+Usage:
+- The file_path parameter must be an absolute path, not a relative path.
+- By default, reads up to 2000 lines starting from the beginning of the file.
+- When you already know which part of the file you need, only read that part using offset/limit. This can be important for larger files.
+- Results are returned in cat -n format, with line numbers starting at 1.
+- This tool can only read files, not directories. To list a directory, use Glob or ls via Bash.
+- If you read a file that exists but has empty contents you will receive a warning.
+- Reads over 2MB are rejected — use offset/limit to read portions.
+- Cannot read binary files (images, PDFs, archives).
+- You will regularly be asked to read screenshots or images. If the user provides a path, ALWAYS use this tool to view it.
+
+IMPORTANT: Always use Read instead of cat, head, or tail via Bash. This tool provides line numbers and integrates with Edit's read-before-edit enforcement.`,
     input_schema: {
       type: 'object',
       properties: {
-        file_path: { type: 'string', description: 'Absolute path' },
-        offset: { type: 'number', description: 'Start line (1-based)' },
-        limit: { type: 'number', description: 'Max lines (default 2000)' },
+        file_path: { type: 'string', description: 'The absolute path to the file to read' },
+        offset: { type: 'number', description: 'The line number to start reading from (1-based). Only provide if the file is too large to read at once.' },
+        limit: { type: 'number', description: 'The number of lines to read. Only provide if the file is too large to read at once. Default: 2000.' },
       },
       required: ['file_path'],
     },

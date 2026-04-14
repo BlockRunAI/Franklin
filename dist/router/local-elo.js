@@ -48,6 +48,7 @@ function trimHistory() {
  *   switched  → loss (-K * 1.0)
  *   retried   → loss (-K * 0.8)
  *   error     → loss (-K * 0.5)
+ *   payment   → loss (-K * 1.5) — heavy penalty, guaranteed to repeat until funded
  *   max_turns → loss (-K * 0.3)
  */
 export function computeLocalElo() {
@@ -77,6 +78,9 @@ export function computeLocalElo() {
                         break;
                     case 'error':
                         delta = -K_FACTOR * 0.5;
+                        break;
+                    case 'payment':
+                        delta = -K_FACTOR * 1.5;
                         break;
                     case 'max_turns':
                         delta = -K_FACTOR * 0.3;

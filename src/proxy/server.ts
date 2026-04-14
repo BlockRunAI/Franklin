@@ -18,6 +18,7 @@ import {
   fetchWithFallback,
   buildFallbackChain,
   DEFAULT_FALLBACK_CONFIG,
+  ROUTING_PROFILES,
   type FallbackConfig,
 } from './fallback.js';
 import {
@@ -30,8 +31,8 @@ import { estimateCost } from '../pricing.js';
 import { VERSION } from '../config.js';
 
 // User-Agent for backend requests
-const USER_AGENT = `runcode/${VERSION}`;
-const X_RUNCODE_VERSION = VERSION;
+const USER_AGENT = `franklin/${VERSION}`;
+const X_FRANKLIN_VERSION = VERSION;
 
 export interface ProxyOptions {
   port: number;
@@ -42,7 +43,7 @@ export interface ProxyOptions {
   fallbackEnabled?: boolean;
 }
 
-const LOG_FILE = path.join(os.homedir(), '.blockrun', 'runcode-debug.log');
+const LOG_FILE = path.join(os.homedir(), '.blockrun', 'franklin-debug.log');
 
 // Strip ANSI escape codes so log file doesn't distort terminal on replay
 function stripAnsi(str: string): string {
@@ -62,9 +63,9 @@ function debug(options: ProxyOptions, ...args: unknown[]) {
 }
 
 function log(...args: unknown[]) {
-  const msg = `[runcode] ${args.map(String).join(' ')}`;
-  // Do NOT print to stdout — Claude Code owns the terminal (stdio: inherit).
-  // Use `runcode logs` to read runtime messages.
+  const msg = `[franklin] ${args.map(String).join(' ')}`;
+  // Do NOT print to stdout — the terminal is owned by the parent process (stdio: inherit).
+  // Use `franklin logs` to read runtime messages.
   try {
     fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
     fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${stripAnsi(msg)}\n`);
@@ -243,7 +244,7 @@ export function createProxy(options: ProxyOptions): http.Server {
               currentModel = switchCmd;
               debug(options, `model switched to: ${currentModel}`);
               const fakeResponse = {
-                id: `msg_runcode_${Date.now()}`,
+                id: `msg_franklin_${Date.now()}`,
                 type: 'message',
                 role: 'assistant',
                 model: currentModel,
@@ -341,7 +342,7 @@ export function createProxy(options: ProxyOptions): http.Server {
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
           'User-Agent': USER_AGENT,
-          'X-runcode-Version': X_RUNCODE_VERSION,
+          'X-Franklin-Version': X_FRANKLIN_VERSION,
         };
         for (const [key, value] of Object.entries(req.headers)) {
           if (
@@ -351,6 +352,24 @@ export function createProxy(options: ProxyOptions): http.Server {
             value
           ) {
             headers[key] = Array.isArray(value) ? value[0] : value;
+          }
+        }
+
+        // Safety net: if requestModel is still a routing profile (blockrun/auto etc.)
+        // after all resolution attempts, force-route it to a concrete model.
+        // This prevents 404s from the backend which doesn't recognize virtual model names.
+        if (ROUTING_PROFILES.has(requestModel) && body) {
+          const virtualName = requestModel;
+          const profile = parseRoutingProfile(requestModel);
+          if (profile) {
+            const fallbackRouting = routeRequest('', profile);
+            requestModel = fallbackRouting.model;
+            try {
+              const parsed = JSON.parse(body);
+              parsed.model = requestModel;
+              body = JSON.stringify(parsed);
+            } catch { /* body not JSON, skip */ }
+            log(`⚠️  Safety net: resolved unrouted ${virtualName} → ${requestModel}`);
           }
         }
 
@@ -608,7 +627,7 @@ async function handleBasePayment(
 ): Promise<Response> {
   const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
-    throw new Error('402 Payment Required — wallet may need funding. Run: runcode balance');
+    throw new Error('402 Payment Required — wallet may need funding. Run: franklin balance');
   }
 
   const paymentRequired = parsePaymentRequired(paymentHeader);
@@ -654,7 +673,7 @@ async function handleSolanaPayment(
 ): Promise<Response> {
   const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
-    throw new Error('402 Payment Required — wallet may need funding. Run: runcode balance');
+    throw new Error('402 Payment Required — wallet may need funding. Run: franklin balance');
   }
 
   const paymentRequired = parsePaymentRequired(paymentHeader);

@@ -4,14 +4,14 @@ import path from 'node:path';
 import os from 'node:os';
 import { getOrCreateWallet, getOrCreateSolanaWallet, createPaymentPayload, createSolanaPaymentPayload, parsePaymentRequired, extractPaymentDetails, solanaKeyToBytes, SOLANA_NETWORK, } from '@blockrun/llm';
 import { recordUsage } from '../stats/tracker.js';
-import { fetchWithFallback, buildFallbackChain, DEFAULT_FALLBACK_CONFIG, } from './fallback.js';
+import { fetchWithFallback, buildFallbackChain, DEFAULT_FALLBACK_CONFIG, ROUTING_PROFILES, } from './fallback.js';
 import { routeRequest, parseRoutingProfile, } from '../router/index.js';
 import { estimateCost } from '../pricing.js';
 import { VERSION } from '../config.js';
 // User-Agent for backend requests
-const USER_AGENT = `runcode/${VERSION}`;
-const X_RUNCODE_VERSION = VERSION;
-const LOG_FILE = path.join(os.homedir(), '.blockrun', 'runcode-debug.log');
+const USER_AGENT = `franklin/${VERSION}`;
+const X_FRANKLIN_VERSION = VERSION;
+const LOG_FILE = path.join(os.homedir(), '.blockrun', 'franklin-debug.log');
 // Strip ANSI escape codes so log file doesn't distort terminal on replay
 function stripAnsi(str) {
     // eslint-disable-next-line no-control-regex
@@ -30,9 +30,9 @@ function debug(options, ...args) {
     }
 }
 function log(...args) {
-    const msg = `[runcode] ${args.map(String).join(' ')}`;
-    // Do NOT print to stdout — Claude Code owns the terminal (stdio: inherit).
-    // Use `runcode logs` to read runtime messages.
+    const msg = `[franklin] ${args.map(String).join(' ')}`;
+    // Do NOT print to stdout — the terminal is owned by the parent process (stdio: inherit).
+    // Use `franklin logs` to read runtime messages.
     try {
         fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
         fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${stripAnsi(msg)}\n`);
@@ -193,7 +193,7 @@ export function createProxy(options) {
                             currentModel = switchCmd;
                             debug(options, `model switched to: ${currentModel}`);
                             const fakeResponse = {
-                                id: `msg_runcode_${Date.now()}`,
+                                id: `msg_franklin_${Date.now()}`,
                                 type: 'message',
                                 role: 'assistant',
                                 model: currentModel,
@@ -277,7 +277,7 @@ export function createProxy(options) {
                 const headers = {
                     'Content-Type': 'application/json',
                     'User-Agent': USER_AGENT,
-                    'X-runcode-Version': X_RUNCODE_VERSION,
+                    'X-Franklin-Version': X_FRANKLIN_VERSION,
                 };
                 for (const [key, value] of Object.entries(req.headers)) {
                     if (key.toLowerCase() !== 'host' &&
@@ -285,6 +285,24 @@ export function createProxy(options) {
                         key.toLowerCase() !== 'user-agent' && // Don't forward client's user-agent
                         value) {
                         headers[key] = Array.isArray(value) ? value[0] : value;
+                    }
+                }
+                // Safety net: if requestModel is still a routing profile (blockrun/auto etc.)
+                // after all resolution attempts, force-route it to a concrete model.
+                // This prevents 404s from the backend which doesn't recognize virtual model names.
+                if (ROUTING_PROFILES.has(requestModel) && body) {
+                    const virtualName = requestModel;
+                    const profile = parseRoutingProfile(requestModel);
+                    if (profile) {
+                        const fallbackRouting = routeRequest('', profile);
+                        requestModel = fallbackRouting.model;
+                        try {
+                            const parsed = JSON.parse(body);
+                            parsed.model = requestModel;
+                            body = JSON.stringify(parsed);
+                        }
+                        catch { /* body not JSON, skip */ }
+                        log(`⚠️  Safety net: resolved unrouted ${virtualName} → ${requestModel}`);
                     }
                 }
                 // Build request init
@@ -475,7 +493,7 @@ export function createProxy(options) {
 async function handleBasePayment(response, url, method, headers, body, privateKey, fromAddress) {
     const paymentHeader = await extractPaymentHeader(response);
     if (!paymentHeader) {
-        throw new Error('402 Payment Required — wallet may need funding. Run: runcode balance');
+        throw new Error('402 Payment Required — wallet may need funding. Run: franklin balance');
     }
     const paymentRequired = parsePaymentRequired(paymentHeader);
     const details = extractPaymentDetails(paymentRequired);
@@ -500,7 +518,7 @@ async function handleBasePayment(response, url, method, headers, body, privateKe
 async function handleSolanaPayment(response, url, method, headers, body, privateKey, fromAddress) {
     const paymentHeader = await extractPaymentHeader(response);
     if (!paymentHeader) {
-        throw new Error('402 Payment Required — wallet may need funding. Run: runcode balance');
+        throw new Error('402 Payment Required — wallet may need funding. Run: franklin balance');
     }
     const paymentRequired = parsePaymentRequired(paymentHeader);
     const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);

@@ -1,5 +1,5 @@
 /**
- * MCP configuration management for runcode.
+ * MCP configuration management for Franklin.
  * Loads MCP server configs from:
  * 1. Global: ~/.blockrun/mcp.json
  * 2. Project: .mcp.json in working directory

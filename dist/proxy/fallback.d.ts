@@ -1,5 +1,5 @@
 /**
- * Fallback chain for runcode
+ * Fallback chain for Franklin
  * Automatically switches to backup models when primary fails (429, 5xx, etc.)
  */
 export interface FallbackConfig {
@@ -30,6 +30,8 @@ export declare function fetchWithFallback(url: string, init: RequestInit, origin
  * Get the current model from fallback chain based on parsed request
  */
 export declare function getCurrentModelFromChain(requestedModel: string | undefined, config?: FallbackConfig): string;
+/** Routing profiles that must never be sent to the backend directly */
+export declare const ROUTING_PROFILES: Set<string>;
 /**
  * Build fallback chain starting from a specific model.
  * Filters out routing profiles (blockrun/auto etc.) since the backend

@@ -1,5 +1,5 @@
 /**
- * Token estimation for runcode.
+ * Token estimation for Franklin.
  * Uses byte-based heuristic (no external tokenizer dependency).
  * Anchors to actual API counts when available, estimates on top for new messages.
  */
@@ -23,8 +23,17 @@ export declare function getAnchoredTokenCount(history: Dialogue[]): {
  */
 export declare function resetTokenAnchor(): void;
 /**
+ * Set the current model for token estimation context.
+ * Called when the model is resolved in the agent loop.
+ */
+export declare function setEstimationModel(model: string): void;
+/**
  * Estimate token count for a string using byte-length heuristic.
- * JSON-heavy content uses 2 bytes/token; general text uses 4.
+ * JSON-heavy content uses 2 bytes/token; general text uses model-specific ratio.
+ *
+ * Padding reduced from 1.33x to 1.15x to prevent premature compaction.
+ * The old 1.33x + ceil() combo caused ~36% overestimation, triggering
+ * auto-compact when context was still 15-20% below the actual limit.
  */
 export declare function estimateTokens(text: string, bytesPerToken?: number): number;
 /**
