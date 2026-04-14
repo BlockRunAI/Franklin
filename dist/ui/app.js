@@ -165,7 +165,10 @@ function RunCodeApp({ initialModel, workDir, walletAddress, walletBalance, chain
             return;
         }
         // Esc to quit (only when input is empty and in input mode)
+        // In Vim mode: Esc goes to normal mode (handled by VimInput), only quit on Esc in normal mode with empty input
         if (key.escape && mode === 'input' && ready && !input) {
+            if (vimEnabled && currentVimMode === 'insert')
+                return; // Let VimInput handle Esc → normal
             onExit();
             exit();
             return;
