@@ -374,23 +374,38 @@ export class ModelClient {
         case 'content_block_stop': {
           if (currentToolId) {
             let parsedInput: Record<string, unknown> = {};
+            let inputParseError = false;
             try {
               parsedInput = JSON.parse(currentToolInput || '{}');
             } catch (parseErr) {
-              // Log malformed JSON instead of silently defaulting to {}
+              // Incomplete JSON from stream abort or model error.
+              // Mark as error so the executor returns an error result
+              // instead of silently invoking the tool with empty/wrong params.
+              inputParseError = true;
               if (this.debug) {
                 console.error(`[franklin] Malformed tool input JSON for ${currentToolName}: ${(parseErr as Error).message}`);
+                console.error(`[franklin] Raw input was: ${currentToolInput.slice(0, 200)}`);
               }
             }
-            const toolInvocation = {
-              type: 'tool_use',
-              id: currentToolId,
-              name: currentToolName,
-              input: parsedInput,
-            } as CapabilityInvocation;
-            collected.push(toolInvocation);
-            // Notify caller so concurrent tools can start immediately
-            onToolReady?.(toolInvocation);
+
+            if (inputParseError) {
+              // Don't invoke the tool — add a text block explaining the error
+              // and skip the tool_use entirely. The model will see the error and retry.
+              collected.push({
+                type: 'text',
+                text: `[Tool call to ${currentToolName} failed: incomplete JSON input from stream. The request may have been interrupted.]`,
+              } as TextSegment);
+            } else {
+              const toolInvocation = {
+                type: 'tool_use',
+                id: currentToolId,
+                name: currentToolName,
+                input: parsedInput,
+              } as CapabilityInvocation;
+              collected.push(toolInvocation);
+              // Notify caller so concurrent tools can start immediately
+              onToolReady?.(toolInvocation);
+            }
             currentToolId = '';
             currentToolName = '';
             currentToolInput = '';

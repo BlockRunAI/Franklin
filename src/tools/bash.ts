@@ -354,6 +354,62 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   });
 }
 
+/**
+ * Detect if a bash command is read-only (safe to run concurrently).
+ * Inspired by Claude Code's isSearchOrReadBashCommand — analyzes command segments
+ * to determine if ALL operations are read-only.
+ */
+const READ_ONLY_COMMANDS = new Set([
+  'ls', 'cat', 'head', 'tail', 'wc', 'du', 'df', 'file', 'stat', 'tree',
+  'find', 'grep', 'rg', 'ag', 'ack', 'which', 'whereis', 'type',
+  'echo', 'printf', 'date', 'whoami', 'hostname', 'uname', 'env', 'printenv',
+  'pwd', 'realpath', 'dirname', 'basename',
+  'jq', 'yq', 'sort', 'uniq', 'cut', 'tr', 'awk', 'sed', // sed is read-only when used in pipeline (no -i)
+  'diff', 'comm', 'less', 'more',
+]);
+
+const READ_ONLY_GIT_SUBCOMMANDS = new Set([
+  'status', 'log', 'diff', 'show', 'branch', 'tag', 'remote', 'stash',
+  'blame', 'shortlog', 'describe', 'rev-parse', 'rev-list', 'ls-files',
+  'ls-tree', 'ls-remote', 'config', 'reflog',
+]);
+
+function isReadOnlyCommand(command: string): boolean {
+  // Split on operators (&&, ||, ;, |) and check each segment
+  const segments = command.split(/\s*(?:&&|\|\||[;|])\s*/);
+
+  for (const segment of segments) {
+    const trimmed = segment.trim();
+    if (!trimmed) continue;
+
+    // Extract the base command (first word, ignore env vars and redirects)
+    const words = trimmed.split(/\s+/).filter(w => !w.includes('=') && !w.startsWith('>') && !w.startsWith('<'));
+    const baseCmd = words[0]?.replace(/^(sudo|time|nice)\s+/, '') || '';
+
+    if (baseCmd === 'git') {
+      const subCmd = words[1] || '';
+      if (!READ_ONLY_GIT_SUBCOMMANDS.has(subCmd)) return false;
+      continue;
+    }
+
+    if (baseCmd === 'npm' || baseCmd === 'npx' || baseCmd === 'yarn' || baseCmd === 'pnpm') {
+      const subCmd = words[1] || '';
+      // npm run/test/list/info are read-only; npm install/build are not
+      if (['run', 'test', 'list', 'ls', 'info', 'view', 'show', 'outdated', 'audit'].includes(subCmd)) continue;
+      return false;
+    }
+
+    // Check if it's a known read-only command
+    const baseName = baseCmd.split('/').pop() || baseCmd;
+    if (!READ_ONLY_COMMANDS.has(baseName)) return false;
+
+    // sed with -i flag is NOT read-only
+    if (baseName === 'sed' && trimmed.includes(' -i')) return false;
+  }
+
+  return segments.some(s => s.trim().length > 0); // At least one non-empty segment
+}
+
 export const bashCapability: CapabilityHandler = {
   spec: {
     name: 'Bash',
@@ -401,5 +457,9 @@ Output is capped at 512KB capture / 32KB return.`,
     },
   },
   execute,
-  concurrent: false,
+  concurrent: false, // Default; overridden by isConcurrentSafe for read-only commands
+  isConcurrentSafe: (input: Record<string, unknown>) => {
+    const cmd = (input.command as string) || '';
+    return isReadOnlyCommand(cmd);
+  },
 };
