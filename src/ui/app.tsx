@@ -148,7 +148,7 @@ interface AppProps {
   startWithPicker?: boolean;
   chain: string;
   onSubmit: (input: string) => void;
-  onModelChange: (model: string) => void;
+  onModelChange: (model: string, reason?: 'user' | 'system') => void;
   onAbort: () => void;
   onExit: () => void;
 }
@@ -352,7 +352,7 @@ function RunCodeApp({
     else if (key.return) {
       const selected = PICKER_MODELS_FLAT[pickerIdx];
       setCurrentModel(selected.id);
-      onModelChange(selected.id);
+      onModelChange(selected.id, 'user');
       showStatus(`Model → ${selected.label}`, 'success', 3000);
       setMode('input');
       setReady(true);
@@ -428,7 +428,7 @@ function RunCodeApp({
           if (parts[1]) {
             const resolved = resolveModel(parts[1]);
             setCurrentModel(resolved);
-            onModelChange(resolved);
+            onModelChange(resolved, 'user');
             showStatus(`Model → ${resolved}`, 'success', 3000);
           } else {
             const idx = PICKER_MODELS_FLAT.findIndex(m => m.id === currentModel);
@@ -1199,7 +1199,7 @@ export function launchInkUI(opts: {
   walletBalance?: string;
   chain?: string;
   showPicker?: boolean;
-  onModelChange?: (model: string) => void;
+  onModelChange?: (model: string, reason?: 'user' | 'system') => void;
 }): InkUIHandle {
   let resolveInput: ((value: string | null) => void) | null = null;
   let pendingInput: string | null = null; // Queue for inputs that arrive before waitForInput
@@ -1223,7 +1223,7 @@ export function launchInkUI(opts: {
           pendingInput = value;
         }
       }}
-      onModelChange={(model) => { opts.onModelChange?.(model); }}
+      onModelChange={(model, reason) => { opts.onModelChange?.(model, reason); }}
       onAbort={() => { abortCallback?.(); }}
       onExit={() => {
         exiting = true;
