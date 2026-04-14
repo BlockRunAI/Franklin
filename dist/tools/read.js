@@ -5,10 +5,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 /**
  * Tracks files that were only partially read (offset or limit applied).
- * Edit tool uses this to warn when editing without full context.
+ * Stores the read range so Edit tool can give smarter warnings —
+ * only warns if the edit target is near/beyond the boundary of what was read.
  * Exported so edit.ts can check and clear entries.
  */
-export const partiallyReadFiles = new Set();
+export const partiallyReadFiles = new Map();
 /**
  * Tracks files that have been read in this session — enables read-before-edit enforcement.
  * Stores the file's mtime at read time so we can detect stale writes.
@@ -49,10 +50,14 @@ async function execute(input, ctx) {
         const maxLines = limit ?? 2000;
         const endLine = Math.min(allLines.length, startLine + maxLines);
         const slice = allLines.slice(startLine, endLine);
-        // Track partial reads — file was not read from the beginning or was truncated
+        // Track partial reads — store the range so Edit can give smarter warnings
         const isPartial = startLine > 0 || endLine < allLines.length;
         if (isPartial) {
-            partiallyReadFiles.add(resolved);
+            partiallyReadFiles.set(resolved, {
+                startLine: startLine + 1, // 1-based
+                endLine,
+                totalLines: allLines.length,
+            });
         }
         else {
             // Full read — clear any stale partial flag

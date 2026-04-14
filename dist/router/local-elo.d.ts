@@ -5,7 +5,7 @@
  * Storage: ~/.blockrun/router-history.jsonl (append-only, capped 2000 records)
  * Never uploaded — purely local personalization.
  */
-export type Outcome = 'continued' | 'switched' | 'retried' | 'error' | 'max_turns';
+export type Outcome = 'continued' | 'switched' | 'retried' | 'error' | 'max_turns' | 'payment';
 /**
  * Record a model outcome for local learning.
  */
@@ -19,6 +19,7 @@ export declare function recordOutcome(category: string, model: string, outcome: 
  *   switched  → loss (-K * 1.0)
  *   retried   → loss (-K * 0.8)
  *   error     → loss (-K * 0.5)
+ *   payment   → loss (-K * 1.5) — heavy penalty, guaranteed to repeat until funded
  *   max_turns → loss (-K * 0.3)
  */
 export declare function computeLocalElo(): Map<string, Map<string, number>>;
