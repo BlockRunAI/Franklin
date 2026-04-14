@@ -93,7 +93,12 @@ export function updateSessionMeta(sessionId, meta) {
             costUsd: meta.costUsd ?? existing?.costUsd ?? 0,
             savedVsOpusUsd: meta.savedVsOpusUsd ?? existing?.savedVsOpusUsd ?? 0,
         };
-        fs.writeFileSync(metaPath(sessionId), JSON.stringify(updated, null, 2));
+        // Atomic write: tmp file + rename. Prevents corruption when parent
+        // and sub-agent update the same session meta concurrently.
+        const target = metaPath(sessionId);
+        const tmp = target + '.tmp';
+        fs.writeFileSync(tmp, JSON.stringify(updated, null, 2));
+        fs.renameSync(tmp, target);
     });
 }
 /**

@@ -137,6 +137,34 @@ function detectModelSwitch(parsed) {
 }
 // Default model - smart routing built-in
 const DEFAULT_MODEL = 'blockrun/auto';
+// Origin allowlist: requests must either have no Origin (native HTTP like Claude Code CLI)
+// or come from localhost. This prevents drive-by wallet draining by browser extensions
+// or other cross-origin local processes.
+function isAllowedOrigin(origin) {
+    if (!origin)
+        return true; // Native HTTP clients (curl, CLI) have no Origin header
+    return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin);
+}
+// Sliding-window rate limiter to prevent runaway loops draining the wallet.
+// Default 120 req/min; override via FRANKLIN_PROXY_RATE_LIMIT=<n> (0 disables).
+const RATE_LIMIT_PER_MIN = (() => {
+    const raw = process.env.FRANKLIN_PROXY_RATE_LIMIT;
+    const parsed = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(parsed) ? parsed : 120;
+})();
+const rateWindow = []; // timestamps (ms) of recent paid requests
+function withinRateLimit() {
+    if (RATE_LIMIT_PER_MIN <= 0)
+        return true;
+    const now = Date.now();
+    // Drop timestamps older than 60s
+    while (rateWindow.length && now - rateWindow[0] > 60_000)
+        rateWindow.shift();
+    if (rateWindow.length >= RATE_LIMIT_PER_MIN)
+        return false;
+    rateWindow.push(now);
+    return true;
+}
 export function createProxy(options) {
     const chain = options.chain || 'base';
     let currentModel = options.modelOverride || DEFAULT_MODEL;
@@ -162,13 +190,30 @@ export function createProxy(options) {
         return solanaInitPromise;
     };
     const server = http.createServer(async (req, res) => {
+        // Origin check: block browser extensions / cross-origin local processes
+        const origin = req.headers.origin;
+        if (!isAllowedOrigin(origin)) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `Origin ${origin} not allowed` }));
+            return;
+        }
         if (req.method === 'OPTIONS') {
             res.writeHead(200);
             res.end();
             return;
         }
+        // Rate limit paid endpoints (anything but /health and /v1/models)
+        const rawPath = req.url?.replace(/^\/api/, '') || '';
+        const isReadOnly = rawPath.startsWith('/health') || rawPath.startsWith('/v1/models');
+        if (!isReadOnly && !withinRateLimit()) {
+            res.writeHead(429, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                error: `Rate limit: ${RATE_LIMIT_PER_MIN} requests/minute. Override with FRANKLIN_PROXY_RATE_LIMIT=<n> (0 disables).`,
+            }));
+            return;
+        }
         await initSolana();
-        const requestPath = req.url?.replace(/^\/api/, '') || '';
+        const requestPath = rawPath;
         const targetUrl = `${options.apiUrl}${requestPath}`;
         let body = '';
         const requestStartTime = Date.now();
