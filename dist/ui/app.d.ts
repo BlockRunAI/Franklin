@@ -22,5 +22,5 @@ export declare function launchInkUI(opts: {
     walletBalance?: string;
     chain?: string;
     showPicker?: boolean;
-    onModelChange?: (model: string) => void;
+    onModelChange?: (model: string, reason?: 'user' | 'system') => void;
 }): InkUIHandle;
