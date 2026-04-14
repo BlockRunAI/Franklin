@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { BLOCKRUN_DIR } from '../config.js';
-import type { Learning, LearningCategory } from './types.js';
+import type { Learning, LearningCategory, Skill } from './types.js';
 
 const LEARNINGS_PATH = path.join(BLOCKRUN_DIR, 'learnings.jsonl');
 const MAX_LEARNINGS = 50;
@@ -173,4 +173,103 @@ export function formatForPrompt(learnings: Learning[]): string {
 
   if (sections.length === 0) return '';
   return '# Personal Context\nLearned from previous sessions:\n\n' + sections.join('\n\n');
+}
+
+// ─── Skills (procedural memory) ──────────────────────────────────────────
+// Stored as individual markdown files in ~/.blockrun/skills/
+// Larger than learnings, conditionally injected based on trigger matching.
+
+const SKILLS_DIR = path.join(BLOCKRUN_DIR, 'skills');
+const MAX_SKILLS_IN_PROMPT = 5;
+const MAX_SKILL_CHARS = 1500;
+
+function ensureSkillsDir() {
+  if (!fs.existsSync(SKILLS_DIR)) {
+    fs.mkdirSync(SKILLS_DIR, { recursive: true });
+  }
+}
+
+/** Load all skills from disk. */
+export function loadSkills(): Skill[] {
+  ensureSkillsDir();
+  const skills: Skill[] = [];
+  try {
+    for (const file of fs.readdirSync(SKILLS_DIR).filter(f => f.endsWith('.md'))) {
+      try {
+        const raw = fs.readFileSync(path.join(SKILLS_DIR, file), 'utf-8');
+        const skill = parseSkillFile(raw);
+        if (skill) skills.push(skill);
+      } catch { /* skip corrupt */ }
+    }
+  } catch { /* dir doesn't exist yet */ }
+  return skills;
+}
+
+function parseSkillFile(raw: string): Skill | null {
+  const m = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!m) return null;
+  const fm = m[1];
+  const name = fm.match(/^name:\s*(.+)$/m)?.[1]?.trim() || '';
+  const description = fm.match(/^description:\s*(.+)$/m)?.[1]?.trim() || '';
+  const triggersRaw = fm.match(/^triggers:\s*\[([^\]]*)\]/m)?.[1] || '';
+  const triggers = triggersRaw.split(',').map(t => t.trim()).filter(Boolean);
+  const created = fm.match(/^created:\s*(.+)$/m)?.[1]?.trim() || '';
+  const uses = parseInt(fm.match(/^uses:\s*(\d+)$/m)?.[1] || '0');
+  const source = fm.match(/^source_session:\s*(.+)$/m)?.[1]?.trim() || '';
+  if (!name) return null;
+  return { name, description, triggers, steps: m[2].trim(), created, uses, source_session: source };
+}
+
+/** Save a new skill to disk. */
+export function saveSkill(skill: Skill): void {
+  ensureSkillsDir();
+  const filename = skill.name.replace(/[^a-z0-9-]/gi, '-').toLowerCase() + '.md';
+  const fm = [
+    '---',
+    `name: ${skill.name}`,
+    `description: ${skill.description}`,
+    `triggers: [${skill.triggers.join(', ')}]`,
+    `created: ${skill.created}`,
+    `uses: ${skill.uses}`,
+    `source_session: ${skill.source_session}`,
+    '---',
+  ].join('\n');
+  fs.writeFileSync(path.join(SKILLS_DIR, filename), `${fm}\n${skill.steps}\n`);
+}
+
+/** Bump use count for a skill. */
+export function bumpSkillUse(skill: Skill): void {
+  const filename = skill.name.replace(/[^a-z0-9-]/gi, '-').toLowerCase() + '.md';
+  const fp = path.join(SKILLS_DIR, filename);
+  try {
+    const raw = fs.readFileSync(fp, 'utf-8');
+    fs.writeFileSync(fp, raw.replace(/^uses:\s*\d+$/m, `uses: ${skill.uses + 1}`));
+  } catch { /* non-critical */ }
+}
+
+/** Find skills relevant to a user message, by trigger matching. */
+export function matchSkills(input: string, skills: Skill[]): Skill[] {
+  const lower = input.toLowerCase();
+  const scored: Array<{ skill: Skill; score: number }> = [];
+  for (const s of skills) {
+    let score = 0;
+    for (const t of s.triggers) {
+      if (lower.includes(t.toLowerCase())) score += 2;
+    }
+    if (lower.includes(s.name.toLowerCase())) score += 3;
+    score += Math.min(s.uses * 0.5, 3);
+    if (score > 0) scored.push({ skill: s, score });
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, MAX_SKILLS_IN_PROMPT).map(m => m.skill);
+}
+
+/** Format matched skills for system prompt injection. */
+export function formatSkillsForPrompt(skills: Skill[]): string {
+  if (skills.length === 0) return '';
+  const parts = ['# Learned Skills\nProcedures from previous experience — use when relevant:\n'];
+  for (const s of skills) {
+    const body = s.steps.length > MAX_SKILL_CHARS ? s.steps.slice(0, MAX_SKILL_CHARS) + '\n…' : s.steps;
+    parts.push(`## ${s.name}\n*${s.description}*\n\n${body}`);
+  }
+  return parts.join('\n\n');
 }

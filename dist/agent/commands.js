@@ -202,7 +202,7 @@ const DIRECT_COMMANDS = {
                 `  **Git:** /push /pr /undo /status /diff /log /branch /stash /unstash\n` +
                 `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
                 `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /session-search /context /tasks\n` +
-                `  **Power:** /ultrathink [query] /ultraplan /noplan /dump\n` +
+                `  **Power:** /ultrathink [query] /ultraplan /noplan /moa [query] /dump\n` +
                 `  **Info:** /model /wallet /cost /tokens /learnings /brain /mcp /doctor /version /bug /help\n` +
                 `  **UI:** /clear /exit\n` +
                 (ultrathinkOn ? `\n  Ultrathink: ON\n` : '')
@@ -536,6 +536,8 @@ const ARG_COMMANDS = [
     { prefix: '/refactor ', rewrite: (a) => `Refactor: ${a}. Read the relevant code first, then make targeted changes. Explain each change.` },
     { prefix: '/scaffold ', rewrite: (a) => `Create the scaffolding/boilerplate for: ${a}. Generate the file structure and initial code. Ask me if you need clarification on requirements.` },
     { prefix: '/doc ', rewrite: (a) => `Generate documentation for ${a}. Include: purpose, API/interface description, usage examples, and important notes.` },
+    { prefix: '/moa ', rewrite: (a) => `Use the MixtureOfAgents tool to get a high-quality answer by querying multiple AI models in parallel: ${a}` },
+    { prefix: '/moa', rewrite: () => `Use the MixtureOfAgents tool. Ask me what question I want answered by multiple models.` },
 ];
 // ─── Main dispatch ────────────────────────────────────────────────────────
 /**
@@ -667,6 +669,7 @@ export async function handleSlashCommand(input, ctx) {
         else {
             const newModel = resolveModel(input.slice(7).trim());
             ctx.config.model = newModel;
+            ctx.config.baseModel = newModel; // Update recovery target so loop doesn't reset
             ctx.config.onModelChange?.(newModel);
             ctx.onEvent({ kind: 'text_delta', text: `Model → **${newModel}**\n` });
         }

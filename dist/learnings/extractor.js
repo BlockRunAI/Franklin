@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { loadLearnings, mergeLearning, saveLearnings } from './store.js';
+import { loadLearnings, mergeLearning, saveLearnings, loadSkills, saveSkill } from './store.js';
 // Free models for learning extraction — JSON extraction is simple enough.
 // Ordered by reliability: try the best free model first, fall back to others.
 const EXTRACTION_MODELS = [
@@ -242,6 +242,120 @@ async function runExtraction(condensed, sessionId, client) {
     }
     saveLearnings(existing);
 }
+// ─── Skill extraction (procedural memory) ─────────────────────────────────
+// After complex tasks, detect reusable procedures and save as skills.
+const SKILL_EXTRACTION_PROMPT = `You are analyzing a conversation where an AI agent completed a complex multi-step task. Decide if this task pattern should be saved as a reusable skill (procedure).
+
+Save a skill when:
+1. The task involved 5+ distinct steps that could be repeated
+2. The steps are generalizable (not one-off fixes for specific bugs)
+3. Future similar tasks would benefit from having the procedure documented
+
+If the task IS worth saving, output in this exact format (no markdown fences):
+{"skill":{"name":"kebab-case-name","description":"One-line description","triggers":["keyword1","keyword2"],"steps":"## Steps\\n1. First step\\n2. Second step\\n..."}}
+
+If NOT worth saving, output exactly:
+{"skill":null}
+
+Be selective — only save genuinely reusable multi-step procedures.`;
+const MIN_TOOL_CALLS_FOR_SKILL = 5;
+/**
+ * Try to extract a reusable skill from the recent work.
+ * Called from maybeMidSessionExtract when enough tool calls happened.
+ */
+export async function maybeExtractSkill(history, turnToolCalls, sessionId, client) {
+    if (turnToolCalls < MIN_TOOL_CALLS_FOR_SKILL)
+        return;
+    // Condense recent history with tool details (skills need tool context)
+    const parts = [];
+    let chars = 0;
+    const CAP = 6000;
+    for (const msg of history.slice(-20)) {
+        if (chars >= CAP)
+            break;
+        if (typeof msg.content === 'string') {
+            const line = `${msg.role}: ${msg.content.slice(0, 300)}`;
+            parts.push(line);
+            chars += line.length;
+        }
+        else if (Array.isArray(msg.content)) {
+            for (const p of msg.content) {
+                if (chars >= CAP)
+                    break;
+                if (p.type === 'text') {
+                    const line = `${msg.role}: ${p.text.slice(0, 200)}`;
+                    parts.push(line);
+                    chars += line.length;
+                }
+                else if (p.type === 'tool_use') {
+                    const line = `tool: ${p.name}(${JSON.stringify(p.input).slice(0, 150)})`;
+                    parts.push(line);
+                    chars += line.length;
+                }
+                else if (p.type === 'tool_result') {
+                    const text = typeof p.content === 'string' ? p.content : '';
+                    const line = `result: ${text.slice(0, 100)}`;
+                    parts.push(line);
+                    chars += line.length;
+                }
+            }
+        }
+    }
+    const condensed = parts.join('\n\n');
+    if (condensed.length < 200)
+        return;
+    try {
+        let text = '';
+        for (const model of EXTRACTION_MODELS) {
+            try {
+                const response = await client.complete({
+                    model,
+                    messages: [{ role: 'user', content: condensed }],
+                    system: SKILL_EXTRACTION_PROMPT,
+                    max_tokens: 1500,
+                    temperature: 0.2,
+                });
+                text = response.content
+                    .filter((p) => p.type === 'text')
+                    .map((p) => p.text)
+                    .join('');
+                break;
+            }
+            catch {
+                continue;
+            }
+        }
+        if (!text)
+            return;
+        // Parse JSON
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start === -1 || end === -1)
+            return;
+        const parsed = JSON.parse(text.slice(start, end + 1));
+        if (!parsed.skill)
+            return;
+        const { name, description, triggers, steps } = parsed.skill;
+        if (!name || !description || !steps)
+            return;
+        // Check for duplicate skills
+        const existing = loadSkills();
+        if (existing.some(s => s.name === name))
+            return;
+        saveSkill({
+            name,
+            description,
+            triggers: Array.isArray(triggers) ? triggers : [],
+            steps,
+            created: new Date().toISOString().split('T')[0],
+            uses: 0,
+            source_session: sessionId,
+        });
+    }
+    catch {
+        // Skill extraction is best-effort
+    }
+}
 const midSessionState = {
     lastExtractionTokens: 0,
     lastExtractionToolCalls: 0,
@@ -289,7 +403,9 @@ export function maybeMidSessionExtract(history, estimatedTokens, totalToolCalls,
     const condensed = condenseHistory(history);
     if (condensed.length < 100)
         return;
-    // Run in background — errors are silently swallowed
+    // Run learnings + skill extraction in background — errors are silently swallowed
     runExtraction(condensed, `${sessionId}:mid-${midSessionState.extractionCount}`, client)
+        .catch(() => { });
+    maybeExtractSkill(history, totalToolCalls, sessionId, client)
         .catch(() => { });
 }
