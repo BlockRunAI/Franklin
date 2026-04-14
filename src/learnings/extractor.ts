@@ -11,19 +11,21 @@ import type { Dialogue, ContentPart } from '../agent/types.js';
 import type { ExtractionResult, LearningCategory } from './types.js';
 import { loadLearnings, mergeLearning, saveLearnings } from './store.js';
 
-// Cheapest models that reliably output structured JSON
+// Free models for learning extraction — JSON extraction is simple enough.
+// Ordered by reliability: try the best free model first, fall back to others.
 const EXTRACTION_MODELS = [
-  'google/gemini-2.5-flash-lite',
-  'google/gemini-2.5-flash',
-  'nvidia/nemotron-super-49b',
+  'nvidia/nemotron-ultra-253b',   // Best free model for structured output
+  'nvidia/qwen3-coder-480b',     // Strong at JSON tasks
+  'nvidia/devstral-2-123b',      // Fallback
 ];
 
 const VALID_CATEGORIES = new Set<LearningCategory>([
   'language', 'model_preference', 'tool_pattern', 'coding_style',
-  'communication', 'domain', 'correction', 'workflow', 'other',
+  'communication', 'domain', 'correction', 'negative', 'project_context',
+  'workflow', 'other',
 ]);
 
-const EXTRACTION_PROMPT = `You are analyzing a conversation between a user and an AI coding agent. Extract user preferences and behavioral patterns that would help personalize future interactions.
+const EXTRACTION_PROMPT = `You are analyzing a conversation between a user and an AI coding agent. Extract user preferences, behavioral patterns, and project knowledge that would help personalize future interactions.
 
 Analyze for:
 1. Language — what language does the user write in? (English, Chinese, mixed?)
@@ -32,16 +34,21 @@ Analyze for:
 4. Communication — are they terse or verbose? Do they want explanations or just code?
 5. Domain — what tech stack, frameworks, or project type?
 6. Corrections — did they repeatedly correct the same agent behavior?
-7. Workflow — do they prefer short tasks or long planning sessions?
+7. **Negative signals** — did the user say "don't do X", "stop doing Y", "never Z"? These are HIGH PRIORITY (confidence 0.9+). Use category "negative".
+8. **Project context** — architecture decisions, key file locations, deployment patterns, team conventions. Use category "project_context".
+9. Workflow — do they prefer short tasks or long planning sessions?
 
 Rules:
 - ONLY extract signals clearly supported by evidence in the conversation.
 - Do NOT speculate. If evidence is weak, set confidence below 0.5.
+- **Negative signals get HIGH confidence** (0.9+) — when a user says "don't" or "stop" or corrects the agent, that's a strong signal.
+- **Project context gets MEDIUM confidence** (0.7) — architecture/tech decisions are usually deliberate.
 - If the conversation is too short or generic, return an empty array.
 - Each learning should be one clear, actionable sentence.
+- For negative learnings, start with "NEVER" or "Do NOT" to make the instruction clear.
 
 Respond with ONLY a JSON object (no markdown fences, no commentary):
-{"learnings":[{"learning":"...","category":"language|model_preference|tool_pattern|coding_style|communication|domain|correction|workflow|other","confidence":0.5}]}`;
+{"learnings":[{"learning":"...","category":"language|model_preference|tool_pattern|coding_style|communication|domain|correction|negative|project_context|workflow|other","confidence":0.5}]}`;
 
 /**
  * Condense session history into a compact text for extraction.
@@ -217,6 +224,10 @@ export async function extractLearnings(
   const condensed = condenseHistory(history);
   if (condensed.length < 100) return; // Too little content
 
+  await runExtraction(condensed, sessionId, client);
+}
+
+async function runExtraction(condensed: string, sessionId: string, client: ModelClient): Promise<void> {
   // Try each model until one succeeds
   let result: ExtractionResult | null = null;
   for (const model of EXTRACTION_MODELS) {
@@ -250,4 +261,77 @@ export async function extractLearnings(
     });
   }
   saveLearnings(existing);
+}
+
+// ─── Mid-session extraction (like Claude Code's SessionMemory) ──────────
+
+/**
+ * Tracks state for mid-session extraction so it only runs when there's
+ * enough new conversation to analyze.
+ */
+interface MidSessionState {
+  lastExtractionTokens: number;
+  lastExtractionToolCalls: number;
+  extractionCount: number;
+}
+
+const midSessionState: MidSessionState = {
+  lastExtractionTokens: 0,
+  lastExtractionToolCalls: 0,
+  extractionCount: 0,
+};
+
+/** Token threshold before first mid-session extraction */
+const MID_SESSION_INIT_THRESHOLD = 30_000;
+/** Token growth since last extraction to trigger another */
+const MID_SESSION_UPDATE_THRESHOLD = 25_000;
+/** Minimum tool calls since last extraction */
+const MID_SESSION_TOOL_CALLS_THRESHOLD = 5;
+/** Max mid-session extractions per session (don't spam) */
+const MID_SESSION_MAX_EXTRACTIONS = 3;
+
+/**
+ * Check if mid-session extraction should run, and if so, run it in background.
+ * Called from the agent loop after tool execution completes.
+ *
+ * Triggers when:
+ * 1. Token count exceeds init threshold (first extraction) OR update threshold (subsequent)
+ * 2. AND enough tool calls have happened since last extraction
+ * 3. AND we haven't hit the per-session cap
+ *
+ * Inspired by Claude Code's SessionMemory which runs a background subagent
+ * to extract conversation notes periodically.
+ */
+export function maybeMidSessionExtract(
+  history: Dialogue[],
+  estimatedTokens: number,
+  totalToolCalls: number,
+  sessionId: string,
+  client: ModelClient,
+): void {
+  // Cap reached — stop extracting
+  if (midSessionState.extractionCount >= MID_SESSION_MAX_EXTRACTIONS) return;
+
+  // Check token threshold
+  const tokenGrowth = estimatedTokens - midSessionState.lastExtractionTokens;
+  const threshold = midSessionState.extractionCount === 0
+    ? MID_SESSION_INIT_THRESHOLD
+    : MID_SESSION_UPDATE_THRESHOLD;
+  if (tokenGrowth < threshold) return;
+
+  // Check tool calls threshold
+  const toolCallGrowth = totalToolCalls - midSessionState.lastExtractionToolCalls;
+  if (toolCallGrowth < MID_SESSION_TOOL_CALLS_THRESHOLD) return;
+
+  // Trigger extraction — fire and forget (never blocks the conversation)
+  midSessionState.lastExtractionTokens = estimatedTokens;
+  midSessionState.lastExtractionToolCalls = totalToolCalls;
+  midSessionState.extractionCount++;
+
+  const condensed = condenseHistory(history);
+  if (condensed.length < 100) return;
+
+  // Run in background — errors are silently swallowed
+  runExtraction(condensed, `${sessionId}:mid-${midSessionState.extractionCount}`, client)
+    .catch(() => { /* best-effort */ });
 }

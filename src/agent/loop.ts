@@ -16,6 +16,7 @@ import { SessionToolGuard } from './tool-guard.js';
 import { recordUsage } from '../stats/tracker.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
+import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import type { Tier, RoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
@@ -820,6 +821,11 @@ export async function interactiveSession(
 
       // Refresh activity timestamp after tool execution
       lastSessionActivity = Date.now();
+
+      // Mid-session learning extraction (like Claude Code's SessionMemory)
+      // Runs in background — never blocks the conversation
+      const { estimated: currentTokens } = getAnchoredTokenCount(history);
+      maybeMidSessionExtract(history, currentTokens, turnToolCalls, sessionId, client);
 
       // Append outcomes (with guardrail injections)
       const outcomeContent: UserContentPart[] = results.map(

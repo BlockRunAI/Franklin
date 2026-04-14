@@ -14,7 +14,7 @@ export interface Learning {
     last_confirmed: number;
     times_confirmed: number;
 }
-export type LearningCategory = 'language' | 'model_preference' | 'tool_pattern' | 'coding_style' | 'communication' | 'domain' | 'correction' | 'workflow' | 'other';
+export type LearningCategory = 'language' | 'model_preference' | 'tool_pattern' | 'coding_style' | 'communication' | 'domain' | 'correction' | 'negative' | 'project_context' | 'workflow' | 'other';
 export interface ExtractionResult {
     learnings: Array<{
         learning: string;
