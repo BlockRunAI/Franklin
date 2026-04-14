@@ -508,7 +508,7 @@ function RunCodeApp({
     // Show user message in scrollback so the conversation is readable
     setCommittedResponses(rs => [...rs, {
       key: `user-${Date.now()}`,
-      text: chalk.cyan('❯') + ' ' + trimmed,
+      text: chalk.bold.cyan('❯ ') + chalk.bold(trimmed),
       tokens: { input: 0, output: 0, calls: 0 },
       cost: 0,
     }]);
@@ -544,7 +544,10 @@ function RunCodeApp({
   useEffect(() => {
     const cleanup = mouse.enable();
 
-    const handleClick = (_event: TermMouseEvent) => {
+    const handleClick = (event: TermMouseEvent) => {
+      // Ignore clicks in the input area (bottom 4 rows of the terminal)
+      const termRows = process.stdout.rows ?? 24;
+      if (event.row >= termRows - 4) return;
       // Click: toggle expandable tool
       setExpandableTool(prev => prev ? { ...prev, expanded: !prev.expanded } : null);
     };
@@ -896,7 +899,13 @@ function RunCodeApp({
                   <Text dimColor>{'─'.repeat(60)}</Text>
                 </Box>
               )}
-              <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
+              {/* User messages get a left border bar + top margin for visual separation */}
+              {isUserMsg && (
+                <Box marginTop={1}/>
+              )}
+              <Box paddingLeft={isUserMsg ? 0 : 2}>
+                <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
+              </Box>
               {(r.tokens.input > 0 || r.tokens.output > 0) && (
                 <Box marginLeft={1} marginBottom={1}>
                   <Text dimColor>
