@@ -60,8 +60,13 @@ export function discoverPluginManifests() {
                 seen.add(manifest.id);
                 found.push({ manifest, dir: pluginDir });
             }
-            catch {
-                // Invalid manifest — skip
+            catch (err) {
+                // Invalid manifest — surface the reason so users can fix it instead
+                // of wondering why their plugin silently isn't loading.
+                try {
+                    process.stderr.write(`[franklin] plugin skipped (${pluginDir}): ${err.message}\n`);
+                }
+                catch { /* stderr gone */ }
             }
         }
     }

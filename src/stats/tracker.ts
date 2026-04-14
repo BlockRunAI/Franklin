@@ -138,8 +138,10 @@ export function saveStats(stats: Stats): void {
       stats.history = stats.history.slice(-1000);
       fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
     });
-  } catch {
-    /* ignore write errors */
+  } catch (err) {
+    // Surface write failures (disk full, permission) to stderr so users
+    // aren't silently losing usage data.
+    try { process.stderr.write(`[franklin-stats] flush failed: ${(err as Error).message}\n`); } catch { /* stderr gone */ }
   }
 }
 
