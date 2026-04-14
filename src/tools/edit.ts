@@ -113,7 +113,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       const matchedLines: { num: number; text: string }[] = [];
 
       if (searchTerms.length > 0) {
-        for (let i = 0; i < lines.length && matchedLines.length < 5; i++) {
+        for (let i = 0; i < lines.length && matchedLines.length < 8; i++) {
           if (searchTerms.some(term => lines[i].includes(term))) {
             matchedLines.push({ num: i + 1, text: lines[i] });
           }
@@ -122,11 +122,17 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
       let hint: string;
       if (matchedLines.length > 0) {
-        const preview = matchedLines.map(m => `${m.num}\t${m.text}`).join('\n');
-        hint = `\n\nSimilar lines found:\n${preview}\n\nCheck for whitespace or formatting differences.`;
+        // Show matched lines with 1 line of context above for better orientation
+        const preview = matchedLines.map(m => {
+          const above = m.num > 1 ? `  ${m.num - 1}\t${lines[m.num - 2].slice(0, 80)}\n` : '';
+          return `${above}→ ${m.num}\t${m.text}`;
+        }).join('\n');
+        hint = `\n\nLines containing fragments of your old_string (${matchedLines.length} found):\n${preview}\n\nThe old_string must match EXACTLY — check indentation, quotes, and whitespace. Use Read to see the full region.`;
       } else {
-        const preview = lines.slice(0, 10).map((l, i) => `${i + 1}\t${l}`).join('\n');
-        hint = `\n\nFirst 10 lines of file:\n${preview}`;
+        // No matches — show the middle of the file (more useful than first 10 lines)
+        const mid = Math.max(0, Math.floor(lines.length / 2) - 5);
+        const preview = lines.slice(mid, mid + 12).map((l, i) => `${mid + i + 1}\t${l}`).join('\n');
+        hint = `\n\nNo matching fragments found in ${lines.length}-line file. Lines ${mid + 1}-${mid + 12}:\n${preview}\n\nUse Read to find the correct text.`;
       }
 
       return {

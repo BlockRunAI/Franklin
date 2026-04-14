@@ -732,18 +732,31 @@ export async function interactiveSession(
             console.error(`[franklin] Max tokens hit — escalating to ${maxTokensOverride}`);
           }
         }
-        // Append what we got + a continuation prompt (text already streamed)
+        // Append what we got + a continuation prompt with last-line anchor
         const partialAssistant = { role: 'assistant' as const, content: responseParts };
+
+        // Extract last line of output to give the model a concrete resume point
+        const textParts = responseParts.filter(p => p.type === 'text');
+        const lastTextBlock = textParts[textParts.length - 1];
+        let lastLineAnchor = '';
+        if (lastTextBlock && lastTextBlock.type === 'text') {
+          const lastLine = lastTextBlock.text.split('\n').filter(l => l.trim()).pop() ?? '';
+          if (lastLine.length > 10) {
+            lastLineAnchor = `\nYour output ended with: "${lastLine.slice(0, 120)}"\nResume immediately after that point.`;
+          }
+        }
+
         const continuationPrompt = {
           role: 'user',
           content: [
-            'Output token limit hit. Continue with these rules:',
-            '1. Resume directly — no apology, no recap of what you already said. Pick up mid-sentence if that is where the cut happened.',
-            '2. Do NOT repeat any text or code that was already output above.',
-            '3. Break remaining work into smaller pieces — use multiple tool calls if needed instead of one large output.',
-            '4. Skip extended reasoning for the continuation — focus on executing.',
-            '5. If you were in the middle of outputting code, finish the code block first.',
-          ].join('\n'),
+            'Output token limit hit. Continue:',
+            '1. Resume exactly where you stopped — your prior output is visible above.',
+            '2. Do NOT repeat, summarize, or recap anything already output.',
+            '3. If mid-code-block, continue the same block without restarting.',
+            '4. Prefer tool calls (Write, Edit) over large text output — they are more token-efficient.',
+            '5. Be concise — skip explanations, focus on completing the work.',
+            lastLineAnchor,
+          ].filter(l => l).join('\n'),
         } as const;
         history.push(partialAssistant);
         persistSessionMessage(partialAssistant);
