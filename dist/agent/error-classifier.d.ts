@@ -6,10 +6,10 @@
  * - Auth errors (401) get special handling (token refresh, not retry)
  * - EPIPE/connection reset handled as network errors (retryable)
  */
-export type AgentErrorCategory = 'rate_limit' | 'payment' | 'network' | 'timeout' | 'context_limit' | 'overloaded' | 'server' | 'auth' | 'unknown';
+export type AgentErrorCategory = 'rate_limit' | 'payment' | 'network' | 'timeout' | 'context_limit' | 'overloaded' | 'server' | 'auth' | 'schema' | 'unknown';
 export interface AgentErrorInfo {
     category: AgentErrorCategory;
-    label: 'RateLimit' | 'Payment' | 'Network' | 'Timeout' | 'Context' | 'Overloaded' | 'Server' | 'Auth' | 'Unknown';
+    label: 'RateLimit' | 'Payment' | 'Network' | 'Timeout' | 'Context' | 'Overloaded' | 'Server' | 'Auth' | 'Schema' | 'Unknown';
     isTransient: boolean;
     /** Max retries for this error type (overrides default). undefined = use default. */
     maxRetries?: number;
