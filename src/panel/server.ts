@@ -37,6 +37,7 @@ export function createPanelServer(port: number): http.Server {
   const html = getHTML();
 
   const server = http.createServer(async (req, res) => {
+    try {
     const url = new URL(req.url || '/', `http://localhost:${port}`);
     const p = url.pathname;
 
@@ -169,6 +170,20 @@ export function createPanelServer(port: number): http.Server {
     } catch (err) {
       json(res, { error: (err as Error).message }, 500);
     }
+    } catch (err) {
+      // Outer safety net — logs but never crashes the server
+      try {
+        if (!res.headersSent) json(res, { error: (err as Error).message }, 500);
+        else res.end();
+      } catch { /* socket already gone */ }
+      console.error('[panel] request error:', (err as Error).message);
+    }
+  });
+
+  // Swallow socket errors (client disconnects, etc.) so they don't crash the process
+  server.on('clientError', (err, socket) => {
+    try { socket.destroy(); } catch { /* already closed */ }
+    console.error('[panel] client error:', err.message);
   });
 
   // Watch stats file for changes → push to SSE clients
