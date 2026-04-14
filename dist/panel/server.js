@@ -36,130 +36,151 @@ function broadcast(data) {
 export function createPanelServer(port) {
     const html = getHTML();
     const server = http.createServer(async (req, res) => {
-        const url = new URL(req.url || '/', `http://localhost:${port}`);
-        const p = url.pathname;
-        // ─── HTML ──
-        if (p === '/') {
-            res.writeHead(200, {
-                'Content-Type': 'text/html; charset=utf-8',
-                'Cache-Control': 'no-store, no-cache, must-revalidate',
-                'Pragma': 'no-cache',
-            });
-            res.end(html);
-            return;
-        }
-        // ─── Static assets ──
-        if (p.startsWith('/assets/') && p.endsWith('.jpg')) {
-            const filename = path.basename(p);
-            const assetsDir = path.join(path.dirname(path.dirname(new URL(import.meta.url).pathname)), '..', 'assets');
-            const imgPath = path.join(assetsDir, filename);
-            try {
-                const img = fs.readFileSync(imgPath);
+        try {
+            const url = new URL(req.url || '/', `http://localhost:${port}`);
+            const p = url.pathname;
+            // ─── HTML ──
+            if (p === '/') {
                 res.writeHead(200, {
-                    'Content-Type': 'image/jpeg',
-                    'Cache-Control': 'public, max-age=86400',
+                    'Content-Type': 'text/html; charset=utf-8',
+                    'Cache-Control': 'no-store, no-cache, must-revalidate',
+                    'Pragma': 'no-cache',
                 });
-                res.end(img);
+                res.end(html);
+                return;
             }
-            catch {
+            // ─── Static assets ──
+            if (p.startsWith('/assets/') && p.endsWith('.jpg')) {
+                const filename = path.basename(p);
+                const assetsDir = path.join(path.dirname(path.dirname(new URL(import.meta.url).pathname)), '..', 'assets');
+                const imgPath = path.join(assetsDir, filename);
+                try {
+                    const img = fs.readFileSync(imgPath);
+                    res.writeHead(200, {
+                        'Content-Type': 'image/jpeg',
+                        'Cache-Control': 'public, max-age=86400',
+                    });
+                    res.end(img);
+                }
+                catch {
+                    res.writeHead(404);
+                    res.end('Not found');
+                }
+                return;
+            }
+            // ─── SSE ──
+            if (p === '/api/events') {
+                res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                    'Access-Control-Allow-Origin': '*',
+                });
+                res.write('data: {"type":"connected"}\n\n');
+                sseClients.add(res);
+                req.on('close', () => sseClients.delete(res));
+                return;
+            }
+            // ─── API ──
+            try {
+                if (p === '/api/stats') {
+                    const summary = getStatsSummary();
+                    json(res, {
+                        totalRequests: summary.stats.totalRequests,
+                        totalCostUsd: summary.stats.totalCostUsd,
+                        opusCost: summary.opusCost,
+                        saved: summary.saved,
+                        savedPct: summary.savedPct,
+                        avgCostPerRequest: summary.avgCostPerRequest,
+                        period: summary.period,
+                        byModel: summary.stats.byModel,
+                    });
+                    return;
+                }
+                if (p === '/api/insights') {
+                    const days = parseInt(url.searchParams.get('days') || '30', 10);
+                    const report = generateInsights(days);
+                    json(res, report);
+                    return;
+                }
+                if (p === '/api/sessions') {
+                    const sessions = listSessions();
+                    json(res, sessions);
+                    return;
+                }
+                if (p.startsWith('/api/sessions/search')) {
+                    const q = url.searchParams.get('q') || '';
+                    const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+                    const results = searchSessions(q, { limit });
+                    json(res, results);
+                    return;
+                }
+                if (p.startsWith('/api/sessions/')) {
+                    const id = decodeURIComponent(p.slice('/api/sessions/'.length));
+                    const history = loadSessionHistory(id);
+                    json(res, history);
+                    return;
+                }
+                if (p === '/api/wallet') {
+                    try {
+                        const chain = loadChain();
+                        let address = '', balance = 0;
+                        if (chain === 'solana') {
+                            const { setupAgentSolanaWallet } = await import('@blockrun/llm');
+                            const client = await setupAgentSolanaWallet({ silent: true });
+                            address = await client.getWalletAddress();
+                            balance = await client.getBalance();
+                        }
+                        else {
+                            const { setupAgentWallet } = await import('@blockrun/llm');
+                            const client = setupAgentWallet({ silent: true });
+                            address = client.getWalletAddress();
+                            balance = await client.getBalance();
+                        }
+                        json(res, { address, balance, chain });
+                    }
+                    catch {
+                        json(res, { address: 'not set', balance: 0, chain: loadChain() });
+                    }
+                    return;
+                }
+                if (p === '/api/social') {
+                    const stats = getSocialStats();
+                    json(res, stats);
+                    return;
+                }
+                if (p === '/api/learnings') {
+                    const learnings = loadLearnings();
+                    json(res, learnings);
+                    return;
+                }
+                // 404
                 res.writeHead(404);
                 res.end('Not found');
             }
-            return;
-        }
-        // ─── SSE ──
-        if (p === '/api/events') {
-            res.writeHead(200, {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-                'Access-Control-Allow-Origin': '*',
-            });
-            res.write('data: {"type":"connected"}\n\n');
-            sseClients.add(res);
-            req.on('close', () => sseClients.delete(res));
-            return;
-        }
-        // ─── API ──
-        try {
-            if (p === '/api/stats') {
-                const summary = getStatsSummary();
-                json(res, {
-                    totalRequests: summary.stats.totalRequests,
-                    totalCostUsd: summary.stats.totalCostUsd,
-                    opusCost: summary.opusCost,
-                    saved: summary.saved,
-                    savedPct: summary.savedPct,
-                    avgCostPerRequest: summary.avgCostPerRequest,
-                    period: summary.period,
-                    byModel: summary.stats.byModel,
-                });
-                return;
+            catch (err) {
+                json(res, { error: err.message }, 500);
             }
-            if (p === '/api/insights') {
-                const days = parseInt(url.searchParams.get('days') || '30', 10);
-                const report = generateInsights(days);
-                json(res, report);
-                return;
-            }
-            if (p === '/api/sessions') {
-                const sessions = listSessions();
-                json(res, sessions);
-                return;
-            }
-            if (p.startsWith('/api/sessions/search')) {
-                const q = url.searchParams.get('q') || '';
-                const limit = parseInt(url.searchParams.get('limit') || '20', 10);
-                const results = searchSessions(q, { limit });
-                json(res, results);
-                return;
-            }
-            if (p.startsWith('/api/sessions/')) {
-                const id = decodeURIComponent(p.slice('/api/sessions/'.length));
-                const history = loadSessionHistory(id);
-                json(res, history);
-                return;
-            }
-            if (p === '/api/wallet') {
-                try {
-                    const chain = loadChain();
-                    let address = '', balance = 0;
-                    if (chain === 'solana') {
-                        const { setupAgentSolanaWallet } = await import('@blockrun/llm');
-                        const client = await setupAgentSolanaWallet({ silent: true });
-                        address = await client.getWalletAddress();
-                        balance = await client.getBalance();
-                    }
-                    else {
-                        const { setupAgentWallet } = await import('@blockrun/llm');
-                        const client = setupAgentWallet({ silent: true });
-                        address = client.getWalletAddress();
-                        balance = await client.getBalance();
-                    }
-                    json(res, { address, balance, chain });
-                }
-                catch {
-                    json(res, { address: 'not set', balance: 0, chain: loadChain() });
-                }
-                return;
-            }
-            if (p === '/api/social') {
-                const stats = getSocialStats();
-                json(res, stats);
-                return;
-            }
-            if (p === '/api/learnings') {
-                const learnings = loadLearnings();
-                json(res, learnings);
-                return;
-            }
-            // 404
-            res.writeHead(404);
-            res.end('Not found');
         }
         catch (err) {
-            json(res, { error: err.message }, 500);
+            // Outer safety net — logs but never crashes the server
+            try {
+                if (!res.headersSent)
+                    json(res, { error: err.message }, 500);
+                else
+                    res.end();
+            }
+            catch { /* socket already gone */ }
+            console.error('[panel] request error:', err.message);
         }
+    });
+    // Swallow socket errors (client disconnects, etc.) so they don't crash the process
+    server.on('clientError', (err, socket) => {
+        try {
+            socket.destroy();
+        }
+        catch { /* already closed */ }
+        console.error('[panel] client error:', err.message);
     });
     // Watch stats file for changes → push to SSE clients
     const statsFile = fs.existsSync(path.join(BLOCKRUN_DIR, 'franklin-stats.json'))
