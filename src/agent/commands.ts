@@ -1,5 +1,5 @@
 /**
- * Slash command registry for runcode.
+ * Slash command registry for Franklin.
  * Extracted from loop.ts for maintainability.
  *
  * Two types of commands:

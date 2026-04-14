@@ -1,5 +1,5 @@
 /**
- * Fallback chain for runcode
+ * Fallback chain for Franklin
  * Automatically switches to backup models when primary fails (429, 5xx, etc.)
  */
 
@@ -132,7 +132,7 @@ export async function fetchWithFallback(
       if (nextModel && onFallback) {
         const errMsg = err instanceof Error ? err.message : 'Network error';
         onFallback(model, 0, nextModel);
-        appendLog(`[runcode] [fallback] ${model} network error: ${errMsg}`);
+        appendLog(`[franklin] [fallback] ${model} network error: ${errMsg}`);
       }
 
       if (i < config.chain.length - 1) {

@@ -1,5 +1,5 @@
 /**
- * LLM Client for runcode
+ * LLM Client for Franklin
  * Calls BlockRun API directly with x402 payment handling and streaming.
  * Original implementation — not derived from any existing codebase.
  */
@@ -174,7 +174,7 @@ export class ModelClient {
             headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
         }
         if (this.debug) {
-            console.error(`[runcode] POST ${endpoint} model=${request.model}`);
+            console.error(`[franklin] POST ${endpoint} model=${request.model}`);
         }
         let response = await fetch(endpoint, {
             method: 'POST',
@@ -185,7 +185,7 @@ export class ModelClient {
         // Handle x402 payment
         if (response.status === 402) {
             if (this.debug)
-                console.error('[runcode] Payment required — signing...');
+                console.error('[franklin] Payment required — signing...');
             const paymentHeader = await this.signPayment(response);
             if (!paymentHeader) {
                 yield { kind: 'error', payload: { message: 'Payment signing failed' } };
@@ -277,7 +277,7 @@ export class ModelClient {
                         catch (parseErr) {
                             // Log malformed JSON instead of silently defaulting to {}
                             if (this.debug) {
-                                console.error(`[runcode] Malformed tool input JSON for ${currentToolName}: ${parseErr.message}`);
+                                console.error(`[franklin] Malformed tool input JSON for ${currentToolName}: ${parseErr.message}`);
                             }
                         }
                         const toolInvocation = {
@@ -356,13 +356,13 @@ export class ModelClient {
         catch (err) {
             const msg = err.message || '';
             if (msg.includes('insufficient') || msg.includes('balance')) {
-                console.error(`[runcode] Insufficient USDC balance. Run 'runcode balance' to check.`);
+                console.error(`[franklin] Insufficient USDC balance. Run 'franklin balance' to check.`);
             }
             else if (this.debug) {
-                console.error('[runcode] Payment error:', msg);
+                console.error('[franklin] Payment error:', msg);
             }
             else {
-                console.error(`[runcode] Payment failed: ${msg.slice(0, 100)}`);
+                console.error(`[franklin] Payment failed: ${msg.slice(0, 100)}`);
             }
             return null;
         }
@@ -449,7 +449,7 @@ export class ModelClient {
                 // Safety: if buffer grows too large without newlines, something is wrong
                 if (buffer.length > MAX_BUFFER) {
                     if (this.debug) {
-                        console.error(`[runcode] SSE buffer overflow (${(buffer.length / 1024).toFixed(0)}KB) — truncating to prevent OOM`);
+                        console.error(`[franklin] SSE buffer overflow (${(buffer.length / 1024).toFixed(0)}KB) — truncating to prevent OOM`);
                     }
                     buffer = buffer.slice(-MAX_BUFFER / 2);
                 }

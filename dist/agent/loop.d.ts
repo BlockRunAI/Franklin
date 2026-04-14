@@ -1,7 +1,6 @@
 /**
- * runcode Agent Loop
+ * Franklin Agent Loop
  * The core reasoning-action cycle: prompt → model → extract capabilities → execute → repeat.
- * Original implementation with different architecture from any reference codebase.
  */
 import type { AgentConfig, Dialogue, StreamEvent } from './types.js';
 /**

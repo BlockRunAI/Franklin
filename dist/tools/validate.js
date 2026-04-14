@@ -23,7 +23,7 @@ export function validateToolDescriptions(tools) {
         if (desc.length < 20) {
             issues.push({ toolName: name, issue: `Description too short (${desc.length} chars) — LLM may not understand when to use this tool`, severity: 'warning' });
         }
-        if (desc.length > 500) {
+        if (desc.length > 3000) {
             issues.push({ toolName: name, issue: `Description too long (${desc.length} chars) — wastes context window`, severity: 'warning' });
         }
         // Blocker patterns — phrases that make the LLM think the tool won't work

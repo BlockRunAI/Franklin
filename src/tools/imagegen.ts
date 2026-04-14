@@ -186,7 +186,7 @@ async function signPayment(
       return { 'PAYMENT-SIGNATURE': payload };
     }
   } catch (err) {
-    console.error(`[runcode] Image payment error: ${(err as Error).message}`);
+    console.error(`[franklin] Image payment error: ${(err as Error).message}`);
     return null;
   }
 }

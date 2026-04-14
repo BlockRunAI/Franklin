@@ -143,12 +143,22 @@ async function execute(input, ctx) {
 export const globCapability = {
     spec: {
         name: 'Glob',
-        description: 'Find files by glob pattern (e.g. \'**/*.ts\'). Returns up to 200 paths sorted by modification time. Skips node_modules/.git. Use this instead of find/ls in Bash. Use Grep to search file contents.',
+        description: `Fast file pattern matching tool that works with any codebase size.
+
+Usage:
+- Supports glob patterns like "**/*.js" or "src/**/*.ts"
+- Returns matching file paths sorted by modification time (most recent first)
+- Use this when you need to find files by name patterns
+- Skips node_modules, .git, __pycache__ automatically
+- Returns up to 200 results
+- When doing an open-ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead
+
+IMPORTANT: Always use Glob instead of find or ls via Bash.`,
         input_schema: {
             type: 'object',
             properties: {
-                pattern: { type: 'string', description: 'Glob pattern to match files (e.g. "**/*.ts")' },
-                path: { type: 'string', description: 'Directory to search in. Defaults to working directory.' },
+                pattern: { type: 'string', description: 'The glob pattern to match files against (e.g. "**/*.ts", "src/**/*.tsx")' },
+                path: { type: 'string', description: 'The directory to search in. Defaults to working directory.' },
             },
             required: ['pattern'],
         },

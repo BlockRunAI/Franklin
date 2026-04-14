@@ -3,7 +3,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { partiallyReadFiles } from './read.js';
+import { partiallyReadFiles, fileReadTracker } from './read.js';
 /**
  * Normalize curly/smart quotes to straight quotes.
  * Claude Code does this to handle API-sanitized strings and editor paste artifacts.
@@ -28,6 +28,25 @@ async function execute(input, ctx) {
         return { output: 'Error: old_string and new_string are identical', isError: true };
     }
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.workingDir, filePath);
+    // Enforce read-before-edit: the model must Read the file before editing it
+    const readRecord = fileReadTracker.get(resolved);
+    if (!readRecord) {
+        return {
+            output: `Error: you must Read this file before editing it. Use Read to understand the current content first.\nFile: ${resolved}`,
+            isError: true,
+        };
+    }
+    // Check if the file was modified since it was last read (stale write detection)
+    try {
+        const currentStat = fs.statSync(resolved);
+        if (currentStat.mtimeMs !== readRecord.mtimeMs) {
+            return {
+                output: `Warning: ${resolved} has been modified since you last read it. Read the file again to see the current content before editing.`,
+                isError: true,
+            };
+        }
+    }
+    catch { /* file may have been deleted — will be caught below */ }
     // Warn if the file was only partially read — editing without full context risks mistakes
     const isPartial = partiallyReadFiles.has(resolved);
     try {
@@ -104,6 +123,9 @@ async function execute(input, ctx) {
         fs.writeFileSync(resolved, updated, 'utf-8');
         // File has been modified — remove from partial-read tracking so next read is fresh
         partiallyReadFiles.delete(resolved);
+        // Update read tracker mtime so subsequent edits don't trigger stale-write detection
+        const newStat = fs.statSync(resolved);
+        fileReadTracker.set(resolved, { mtimeMs: newStat.mtimeMs, readAt: Date.now() });
         // Build a concise diff preview
         const oldLines = effectiveOldStr.split('\n');
         const newLines = newStr.split('\n');
@@ -131,14 +153,24 @@ async function execute(input, ctx) {
 export const editCapability = {
     spec: {
         name: 'Edit',
-        description: 'Replace an exact string in a file. old_string must appear exactly once unless replace_all=true. Preferred over Write for modifying existing files — sends only the diff. Always Read a file before editing it.',
+        description: `Perform exact string replacements in files.
+
+Usage:
+- You MUST use Read at least once before editing. This tool will error if you attempt an edit without reading the file first.
+- When editing text from Read output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that is the actual file content to match.
+- ALWAYS prefer editing existing files. NEVER write new files unless explicitly required.
+- The edit will FAIL if old_string is not unique in the file. Either provide a larger string with more surrounding context to make it unique, or use replace_all to change every instance.
+- Use replace_all for replacing and renaming strings across the file.
+- old_string and new_string must be different.
+
+IMPORTANT: Always use Edit instead of sed or awk via Bash.`,
         input_schema: {
             type: 'object',
             properties: {
-                file_path: { type: 'string', description: 'Absolute path' },
-                old_string: { type: 'string', description: 'Text to find' },
-                new_string: { type: 'string', description: 'Replacement text' },
-                replace_all: { type: 'boolean', description: 'Replace all occurrences' },
+                file_path: { type: 'string', description: 'The absolute path to the file to modify' },
+                old_string: { type: 'string', description: 'The text to replace (must be different from new_string)' },
+                new_string: { type: 'string', description: 'The text to replace it with' },
+                replace_all: { type: 'boolean', description: 'Replace all occurrences of old_string (default false)' },
             },
             required: ['file_path', 'old_string', 'new_string'],
         },

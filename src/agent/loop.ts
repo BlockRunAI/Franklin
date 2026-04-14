@@ -1,7 +1,6 @@
 /**
- * runcode Agent Loop
+ * Franklin Agent Loop
  * The core reasoning-action cycle: prompt → model → extract capabilities → execute → repeat.
- * Original implementation with different architecture from any reference codebase.
  */
 
 import { ModelClient } from './llm.js';
@@ -79,6 +78,72 @@ function sanitizeHistory(history: Dialogue[]): Dialogue[] {
   }).filter(Boolean) as Dialogue[];
 }
 
+/**
+ * Detect media-related errors (image too large, too many images, PDF too large).
+ * These can be recovered by stripping media blocks and retrying.
+ */
+function isMediaSizeError(msg: string): boolean {
+  return (
+    (msg.includes('image exceeds') && msg.includes('maximum')) ||
+    (msg.includes('image dimensions exceed')) ||
+    /maximum of \d+ PDF pages/.test(msg) ||
+    (msg.includes('image') && msg.includes('too large')) ||
+    (msg.includes('PDF') && msg.includes('too large'))
+  );
+}
+
+/**
+ * Strip image and document blocks from history, replacing with text placeholders.
+ * Used for media error recovery — retry without the oversized media.
+ */
+function stripMediaFromHistory(history: Dialogue[]): { history: Dialogue[]; stripped: boolean } {
+  let stripped = false;
+  const result = history.map(msg => {
+    if (typeof msg.content === 'string' || !Array.isArray(msg.content)) return msg;
+
+    let modified = false;
+    const cleaned = msg.content.map((part: any) => {
+      if (part.type === 'image') {
+        modified = true;
+        stripped = true;
+        return { type: 'text' as const, text: '[image removed — too large for context]' };
+      }
+      if (part.type === 'document') {
+        modified = true;
+        stripped = true;
+        return { type: 'text' as const, text: '[document removed — too large for context]' };
+      }
+      // Also strip media nested inside tool_result content arrays
+      if (part.type === 'tool_result' && Array.isArray(part.content)) {
+        const cleanedContent = part.content.map((c: any) => {
+          if (c.type === 'image' || c.type === 'document') {
+            modified = true;
+            stripped = true;
+            return { type: 'text' as const, text: `[${c.type} removed — too large for context]` };
+          }
+          return c;
+        });
+        return modified ? { ...part, content: cleanedContent } : part;
+      }
+      return part;
+    });
+
+    return modified ? { ...msg, content: cleaned } : msg;
+  }) as Dialogue[];
+
+  return { history: stripped ? result : history, stripped };
+}
+
+/**
+ * Calculate backoff delay with jitter to avoid thundering herd.
+ * Base: exponential (2^attempt * 1000ms), jitter: ±25%.
+ */
+function getBackoffDelay(attempt: number, maxDelayMs = 32_000): number {
+  const base = Math.min(Math.pow(2, attempt) * 1000, maxDelayMs);
+  const jitter = base * 0.25 * (Math.random() * 2 - 1); // ±25%
+  return Math.max(500, Math.round(base + jitter));
+}
+
 // ─── Interactive Session ───────────────────────────────────────────────────
 
 /**
@@ -112,7 +177,8 @@ export async function interactiveSession(
   );
   const history: Dialogue[] = [];
   let lastUserInput = ''; // For /retry
-  const failedModels = new Set<string>(); // Models that failed payment/rate-limit (session-level)
+  const originalModel = config.model; // Preserve original model/routing profile for recovery
+  let turnFailedModels = new Set<string>(); // Models that failed this turn (cleared each new turn)
 
   // Session persistence
   const sessionId = createSessionId();
@@ -179,6 +245,15 @@ export async function interactiveSession(
     toolGuard.startTurn();
     persistSessionMessage({ role: 'user', content: input });
 
+    // ── Model recovery: try original model at the start of each new turn ──
+    // If we fell back to a free model last turn, try the original again.
+    // This prevents a single payment hiccup from permanently downgrading the session.
+    if (config.model !== originalModel) {
+      config.model = originalModel;
+      config.onModelChange?.(originalModel);
+    }
+    turnFailedModels = new Set<string>(); // Fresh slate for this turn
+
     const abort = new AbortController();
     onAbortReady?.(() => abort.abort());
     let loopCount = 0;
@@ -244,13 +319,13 @@ export async function interactiveSession(
             resetTokenAnchor();
             compactFailures = 0;
             if (config.debug) {
-              console.error(`[runcode] History compacted: ~${estimateHistoryTokens(history)} tokens`);
+              console.error(`[franklin] History compacted: ~${estimateHistoryTokens(history)} tokens`);
             }
           }
         } catch (compactErr) {
           compactFailures++;
           if (config.debug) {
-            console.error(`[runcode] Compaction failed (${compactFailures}/3): ${(compactErr as Error).message}`);
+            console.error(`[franklin] Compaction failed (${compactFailures}/3): ${(compactErr as Error).message}`);
           }
         }
       }
@@ -353,7 +428,7 @@ export async function interactiveSession(
         if (!hasText && !hasTools && !hasThinking && recoveryAttempts < 3) {
           recoveryAttempts++;
           if (config.debug) {
-            console.error(`[runcode] Empty response — retrying (${recoveryAttempts}/3)`);
+            console.error(`[franklin] Empty response — retrying (${recoveryAttempts}/3)`);
           }
           onEvent({ kind: 'text_delta', text: `\n*Empty response — retrying (${recoveryAttempts}/3)...*\n` });
           continue;
@@ -376,11 +451,27 @@ export async function interactiveSession(
         const errMsg = (err as Error).message || '';
         const classified = classifyAgentError(errMsg);
 
+        // ── Media size error recovery (strip images/PDFs + retry) ──
+        if (isMediaSizeError(errMsg) && recoveryAttempts < 3) {
+          recoveryAttempts++;
+          if (config.debug) {
+            console.error(`[franklin] Media too large — stripping and retrying (attempt ${recoveryAttempts})`);
+          }
+          const { history: stripped, stripped: didStrip } = stripMediaFromHistory(history);
+          if (didStrip) {
+            history.length = 0;
+            history.push(...stripped);
+            onEvent({ kind: 'text_delta', text: '\n*Media too large — retrying without images/documents...*\n' });
+            continue;
+          }
+          // No media to strip — fall through to other error handling
+        }
+
         // ── Prompt too long recovery ──
         if (classified.category === 'context_limit' && recoveryAttempts < 3) {
           recoveryAttempts++;
           if (config.debug) {
-            console.error(`[runcode] Prompt too long — forcing compact (attempt ${recoveryAttempts})`);
+            console.error(`[franklin] Prompt too long — forcing compact (attempt ${recoveryAttempts})`);
           }
           const { history: compactedAgain } =
             await autoCompactIfNeeded(history, config.model, client, config.debug);
@@ -392,10 +483,10 @@ export async function interactiveSession(
         // ── Transient error recovery (network, rate limit, server errors) ──
         if (classified.isTransient && recoveryAttempts < 3) {
           recoveryAttempts++;
-          const backoffMs = Math.pow(2, recoveryAttempts) * 1000;
+          const backoffMs = getBackoffDelay(recoveryAttempts);
           if (config.debug) {
             console.error(
-              `[runcode] ${classified.label} error — retrying in ${backoffMs / 1000}s (attempt ${recoveryAttempts}): ${errMsg.slice(0, 100)}`
+              `[franklin] ${classified.label} error — retrying in ${(backoffMs / 1000).toFixed(1)}s (attempt ${recoveryAttempts}): ${errMsg.slice(0, 100)}`
             );
           }
           onEvent({
@@ -412,10 +503,11 @@ export async function interactiveSession(
           suggestion = '\nTip: Try /model to switch to a different model, or wait a moment and /retry.';
         } else if (classified.category === 'payment') {
           // Auto-fallback to free models on payment/rate limit failure
-          // Track failed models at session level to prevent ping-pong loops
-          failedModels.add(config.model);
+          // Track failed models per-turn — cleared at start of each new user turn
+          // so the original model gets retried next turn (transient failures recover)
+          turnFailedModels.add(config.model);
           const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/nemotron-ultra-253b', 'nvidia/devstral-2-123b'];
-          const nextFree = FREE_MODELS.find(m => !failedModels.has(m));
+          const nextFree = FREE_MODELS.find(m => !turnFailedModels.has(m));
           if (nextFree) {
             const oldModel = config.model;
             config.model = nextFree;
@@ -423,7 +515,7 @@ export async function interactiveSession(
             onEvent({ kind: 'text_delta', text: `\n*${oldModel} failed — switching to ${nextFree}*\n` });
             continue; // Retry with next model
           }
-          suggestion = '\nTip: Run `runcode balance` to check funds. Try /model free for free models.';
+          suggestion = '\nTip: Run `franklin balance` to check funds. Try /model free for free models.';
         } else if (classified.category === 'timeout' || classified.category === 'network') {
           suggestion = '\nTip: Check your network connection. Use /retry to try again.';
         } else if (classified.category === 'context_limit') {
@@ -460,7 +552,7 @@ export async function interactiveSession(
         contextPct: Math.round(contextUsagePct),
       });
 
-      // Record usage for stats tracking (runcode stats command)
+      // Record usage for stats tracking (franklin stats command)
       const costEstimate = estimateCost(resolvedModel, inputTokens, usage.outputTokens, 1);
       recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, 0);
       recordSessionUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, routingTier);
@@ -480,14 +572,14 @@ export async function interactiveSession(
           // First hit: escalate to 64K
           maxTokensOverride = ESCALATED_MAX_TOKENS;
           if (config.debug) {
-            console.error(`[runcode] Max tokens hit — escalating to ${maxTokensOverride}`);
+            console.error(`[franklin] Max tokens hit — escalating to ${maxTokensOverride}`);
           }
         }
         // Append what we got + a continuation prompt (text already streamed)
         const partialAssistant = { role: 'assistant' as const, content: responseParts };
         const continuationPrompt = {
           role: 'user',
-          content: 'Continue where you left off. Do not repeat what you already said.',
+          content: 'Output token limit hit. Resume directly — no apology, no recap of what you were doing. Pick up mid-thought if that is where the cut happened. Break remaining work into smaller pieces.',
         } as const;
         history.push(partialAssistant);
         persistSessionMessage(partialAssistant);
@@ -617,7 +709,7 @@ export async function interactiveSession(
       // Hard stop: if cap exceeded, force end this agent loop iteration
       if (turnToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
         if (config.debug) {
-          console.error(`[runcode] Tool call cap hit: ${turnToolCalls} calls this turn`);
+          console.error(`[franklin] Tool call cap hit: ${turnToolCalls} calls this turn`);
         }
         // Don't break — let the model respond one more time to summarize,
         // but inject the stop signal above so it knows to finish up.

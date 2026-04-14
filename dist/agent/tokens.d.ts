@@ -1,5 +1,5 @@
 /**
- * Token estimation for runcode.
+ * Token estimation for Franklin.
  * Uses byte-based heuristic (no external tokenizer dependency).
  * Anchors to actual API counts when available, estimates on top for new messages.
  */

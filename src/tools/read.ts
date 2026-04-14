@@ -19,6 +19,13 @@ interface ReadInput {
  */
 export const partiallyReadFiles = new Set<string>();
 
+/**
+ * Tracks files that have been read in this session — enables read-before-edit enforcement.
+ * Stores the file's mtime at read time so we can detect stale writes.
+ * Exported so edit.ts and write.ts can check.
+ */
+export const fileReadTracker = new Map<string, { mtimeMs: number; readAt: number }>();
+
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
   const { file_path: filePath, offset, limit } = input as unknown as ReadInput;
 
@@ -70,6 +77,9 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       partiallyReadFiles.delete(resolved);
     }
 
+    // Record this read for read-before-edit/write enforcement
+    fileReadTracker.set(resolved, { mtimeMs: stat.mtimeMs, readAt: Date.now() });
+
     // Format with line numbers (cat -n style)
     const numbered = slice.map((line, i) => `${startLine + i + 1}\t${line}`);
 
@@ -94,13 +104,25 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 export const readCapability: CapabilityHandler = {
   spec: {
     name: 'Read',
-    description: 'Read a file with line numbers. Use offset/limit for large files (>2000 lines). Use this instead of cat/head/tail in Bash. Reads over 2MB are rejected. Cannot read binary files or images.',
+    description: `Read a file from the local filesystem.
+
+Usage:
+- The file_path parameter must be an absolute path, not a relative path.
+- By default, reads up to 2000 lines starting from the beginning of the file.
+- When you already know which part of the file you need, only read that part using offset/limit. This is important for large files.
+- Results are returned in cat -n format, with line numbers starting at 1.
+- This tool can only read files, not directories. To list a directory, use Glob or ls via Bash.
+- If you read a file that exists but has empty contents you will receive a warning.
+- Reads over 2MB are rejected — use offset/limit to read portions.
+- Cannot read binary files (images, PDFs, archives).
+
+IMPORTANT: Always use Read instead of cat, head, or tail via Bash.`,
     input_schema: {
       type: 'object',
       properties: {
-        file_path: { type: 'string', description: 'Absolute path' },
-        offset: { type: 'number', description: 'Start line (1-based)' },
-        limit: { type: 'number', description: 'Max lines (default 2000)' },
+        file_path: { type: 'string', description: 'The absolute path to the file to read' },
+        offset: { type: 'number', description: 'The line number to start reading from (1-based). Only provide if the file is too large to read at once.' },
+        limit: { type: 'number', description: 'The number of lines to read. Only provide if the file is too large to read at once. Default: 2000.' },
       },
       required: ['file_path'],
     },
