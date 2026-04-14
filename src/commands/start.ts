@@ -27,7 +27,8 @@ export async function startCommand(options: StartOptions) {
   const apiUrl = API_URLS[chain];
   const config = loadConfig();
 
-  // Resolve model — default to GLM-5.1 promo if nothing specified
+  // Resolve model — default to FREE (nemotron) so users don't get surprise charges.
+  // Paid models (glm-5.1, sonnet, opus, etc.) must be opted in with --model or /model.
   let model: string;
   const configModel = config['default-model'];
   if (options.model) {
@@ -35,9 +36,20 @@ export async function startCommand(options: StartOptions) {
   } else if (configModel) {
     model = configModel;
   } else {
-    // Default: GLM-5.1 promo if still active, otherwise Gemini Flash (cheap & reliable)
-    const promoExpiry = new Date('2026-04-15');
-    model = Date.now() < promoExpiry.getTime() ? 'zai/glm-5.1' : 'google/gemini-2.5-flash';
+    // Default: free NVIDIA model — zero wallet charges until user explicitly switches
+    model = 'nvidia/nemotron-ultra-253b';
+  }
+
+  // Warn when a paid model is active so users know they'll be charged
+  const FREE_MODELS = new Set([
+    'nvidia/nemotron-ultra-253b',
+    'nvidia/qwen3-coder-480b',
+    'nvidia/devstral-2-123b',
+    'blockrun/free',
+  ]);
+  if (!FREE_MODELS.has(model)) {
+    console.log(chalk.yellow(`  Model: ${model}  (paid — charges from your wallet per call)`));
+    console.log(chalk.dim(`  Switch to free with: /model free\n`));
   }
 
   // Auto-create wallet if needed (no interruption — free models work without funding)
