@@ -4,7 +4,7 @@
  */
 
 import { ModelClient } from './llm.js';
-import { autoCompactIfNeeded, microCompact } from './compact.js';
+import { autoCompactIfNeeded, forceCompact, microCompact } from './compact.js';
 import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor, getAnchoredTokenCount, getContextWindow } from './tokens.js';
 import { handleSlashCommand } from './commands.js';
 import { reduceTokens } from './reduce.js';
@@ -36,8 +36,15 @@ import type {
 } from './types.js';
 
 /**
- * Sanitize history: fix orphaned tool results and missing results.
- * Inspired by Hermes _sanitize_api_messages().
+ * Sanitize history: fix orphaned tool results AND inject missing results.
+ * Inspired by Claude Code's yieldMissingToolResultBlocks + Hermes _sanitize_api_messages().
+ *
+ * Two problems this solves:
+ * 1. Orphaned tool_results — results without matching tool_use calls (remove them)
+ * 2. Missing tool_results — tool_use calls without matching results (inject stubs)
+ *    This happens when the model response includes tool calls that weren't executed
+ *    (e.g., abort mid-stream, error before tool execution). The API requires every
+ *    tool_use to have a corresponding tool_result or it rejects the request.
  */
 function sanitizeHistory(history: Dialogue[]): Dialogue[] {
   // Collect all tool_use IDs from assistant messages
@@ -62,20 +69,92 @@ function sanitizeHistory(history: Dialogue[]): Dialogue[] {
     }
   }
 
-  // Remove orphaned tool results (results without matching calls)
-  const orphaned = new Set([...resultIds].filter(id => !callIds.has(id)));
-  if (orphaned.size === 0) return history;
+  // 1. Remove orphaned tool results (results without matching calls)
+  const orphanedResults = new Set([...resultIds].filter(id => !callIds.has(id)));
 
-  return history.map(msg => {
+  // 2. Find missing tool results (calls without matching results)
+  const missingResults = new Set([...callIds].filter(id => !resultIds.has(id)));
+
+  if (orphanedResults.size === 0 && missingResults.size === 0) return history;
+
+  const result: Dialogue[] = [];
+
+  for (let i = 0; i < history.length; i++) {
+    const msg = history[i];
+
     if (msg.role === 'user' && Array.isArray(msg.content)) {
-      const filtered = (msg.content as any[]).filter(
-        p => !(p.type === 'tool_result' && orphaned.has(p.tool_use_id))
-      );
-      if (filtered.length === 0) return null;
-      return { ...msg, content: filtered };
+      // Remove orphaned tool results
+      if (orphanedResults.size > 0) {
+        const filtered = (msg.content as any[]).filter(
+          p => !(p.type === 'tool_result' && orphanedResults.has(p.tool_use_id))
+        );
+        if (filtered.length === 0) continue; // Skip empty messages
+        result.push({ ...msg, content: filtered });
+      } else {
+        result.push(msg);
+      }
+      continue;
     }
-    return msg;
-  }).filter(Boolean) as Dialogue[];
+
+    result.push(msg);
+
+    // After each assistant message with tool_use, check if the next message
+    // contains all the required tool_results. If not, inject stubs.
+    if (msg.role === 'assistant' && Array.isArray(msg.content) && missingResults.size > 0) {
+      const toolUseIds: string[] = [];
+      for (const part of msg.content as any[]) {
+        if (part.type === 'tool_use' && missingResults.has(part.id)) {
+          toolUseIds.push(part.id);
+        }
+      }
+
+      if (toolUseIds.length > 0) {
+        // Check if the next message already has some of these results
+        const nextMsg = history[i + 1];
+        const nextResultIds = new Set<string>();
+        if (nextMsg?.role === 'user' && Array.isArray(nextMsg.content)) {
+          for (const part of nextMsg.content as any[]) {
+            if (part.type === 'tool_result') {
+              nextResultIds.add(part.tool_use_id);
+            }
+          }
+        }
+
+        // Inject stub results for any tool_use IDs that are truly missing
+        const stubParts: UserContentPart[] = [];
+        for (const id of toolUseIds) {
+          if (!nextResultIds.has(id)) {
+            stubParts.push({
+              type: 'tool_result',
+              tool_use_id: id,
+              content: '[Tool execution was interrupted — result not available]',
+              is_error: true,
+            });
+            missingResults.delete(id); // Don't inject twice
+          }
+        }
+
+        if (stubParts.length > 0) {
+          // If next message is a user message, prepend stubs to it
+          if (nextMsg?.role === 'user' && Array.isArray(nextMsg.content)) {
+            // Will be handled when we process that message next
+            const existingContent = orphanedResults.size > 0
+              ? (nextMsg.content as any[]).filter(
+                  p => !(p.type === 'tool_result' && orphanedResults.has(p.tool_use_id))
+                )
+              : [...(nextMsg.content as any[])];
+            // Replace the next message with merged content
+            history[i + 1] = { role: 'user', content: [...stubParts, ...existingContent] };
+          } else {
+            // No user message follows — insert a new one with the stubs
+            result.push({ role: 'user', content: stubParts });
+          }
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -258,6 +337,7 @@ export async function interactiveSession(
     onAbortReady?.(() => abort.abort());
     let loopCount = 0;
     let recoveryAttempts = 0;
+    const MAX_RECOVERY_ATTEMPTS = 5;  // Up from 3 — Claude Code uses 10, we split the difference
     let compactFailures = 0;
     let maxTokensOverride: number | undefined;
     const turnIdleReference = lastSessionActivity;
@@ -425,12 +505,12 @@ export async function interactiveSession(
         const hasText = responseParts.some(p => p.type === 'text' && (p as any).text?.trim());
         const hasTools = responseParts.some(p => p.type === 'tool_use');
         const hasThinking = responseParts.some(p => p.type === 'thinking');
-        if (!hasText && !hasTools && !hasThinking && recoveryAttempts < 3) {
+        if (!hasText && !hasTools && !hasThinking && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
           recoveryAttempts++;
           if (config.debug) {
-            console.error(`[franklin] Empty response — retrying (${recoveryAttempts}/3)`);
+            console.error(`[franklin] Empty response — retrying (${recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS})`);
           }
-          onEvent({ kind: 'text_delta', text: `\n*Empty response — retrying (${recoveryAttempts}/3)...*\n` });
+          onEvent({ kind: 'text_delta', text: `\n*Empty response — retrying (${recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS})...*\n` });
           continue;
         }
       } catch (err) {
@@ -452,7 +532,7 @@ export async function interactiveSession(
         const classified = classifyAgentError(errMsg);
 
         // ── Media size error recovery (strip images/PDFs + retry) ──
-        if (isMediaSizeError(errMsg) && recoveryAttempts < 3) {
+        if (isMediaSizeError(errMsg) && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
           recoveryAttempts++;
           if (config.debug) {
             console.error(`[franklin] Media too large — stripping and retrying (attempt ${recoveryAttempts})`);
@@ -467,31 +547,38 @@ export async function interactiveSession(
           // No media to strip — fall through to other error handling
         }
 
-        // ── Prompt too long recovery ──
-        if (classified.category === 'context_limit' && recoveryAttempts < 3) {
+        // ── Prompt too long recovery (reactive compaction) ──
+        // Use forceCompact instead of autoCompactIfNeeded — the API already told us
+        // the prompt is too long, so we must compact regardless of our threshold estimate.
+        // This is the key insight from Claude Code: reactive compaction must FORCE compress.
+        if (classified.category === 'context_limit' && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
           recoveryAttempts++;
           if (config.debug) {
-            console.error(`[franklin] Prompt too long — forcing compact (attempt ${recoveryAttempts})`);
+            console.error(`[franklin] Prompt too long — force compacting (attempt ${recoveryAttempts})`);
           }
+          onEvent({ kind: 'text_delta', text: '\n*Context limit hit — compacting conversation...*\n' });
           const { history: compactedAgain } =
-            await autoCompactIfNeeded(history, config.model, client, config.debug);
+            await forceCompact(history, config.model, client, config.debug);
           history.length = 0;
           history.push(...compactedAgain);
+          resetTokenAnchor(); // History mutated — resync tracking
           continue; // Retry
         }
 
         // ── Transient error recovery (network, rate limit, server errors) ──
-        if (classified.isTransient && recoveryAttempts < 3) {
+        // Respect per-error maxRetries (e.g., 529/overloaded gets only 3 retries)
+        const effectiveMaxRetries = classified.maxRetries ?? MAX_RECOVERY_ATTEMPTS;
+        if (classified.isTransient && recoveryAttempts < effectiveMaxRetries) {
           recoveryAttempts++;
           const backoffMs = getBackoffDelay(recoveryAttempts);
           if (config.debug) {
             console.error(
-              `[franklin] ${classified.label} error — retrying in ${(backoffMs / 1000).toFixed(1)}s (attempt ${recoveryAttempts}): ${errMsg.slice(0, 100)}`
+              `[franklin] ${classified.label} error — retrying in ${(backoffMs / 1000).toFixed(1)}s (attempt ${recoveryAttempts}/${effectiveMaxRetries}): ${errMsg.slice(0, 100)}`
             );
           }
           onEvent({
             kind: 'text_delta',
-            text: `\n*Retrying (${recoveryAttempts}/3) after ${classified.label} error...*\n`,
+            text: `\n*Retrying (${recoveryAttempts}/${effectiveMaxRetries}) after ${classified.label} error...*\n`,
           });
           await new Promise(r => setTimeout(r, backoffMs));
           continue;
@@ -499,8 +586,12 @@ export async function interactiveSession(
 
         // Add recovery suggestions based on error type
         let suggestion = '';
-        if (classified.category === 'rate_limit') {
+        if (classified.category === 'auth') {
+          suggestion = '\nTip: Check your API key or wallet configuration. Run `franklin setup` to reconfigure.';
+        } else if (classified.category === 'rate_limit') {
           suggestion = '\nTip: Try /model to switch to a different model, or wait a moment and /retry.';
+        } else if (classified.category === 'overloaded') {
+          suggestion = '\nTip: The model is overloaded. Try /model to switch, or wait and /retry.';
         } else if (classified.category === 'payment') {
           // Auto-fallback to free models on payment/rate limit failure
           // Track failed models per-turn — cleared at start of each new user turn
@@ -566,7 +657,7 @@ export async function interactiveSession(
       sessionSavedVsOpus += Math.max(0, opusCost - costEstimate);
 
       // ── Max output tokens recovery ──
-      if (stopReason === 'max_tokens' && recoveryAttempts < 3) {
+      if (stopReason === 'max_tokens' && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
         recoveryAttempts++;
         if (maxTokensOverride === undefined) {
           // First hit: escalate to 64K
@@ -579,7 +670,14 @@ export async function interactiveSession(
         const partialAssistant = { role: 'assistant' as const, content: responseParts };
         const continuationPrompt = {
           role: 'user',
-          content: 'Output token limit hit. Resume directly — no apology, no recap of what you were doing. Pick up mid-thought if that is where the cut happened. Break remaining work into smaller pieces.',
+          content: [
+            'Output token limit hit. Continue with these rules:',
+            '1. Resume directly — no apology, no recap of what you already said. Pick up mid-sentence if that is where the cut happened.',
+            '2. Do NOT repeat any text or code that was already output above.',
+            '3. Break remaining work into smaller pieces — use multiple tool calls if needed instead of one large output.',
+            '4. Skip extended reasoning for the continuation — focus on executing.',
+            '5. If you were in the middle of outputting code, finish the code block first.',
+          ].join('\n'),
         } as const;
         history.push(partialAssistant);
         persistSessionMessage(partialAssistant);

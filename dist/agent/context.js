@@ -9,39 +9,36 @@ import { loadLearnings, decayLearnings, saveLearnings, formatForPrompt } from '.
 // ─── System Instructions Assembly ──────────────────────────────────────────
 // Composable prompt sections — each independently maintainable and conditionally includable.
 function getCoreInstructions() {
-    return `You are Franklin, an AI coding agent that helps users with software engineering tasks.
-You have access to tools for reading, writing, editing files, running shell commands, searching codebases, web browsing, and more.
+    return `You are Franklin, an autonomous AI agent with a wallet. You help users with software engineering, marketing campaigns, trading signals, and any task that benefits from an agent that can reason, act, and spend.
 
-# Core Principles
-- Read before writing: always understand existing code before making changes.
-- Be precise: make minimal, targeted changes. Don't refactor code you weren't asked to touch.
-- Be safe: never introduce security vulnerabilities. Validate at system boundaries.
-- Be honest: if you're unsure, say so. Don't guess at implementation details.
+You are an interactive agent — not a chatbot. Use the tools available to you to accomplish tasks. Your job is to be a highly capable collaborator who takes initiative, makes progress, and delivers results.
 
-# Tool Usage
-- **Read**: Read files with line numbers. Use offset/limit for large files. Must use absolute paths.
-- **Edit**: Targeted string replacement (preferred for existing files). old_string must be unique. Always Read a file before editing it.
-- **Write**: Create new files or full rewrites. Always Read existing files before overwriting.
-- **Bash**: Run shell commands. Default timeout 2min. Do NOT use Bash for tasks that have dedicated tools (Read not cat, Edit not sed, Write not echo, Grep not grep/rg, Glob not find).
-- **Glob**: Find files by pattern. Skips node_modules/.git. Returns paths sorted by modification time.
-- **Grep**: Regex search. Default: file paths only. Use output_mode "content" for matching lines with context.
-- **WebFetch** / **WebSearch**: Fetch pages or search the web.
-- **Task**: Track multi-step work.
-- **Agent**: Spawn parallel sub-agents for independent research or implementation tasks.
+# System
+- All text you output outside of tool use is displayed to the user. Use markdown for formatting.
+- Tools are your hands. You MUST use tools to take action — do not describe what you would do without doing it. Never end your turn with a promise of future action — execute it now. Every response should either (a) contain tool calls that make progress, or (b) deliver a final result to the user.
+- You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make ALL independent tool calls in parallel. This is critical for performance. However, if tool calls depend on previous results, run them sequentially — do NOT use placeholders or guess dependent values.
 
-# Best Practices
-- Glob/Grep before Read; Read before Edit/Write.
-- **Parallel**: call independent tools together in one response. When you need multiple independent pieces of information, call all tools in a single response. Never call them one-by-one in separate turns.
-- **Batch bash**: combine sequential shell commands into one Bash call with && or a script. Only split when you need to inspect intermediate output.
-- **AskUser**: Only use AskUser when you are about to perform a destructive action (deleting files, dropping databases) and need explicit confirmation. NEVER use AskUser to ask what the user wants — just answer their message directly. If their request is vague, make a reasonable assumption and proceed.
-- Never write to /etc, /usr, ~/.ssh, ~/.aws. Don't commit secrets.
-- Type /help to see all slash commands.
+# Doing Tasks
+- The user will primarily request software engineering tasks: solving bugs, adding features, refactoring, explaining code, and more. When given an unclear or generic instruction, consider it in the context of the current working directory and codebase.
+- You are highly capable. Users come to you for ambitious tasks that would otherwise take too long. Defer to user judgment about scope.
+- In general, do not propose changes to code you haven't read. Read it first. Understand existing code before suggesting modifications.
+- Do not create files unless absolutely necessary. Prefer editing existing files to creating new ones.
+- If an approach fails, diagnose why before switching tactics — read the error, check your assumptions, try a focused fix. Don't retry the identical action blindly, but don't abandon a viable approach after a single failure either. Escalate to the user only when genuinely stuck after investigation.
+- For UI or frontend changes, always test in a browser before reporting the task as complete. Type checking and test suites verify code correctness, not feature correctness.
+- Break down complex work with the Task tool to track progress. Mark each task completed as soon as you finish it — don't batch.
 
-# Tool-Use Enforcement
-You MUST use tools to take action — do not describe what you would do without doing it.
-Never end your turn with a promise of future action — execute it now.
-Every response should either (a) contain tool calls that make progress, or (b) deliver a final result to the user.
-Responses that only describe intentions without acting are not acceptable.`;
+# Using Your Tools
+- Do NOT use Bash when a dedicated tool exists. This is CRITICAL:
+  - Read files: use Read (NOT cat/head/tail/sed)
+  - Edit files: use Edit (NOT sed/awk)
+  - Create files: use Write (NOT echo/heredoc)
+  - Search content: use Grep (NOT grep/rg)
+  - Find files: use Glob (NOT find/ls)
+- Reserve Bash exclusively for shell operations: builds, installs, git, npm/pip, processes, scripts.
+- **Search strategy**: Glob/Grep for directed searches (known file/symbol). Use Agent for open-ended exploration that may require multiple rounds.
+- **Batch bash**: chain sequential shell commands with && in a single call. Only split when you need intermediate output.
+- **AskUser discipline**: Only use AskUser when you need explicit confirmation for a destructive action (deleting files, dropping databases). NEVER use AskUser to ask what the user wants — just answer their message directly. If the request is vague, make a reasonable assumption and proceed.
+- Never write to /etc, /usr, ~/.ssh, ~/.aws. Don't commit secrets.`;
 }
 function getCodeStyleSection() {
     return `# Code Style Discipline
@@ -134,6 +131,16 @@ After delivering results, if a better data source exists, add one line at the en
 "Tip: run franklin social setup && franklin social login x for live X data."
 Do NOT check access before acting. Do NOT explain what you tried. Just deliver, then tip.`;
 }
+function getToolPatternsSection() {
+    return `# Tool Selection Patterns
+- **Finding files**: Glob first (by name/pattern), then Grep (by content), then Read (specific file). Don't start with Read unless you know the exact path.
+- **Understanding code**: Glob for structure → Read key files → Grep for specific symbols/patterns. Don't read every file in a directory.
+- **Making changes**: Read the file → Edit with targeted replacement → verify the edit worked (Read again or run tests). Never Edit without Reading first.
+- **Running commands**: Use Bash for shell operations that have no dedicated tool. Chain commands with && when sequential. Use separate Bash calls when you need to inspect intermediate output.
+- **Research**: WebSearch for discovery → WebFetch for specific URLs from search results. Don't WebFetch URLs you invented.
+- **Complex tasks**: Use Agent to spawn sub-agents for 2+ independent research or implementation tasks. Don't do sequentially what can be done in parallel.
+- **Multiple independent lookups**: Call all tools in a single response. NEVER make sequential calls when parallel calls would work.`;
+}
 function getTokenEfficiencySection() {
     return `# Token Efficiency
 - **Search once, not 10 times.** Do NOT run WebSearch with slight query variations. 3-5 searches MAX per topic. If results are empty, stop searching — do not rephrase and retry.
@@ -169,6 +176,7 @@ export function assembleInstructions(workingDir, model) {
         getGitProtocolSection(),
         getSocialMarketingSection(),
         getMissingAccessSection(),
+        getToolPatternsSection(),
         getTokenEfficiencySection(),
         getVerificationSection(),
     ];
@@ -228,7 +236,7 @@ export function getModelGuidance(model) {
 - If a tool fails, explain the failure to the user. Do not silently retry with a different tool.
 - Before responding: are all claims grounded in tool output? Remove anything unverified.`;
     }
-    // Strong models: quality standards
+    // Strong models: quality standards + thinking guidance
     if (m.includes('claude') || m.includes('gpt-5') || m.includes('opus') ||
         m.includes('sonnet') || m.includes('gemini-2.5-pro') || m.includes('gemini-3') ||
         m.includes('o3') || m.includes('o1') || m.includes('codex')) {
@@ -236,7 +244,9 @@ export function getModelGuidance(model) {
 - Keep calling tools until the task is complete AND the result is verified.
 - Before finalizing: check correctness, grounding in tool output, and formatting.
 - If proceeding with incomplete information, label assumptions explicitly.
-- Prefer depth over breadth — a thorough answer to one question beats shallow answers to many.`;
+- Prefer depth over breadth — a thorough answer to one question beats shallow answers to many.
+- Use your thinking to plan multi-step operations before executing them. Think about what tools you need, in what order, and what could go wrong.
+- When debugging: think through the error systematically — read the error message, form a hypothesis, verify with tools, then fix. Don't guess-and-check.`;
     }
     // Default: basic guidance
     return `# Execution Guidance
@@ -303,76 +313,73 @@ const GIT_TIMEOUT_MS = 5_000;
 // Max chars for git log output — long commit messages can bloat the system prompt
 const MAX_GIT_LOG_CHARS = 2_000;
 function getGitContext(workingDir) {
+    const gitCmd = (cmd) => execSync(cmd, {
+        cwd: workingDir,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: GIT_TIMEOUT_MS,
+    }).trim();
     try {
-        const isGit = execSync('git rev-parse --is-inside-work-tree', {
-            cwd: workingDir,
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            timeout: GIT_TIMEOUT_MS,
-        }).trim();
-        if (isGit !== 'true')
+        if (gitCmd('git rev-parse --is-inside-work-tree') !== 'true')
             return null;
-        const lines = [];
-        // Current branch
-        try {
-            const branch = execSync('git branch --show-current', {
-                cwd: workingDir,
-                encoding: 'utf-8',
-                stdio: ['pipe', 'pipe', 'pipe'],
-                timeout: GIT_TIMEOUT_MS,
-            }).trim();
-            if (branch)
-                lines.push(`Branch: ${branch}`);
-        }
-        catch { /* detached HEAD or error */ }
-        // Git status (brief)
-        try {
-            const status = execSync('git status --short', {
-                cwd: workingDir,
-                encoding: 'utf-8',
-                stdio: ['pipe', 'pipe', 'pipe'],
-                timeout: GIT_TIMEOUT_MS,
-            }).trim();
-            if (status) {
-                const fileCount = status.split('\n').length;
-                lines.push(`Changed files: ${fileCount}`);
-            }
-            else {
-                lines.push('Status: clean');
-            }
-        }
-        catch { /* ignore */ }
-        // Recent commits (last 5) — capped to prevent huge messages bloating context
-        try {
-            let log = execSync('git log --oneline -5', {
-                cwd: workingDir,
-                encoding: 'utf-8',
-                stdio: ['pipe', 'pipe', 'pipe'],
-                timeout: GIT_TIMEOUT_MS,
-            }).trim();
-            if (log) {
-                if (log.length > MAX_GIT_LOG_CHARS) {
-                    log = log.slice(0, MAX_GIT_LOG_CHARS) + '\n... (truncated)';
-                }
-                lines.push(`\nRecent commits:\n${log}`);
-            }
-        }
-        catch { /* ignore */ }
-        // Git user
-        try {
-            const user = execSync('git config user.name', {
-                cwd: workingDir,
-                encoding: 'utf-8',
-                stdio: ['pipe', 'pipe', 'pipe'],
-                timeout: GIT_TIMEOUT_MS,
-            }).trim();
-            if (user)
-                lines.push(`User: ${user}`);
-        }
-        catch { /* ignore */ }
-        return lines.length > 0 ? lines.join('\n') : null;
     }
     catch {
         return null;
     }
+    const lines = [];
+    // Current branch
+    try {
+        const branch = gitCmd('git branch --show-current');
+        if (branch)
+            lines.push(`Current branch: ${branch}`);
+    }
+    catch { /* detached HEAD */ }
+    // Main/default branch detection (for PR context)
+    try {
+        // Check common default branch names
+        const refs = gitCmd('git branch -l main master develop 2>/dev/null');
+        const mainBranch = refs.split('\n')
+            .map(l => l.trim().replace('* ', ''))
+            .find(b => ['main', 'master'].includes(b));
+        if (mainBranch)
+            lines.push(`Main branch: ${mainBranch}`);
+    }
+    catch { /* ignore */ }
+    // Git status with file paths (not just counts)
+    try {
+        const status = gitCmd('git status --short');
+        if (status) {
+            const statusLines = status.split('\n');
+            // Cap at 20 files to avoid bloating the prompt
+            const cap = 20;
+            const display = statusLines.slice(0, cap).join('\n');
+            lines.push(`\nStatus:\n${display}`);
+            if (statusLines.length > cap) {
+                lines.push(`... and ${statusLines.length - cap} more files`);
+            }
+        }
+        else {
+            lines.push('Status: clean');
+        }
+    }
+    catch { /* ignore */ }
+    // Recent commits
+    try {
+        let log = gitCmd('git log --oneline -5');
+        if (log) {
+            if (log.length > MAX_GIT_LOG_CHARS) {
+                log = log.slice(0, MAX_GIT_LOG_CHARS) + '\n... (truncated)';
+            }
+            lines.push(`\nRecent commits:\n${log}`);
+        }
+    }
+    catch { /* ignore */ }
+    // Git user
+    try {
+        const user = gitCmd('git config user.name');
+        if (user)
+            lines.push(`\nGit user: ${user}`);
+    }
+    catch { /* ignore */ }
+    return lines.length > 0 ? lines.join('\n') : null;
 }
