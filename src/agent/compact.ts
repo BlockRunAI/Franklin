@@ -34,9 +34,9 @@ Critical rules:
 - Preserve EXACT file paths, function names, line numbers, variable names
 - Preserve EXACT error messages and stack traces (verbatim)
 - Preserve user preferences and corrections (especially "don't do X" instructions)
-- Preserve decisions with their rationale (not just the decision)
+- Preserve decisions WITH their rationale — "changed X to Y because Z was broken" (1-2 sentences per decision)
 - Include full code snippets and function signatures when they are load-bearing
-- DO NOT include reasoning that led to decisions — only the decisions themselves
+- DO NOT include verbose reasoning chains — summarize the WHY in 1-2 sentences, not paragraphs
 - DO NOT include pleasantries, meta-commentary, or apologies
 - Use bullet points inside each section
 - Be specific: "edited src/foo.ts:42 to add error handling" not "made some changes"
@@ -58,7 +58,7 @@ Then produce the summary inside <summary> tags using these exact section headers
 [Any errors encountered, their root causes, and how they were resolved — this prevents re-investigating the same issues]
 
 ## Decisions
-[Key decisions made, each with its rationale]
+[Each decision: what was chosen, why, and what constraint/goal drove it. Format: "Chose X over Y because Z." — losing the WHY causes rework later]
 
 ## Files Modified
 [Each file touched, with a one-line description of what changed and why]
