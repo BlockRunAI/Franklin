@@ -79,6 +79,42 @@ async function connectStdio(name, config) {
             concurrent: true, // MCP tools are safe to run concurrently
         });
     }
+    // Discover resources (optional — not all servers expose resources)
+    try {
+        const { resources: mcpResources } = await client.listResources();
+        for (const resource of mcpResources) {
+            const resourceToolName = `mcp__${name}__read_${resource.name.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+            const resourceDesc = resource.description
+                ? `Read resource: ${resource.description}`.slice(0, 2048)
+                : `Read MCP resource "${resource.name}" from ${name}`;
+            capabilities.push({
+                spec: {
+                    name: resourceToolName,
+                    description: resourceDesc,
+                    input_schema: { type: 'object', properties: {}, required: [] },
+                },
+                execute: async () => {
+                    try {
+                        const result = await client.readResource({ uri: resource.uri });
+                        const output = result.contents
+                            ?.map(c => c.text ?? `[resource: ${c.uri}]`)
+                            ?.join('\n') || JSON.stringify(result.contents);
+                        return { output, isError: false };
+                    }
+                    catch (err) {
+                        return {
+                            output: `MCP resource error (${name}/${resource.name}): ${err.message}`,
+                            isError: true,
+                        };
+                    }
+                },
+                concurrent: true,
+            });
+        }
+    }
+    catch {
+        // Server doesn't support resources — that's fine, tools-only mode
+    }
     const connected = { name, client, transport, tools: capabilities };
     connections.set(name, connected);
     return connected;
