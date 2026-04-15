@@ -119,7 +119,7 @@ function runRipgrep(
     const sliced = offset > 0 ? lines.slice(offset) : lines;
     const limited = limit > 0 ? sliced.slice(0, limit) : sliced;
 
-    // Convert absolute paths to relative paths to save tokens (same as Claude Code)
+    // Convert absolute paths to relative paths to save tokens
     const relativized = limited.map(line => {
       // Lines: /abs/path or /abs/path:rest (content mode)
       const colonIdx = line.indexOf(':');

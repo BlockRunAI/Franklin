@@ -125,7 +125,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   });
   withMtime.sort((a, b) => b.mtime - a.mtime);
 
-  // Convert to relative paths to save tokens (same as Claude Code)
+  // Convert to relative paths to save tokens
   const sorted = withMtime.map(f => {
     const rel = path.relative(ctx.workingDir, f.path);
     return rel.startsWith('..') ? f.path : rel;

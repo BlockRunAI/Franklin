@@ -267,7 +267,7 @@ export async function startCommand(options: StartOptions) {
     resumeSessionId,
   };
 
-  // Bootstrap learnings from Claude Code config on first run (async, non-blocking)
+  // Bootstrap learnings from existing CLAUDE.md on first run (async, non-blocking)
   Promise.all([
     import('../learnings/extractor.js'),
     import('../agent/llm.js'),

@@ -22,8 +22,7 @@ interface PendingTool {
   promise: Promise<CapabilityResult>;
 }
 
-/** Persist a large tool result to disk and return a preview string.
- * Inspired by Claude Code's toolResultStorage.ts. */
+/** Persist a large tool result to disk and return a preview string. */
 const PERSIST_THRESHOLD = 50_000;
 const PREVIEW_SIZE = 2_000;
 
@@ -250,7 +249,7 @@ export class StreamingExecutor {
       let result = await handler.execute(invocation.input, progressScope);
       this.guard?.afterExecute(invocation, result);
 
-      // Persist large results to disk with preview (inspired by Claude Code toolResultStorage)
+      // Persist large results to disk with preview.
       // Instead of just truncating, save the full result to disk so it can be re-read later.
       if (result.output.length > PERSIST_THRESHOLD) {
         result = {

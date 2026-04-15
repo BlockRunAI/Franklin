@@ -120,7 +120,7 @@ function parseExtraction(raw: string): ExtractionResult {
   };
 }
 
-// ─── Onboarding: bootstrap from Claude Code config ───────────────────────
+// ─── Onboarding: bootstrap from existing CLAUDE.md preferences ───────────
 
 const BOOTSTRAP_PROMPT = `You are analyzing a user's AI coding agent configuration file (CLAUDE.md). Extract user preferences that would help personalize a different AI agent's behavior.
 
@@ -137,13 +137,13 @@ Rules:
 - Extract EVERY explicit preference. These are user-written rules, so confidence is high (0.8-1.0).
 - Each learning should be one clear, actionable sentence.
 - Do NOT include project-specific paths or secrets.
-- Do NOT include things that are tool-specific to Claude Code and wouldn't apply to another agent.
+- Do NOT include things that are tool-specific to a particular agent and wouldn't apply to franklin.
 
 Respond with ONLY a JSON object (no markdown fences, no commentary):
 {"learnings":[{"learning":"...","category":"language|model_preference|tool_pattern|coding_style|communication|domain|correction|workflow|other","confidence":0.9}]}`;
 
 /**
- * Scan for Claude Code configuration and bootstrap learnings from it.
+ * Scan for existing CLAUDE.md preference files and bootstrap learnings from them.
  * Only runs once — skips if learnings already exist.
  */
 export async function bootstrapFromClaudeConfig(client: ModelClient): Promise<number> {
@@ -151,7 +151,7 @@ export async function bootstrapFromClaudeConfig(client: ModelClient): Promise<nu
   const existing = loadLearnings();
   if (existing.length > 0) return 0;
 
-  // Scan for Claude Code config files
+  // Scan for CLAUDE.md preference files
   const configPaths = [
     path.join(os.homedir(), '.claude', 'CLAUDE.md'),
     path.join(process.cwd(), 'CLAUDE.md'),
@@ -379,7 +379,7 @@ export async function maybeExtractSkill(
   }
 }
 
-// ─── Mid-session extraction (like Claude Code's SessionMemory) ──────────
+// ─── Mid-session extraction ──────────────────────────────────────────────
 
 /**
  * Tracks state for mid-session extraction so it only runs when there's
@@ -414,9 +414,6 @@ const MID_SESSION_MAX_EXTRACTIONS = 3;
  * 1. Token count exceeds init threshold (first extraction) OR update threshold (subsequent)
  * 2. AND enough tool calls have happened since last extraction
  * 3. AND we haven't hit the per-session cap
- *
- * Inspired by Claude Code's SessionMemory which runs a background subagent
- * to extract conversation notes periodically.
  */
 export function maybeMidSessionExtract(
   history: Dialogue[],

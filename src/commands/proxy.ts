@@ -1,6 +1,6 @@
 /**
- * Proxy-only mode — runs the BlockRun payment proxy for other tools (e.g. Claude Code).
- * The proxy translates requests and handles x402 payments so Claude Code can use any model.
+ * Proxy-only mode — runs the BlockRun payment proxy for Anthropic-compatible CLI agents.
+ * The proxy translates requests and handles x402 payments so any compatible client can use any model.
  */
 
 import chalk from 'chalk';
@@ -114,7 +114,7 @@ function launchProxy(
     if (debug) console.log(chalk.dim(`  Debug log:      ~/.blockrun/franklin-debug.log`));
     console.log(chalk.dim(`  Run 'franklin stats' to view statistics\n`));
 
-    console.log('Set this in your shell to use with Claude Code:\n');
+    console.log('Set these in your shell to route Anthropic-compatible CLI agents through franklin:\n');
     console.log(
       chalk.bold(`  export ANTHROPIC_BASE_URL=http://localhost:${port}/api`)
     );

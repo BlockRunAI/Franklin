@@ -167,7 +167,7 @@ function RunCodeApp({
   const [completedTools, setCompletedTools] = useState<Array<ToolStatus & { key: string }>>([]);
   // Last completed tool — shown in dynamic area so it can be expanded/collapsed with Tab
   const [expandableTool, setExpandableTool] = useState<(ToolStatus & { key: string }) | null>(null);
-  // Full responses committed to Static immediately — goes into terminal scrollback like Claude Code
+  // Full responses committed to Static immediately — goes into terminal scrollback
   const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number }>>([]);
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
   const [responsePreview, setResponsePreview] = useState('');

@@ -106,10 +106,10 @@ export async function initCommand(options: { port?: string }) {
 
   // ── 3. Start daemon now ──────────────────────────────────────────────────
   console.log('');
-  console.log(chalk.bold('franklin initialized (proxy mode for Claude Code).'));
+  console.log(chalk.bold('franklin initialized (proxy mode).'));
   console.log(`Run ${chalk.bold('franklin daemon start')} to start the background proxy now.`);
-  console.log(`Then just run ${chalk.bold('claude')} — franklin proxy handles payments automatically.`);
+  console.log(`Anthropic-compatible CLI agents will route through franklin automatically.`);
   console.log('');
   console.log(chalk.dim('Or use franklin directly: franklin start'));
-  console.log(chalk.dim('Note: Claude Code will ask you to trust the proxy URL once.'));
+  console.log(chalk.dim('Note: your CLI agent will ask you to trust the proxy URL once.'));
 }
