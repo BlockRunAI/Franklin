@@ -14,6 +14,7 @@ import {
 } from '@blockrun/llm';
 import type { Chain } from '../config.js';
 import { recordUsage } from '../stats/tracker.js';
+import { appendAudit } from '../stats/audit.js';
 import {
   fetchWithFallback,
   buildFallbackChain,
@@ -587,6 +588,16 @@ export function createProxy(options: ProxyOptions): http.Server {
                       latencyMs,
                       usedFallback
                     );
+                    appendAudit({
+                      ts: Date.now(),
+                      model: finalModel,
+                      inputTokens,
+                      outputTokens,
+                      costUsd: cost,
+                      latencyMs,
+                      fallback: usedFallback,
+                      source: 'proxy',
+                    });
                     debug(
                       options,
                       `recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
@@ -630,6 +641,16 @@ export function createProxy(options: ProxyOptions): http.Server {
                 latencyMs,
                 usedFallback
               );
+              appendAudit({
+                ts: Date.now(),
+                model: finalModel,
+                inputTokens,
+                outputTokens,
+                costUsd: cost,
+                latencyMs,
+                fallback: usedFallback,
+                source: 'proxy',
+              });
               debug(
                 options,
                 `recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`

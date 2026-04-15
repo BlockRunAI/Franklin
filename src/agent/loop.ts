@@ -15,6 +15,7 @@ import { classifyAgentError } from './error-classifier.js';
 import { SessionToolGuard } from './tool-guard.js';
 import { recordUsage } from '../stats/tracker.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
+import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
@@ -744,6 +745,18 @@ export async function interactiveSession(
       const costEstimate = estimateCost(resolvedModel, inputTokens, usage.outputTokens, 1);
       recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, 0);
       recordSessionUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, routingTier);
+      appendAudit({
+        ts: Date.now(),
+        sessionId,
+        model: resolvedModel,
+        inputTokens,
+        outputTokens: usage.outputTokens,
+        costUsd: costEstimate,
+        source: 'agent',
+        workDir,
+        prompt: extractLastUserPrompt(history),
+        routingTier,
+      });
 
       // Accumulate session-level totals for session meta
       sessionInputTokens += inputTokens;

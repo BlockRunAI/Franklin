@@ -383,6 +383,10 @@ a:hover { text-decoration:underline; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
       Learnings
     </button>
+    <button class="nav-item" data-tab="audit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M11 8v3l2 1"/></svg>
+      Audit Log
+    </button>
   </div>
 
   <div class="sidebar-footer">
@@ -558,6 +562,31 @@ a:hover { text-decoration:underline; }
       <p>Preferences Franklin has learned over time</p>
     </div>
     <div id="learnings-list"></div>
+  </div>
+
+  <!-- Audit Log -->
+  <div class="tab" id="tab-audit">
+    <div class="content-header">
+      <h2>Audit Log</h2>
+      <p>Every LLM call: prompt, model, tokens, cost. Where the money actually went.</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim);cursor:pointer;">
+        <input type="checkbox" id="audit-paid-only" style="margin:0;" /> Paid only
+      </label>
+      <select id="audit-since" style="padding:4px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:13px;">
+        <option value="0">All time</option>
+        <option value="3600000">Last hour</option>
+        <option value="86400000" selected>Last 24h</option>
+        <option value="604800000">Last 7 days</option>
+        <option value="2592000000">Last 30 days</option>
+      </select>
+      <input id="audit-model" placeholder="Filter by model…" style="padding:4px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:13px;width:180px;" />
+      <input id="audit-session" placeholder="Filter by session prefix…" style="padding:4px 8px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:13px;width:180px;" />
+      <button id="audit-refresh" style="padding:4px 10px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:13px;cursor:pointer;">Refresh</button>
+      <span id="audit-summary" style="margin-left:auto;font-size:13px;color:var(--text-dim);"></span>
+    </div>
+    <div id="audit-list" style="font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;"></div>
   </div>
 </div>
 
@@ -826,6 +855,57 @@ es.onerror = () => { dot.className = 'dot off'; statusEl.textContent = 'offline'
 es.onmessage = (e) => {
   try { if (JSON.parse(e.data).type === 'stats.updated') loadOverview(); } catch {}
 };
+
+async function loadAudit() {
+  const list = document.getElementById('audit-list');
+  const summary = document.getElementById('audit-summary');
+  if (!list) return;
+  const params = new URLSearchParams({ limit: '300' });
+  if (document.getElementById('audit-paid-only').checked) params.set('paidOnly', '1');
+  const sinceMs = parseInt(document.getElementById('audit-since').value, 10);
+  if (sinceMs > 0) params.set('since', String(Date.now() - sinceMs));
+  const model = document.getElementById('audit-model').value.trim();
+  if (model) params.set('model', model);
+  const session = document.getElementById('audit-session').value.trim();
+  if (session) params.set('session', session);
+
+  list.innerHTML = '<div style="color:var(--text-dim);padding:12px;">Loading…</div>';
+  const data = await fetch('/api/audit?' + params.toString()).then(r => r.json()).catch(() => null);
+  if (!data) { list.innerHTML = '<div style="color:var(--text-dim);padding:12px;">API offline</div>'; return; }
+  if (!data.entries.length) {
+    list.innerHTML = '<div style="color:var(--text-dim);padding:12px;">No audit entries match these filters. Run franklin and make a request.</div>';
+    summary.textContent = '0 calls';
+    return;
+  }
+  summary.textContent = data.returned + ' / ' + data.total + ' calls · $' + data.totalCostUsd.toFixed(4) + ' · ' +
+    (data.totalInputTokens/1000).toFixed(1) + 'k in / ' + (data.totalOutputTokens/1000).toFixed(1) + 'k out';
+
+  list.innerHTML = data.entries.map(e => {
+    const ts = new Date(e.ts).toLocaleString('en-US', { hour12: false });
+    const cost = e.costUsd > 0
+      ? '<span style="color:#fbbf24;">$' + e.costUsd.toFixed(4) + '</span>'
+      : '<span style="color:#10b981;">FREE</span>';
+    const fb = e.fallback ? ' <span style="color:#f97316;">·fb</span>' : '';
+    const sid = e.sessionId ? ' <span style="color:var(--text-dim);">' + esc(e.sessionId.slice(0,8)) + '</span>' : '';
+    const prompt = e.prompt
+      ? '<div style="color:var(--text-dim);padding:2px 0 4px 16px;white-space:pre-wrap;word-break:break-word;">"' + esc(e.prompt) + '"</div>'
+      : '';
+    const dir = e.workDir ? '<div style="color:var(--text-dim);padding:0 0 0 16px;font-size:11px;">📁 ' + esc(e.workDir) + '</div>' : '';
+    return '<div style="padding:8px 12px;border-bottom:1px solid var(--border);">' +
+      '<div><span style="color:var(--text-dim);">' + ts + '</span>  ' + cost + '  <span style="color:#60a5fa;">' + esc(e.model) + '</span>  ' +
+      '<span style="color:var(--text-dim);">in=' + e.inputTokens + ' out=' + e.outputTokens + '</span>  ' +
+      '<span style="color:var(--text-dim);">[' + esc(e.source) + ']' + fb + '</span>' + sid + '</div>' +
+      prompt + dir +
+      '</div>';
+  }).join('');
+}
+
+['audit-paid-only','audit-since','audit-model','audit-session'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener(el.tagName === 'INPUT' && el.type === 'text' ? 'input' : 'change', () => loadAudit());
+});
+document.getElementById('audit-refresh')?.addEventListener('click', loadAudit);
+document.querySelector('[data-tab="audit"]')?.addEventListener('click', loadAudit);
 
 loadOverview();
 loadSessions();
