@@ -16,7 +16,7 @@ interface EditInput {
 
 /**
  * Normalize curly/smart quotes to straight quotes.
- * Claude Code does this to handle API-sanitized strings and editor paste artifacts.
+ * Handles API-sanitized strings and editor paste artifacts.
  */
 function normalizeQuotes(str: string): string {
   return str

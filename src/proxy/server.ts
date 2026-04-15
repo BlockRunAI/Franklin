@@ -174,7 +174,7 @@ function detectModelSwitch(parsed: {
 // Default model - smart routing built-in
 const DEFAULT_MODEL = 'blockrun/auto';
 
-// Origin allowlist: requests must either have no Origin (native HTTP like Claude Code CLI)
+// Origin allowlist: requests must either have no Origin (native HTTP CLI clients)
 // or come from localhost. This prevents drive-by wallet draining by browser extensions
 // or other cross-origin local processes.
 function isAllowedOrigin(origin: string | undefined): boolean {
@@ -310,8 +310,8 @@ export function createProxy(options: ProxyOptions): http.Server {
             }
 
             // Model override logic:
-            // - Claude Code sends native Anthropic IDs (e.g. "claude-sonnet-4-6-20250514")
-            //   which don't contain "/" — these MUST be replaced with currentModel.
+            // - Native Anthropic-format IDs (e.g. "claude-sonnet-4-6-20250514")
+            //   don't contain "/" — these MUST be replaced with currentModel.
             // - BlockRun model IDs always contain "/" (e.g. "blockrun/auto", "nvidia/nemotron-ultra-253b")
             //   — these should be passed through as-is.
             // - If --model CLI flag is set, always override regardless.
@@ -496,7 +496,7 @@ export function createProxy(options: ProxyOptions): http.Server {
         });
 
         // Intercept error responses and ensure Anthropic-format errors
-        // so Claude Code doesn't fall back to showing a login page
+        // so upstream CLI clients don't fall back to showing a login page
         if (response.status >= 400 && !responseHeaders['content-type']?.includes('text/event-stream')) {
           let errorBody: string;
           try {

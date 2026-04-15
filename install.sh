@@ -1,8 +1,8 @@
 #!/bin/bash
-# runcode — RunCode
-# One-line install: curl -fsSL https://runcode.blockrun.ai/install.sh | bash
+# franklin — installer
+# One-line install: curl -fsSL https://franklin.run/install.sh | bash
 #
-# Installs: Node.js (if missing) + Claude Code + runcode
+# Installs: Node.js (if missing) + Anthropic CLI (optional) + franklin
 # Creates wallet and shows funding instructions
 
 set -e
@@ -15,8 +15,8 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 echo ""
-echo -e "${BOLD}runcode — RunCode${NC}"
-echo -e "Run Claude Code with any model. No rate limits. Pay with USDC."
+echo -e "${BOLD}franklin — the AI agent with a wallet${NC}"
+echo -e "Spends USDC autonomously across 55+ models. Pay per outcome."
 echo ""
 
 # ======================================================================
@@ -67,33 +67,33 @@ else
 fi
 
 # ======================================================================
-# 2. Install Claude Code
+# 2. Install Anthropic CLI (optional — only needed for proxy mode)
 # ======================================================================
 if command -v claude &>/dev/null; then
-  echo -e "${GREEN}✓${NC} Claude Code $(claude --version 2>/dev/null || echo 'installed')"
+  echo -e "${GREEN}✓${NC} Anthropic CLI $(claude --version 2>/dev/null || echo 'installed')"
 else
-  echo "Installing Claude Code..."
+  echo "Installing Anthropic CLI (for proxy mode)..."
   curl -fsSL https://claude.ai/install.sh | bash
   export PATH="$HOME/.local/bin:$PATH"
-  echo -e "${GREEN}✓${NC} Claude Code installed"
+  echo -e "${GREEN}✓${NC} Anthropic CLI installed"
 fi
 
 # ======================================================================
 # 3. Install runcode
 # ======================================================================
-echo "Installing runcode..."
+echo "Installing franklin..."
 if [[ "$EUID" -eq 0 ]]; then
-  npm install -g @blockrun/cc@latest 2>/dev/null
+  npm install -g @blockrun/franklin@latest 2>/dev/null
 else
-  sudo npm install -g @blockrun/cc@latest 2>/dev/null || npm install -g @blockrun/cc@latest 2>/dev/null
+  sudo npm install -g @blockrun/franklin@latest 2>/dev/null || npm install -g @blockrun/franklin@latest 2>/dev/null
 fi
-echo -e "${GREEN}✓${NC} runcode $(runcode --version 2>/dev/null || echo 'installed')"
+echo -e "${GREEN}✓${NC} franklin $(franklin --version 2>/dev/null || echo 'installed')"
 
 # ======================================================================
 # 4. Setup wallet
 # ======================================================================
 echo ""
-runcode setup base
+franklin setup base
 
 # ======================================================================
 # 5. Done
@@ -108,15 +108,15 @@ echo ""
 echo -e "  1. Fund your wallet with USDC on Base"
 echo -e "     (or use free models without funding)"
 echo ""
-echo -e "  2. Start Claude Code:"
-echo -e "     ${CYAN}runcode start${NC}                          # default model"
-echo -e "     ${CYAN}runcode start --model nvidia/nemotron-ultra-253b${NC}  # free model"
-echo -e "     ${CYAN}runcode start --model openai/gpt-5.4${NC}      # GPT-5.4"
+echo -e "  2. Start franklin:"
+echo -e "     ${CYAN}franklin start${NC}                              # default model"
+echo -e "     ${CYAN}franklin start --model nvidia/nemotron-ultra-253b${NC}  # free model"
+echo -e "     ${CYAN}franklin start --model openai/gpt-5.4${NC}          # GPT-5.4"
 echo ""
 echo -e "  3. Useful commands:"
-echo -e "     ${CYAN}runcode models${NC}    — list all models + pricing"
-echo -e "     ${CYAN}runcode balance${NC}   — check wallet balance"
-echo -e "     ${CYAN}runcode config list${NC} — view settings"
+echo -e "     ${CYAN}franklin models${NC}    — list all models + pricing"
+echo -e "     ${CYAN}franklin balance${NC}   — check wallet balance"
+echo -e "     ${CYAN}franklin config list${NC} — view settings"
 echo ""
 echo -e "  ${BOLD}Docs:${NC} https://Franklin.run"
 echo ""

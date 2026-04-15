@@ -2,7 +2,6 @@
  * Session insights engine.
  *
  * Rich usage analytics from the stats tracker history.
- * Inspired by hermes-agent's `agent/insights.py` and Claude Code's /insights.
  *
  * Provides:
  *   - Per-model cost and request breakdown

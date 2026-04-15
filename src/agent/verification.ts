@@ -7,8 +7,6 @@
  *
  * If FAIL: injects feedback into conversation so the main agent can fix issues.
  * If PASS: work is considered verified.
- *
- * Inspired by Claude Code's verification agent architecture.
  */
 
 import type { CapabilityHandler, Dialogue } from './types.js';

@@ -456,7 +456,7 @@ The chat-based social tools (`SearchX`, `PostToX`) and the batch CLI (`franklin 
 - [Plugin SDK guide](docs/plugin-sdk.md) — build your own workflow vertical
 - [Changelog](CHANGELOG.md) — every release explained
 - [Roadmap](docs/ROADMAP.md) — what's coming next
-- [Claude Code compatibility](docs/) — use Franklin as a payment proxy
+- [Proxy mode](docs/) — use Franklin as a payment proxy for Anthropic-compatible CLI agents
 
 ---
 

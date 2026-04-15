@@ -38,7 +38,7 @@ src/
 ├── session/                # Persistent sessions + full-text search
 ├── stats/                  # Usage tracking + insights engine
 ├── ui/                     # Ink-based terminal UI
-├── proxy/                  # Payment proxy for Claude Code compatibility
+├── proxy/                  # Payment proxy for Anthropic-compatible CLI agents
 ├── router/                 # Smart model tier routing (free/cheap/premium)
 ├── wallet/                 # Base + Solana wallet management
 ├── commands/               # CLI subcommands

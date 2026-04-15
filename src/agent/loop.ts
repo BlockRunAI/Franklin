@@ -53,7 +53,6 @@ function replaceHistory(target: Dialogue[], replacement: Dialogue[]): void {
 
 /**
  * Sanitize history: fix orphaned tool results AND inject missing results.
- * Inspired by Claude Code's yieldMissingToolResultBlocks + Hermes _sanitize_api_messages().
  *
  * Two problems this solves:
  * 1. Orphaned tool_results — results without matching tool_use calls (remove them)
@@ -382,7 +381,7 @@ export async function interactiveSession(
     onAbortReady?.(() => abort.abort());
     let loopCount = 0;
     let recoveryAttempts = 0;
-    const MAX_RECOVERY_ATTEMPTS = 5;  // Up from 3 — Claude Code uses 10, we split the difference
+    const MAX_RECOVERY_ATTEMPTS = 5;
     let compactFailures = 0;
     let maxTokensOverride: number | undefined;
     const turnIdleReference = lastSessionActivity;
@@ -649,7 +648,6 @@ export async function interactiveSession(
         // ── Prompt too long recovery (reactive compaction) ──
         // Use forceCompact instead of autoCompactIfNeeded — the API already told us
         // the prompt is too long, so we must compact regardless of our threshold estimate.
-        // This is the key insight from Claude Code: reactive compaction must FORCE compress.
         if (classified.category === 'context_limit' && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
           recoveryAttempts++;
           if (config.debug) {
@@ -917,7 +915,7 @@ export async function interactiveSession(
       // Refresh activity timestamp after tool execution
       lastSessionActivity = Date.now();
 
-      // Mid-session learning extraction (like Claude Code's SessionMemory)
+      // Mid-session learning extraction
       // Runs in background — never blocks the conversation
       const { estimated: currentTokens } = getAnchoredTokenCount(history);
       maybeMidSessionExtract(history, currentTokens, turnToolCalls, sessionId, client);
