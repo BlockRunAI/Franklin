@@ -1,7 +1,8 @@
 import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { loadChain, API_URLS } from '../config.js';
-import { flushStats } from '../stats/tracker.js';
+import { flushStats, loadStats } from '../stats/tracker.js';
+import { OPUS_PRICING } from '../pricing.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
 import { assembleInstructions } from '../agent/context.js';
@@ -132,11 +133,18 @@ export async function startCommand(options: StartOptions) {
 
   const workDir = process.cwd();
 
+  // Auto-start panel in background unless explicitly disabled.
+  // Binds loopback-only (wallet secrets on /api/wallet/secret — never expose on LAN).
+  let panelUrl: string | undefined;
+  if (process.env.FRANKLIN_PANEL_AUTOSTART !== '0') {
+    panelUrl = await startPanelBackground(3100);
+  }
+
   // Session info — aligned, minimal. Model + balance live in the input bar below.
   // Full wallet address is shown so the user can copy-paste it to fund the wallet.
   console.log(chalk.dim('  Wallet:    ') + (walletAddress || chalk.yellow('not set')));
   console.log(chalk.dim('  Dir:       ') + workDir);
-  console.log(chalk.dim('  Dashboard: ') + chalk.cyan('franklin panel') + chalk.dim(' → http://localhost:3100'));
+  console.log(chalk.dim('  Dashboard: ') + (panelUrl ? chalk.cyan(panelUrl) : chalk.cyan('franklin panel') + chalk.dim(' → http://localhost:3100')));
   console.log(chalk.dim('  Help:      ') + chalk.cyan('/help'));
   console.log('');
 
@@ -289,6 +297,7 @@ async function runWithInkUI(
   onBalanceReady?: (cb: (bal: string) => void) => void,
   fetchBalance?: () => Promise<string>,
 ) {
+  const startSnapshot = snapshotStats();
   const ui = launchInkUI({
     model,
     workDir,
@@ -367,15 +376,16 @@ async function runWithInkUI(
 
   await disconnectMcpServers();
 
-  // Session summary — show cost and usage before goodbye
+  // Session summary — delta vs. snapshot at session start
   try {
-    const { getStatsSummary } = await import('../stats/tracker.js');
-    const { stats, saved } = getStatsSummary();
-    if (stats.totalRequests > 0) {
-      const cost = stats.totalCostUsd.toFixed(4);
-      const savedStr = saved > 0.001 ? ` · saved $${saved.toFixed(2)} vs Opus` : '';
-      const tokens = `${(stats.totalInputTokens / 1000).toFixed(0)}k in / ${(stats.totalOutputTokens / 1000).toFixed(0)}k out`;
-      console.log(chalk.dim(`\n  Session: ${stats.totalRequests} requests · $${cost} USDC${savedStr} · ${tokens}`));
+    const delta = statsDelta(startSnapshot);
+    if (delta.requests > 0) {
+      const cost = delta.cost.toFixed(4);
+      const savedStr = delta.saved > 0.001 ? ` · saved $${delta.saved.toFixed(2)} vs Opus` : '';
+      const tokens = `${(delta.inputTokens / 1000).toFixed(0)}k in / ${(delta.outputTokens / 1000).toFixed(0)}k out`;
+      console.log(chalk.dim(`\n  Session: ${delta.requests} requests · $${cost} USDC${savedStr} · ${tokens}`));
+    } else {
+      console.log(chalk.dim('\n  Session: 0 requests · no spend'));
     }
   } catch { /* stats unavailable */ }
 
@@ -392,6 +402,7 @@ async function runWithBasicUI(
   const { TerminalUI } = await import('../ui/terminal.js');
   const ui = new TerminalUI();
   ui.printWelcome(model, workDir);
+  const startSnapshot = snapshotStats();
 
   let lastTerminalPrompt = '';
   try {
@@ -440,18 +451,82 @@ async function runWithBasicUI(
 
   // Session summary for piped mode
   try {
-    const { getStatsSummary } = await import('../stats/tracker.js');
-    const { stats, saved } = getStatsSummary();
-    if (stats.totalRequests > 0) {
-      const cost = stats.totalCostUsd.toFixed(4);
-      const savedStr = saved > 0.001 ? ` · saved $${saved.toFixed(2)} vs Opus` : '';
-      const tokens = `${(stats.totalInputTokens / 1000).toFixed(0)}k in / ${(stats.totalOutputTokens / 1000).toFixed(0)}k out`;
-      console.error(`Session: ${stats.totalRequests} requests · $${cost} USDC${savedStr} · ${tokens}`);
+    const delta = statsDelta(startSnapshot);
+    if (delta.requests > 0) {
+      const cost = delta.cost.toFixed(4);
+      const savedStr = delta.saved > 0.001 ? ` · saved $${delta.saved.toFixed(2)} vs Opus` : '';
+      const tokens = `${(delta.inputTokens / 1000).toFixed(0)}k in / ${(delta.outputTokens / 1000).toFixed(0)}k out`;
+      console.error(`Session: ${delta.requests} requests · $${cost} USDC${savedStr} · ${tokens}`);
     }
   } catch { /* stats unavailable */ }
 
   ui.printGoodbye();
   flushStats();
+}
+
+// ─── Panel auto-start ──────────────────────────────────────────────────────
+
+async function startPanelBackground(startPort: number): Promise<string | undefined> {
+  const MAX_ATTEMPTS = 20;
+  try {
+    const { createPanelServer } = await import('../panel/server.js');
+    return await new Promise<string | undefined>((resolve) => {
+      const tryListen = (port: number, attempt: number) => {
+        const server = createPanelServer(port);
+        server.on('error', (err: NodeJS.ErrnoException) => {
+          if (err.code === 'EADDRINUSE' && attempt < MAX_ATTEMPTS) {
+            tryListen(port + 1, attempt + 1);
+            return;
+          }
+          resolve(undefined);
+        });
+        server.listen(port, '127.0.0.1', () => {
+          server.unref?.();
+          resolve(`http://localhost:${port}`);
+        });
+      };
+      tryListen(startPort, 0);
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+// ─── Per-session stats delta ───────────────────────────────────────────────
+// The stats tracker persists lifetime totals. For the exit summary we want
+// just what this session spent, so we snapshot at start and diff at exit.
+
+interface StatsSnapshot {
+  requests: number;
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+function snapshotStats(): StatsSnapshot {
+  try {
+    const s = loadStats();
+    return {
+      requests: s.totalRequests,
+      cost: s.totalCostUsd,
+      inputTokens: s.totalInputTokens,
+      outputTokens: s.totalOutputTokens,
+    };
+  } catch {
+    return { requests: 0, cost: 0, inputTokens: 0, outputTokens: 0 };
+  }
+}
+
+function statsDelta(before: StatsSnapshot): StatsSnapshot & { saved: number } {
+  const now = loadStats();
+  const requests = Math.max(0, now.totalRequests - before.requests);
+  const cost = Math.max(0, now.totalCostUsd - before.cost);
+  const inputTokens = Math.max(0, now.totalInputTokens - before.inputTokens);
+  const outputTokens = Math.max(0, now.totalOutputTokens - before.outputTokens);
+  const opusCost =
+    (inputTokens / 1_000_000) * OPUS_PRICING.input +
+    (outputTokens / 1_000_000) * OPUS_PRICING.output;
+  return { requests, cost, inputTokens, outputTokens, saved: Math.max(0, opusCost - cost) };
 }
 
 // ─── Slash commands ────────────────────────────────────────────────────────
