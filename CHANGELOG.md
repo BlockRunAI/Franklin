@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.7.2 (2026-04-15) — Auto-start panel + per-call audit log in the dashboard
+
+Three small fixes that make Franklin easier to debug spending and easier
+to live with day-to-day.
+
+### Added
+
+- **Panel auto-starts with `franklin`.** No more "where's the dashboard?"
+  — the panel HTTP server now boots in-process on `127.0.0.1:3100` (or
+  the next free port up to 3119) the moment you launch the agent. The
+  startup banner shows the live URL instead of a hint to run a separate
+  command. Loopback-only bind, `server.unref()` so it doesn't hold the
+  process open. Opt out with `FRANKLIN_PANEL_AUTOSTART=0`.
+- **Per-call audit log at `~/.blockrun/franklin-audit.jsonl`.** Append-only
+  forensic record of every LLM call: timestamp, sessionId, model,
+  tokens, cost, latency, fallback flag, source (`agent`/`proxy`), working
+  directory, routing tier, and the **truncated user prompt** (240 chars,
+  tool-result blocks filtered) that triggered the call. Lets you answer
+  "where did $1.50 go on Apr 12?" with prompt-level detail instead of
+  just aggregate model totals. Recording is best-effort — disk failures
+  never break the agent loop.
+- **New "Audit Log" tab in the dashboard.** Filter by paid-only, time
+  window (1h / 24h / 7d / 30d / all), model substring, or session prefix.
+  Per-call rows show the actual prompt that triggered each spend.
+  Backed by new `GET /api/audit` endpoint.
+
+### Fixed
+
+- **Panel no longer logs `[panel] client error: read ECONNRESET` on every
+  browser tab close.** `ECONNRESET` and `EPIPE` are normal SSE-stream
+  disconnects; they're now silently swallowed. Other client errors only
+  print under `FRANKLIN_PANEL_DEBUG=1`.
+
 ## 3.7.1 (2026-04-14) — Fix misleading session cost summary + bare-greeting misfire
 
 ### Fixed
