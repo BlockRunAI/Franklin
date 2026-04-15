@@ -75,10 +75,12 @@
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
     "playwright-core": "^1.49.1",
+    "qrcode": "^1.5.4",
     "react": "^19.2.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
     "typescript": "^5.7.0"
   }
 }

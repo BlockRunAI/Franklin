@@ -26,6 +26,30 @@ function json(res: http.ServerResponse, data: unknown, status = 200): void {
   res.end(JSON.stringify(data));
 }
 
+/**
+ * Require the request to come from loopback. Wallet secret + import endpoints
+ * must never be reachable from another host — defense-in-depth on top of the
+ * 127.0.0.1 listen binding in panel.ts.
+ */
+function isLoopback(req: http.IncomingMessage): boolean {
+  const addr = req.socket.remoteAddress || '';
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+async function readBody(req: http.IncomingMessage, maxBytes = 16 * 1024): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maxBytes) { reject(new Error('Request body too large')); req.destroy(); return; }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+    req.on('error', reject);
+  });
+}
+
 function broadcast(data: unknown): void {
   const msg = `data: ${JSON.stringify(data)}\n\n`;
   for (const client of sseClients) {
@@ -148,6 +172,114 @@ export function createPanelServer(port: number): http.Server {
           json(res, { address, balance, chain });
         } catch {
           json(res, { address: 'not set', balance: 0, chain: loadChain() });
+        }
+        return;
+      }
+
+      // ─── Wallet QR (SVG) ────────────────────────────────────────────────
+      // Returns an SVG QR code for a given payload (?data=...). Generated
+      // server-side so the browser never ships the wallet address to a
+      // third-party QR service. Size-bounded.
+      if (p === '/api/wallet/qr') {
+        const data = url.searchParams.get('data') || '';
+        if (!data || data.length > 256) {
+          json(res, { error: 'missing or oversized data param' }, 400);
+          return;
+        }
+        try {
+          const QRCode = (await import('qrcode')).default;
+          const svg = await QRCode.toString(data, {
+            type: 'svg',
+            errorCorrectionLevel: 'M',
+            margin: 1,
+            color: { dark: '#000000', light: '#ffffff' },
+          });
+          res.writeHead(200, {
+            'Content-Type': 'image/svg+xml; charset=utf-8',
+            'Cache-Control': 'no-store',
+          });
+          res.end(svg);
+        } catch (err) {
+          json(res, { error: (err as Error).message }, 500);
+        }
+        return;
+      }
+
+      // ─── Wallet secret (loopback only) ──────────────────────────────────
+      // Returns the private key so the user can back it up / move it.
+      // Hardened: loopback-only (belt-and-suspenders on the 127.0.0.1 bind),
+      // no-store cache header, JSON only.
+      if (p === '/api/wallet/secret') {
+        if (!isLoopback(req)) {
+          json(res, { error: 'forbidden' }, 403);
+          return;
+        }
+        try {
+          const chain = loadChain();
+          const { loadWallet, loadSolanaWallet, WALLET_FILE_PATH, SOLANA_WALLET_FILE_PATH } =
+            await import('@blockrun/llm');
+          const privateKey = chain === 'solana' ? loadSolanaWallet() : loadWallet();
+          if (!privateKey) {
+            json(res, { error: 'wallet not set' }, 404);
+            return;
+          }
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          });
+          res.end(JSON.stringify({
+            chain,
+            privateKey,
+            walletFile: chain === 'solana' ? SOLANA_WALLET_FILE_PATH : WALLET_FILE_PATH,
+          }));
+        } catch (err) {
+          json(res, { error: (err as Error).message }, 500);
+        }
+        return;
+      }
+
+      // ─── Wallet import (loopback only) ──────────────────────────────────
+      // Overwrites the local wallet with a user-supplied private key.
+      // Destructive — overwrites the existing wallet file without backup,
+      // so the UI warns the user. Loopback-only.
+      if (p === '/api/wallet/import' && req.method === 'POST') {
+        if (!isLoopback(req)) {
+          json(res, { error: 'forbidden' }, 403);
+          return;
+        }
+        try {
+          const raw = await readBody(req);
+          const body = JSON.parse(raw) as { privateKey?: string };
+          const pk = (body.privateKey || '').trim();
+          if (!pk) { json(res, { error: 'privateKey required' }, 400); return; }
+
+          const chain = loadChain();
+          if (chain === 'solana') {
+            const { saveSolanaWallet, setupAgentSolanaWallet } = await import('@blockrun/llm');
+            // Basic shape check: base58 chars, reasonable length. Library validates too.
+            if (!/^[1-9A-HJ-NP-Za-km-z]{40,120}$/.test(pk)) {
+              json(res, { error: 'invalid Solana private key format' }, 400);
+              return;
+            }
+            saveSolanaWallet(pk);
+            const client = await setupAgentSolanaWallet({ silent: true });
+            const address = await client.getWalletAddress();
+            json(res, { ok: true, chain, address });
+          } else {
+            const { saveWallet, setupAgentWallet } = await import('@blockrun/llm');
+            // Base: 0x + 64 hex chars
+            const normalized = pk.startsWith('0x') ? pk : `0x${pk}`;
+            if (!/^0x[0-9a-fA-F]{64}$/.test(normalized)) {
+              json(res, { error: 'invalid Base private key — expected 0x + 64 hex chars' }, 400);
+              return;
+            }
+            saveWallet(normalized);
+            const client = setupAgentWallet({ silent: true });
+            const address = client.getWalletAddress();
+            json(res, { ok: true, chain, address });
+          }
+        } catch (err) {
+          json(res, { error: (err as Error).message }, 500);
         }
         return;
       }

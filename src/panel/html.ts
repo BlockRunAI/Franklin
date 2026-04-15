@@ -274,6 +274,63 @@ a:hover { text-decoration:underline; }
 .tab.active { display:block; }
 .empty { color:var(--text-dim); text-align:center; padding:56px 24px; font-size:13px; }
 
+/* ── Wallet page ── */
+.wallet-grid { display:grid; grid-template-columns:1.1fr 1fr; gap:14px; }
+.wallet-grid .card { display:flex; flex-direction:column; gap:10px; }
+.wallet-receive { grid-row:span 2; align-items:flex-start; }
+.wallet-address-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; width:100%; }
+.wallet-chain-pill {
+  font-size:10px; font-weight:700; letter-spacing:0.8px; text-transform:uppercase;
+  padding:3px 8px; border-radius:6px; background:oklch(0.68 0.16 260 / 18%); color:var(--brand);
+}
+.wallet-address {
+  font-family:var(--mono); font-size:12px; color:var(--text);
+  background:oklch(0 0 0 / 35%); padding:8px 10px; border-radius:8px;
+  border:1px solid var(--border); word-break:break-all; flex:1; min-width:0;
+}
+.wallet-balance-big { font-family:var(--mono); font-size:28px; font-weight:700; color:var(--gold); letter-spacing:-0.02em; }
+.wallet-qr {
+  background:#fff; padding:14px; border-radius:12px; display:inline-block;
+  box-shadow:0 10px 40px oklch(0 0 0 / 35%); min-width:220px; min-height:220px;
+}
+.wallet-qr svg { display:block; width:200px; height:200px; }
+.wallet-hint { font-size:12.5px; color:var(--text-muted); line-height:1.55; }
+.wallet-hint code { font-family:var(--mono); font-size:11.5px; color:var(--text); background:oklch(0 0 0 / 30%); padding:1px 5px; border-radius:4px; }
+.wallet-secret { position:relative; }
+.wallet-secret .wallet-key-value {
+  font-family:var(--mono); font-size:11.5px; color:var(--text);
+  background:oklch(0 0 0 / 35%); padding:10px; border-radius:8px;
+  border:1px solid var(--border-strong); word-break:break-all; display:block;
+  user-select:all;
+}
+.wallet-secret-actions { display:flex; gap:8px; margin-top:8px; }
+.wallet-import-input {
+  width:100%; min-height:70px; background:oklch(0 0 0 / 35%); color:var(--text);
+  border:1px solid var(--border); border-radius:8px; padding:10px;
+  font-family:var(--mono); font-size:12px; resize:vertical;
+}
+.wallet-import-input:focus { border-color:var(--brand); outline:none; box-shadow:0 0 0 3px oklch(0.68 0.16 260 / 14%); }
+.wallet-actions { display:flex; align-items:center; gap:10px; margin-top:4px; }
+.wallet-import-status { font-size:12px; color:var(--text-muted); }
+.wallet-import-status.ok { color:var(--success); }
+.wallet-import-status.err { color:var(--danger); }
+.wallet-steps { margin:6px 0 0 18px; color:var(--text-muted); font-size:12.5px; line-height:1.7; }
+.wallet-steps em { color:var(--text); font-style:normal; font-weight:600; }
+
+.btn {
+  font-family:var(--sans); font-size:12px; font-weight:600;
+  padding:7px 12px; border-radius:7px; border:1px solid var(--border);
+  background:oklch(1 0 0 / 4%); color:var(--text); cursor:pointer;
+  transition:background 0.15s, border-color 0.15s, transform 0.05s;
+}
+.btn:hover { background:oklch(1 0 0 / 10%); }
+.btn:active { transform:translateY(1px); }
+.btn-ghost { background:transparent; }
+.btn-warn { background:oklch(0.78 0.14 85 / 18%); color:var(--gold); border-color:oklch(0.78 0.14 85 / 35%); }
+.btn-warn:hover { background:oklch(0.78 0.14 85 / 30%); }
+.btn-danger { background:oklch(0.65 0.20 25 / 18%); color:var(--danger); border-color:oklch(0.65 0.20 25 / 35%); }
+.btn-danger:hover { background:oklch(0.65 0.20 25 / 30%); }
+
 @media (max-width:768px) {
   body { flex-direction:column; }
   .sidebar { width:100%; min-width:100%; flex-direction:row; padding:8px; overflow-x:auto; border-right:none; border-bottom:1px solid var(--border); }
@@ -281,6 +338,8 @@ a:hover { text-decoration:underline; }
   .sidebar-nav { flex-direction:row; gap:4px; padding:0; }
   .content { padding:16px; }
   .grid-4 { grid-template-columns:repeat(2,1fr); }
+  .wallet-grid { grid-template-columns:1fr; }
+  .wallet-receive { grid-row:auto; }
   .savings-hero { flex-direction:column; gap:12px; text-align:center; }
   .savings-pct { display:none; }
   .watermark { width:100%; }
@@ -308,6 +367,10 @@ a:hover { text-decoration:underline; }
     <button class="nav-item active" data-tab="overview">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
       Overview
+    </button>
+    <button class="nav-item" data-tab="wallet">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+      Wallet
     </button>
     <button class="nav-item" data-tab="sessions">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -399,6 +462,69 @@ a:hover { text-decoration:underline; }
     <div class="card" style="margin-top:12px">
       <h3>Cost by Model</h3>
       <div class="bar-chart" id="model-chart"></div>
+    </div>
+  </div>
+
+  <!-- Wallet -->
+  <div class="tab" id="tab-wallet">
+    <div class="content-header">
+      <h2>Wallet</h2>
+      <p>Receive USDC, back up your key, or import an existing wallet</p>
+    </div>
+
+    <div class="wallet-grid">
+      <div class="card wallet-receive">
+        <h3>Receive USDC</h3>
+        <div class="wallet-address-row">
+          <span class="wallet-chain-pill" id="wallet-chain-pill">—</span>
+          <code class="wallet-address" id="wallet-address-full">—</code>
+          <button class="btn btn-ghost" id="wallet-copy-btn" title="Copy address">Copy</button>
+        </div>
+        <div class="wallet-balance-big" id="wallet-balance-big">—</div>
+        <div class="wallet-qr" id="wallet-qr"></div>
+        <p class="wallet-hint" id="wallet-qr-hint">Scan to send USDC to this wallet.</p>
+      </div>
+
+      <div class="card">
+        <h3>Back up your key</h3>
+        <p class="wallet-hint">
+          Your private key is the only way to access this wallet.
+          Save it somewhere safe — a password manager, encrypted note, or hardware token.
+          <strong>Never</strong> share it; anyone with the key can drain the wallet.
+        </p>
+        <div class="wallet-secret" id="wallet-secret">
+          <button class="btn btn-warn" id="wallet-reveal-btn">Reveal private key</button>
+        </div>
+        <div id="wallet-file-hint" class="wallet-hint" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
+        <h3>Import an existing wallet</h3>
+        <p class="wallet-hint">
+          Paste a private key below to replace the current wallet.
+          <strong>This overwrites your existing wallet file.</strong>
+          Make sure the current key is backed up first, or you will lose access to any funds still on it.
+        </p>
+        <textarea id="wallet-import-input" class="wallet-import-input" placeholder="0x… (Base) or base58 key (Solana)"></textarea>
+        <div class="wallet-actions">
+          <button class="btn btn-danger" id="wallet-import-btn">Import &amp; replace</button>
+          <span class="wallet-import-status" id="wallet-import-status"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Export to another tool</h3>
+        <p class="wallet-hint">
+          Franklin stores your key in <code id="wallet-file-path">~/.blockrun/</code>.
+          To use the same wallet in MetaMask / Phantom / a hardware wallet:
+        </p>
+        <ol class="wallet-steps">
+          <li>Click <em>Reveal private key</em> above and copy it.</li>
+          <li>In your destination wallet, choose <em>Import account</em> / <em>Import private key</em>.</li>
+          <li>Paste the key. The wallet will derive the same address.</li>
+          <li>Consider deleting the local file once imported if you no longer want Franklin to spend from it.</li>
+        </ol>
+      </div>
     </div>
   </div>
 
@@ -590,6 +716,109 @@ async function loadLearnings() {
     }).join('');
 }
 
+async function loadWallet() {
+  const w = await api('wallet');
+  if (!w) return;
+  const addr = w.address || '';
+  document.getElementById('wallet-address-full').textContent = addr || 'not set';
+  document.getElementById('wallet-balance-big').textContent = usdBig(w.balance) + ' USDC';
+  document.getElementById('wallet-chain-pill').textContent = w.chain || '—';
+
+  // QR via server — never leak address to third parties
+  const qrBox = document.getElementById('wallet-qr');
+  const hint = document.getElementById('wallet-qr-hint');
+  if (addr && addr !== 'not set') {
+    const svg = await fetch('/api/wallet/qr?data=' + encodeURIComponent(addr)).then(r => r.ok ? r.text() : null);
+    qrBox.innerHTML = svg || '';
+    hint.textContent = w.chain === 'solana'
+      ? 'Scan to send USDC (Solana) to this address.'
+      : 'Scan to send USDC on Base to this address.';
+  } else {
+    qrBox.innerHTML = '';
+    hint.textContent = 'No wallet set yet — run: franklin setup';
+  }
+}
+
+// Copy button
+document.getElementById('wallet-copy-btn').addEventListener('click', async () => {
+  const addr = document.getElementById('wallet-address-full').textContent;
+  try {
+    await navigator.clipboard.writeText(addr);
+    const btn = document.getElementById('wallet-copy-btn');
+    const orig = btn.textContent;
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = orig; }, 1400);
+  } catch { /* clipboard may be blocked — user can select manually */ }
+});
+
+// Reveal private key
+document.getElementById('wallet-reveal-btn').addEventListener('click', async () => {
+  if (!confirm('Show the private key on screen?\\n\\nAnyone who sees or records the key can drain this wallet. Make sure nobody is looking over your shoulder or recording your screen.')) return;
+  const box = document.getElementById('wallet-secret');
+  box.innerHTML = '<div class="wallet-hint">Loading…</div>';
+  try {
+    const r = await fetch('/api/wallet/secret');
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ error: 'unknown' }));
+      box.innerHTML = '<div class="wallet-hint err">Error: ' + esc(err.error || r.statusText) + '</div>';
+      return;
+    }
+    const d = await r.json();
+    box.innerHTML =
+      '<code class="wallet-key-value" id="wallet-key-value">' + esc(d.privateKey) + '</code>' +
+      '<div class="wallet-secret-actions">' +
+        '<button class="btn" id="wallet-key-copy">Copy key</button>' +
+        '<button class="btn btn-ghost" id="wallet-key-hide">Hide</button>' +
+      '</div>';
+    document.getElementById('wallet-file-hint').textContent = 'Stored at: ' + d.walletFile;
+    document.getElementById('wallet-file-path').textContent = d.walletFile;
+    document.getElementById('wallet-key-copy').addEventListener('click', async () => {
+      await navigator.clipboard.writeText(d.privateKey);
+      const btn = document.getElementById('wallet-key-copy');
+      btn.textContent = 'Copied ✓';
+      setTimeout(() => { btn.textContent = 'Copy key'; }, 1400);
+    });
+    document.getElementById('wallet-key-hide').addEventListener('click', () => {
+      box.innerHTML = '<button class="btn btn-warn" id="wallet-reveal-btn-2">Reveal private key</button>';
+      document.getElementById('wallet-reveal-btn-2').addEventListener('click',
+        () => document.getElementById('wallet-reveal-btn').click());
+    });
+  } catch (err) {
+    box.innerHTML = '<div class="wallet-hint err">Error: ' + esc(err.message) + '</div>';
+  }
+});
+
+// Import
+document.getElementById('wallet-import-btn').addEventListener('click', async () => {
+  const pk = document.getElementById('wallet-import-input').value.trim();
+  const status = document.getElementById('wallet-import-status');
+  status.className = 'wallet-import-status';
+  if (!pk) { status.textContent = 'Paste a private key first.'; return; }
+  if (!confirm('Replace the current wallet with this key?\\n\\nThis OVERWRITES your existing wallet file. Any funds on the current wallet will be inaccessible unless you already backed up its key.')) return;
+  status.textContent = 'Importing…';
+  try {
+    const r = await fetch('/api/wallet/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ privateKey: pk }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      status.textContent = 'Error: ' + (d.error || r.statusText);
+      status.className = 'wallet-import-status err';
+      return;
+    }
+    status.textContent = 'Imported ✓  New address: ' + d.address;
+    status.className = 'wallet-import-status ok';
+    document.getElementById('wallet-import-input').value = '';
+    loadWallet();
+    loadOverview();
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
+    status.className = 'wallet-import-status err';
+  }
+});
+
 const es = new EventSource('/api/events');
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
@@ -603,6 +832,7 @@ loadOverview();
 loadSessions();
 loadSocial();
 loadLearnings();
+loadWallet();
 setInterval(() => api('wallet').then(w => {
   if (w) {
     document.getElementById('balance').textContent = usdBig(w.balance) + ' USDC';

@@ -27,7 +27,9 @@ export async function panelCommand(options: { port?: string }): Promise<void> {
       process.exit(1);
     });
 
-    server.listen(port, () => {
+    // Bind to loopback only — the panel exposes wallet secrets on /api/wallet/secret
+    // and a write-capable /api/wallet/import. Never expose these on a LAN.
+    server.listen(port, '127.0.0.1', () => {
       console.log('');
       console.log(chalk.bold('  Franklin Panel'));
       console.log(chalk.dim(`  http://localhost:${port}`) +
