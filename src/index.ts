@@ -54,7 +54,22 @@ program
   )
   .option('--debug', 'Enable debug logging')
   .option('--trust', 'Trust mode — skip permission prompts for all tools')
+  .option('-r, --resume [sessionId]', 'Resume a session by ID (or show picker if omitted)')
+  .option('-c, --continue', 'Continue the most recent session in this directory')
   .action((options) => startCommand({ ...options, version }));
+
+program
+  .command('resume [sessionId]')
+  .description('Resume a saved Franklin session (alias for: franklin --resume)')
+  .option(
+    '-m, --model <model>',
+    'Override the model for this session'
+  )
+  .option('--debug', 'Enable debug logging')
+  .option('--trust', 'Trust mode — skip permission prompts for all tools')
+  .action((sessionId: string | undefined, options) =>
+    startCommand({ ...options, version, resume: sessionId ?? 'picker' })
+  );
 
 program
   .command('proxy')
@@ -214,7 +229,7 @@ const args = process.argv.slice(2);
 const firstArg = args[0];
 const HELP_FLAGS = new Set(['-h', '--help']);
 const VERSION_FLAGS = new Set(['-V', '--version']);
-const START_ONLY_FLAGS = new Set(['--trust', '--debug', '-m', '--model']);
+const START_ONLY_FLAGS = new Set(['--trust', '--debug', '-m', '--model', '-r', '--resume', '-c', '--continue']);
 
 function hasAnyFlag(argv: string[], flags: Set<string>): boolean {
   return argv.some(arg => flags.has(arg));
@@ -222,6 +237,30 @@ function hasAnyFlag(argv: string[], flags: Set<string>): boolean {
 
 function hasStartOnlyFlag(argv: string[]): boolean {
   return argv.some(arg => START_ONLY_FLAGS.has(arg));
+}
+
+function parseStartFlags(argv: string[], startIdx = 0): Record<string, unknown> {
+  const opts: Record<string, unknown> = { version };
+  for (let i = startIdx; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--trust') opts.trust = true;
+    else if (arg === '--debug') opts.debug = true;
+    else if ((arg === '-m' || arg === '--model') && argv[i + 1]) {
+      opts.model = argv[++i];
+    } else if (arg === '-c' || arg === '--continue') {
+      opts.continue = true;
+    } else if (arg === '-r' || arg === '--resume') {
+      // --resume may take an optional session id — look at next arg
+      const next = argv[i + 1];
+      if (next && !next.startsWith('-')) {
+        opts.resume = next;
+        i++;
+      } else {
+        opts.resume = 'picker';
+      }
+    }
+  }
+  return opts;
 }
 
 // Handle chain shortcuts: `runcode solana` or `runcode base`
@@ -235,14 +274,7 @@ if (firstArg === 'solana' || firstArg === 'base') {
   }
   const { saveChain } = await import('./config.js');
   saveChain(firstArg as 'base' | 'solana');
-  const startOpts: Record<string, unknown> = { version };
-  for (let i = 1; i < args.length; i++) {
-    if (args[i] === '--trust') startOpts.trust = true;
-    else if (args[i] === '--debug') startOpts.debug = true;
-    else if ((args[i] === '-m' || args[i] === '--model') && args[i + 1]) {
-      startOpts.model = args[++i];
-    }
-  }
+  const startOpts = parseStartFlags(args, 1);
   await startCommand(startOpts as Parameters<typeof startCommand>[0]);
   process.exit(0);
 } else if (!firstArg || firstArg.startsWith('-')) {
@@ -257,14 +289,7 @@ if (firstArg === 'solana' || firstArg === 'base') {
     program.parse();
   }
   // No subcommand or only flags — treat as 'start' with flags
-  const startOpts: Record<string, unknown> = { version };
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--trust') startOpts.trust = true;
-    else if (args[i] === '--debug') startOpts.debug = true;
-    else if ((args[i] === '-m' || args[i] === '--model') && args[i + 1]) {
-      startOpts.model = args[++i];
-    }
-  }
+  const startOpts = parseStartFlags(args, 0);
   await startCommand(startOpts as Parameters<typeof startCommand>[0]);
   process.exit(0);
 } else {

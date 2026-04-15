@@ -146,4 +146,6 @@ export interface AgentConfig {
     onModelChange?: (model: string, reason?: 'user' | 'system') => void;
     /** The user's intended model — updated by /model command, used for turn recovery */
     baseModel?: string;
+    /** Resume an existing session by ID — loads prior history and keeps appending to the same JSONL */
+    resumeSessionId?: string;
 }

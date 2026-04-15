@@ -27,6 +27,8 @@ import {
   appendToSession,
   updateSessionMeta,
   pruneOldSessions,
+  loadSessionHistory,
+  loadSessionMeta,
 } from '../session/storage.js';
 import type {
   AgentConfig,
@@ -278,9 +280,23 @@ export async function interactiveSession(
 
   // Plan-then-execute: session-level disable flag lives on config (set by /noplan command)
 
-  // Session persistence
-  const sessionId = createSessionId();
+  // Session persistence — reuse existing session ID when resuming, else create new
+  const sessionId = config.resumeSessionId || createSessionId();
   let turnCount = 0;
+
+  // Resume: hydrate history from the saved JSONL transcript.
+  // Sanitize to drop any orphaned tool_use / tool_result pairs from a crash.
+  if (config.resumeSessionId) {
+    const prior = loadSessionHistory(config.resumeSessionId);
+    if (prior.length > 0) {
+      const sanitized = sanitizeHistory(prior);
+      replaceHistory(history, sanitized);
+      const meta = loadSessionMeta(config.resumeSessionId);
+      if (meta) {
+        turnCount = meta.turnCount ?? 0;
+      }
+    }
+  }
   let tokenBudgetWarned = false; // Emit token budget warning at most once per session
   let lastSessionActivity = Date.now();
   let lastRoutedModel = '';   // last model chosen by router (for local elo)
