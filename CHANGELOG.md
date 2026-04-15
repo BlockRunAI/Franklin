@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.7.1 (2026-04-14) — Fix misleading session cost summary + bare-greeting misfire
+
+### Fixed
+
+- **Exit summary now shows per-session spend, not lifetime totals.** The
+  `Session: N requests · $X USDC` line at exit was reading lifetime
+  cumulative stats from `~/.blockrun/franklin-stats.json` and labeling
+  them "Session:", which made users think a single short run had spent
+  their entire historical budget. Franklin now snapshots stats at session
+  start and shows the true delta on exit.
+- **Bare greetings no longer trigger AskUser / social-post workflow.**
+  Typing "hello", "hi", "ok", "thanks", etc. was sometimes sending the
+  agent into a marketing interview ("Which industry should the post
+  target?"). Added an explicit rule to the core system prompt: greetings
+  get one short plain-text reply, no tool calls, no task assumptions.
+
 ## 3.7.0 (2026-04-14) — Resume sessions + wallet dashboard
 
 Two UX upgrades that bring Franklin closer to a proper daily-driver.
