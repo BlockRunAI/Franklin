@@ -272,6 +272,6 @@ export function formatSearchResults(matches: SearchMatch[], query: string): stri
     lines.push('');
   }
 
-  lines.push(`  Resume: franklin  (then /resume <session-id>)\n`);
+  lines.push(`  Resume: franklin --resume <session-id>   (or: franklin resume for a picker)\n`);
   return lines.join('\n');
 }
