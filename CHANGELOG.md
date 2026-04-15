@@ -1,5 +1,71 @@
 # Changelog
 
+## 3.7.0 (2026-04-14) — Resume sessions + wallet dashboard
+
+Two UX upgrades that bring Franklin closer to a proper daily-driver.
+
+### Added
+
+**Session resume (Claude Code parity)**
+- `franklin --resume <id>` — continue a specific past session. Prefix
+  match supported (min 8 chars) so you don't have to paste the whole
+  40-char ID.
+- `franklin --resume` — interactive picker showing the last 20 sessions
+  with model, turn count, last-active time, and a green dot next to
+  sessions matching the current working directory.
+- `franklin --continue` / `-c` — auto-resume the most recent session in
+  the current directory. Symlink-aware (`/tmp` and `/private/tmp` now
+  compare equal on macOS).
+- `franklin resume [id]` — subcommand form.
+- Model inheritance: resumed sessions restore whatever model they were
+  using. `--model` still overrides.
+- Invalid or ambiguous session IDs fail fast — before wallet creation
+  or banner — with a clear error and a hint.
+- `franklin search` now advertises the new `--resume` flag in its
+  output footer.
+
+**Wallet dashboard**
+- New `Wallet` tab in `franklin panel` with four cards:
+  - **Receive USDC** — chain pill, full address, one-click Copy, live
+    balance, and a server-generated SVG QR code for scan-to-send.
+  - **Back up your key** — click-to-reveal private key with double
+    confirmation, copy/hide controls, and the on-disk wallet file path.
+  - **Import an existing wallet** — paste a private key, format-validate
+    (Base: `0x` + 64 hex, Solana: base58), overwrite with confirmation.
+  - **Export to another tool** — step-by-step guide for moving the key
+    into MetaMask / Phantom / hardware wallets.
+- CLI wallet display is unchanged — it's still there for users who
+  never open the panel.
+
+### Security
+
+- Panel server now binds to `127.0.0.1` only (was `0.0.0.0`). Tested:
+  external-IP connections are refused.
+- New wallet endpoints (`/api/wallet/secret`, `/api/wallet/import`)
+  additionally enforce loopback at the socket level as defense in depth.
+- QR codes are generated server-side so the wallet address is never
+  sent to a third-party QR service.
+
+### Internals
+
+- `interactiveSession(config, ...)` accepts `config.resumeSessionId`.
+  When set, it hydrates history from the saved JSONL, sanitizes
+  orphaned `tool_use` / `tool_result` pairs from a prior crash, and
+  keeps appending to the same session file — no duplicate sessions.
+- New `src/ui/session-picker.ts`: `pickSession()`,
+  `findLatestSessionForDir()`, and `resolveSessionIdInput()` (exact +
+  unambiguous prefix match).
+- New deps: `qrcode` + `@types/qrcode`.
+
+### Tests
+
+46 local tests — 5 new covering:
+- CLI `--resume <bad-id>` fails fast before banner.
+- Symlink-aware workDir canonicalization.
+- Resume via `resumeSessionId` continues the same JSONL transcript.
+- `findLatestSessionForDir` picks newest by `updatedAt`.
+- `resolveSessionIdInput` handles exact / prefix / ambiguous / not-found.
+
 ## 3.3.0 (2026-04-11) — Chat-first trading + social tools + welcome
 
 **The version that makes Franklin different from every other AI agent.**
