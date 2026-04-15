@@ -13,6 +13,7 @@ import { generateInsights } from '../stats/insights.js';
 import { listSessions, loadSessionHistory } from '../session/storage.js';
 import { searchSessions } from '../session/search.js';
 import { loadLearnings } from '../learnings/store.js';
+import { readAudit } from '../stats/audit.js';
 import { getStats as getSocialStats } from '../social/db.js';
 import { getHTML } from './html.js';
 
@@ -130,6 +131,34 @@ export function createPanelServer(port: number): http.Server {
         const days = parseInt(url.searchParams.get('days') || '30', 10);
         const report = generateInsights(days);
         json(res, report);
+        return;
+      }
+
+      if (p === '/api/audit') {
+        // Per-call LLM audit log — prompt, model, tokens, cost per call.
+        // Supports ?limit=N&paidOnly=1&since=<ms>&session=<prefix>&model=<substr>
+        const limit = Math.min(parseInt(url.searchParams.get('limit') || '200', 10), 2000);
+        const paidOnly = url.searchParams.get('paidOnly') === '1';
+        const since = parseInt(url.searchParams.get('since') || '0', 10);
+        const sessionFilter = url.searchParams.get('session') || '';
+        const modelFilter = url.searchParams.get('model') || '';
+        let entries = readAudit();
+        if (since > 0) entries = entries.filter(e => e.ts >= since);
+        if (paidOnly) entries = entries.filter(e => e.costUsd > 0);
+        if (sessionFilter) entries = entries.filter(e => e.sessionId?.startsWith(sessionFilter));
+        if (modelFilter) entries = entries.filter(e => e.model.includes(modelFilter));
+        const recent = entries.slice(-limit).reverse(); // newest first
+        const totalCost = entries.reduce((s, e) => s + e.costUsd, 0);
+        const totalIn = entries.reduce((s, e) => s + e.inputTokens, 0);
+        const totalOut = entries.reduce((s, e) => s + e.outputTokens, 0);
+        json(res, {
+          total: entries.length,
+          returned: recent.length,
+          totalCostUsd: totalCost,
+          totalInputTokens: totalIn,
+          totalOutputTokens: totalOut,
+          entries: recent,
+        });
         return;
       }
 
@@ -312,10 +341,14 @@ export function createPanelServer(port: number): http.Server {
     }
   });
 
-  // Swallow socket errors (client disconnects, etc.) so they don't crash the process
-  server.on('clientError', (err, socket) => {
+  // Swallow socket errors (client disconnects, etc.) so they don't crash the process.
+  // ECONNRESET / EPIPE happen every time a browser tab closes an SSE stream — pure noise.
+  server.on('clientError', (err: NodeJS.ErrnoException, socket) => {
     try { socket.destroy(); } catch { /* already closed */ }
-    console.error('[panel] client error:', err.message);
+    if (err.code === 'ECONNRESET' || err.code === 'EPIPE') return;
+    if (process.env.FRANKLIN_PANEL_DEBUG) {
+      console.error('[panel] client error:', err.message);
+    }
   });
 
   // Watch stats file for changes → push to SSE clients

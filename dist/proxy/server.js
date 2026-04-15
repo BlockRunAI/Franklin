@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { getOrCreateWallet, getOrCreateSolanaWallet, createPaymentPayload, createSolanaPaymentPayload, parsePaymentRequired, extractPaymentDetails, solanaKeyToBytes, SOLANA_NETWORK, } from '@blockrun/llm';
 import { recordUsage } from '../stats/tracker.js';
+import { appendAudit } from '../stats/audit.js';
 import { fetchWithFallback, buildFallbackChain, DEFAULT_FALLBACK_CONFIG, ROUTING_PROFILES, } from './fallback.js';
 import { routeRequest, parseRoutingProfile, } from '../router/index.js';
 import { estimateCost } from '../pricing.js';
@@ -481,6 +482,16 @@ export function createProxy(options) {
                                         const latencyMs = Date.now() - requestStartTime;
                                         const cost = estimateCost(finalModel, inputTokens, outputTokens);
                                         recordUsage(finalModel, inputTokens, outputTokens, cost, latencyMs, usedFallback);
+                                        appendAudit({
+                                            ts: Date.now(),
+                                            model: finalModel,
+                                            inputTokens,
+                                            outputTokens,
+                                            costUsd: cost,
+                                            latencyMs,
+                                            fallback: usedFallback,
+                                            source: 'proxy',
+                                        });
                                         debug(options, `recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`);
                                     }
                                 }
@@ -510,6 +521,16 @@ export function createProxy(options) {
                             const latencyMs = Date.now() - requestStartTime;
                             const cost = estimateCost(finalModel, inputTokens, outputTokens);
                             recordUsage(finalModel, inputTokens, outputTokens, cost, latencyMs, usedFallback);
+                            appendAudit({
+                                ts: Date.now(),
+                                model: finalModel,
+                                inputTokens,
+                                outputTokens,
+                                costUsd: cost,
+                                latencyMs,
+                                fallback: usedFallback,
+                                source: 'proxy',
+                            });
                             debug(options, `recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`);
                         }
                     }
