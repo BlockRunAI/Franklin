@@ -462,8 +462,7 @@ function executeCommand(command: string, timeoutMs: number, ctx: ExecutionScope)
 
 /**
  * Detect if a bash command is read-only (safe to run concurrently).
- * Inspired by Claude Code's isSearchOrReadBashCommand — analyzes command segments
- * to determine if ALL operations are read-only.
+ * Analyzes command segments to determine if ALL operations are read-only.
  */
 const READ_ONLY_COMMANDS = new Set([
   'ls', 'cat', 'head', 'tail', 'wc', 'du', 'df', 'file', 'stat', 'tree',

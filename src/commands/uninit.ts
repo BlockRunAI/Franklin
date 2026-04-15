@@ -66,7 +66,7 @@ export async function uninitCommand() {
   } else {
     console.log('');
     console.log(chalk.bold('franklin uninitialized.'));
-    console.log(`Claude Code will use its default Anthropic API settings again.`);
+    console.log(`CLI agents will use their default Anthropic API settings again.`);
     console.log(`Run ${chalk.bold('franklin daemon stop')} to stop any running proxy.`);
   }
 }

@@ -14,7 +14,7 @@ import {
   COMPACTION_SUMMARY_RESERVE,
 } from './tokens.js';
 
-/** Max files to restore after compaction (inspired by Claude Code POST_COMPACT_MAX_FILES_TO_RESTORE) */
+/** Max files to restore after compaction */
 const POST_COMPACT_MAX_FILES = 5;
 
 /** Max tokens to spend on post-compact file restoration */
@@ -227,7 +227,7 @@ async function compactHistory(
     },
   ];
 
-  // Post-compact file restoration (inspired by Claude Code)
+  // Post-compact file restoration
   // Re-read recently modified files to restore working context that was lost
   // during compaction. This prevents the agent from needing to re-read files
   // it was actively working on.
@@ -255,8 +255,6 @@ async function compactHistory(
  * Restore recently modified files after compaction.
  * Extracts file paths from the compaction summary and the original messages,
  * reads the ones that still exist, and builds a context restoration prompt.
- *
- * Inspired by Claude Code's POST_COMPACT_MAX_FILES_TO_RESTORE mechanism.
  */
 function restoreRecentFiles(
   summaryText: string,

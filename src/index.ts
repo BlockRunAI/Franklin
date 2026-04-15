@@ -73,7 +73,7 @@ program
 
 program
   .command('proxy')
-  .description('Run payment proxy for Claude Code or other tools')
+  .description('Run payment proxy for Anthropic-compatible CLI agents')
   .option('-p, --port <port>', 'Proxy port', '8402')
   .option(
     '-m, --model <model>',
@@ -210,7 +210,7 @@ program
 
 program
   .command('migrate')
-  .description('Import data from other AI tools (Claude Code, Cline, Cursor)')
+  .description('Import preferences and MCP servers from existing AI agent configs')
   .action(async () => {
     const { migrateCommand } = await import('./commands/migrate.js');
     await migrateCommand();
