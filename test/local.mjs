@@ -391,6 +391,265 @@ test('interactive session persists tool exchanges for resume', { timeout: 20_000
   }
 });
 
+test('resume: second interactiveSession with resumeSessionId continues prior transcript', { timeout: 20_000 }, async () => {
+  const { listSessions, loadSessionHistory, getSessionFilePath } = await import('../dist/session/storage.js');
+  const beforeIds = new Set(listSessions().map((s) => s.id));
+
+  let requestCount = 0;
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk.toString();
+    requestCount++;
+
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+
+    const send = (event, data) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    if (requestCount === 1) {
+      // First session's only turn: answer directly and end.
+      send('message_start', { message: { usage: { input_tokens: 10, output_tokens: 0 } } });
+      send('content_block_start', { content_block: { type: 'text', text: '' } });
+      send('content_block_delta', { delta: { type: 'text_delta', text: 'first answer' } });
+      send('content_block_stop', {});
+      send('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } });
+      send('message_stop', {});
+    } else {
+      // Second session (resumed): verify the prior user+assistant turn is in the history.
+      const payload = JSON.parse(raw);
+      const messages = payload.messages || [];
+      const userMsgs = messages.filter((m) => m.role === 'user');
+      const assistantMsgs = messages.filter((m) => m.role === 'assistant');
+
+      assert.ok(userMsgs.length >= 2, `Expected resumed request to include both user turns, got ${userMsgs.length}`);
+      assert.ok(assistantMsgs.length >= 1, `Expected resumed request to include prior assistant turn, got ${assistantMsgs.length}`);
+
+      const firstUserText = JSON.stringify(userMsgs[0].content ?? '');
+      assert.ok(firstUserText.includes('first prompt'), `Expected first user prompt in resumed history.\n${firstUserText}`);
+
+      const assistantText = JSON.stringify(assistantMsgs[0].content ?? '');
+      assert.ok(assistantText.includes('first answer'), `Expected prior assistant answer in resumed history.\n${assistantText}`);
+
+      send('message_start', { message: { usage: { input_tokens: 20, output_tokens: 0 } } });
+      send('content_block_start', { content_block: { type: 'text', text: '' } });
+      send('content_block_delta', { delta: { type: 'text_delta', text: 'second answer' } });
+      send('content_block_stop', {});
+      send('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } });
+      send('message_stop', {});
+    }
+
+    res.end('data: [DONE]\n\n');
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const apiUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const { interactiveSession } = await import('../dist/agent/loop.js');
+
+    const baseConfig = {
+      model: 'local/test-model',
+      apiUrl,
+      chain: 'base',
+      systemInstructions: ['You are a test harness.'],
+      capabilities: [],
+      workingDir: process.cwd(),
+      permissionMode: 'trust',
+    };
+
+    // First session
+    let calls = 0;
+    await interactiveSession(
+      baseConfig,
+      async () => (++calls === 1 ? 'first prompt' : null),
+      () => {}
+    );
+
+    const created = listSessions().find((s) => !beforeIds.has(s.id));
+    assert.ok(created, 'Expected a new persisted session from first turn');
+
+    const beforeResumeLen = loadSessionHistory(created.id).length;
+    assert.equal(beforeResumeLen, 2, `Expected 2 messages after first turn, got ${beforeResumeLen}`);
+
+    // Second session — resume by id
+    let calls2 = 0;
+    await interactiveSession(
+      { ...baseConfig, resumeSessionId: created.id },
+      async () => (++calls2 === 1 ? 'second prompt' : null),
+      () => {}
+    );
+
+    // Transcript must have grown in the same session file (no new session created)
+    const afterIds = listSessions().map((s) => s.id);
+    const newSessionsAfterResume = afterIds.filter((id) => !beforeIds.has(id) && id !== created.id);
+    assert.equal(newSessionsAfterResume.length, 0, `Resume must not create a new session.\nNew: ${newSessionsAfterResume}`);
+
+    const finalHistory = loadSessionHistory(created.id);
+    assert.equal(finalHistory.length, 4, `Expected 4 messages after resume turn, got ${finalHistory.length}\n${JSON.stringify(finalHistory, null, 2)}`);
+    assert.equal(finalHistory[0].role, 'user');
+    assert.equal(finalHistory[1].role, 'assistant');
+    assert.equal(finalHistory[2].role, 'user');
+    assert.equal(finalHistory[3].role, 'assistant');
+
+    const lastAssistant = JSON.stringify(finalHistory[3].content ?? '');
+    assert.ok(lastAssistant.includes('second answer'), `Expected second-turn answer in transcript.\n${lastAssistant}`);
+
+    // Cleanup
+    const sessionFile = getSessionFilePath(created.id);
+    rmSync(sessionFile, { force: true });
+    rmSync(join(dirname(sessionFile), `${created.id}.meta.json`), { force: true });
+  } finally {
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
+test('resume: --resume with unknown id fails fast with non-zero exit (no wallet/banner)', { timeout: 10_000 }, async () => {
+  const home = mkdtempSync(join(tmpdir(), 'franklin-e2e-fastfail-'));
+  try {
+    const result = await runCli('', {
+      args: [DIST, '--resume', 'session-nonexistent-xyz'],
+      env: { HOME: home, BLOCKRUN_DIR: join(home, '.blockrun') },
+      timeoutMs: 8_000,
+    });
+    assert.equal(result.code, 1, `Expected exit 1 for unknown resume id, got ${result.code}\nstderr: ${result.stderr}`);
+    const combined = result.stdout + result.stderr;
+    assert.ok(combined.includes('No session found with id'), `Expected 'No session found' error.\n${combined}`);
+    // Must fail before wallet/banner work runs — banner string would reveal it
+    assert.ok(!combined.includes('Wallet created automatically'), `Validation should happen before wallet creation.\n${combined}`);
+    assert.ok(!combined.includes('FRANKLIN') && !combined.includes('blockrun.ai  ·'), `Validation should happen before banner.\n${combined}`);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('resume: findLatestSessionForDir canonicalizes symlinked paths', async () => {
+  const { findLatestSessionForDir } = await import('../dist/ui/session-picker.js');
+  const { updateSessionMeta, appendToSession, getSessionFilePath } = await import('../dist/session/storage.js');
+  const fs = await import('node:fs');
+
+  // Create a real dir and a symlink pointing at it
+  const real = mkdtempSync(join(tmpdir(), 'franklin-real-'));
+  const link = join(tmpdir(), `franklin-link-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
+  fs.symlinkSync(real, link);
+
+  const id = `session-symlink-test-${Date.now()}`;
+  try {
+    // Session stored under the symlinked path
+    appendToSession(id, { role: 'user', content: 'symlink test' });
+    updateSessionMeta(id, { model: 'local/test', workDir: link, turnCount: 1, messageCount: 1 });
+
+    // Querying with the real path should still find it
+    const fromReal = findLatestSessionForDir(real);
+    assert.ok(fromReal, `Expected to find session when querying via real path.`);
+    assert.equal(fromReal.id, id);
+
+    // And querying with the symlink itself must also work
+    const fromLink = findLatestSessionForDir(link);
+    assert.ok(fromLink);
+    assert.equal(fromLink.id, id);
+  } finally {
+    const sf = getSessionFilePath(id);
+    rmSync(sf, { force: true });
+    rmSync(join(dirname(sf), `${id}.meta.json`), { force: true });
+    try { fs.unlinkSync(link); } catch {}
+    rmSync(real, { recursive: true, force: true });
+  }
+});
+
+test('resume: resolveSessionIdInput handles exact, prefix, ambiguous, and not-found', async () => {
+  const { resolveSessionIdInput } = await import('../dist/ui/session-picker.js');
+  const { appendToSession, updateSessionMeta, getSessionFilePath } = await import('../dist/session/storage.js');
+
+  const unique = `prefixtest${Date.now()}`;
+  const ids = [
+    `session-${unique}-alpha`,
+    `session-${unique}-beta`,
+  ];
+  try {
+    for (const id of ids) {
+      appendToSession(id, { role: 'user', content: 'x' });
+      updateSessionMeta(id, { model: 'local/test', workDir: process.cwd(), turnCount: 1, messageCount: 1 });
+    }
+
+    // Exact
+    const exact = resolveSessionIdInput(ids[0]);
+    assert.equal(exact.ok, true);
+    assert.equal(exact.id, ids[0]);
+
+    // Unique prefix (long enough to disambiguate)
+    const uniquePrefix = `session-${unique}-a`;
+    const pref = resolveSessionIdInput(uniquePrefix);
+    assert.equal(pref.ok, true);
+    assert.equal(pref.id, ids[0]);
+
+    // Ambiguous prefix (matches both)
+    const ambPrefix = `session-${unique}`;
+    const amb = resolveSessionIdInput(ambPrefix);
+    assert.equal(amb.ok, false);
+    assert.equal(amb.error, 'ambiguous');
+    assert.equal(amb.candidates.length, 2);
+
+    // Too-short prefix (< 8 chars) is rejected as not-found even when sessions exist
+    const tiny = resolveSessionIdInput('abcdef'); // 6 chars — below 8-char minimum
+    assert.equal(tiny.ok, false);
+    assert.equal(tiny.error, 'not-found');
+
+    // Not found
+    const nf = resolveSessionIdInput('session-nonexistent-abc123');
+    assert.equal(nf.ok, false);
+    assert.equal(nf.error, 'not-found');
+  } finally {
+    for (const id of ids) {
+      const sf = getSessionFilePath(id);
+      rmSync(sf, { force: true });
+      rmSync(join(dirname(sf), `${id}.meta.json`), { force: true });
+    }
+  }
+});
+
+test('resume: findLatestSessionForDir returns newest session for cwd', async () => {
+  const { findLatestSessionForDir } = await import('../dist/ui/session-picker.js');
+  const { updateSessionMeta, appendToSession, getSessionFilePath } = await import('../dist/session/storage.js');
+
+  const workDir = mkdtempSync(join(tmpdir(), 'franklin-resume-'));
+  const idOlder = `session-test-older-${Date.now()}`;
+  const idNewer = `session-test-newer-${Date.now()}`;
+
+  try {
+    // Older session
+    appendToSession(idOlder, { role: 'user', content: 'older' });
+    updateSessionMeta(idOlder, { model: 'local/test', workDir, turnCount: 1, messageCount: 1 });
+    await new Promise((r) => setTimeout(r, 15)); // ensure distinct updatedAt
+
+    // Newer session
+    appendToSession(idNewer, { role: 'user', content: 'newer' });
+    updateSessionMeta(idNewer, { model: 'local/test', workDir, turnCount: 1, messageCount: 1 });
+
+    const found = findLatestSessionForDir(workDir);
+    assert.ok(found, 'Expected to find a session for this workDir');
+    assert.equal(found.id, idNewer, `Expected newest session; got ${found?.id}`);
+
+    // Unrelated dir returns null
+    const other = mkdtempSync(join(tmpdir(), 'franklin-resume-other-'));
+    assert.equal(findLatestSessionForDir(other), null);
+    rmSync(other, { recursive: true, force: true });
+  } finally {
+    for (const id of [idOlder, idNewer]) {
+      const sf = getSessionFilePath(id);
+      rmSync(sf, { force: true });
+      rmSync(join(dirname(sf), `${id}.meta.json`), { force: true });
+    }
+    rmSync(workDir, { recursive: true, force: true });
+  }
+});
+
 test('bash capability reports user abort distinctly from timeout', async () => {
   const { bashCapability } = await import('../dist/tools/bash.js');
   const controller = new AbortController();

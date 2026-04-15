@@ -14,15 +14,57 @@ import { loadMcpConfig } from '../mcp/config.js';
 import { connectMcpServers, disconnectMcpServers } from '../mcp/client.js';
 export async function startCommand(options) {
     const version = options.version ?? '1.0.0';
+    // Early-validate explicit resume ID so a typo fails fast — before wallet
+    // creation, banner, or MCP connection. Also resolve unambiguous prefixes so
+    // users don't need to paste the full 40-char session ID.
+    if (typeof options.resume === 'string' && options.resume !== 'picker') {
+        const { resolveSessionIdInput } = await import('../ui/session-picker.js');
+        const resolved = resolveSessionIdInput(options.resume);
+        if (!resolved.ok) {
+            if (resolved.error === 'ambiguous') {
+                console.error(chalk.red(`Ambiguous session prefix: ${options.resume}`));
+                console.error(chalk.dim('Matches:'));
+                for (const c of resolved.candidates) {
+                    console.error(chalk.dim(`  ${c.id}  (${new Date(c.updatedAt).toLocaleString()})`));
+                }
+            }
+            else {
+                console.error(chalk.red(`No session found with id: ${options.resume}`));
+                console.error(chalk.dim('Run `franklin resume` to pick from a list.'));
+            }
+            process.exit(1);
+        }
+        options.resume = resolved.id;
+    }
+    // Resolve --continue early so the session's model can be inherited during
+    // model resolution below. If no matching session is found, we fall through
+    // to a fresh session (message is printed later, near the resume banner).
+    let continueResolvedId;
+    if (options.continue && !options.resume) {
+        const { findLatestSessionForDir } = await import('../ui/session-picker.js');
+        continueResolvedId = findLatestSessionForDir(process.cwd())?.id;
+    }
     const chain = loadChain();
     const apiUrl = API_URLS[chain];
     const config = loadConfig();
-    // Resolve model — default to FREE (nemotron) so users don't get surprise charges.
-    // Paid models (glm-5.1, sonnet, opus, etc.) must be opted in with --model or /model.
+    // Resolve model. Priority: explicit --model > resumed session's model > user
+    // config default > FREE default. Resuming restores the same model the user was
+    // on last time so the environment feels continuous. Explicit --model still wins
+    // so users can cheaply retry a paid session on a free model.
     let model;
     const configModel = config['default-model'];
+    let resumedSessionModel;
+    const modelSourceId = (typeof options.resume === 'string' && options.resume !== 'picker') ? options.resume
+        : continueResolvedId;
+    if (modelSourceId) {
+        const { loadSessionMeta } = await import('../session/storage.js');
+        resumedSessionModel = loadSessionMeta(modelSourceId)?.model;
+    }
     if (options.model) {
         model = resolveModel(options.model);
+    }
+    else if (resumedSessionModel && resumedSessionModel !== 'unknown') {
+        model = resumedSessionModel;
     }
     else if (configModel) {
         model = configModel;
@@ -145,6 +187,41 @@ export async function startCommand(options) {
             console.error(`[validate] ${issue.severity}: ${issue.toolName} — ${issue.issue}`);
         }
     }
+    // Resolve resume target, if requested.
+    let resumeSessionId;
+    if (options.resume || options.continue) {
+        const { pickSession } = await import('../ui/session-picker.js');
+        const { loadSessionMeta, loadSessionHistory } = await import('../session/storage.js');
+        if (typeof options.resume === 'string' && options.resume !== 'picker') {
+            // Explicit ID — already validated above
+            resumeSessionId = options.resume;
+        }
+        else if (options.continue) {
+            if (!continueResolvedId) {
+                console.error(chalk.yellow(`  No prior session found in ${workDir} — starting a new one.`));
+            }
+            else {
+                resumeSessionId = continueResolvedId;
+            }
+        }
+        else {
+            // --resume with no value → interactive picker
+            const picked = await pickSession({ workDir });
+            if (!picked) {
+                console.error(chalk.dim('  No session picked — starting a new one.'));
+            }
+            else {
+                resumeSessionId = picked;
+            }
+        }
+        if (resumeSessionId) {
+            const meta = loadSessionMeta(resumeSessionId);
+            const msgs = loadSessionHistory(resumeSessionId).length;
+            const when = meta ? new Date(meta.updatedAt).toLocaleString() : 'unknown';
+            console.log(chalk.green(`  Resuming session ${resumeSessionId.slice(0, 24)}…`));
+            console.log(chalk.dim(`  ${msgs} messages · last active ${when}\n`));
+        }
+    }
     // Agent config
     const agentConfig = {
         model,
@@ -158,6 +235,7 @@ export async function startCommand(options) {
         // Interactive TTY = default mode (prompts for Bash/Write/Edit).
         permissionMode: (options.trust || !process.stdin.isTTY) ? 'trust' : 'default',
         debug: options.debug,
+        resumeSessionId,
     };
     // Bootstrap learnings from Claude Code config on first run (async, non-blocking)
     Promise.all([
