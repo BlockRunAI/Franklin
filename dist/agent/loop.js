@@ -20,7 +20,7 @@ import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
 import { shouldVerify, runVerification } from './verification.js';
-import { createSessionId, appendToSession, updateSessionMeta, pruneOldSessions, } from '../session/storage.js';
+import { createSessionId, appendToSession, updateSessionMeta, pruneOldSessions, loadSessionHistory, loadSessionMeta, } from '../session/storage.js';
 /**
  * Atomically replace all elements in a history array.
  * Safer than `history.length = 0; history.push(...)` because if push throws
@@ -226,9 +226,22 @@ export async function interactiveSession(config, getUserInput, onEvent, onAbortR
     // will keep failing until the user adds funds. Map stores failure timestamp for future TTL.
     const paymentFailedModels = new Map(); // model → timestamp
     // Plan-then-execute: session-level disable flag lives on config (set by /noplan command)
-    // Session persistence
-    const sessionId = createSessionId();
+    // Session persistence — reuse existing session ID when resuming, else create new
+    const sessionId = config.resumeSessionId || createSessionId();
     let turnCount = 0;
+    // Resume: hydrate history from the saved JSONL transcript.
+    // Sanitize to drop any orphaned tool_use / tool_result pairs from a crash.
+    if (config.resumeSessionId) {
+        const prior = loadSessionHistory(config.resumeSessionId);
+        if (prior.length > 0) {
+            const sanitized = sanitizeHistory(prior);
+            replaceHistory(history, sanitized);
+            const meta = loadSessionMeta(config.resumeSessionId);
+            if (meta) {
+                turnCount = meta.turnCount ?? 0;
+            }
+        }
+    }
     let tokenBudgetWarned = false; // Emit token budget warning at most once per session
     let lastSessionActivity = Date.now();
     let lastRoutedModel = ''; // last model chosen by router (for local elo)
