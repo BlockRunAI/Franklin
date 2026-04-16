@@ -41,7 +41,7 @@ This document describes the overall architecture, module boundaries, and key dat
                           ▼                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                   Payment Proxy  src/proxy/server.ts                    │
-│       (Claude Code / third-party SDK compatibility layer, :8402)        │
+│       (Anthropic-compatible CLI / third-party SDK layer, :8402)         │
 │                                                                         │
 │   Request → model alias resolution → Gateway call → 402 → sign → retry │
 │             ↑ smart router (src/router) scores on 15 dimensions         │
@@ -103,7 +103,7 @@ src/
 │
 ├── wallet/manager.ts        # @blockrun/llm wrapper (Base + Solana)
 │
-├── proxy/                   # Local payment proxy (Claude Code compatibility layer)
+├── proxy/                   # Local payment proxy (Anthropic-compatible CLI layer)
 │   ├── server.ts            # HTTP :8402 + x402 flow
 │   ├── fallback.ts          # Fallback chain
 │   └── sse-translator.ts    # SSE format translation
@@ -165,7 +165,7 @@ Commander registers 15 main commands, with `start` as the default:
 |---|---|
 | `setup [chain]` | Create a Base / Solana wallet |
 | `start` | Interactive session (default) |
-| `proxy` | Start local payment proxy on `:8402` for Claude Code |
+| `proxy` | Start local payment proxy on `:8402` for Anthropic-compatible CLI agents |
 | `models` | List all available models and pricing |
 | `balance` | Check USDC balance |
 | `config` | Read/write user configuration under `~/.blockrun/` |
@@ -279,7 +279,7 @@ Each manifest is loaded via dynamic `import(entry)`, injected with `PluginContex
 
 **`wallet/manager.ts`** is a thin wrapper around `@blockrun/llm`: `walletExists`, `setupWallet`, `setupSolanaWallet`, `getAddress`. All sensitive logic -- private key generation, signing, KDF -- lives in `@blockrun/llm` v1.4.2.
 
-**`proxy/server.ts`** -- local server on :8402, designed to **let Claude Code and third-party Anthropic SDKs transparently use Franklin's wallet**:
+**`proxy/server.ts`** -- local server on :8402, designed to **let any Anthropic-compatible CLI and third-party SDKs transparently use Franklin's wallet**:
 - Model alias resolution (`auto`/`eco`/`premium`/`sonnet`/`opus`/`haiku`/`gpt` ...)
 - Forwards requests to the Gateway
 - 402 --> sign --> retry
@@ -420,7 +420,7 @@ tool_result entries appended to history
 | `ink` / `react` | Terminal UI | `src/ui/*` |
 | **BlockRun Gateway** | Unified entry point for 55+ LLMs + paid APIs | `blockrun.ai/api` (Base) / `sol.blockrun.ai/api` (Solana) |
 
-The protocol between Franklin and the Gateway is an **Anthropic Messages API-compatible streaming interface plus x402**. In other words, any client that can call the Anthropic API can be pointed at the local :8402 payment proxy to transparently gain access to Franklin's wallet, smart routing, and usage tracking. This is the raison d'etre of proxy mode for Claude Code.
+The protocol between Franklin and the Gateway is an **Anthropic Messages API-compatible streaming interface plus x402**. Any client that can call the Anthropic API can be pointed at the local :8402 payment proxy to transparently gain access to Franklin's wallet, smart routing, and usage tracking.
 
 ---
 

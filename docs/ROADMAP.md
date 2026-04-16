@@ -29,7 +29,7 @@ runcode
   │     ├── 4 tiers: SIMPLE → MEDIUM → COMPLEX → REASONING
   │     └── Automatic fallback chains per tier
   │
-  ├── Proxy mode (for Claude Code + other tools)
+  ├── Proxy mode (for Anthropic-compatible CLI agents)
   │     ├── localhost:8402, x402 payment signing
   │     ├── In-session model switching (last-message detection)
   │     ├── Daemon mode (background process)
@@ -131,7 +131,7 @@ Interactive permission dialog: `y` (yes), `n` (no), `a` (allow all pending). Sho
 
 ### Proxy Mode
 
-Run RunCode as a payment proxy for Claude Code or any OpenAI-compatible tool:
+Run Franklin as a payment proxy for Anthropic-compatible CLI agents or any OpenAI-compatible tool:
 
 ```bash
 runcode proxy                          # Start proxy on localhost:8402
@@ -140,7 +140,7 @@ runcode daemon start                   # Background daemon
 runcode init                           # Auto-start on login (macOS LaunchAgent)
 ```
 
-Claude Code connects via `ANTHROPIC_BASE_URL=http://localhost:8402/api`. The proxy signs x402 payments with your local wallet and forwards to BlockRun.
+Any Anthropic-compatible CLI agent connects via `ANTHROPIC_BASE_URL=http://localhost:8402/api`. The proxy signs x402 payments with your local wallet and forwards to BlockRun.
 
 ### Stats & Cost Tracking
 
@@ -169,14 +169,14 @@ The biggest drop-off is "Send USDC on Base." Non-crypto users stop here.
 - [ ] **Better auto-compact** — Current compaction loses important context. Implement selective compaction: keep recent tool results + user instructions, compress old exchanges.
 - [ ] **Multi-file edit** — Single tool call that edits multiple files atomically. Reduces turn count for refactoring tasks.
 - [ ] **Image understanding** — Accept image input (screenshots, diagrams) in user messages. Requires multimodal API support.
-- [ ] **Thinking display** — Currently hidden. Add `/thinking` toggle to show model's reasoning (Claude Code #8477 has 193 upvotes requesting this).
+- [ ] **Thinking display** — Currently hidden. Add `/thinking` toggle to show model's reasoning.
 
 ### Ecosystem (Priority 3)
 
 - [ ] **HTTP/SSE transport for MCP** — Currently stdio only. HTTP enables remote MCP servers.
 - [ ] **More built-in MCP servers** — Evaluate: GitHub (issues, PRs), Slack, Linear, Notion.
 - [ ] **Custom tool plugins** — User-defined tools in `~/.blockrun/tools/` without writing a full MCP server.
-- [ ] **CLAUDE.md / AGENTS.md support** — Auto-load project context files (Claude Code #6235 has 3,517 upvotes).
+- [ ] **CLAUDE.md / AGENTS.md support** — Auto-load project context files.
 
 ### Team & Enterprise (Priority 4)
 
@@ -188,7 +188,6 @@ The biggest drop-off is "Send USDC on Base." Non-crypto users stop here.
 ### Growth & Community (Priority 5)
 
 - [ ] **GitHub Discussions** — Enable on the RunCode repo for community Q&A
-- [ ] **Blog posts targeting Claude Code pain points** — Rate limits, account bans, regional pricing, token drain. SEO-optimized, linking to RunCode as the solution.
 - [ ] **Discord / Telegram community** — Already have Telegram (t.me/blockrunAI), grow it
 - [ ] **Model comparison benchmarks** — Publish coding benchmarks across all 55+ models. Help users pick the right model.
 
