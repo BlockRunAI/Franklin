@@ -51,6 +51,31 @@ function replaceHistory(target: Dialogue[], replacement: Dialogue[]): void {
   target.splice(0, target.length, ...replacement);
 }
 
+// ─── Pushback detection ───────────────────────────────────────────────────
+// Cheap models plough forward when users correct them. This detects common
+// correction patterns so the agent can explicitly reset its approach.
+
+const PUSHBACK_PATTERNS: RegExp[] = [
+  /^(but|however|actually|wait|no+\b|hmm)\b/i,
+  /\b(that'?s?\s+(wrong|incorrect|not\s+right)|you'?re?\s+wrong)\b/i,
+  /\b(i\s+(said|told\s+you)|not\s+(what|that))\b/i,
+  /\b(we\s+are\s+using|the\s+correct|the\s+actual)\b/i,
+  /^(stop|no,|wrong|incorrect|try\s+again)\b/i,
+  /^(不对|不是|错了|再试|但是|其实|等等|停|重来)/,
+];
+
+function detectPushback(input: string, history: Dialogue[]): boolean {
+  // Only count as pushback if there's a prior assistant turn to push back against.
+  if (history.length === 0) return false;
+  const hasPriorAssistant = history.some((m) => m.role === 'assistant');
+  if (!hasPriorAssistant) return false;
+
+  const trimmed = input.trim();
+  if (trimmed.length === 0 || trimmed.length > 500) return false;
+
+  return PUSHBACK_PATTERNS.some((re) => re.test(trimmed));
+}
+
 /**
  * Sanitize history: fix orphaned tool results AND inject missing results.
  *
@@ -361,11 +386,20 @@ export async function interactiveSession(
       }
     }
 
+    // ── Pushback detection ──
+    // When the user corrects us ("no", "but", "actually", "wrong"), we must throw
+    // away the previous plan and reconsider — not continue the failing approach.
+    // Without this signal, cheap models tend to plough forward with the same bad idea.
+    const pushbackSignal = detectPushback(input, history);
+    const effectiveInput = pushbackSignal
+      ? `${input}\n\n[SYSTEM NOTE] The user is correcting you. Your previous response was wrong or off-target. Do NOT continue the previous approach. Re-read the conversation, identify what specifically the user is correcting, and change your strategy. If the user pointed out a fact (e.g. "we are using X"), treat that fact as ground truth and rebuild your answer around it.`
+      : input;
+
     lastUserInput = input;
-    history.push({ role: 'user', content: input });
+    history.push({ role: 'user', content: effectiveInput });
     turnCount++;
     toolGuard.startTurn();
-    persistSessionMessage({ role: 'user', content: input });
+    persistSessionMessage({ role: 'user', content: effectiveInput });
 
     // ── Model recovery: try original model at the start of each new turn ──
     // If we fell back to a free model last turn due to a transient error, try original again.
