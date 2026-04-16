@@ -23,6 +23,16 @@ cost predictability, and fewer false-positive agent interrupts.
   Session storage now persists the user's original message; the
   SYSTEM NOTE lives only in the in-memory history for the turn.
 
+- **Auto-compaction now gated by projected ROI, not just a token threshold.**
+  `autoCompactIfNeeded` previously fired as soon as history crossed the
+  compaction threshold, regardless of whether summarization would
+  meaningfully shrink things. On mid-sized sessions the round-trip cost
+  (payload sent to the compaction model + the ~16k reserved for output)
+  could exceed the headroom gained, making compaction net-negative. The
+  new gate computes projected post-compaction size from `findKeepBoundary`
+  and the expected summary length, and skips compaction unless projected
+  savings clear 20% of current tokens. `/compact` (forceCompact) still
+  runs unconditionally — the user asked for it.
 - **Module-level tool state is now reset at the start of every session.**
   `fileReadTracker` / `partiallyReadFiles` / `fileContentCache` (read.ts),
   `fetchCache` (webfetch.ts), and completed entries in `backgroundTasks`

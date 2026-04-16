@@ -20,6 +20,56 @@ const POST_COMPACT_MAX_FILES = 5;
 /** Max tokens to spend on post-compact file restoration */
 const POST_COMPACT_TOKEN_BUDGET = 50_000;
 
+/**
+ * Minimum projected fraction of total history tokens that compaction must
+ * save to be worth the round-trip. Summarization itself costs roughly
+ * the input payload tokens (read once by the compaction model) plus the
+ * ~16k reserved for the output. If the payload we'd summarize is small
+ * relative to what we'd keep, we pay the full cost for marginal relief.
+ * 0.20 = skip compaction unless projected savings clear 20% of total tokens.
+ * This only applies to autoCompactIfNeeded; /compact (forceCompact) still
+ * runs unconditionally because the user asked for it.
+ */
+const MIN_COMPACTION_SAVINGS_RATIO = 0.20;
+
+/**
+ * Rough upper bound on how many tokens the summary itself will occupy in
+ * the new history. The model is asked for up to COMPACTION_SUMMARY_RESERVE,
+ * but in practice structured summaries land well under that; be optimistic
+ * on the expected case, pessimistic on the safety margin.
+ */
+const EXPECTED_SUMMARY_TOKENS = 4_000;
+
+/**
+ * Decide whether compacting is worth the round-trip. Pure function so tests
+ * can pin behavior at specific history shapes without spinning up a client.
+ *
+ * Returns `{ worthIt, currentTokens, projectedTokens, savings }`. Caller
+ * can log the numbers or just branch on `worthIt`.
+ */
+export function projectCompactionSavings(history: Dialogue[]): {
+  worthIt: boolean;
+  currentTokens: number;
+  projectedTokens: number;
+  savings: number;
+  floor: number;
+} {
+  const currentTokens = estimateHistoryTokens(history);
+  const keepCount = findKeepBoundary(history);
+  const toKeep = history.slice(history.length - keepCount);
+  const keptTokens = estimateHistoryTokens(toKeep);
+  const projectedTokens = keptTokens + EXPECTED_SUMMARY_TOKENS;
+  const savings = currentTokens - projectedTokens;
+  const floor = Math.ceil(currentTokens * MIN_COMPACTION_SAVINGS_RATIO);
+  return {
+    worthIt: savings >= floor,
+    currentTokens,
+    projectedTokens,
+    savings,
+    floor,
+  };
+}
+
 // Structured compaction prompt (pattern from nousresearch/hermes-agent
 // `agent/context_compressor.py`). The structured sections preserve more
 // signal than free-form summaries and make it easier for the model to
@@ -91,9 +141,27 @@ export async function autoCompactIfNeeded(
     return { history, compacted: false };
   }
 
+  // ROI gate: project how much the summarization would actually save. The
+  // portion that survives compaction (`toKeep`) doesn't shrink, and the
+  // summary replaces `toSummarize` with ~EXPECTED_SUMMARY_TOKENS. If the
+  // resulting history is within MIN_COMPACTION_SAVINGS_RATIO of the current
+  // size, skip — the round-trip would cost more than the headroom is worth.
+  // The caller then falls back to per-turn emergency handling (413 recovery,
+  // output-tokens clamp) which is much cheaper on the margin.
+  const roi = projectCompactionSavings(history);
+  if (!roi.worthIt) {
+    if (debug) {
+      console.error(
+        `[franklin] Compaction skipped (ROI): current=${roi.currentTokens}, projected=${roi.projectedTokens}, ` +
+        `savings=${roi.savings} < ${roi.floor} floor`,
+      );
+    }
+    return { history, compacted: false };
+  }
+
   if (debug) {
     console.error(
-      `[franklin] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}`
+      `[franklin] Auto-compacting: ~${currentTokens} tokens, threshold=${threshold}, projected savings=${roi.savings}`,
     );
   }
 

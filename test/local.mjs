@@ -1369,6 +1369,52 @@ test('bash-guard e2e: non-Bash tools are not affected by risk classifier', async
   assert.equal(readDecision.behavior, 'allow');
 });
 
+test('projectCompactionSavings: skips compaction when history is mostly kept', async () => {
+  const { projectCompactionSavings } = await import('../dist/agent/compact.js');
+
+  // Short history — findKeepBoundary keeps all or nearly all of it, so
+  // summarizing saves little and ROI should say "not worth it".
+  const shortHistory = [
+    { role: 'user', content: 'hello' },
+    { role: 'assistant', content: 'hi there' },
+    { role: 'user', content: 'what is 2+2?' },
+    { role: 'assistant', content: '4' },
+    { role: 'user', content: 'and 3+3?' },
+    { role: 'assistant', content: '6' },
+  ];
+
+  const roi = projectCompactionSavings(shortHistory);
+  assert.equal(roi.worthIt, false, 'tiny history should not trigger compaction');
+  // Projected size is at least the ~4k summary floor.
+  assert.ok(roi.projectedTokens >= 4_000, `projectedTokens=${roi.projectedTokens} should include summary floor`);
+});
+
+test('projectCompactionSavings: greenlights compaction when old payload dominates', async () => {
+  const { projectCompactionSavings } = await import('../dist/agent/compact.js');
+
+  // Build a history where the first N messages are enormous and the last
+  // few are tiny. findKeepBoundary keeps the tail (small); the head is the
+  // huge payload that compaction actually eliminates.
+  const bulk = 'x'.repeat(400_000); // ~100k tokens-ish at 4 bytes/token
+  const history = [];
+  for (let i = 0; i < 15; i++) {
+    history.push({ role: 'user', content: `${bulk} question ${i}` });
+    history.push({ role: 'assistant', content: `${bulk} answer ${i}` });
+  }
+  // Tail: a handful of short messages that will survive as the kept window.
+  for (let i = 0; i < 6; i++) {
+    history.push({ role: 'user', content: 'tiny' });
+    history.push({ role: 'assistant', content: 'ok' });
+  }
+
+  const roi = projectCompactionSavings(history);
+  assert.equal(roi.worthIt, true, 'bulk-old history should greenlight compaction');
+  assert.ok(
+    roi.savings > roi.floor,
+    `expected savings (${roi.savings}) > floor (${roi.floor})`,
+  );
+});
+
 test('resetToolSessionState clears read/webfetch/bash module-level caches across sessions', async () => {
   const { fileReadTracker, partiallyReadFiles } = await import('../dist/tools/read.js');
   const { resetToolSessionState } = await import('../dist/tools/index.js');
