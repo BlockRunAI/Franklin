@@ -814,7 +814,7 @@ Future workflows (`runcode trading`, `runcode content`) follow the same plugin p
 
 ## 2.5.0 (2026-04-04)
 
-### Power User Features (inspired by free-code/Claude Code)
+### Power User Features
 
 **Ultrathink Mode** (`/ultrathink`)
 - Toggle session-level deep reasoning mode — injects a thorough analysis instruction into every system prompt turn
@@ -843,7 +843,7 @@ Future workflows (`runcode trading`, `runcode content`) follow the same plugin p
 
 ### Token Management Overhaul
 
-Comprehensive token reduction improvements based on Claude Code comparison audit:
+Comprehensive token reduction improvements based on an internal audit:
 
 **Smarter Optimization Pipeline**
 - **Conditional microcompact**: Only runs when history >15 messages (was running every single loop iteration, wasting cycles on short conversations)
