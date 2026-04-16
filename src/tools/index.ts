@@ -30,6 +30,9 @@ import { TradingEngine } from '../trading/engine.js';
 import { loadPortfolio, savePortfolio } from '../trading/store.js';
 import { TradeLog } from '../trading/trade-log.js';
 import { getPrice as cgGetPrice } from '../trading/data.js';
+import { createContentCapabilities } from './content-execute.js';
+import { ContentLibrary } from '../content/library.js';
+import { loadLibrary as loadContentLibrary, saveLibrary as saveContentLibrary } from '../content/store.js';
 
 // ─── Default Trading Engine ────────────────────────────────────────────────
 // Paper trading defaults: $1000 starting bankroll, $400 per-position cap
@@ -71,6 +74,28 @@ function buildDefaultTradingCapabilities() {
 
 const defaultTradingCapabilities = buildDefaultTradingCapabilities();
 
+// ─── Default Content Library ──────────────────────────────────────────────
+// Durable content projects at ~/.blockrun/content.json. Like the portfolio,
+// this is persistent cross-session state — something Claude Code structurally
+// cannot offer.
+const DEFAULT_CONTENT_PATH = path.join(os.homedir(), '.blockrun', 'content.json');
+
+function buildDefaultContentCapabilities() {
+  const library = loadContentLibrary(DEFAULT_CONTENT_PATH) ?? new ContentLibrary();
+  return createContentCapabilities({
+    library,
+    onStateChange: () => {
+      try {
+        saveContentLibrary(library, DEFAULT_CONTENT_PATH);
+      } catch {
+        // Best-effort — in-memory library remains authoritative.
+      }
+    },
+  });
+}
+
+const defaultContentCapabilities = buildDefaultContentCapabilities();
+
 /**
  * Reset module-level tool state that would otherwise leak between sessions
  * when the same process runs `interactiveSession()` more than once (library
@@ -97,7 +122,8 @@ export const allCapabilities: CapabilityHandler[] = [
   askUserCapability,
   tradingSignalCapability,
   tradingMarketCapability,
-  ...defaultTradingCapabilities, // TradingPortfolio, TradingOpenPosition, TradingClosePosition
+  ...defaultTradingCapabilities, // TradingPortfolio, TradingOpenPosition, TradingClosePosition, TradingHistory
+  ...defaultContentCapabilities, // ContentCreate, ContentAddAsset, ContentShow, ContentList
   searchXCapability,
   postToXCapability,
   moaCapability,

@@ -1369,6 +1369,196 @@ test('bash-guard e2e: non-Bash tools are not affected by risk classifier', async
   assert.equal(readDecision.behavior, 'allow');
 });
 
+// ─── Content generation vertical ──────────────────────────────────────────
+
+test('ContentLibrary: create() produces a Content with generated id, budget, timestamps, empty drafts/assets', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'x-thread', title: 'x402 launch thread', budgetUsd: 5 });
+
+  assert.ok(c.id, 'id should be generated');
+  assert.equal(c.type, 'x-thread');
+  assert.equal(c.title, 'x402 launch thread');
+  assert.equal(c.budgetUsd, 5);
+  assert.equal(c.spentUsd, 0);
+  assert.equal(c.status, 'outline', 'new content starts in outline status');
+  assert.deepEqual(c.assets, []);
+  assert.deepEqual(c.drafts, []);
+  assert.ok(c.createdAt > 0);
+  assert.equal(c.publishedAt, undefined);
+});
+
+test('ContentLibrary: get() returns created content; unknown id returns undefined', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'AEA manifesto', budgetUsd: 20 });
+  assert.equal(lib.get(c.id)?.title, 'AEA manifesto');
+  assert.equal(lib.get('never-created'), undefined);
+});
+
+test('createContentCapabilities: ContentCreate returns the new content id and fields', async () => {
+  const { createContentCapabilities } = await import('../dist/tools/content-execute.js');
+  const { ContentLibrary } = await import('../dist/content/library.js');
+
+  const lib = new ContentLibrary();
+  const caps = createContentCapabilities({ library: lib });
+  const createCap = caps.find((c) => c.spec.name === 'ContentCreate');
+  assert.ok(createCap);
+
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+  const result = await createCap.execute(
+    { type: 'x-thread', title: 'Franklin launch', budgetUsd: 3 },
+    ctx,
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.output, /Franklin launch/);
+  assert.match(result.output, /\$3\.00/);
+  assert.equal(lib.list().length, 1);
+});
+
+test('createContentCapabilities: ContentAddAsset records spend and surfaces budget refusals as normal text', async () => {
+  const { createContentCapabilities } = await import('../dist/tools/content-execute.js');
+  const { ContentLibrary } = await import('../dist/content/library.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'image', title: 'Banner', budgetUsd: 0.05 });
+  const caps = createContentCapabilities({ library: lib });
+  const addCap = caps.find((c) => c.spec.name === 'ContentAddAsset');
+  assert.ok(addCap);
+
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  const ok = await addCap.execute(
+    { id: c.id, kind: 'image', source: 'openai/dall-e-3', costUsd: 0.04 },
+    ctx,
+  );
+  assert.equal(ok.isError, undefined);
+  assert.match(ok.output, /Asset recorded/i);
+
+  const blocked = await addCap.execute(
+    { id: c.id, kind: 'image', source: 'openai/dall-e-3', costUsd: 0.04 },
+    ctx,
+  );
+  // Budget refusal is NOT an agent error — the agent should read the
+  // reason and pick a cheaper model, not trigger retry/recovery.
+  assert.equal(blocked.isError, undefined);
+  assert.match(blocked.output, /budget/i);
+  assert.equal(lib.get(c.id)?.assets.length, 1, 'rejected asset must not persist');
+});
+
+test('createContentCapabilities: ContentShow and ContentList produce useful markdown', async () => {
+  const { createContentCapabilities } = await import('../dist/tools/content-execute.js');
+  const { ContentLibrary } = await import('../dist/content/library.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'AEA essay', budgetUsd: 5 });
+  lib.addAsset(c.id, { kind: 'image', source: 'openai/dall-e-3', costUsd: 0.04 });
+
+  const caps = createContentCapabilities({ library: lib });
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  const show = await caps.find((c) => c.spec.name === 'ContentShow').execute({ id: c.id }, ctx);
+  assert.equal(show.isError, undefined);
+  assert.match(show.output, /AEA essay/);
+  assert.match(show.output, /dall-e-3/);
+  assert.match(show.output, /\$0\.04/);
+  assert.match(show.output, /\$5\.00/);
+
+  const list = await caps.find((c) => c.spec.name === 'ContentList').execute({}, ctx);
+  assert.equal(list.isError, undefined);
+  assert.match(list.output, /AEA essay/);
+});
+
+test('content store: save + load roundtrips every field including assets and spend', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { saveLibrary, loadLibrary } = await import('../dist/content/store.js');
+  const tmpFile = join(tmpdir(), `franklin-content-${Date.now()}.json`);
+
+  try {
+    const lib = new ContentLibrary();
+    const c = lib.create({ type: 'podcast', title: 'Ep. 1', budgetUsd: 10 });
+    lib.addAsset(c.id, { kind: 'audio', source: 'suno-v4', costUsd: 0.5 });
+    saveLibrary(lib, tmpFile);
+
+    const restored = loadLibrary(tmpFile);
+    assert.ok(restored);
+    const list = restored.list();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, c.id);
+    assert.equal(list[0].title, 'Ep. 1');
+    assert.equal(list[0].assets.length, 1);
+    assert.equal(list[0].assets[0].source, 'suno-v4');
+    assert.equal(list[0].spentUsd, 0.5);
+    assert.equal(list[0].budgetUsd, 10);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
+test('content store: loadLibrary returns null when file does not exist', async () => {
+  const { loadLibrary } = await import('../dist/content/store.js');
+  const missing = join(tmpdir(), `franklin-content-missing-${Date.now()}.json`);
+  assert.equal(loadLibrary(missing), null);
+});
+
+test('ContentLibrary: addAsset within budget records the asset and increments spend', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'Hero image test', budgetUsd: 5 });
+
+  const decision = lib.addAsset(c.id, {
+    kind: 'image',
+    source: 'openai/dall-e-3',
+    costUsd: 0.04,
+    data: 'https://example.com/hero.png',
+  });
+  assert.equal(decision.ok, true);
+
+  const after = lib.get(c.id);
+  assert.equal(after?.assets.length, 1);
+  assert.equal(after?.assets[0].source, 'openai/dall-e-3');
+  assert.equal(after?.spentUsd, 0.04);
+});
+
+test('ContentLibrary: addAsset over budget is rejected and leaves content unchanged', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'image', title: 'Banner', budgetUsd: 0.05 });
+
+  // First asset fits.
+  lib.addAsset(c.id, { kind: 'image', source: 'openai/dall-e-3', costUsd: 0.04 });
+  // Second asset would overshoot.
+  const decision = lib.addAsset(c.id, { kind: 'image', source: 'openai/dall-e-3', costUsd: 0.04 });
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /budget/i);
+
+  const after = lib.get(c.id);
+  assert.equal(after?.assets.length, 1, 'rejected asset must not be recorded');
+  assert.equal(after?.spentUsd, 0.04, 'spent must not increment on rejection');
+});
+
+test('ContentLibrary: addAsset on unknown id is rejected cleanly', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const decision = lib.addAsset('does-not-exist', { kind: 'image', source: 'x', costUsd: 0 });
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /not found/i);
+});
+
+test('ContentLibrary: list() returns all contents newest-first', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const a = lib.create({ type: 'blog', title: 'A', budgetUsd: 10 });
+  // Ensure distinct timestamps regardless of Date.now() resolution.
+  await new Promise((r) => setTimeout(r, 2));
+  const b = lib.create({ type: 'blog', title: 'B', budgetUsd: 10 });
+
+  const listed = lib.list();
+  assert.equal(listed.length, 2);
+  assert.equal(listed[0].id, b.id, 'list should be newest-first');
+  assert.equal(listed[1].id, a.id);
+});
+
 // ─── Trading execution MVP ────────────────────────────────────────────────
 
 test('Portfolio: buy fill into empty portfolio opens a position and debits cash', async () => {
