@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased — Trading Agent vertical lands
+
+### Added
+
+- **Three new agent capabilities: `TradingPortfolio`, `TradingOpenPosition`,
+  `TradingClosePosition`.** This is the first slice of Franklin's
+  differentiated surface — the use cases generic coding agents cannot
+  cover. Claude Code / Cursor have no persistent wallet state, no way
+  to carry positions across sessions, no P&L reasoning. Franklin now does.
+  - `TradingPortfolio` reports cash, equity, unrealized + realized P&L,
+    per-position mark-to-market, and risk-cap utilization — everything
+    the agent needs to decide its next trade in one call.
+  - `TradingOpenPosition` runs pre-trade risk checks (per-position cap,
+    total exposure cap, cash sufficiency) before touching the exchange.
+    Risk blocks come back as ordinary text results (not errors) so the
+    agent reads them and adapts instead of triggering retry/recovery.
+  - `TradingClosePosition` flattens or partially reduces a position,
+    realizing P&L against the weighted-average entry price. Uses the
+    exchange's live mark — no manual price required.
+- **`LiveExchange` adapter** — default `ExchangeClient` that quotes live
+  CoinGecko prices but simulates fills. Paper trading with real market
+  data, so P&L reflects reality. Pricing is injected (not imported),
+  keeping the class unit-testable without hitting CoinGecko.
+- **Portfolio persistence at `~/.blockrun/portfolio.json`.** Trades
+  survive restart — the whole point of the vertical. Disk failures are
+  swallowed so a full disk never blocks a trade; corrupt JSON falls
+  back to a fresh paper portfolio.
+- **Paper-trading defaults** tuned for safety: $1,000 starting bankroll,
+  $400 per-position cap, $900 total exposure cap, 10 bps simulated fee.
+  Adjustable at the engine construction site; env-var / config surface
+  planned for a follow-up.
+
 ## Unreleased — Post-v3.7.6 audit fixes
 
 Follow-ups from a cross-cutting audit of v3.7.4–v3.7.6. Focus: correctness,

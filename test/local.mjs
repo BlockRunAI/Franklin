@@ -1462,6 +1462,131 @@ test('RiskEngine: sell is allowed even when caps are exceeded, as long as positi
   assert.equal(decision.allowed, true, 'exits should not be blocked by exposure caps');
 });
 
+test('LiveExchange: getPrice delegates to injected pricing client and returns numeric price', async () => {
+  const { LiveExchange } = await import('../dist/trading/live-exchange.js');
+  const pricingClient = {
+    async getPrice(ticker) {
+      if (ticker === 'BTC') return { price: 71_234.5, change24h: 0, volume24h: 0, marketCap: 0 };
+      return 'unknown ticker'; // data.ts returns string on error
+    },
+  };
+  const ex = new LiveExchange({ pricing: pricingClient, feeBps: 10 });
+  assert.equal(await ex.getPrice('BTC'), 71_234.5);
+  assert.equal(await ex.getPrice('XYZ'), null, 'unknown ticker returns null, not throw');
+});
+
+test('LiveExchange: placeOrder charges fee on notional and echoes price', async () => {
+  const { LiveExchange } = await import('../dist/trading/live-exchange.js');
+  const pricingClient = { async getPrice() { return 'not used for placeOrder'; } };
+  const ex = new LiveExchange({ pricing: pricingClient, feeBps: 15 }); // 0.15%
+  const fill = await ex.placeOrder({ symbol: 'BTC', side: 'buy', qty: 0.005, priceUsd: 70_000 });
+  // Fee: 0.005 * 70000 * 0.0015 = 0.525
+  assert.equal(fill.feeUsd, 0.525);
+  assert.equal(fill.priceUsd, 70_000);
+});
+
+test('createTradingCapabilities: TradingPortfolio reports cash, positions, and P&L in markdown', async () => {
+  const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 500, maxTotalExposureUsd: 800 });
+  const exchange = new MockExchange({ prices: { BTC: 72_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  await engine.openPosition({ symbol: 'BTC', qty: 0.005, priceUsd: 70_000 });
+
+  const caps = createTradingCapabilities({ engine });
+  const portfolioCap = caps.find((c) => c.spec.name === 'TradingPortfolio');
+  assert.ok(portfolioCap, 'TradingPortfolio capability must be registered');
+
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+  const result = await portfolioCap.execute({}, ctx);
+  assert.equal(result.isError, undefined);
+  assert.match(result.output, /BTC/, 'should list the BTC position');
+  assert.match(result.output, /Cash/i);
+  assert.match(result.output, /Equity/i);
+});
+
+test('createTradingCapabilities: TradingOpenPosition routes through risk + exchange + portfolio', async () => {
+  const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 500, maxTotalExposureUsd: 800 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  const caps = createTradingCapabilities({ engine });
+  const openCap = caps.find((c) => c.spec.name === 'TradingOpenPosition');
+  assert.ok(openCap);
+
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+  const result = await openCap.execute(
+    { symbol: 'BTC', qty: 0.002, priceUsd: 70_000 },
+    ctx,
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.output, /filled/i);
+  assert.equal(portfolio.getPosition('BTC')?.qty, 0.002);
+});
+
+test('createTradingCapabilities: TradingOpenPosition surfaces risk-block reason as a normal output', async () => {
+  const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  // Paranoid caps so even a small order is blocked.
+  const risk = new RiskEngine({ maxPositionUsd: 50, maxTotalExposureUsd: 50 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  const caps = createTradingCapabilities({ engine });
+  const openCap = caps.find((c) => c.spec.name === 'TradingOpenPosition');
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+  const result = await openCap.execute(
+    { symbol: 'BTC', qty: 0.01, priceUsd: 70_000 },
+    ctx,
+  );
+
+  // Blocked is not an agent error — it's a correct decision the agent
+  // needs to see and react to. Surfacing this as `isError: true` would
+  // trigger Franklin's retry/recovery paths, which is wrong.
+  assert.equal(result.isError, undefined, 'risk blocks are informational, not errors');
+  assert.match(result.output, /blocked/i);
+  assert.match(result.output, /cap/i);
+  assert.equal(portfolio.cashUsd, 1000, 'blocked order must not debit cash');
+});
+
+test('createTradingCapabilities: TradingClosePosition is a noop on missing symbol', async () => {
+  const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 500, maxTotalExposureUsd: 800 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  const caps = createTradingCapabilities({ engine });
+  const closeCap = caps.find((c) => c.spec.name === 'TradingClosePosition');
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+  const result = await closeCap.execute({ symbol: 'DOGE' }, ctx);
+  assert.equal(result.isError, undefined);
+  assert.match(result.output, /No open DOGE position/i);
+});
+
 test('TradingEngine: executes a compliant order through risk → exchange → portfolio', async () => {
   const { TradingEngine } = await import('../dist/trading/engine.js');
   const { Portfolio } = await import('../dist/trading/portfolio.js');
