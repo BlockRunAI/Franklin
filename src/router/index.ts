@@ -49,22 +49,24 @@ export interface RoutingResult {
 
 // ─── Tier Model Configs ───
 
+// Agent-first defaults. Claude Sonnet 4.6 is the industry standard for multi-step
+// tool-use agent work; cheap models keep derailing on simple agent loops.
 const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
     primary: 'google/gemini-2.5-flash',
-    fallback: ['deepseek/deepseek-chat', 'nvidia/nemotron-ultra-253b'],
+    fallback: ['moonshot/kimi-k2.5', 'deepseek/deepseek-chat'],
   },
   MEDIUM: {
-    primary: 'moonshot/kimi-k2.5',
-    fallback: ['google/gemini-2.5-flash', 'minimax/minimax-m2.7'],
+    primary: 'anthropic/claude-sonnet-4.6',
+    fallback: ['openai/gpt-5.4', 'google/gemini-3.1-pro'],
   },
   COMPLEX: {
-    primary: 'google/gemini-3.1-pro',
-    fallback: ['anthropic/claude-sonnet-4.6', 'google/gemini-2.5-pro'],
+    primary: 'anthropic/claude-sonnet-4.6',
+    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.6'],
   },
   REASONING: {
-    primary: 'xai/grok-4-1-fast-reasoning',
-    fallback: ['deepseek/deepseek-reasoner', 'openai/o4-mini'],
+    primary: 'anthropic/claude-opus-4.6',
+    fallback: ['openai/o3', 'xai/grok-4-1-fast-reasoning'],
   },
 };
 
@@ -316,6 +318,14 @@ export function routeRequest(
       signals: ['free-profile'],
       savings: 1.0,
     };
+  }
+
+  // Auto profile bypasses learned routing. The learned Elo scores grow with
+  // usage volume rather than pure quality, which biased the router toward
+  // cheap/weak models on agentic work. Classic AUTO_TIERS defaults are
+  // agent-tuned (Claude Sonnet as backbone) and more predictable for users.
+  if (profile === 'auto') {
+    return classicRouteRequest(prompt, profile);
   }
 
   // ── Learned routing (if weights available) ──
