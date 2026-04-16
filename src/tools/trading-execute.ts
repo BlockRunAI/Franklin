@@ -20,6 +20,7 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import type { TradingEngine } from '../trading/engine.js';
 import type { Position } from '../trading/portfolio.js';
 import type { RiskConfig } from '../trading/risk.js';
+import type { TradeLog, TradeLogEntry } from '../trading/trade-log.js';
 
 export interface TradingCapabilitiesDeps {
   engine: TradingEngine;
@@ -27,6 +28,12 @@ export interface TradingCapabilitiesDeps {
   riskConfig?: RiskConfig;
   /** Optional hook run after every state-changing call (e.g., persist to disk). */
   onStateChange?: () => void | Promise<void>;
+  /**
+   * Optional persistent trade log. When provided, opens and closes are
+   * appended to it and the TradingHistory capability is registered so the
+   * agent can query cross-session P&L.
+   */
+  tradeLog?: TradeLog;
 }
 
 function formatUsd(n: number): string {
@@ -51,10 +58,32 @@ function formatPositionLine(
   );
 }
 
+/** Parse a window string (e.g. "24h", "7d", "all") into a lower-bound timestamp. */
+function windowToSince(window: string, now: number): number {
+  const m = /^(\d+)\s*([hdwm])$/i.exec(window.trim());
+  if (!m) return 0; // "all" or anything unparseable → since epoch
+  const n = parseInt(m[1], 10);
+  switch (m[2].toLowerCase()) {
+    case 'h': return now - n * 3_600_000;
+    case 'd': return now - n * 86_400_000;
+    case 'w': return now - n * 7 * 86_400_000;
+    case 'm': return now - n * 30 * 86_400_000;
+    default: return 0;
+  }
+}
+
+function formatTradeLine(entry: TradeLogEntry): string {
+  const when = new Date(entry.timestamp).toISOString().replace('T', ' ').slice(0, 16);
+  const side = entry.side.toUpperCase();
+  const pnl =
+    entry.realizedPnlUsd === 0 ? '' : ` → realized ${formatUsd(entry.realizedPnlUsd)}`;
+  return `- ${when}  ${side} ${entry.qty} ${entry.symbol} @ ${formatUsd(entry.priceUsd)}${pnl}`;
+}
+
 export function createTradingCapabilities(
   deps: TradingCapabilitiesDeps,
 ): CapabilityHandler[] {
-  const { engine, riskConfig, onStateChange } = deps;
+  const { engine, riskConfig, onStateChange, tradeLog } = deps;
 
   const tradingPortfolio: CapabilityHandler = {
     spec: {
@@ -154,6 +183,17 @@ export function createTradingCapabilities(
         return { output: `No-op: ${outcome.reason}` };
       }
 
+      if (tradeLog) {
+        tradeLog.append({
+          timestamp: Date.now(),
+          symbol,
+          side: 'buy',
+          qty: outcome.fill.qty,
+          priceUsd: outcome.fill.priceUsd,
+          feeUsd: outcome.fill.feeUsd,
+          realizedPnlUsd: 0,
+        });
+      }
       if (onStateChange) await onStateChange();
 
       const portfolio = (engine as unknown as { deps: { portfolio: import('../trading/portfolio.js').Portfolio } }).deps.portfolio;
@@ -219,9 +259,20 @@ export function createTradingCapabilities(
         };
       }
 
+      const tradeRealized = portfolio.realizedPnlUsd - priorRealized;
+      if (tradeLog) {
+        tradeLog.append({
+          timestamp: Date.now(),
+          symbol,
+          side: 'sell',
+          qty: outcome.fill.qty,
+          priceUsd: outcome.fill.priceUsd,
+          feeUsd: outcome.fill.feeUsd,
+          realizedPnlUsd: tradeRealized,
+        });
+      }
       if (onStateChange) await onStateChange();
 
-      const tradeRealized = portfolio.realizedPnlUsd - priorRealized;
       const remaining = portfolio.getPosition(symbol);
       return {
         output:
@@ -236,5 +287,63 @@ export function createTradingCapabilities(
     },
   };
 
-  return [tradingPortfolio, tradingOpenPosition, tradingClosePosition];
+  const caps: CapabilityHandler[] = [tradingPortfolio, tradingOpenPosition, tradingClosePosition];
+
+  if (tradeLog) {
+    const tradingHistory: CapabilityHandler = {
+      spec: {
+        name: 'TradingHistory',
+        description:
+          'Show recent trades and realized P&L within a time window. Unlike ephemeral ' +
+          'session state, this reads the persistent trade log so it spans every prior ' +
+          'session on this machine. Use to answer "am I up this week?", "what was my ' +
+          'worst trade?", "how often am I flipping BTC?".',
+        input_schema: {
+          type: 'object',
+          properties: {
+            window: {
+              type: 'string',
+              description: 'Time window: "24h", "7d", "30d", "all". Default "7d".',
+            },
+            limit: {
+              type: 'number',
+              description: 'Max number of trade rows to list. Default 20.',
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      concurrent: true,
+      async execute(input: Record<string, unknown>, _ctx: ExecutionScope): Promise<CapabilityResult> {
+        const windowRaw = String(input.window ?? '7d').trim();
+        const limit = Number.isFinite(Number(input.limit))
+          ? Math.max(1, Math.min(200, Number(input.limit)))
+          : 20;
+        const now = Date.now();
+        const since = windowRaw.toLowerCase() === 'all' ? 0 : windowToSince(windowRaw, now);
+
+        const entries = tradeLog.recent(limit).filter((e) => e.timestamp >= since);
+        const realized = tradeLog.realizedSince(since);
+        const opens = entries.filter((e) => e.side === 'buy').length;
+        const closes = entries.filter((e) => e.side === 'sell').length;
+
+        const lines: string[] = [];
+        lines.push(`## Trade history (${windowRaw})`);
+        lines.push(
+          `- ${windowRaw} P&L (realized): ${formatUsd(realized)}`,
+        );
+        lines.push(`- Trades: ${entries.length} (${opens} opens, ${closes} closes)`);
+        lines.push('');
+        if (entries.length === 0) {
+          lines.push('_No trades in this window._');
+        } else {
+          for (const e of entries) lines.push(formatTradeLine(e));
+        }
+        return { output: lines.join('\n') };
+      },
+    };
+    caps.push(tradingHistory);
+  }
+
+  return caps;
 }
