@@ -54,26 +54,73 @@ function replaceHistory(target: Dialogue[], replacement: Dialogue[]): void {
 // ─── Pushback detection ───────────────────────────────────────────────────
 // Cheap models plough forward when users correct them. This detects common
 // correction patterns so the agent can explicitly reset its approach.
+//
+// Precision-biased: we'd rather miss a real pushback than falsely trigger on
+// casual disagreement ("But how do I deploy?"). False positives pollute the
+// conversation and make the agent abandon working approaches unnecessarily.
 
-const PUSHBACK_PATTERNS: RegExp[] = [
-  /^(but|however|actually|wait|no+\b|hmm)\b/i,
+// STRONG patterns: high-precision correction language. Fires even on short input.
+const PUSHBACK_STRONG: RegExp[] = [
   /\b(that'?s?\s+(wrong|incorrect|not\s+right)|you'?re?\s+wrong)\b/i,
-  /\b(i\s+(said|told\s+you)|not\s+(what|that))\b/i,
-  /\b(we\s+are\s+using|the\s+correct|the\s+actual)\b/i,
-  /^(stop|no,|wrong|incorrect|try\s+again)\b/i,
-  /^(不对|不是|错了|再试|但是|其实|等等|停|重来)/,
+  /\b(i\s+(said|told\s+you)|not\s+what\s+i)\b/i,
+  /^(stop|wrong|incorrect|try\s+again)\b/i,
+  /^(不对|不是|错了|再试|重来)/,
 ];
+
+// WEAK patterns: common correction starters that also appear in casual speech.
+// Require a corroborating signal (see detectPushback) to count as pushback.
+const PUSHBACK_WEAK: RegExp[] = [
+  /^(but|however|actually|wait|no+\b|hmm)\b/i,
+  /\b(we\s+are\s+using|the\s+correct|the\s+actual)\b/i,
+  /^(但是|其实|等等|停)/,
+];
+
+/**
+ * True if the last assistant turn made a concrete claim worth pushing back
+ * against: executed a tool, wrote code, or produced a non-trivial answer.
+ * Casual assistant chatter doesn't warrant treating a "but" as a correction.
+ */
+function lastAssistantHasClaim(history: Dialogue[]): boolean {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg.role !== 'assistant') continue;
+    if (Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        const p = part as { type?: string; text?: string };
+        if (p.type === 'tool_use') return true;
+        if (p.type === 'text' && typeof p.text === 'string' && p.text.trim().length >= 40) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (typeof msg.content === 'string' && msg.content.trim().length >= 40) return true;
+    return false;
+  }
+  return false;
+}
 
 function detectPushback(input: string, history: Dialogue[]): boolean {
   // Only count as pushback if there's a prior assistant turn to push back against.
   if (history.length === 0) return false;
-  const hasPriorAssistant = history.some((m) => m.role === 'assistant');
-  if (!hasPriorAssistant) return false;
+  if (!lastAssistantHasClaim(history)) return false;
 
   const trimmed = input.trim();
   if (trimmed.length === 0 || trimmed.length > 500) return false;
 
-  return PUSHBACK_PATTERNS.some((re) => re.test(trimmed));
+  // Strong patterns: direct correction language — fire immediately.
+  if (PUSHBACK_STRONG.some((re) => re.test(trimmed))) return true;
+
+  // Weak patterns: only count if the message is short (< 120 chars) AND doesn't
+  // also contain a fresh request. A weak starter followed by "can you also X"
+  // or "please do Y" is scope addition, not correction.
+  if (PUSHBACK_WEAK.some((re) => re.test(trimmed))) {
+    if (trimmed.length > 120) return false;
+    if (/\b(can you|could you|please|also|add|include)\b/i.test(trimmed)) return false;
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -399,7 +446,9 @@ export async function interactiveSession(
     history.push({ role: 'user', content: effectiveInput });
     turnCount++;
     toolGuard.startTurn();
-    persistSessionMessage({ role: 'user', content: effectiveInput });
+    // Persist the user's original message, not the injected SYSTEM NOTE scaffold.
+    // Resumed sessions should show what the user typed, not our internal prompt engineering.
+    persistSessionMessage({ role: 'user', content: input });
 
     // ── Model recovery: try original model at the start of each new turn ──
     // If we fell back to a free model last turn due to a transient error, try original again.
