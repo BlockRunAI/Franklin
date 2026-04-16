@@ -24,6 +24,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   // Anthropic
   'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
   'anthropic/claude-opus-4.6': { input: 5.0, output: 25.0 },
+  'anthropic/claude-opus-4.7': { input: 5.0, output: 25.0 },
   'anthropic/claude-haiku-4.5': { input: 1.0, output: 5.0 },
   'anthropic/claude-haiku-4.5-20251001': { input: 1.0, output: 5.0 },
   // OpenAI
@@ -78,7 +79,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
 };
 
 /** Opus pricing for savings calculations */
-export const OPUS_PRICING = MODEL_PRICING['anthropic/claude-opus-4.6'];
+export const OPUS_PRICING = MODEL_PRICING['anthropic/claude-opus-4.7'];
 
 /**
  * Estimate cost in USD for a request.

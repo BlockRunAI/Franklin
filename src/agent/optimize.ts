@@ -31,6 +31,7 @@ export const ESCALATED_MAX_TOKENS = 65_536;
 
 /** Per-model max output tokens — prevents requesting more than the model supports */
 const MODEL_MAX_OUTPUT: Record<string, number> = {
+  'anthropic/claude-opus-4.7': 128_000,
   'anthropic/claude-opus-4.6': 32_000,
   'anthropic/claude-sonnet-4.6': 64_000,
   'anthropic/claude-haiku-4.5-20251001': 16_384,

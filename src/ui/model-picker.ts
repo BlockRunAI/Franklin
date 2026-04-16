@@ -17,7 +17,9 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   // Anthropic
   sonnet: 'anthropic/claude-sonnet-4.6',
   claude: 'anthropic/claude-sonnet-4.6',
-  opus: 'anthropic/claude-opus-4.6',
+  opus: 'anthropic/claude-opus-4.7',
+  'opus-4.7': 'anthropic/claude-opus-4.7',
+  'opus-4.6': 'anthropic/claude-opus-4.6',
   haiku: 'anthropic/claude-haiku-4.5-20251001',
   // OpenAI
   gpt: 'openai/gpt-5.4',
@@ -113,8 +115,9 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
   {
     category: '✨ Premium frontier',
     models: [
+      { id: 'anthropic/claude-opus-4.7',   shortcut: 'opus',      label: 'Claude Opus 4.7',   price: '$5/$25', highlight: true },
       { id: 'anthropic/claude-sonnet-4.6', shortcut: 'sonnet',    label: 'Claude Sonnet 4.6', price: '$3/$15' },
-      { id: 'anthropic/claude-opus-4.6',   shortcut: 'opus',      label: 'Claude Opus 4.6',   price: '$5/$25' },
+      { id: 'anthropic/claude-opus-4.6',   shortcut: 'opus-4.6',  label: 'Claude Opus 4.6',   price: '$5/$25' },
       { id: 'openai/gpt-5.4',              shortcut: 'gpt',       label: 'GPT-5.4',           price: '$2.5/$15' },
       { id: 'openai/gpt-5.4-pro',          shortcut: 'gpt-5.4-pro', label: 'GPT-5.4 Pro',     price: '$30/$180' },
       { id: 'google/gemini-2.5-pro',       shortcut: 'gemini',    label: 'Gemini 2.5 Pro',    price: '$1.25/$10' },
