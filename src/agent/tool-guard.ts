@@ -131,6 +131,10 @@ export class SessionToolGuard {
   private recentFetches = new Map<string, FetchSnapshot>();
   private pendingFetches = new Map<string, FetchSnapshot>();
   private toolErrorCounts = new Map<string, number>();
+  // Session-level dedup for code-search tools — agents love grep'ing the same pattern
+  // five times in a row when they're confused. Tell them once that it already failed.
+  private recentGreps = new Map<string, { preview: string; turn: number }>();
+  private recentGlobs = new Map<string, { preview: string; turn: number }>();
 
   startTurn(): void {
     this.turn++;
@@ -162,9 +166,47 @@ export class SessionToolGuard {
         return this.beforeRead(invocation, scope);
       case 'WebFetch':
         return this.beforeWebFetch(invocation);
+      case 'Grep':
+        return this.beforeGrep(invocation);
+      case 'Glob':
+        return this.beforeGlob(invocation);
       default:
         return null;
     }
+  }
+
+  private beforeGrep(invocation: CapabilityInvocation): CapabilityResult | null {
+    const pattern = String(invocation.input.pattern ?? '').trim();
+    const path = String(invocation.input.path ?? '').trim();
+    const glob = String(invocation.input.glob ?? '').trim();
+    const type = String(invocation.input.type ?? '').trim();
+    if (!pattern) return null;
+    const key = `${pattern}::${path}::${glob}::${type}`;
+    const cached = this.recentGreps.get(key);
+    if (cached) {
+      return {
+        output:
+          `That exact Grep was already run this session and returned:\n${cached.preview}\n\n` +
+          'Do not re-run the same pattern. If you need different information, change the pattern, path, or try a different tool (Glob to list files, Read to see full content).',
+      };
+    }
+    return null;
+  }
+
+  private beforeGlob(invocation: CapabilityInvocation): CapabilityResult | null {
+    const pattern = String(invocation.input.pattern ?? '').trim();
+    const path = String(invocation.input.path ?? '').trim();
+    if (!pattern) return null;
+    const key = `${pattern}::${path}`;
+    const cached = this.recentGlobs.get(key);
+    if (cached) {
+      return {
+        output:
+          `That exact Glob was already run this session and returned:\n${cached.preview}\n\n` +
+          'Do not re-run the same pattern. Use Grep to search within those files, or Read them directly.',
+      };
+    }
+    return null;
   }
 
   afterExecute(invocation: CapabilityInvocation, result: CapabilityResult): void {
@@ -187,9 +229,41 @@ export class SessionToolGuard {
       case 'WebFetch':
         this.afterWebFetch(invocation, result);
         break;
+      case 'Grep':
+        this.afterGrep(invocation, result);
+        break;
+      case 'Glob':
+        this.afterGlob(invocation, result);
+        break;
       default:
         break;
     }
+  }
+
+  private afterGrep(invocation: CapabilityInvocation, result: CapabilityResult): void {
+    const pattern = String(invocation.input.pattern ?? '').trim();
+    const path = String(invocation.input.path ?? '').trim();
+    const glob = String(invocation.input.glob ?? '').trim();
+    const type = String(invocation.input.type ?? '').trim();
+    if (!pattern) return;
+    const key = `${pattern}::${path}::${glob}::${type}`;
+    const output = String(result.output ?? '');
+    const preview = output.length > MAX_PREVIEW_CHARS
+      ? output.slice(0, MAX_PREVIEW_CHARS) + '…'
+      : output;
+    this.recentGreps.set(key, { preview, turn: this.turn });
+  }
+
+  private afterGlob(invocation: CapabilityInvocation, result: CapabilityResult): void {
+    const pattern = String(invocation.input.pattern ?? '').trim();
+    const path = String(invocation.input.path ?? '').trim();
+    if (!pattern) return;
+    const key = `${pattern}::${path}`;
+    const output = String(result.output ?? '');
+    const preview = output.length > MAX_PREVIEW_CHARS
+      ? output.slice(0, MAX_PREVIEW_CHARS) + '…'
+      : output;
+    this.recentGlobs.set(key, { preview, turn: this.turn });
   }
 
   cancelInvocation(invocationId: string): void {
