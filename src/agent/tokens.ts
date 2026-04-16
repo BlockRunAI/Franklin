@@ -172,6 +172,7 @@ export function estimateHistoryTokens(history: Dialogue[]): number {
  */
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // Anthropic
+  'anthropic/claude-opus-4.7': 1_000_000,
   'anthropic/claude-opus-4.6': 200_000,
   'anthropic/claude-sonnet-4.6': 200_000,
   'anthropic/claude-sonnet-4': 200_000,

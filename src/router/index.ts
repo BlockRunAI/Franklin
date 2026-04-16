@@ -62,10 +62,10 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   },
   COMPLEX: {
     primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.6'],
+    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.7'],
   },
   REASONING: {
-    primary: 'anthropic/claude-opus-4.6',
+    primary: 'anthropic/claude-opus-4.7',
     fallback: ['openai/o3', 'xai/grok-4-1-fast-reasoning'],
   },
 };
@@ -99,12 +99,12 @@ const PREMIUM_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
     fallback: ['anthropic/claude-sonnet-4.6'],
   },
   COMPLEX: {
-    primary: 'anthropic/claude-opus-4.6',
+    primary: 'anthropic/claude-opus-4.7',
     fallback: ['openai/gpt-5.4', 'anthropic/claude-sonnet-4.6'],
   },
   REASONING: {
     primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['anthropic/claude-opus-4.6', 'openai/o3'],
+    fallback: ['anthropic/claude-opus-4.7', 'openai/o3'],
   },
 };
 
