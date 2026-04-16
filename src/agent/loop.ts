@@ -13,6 +13,7 @@ import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
 import { classifyAgentError } from './error-classifier.js';
 import { SessionToolGuard } from './tool-guard.js';
+import { resetToolSessionState } from '../tools/index.js';
 import { recordUsage } from '../stats/tracker.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
@@ -323,6 +324,14 @@ export async function interactiveSession(
   onEvent: (event: StreamEvent) => void,
   onAbortReady?: (abort: () => void) => void
 ): Promise<Dialogue[]> {
+  // Clear module-level tool caches left over from a prior session in the same
+  // process. Matters when Franklin is used as a library or driven by tests
+  // that call interactiveSession() more than once — stale fileReadTracker /
+  // fetchCache / backgroundTasks entries from the previous run would otherwise
+  // fool Edit/Write into skipping the read-before-edit check or serve cached
+  // webfetch content fetched under the previous session's intent.
+  resetToolSessionState();
+
   const client = new ModelClient({
     apiUrl: config.apiUrl,
     chain: config.chain,
