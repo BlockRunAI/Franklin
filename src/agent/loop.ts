@@ -263,7 +263,7 @@ export async function interactiveSession(
   }
 
   const toolDefs = config.capabilities.map((c) => c.spec);
-  const maxTurns = config.maxTurns ?? 100;
+  const maxTurns = config.maxTurns ?? 15;
   const workDir = config.workingDir ?? process.cwd();
   const permissions = new PermissionManager(
     config.permissionMode ?? 'default',
@@ -400,7 +400,13 @@ export async function interactiveSession(
     const turnToolCounts = new Map<string, number>();    // Per-tool-name counts this turn
     const readFileCache = new Set<string>();             // Files already read (dedup)
     const MAX_TOOL_CALLS_PER_TURN = 25;                 // Hard cap per user turn
-    const SAME_TOOL_WARN_THRESHOLD = 5;                 // Warn after N calls to same tool
+    const SAME_TOOL_WARN_THRESHOLD = 3;                 // Warn after N calls to same tool (lowered from 5 — search loops were wasting turns)
+
+    // ── No-progress guardrail: kill infinite tiny-response loops ──
+    let consecutiveTinyResponses = 0;                    // Count of consecutive calls with <10 output tokens
+    const MAX_TINY_RESPONSES = 2;                        // Break after N tiny responses — if 2 calls return near-empty, something is wrong
+    let turnSpend = 0;                                   // Cost spent this user turn (USD)
+    const MAX_TURN_SPEND_USD = 0.25;                    // Hard circuit breaker per user message (lowered — user wallets are real money)
 
     // Agent loop for this user message
     while (loopCount < maxTurns) {
@@ -600,17 +606,34 @@ export async function interactiveSession(
         usage = result.usage;
         stopReason = result.stopReason;
 
-        // ── Empty response recovery (inspired by Hermes _empty_content_retries) ──
+        // ── Empty response recovery ──
+        // If the model returns nothing, DON'T just retry the same model with the same input.
+        // That's deterministic waste. Instead: switch to a different model — then give up and tell the user.
         const hasText = responseParts.some(p => p.type === 'text' && (p as any).text?.trim());
         const hasTools = responseParts.some(p => p.type === 'tool_use');
         const hasThinking = responseParts.some(p => p.type === 'thinking');
-        if (!hasText && !hasTools && !hasThinking && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
-          recoveryAttempts++;
-          if (config.debug) {
-            console.error(`[franklin] Empty response — retrying (${recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS})`);
+        if (!hasText && !hasTools && !hasThinking) {
+          const EMPTY_FALLBACK_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/nemotron-ultra-253b', 'zai/glm-5.1'];
+          const nextModel = EMPTY_FALLBACK_MODELS.find(m => m !== config.model && !turnFailedModels.has(m));
+          if (nextModel && recoveryAttempts < 2) {
+            recoveryAttempts++;
+            turnFailedModels.add(config.model);
+            const oldModel = config.model;
+            config.model = nextModel;
+            config.onModelChange?.(nextModel, 'system');
+            if (config.debug) {
+              console.error(`[franklin] ${oldModel} returned empty — switching to ${nextModel}`);
+            }
+            onEvent({ kind: 'text_delta', text: `\n*${oldModel} returned empty — switching to ${nextModel}*\n` });
+            continue;
           }
-          onEvent({ kind: 'text_delta', text: `\n*Empty response — retrying (${recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS})...*\n` });
-          continue;
+          // No fallback available OR already tried 2 models — give up, tell the user.
+          onEvent({
+            kind: 'text_delta',
+            text: `\n\n⚠️ The model returned an empty response and fallback models didn't help. This usually means the model is rate-limited or confused. Try rephrasing your question or switching model with \`/model\`.\n`,
+          });
+          onEvent({ kind: 'turn_done', reason: 'no_progress' });
+          break;
         }
       } catch (err) {
         // ── User abort (Esc key) ──
@@ -742,6 +765,36 @@ export async function interactiveSession(
       // Record usage for stats tracking (franklin stats command)
       const costEstimate = estimateCost(resolvedModel, inputTokens, usage.outputTokens, 1);
       recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, 0);
+
+      // ── Circuit breakers: prevent infinite-loop wallet drain ──
+      turnSpend += costEstimate;
+      if (turnSpend > MAX_TURN_SPEND_USD) {
+        onEvent({
+          kind: 'text_delta',
+          text: `\n\n⚠️ Turn spend limit reached ($${turnSpend.toFixed(3)} > $${MAX_TURN_SPEND_USD}). Stopping to protect your wallet. Try again with a clearer prompt or a different model.\n`,
+        });
+        onEvent({ kind: 'turn_done', reason: 'budget' });
+        break;
+      }
+      // Count a response as "no progress" only if it made no meaningful output:
+      // no tool call, and no text content longer than a few chars. A short but
+      // legitimate response (e.g. "done" or a compact tool_use) resets the counter.
+      const madeProgress =
+        responseParts.some(p => p.type === 'tool_use') ||
+        responseParts.some(p => p.type === 'text' && ((p as { text?: string }).text?.trim().length ?? 0) > 3);
+      if (!madeProgress) {
+        consecutiveTinyResponses++;
+        if (consecutiveTinyResponses >= MAX_TINY_RESPONSES) {
+          onEvent({
+            kind: 'text_delta',
+            text: `\n\n⚠️ Model returned ${consecutiveTinyResponses} non-productive responses in a row (${resolvedModel} may be rate-limited or confused). Stopping to save tokens. Try a different model with \`/model\` or rephrase your message.\n`,
+          });
+          onEvent({ kind: 'turn_done', reason: 'no_progress' });
+          break;
+        }
+      } else {
+        consecutiveTinyResponses = 0;
+      }
       recordSessionUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, routingTier);
       appendAudit({
         ts: Date.now(),
@@ -947,13 +1000,16 @@ export async function interactiveSession(
       );
 
       // ── Guardrail injections ──
-      // Warn about same-tool repetition
+      // Warn about same-tool repetition — escalate on every call past threshold
       for (const [name, count] of turnToolCounts) {
-        if (count === SAME_TOOL_WARN_THRESHOLD) {
+        if (count >= SAME_TOOL_WARN_THRESHOLD) {
+          const escalation = count === SAME_TOOL_WARN_THRESHOLD
+            ? `[SYSTEM] You have called ${name} ${count} times this turn. Stop and present your results now. Do not make more ${name} calls.`
+            : `[SYSTEM] STOP. You have now called ${name} ${count} times — more searching is not producing new information. Answer the user with what you already have. If the answer truly requires a different approach, use a DIFFERENT tool or ask the user.`;
           outcomeContent.push({
             type: 'tool_result' as const,
-            tool_use_id: `guardrail-warn-${name}`,
-            content: `[SYSTEM] You have called ${name} ${count} times this turn. Stop and present your results now. Do not make more ${name} calls.`,
+            tool_use_id: `guardrail-warn-${name}-${count}`,
+            content: escalation,
             is_error: true,
           });
         }
