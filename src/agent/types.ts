@@ -126,7 +126,7 @@ export interface StreamCapabilityDone {
 
 export interface StreamTurnDone {
   kind: 'turn_done';
-  reason: 'completed' | 'max_turns' | 'aborted' | 'error';
+  reason: 'completed' | 'max_turns' | 'aborted' | 'error' | 'budget' | 'no_progress';
   error?: string;
 }
 

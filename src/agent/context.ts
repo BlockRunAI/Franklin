@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { getWalletAddress as getBaseWalletAddress } from '@blockrun/llm';
 import { loadLearnings, decayLearnings, saveLearnings, formatForPrompt, loadSkills, matchSkills, formatSkillsForPrompt } from '../learnings/store.js';
 
 // ─── System Instructions Assembly ──────────────────────────────────────────
@@ -146,6 +147,23 @@ After delivering results, if a better data source exists, add one line at the en
 Do NOT check access before acting. Do NOT explain what you tried. Just deliver, then tip.`;
 }
 
+function getWalletKnowledgeSection(): string {
+  return `# Wallet Storage (answer "where is my wallet" directly — no searching)
+Franklin stores wallet keys in ~/.blockrun/. When the user asks about wallet location, answer from this map — do not grep or scan.
+
+- Base / EVM wallet (the primary wallet shown in Franklin's startup banner):
+  Private key file: ~/.blockrun/.session
+  Format: 66-char hex string starting with 0x (file name intentionally looks like a session token for obscurity)
+  Address: derivable from the key; also available via getWalletAddress() from @blockrun/llm
+- Solana wallet:
+  File: ~/.blockrun/solana-wallet.json (JSON with address + private_key)
+- Chain selection: ~/.blockrun/.chain ("base" or "solana")
+- Spending tracker: ~/.blockrun/spending.json
+- Programmatic access: import { getWalletAddress, getOrCreateWallet } from '@blockrun/llm'
+
+When the user asks about "my wallet" without qualifier, default to Base (it's the primary chain shown at launch). Only mention Solana if the chain file says solana or the user explicitly asks.`;
+}
+
 function getToolPatternsSection(): string {
   return `# Tool Selection Patterns
 - **Finding files**: Glob first (by name/pattern), then Grep (by content), then Read (specific file). Don't start with Read unless you know the exact path.
@@ -198,6 +216,7 @@ export function assembleInstructions(workingDir: string, model?: string): string
     getGitProtocolSection(),
     getSocialMarketingSection(),
     getMissingAccessSection(),
+    getWalletKnowledgeSection(),
     getToolPatternsSection(),
     getTokenEfficiencySection(),
     getVerificationSection(),
@@ -428,7 +447,51 @@ function buildEnvironmentSection(workingDir: string): string {
   // Date
   lines.push(`- Date: ${new Date().toISOString().split('T')[0]}`);
 
+  // Franklin runtime wallet info — so the agent can answer "where is my wallet"
+  // without grep'ing the filesystem.
+  const wallet = readRuntimeWallet();
+  if (wallet.base || wallet.solana || wallet.chain) {
+    lines.push('');
+    lines.push('# Franklin Runtime Wallet');
+    if (wallet.chain) lines.push(`- Active chain: ${wallet.chain}`);
+    if (wallet.base) lines.push(`- Base wallet address: ${wallet.base} (private key at ~/.blockrun/.session)`);
+    if (wallet.solana) lines.push(`- Solana wallet address: ${wallet.solana} (private key at ~/.blockrun/solana-wallet.json)`);
+  }
+
   return lines.join('\n');
+}
+
+function readRuntimeWallet(): { chain?: string; base?: string; solana?: string } {
+  const home = process.env.HOME || '';
+  if (!home) return {};
+  const blockrunDir = path.join(home, '.blockrun');
+  const out: { chain?: string; base?: string; solana?: string } = {};
+
+  try {
+    const chainFile = path.join(blockrunDir, '.chain');
+    if (fs.existsSync(chainFile)) {
+      const chain = fs.readFileSync(chainFile, 'utf-8').trim();
+      if (chain) out.chain = chain;
+    }
+  } catch { /* ignore */ }
+
+  // Base address: derive via @blockrun/llm (handles the private key in .session)
+  try {
+    const addr = getBaseWalletAddress();
+    if (addr && typeof addr === 'string') out.base = addr;
+  } catch { /* SDK may not be available in all contexts — skip silently */ }
+
+  // Solana address: read from JSON
+  try {
+    const solPath = path.join(blockrunDir, 'solana-wallet.json');
+    if (fs.existsSync(solPath)) {
+      const data = JSON.parse(fs.readFileSync(solPath, 'utf-8'));
+      const addr = data.address || data.publicKey;
+      if (addr && typeof addr === 'string') out.solana = addr;
+    }
+  } catch { /* ignore */ }
+
+  return out;
 }
 
 // ─── Git Context ───────────────────────────────────────────────────────────
