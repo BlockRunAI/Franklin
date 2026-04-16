@@ -51,8 +51,6 @@ export interface RoutingResult {
 
 // Agent-first defaults. Claude Sonnet 4.6 is the industry standard for multi-step
 // tool-use agent work; cheap models keep derailing on simple agent loops.
-// Each tier's fallback ends with a cheaper option so payment/quota failures
-// don't strand users on equally expensive alternatives.
 const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
     primary: 'google/gemini-2.5-flash',
@@ -60,24 +58,15 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   },
   MEDIUM: {
     primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.4', 'google/gemini-3.1-pro', 'moonshot/kimi-k2.5'],
+    fallback: ['openai/gpt-5.4', 'google/gemini-3.1-pro'],
   },
   COMPLEX: {
     primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.7', 'moonshot/kimi-k2.5'],
+    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.7'],
   },
   REASONING: {
-    // Opus 4.7: step-change improvement in agentic coding over 4.6 per
-    // Anthropic. Same price, same 200k ctx in Franklin's baseline, so
-    // swap is cost-neutral. 4.6 stays in the fallback chain in case of
-    // rollout delays on the gateway side.
     primary: 'anthropic/claude-opus-4.7',
-    fallback: [
-      'anthropic/claude-opus-4.6',
-      'openai/o3',
-      'xai/grok-4-1-fast-reasoning',
-      'deepseek/deepseek-reasoner',
-    ],
+    fallback: ['openai/o3', 'xai/grok-4-1-fast-reasoning'],
   },
 };
 
@@ -111,11 +100,11 @@ const PREMIUM_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   },
   COMPLEX: {
     primary: 'anthropic/claude-opus-4.7',
-    fallback: ['anthropic/claude-opus-4.6', 'openai/gpt-5.4', 'anthropic/claude-sonnet-4.6'],
+    fallback: ['openai/gpt-5.4', 'anthropic/claude-sonnet-4.6'],
   },
   REASONING: {
-    primary: 'anthropic/claude-opus-4.7',
-    fallback: ['anthropic/claude-opus-4.6', 'anthropic/claude-sonnet-4.6', 'openai/o3'],
+    primary: 'anthropic/claude-sonnet-4.6',
+    fallback: ['anthropic/claude-opus-4.7', 'openai/o3'],
   },
 };
 

@@ -115,8 +115,8 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
   {
     category: '✨ Premium frontier',
     models: [
+      { id: 'anthropic/claude-opus-4.7',   shortcut: 'opus',      label: 'Claude Opus 4.7',   price: '$5/$25', highlight: true },
       { id: 'anthropic/claude-sonnet-4.6', shortcut: 'sonnet',    label: 'Claude Sonnet 4.6', price: '$3/$15' },
-      { id: 'anthropic/claude-opus-4.7',   shortcut: 'opus',      label: 'Claude Opus 4.7',   price: '$5/$25' },
       { id: 'anthropic/claude-opus-4.6',   shortcut: 'opus-4.6',  label: 'Claude Opus 4.6',   price: '$5/$25' },
       { id: 'openai/gpt-5.4',              shortcut: 'gpt',       label: 'GPT-5.4',           price: '$2.5/$15' },
       { id: 'openai/gpt-5.4-pro',          shortcut: 'gpt-5.4-pro', label: 'GPT-5.4 Pro',     price: '$30/$180' },

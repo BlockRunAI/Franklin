@@ -31,10 +31,7 @@ export const ESCALATED_MAX_TOKENS = 65_536;
 
 /** Per-model max output tokens — prevents requesting more than the model supports */
 const MODEL_MAX_OUTPUT: Record<string, number> = {
-  // Opus 4.6 and 4.7 both support 128k output per Anthropic docs; we keep 32k
-  // as Franklin's practical ceiling to avoid runaway generations. Raise in a
-  // separate change if a use case needs the full 128k.
-  'anthropic/claude-opus-4.7': 32_000,
+  'anthropic/claude-opus-4.7': 128_000,
   'anthropic/claude-opus-4.6': 32_000,
   'anthropic/claude-sonnet-4.6': 64_000,
   'anthropic/claude-haiku-4.5-20251001': 16_384,

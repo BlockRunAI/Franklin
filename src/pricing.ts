@@ -23,8 +23,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'nvidia/llama-4-maverick': { input: 0, output: 0 },
   // Anthropic
   'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
-  'anthropic/claude-opus-4.7': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.6': { input: 5.0, output: 25.0 },
+  'anthropic/claude-opus-4.7': { input: 5.0, output: 25.0 },
   'anthropic/claude-haiku-4.5': { input: 1.0, output: 5.0 },
   'anthropic/claude-haiku-4.5-20251001': { input: 1.0, output: 5.0 },
   // OpenAI
@@ -78,7 +78,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'zai/glm-5.1-turbo': { input: 0, output: 0, perCall: 0.001 },  // client alias for zai/glm-5-turbo
 };
 
-/** Opus pricing for savings calculations — tracks the current flagship. */
+/** Opus pricing for savings calculations */
 export const OPUS_PRICING = MODEL_PRICING['anthropic/claude-opus-4.7'];
 
 /**
