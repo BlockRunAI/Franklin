@@ -10,6 +10,56 @@ const DUPLICATE_READ_TURN_WINDOW = 1;
 const DUPLICATE_FETCH_TURN_WINDOW = 1;
 const MAX_PREVIEW_CHARS = 320;
 
+// Commands that mutate state or have side effects — never dedup these.
+// Covers: filesystem writes, network downloads, package managers, container/orchestration,
+// git mutations, privileged escalation, archive ops, and output redirection.
+// Hoisted to module scope so beforeBash/afterBash don't recompile on every call.
+// Normalize a filesystem path for cache-key use: collapse whitespace and strip
+// a single trailing slash (so `/foo` and `/foo/` share a cache entry).
+function normalizePath(p: string): string {
+  const trimmed = p.trim().replace(/\s+/g, ' ');
+  if (trimmed.length > 1 && trimmed.endsWith('/')) return trimmed.slice(0, -1);
+  return trimmed;
+}
+
+// Build a stable Grep cache key — or return '' if the call isn't dedupable.
+// Pattern is case-sensitive by design (grep semantics), but path/glob/type
+// are normalized so cosmetic variation doesn't bypass dedup.
+function grepKey(invocation: CapabilityInvocation): string {
+  const pattern = String(invocation.input.pattern ?? '').trim();
+  if (!pattern) return '';
+  const path = normalizePath(String(invocation.input.path ?? ''));
+  const glob = String(invocation.input.glob ?? '').trim().replace(/\s+/g, ' ');
+  const type = String(invocation.input.type ?? '').trim();
+  return `${pattern}::${path}::${glob}::${type}`;
+}
+
+function globKey(invocation: CapabilityInvocation): string {
+  const pattern = String(invocation.input.pattern ?? '').trim().replace(/\s+/g, ' ');
+  if (!pattern) return '';
+  const path = normalizePath(String(invocation.input.path ?? ''));
+  return `${pattern}::${path}`;
+}
+
+const WRITE_KEYWORDS: RegExp = (() => {
+  const words = [
+    'rm', 'mv', 'cp', 'mkdir', 'touch', 'chmod', 'chown', 'ln',
+    'write', 'install', 'uninstall', 'build', 'publish',
+    'push', 'pull', 'fetch', 'clone',
+    'curl', 'wget', 'scp', 'rsync',
+    'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pipx', 'poetry', 'cargo', 'gem',
+    'apt', 'apt-get', 'brew', 'port', 'dnf', 'yum', 'pacman',
+    'make', 'cmake', 'gradle', 'mvn',
+    'go\\s+(?:build|run|test|install|mod)',
+    'git\\s+(?:push|pull|commit|merge|rebase|reset|clean|stash|checkout|add|rm|mv|fetch|clone|revert|cherry-pick)',
+    'docker', 'podman', 'kubectl', 'helm',
+    'tar', 'zip', 'unzip', 'gzip', 'bzip2',
+    'tee', 'sudo', 'doas',
+  ];
+  // Redirect operators are not word chars — match separately, not under \b.
+  return new RegExp(`(?:\\b(?:${words.join('|')})\\b|>>?\\s)`);
+})();
+
 const SEARCH_STOPWORDS = new Set([
   'a', 'an', 'and', 'april', 'at', 'builder', 'builders', 'com', 'developer',
   'developers', 'for', 'from', 'in', 'latest', 'live', 'may', 'of', 'on', 'or',
@@ -182,9 +232,9 @@ export class SessionToolGuard {
     const cmd = String(invocation.input.command ?? '').trim();
     if (!cmd) return null;
     // Only dedup deterministic read-only commands. Skip anything writing/network/long-running.
-    const writeKeywords = /\b(rm|mv|cp|mkdir|touch|chmod|chown|write|install|build|publish|push|pull|curl|wget|fetch|npm|pnpm|yarn|pip|cargo|go\s+(build|run|test)|docker|kubectl|tar|zip|unzip|tee|>\s|>>\s)\b/;
-    if (writeKeywords.test(cmd)) return null;
-    const key = cmd;
+    if (WRITE_KEYWORDS.test(cmd)) return null;
+    // Normalize whitespace so "ls   -la" and "ls -la" share a cache entry.
+    const key = cmd.replace(/\s+/g, ' ');
     const cached = this.recentBash.get(key);
     if (cached) {
       const lead = cached.isError
@@ -200,12 +250,8 @@ export class SessionToolGuard {
   }
 
   private beforeGrep(invocation: CapabilityInvocation): CapabilityResult | null {
-    const pattern = String(invocation.input.pattern ?? '').trim();
-    const path = String(invocation.input.path ?? '').trim();
-    const glob = String(invocation.input.glob ?? '').trim();
-    const type = String(invocation.input.type ?? '').trim();
-    if (!pattern) return null;
-    const key = `${pattern}::${path}::${glob}::${type}`;
+    const key = grepKey(invocation);
+    if (!key) return null;
     const cached = this.recentGreps.get(key);
     if (cached) {
       return {
@@ -218,10 +264,8 @@ export class SessionToolGuard {
   }
 
   private beforeGlob(invocation: CapabilityInvocation): CapabilityResult | null {
-    const pattern = String(invocation.input.pattern ?? '').trim();
-    const path = String(invocation.input.path ?? '').trim();
-    if (!pattern) return null;
-    const key = `${pattern}::${path}`;
+    const key = globKey(invocation);
+    if (!key) return null;
     const cached = this.recentGlobs.get(key);
     if (cached) {
       return {
@@ -270,22 +314,19 @@ export class SessionToolGuard {
   private afterBash(invocation: CapabilityInvocation, result: CapabilityResult): void {
     const cmd = String(invocation.input.command ?? '').trim();
     if (!cmd) return;
-    const writeKeywords = /\b(rm|mv|cp|mkdir|touch|chmod|chown|write|install|build|publish|push|pull|curl|wget|fetch|npm|pnpm|yarn|pip|cargo|go\s+(build|run|test)|docker|kubectl|tar|zip|unzip|tee|>\s|>>\s)\b/;
-    if (writeKeywords.test(cmd)) return;
+    if (WRITE_KEYWORDS.test(cmd)) return;
     const output = String(result.output ?? '');
     const preview = output.length > MAX_PREVIEW_CHARS
       ? output.slice(0, MAX_PREVIEW_CHARS) + '…'
       : output;
-    this.recentBash.set(cmd, { preview, turn: this.turn, isError: !!result.isError });
+    // Match the normalization used in beforeBash so reads/writes share keys.
+    const key = cmd.replace(/\s+/g, ' ');
+    this.recentBash.set(key, { preview, turn: this.turn, isError: !!result.isError });
   }
 
   private afterGrep(invocation: CapabilityInvocation, result: CapabilityResult): void {
-    const pattern = String(invocation.input.pattern ?? '').trim();
-    const path = String(invocation.input.path ?? '').trim();
-    const glob = String(invocation.input.glob ?? '').trim();
-    const type = String(invocation.input.type ?? '').trim();
-    if (!pattern) return;
-    const key = `${pattern}::${path}::${glob}::${type}`;
+    const key = grepKey(invocation);
+    if (!key) return;
     const output = String(result.output ?? '');
     const preview = output.length > MAX_PREVIEW_CHARS
       ? output.slice(0, MAX_PREVIEW_CHARS) + '…'
@@ -294,10 +335,8 @@ export class SessionToolGuard {
   }
 
   private afterGlob(invocation: CapabilityInvocation, result: CapabilityResult): void {
-    const pattern = String(invocation.input.pattern ?? '').trim();
-    const path = String(invocation.input.path ?? '').trim();
-    if (!pattern) return;
-    const key = `${pattern}::${path}`;
+    const key = globKey(invocation);
+    if (!key) return;
     const output = String(result.output ?? '');
     const preview = output.length > MAX_PREVIEW_CHARS
       ? output.slice(0, MAX_PREVIEW_CHARS) + '…'

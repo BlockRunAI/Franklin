@@ -51,6 +51,8 @@ export interface RoutingResult {
 
 // Agent-first defaults. Claude Sonnet 4.6 is the industry standard for multi-step
 // tool-use agent work; cheap models keep derailing on simple agent loops.
+// Each tier's fallback ends with a cheaper option so payment/quota failures
+// don't strand users on equally expensive alternatives.
 const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
     primary: 'google/gemini-2.5-flash',
@@ -58,15 +60,15 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   },
   MEDIUM: {
     primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.4', 'google/gemini-3.1-pro'],
+    fallback: ['openai/gpt-5.4', 'google/gemini-3.1-pro', 'moonshot/kimi-k2.5'],
   },
   COMPLEX: {
     primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.6'],
+    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.6', 'moonshot/kimi-k2.5'],
   },
   REASONING: {
     primary: 'anthropic/claude-opus-4.6',
-    fallback: ['openai/o3', 'xai/grok-4-1-fast-reasoning'],
+    fallback: ['openai/o3', 'xai/grok-4-1-fast-reasoning', 'deepseek/deepseek-reasoner'],
   },
 };
 

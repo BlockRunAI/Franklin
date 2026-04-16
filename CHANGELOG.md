@@ -1,6 +1,40 @@
 # Changelog
 
-## 3.7.2 (2026-04-15) — Auto-start panel + per-call audit log in the dashboard
+## Unreleased — Post-v3.7.6 audit fixes
+
+Follow-ups from a cross-cutting audit of v3.7.4–v3.7.6. Focus: correctness,
+cost predictability, and fewer false-positive agent interrupts.
+
+### Fixed
+
+- **Pushback detection no longer misfires on casual disagreement.** The
+  v3.7.5 corrections detector treated any message starting with "but",
+  "actually", "wait", or "hmm" as a full-abandon signal — so "But how do
+  I deploy this?" caused the agent to throw away a working approach.
+  Split the patterns into STRONG (high-precision) and WEAK (starter words
+  that also occur in casual speech) buckets. Weak patterns only trigger
+  when the message is short, carries no fresh request ("can you also…",
+  "please add…"), and the prior assistant turn made a concrete claim
+  (tool call or ≥40-char answer). Reduces false positives substantially
+  on multi-language conversational flow.
+- **Pushback `[SYSTEM NOTE]` no longer pollutes session transcripts.**
+  The injected correction prompt was being written to the session file,
+  so resumed sessions showed internal prompt-engineering scaffolding.
+  Session storage now persists the user's original message; the
+  SYSTEM NOTE lives only in the in-memory history for the turn.
+
+### Changed
+
+- **MEDIUM / COMPLEX / REASONING `auto` tiers now carry a cheap fallback.**
+  v3.7.4's agent-first routing rightly moved MEDIUM primary to Claude
+  Sonnet 4.6, but the fallback chain (`gpt-5.4`, `gemini-3.1-pro`) was
+  entirely premium, so payment or quota failures cascaded into
+  equally-expensive retries. Each paid tier now ends its fallback list
+  with a lower-cost option (Kimi K2.5 for MEDIUM/COMPLEX,
+  DeepSeek-Reasoner for REASONING) so transient failures degrade
+  gracefully instead of doubling spend.
+
+
 
 Three small fixes that make Franklin easier to debug spending and easier
 to live with day-to-day.
