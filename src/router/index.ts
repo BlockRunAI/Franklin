@@ -64,11 +64,20 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   },
   COMPLEX: {
     primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.6', 'moonshot/kimi-k2.5'],
+    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.7', 'moonshot/kimi-k2.5'],
   },
   REASONING: {
-    primary: 'anthropic/claude-opus-4.6',
-    fallback: ['openai/o3', 'xai/grok-4-1-fast-reasoning', 'deepseek/deepseek-reasoner'],
+    // Opus 4.7: step-change improvement in agentic coding over 4.6 per
+    // Anthropic. Same price, same 200k ctx in Franklin's baseline, so
+    // swap is cost-neutral. 4.6 stays in the fallback chain in case of
+    // rollout delays on the gateway side.
+    primary: 'anthropic/claude-opus-4.7',
+    fallback: [
+      'anthropic/claude-opus-4.6',
+      'openai/o3',
+      'xai/grok-4-1-fast-reasoning',
+      'deepseek/deepseek-reasoner',
+    ],
   },
 };
 
@@ -101,12 +110,12 @@ const PREMIUM_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
     fallback: ['anthropic/claude-sonnet-4.6'],
   },
   COMPLEX: {
-    primary: 'anthropic/claude-opus-4.6',
-    fallback: ['openai/gpt-5.4', 'anthropic/claude-sonnet-4.6'],
+    primary: 'anthropic/claude-opus-4.7',
+    fallback: ['anthropic/claude-opus-4.6', 'openai/gpt-5.4', 'anthropic/claude-sonnet-4.6'],
   },
   REASONING: {
-    primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['anthropic/claude-opus-4.6', 'openai/o3'],
+    primary: 'anthropic/claude-opus-4.7',
+    fallback: ['anthropic/claude-opus-4.6', 'anthropic/claude-sonnet-4.6', 'openai/o3'],
   },
 };
 

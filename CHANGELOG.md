@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased — Claude Opus 4.7 integration (client-side)
+
+Anthropic released Claude Opus 4.7 with a step-change improvement in
+agentic coding and reasoning over 4.6. Franklin's auto tier now prefers
+4.7 for REASONING and COMPLEX tasks and keeps 4.6 in the fallback chain
+for rollout safety.
+
+### Added
+
+- `anthropic/claude-opus-4.7` registered in pricing ($5 in / $25 out per
+  MTok — identical to 4.6), context window (200k — matches the Franklin
+  baseline; 1M-ctx beta is a separate gateway concern), and per-model
+  max output (32k — the Franklin ceiling, not the model's 128k limit).
+- `modelHasExtendedThinking(model)` exported pure helper. Explicit
+  allowlist rather than a regex: Opus 4.7 uses *adaptive* thinking
+  (built-in, no API flag) and rejects the `thinking: { type: 'enabled' }`
+  block that 4.6 accepts. A regex-based check that matched `includes('opus')`
+  would silently re-enable the flag on any future Opus variant and 400 the
+  request. The explicit allowlist requires us to opt in per model.
+- Model-picker entries for both Opus 4.7 (new `opus` shortcut) and 4.6
+  (now under `opus-4.6` shortcut) so users can pin a specific version.
+- Proxy aliases: `opus` → 4.7, plus explicit `opus-4.6` / `opus-4.7`
+  aliases so agents can pin deterministically.
+
+### Changed
+
+- `auto` REASONING tier primary: `claude-opus-4.6` → `claude-opus-4.7`.
+  4.6 slotted into the fallback chain above o3 / grok-reasoning / deepseek.
+- `auto` COMPLEX fallback chain now ends with Opus 4.7 (not 4.6).
+- `premium` COMPLEX + REASONING tiers: primary → 4.7, 4.6 retained as
+  first fallback.
+- `ANTHROPIC_DEFAULT_OPUS_MODEL` in the `/init` template now points at
+  4.7 so fresh Claude Code integrations pick it up by default.
+- `OPUS_PRICING` savings-calculation baseline now references the 4.7
+  entry (same price point, but tracks the current flagship).
+
+### Gateway coordination
+
+This is the **client-side** integration. Franklin forwards model IDs to
+the BlockRun gateway, which in turn calls Anthropic. For users to
+actually hit 4.7, the gateway's model registry must also accept the
+`anthropic/claude-opus-4.7` string and pass `claude-opus-4-7` (Anthropic's
+dashed API ID) to the upstream API. Gateway-side PR pending — track
+separately. If the gateway is behind, 4.7 requests fall back to 4.6
+through the new fallback chain, so users aren't broken in the meantime.
+
 ## Unreleased — Trading Agent vertical lands
 
 ### Added

@@ -69,6 +69,30 @@ export interface LLMClientOptions {
  * than invalidating it. Multi-turn conversations see ~75% input token savings
  * on Anthropic models.
  */
+/**
+ * True if the given Anthropic model accepts the `thinking: { type: 'enabled' }`
+ * API flag (so-called *extended thinking*). Models using *adaptive thinking*
+ * (Opus 4.7 and later) reject that flag — the behavior is built in and not
+ * opt-in via API. Keeping the allowlist explicit, not derived from a regex,
+ * so a future model that happens to include "opus" in its name doesn't
+ * silently re-enable extended thinking on a model that can't handle it.
+ *
+ * Exported so tests can pin this decision without a live API.
+ */
+export function modelHasExtendedThinking(model: string): boolean {
+  const m = model.toLowerCase();
+  // Excluded: Opus 4.7+ uses adaptive thinking; sending `thinking: enabled`
+  // causes the API to 400.
+  if (m.includes('opus-4.7') || m.includes('opus-4-7')) return false;
+  return (
+    m.includes('opus-4.6') || m.includes('opus-4-6') ||
+    m.includes('opus-4.5') || m.includes('opus-4-5') ||
+    m.includes('opus-4.1') || m.includes('opus-4-1') ||
+    m.includes('sonnet-4') ||
+    m.includes('sonnet-3.7')
+  );
+}
+
 function applyAnthropicPromptCaching(
   payload: Record<string, unknown>,
   request: ModelRequest
@@ -206,18 +230,11 @@ export class ModelClient {
 
     if (isAnthropic) {
       // ─ Anthropic extended thinking ──────────────────────────────────────
-      // Enable thinking for Claude models that support it (Opus 4.6, Sonnet 4.6).
-      // This is the single biggest quality lever — Claude with thinking enabled
-      // is dramatically better at complex multi-step tasks, reasoning, and code.
-      //
-      // Uses adaptive thinking: the model decides how much to think per request.
-      // budget_tokens is the MAX it can use (not a minimum), so the model won't
-      // waste tokens on simple tasks. Set to 80% of max_tokens to leave room
-      // for the actual response.
-      const supportsThinking = request.model.includes('opus') ||
-        request.model.includes('sonnet-4') ||
-        request.model.includes('sonnet-3.7');
-      if (supportsThinking) {
+      // Enable the `thinking` API block only for models that accept it.
+      // Claude Opus 4.7 and newer use *adaptive* thinking (built-in, no API
+      // flag); passing the extended-thinking flag to them makes Anthropic
+      // reject the request. See `modelHasExtendedThinking` for the allowlist.
+      if (modelHasExtendedThinking(request.model)) {
         const maxOut = (request.max_tokens ?? 16_384);
         requestPayload['thinking'] = {
           type: 'enabled',

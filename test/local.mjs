@@ -1502,6 +1502,24 @@ test('createTradingCapabilities: TradingHistory reports last N trades and window
   }
 });
 
+test('modelHasExtendedThinking: Opus 4.7 is excluded (adaptive thinking), 4.6 still included', async () => {
+  const { modelHasExtendedThinking } = await import('../dist/agent/llm.js');
+
+  // Opus 4.7 uses adaptive thinking; sending `thinking:{type:"enabled"}` 400s.
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4.7'), false);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4-7'), false);
+
+  // Earlier Opus + Sonnet variants still accept the extended-thinking flag.
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4.6'), true);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4-6'), true);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-sonnet-4.6'), true);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-sonnet-4-6'), true);
+
+  // Unknown / non-Anthropic models: false (default safe).
+  assert.equal(modelHasExtendedThinking('anthropic/claude-future-5.0'), false);
+  assert.equal(modelHasExtendedThinking('openai/gpt-5.4'), false);
+});
+
 test('TradeLog: append writes one JSONL line per trade; recent(n) returns newest N', async () => {
   const { TradeLog } = await import('../dist/trading/trade-log.js');
   const tmpFile = join(tmpdir(), `franklin-trades-${Date.now()}.jsonl`);
