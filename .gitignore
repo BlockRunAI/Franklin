@@ -8,3 +8,7 @@ node_modules
 
 # Build output (rebuilt from src on every install)
 dist/
+
+# Local CLI agent settings (user-specific allowlists, not portable)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
