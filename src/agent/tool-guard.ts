@@ -135,6 +135,7 @@ export class SessionToolGuard {
   // five times in a row when they're confused. Tell them once that it already failed.
   private recentGreps = new Map<string, { preview: string; turn: number }>();
   private recentGlobs = new Map<string, { preview: string; turn: number }>();
+  private recentBash = new Map<string, { preview: string; turn: number; isError: boolean }>();
 
   startTurn(): void {
     this.turn++;
@@ -170,9 +171,32 @@ export class SessionToolGuard {
         return this.beforeGrep(invocation);
       case 'Glob':
         return this.beforeGlob(invocation);
+      case 'Bash':
+        return this.beforeBash(invocation);
       default:
         return null;
     }
+  }
+
+  private beforeBash(invocation: CapabilityInvocation): CapabilityResult | null {
+    const cmd = String(invocation.input.command ?? '').trim();
+    if (!cmd) return null;
+    // Only dedup deterministic read-only commands. Skip anything writing/network/long-running.
+    const writeKeywords = /\b(rm|mv|cp|mkdir|touch|chmod|chown|write|install|build|publish|push|pull|curl|wget|fetch|npm|pnpm|yarn|pip|cargo|go\s+(build|run|test)|docker|kubectl|tar|zip|unzip|tee|>\s|>>\s)\b/;
+    if (writeKeywords.test(cmd)) return null;
+    const key = cmd;
+    const cached = this.recentBash.get(key);
+    if (cached) {
+      const lead = cached.isError
+        ? 'That exact Bash command was already run this session and FAILED:'
+        : 'That exact Bash command was already run this session and returned:';
+      return {
+        output:
+          `${lead}\n${cached.preview}\n\n` +
+          'Do not re-run the same command. If the output was insufficient, run a different command or use a dedicated tool (Read for files, Grep/Glob for searching).',
+      };
+    }
+    return null;
   }
 
   private beforeGrep(invocation: CapabilityInvocation): CapabilityResult | null {
@@ -235,9 +259,24 @@ export class SessionToolGuard {
       case 'Glob':
         this.afterGlob(invocation, result);
         break;
+      case 'Bash':
+        this.afterBash(invocation, result);
+        break;
       default:
         break;
     }
+  }
+
+  private afterBash(invocation: CapabilityInvocation, result: CapabilityResult): void {
+    const cmd = String(invocation.input.command ?? '').trim();
+    if (!cmd) return;
+    const writeKeywords = /\b(rm|mv|cp|mkdir|touch|chmod|chown|write|install|build|publish|push|pull|curl|wget|fetch|npm|pnpm|yarn|pip|cargo|go\s+(build|run|test)|docker|kubectl|tar|zip|unzip|tee|>\s|>>\s)\b/;
+    if (writeKeywords.test(cmd)) return;
+    const output = String(result.output ?? '');
+    const preview = output.length > MAX_PREVIEW_CHARS
+      ? output.slice(0, MAX_PREVIEW_CHARS) + '…'
+      : output;
+    this.recentBash.set(cmd, { preview, turn: this.turn, isError: !!result.isError });
   }
 
   private afterGrep(invocation: CapabilityInvocation, result: CapabilityResult): void {

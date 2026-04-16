@@ -29,25 +29,31 @@ export function shouldPlan(
   ultrathink: boolean,
   planDisabled: boolean,
 ): boolean {
-  // Gate 1: only COMPLEX or REASONING tiers benefit from planning
-  if (tier !== 'COMPLEX' && tier !== 'REASONING') return false;
-
-  // Gate 2: only auto or premium profiles (eco/free already cost-optimized)
-  if (profile !== 'auto' && profile !== 'premium') return false;
-
-  // Gate 3: skip short queries — planning overhead not worth it
-  if (userText.length < 80) return false;
-
-  // Gate 4: ultrathink already provides deep reasoning
-  if (ultrathink) return false;
-
-  // Gate 5: user disabled planning for this session
+  // User disabled planning for this session
   if (planDisabled) return false;
 
-  // Gate 6: must have agentic or multi-step signals
-  const hasAgenticKeyword = AGENTIC_KEYWORDS.test(userText);
-  const hasMultiStep = MULTI_STEP_PATTERN.test(userText);
-  return hasAgenticKeyword || hasMultiStep;
+  // Ultrathink already provides deep reasoning
+  if (ultrathink) return false;
+
+  // Only auto or premium profiles (eco/free are cost-constrained)
+  if (profile !== 'auto' && profile !== 'premium') return false;
+
+  // Explicit multi-step language always plans, regardless of tier / length
+  // ("first ... then ...", "step 1 ... step 2 ...", numbered lists, etc.)
+  if (MULTI_STEP_PATTERN.test(userText)) return true;
+
+  // Planning is high-ROI on COMPLEX / REASONING tiers for agentic verbs,
+  // even when the prompt is short ("refactor the wallet module", "migrate to TS")
+  if (tier === 'COMPLEX' || tier === 'REASONING') {
+    return AGENTIC_KEYWORDS.test(userText) || userText.length >= 60;
+  }
+
+  // On MEDIUM tier: plan only if long AND agentic
+  if (tier === 'MEDIUM' && userText.length >= 120 && AGENTIC_KEYWORDS.test(userText)) {
+    return true;
+  }
+
+  return false;
 }
 
 // ─── Planning Prompt ─────────────────────────────────────────────────────
