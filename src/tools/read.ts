@@ -48,6 +48,24 @@ export function invalidateFileCache(resolvedPath: string): void {
   fileContentCache.delete(resolvedPath);
 }
 
+/**
+ * Reset all module-level tracking state for a fresh session.
+ *
+ * These Maps live at module scope (not inside a class) because read/edit/write
+ * tools share them to enforce "read-before-edit" and to cache unchanged files.
+ * When a library caller invokes `interactiveSession()` a second time in the
+ * same process, stale entries from the prior session would:
+ *   - make Edit/Write falsely believe files were read in this session
+ *   - serve cached content for files that may have changed externally
+ *   - keep partial-read bounds from the wrong session
+ * Called from the agent loop at session start to guarantee a clean slate.
+ */
+export function clearSessionState(): void {
+  fileReadTracker.clear();
+  partiallyReadFiles.clear();
+  fileContentCache.clear();
+}
+
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
   const { file_path: filePath, offset, limit } = input as unknown as ReadInput;
 

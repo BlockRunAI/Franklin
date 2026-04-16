@@ -1368,3 +1368,20 @@ test('bash-guard e2e: non-Bash tools are not affected by risk classifier', async
   const readDecision = await pm.check('Read', { file_path: '/etc/hosts' });
   assert.equal(readDecision.behavior, 'allow');
 });
+
+test('resetToolSessionState clears read/webfetch/bash module-level caches across sessions', async () => {
+  const { fileReadTracker, partiallyReadFiles } = await import('../dist/tools/read.js');
+  const { resetToolSessionState } = await import('../dist/tools/index.js');
+
+  // Seed tracker state as if a prior session had read files.
+  fileReadTracker.set('/tmp/franklin-session-a.ts', { mtimeMs: 1, readAt: Date.now() });
+  partiallyReadFiles.set('/tmp/franklin-session-a.ts', { startLine: 0, endLine: 100, totalLines: 500 });
+  assert.equal(fileReadTracker.size, 1, 'precondition: tracker seeded');
+  assert.equal(partiallyReadFiles.size, 1, 'precondition: partial-read seeded');
+
+  // Starting a fresh session should wipe every tool's module-level cache.
+  resetToolSessionState();
+
+  assert.equal(fileReadTracker.size, 0, 'fileReadTracker must be cleared so read-before-edit enforcement resets');
+  assert.equal(partiallyReadFiles.size, 0, 'partiallyReadFiles must be cleared so Edit warnings are not based on a prior session');
+});
