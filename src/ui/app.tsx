@@ -370,10 +370,17 @@ function RunCodeApp({
       setCurrentModel(selected.id);
       onModelChange(selected.id, 'user');
       showStatus(`Model → ${selected.label}`, 'success', 3000);
+      // Clear any stale draft that was in the input when the picker opened —
+      // previously a paste/typed value could leak back into the chat box after
+      // the picker closed, which is both confusing and a privacy risk.
+      setInput('');
+      setHistoryIdx(-1);
       setMode('input');
       setReady(true);
     }
     else if (key.escape) {
+      setInput('');
+      setHistoryIdx(-1);
       setMode('input');
       setReady(true);
     }
@@ -449,6 +456,10 @@ function RunCodeApp({
           } else {
             const idx = PICKER_MODELS_FLAT.findIndex(m => m.id === currentModel);
             setPickerIdx(idx >= 0 ? idx : 0);
+            // Defensive: ensure no draft text survives into the picker —
+            // closing handlers clear input too, so both ends are covered.
+            setInput('');
+            setHistoryIdx(-1);
             setMode('model-picker');
           }
           return;
