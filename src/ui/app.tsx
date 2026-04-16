@@ -22,6 +22,28 @@ import { mouse, forceDisableMouseTracking, type MouseEvent as TermMouseEvent } f
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
+// Subscribe to terminal resize so React re-renders with fresh dimensions.
+// Without this, useStdout() returns a stable ref and children that read
+// stdout.columns on each render still need React to re-execute them — which
+// only happens if some state changes. stdout.on('resize') → setState does that.
+function useTerminalSize() {
+  const { stdout } = useStdout();
+  const [size, setSize] = useState(() => ({
+    cols: stdout?.columns ?? 80,
+    rows: stdout?.rows ?? 24,
+  }));
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = () => setSize({
+      cols: stdout.columns ?? 80,
+      rows: stdout.rows ?? 24,
+    });
+    stdout.on('resize', onResize);
+    return () => { stdout.off('resize', onResize); };
+  }, [stdout]);
+  return size;
+}
+
 function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, queuedCount, focused, busy, contextPct, vimMode, onVimModeChange }: {
   input: string;
   setInput: (v: string) => void;
@@ -37,9 +59,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
   vimMode?: boolean;
   onVimModeChange?: (mode: VimMode) => void;
 }) {
-  const { stdout } = useStdout();
-  const cols = stdout?.columns ?? 80;
-  const innerWidth = Math.min(Math.max(30, cols - 4), cols - 2);
+  const { cols } = useTerminalSize();
 
   const placeholder = busy
     ? (queued
@@ -49,11 +69,9 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text dimColor>{'╭' + '─'.repeat(cols - 2) + '╮'}</Text>
-      <Box>
-        <Text dimColor>│ </Text>
+      <Box borderStyle="round" borderDimColor paddingX={1} width={cols}>
         {busy && !input ? <Text color="yellow"><Spinner type="dots" /> </Text> : null}
-        <Box width={busy && !input ? innerWidth - 4 : innerWidth}>
+        <Box flexGrow={1}>
           {vimMode ? (
             <VimInput
               value={input}
@@ -74,9 +92,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
             />
           )}
         </Box>
-        <Text dimColor>{' '.repeat(Math.max(0, cols - innerWidth - 4))}│</Text>
       </Box>
-      <Text dimColor>{'╰' + '─'.repeat(cols - 2) + '╯'}</Text>
       <Box marginLeft={1}>
         <Text dimColor>
           {busy ? <Text color="yellow"><Spinner type="dots" /></Text> : null}
