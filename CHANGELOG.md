@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased — Content Generation vertical lands
+
+Second of the three differentiated verticals (after Trading). Same shape
+as the Trading substrate: a Library of durable records, a budget enforcer
+that gates spending, JSON persistence, and a factory of agent-facing
+capabilities.
+
+### Added
+
+- `src/content/library.ts` — `ContentLibrary` + `Content` type. A
+  Content is a single publishable unit (x-thread / blog / podcast /
+  video / ad-copy / image) with outline, drafts, assets, distribution
+  log, spentUsd, and budgetUsd. Survives across sessions. This is the
+  surface coding agents can't replicate: Claude Code has no concept of
+  "the same piece of work" across runs.
+- `ContentLibrary.addAsset(id, asset)` — budget-enforced asset recording.
+  Refusals return `{ ok: false, reason }` rather than throwing so the
+  agent-facing capability can surface the reason as normal text.
+- `src/content/store.ts` — whole-library JSON snapshot at
+  `~/.blockrun/content.json`. Versioned payload, defensive load that
+  skips malformed records rather than erroring out; disk failures are
+  best-effort and never block a capability call.
+- Four new agent capabilities:
+  - `ContentCreate` — start a new piece with type, title, and budget.
+  - `ContentAddAsset` — record a generated asset with its USD cost.
+    Over-budget attempts return as normal text with the reason (not
+    `isError: true`) so the agent reads the refusal and picks a cheaper
+    model rather than triggering retry/recovery.
+  - `ContentShow` — dump a single piece's full state as actionable
+    markdown: budget utilization, assets with source + cost, drafts,
+    distribution, status.
+  - `ContentList` — every piece newest-first with budget percent and
+    asset count.
+
+### Changed
+
+- `allCapabilities` in `tools/index.ts` now includes the 4 content
+  capabilities. Total agent surface: 24 capabilities (Trading: 6,
+  Content: 4, core tools: 14).
+
 ## Unreleased — Claude Opus 4.7 integration (client-side)
 
 Anthropic released Claude Opus 4.7 with a step-change improvement in
