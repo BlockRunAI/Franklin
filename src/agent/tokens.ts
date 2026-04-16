@@ -174,7 +174,12 @@ export function estimateHistoryTokens(history: Dialogue[]): number {
  * Context window sizes for known models.
  */
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  // Anthropic
+  // Anthropic. NB: Anthropic docs report 1M-token ctx for Opus 4.6/4.7 and
+  // Sonnet 4.6 (behind a beta header). We keep 200k as the Franklin baseline
+  // because the BlockRun gateway has not enabled the 1M beta yet; bumping
+  // either side without the other would just trigger 413s. When the gateway
+  // flips the switch, update these numbers together in a separate commit.
+  'anthropic/claude-opus-4.7': 200_000,
   'anthropic/claude-opus-4.6': 200_000,
   'anthropic/claude-sonnet-4.6': 200_000,
   'anthropic/claude-sonnet-4': 200_000,

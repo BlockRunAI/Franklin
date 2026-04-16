@@ -32,7 +32,7 @@ export async function initCommand(options: { port?: string }) {
     ANTHROPIC_AUTH_TOKEN: 'x402-proxy-handles-auth',
     ANTHROPIC_MODEL: 'blockrun/auto',
     ANTHROPIC_DEFAULT_SONNET_MODEL: 'anthropic/claude-sonnet-4.6',
-    ANTHROPIC_DEFAULT_OPUS_MODEL: 'anthropic/claude-opus-4.6',
+    ANTHROPIC_DEFAULT_OPUS_MODEL: 'anthropic/claude-opus-4.7',
     ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-haiku-4.5-20251001',
   };
 
