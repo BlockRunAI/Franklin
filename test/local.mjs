@@ -1462,6 +1462,120 @@ test('RiskEngine: sell is allowed even when caps are exceeded, as long as positi
   assert.equal(decision.allowed, true, 'exits should not be blocked by exposure caps');
 });
 
+test('createTradingCapabilities: TradingHistory reports last N trades and windowed realized P&L', async () => {
+  const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+  const { TradeLog } = await import('../dist/trading/trade-log.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 500, maxTotalExposureUsd: 800 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  const tmpFile = join(tmpdir(), `franklin-history-${Date.now()}.jsonl`);
+  try {
+    const tradeLog = new TradeLog(tmpFile);
+    // Seed the log with two prior trades (from a previous "session").
+    const now = Date.now();
+    tradeLog.append({ timestamp: now - 10 * 86400_000, symbol: 'BTC', side: 'buy',  qty: 0.01, priceUsd: 70000, feeUsd: 0, realizedPnlUsd: 0 });
+    tradeLog.append({ timestamp: now - 10 * 86400_000, symbol: 'BTC', side: 'sell', qty: 0.01, priceUsd: 72000, feeUsd: 0, realizedPnlUsd: 20 });
+    tradeLog.append({ timestamp: now - 1 * 3600_000,   symbol: 'ETH', side: 'buy',  qty: 0.1,  priceUsd: 3500,  feeUsd: 0, realizedPnlUsd: 0 });
+    tradeLog.append({ timestamp: now - 1 * 3600_000,   symbol: 'ETH', side: 'sell', qty: 0.1,  priceUsd: 3400,  feeUsd: 0, realizedPnlUsd: -10 });
+
+    const caps = createTradingCapabilities({ engine, tradeLog });
+    const historyCap = caps.find((c) => c.spec.name === 'TradingHistory');
+    assert.ok(historyCap, 'TradingHistory capability must be registered');
+
+    const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+    const result = await historyCap.execute({ window: '24h', limit: 10 }, ctx);
+    assert.equal(result.isError, undefined);
+    // Should include the two ETH trades (within 24h) but not the BTC ones (10d ago).
+    assert.match(result.output, /ETH/);
+    assert.match(result.output, /-\$10/, 'should show the -$10 realized loss in the 24h window');
+    // 24h P&L is just the one -10 realized entry.
+    assert.match(result.output, /24h P&L.*-\$10/);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
+test('TradeLog: append writes one JSONL line per trade; recent(n) returns newest N', async () => {
+  const { TradeLog } = await import('../dist/trading/trade-log.js');
+  const tmpFile = join(tmpdir(), `franklin-trades-${Date.now()}.jsonl`);
+
+  try {
+    const log = new TradeLog(tmpFile);
+    log.append({
+      timestamp: 1_000,
+      symbol: 'BTC',
+      side: 'buy',
+      qty: 0.01,
+      priceUsd: 70_000,
+      feeUsd: 0.5,
+      realizedPnlUsd: 0,
+    });
+    log.append({
+      timestamp: 2_000,
+      symbol: 'BTC',
+      side: 'sell',
+      qty: 0.01,
+      priceUsd: 72_000,
+      feeUsd: 0.5,
+      realizedPnlUsd: 20,
+    });
+
+    const recent = log.recent(5);
+    assert.equal(recent.length, 2);
+    assert.equal(recent[0].timestamp, 2_000, 'recent should be newest-first');
+    assert.equal(recent[1].timestamp, 1_000);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
+test('TradeLog: cumulative realized P&L across entries since a timestamp', async () => {
+  const { TradeLog } = await import('../dist/trading/trade-log.js');
+  const tmpFile = join(tmpdir(), `franklin-trades-cum-${Date.now()}.jsonl`);
+
+  try {
+    const log = new TradeLog(tmpFile);
+    log.append({ timestamp: 1_000, symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000, feeUsd: 0, realizedPnlUsd: 0 });
+    log.append({ timestamp: 2_000, symbol: 'BTC', side: 'sell', qty: 0.01, priceUsd: 72_000, feeUsd: 0, realizedPnlUsd: 20 });
+    log.append({ timestamp: 3_000, symbol: 'ETH', side: 'buy', qty: 0.1, priceUsd: 3_500, feeUsd: 0, realizedPnlUsd: 0 });
+    log.append({ timestamp: 4_000, symbol: 'ETH', side: 'sell', qty: 0.1, priceUsd: 3_400, feeUsd: 0, realizedPnlUsd: -10 });
+
+    // Last three entries sum: 0 + 0 + -10 = -10
+    assert.equal(log.realizedSince(1_500), 10);
+    // All four sum: 0 + 20 + 0 + -10 = 10
+    assert.equal(log.realizedSince(0), 10);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
+test('TradeLog: recovers gracefully from a corrupt line (skips it, keeps the rest)', async () => {
+  const { TradeLog } = await import('../dist/trading/trade-log.js');
+  const tmpFile = join(tmpdir(), `franklin-trades-corrupt-${Date.now()}.jsonl`);
+
+  try {
+    writeFileSync(
+      tmpFile,
+      '{"timestamp":1000,"symbol":"BTC","side":"buy","qty":0.01,"priceUsd":70000,"feeUsd":0,"realizedPnlUsd":0}\n' +
+        '{this is not valid json\n' +
+        '{"timestamp":2000,"symbol":"BTC","side":"sell","qty":0.01,"priceUsd":72000,"feeUsd":0,"realizedPnlUsd":20}\n',
+    );
+    const log = new TradeLog(tmpFile);
+    const recent = log.recent(10);
+    assert.equal(recent.length, 2, 'corrupt line should be skipped, not crash');
+    assert.equal(recent[0].timestamp, 2_000);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
 test('LiveExchange: getPrice delegates to injected pricing client and returns numeric price', async () => {
   const { LiveExchange } = await import('../dist/trading/live-exchange.js');
   const pricingClient = {

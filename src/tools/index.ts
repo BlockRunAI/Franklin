@@ -28,6 +28,7 @@ import { RiskEngine } from '../trading/risk.js';
 import { LiveExchange } from '../trading/live-exchange.js';
 import { TradingEngine } from '../trading/engine.js';
 import { loadPortfolio, savePortfolio } from '../trading/store.js';
+import { TradeLog } from '../trading/trade-log.js';
 import { getPrice as cgGetPrice } from '../trading/data.js';
 
 // ─── Default Trading Engine ────────────────────────────────────────────────
@@ -38,6 +39,7 @@ import { getPrice as cgGetPrice } from '../trading/data.js';
 // whole point of this vertical (Claude Code / Cursor cannot carry trading
 // state between runs).
 const DEFAULT_PORTFOLIO_PATH = path.join(os.homedir(), '.blockrun', 'portfolio.json');
+const DEFAULT_TRADE_LOG_PATH = path.join(os.homedir(), '.blockrun', 'trades.jsonl');
 const DEFAULT_STARTING_CASH_USD = 1_000;
 const DEFAULT_RISK_CONFIG = { maxPositionUsd: 400, maxTotalExposureUsd: 900 };
 const DEFAULT_FEE_BPS = 10;
@@ -52,9 +54,11 @@ function buildDefaultTradingCapabilities() {
     feeBps: DEFAULT_FEE_BPS,
   });
   const engine = new TradingEngine({ portfolio, risk, exchange });
+  const tradeLog = new TradeLog(DEFAULT_TRADE_LOG_PATH);
   return createTradingCapabilities({
     engine,
     riskConfig: DEFAULT_RISK_CONFIG,
+    tradeLog,
     onStateChange: () => {
       try {
         savePortfolio(portfolio, DEFAULT_PORTFOLIO_PATH);

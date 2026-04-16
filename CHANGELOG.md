@@ -27,6 +27,15 @@
   survive restart — the whole point of the vertical. Disk failures are
   swallowed so a full disk never blocks a trade; corrupt JSON falls
   back to a fresh paper portfolio.
+- **`TradingHistory` capability + persistent trade log at
+  `~/.blockrun/trades.jsonl`.** Every fill (both opens and closes) is
+  appended as a single JSON line; `TradingHistory` answers the questions
+  a coding agent structurally cannot — "am I up this week?", "what was
+  my worst trade?", "how many times did I flip BTC last session?". The
+  log is append-only, corrupt lines are skipped rather than crashing,
+  and windowed queries accept "24h", "7d", "30d", or "all". This is the
+  cross-session economic memory that separates Franklin from Claude Code
+  and Cursor, which cannot carry any trading state between runs.
 - **Paper-trading defaults** tuned for safety: $1,000 starting bankroll,
   $400 per-position cap, $900 total exposure cap, 10 bps simulated fee.
   Adjustable at the engine construction site; env-var / config surface
