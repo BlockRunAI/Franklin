@@ -23,6 +23,15 @@ cost predictability, and fewer false-positive agent interrupts.
   Session storage now persists the user's original message; the
   SYSTEM NOTE lives only in the in-memory history for the turn.
 
+- **System-prompt Context Window Status no longer kills Anthropic prompt
+  cache every turn.** The "~X% of your context window" string embedded
+  the exact rounded percentage, so the system-prompt byte sequence (and
+  the Anthropic `cache_control` hash at its breakpoint) changed on every
+  call — the cache was effectively off for long sessions. Now bucketed
+  into coarse bands (>50% / >65% / >80%) so the text stays byte-identical
+  across many consecutive turns. Cached prefixes actually hold; input-token
+  cost on multi-turn Anthropic sessions drops substantially. The model
+  doesn't need 3% precision to self-regulate.
 - **Auto-compaction now gated by projected ROI, not just a token threshold.**
   `autoCompactIfNeeded` previously fired as soon as history crossed the
   compaction threshold, regardless of whether summarization would

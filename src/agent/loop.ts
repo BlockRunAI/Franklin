@@ -573,15 +573,31 @@ export async function interactiveSession(
       // ── Context awareness injection ──
       // Tell the model how full its context window is so it can self-regulate.
       // At high usage, nudge it to be concise and avoid unnecessary tool calls.
+      //
+      // IMPORTANT: this text is appended to the system prompt, which carries a
+      // prompt-cache breakpoint on Anthropic. Including the exact percentage
+      // invalidated the cache on every turn (the string differed by a digit).
+      // Bucketing the signal to coarse bands (>50 / >65 / >80) keeps the text
+      // byte-identical across many consecutive turns, so the cache actually
+      // holds. The model doesn't need 3% precision to self-regulate.
       const { contextUsagePct: preCallPct } = getAnchoredTokenCount(history);
-      if (preCallPct > 50) {
-        let contextNote = `# Context Window Status\nYou have used approximately ${Math.round(preCallPct)}% of your context window.`;
-        if (preCallPct > 80) {
-          contextNote += ' Context is critically full. Be extremely concise. Avoid re-reading files already in context. Prioritize completing the current task over exploring new questions.';
-        } else if (preCallPct > 65) {
-          contextNote += ' Be concise in responses. Avoid unnecessary tool calls. Do not re-read files you already have in context.';
-        }
-        systemParts.push(contextNote);
+      if (preCallPct > 80) {
+        systemParts.push(
+          '# Context Window Status\nContext window is critically full (>80%). ' +
+          'Be extremely concise. Avoid re-reading files already in context. ' +
+          'Prioritize completing the current task over exploring new questions.',
+        );
+      } else if (preCallPct > 65) {
+        systemParts.push(
+          '# Context Window Status\nContext window is more than two-thirds full (>65%). ' +
+          'Be concise in responses. Avoid unnecessary tool calls. ' +
+          'Do not re-read files you already have in context.',
+        );
+      } else if (preCallPct > 50) {
+        systemParts.push(
+          '# Context Window Status\nContext window has crossed the halfway mark (>50%). ' +
+          'Prefer concise responses and batch tool calls when possible.',
+        );
       }
 
       const systemPrompt = systemParts.join('\n\n');
