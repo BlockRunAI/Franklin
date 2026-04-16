@@ -23,6 +23,17 @@ cost predictability, and fewer false-positive agent interrupts.
   Session storage now persists the user's original message; the
   SYSTEM NOTE lives only in the in-memory history for the turn.
 
+- **Module-level tool state is now reset at the start of every session.**
+  `fileReadTracker` / `partiallyReadFiles` / `fileContentCache` (read.ts),
+  `fetchCache` (webfetch.ts), and completed entries in `backgroundTasks`
+  (bash.ts) previously survived across `interactiveSession()` calls in the
+  same process. For library callers and tests that run multiple sessions,
+  this could fool Edit/Write into skipping read-before-edit checks or serve
+  stale webfetch content. A new `resetToolSessionState()` aggregator is
+  invoked at session start. Running bash background tasks are preserved
+  (killing a spawned process out from under a poll would silently drop
+  output); only completed/failed records are swept.
+
 ### Changed
 
 - **MEDIUM / COMPLEX / REASONING `auto` tiers now carry a cheap fallback.**
