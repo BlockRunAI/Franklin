@@ -1,143 +1,62 @@
 # Changelog
 
-## Unreleased — ImageGen ↔ Content: the spend/track loop closes
+## 3.8.2 (2026-04-17) — Build preserves exec bit on dist/index.js
 
-Content pieces now track image-generation spend automatically. The agent
-passes `contentId` to ImageGen; pre-flight the content's budget is checked
-(so USDC is never spent on a fill that can't be recorded); on success the
-saved image is attached as an asset with its estimated cost and the
-content's `spentUsd` is incremented.
+### Fixed
 
-This is the feedback loop Claude Code structurally can't build — no
-wallet, no persistent content project, no cross-call budget. With
-Franklin the agent can say "generate 5 hero variants within $0.30 for
-the Franklin launch blog" and self-regulate spending against a real,
-per-piece cap that survives session boundaries.
+- **`rm -rf dist && npm run build` no longer produces a non-executable
+  `franklin` binary.** `tsc` strips the exec bit on every emit. `npm install`
+  / `npm pack` re-add it via the `bin` field on install, but a clean local
+  rebuild for users who `npm link` the repo (the BlockRun team) left
+  `dist/index.js` with `rw-r--r--` — the shebang is correct but the kernel
+  refuses to run it, so `franklin --version` fails with "permission denied".
+  The postbuild `scripts/copy-plugin-assets.mjs` now chmods `dist/index.js`
+  to `0o755`. Mirrors what npm does for published bins.
 
-### Added
-
-- `src/content/image-pricing.ts` — `estimateImageCostUsd(model, size)`.
-  Published per-image pricing for `openai/dall-e-3` (standard $0.04,
-  wide/tall $0.08) and `openai/gpt-image-1` ($0.042). Unknown models
-  return 0 — better to undercount than to invent phantom charges.
-- `src/content/record-image.ts` — two pure helpers bridging ImageGen to
-  the Content library:
-  - `checkImageBudget(library, contentId, model, size)` — non-mutating
-    pre-flight that refuses up-front when projected cost would exceed
-    the per-piece budget. Called *before* the paid x402 request.
-  - `recordImageAsset(library, { contentId, imagePath, model, size })`
-    — called *after* a successful generation; looks up the estimated
-    cost, calls `library.addAsset`, and surfaces budget refusals as a
-    structured decision rather than throwing.
-- `createImageGenCapability(deps)` factory. Pass `deps.library` to enable
-  the content-aware flow; omit it for one-off generation. The factory is
-  the form registered by `allCapabilities`.
-- New `contentId` input on `ImageGen` (optional). When set, the agent
-  gets a pre-flight refusal with no USDC spent if the budget can't
-  cover the generation, and on success the output includes a "Content
-  updated" section with attached cost, cumulative spend, and remaining
-  budget.
+## 3.8.1 (2026-04-17) — Dependency refresh (minor/patch)
 
 ### Changed
 
-- `src/tools/index.ts` now constructs a single shared
-  `defaultContentLibrary` used by both `createContentCapabilities` and
-  the new content-aware `createImageGenCapability`. Persistence to
-  `~/.blockrun/content.json` fires on every state change (content
-  create, asset record, image-gen attach).
-- `imageGenCapability` is still exported for back-compat callers that
-  don't want the Content bridge. The registry default is now the
-  content-aware variant.
+- `@blockrun/llm` **1.4.3 → 1.6.2** (gateway SDK, two minor versions of
+  x402 improvements). Live Opus 4.7 + 4.6 end-to-end calls against the real
+  gateway still return 200 OK after the bump — `scripts/verify-opus-47.mjs`
+  passes.
+- `playwright-core` 1.49.1 → 1.59.1.
+- `react` 19.2.4 → 19.2.5.
+- `@types/node` 22.19.15 → 22.19.17.
 
-## Unreleased — Content Generation vertical lands
+### Deferred
 
-Second of the three differentiated verticals (after Trading). Same shape
-as the Trading substrate: a Library of durable records, a budget enforcer
-that gates spending, JSON persistence, and a factory of agent-facing
-capabilities.
+Major bumps held back; need a separate migration pass:
 
-### Added
+- `commander` 13 → 14 (CLI framework — breaking argv parse changes).
+- `ink` 6 → 7 (terminal UI — likely renderer breakage).
+- `typescript` 5 → 6 (compiler — breaking).
+- `@types/node` 22 → 25 (only needed once Node 25 features are used).
 
-- `src/content/library.ts` — `ContentLibrary` + `Content` type. A
-  Content is a single publishable unit (x-thread / blog / podcast /
-  video / ad-copy / image) with outline, drafts, assets, distribution
-  log, spentUsd, and budgetUsd. Survives across sessions. This is the
-  surface coding agents can't replicate: Claude Code has no concept of
-  "the same piece of work" across runs.
-- `ContentLibrary.addAsset(id, asset)` — budget-enforced asset recording.
-  Refusals return `{ ok: false, reason }` rather than throwing so the
-  agent-facing capability can surface the reason as normal text.
-- `src/content/store.ts` — whole-library JSON snapshot at
-  `~/.blockrun/content.json`. Versioned payload, defensive load that
-  skips malformed records rather than erroring out; disk failures are
-  best-effort and never block a capability call.
-- Four new agent capabilities:
-  - `ContentCreate` — start a new piece with type, title, and budget.
-  - `ContentAddAsset` — record a generated asset with its USD cost.
-    Over-budget attempts return as normal text with the reason (not
-    `isError: true`) so the agent reads the refusal and picks a cheaper
-    model rather than triggering retry/recovery.
-  - `ContentShow` — dump a single piece's full state as actionable
-    markdown: budget utilization, assets with source + cost, drafts,
-    distribution, status.
-  - `ContentList` — every piece newest-first with budget percent and
-    asset count.
+### Security
 
-### Changed
+- Audit flags 4 high-severity advisories in the `bigint-buffer →
+  @solana/buffer-layout-utils → @solana/spl-token → @blockrun/llm` chain
+  (Buffer Overflow in `toBigIntLE`). No upstream fix available; exploit
+  requires controlling the deserialized buffer, and Franklin only handles
+  buffers from trusted BlockRun gateway / Solana RPC boundaries. Left in
+  place until upstream patches.
 
-- `allCapabilities` in `tools/index.ts` now includes the 4 content
-  capabilities. Total agent surface: 24 capabilities (Trading: 6,
-  Content: 4, core tools: 14).
+## 3.8.0 (2026-04-17) — Trading + Content verticals
 
-## Unreleased — Claude Opus 4.7 integration (client-side)
+Merged the `xenodochial-lumiere` worktree (10 commits) onto `main`,
+landing two new differentiated verticals that separate Franklin from
+generic coding agents: **Trading** (portfolio / open / close / history
+with cross-session persistence) and **Content** (budget-enforced piece
+tracking with ImageGen cost bridge).
 
-Anthropic released Claude Opus 4.7 with a step-change improvement in
-agentic coding and reasoning over 4.6. Franklin's auto tier now prefers
-4.7 for REASONING and COMPLEX tasks and keeps 4.6 in the fallback chain
-for rollout safety.
+Total agent surface: **24 capabilities** (Trading: 4, Content: 4, core
+tools: 14, social: 2).
 
-### Added
+### Trading Agent vertical lands
 
-- `anthropic/claude-opus-4.7` registered in pricing ($5 in / $25 out per
-  MTok — identical to 4.6), context window (200k — matches the Franklin
-  baseline; 1M-ctx beta is a separate gateway concern), and per-model
-  max output (32k — the Franklin ceiling, not the model's 128k limit).
-- `modelHasExtendedThinking(model)` exported pure helper. Explicit
-  allowlist rather than a regex: Opus 4.7 uses *adaptive* thinking
-  (built-in, no API flag) and rejects the `thinking: { type: 'enabled' }`
-  block that 4.6 accepts. A regex-based check that matched `includes('opus')`
-  would silently re-enable the flag on any future Opus variant and 400 the
-  request. The explicit allowlist requires us to opt in per model.
-- Model-picker entries for both Opus 4.7 (new `opus` shortcut) and 4.6
-  (now under `opus-4.6` shortcut) so users can pin a specific version.
-- Proxy aliases: `opus` → 4.7, plus explicit `opus-4.6` / `opus-4.7`
-  aliases so agents can pin deterministically.
-
-### Changed
-
-- `auto` REASONING tier primary: `claude-opus-4.6` → `claude-opus-4.7`.
-  4.6 slotted into the fallback chain above o3 / grok-reasoning / deepseek.
-- `auto` COMPLEX fallback chain now ends with Opus 4.7 (not 4.6).
-- `premium` COMPLEX + REASONING tiers: primary → 4.7, 4.6 retained as
-  first fallback.
-- `ANTHROPIC_DEFAULT_OPUS_MODEL` in the `/init` template now points at
-  4.7 so fresh Claude Code integrations pick it up by default.
-- `OPUS_PRICING` savings-calculation baseline now references the 4.7
-  entry (same price point, but tracks the current flagship).
-
-### Gateway coordination
-
-This is the **client-side** integration. Franklin forwards model IDs to
-the BlockRun gateway, which in turn calls Anthropic. For users to
-actually hit 4.7, the gateway's model registry must also accept the
-`anthropic/claude-opus-4.7` string and pass `claude-opus-4-7` (Anthropic's
-dashed API ID) to the upstream API. Gateway-side PR pending — track
-separately. If the gateway is behind, 4.7 requests fall back to 4.6
-through the new fallback chain, so users aren't broken in the meantime.
-
-## Unreleased — Trading Agent vertical lands
-
-### Added
+#### Added
 
 - **Three new agent capabilities: `TradingPortfolio`, `TradingOpenPosition`,
   `TradingClosePosition`.** This is the first slice of Franklin's
@@ -176,12 +95,92 @@ through the new fallback chain, so users aren't broken in the meantime.
   Adjustable at the engine construction site; env-var / config surface
   planned for a follow-up.
 
-## Unreleased — Post-v3.7.6 audit fixes
+### Content Generation vertical lands
 
-Follow-ups from a cross-cutting audit of v3.7.4–v3.7.6. Focus: correctness,
-cost predictability, and fewer false-positive agent interrupts.
+Second of the three differentiated verticals (after Trading). Same shape
+as the Trading substrate: a Library of durable records, a budget enforcer
+that gates spending, JSON persistence, and a factory of agent-facing
+capabilities.
 
-### Fixed
+#### Added
+
+- `src/content/library.ts` — `ContentLibrary` + `Content` type. A
+  Content is a single publishable unit (x-thread / blog / podcast /
+  video / ad-copy / image) with outline, drafts, assets, distribution
+  log, spentUsd, and budgetUsd. Survives across sessions. This is the
+  surface coding agents can't replicate: Claude Code has no concept of
+  "the same piece of work" across runs.
+- `ContentLibrary.addAsset(id, asset)` — budget-enforced asset recording.
+  Refusals return `{ ok: false, reason }` rather than throwing so the
+  agent-facing capability can surface the reason as normal text.
+- `src/content/store.ts` — whole-library JSON snapshot at
+  `~/.blockrun/content.json`. Versioned payload, defensive load that
+  skips malformed records rather than erroring out; disk failures are
+  best-effort and never block a capability call.
+- Four new agent capabilities:
+  - `ContentCreate` — start a new piece with type, title, and budget.
+  - `ContentAddAsset` — record a generated asset with its USD cost.
+    Over-budget attempts return as normal text with the reason (not
+    `isError: true`) so the agent reads the refusal and picks a cheaper
+    model rather than triggering retry/recovery.
+  - `ContentShow` — dump a single piece's full state as actionable
+    markdown: budget utilization, assets with source + cost, drafts,
+    distribution, status.
+  - `ContentList` — every piece newest-first with budget percent and
+    asset count.
+
+### ImageGen ↔ Content bridge (the spend/track loop closes)
+
+Content pieces now track image-generation spend automatically. The agent
+passes `contentId` to ImageGen; pre-flight the content's budget is checked
+(so USDC is never spent on a fill that can't be recorded); on success the
+saved image is attached as an asset with its estimated cost and the
+content's `spentUsd` is incremented.
+
+This is the feedback loop Claude Code structurally can't build — no
+wallet, no persistent content project, no cross-call budget. With
+Franklin the agent can say "generate 5 hero variants within $0.30 for
+the Franklin launch blog" and self-regulate spending against a real,
+per-piece cap that survives session boundaries.
+
+#### Added
+
+- `src/content/image-pricing.ts` — `estimateImageCostUsd(model, size)`.
+  Published per-image pricing for `openai/dall-e-3` (standard $0.04,
+  wide/tall $0.08) and `openai/gpt-image-1` ($0.042). Unknown models
+  return 0 — better to undercount than to invent phantom charges.
+- `src/content/record-image.ts` — two pure helpers bridging ImageGen to
+  the Content library:
+  - `checkImageBudget(library, contentId, model, size)` — non-mutating
+    pre-flight that refuses up-front when projected cost would exceed
+    the per-piece budget. Called *before* the paid x402 request.
+  - `recordImageAsset(library, { contentId, imagePath, model, size })`
+    — called *after* a successful generation; looks up the estimated
+    cost, calls `library.addAsset`, and surfaces budget refusals as a
+    structured decision rather than throwing.
+- `createImageGenCapability(deps)` factory. Pass `deps.library` to enable
+  the content-aware flow; omit it for one-off generation. The factory is
+  the form registered by `allCapabilities`.
+- New `contentId` input on `ImageGen` (optional). When set, the agent
+  gets a pre-flight refusal with no USDC spent if the budget can't
+  cover the generation, and on success the output includes a "Content
+  updated" section with attached cost, cumulative spend, and remaining
+  budget.
+
+#### Changed
+
+- `src/tools/index.ts` now constructs a single shared
+  `defaultContentLibrary` used by both `createContentCapabilities` and
+  the new content-aware `createImageGenCapability`. Persistence to
+  `~/.blockrun/content.json` fires on every state change (content
+  create, asset record, image-gen attach).
+- `imageGenCapability` is still exported for back-compat callers that
+  don't want the Content bridge. The registry default is now the
+  content-aware variant.
+
+### Post-v3.7.6 audit fixes (brought in with the merge)
+
+#### Fixed
 
 - **Pushback detection no longer misfires on casual disagreement.** The
   v3.7.5 corrections detector treated any message starting with "but",
@@ -198,7 +197,6 @@ cost predictability, and fewer false-positive agent interrupts.
   so resumed sessions showed internal prompt-engineering scaffolding.
   Session storage now persists the user's original message; the
   SYSTEM NOTE lives only in the in-memory history for the turn.
-
 - **System-prompt Context Window Status no longer kills Anthropic prompt
   cache every turn.** The "~X% of your context window" string embedded
   the exact rounded percentage, so the system-prompt byte sequence (and
@@ -229,7 +227,7 @@ cost predictability, and fewer false-positive agent interrupts.
   (killing a spawned process out from under a poll would silently drop
   output); only completed/failed records are swept.
 
-### Changed
+#### Changed
 
 - **MEDIUM / COMPLEX / REASONING `auto` tiers now carry a cheap fallback.**
   v3.7.4's agent-first routing rightly moved MEDIUM primary to Claude
@@ -240,7 +238,178 @@ cost predictability, and fewer false-positive agent interrupts.
   DeepSeek-Reasoner for REASONING) so transient failures degrade
   gracefully instead of doubling spend.
 
+## 3.7.10 (2026-04-17) — CRITICAL: don't send thinking flag to Opus 4.7
 
+### Fixed
+
+- **Every Opus 4.7 call shipped in v3.7.7–v3.7.9 was broken.** `src/agent/llm.ts`
+  used `request.model.includes('opus')` to decide whether to attach the
+  `thinking: { type: 'enabled' }` API block. Opus 4.7 uses **adaptive
+  thinking** (built-in, no API flag); sending the extended-thinking flag
+  makes Anthropic reject the request with a 400. So every 4.7 call from
+  v3.7.7 through v3.7.9 was failing at the gateway/API layer.
+- Replaced the `includes('opus')` check with an explicit allowlist helper
+  `modelHasExtendedThinking(model)`. Opus 4.7+ is excluded first so a
+  future model whose name happens to include `opus` cannot silently
+  re-enable the wrong flag. Helper is exported so regression tests can
+  pin the decision without a live API call.
+
+### Added
+
+- 7 new tests (`test/local.mjs`):
+  - 3 pure-function tests: Opus 4.7 returns false; older Opus + Sonnet
+    4.x return true; non-Anthropic models return false.
+  - 4 wire-payload tests: mock `fetch`, read the JSON body that
+    `ModelClient.streamCompletion` actually POSTs, assert Opus 4.7 body
+    has no `thinking` field, Opus 4.6 / Sonnet 4.6 bodies do.
+- `scripts/verify-opus-47.mjs` — live end-to-end verification script.
+  Calls Opus 4.7 and 4.6 through the production `ModelClient` against
+  the real BlockRun gateway with a tiny prompt (~$0.001 per run). Kept
+  in repo for future regression checks (e.g. after `@blockrun/llm`
+  SDK bumps).
+
+## 3.7.9 (2026-04-17) — Opus 4.7 consistency in proxy + init defaults
+
+### Fixed
+
+- **Proxy and `/init` defaults were still on Opus 4.6 after v3.7.7.**
+  The v3.7.7 release added Opus 4.7 to the interactive picker and bumped
+  the `opus` shortcut there to 4.7, but two parallel sites were missed:
+  - `src/proxy/server.ts` has its own `MODEL_SHORTCUTS` map used when
+    Franklin runs as an Anthropic-compatible payment proxy. It was still
+    resolving `opus` → `claude-opus-4.6`, so a Claude Code / Cursor user
+    hitting `--model opus` through the proxy got 4.6 while a Franklin
+    user inside the same install got 4.7.
+  - `src/commands/init.ts` writes `ANTHROPIC_DEFAULT_OPUS_MODEL` into
+    the user's `settings.json` on `franklin init`. New installs were
+    configuring the proxy to default Opus calls to 4.6.
+
+Both now resolve to `claude-opus-4.7`. Added explicit `opus-4.6` /
+`opus-4.7` shortcuts to the proxy map for parity with the picker.
+
+### Known follow-up
+
+`MODEL_SHORTCUTS` is duplicated in `proxy/server.ts` and
+`ui/model-picker.ts`. Long-term these should share one source so a
+future Opus bump doesn't need a follow-up commit; left for a later
+refactor.
+
+## 3.7.8 (2026-04-17) — Clear draft input on model picker open/close
+
+### Fixed
+
+- **Unsent text in the input box no longer survives into a `/model`
+  picker round-trip.** Previously any paste, unfinished draft, or
+  sensitive value the user typed before realizing they wanted to switch
+  models would still be sitting in the input field when the picker
+  closed. Beyond the surprise, this was a privacy issue when the draft
+  contained a token, password, or other secret the user pasted and then
+  tried to walk away from.
+- Defensively clear both `input` and `historyIdx` at three transitions:
+  - Opening the picker via `/model` (no args).
+  - Picker confirm (Enter) after selecting a model.
+  - Picker cancel (Esc).
+
+`historyIdx` reset ensures up-arrow history navigation starts fresh
+after the transition instead of resuming from wherever the cursor was.
+
+## 3.7.7 (2026-04-17) — Claude Opus 4.7 + resize-safe input box
+
+Anthropic released Claude Opus 4.7 with a step-change improvement in
+agentic coding and reasoning over 4.6. Franklin's auto tier now prefers
+4.7 for REASONING and COMPLEX tasks and keeps 4.6 in the fallback chain
+for rollout safety.
+
+### Added — Opus 4.7 (client-side)
+
+- `anthropic/claude-opus-4.7` registered in pricing ($5 in / $25 out per
+  MTok — identical to 4.6), context window (200k — matches the Franklin
+  baseline; 1M-ctx beta is a separate gateway concern), and per-model
+  max output (128k — matching the BlockRun gateway's advertised ceiling).
+- Model-picker entries for both Opus 4.7 (new `opus` shortcut, highlighted)
+  and 4.6 (now under `opus-4.6` shortcut) so users can pin a specific
+  version.
+
+### Changed — Opus 4.7 (client-side)
+
+- `auto` REASONING tier primary: `claude-opus-4.6` → `claude-opus-4.7`.
+- `auto` COMPLEX fallback chain now ends with Opus 4.7 (not 4.6).
+- `premium` COMPLEX primary: 4.6 → 4.7.
+- `premium` REASONING fallback: 4.6 → 4.7.
+- `OPUS_PRICING` savings-calculation baseline now references the 4.7
+  entry (same price point, but tracks the current flagship).
+
+### Fixed — Input box resize artifacts
+
+- **Stacked border ghosts when resizing the terminal are gone.** The
+  `InputBox` in `src/ui/app.tsx` built its border from
+  `'─'.repeat(cols - 2)` — one long string per border row. When the
+  terminal was resized, that string wrapped differently on screen and
+  Ink's log-update miscounted the lines-to-erase, so ghost borders piled
+  up in the chat window.
+- Replaced the manual `╭─╮ │ ╰─╯` strings with Ink's native
+  `<Box borderStyle="round">`. Yoga now sizes the box and emits border
+  chars exactly matching the box width — no wrap surprises.
+- Added a `useTerminalSize()` hook that subscribes to
+  `stdout.on('resize')` and `setState`s the new dimensions, forcing a
+  React re-render on resize (without it, `useStdout()` returns a stable
+  ref and children reading `stdout.columns` don't re-execute).
+
+### Gateway coordination
+
+This is the **client-side** Opus 4.7 integration. Franklin forwards
+model IDs to the BlockRun gateway, which in turn calls Anthropic. For
+users to actually hit 4.7 the gateway's model registry must also accept
+`anthropic/claude-opus-4.7` and pass `claude-opus-4-7` (Anthropic's
+dashed API ID) upstream. Live verification against the BlockRun gateway
+done as part of v3.7.10 — 4.7 returns 200 OK end-to-end.
+
+## 3.7.6 (2026-04-16) — Bash dedup + active planning
+
+### Added
+
+- Bash result deduplication across repeated identical commands in the
+  same session — cuts the agent loop's tool-call ping-pong on tight
+  iterations.
+- Plan-then-execute triggers now fire on real agent tasks (not just when
+  the user explicitly invokes `/plan`), so the agent self-structures
+  multi-step work before diving into tool calls.
+
+## 3.7.5 (2026-04-16) — Pushback detection + search dedup
+
+### Added
+
+- **Pushback detection** — the agent now recognizes mid-turn user
+  corrections ("no that's wrong", "actually use X") and drops its prior
+  plan instead of layering a fix on top of a broken approach. (Later
+  refined in v3.8.0's post-audit fixes to stop misfiring on casual
+  disagreement.)
+- **Grep / Glob result deduplication** at the session level — repeated
+  identical searches reuse the cached result instead of re-running.
+
+## 3.7.4 (2026-04-16) — Agent-first default routing
+
+### Changed
+
+- **Default `auto` routing is now agent-first.** MEDIUM + COMPLEX tiers
+  promote Claude Sonnet 4.6 to primary because cheaper models kept
+  derailing on multi-step tool-use agent work. Sonnet 4.6 is the
+  industry standard for agent loops; the cost delta vs Gemini Pro pays
+  for itself in fewer retries.
+
+## 3.7.3 (2026-04-16) — Wallet-drain loop prevention
+
+### Fixed
+
+- **Agent-loop error recovery could drain the wallet.** A narrow class
+  of provider errors caused the agent to retry the same failing paid
+  request indefinitely, each retry a fresh paid call. New guard: errors
+  classified as "unlikely to succeed on retry" (401, 400 schema errors,
+  context-window 413) now fail fast instead of cascading into retries.
+- **Agent runs with its own wallet context** (not the proxy's) so a
+  caller can rotate keys without taking the agent loop down.
+
+## 3.7.2 (2026-04-15) — Auto-start panel + per-call audit log in the dashboard
 
 Three small fixes that make Franklin easier to debug spending and easier
 to live with day-to-day.
