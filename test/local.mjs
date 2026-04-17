@@ -1369,6 +1369,119 @@ test('bash-guard e2e: non-Bash tools are not affected by risk classifier', async
   assert.equal(readDecision.behavior, 'allow');
 });
 
+// ─── Image generation → Content cost tracking ────────────────────────────
+
+test('checkImageBudget: greenlights when content exists and projected cost fits', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { checkImageBudget } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'x', budgetUsd: 0.10 });
+  const decision = checkImageBudget(lib, c.id, 'openai/dall-e-3', '1024x1024');
+  assert.equal(decision.ok, true);
+});
+
+test('checkImageBudget: refuses up-front when projected cost exceeds remaining budget', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { checkImageBudget } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'x', budgetUsd: 0.03 });
+  // dall-e-3 standard costs $0.04; refuse BEFORE paying.
+  const decision = checkImageBudget(lib, c.id, 'openai/dall-e-3', '1024x1024');
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /budget/i);
+});
+
+test('checkImageBudget: unknown content id refuses without throwing', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { checkImageBudget } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const decision = checkImageBudget(lib, 'does-not-exist', 'openai/dall-e-3', '1024x1024');
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /not found/i);
+});
+
+test('recordImageAsset: attaches generated image as an asset with estimated cost', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { recordImageAsset } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'Hero', budgetUsd: 1 });
+
+  const decision = recordImageAsset(lib, {
+    contentId: c.id,
+    imagePath: '/tmp/hero.png',
+    model: 'openai/dall-e-3',
+    size: '1024x1024',
+  });
+
+  assert.equal(decision.ok, true);
+  assert.equal(decision.costUsd, 0.04);
+  const after = lib.get(c.id);
+  assert.equal(after?.assets.length, 1);
+  assert.equal(after?.assets[0].kind, 'image');
+  assert.equal(after?.assets[0].source, 'openai/dall-e-3');
+  assert.equal(after?.assets[0].costUsd, 0.04);
+  assert.equal(after?.assets[0].data, '/tmp/hero.png');
+  assert.equal(after?.spentUsd, 0.04);
+});
+
+test('recordImageAsset: unknown content id returns { ok: false } without throwing', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { recordImageAsset } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const decision = recordImageAsset(lib, {
+    contentId: 'missing',
+    imagePath: '/tmp/x.png',
+    model: 'openai/dall-e-3',
+    size: '1024x1024',
+  });
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /not found/i);
+});
+
+test('recordImageAsset: budget refusal surfaces reason so caller can report it', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { recordImageAsset } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'image', title: 'Banner', budgetUsd: 0.03 });
+
+  const decision = recordImageAsset(lib, {
+    contentId: c.id,
+    imagePath: '/tmp/banner.png',
+    model: 'openai/dall-e-3', // $0.04 > $0.03 budget
+    size: '1024x1024',
+  });
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /budget/i);
+  assert.equal(lib.get(c.id)?.assets.length, 0, 'rejected asset must not persist');
+});
+
+test('estimateImageCostUsd: dall-e-3 standard 1024x1024 is $0.04', async () => {
+  const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
+  assert.equal(estimateImageCostUsd('openai/dall-e-3', '1024x1024'), 0.04);
+});
+
+test('estimateImageCostUsd: dall-e-3 wide/tall formats are $0.08', async () => {
+  const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
+  assert.equal(estimateImageCostUsd('openai/dall-e-3', '1792x1024'), 0.08);
+  assert.equal(estimateImageCostUsd('openai/dall-e-3', '1024x1792'), 0.08);
+});
+
+test('estimateImageCostUsd: gpt-image-1 1024x1024 is $0.042', async () => {
+  const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
+  assert.equal(estimateImageCostUsd('openai/gpt-image-1', '1024x1024'), 0.042);
+});
+
+test('estimateImageCostUsd: unknown model returns 0 (free model, no surprise charge in the report)', async () => {
+  const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
+  assert.equal(estimateImageCostUsd('who/knows', '1024x1024'), 0);
+});
+
 // ─── Content generation vertical ──────────────────────────────────────────
 
 test('ContentLibrary: create() produces a Content with generated id, budget, timestamps, empty drafts/assets', async () => {
