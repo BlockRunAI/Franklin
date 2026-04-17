@@ -1368,3 +1368,27 @@ test('bash-guard e2e: non-Bash tools are not affected by risk classifier', async
   const readDecision = await pm.check('Read', { file_path: '/etc/hosts' });
   assert.equal(readDecision.behavior, 'allow');
 });
+
+// ─── Extended-thinking allowlist (regression: Opus 4.7 must NOT receive flag) ─
+
+import { modelHasExtendedThinking } from '../dist/agent/llm.js';
+
+test('modelHasExtendedThinking: Opus 4.7 returns false (adaptive thinking, no flag)', () => {
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4.7'), false);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4-7'), false);
+  assert.equal(modelHasExtendedThinking('claude-opus-4.7'), false);
+});
+
+test('modelHasExtendedThinking: older Opus + Sonnet 4.x return true (extended thinking flag)', () => {
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4.6'), true);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4-6'), true);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4.5'), true);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-sonnet-4.6'), true);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-sonnet-3.7'), true);
+});
+
+test('modelHasExtendedThinking: non-Anthropic models return false', () => {
+  assert.equal(modelHasExtendedThinking('openai/gpt-5.4'), false);
+  assert.equal(modelHasExtendedThinking('google/gemini-3.1-pro'), false);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-haiku-4.5'), false);
+});
