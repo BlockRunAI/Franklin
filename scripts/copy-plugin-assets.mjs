@@ -40,3 +40,16 @@ function walk(dir, base) {
 
 walk(SRC, SRC);
 console.log(`[copy-plugin-assets] copied ${copied} files to dist/plugins-bundled/`);
+
+// Ensure the CLI entry point stays executable. tsc drops the exec bit every
+// build, and without this a clean `rm -rf dist && npm run build` leaves
+// `franklin` / `runcode` as non-executable files — the shebang is correct
+// but the kernel won't run them. Mirrors what npm does for published bins.
+const ENTRY = path.join(ROOT, 'dist', 'index.js');
+if (fs.existsSync(ENTRY)) {
+  try {
+    fs.chmodSync(ENTRY, 0o755);
+  } catch (err) {
+    console.warn(`[copy-plugin-assets] chmod failed on ${ENTRY}: ${err.message}`);
+  }
+}
