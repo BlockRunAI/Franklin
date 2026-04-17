@@ -51,6 +51,15 @@ function setCached(key: string, output: string): void {
   fetchCache.set(key, { output, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
+/**
+ * Drop every cached fetch so a fresh session doesn't serve stale content
+ * that was fetched under the previous session's intent. The 15-minute TTL
+ * would eventually catch this, but we'd rather start clean.
+ */
+export function clearSessionState(): void {
+  fetchCache.clear();
+}
+
 // ─── Execute ────────────────────────────────────────────────────────────────
 
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {

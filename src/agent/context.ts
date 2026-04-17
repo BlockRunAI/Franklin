@@ -498,8 +498,10 @@ function readRuntimeWallet(): { chain?: string; base?: string; solana?: string }
 
 const GIT_TIMEOUT_MS = 5_000;
 
-// Max chars for git log output — long commit messages can bloat the system prompt
-const MAX_GIT_LOG_CHARS = 2_000;
+// Max chars for git log output — long commit messages can bloat the system prompt.
+// Tightened from 2000: at typical 60-80 chars/commit, 800 comfortably fits
+// the 3 commits we request below with headroom for long subjects.
+const MAX_GIT_LOG_CHARS = 800;
 
 function getGitContext(workingDir: string): string | null {
   const gitCmd = (cmd: string) => execSync(cmd, {
@@ -550,9 +552,9 @@ function getGitContext(workingDir: string): string | null {
     }
   } catch { /* ignore */ }
 
-  // Recent commits
+  // Recent commits — 3 is enough for style/context matching; more just bloats every turn.
   try {
-    let log = gitCmd('git log --oneline -5');
+    let log = gitCmd('git log --oneline -3');
     if (log) {
       if (log.length > MAX_GIT_LOG_CHARS) {
         log = log.slice(0, MAX_GIT_LOG_CHARS) + '\n... (truncated)';

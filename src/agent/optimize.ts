@@ -31,6 +31,10 @@ export const ESCALATED_MAX_TOKENS = 65_536;
 
 /** Per-model max output tokens — prevents requesting more than the model supports */
 const MODEL_MAX_OUTPUT: Record<string, number> = {
+  // Opus 4.7 supports 128k output per the BlockRun gateway model entry
+  // (anthropic/claude-opus-4.7 maxOutput: 128000). Bumping from 32k to
+  // 128k unlocks the full headroom — runaway generations are gated
+  // separately by CAPPED_MAX_TOKENS / ESCALATED_MAX_TOKENS budgets.
   'anthropic/claude-opus-4.7': 128_000,
   'anthropic/claude-opus-4.6': 32_000,
   'anthropic/claude-sonnet-4.6': 64_000,

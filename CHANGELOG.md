@@ -1,6 +1,246 @@
 # Changelog
 
-## 3.7.2 (2026-04-15) — Auto-start panel + per-call audit log in the dashboard
+## Unreleased — ImageGen ↔ Content: the spend/track loop closes
+
+Content pieces now track image-generation spend automatically. The agent
+passes `contentId` to ImageGen; pre-flight the content's budget is checked
+(so USDC is never spent on a fill that can't be recorded); on success the
+saved image is attached as an asset with its estimated cost and the
+content's `spentUsd` is incremented.
+
+This is the feedback loop Claude Code structurally can't build — no
+wallet, no persistent content project, no cross-call budget. With
+Franklin the agent can say "generate 5 hero variants within $0.30 for
+the Franklin launch blog" and self-regulate spending against a real,
+per-piece cap that survives session boundaries.
+
+### Added
+
+- `src/content/image-pricing.ts` — `estimateImageCostUsd(model, size)`.
+  Published per-image pricing for `openai/dall-e-3` (standard $0.04,
+  wide/tall $0.08) and `openai/gpt-image-1` ($0.042). Unknown models
+  return 0 — better to undercount than to invent phantom charges.
+- `src/content/record-image.ts` — two pure helpers bridging ImageGen to
+  the Content library:
+  - `checkImageBudget(library, contentId, model, size)` — non-mutating
+    pre-flight that refuses up-front when projected cost would exceed
+    the per-piece budget. Called *before* the paid x402 request.
+  - `recordImageAsset(library, { contentId, imagePath, model, size })`
+    — called *after* a successful generation; looks up the estimated
+    cost, calls `library.addAsset`, and surfaces budget refusals as a
+    structured decision rather than throwing.
+- `createImageGenCapability(deps)` factory. Pass `deps.library` to enable
+  the content-aware flow; omit it for one-off generation. The factory is
+  the form registered by `allCapabilities`.
+- New `contentId` input on `ImageGen` (optional). When set, the agent
+  gets a pre-flight refusal with no USDC spent if the budget can't
+  cover the generation, and on success the output includes a "Content
+  updated" section with attached cost, cumulative spend, and remaining
+  budget.
+
+### Changed
+
+- `src/tools/index.ts` now constructs a single shared
+  `defaultContentLibrary` used by both `createContentCapabilities` and
+  the new content-aware `createImageGenCapability`. Persistence to
+  `~/.blockrun/content.json` fires on every state change (content
+  create, asset record, image-gen attach).
+- `imageGenCapability` is still exported for back-compat callers that
+  don't want the Content bridge. The registry default is now the
+  content-aware variant.
+
+## Unreleased — Content Generation vertical lands
+
+Second of the three differentiated verticals (after Trading). Same shape
+as the Trading substrate: a Library of durable records, a budget enforcer
+that gates spending, JSON persistence, and a factory of agent-facing
+capabilities.
+
+### Added
+
+- `src/content/library.ts` — `ContentLibrary` + `Content` type. A
+  Content is a single publishable unit (x-thread / blog / podcast /
+  video / ad-copy / image) with outline, drafts, assets, distribution
+  log, spentUsd, and budgetUsd. Survives across sessions. This is the
+  surface coding agents can't replicate: Claude Code has no concept of
+  "the same piece of work" across runs.
+- `ContentLibrary.addAsset(id, asset)` — budget-enforced asset recording.
+  Refusals return `{ ok: false, reason }` rather than throwing so the
+  agent-facing capability can surface the reason as normal text.
+- `src/content/store.ts` — whole-library JSON snapshot at
+  `~/.blockrun/content.json`. Versioned payload, defensive load that
+  skips malformed records rather than erroring out; disk failures are
+  best-effort and never block a capability call.
+- Four new agent capabilities:
+  - `ContentCreate` — start a new piece with type, title, and budget.
+  - `ContentAddAsset` — record a generated asset with its USD cost.
+    Over-budget attempts return as normal text with the reason (not
+    `isError: true`) so the agent reads the refusal and picks a cheaper
+    model rather than triggering retry/recovery.
+  - `ContentShow` — dump a single piece's full state as actionable
+    markdown: budget utilization, assets with source + cost, drafts,
+    distribution, status.
+  - `ContentList` — every piece newest-first with budget percent and
+    asset count.
+
+### Changed
+
+- `allCapabilities` in `tools/index.ts` now includes the 4 content
+  capabilities. Total agent surface: 24 capabilities (Trading: 6,
+  Content: 4, core tools: 14).
+
+## Unreleased — Claude Opus 4.7 integration (client-side)
+
+Anthropic released Claude Opus 4.7 with a step-change improvement in
+agentic coding and reasoning over 4.6. Franklin's auto tier now prefers
+4.7 for REASONING and COMPLEX tasks and keeps 4.6 in the fallback chain
+for rollout safety.
+
+### Added
+
+- `anthropic/claude-opus-4.7` registered in pricing ($5 in / $25 out per
+  MTok — identical to 4.6), context window (200k — matches the Franklin
+  baseline; 1M-ctx beta is a separate gateway concern), and per-model
+  max output (32k — the Franklin ceiling, not the model's 128k limit).
+- `modelHasExtendedThinking(model)` exported pure helper. Explicit
+  allowlist rather than a regex: Opus 4.7 uses *adaptive* thinking
+  (built-in, no API flag) and rejects the `thinking: { type: 'enabled' }`
+  block that 4.6 accepts. A regex-based check that matched `includes('opus')`
+  would silently re-enable the flag on any future Opus variant and 400 the
+  request. The explicit allowlist requires us to opt in per model.
+- Model-picker entries for both Opus 4.7 (new `opus` shortcut) and 4.6
+  (now under `opus-4.6` shortcut) so users can pin a specific version.
+- Proxy aliases: `opus` → 4.7, plus explicit `opus-4.6` / `opus-4.7`
+  aliases so agents can pin deterministically.
+
+### Changed
+
+- `auto` REASONING tier primary: `claude-opus-4.6` → `claude-opus-4.7`.
+  4.6 slotted into the fallback chain above o3 / grok-reasoning / deepseek.
+- `auto` COMPLEX fallback chain now ends with Opus 4.7 (not 4.6).
+- `premium` COMPLEX + REASONING tiers: primary → 4.7, 4.6 retained as
+  first fallback.
+- `ANTHROPIC_DEFAULT_OPUS_MODEL` in the `/init` template now points at
+  4.7 so fresh Claude Code integrations pick it up by default.
+- `OPUS_PRICING` savings-calculation baseline now references the 4.7
+  entry (same price point, but tracks the current flagship).
+
+### Gateway coordination
+
+This is the **client-side** integration. Franklin forwards model IDs to
+the BlockRun gateway, which in turn calls Anthropic. For users to
+actually hit 4.7, the gateway's model registry must also accept the
+`anthropic/claude-opus-4.7` string and pass `claude-opus-4-7` (Anthropic's
+dashed API ID) to the upstream API. Gateway-side PR pending — track
+separately. If the gateway is behind, 4.7 requests fall back to 4.6
+through the new fallback chain, so users aren't broken in the meantime.
+
+## Unreleased — Trading Agent vertical lands
+
+### Added
+
+- **Three new agent capabilities: `TradingPortfolio`, `TradingOpenPosition`,
+  `TradingClosePosition`.** This is the first slice of Franklin's
+  differentiated surface — the use cases generic coding agents cannot
+  cover. Claude Code / Cursor have no persistent wallet state, no way
+  to carry positions across sessions, no P&L reasoning. Franklin now does.
+  - `TradingPortfolio` reports cash, equity, unrealized + realized P&L,
+    per-position mark-to-market, and risk-cap utilization — everything
+    the agent needs to decide its next trade in one call.
+  - `TradingOpenPosition` runs pre-trade risk checks (per-position cap,
+    total exposure cap, cash sufficiency) before touching the exchange.
+    Risk blocks come back as ordinary text results (not errors) so the
+    agent reads them and adapts instead of triggering retry/recovery.
+  - `TradingClosePosition` flattens or partially reduces a position,
+    realizing P&L against the weighted-average entry price. Uses the
+    exchange's live mark — no manual price required.
+- **`LiveExchange` adapter** — default `ExchangeClient` that quotes live
+  CoinGecko prices but simulates fills. Paper trading with real market
+  data, so P&L reflects reality. Pricing is injected (not imported),
+  keeping the class unit-testable without hitting CoinGecko.
+- **Portfolio persistence at `~/.blockrun/portfolio.json`.** Trades
+  survive restart — the whole point of the vertical. Disk failures are
+  swallowed so a full disk never blocks a trade; corrupt JSON falls
+  back to a fresh paper portfolio.
+- **`TradingHistory` capability + persistent trade log at
+  `~/.blockrun/trades.jsonl`.** Every fill (both opens and closes) is
+  appended as a single JSON line; `TradingHistory` answers the questions
+  a coding agent structurally cannot — "am I up this week?", "what was
+  my worst trade?", "how many times did I flip BTC last session?". The
+  log is append-only, corrupt lines are skipped rather than crashing,
+  and windowed queries accept "24h", "7d", "30d", or "all". This is the
+  cross-session economic memory that separates Franklin from Claude Code
+  and Cursor, which cannot carry any trading state between runs.
+- **Paper-trading defaults** tuned for safety: $1,000 starting bankroll,
+  $400 per-position cap, $900 total exposure cap, 10 bps simulated fee.
+  Adjustable at the engine construction site; env-var / config surface
+  planned for a follow-up.
+
+## Unreleased — Post-v3.7.6 audit fixes
+
+Follow-ups from a cross-cutting audit of v3.7.4–v3.7.6. Focus: correctness,
+cost predictability, and fewer false-positive agent interrupts.
+
+### Fixed
+
+- **Pushback detection no longer misfires on casual disagreement.** The
+  v3.7.5 corrections detector treated any message starting with "but",
+  "actually", "wait", or "hmm" as a full-abandon signal — so "But how do
+  I deploy this?" caused the agent to throw away a working approach.
+  Split the patterns into STRONG (high-precision) and WEAK (starter words
+  that also occur in casual speech) buckets. Weak patterns only trigger
+  when the message is short, carries no fresh request ("can you also…",
+  "please add…"), and the prior assistant turn made a concrete claim
+  (tool call or ≥40-char answer). Reduces false positives substantially
+  on multi-language conversational flow.
+- **Pushback `[SYSTEM NOTE]` no longer pollutes session transcripts.**
+  The injected correction prompt was being written to the session file,
+  so resumed sessions showed internal prompt-engineering scaffolding.
+  Session storage now persists the user's original message; the
+  SYSTEM NOTE lives only in the in-memory history for the turn.
+
+- **System-prompt Context Window Status no longer kills Anthropic prompt
+  cache every turn.** The "~X% of your context window" string embedded
+  the exact rounded percentage, so the system-prompt byte sequence (and
+  the Anthropic `cache_control` hash at its breakpoint) changed on every
+  call — the cache was effectively off for long sessions. Now bucketed
+  into coarse bands (>50% / >65% / >80%) so the text stays byte-identical
+  across many consecutive turns. Cached prefixes actually hold; input-token
+  cost on multi-turn Anthropic sessions drops substantially. The model
+  doesn't need 3% precision to self-regulate.
+- **Auto-compaction now gated by projected ROI, not just a token threshold.**
+  `autoCompactIfNeeded` previously fired as soon as history crossed the
+  compaction threshold, regardless of whether summarization would
+  meaningfully shrink things. On mid-sized sessions the round-trip cost
+  (payload sent to the compaction model + the ~16k reserved for output)
+  could exceed the headroom gained, making compaction net-negative. The
+  new gate computes projected post-compaction size from `findKeepBoundary`
+  and the expected summary length, and skips compaction unless projected
+  savings clear 20% of current tokens. `/compact` (forceCompact) still
+  runs unconditionally — the user asked for it.
+- **Module-level tool state is now reset at the start of every session.**
+  `fileReadTracker` / `partiallyReadFiles` / `fileContentCache` (read.ts),
+  `fetchCache` (webfetch.ts), and completed entries in `backgroundTasks`
+  (bash.ts) previously survived across `interactiveSession()` calls in the
+  same process. For library callers and tests that run multiple sessions,
+  this could fool Edit/Write into skipping read-before-edit checks or serve
+  stale webfetch content. A new `resetToolSessionState()` aggregator is
+  invoked at session start. Running bash background tasks are preserved
+  (killing a spawned process out from under a poll would silently drop
+  output); only completed/failed records are swept.
+
+### Changed
+
+- **MEDIUM / COMPLEX / REASONING `auto` tiers now carry a cheap fallback.**
+  v3.7.4's agent-first routing rightly moved MEDIUM primary to Claude
+  Sonnet 4.6, but the fallback chain (`gpt-5.4`, `gemini-3.1-pro`) was
+  entirely premium, so payment or quota failures cascaded into
+  equally-expensive retries. Each paid tier now ends its fallback list
+  with a lower-cost option (Kimi K2.5 for MEDIUM/COMPLEX,
+  DeepSeek-Reasoner for REASONING) so transient failures degrade
+  gracefully instead of doubling spend.
+
+
 
 Three small fixes that make Franklin easier to debug spending and easier
 to live with day-to-day.

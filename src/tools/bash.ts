@@ -262,6 +262,19 @@ export function listBackgroundTasks(): BackgroundTask[] {
   return [...backgroundTasks.values()];
 }
 
+/**
+ * Drop completed/failed task records. Running tasks are left in place —
+ * we have no safe way to terminate a spawned process from here, and killing
+ * one out from under a caller that may still be polling it would silently
+ * lose output. Callers starting a fresh session can still query prior
+ * running tasks by id if they need to; anything finished is gone.
+ */
+export function clearSessionState(): void {
+  for (const [id, task] of backgroundTasks) {
+    if (task.status !== 'running') backgroundTasks.delete(id);
+  }
+}
+
 const MAX_OUTPUT_BYTES = 512 * 1024; // 512KB capture buffer (prevents OOM)
 const MAX_RETURN_CHARS = 32_000;    // 32KB return cap (~8,000 tokens) — prevents context bloat
 const DEFAULT_TIMEOUT_MS = 120_000;  // 2 minutes
