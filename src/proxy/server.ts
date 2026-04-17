@@ -96,8 +96,8 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   sonnet: 'anthropic/claude-sonnet-4.6',
   claude: 'anthropic/claude-sonnet-4.6',
   opus: 'anthropic/claude-opus-4.7',
-  'opus-4.6': 'anthropic/claude-opus-4.6',
   'opus-4.7': 'anthropic/claude-opus-4.7',
+  'opus-4.6': 'anthropic/claude-opus-4.6',
   haiku: 'anthropic/claude-haiku-4.5',
   // OpenAI
   gpt: 'openai/gpt-5.4',
