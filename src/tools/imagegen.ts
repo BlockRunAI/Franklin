@@ -17,26 +17,63 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
+import type { ContentLibrary } from '../content/library.js';
+import { checkImageBudget, recordImageAsset } from '../content/record-image.js';
 
 interface ImageGenInput {
   prompt: string;
   output_path?: string;
   size?: string;
   model?: string;
+  /**
+   * Optional Content id to attach this generation to. When provided:
+   *   (1) Budget is checked BEFORE the paid generation — refusing up-front
+   *       saves wasting USDC on a fill that couldn't be recorded.
+   *   (2) On successful generation, the saved image is recorded as an asset
+   *       on that content with the estimated USD cost.
+   */
+  contentId?: string;
 }
 
-async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
-  const { prompt, output_path, size, model } = input as unknown as ImageGenInput;
+export interface ImageGenDeps {
+  /** Optional Content library for auto-recording generations into a piece. */
+  library?: ContentLibrary;
+  /** Invoked after successful content-linked generation; lets callers persist. */
+  onContentChange?: () => void | Promise<void>;
+}
 
-  if (!prompt) {
-    return { output: 'Error: prompt is required', isError: true };
-  }
+function buildExecute(deps: ImageGenDeps) {
+  return async function execute(
+    input: Record<string, unknown>,
+    ctx: ExecutionScope,
+  ): Promise<CapabilityResult> {
+    const { prompt, output_path, size, model, contentId } = input as unknown as ImageGenInput;
+
+    if (!prompt) {
+      return { output: 'Error: prompt is required', isError: true };
+    }
+
+    // ── Content pre-flight: refuse BEFORE paying if budget can't cover this ──
+    const imageModel = model || 'openai/gpt-image-1';
+    const imageSize = size || '1024x1024';
+    if (contentId && deps.library) {
+      const decision = checkImageBudget(deps.library, contentId, imageModel, imageSize);
+      if (!decision.ok) {
+        // Normal text output, not isError — the agent should adapt (smaller
+        // size, different model, raise budget) rather than trigger retry.
+        return {
+          output:
+            `## Image generation skipped\n` +
+            `- ${decision.reason}\n\n` +
+            `No USDC was spent. Choose a cheaper model/size or raise the ` +
+            `content budget before trying again.`,
+        };
+      }
+    }
 
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
   const endpoint = `${apiUrl}/v1/images/generations`;
-  const imageModel = model || 'openai/gpt-image-1';
-  const imageSize = size || '1024x1024';
 
   // Default output path
   const outPath = output_path
@@ -119,8 +156,37 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     const sizeKB = (fileSize / 1024).toFixed(1);
     const revisedPrompt = imageData.revised_prompt ? `\nRevised prompt: ${imageData.revised_prompt}` : '';
 
+    let contentSummary = '';
+    if (contentId && deps.library) {
+      const rec = recordImageAsset(deps.library, {
+        contentId,
+        imagePath: outPath,
+        model: imageModel,
+        size: imageSize,
+      });
+      if (rec.ok) {
+        if (deps.onContentChange) await deps.onContentChange();
+        const c = deps.library.get(contentId);
+        contentSummary =
+          `\n\n## Content updated\n` +
+          `- Attached to \`${contentId}\` at est. $${rec.costUsd.toFixed(2)}\n` +
+          (c
+            ? `- Spent: $${c.spentUsd.toFixed(2)} / $${c.budgetUsd.toFixed(2)} cap ` +
+              `(remaining $${(c.budgetUsd - c.spentUsd).toFixed(2)})`
+            : '');
+      } else {
+        // Pre-flight guarded this, but keep defensive — bookkeeping refusal
+        // after a successful paid generation is rare (TOCTOU) but possible.
+        contentSummary =
+          `\n\n## Content NOT updated\n` +
+          `- ${rec.reason}\n` +
+          `- The image was generated and saved locally; cost was NOT recorded ` +
+          `against the content budget.`;
+      }
+    }
+
     return {
-      output: `Image saved to ${outPath} (${sizeKB}KB, ${imageSize})${revisedPrompt}\n\nOpen with: open ${outPath}`,
+      output: `Image saved to ${outPath} (${sizeKB}KB, ${imageSize})${revisedPrompt}\n\nOpen with: open ${outPath}${contentSummary}`,
     };
   } catch (err) {
     const msg = (err as Error).message || '';
@@ -131,6 +197,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   } finally {
     clearTimeout(timeout);
   }
+  };
 }
 
 // ─── Payment ───────────────────────────────────────────────────────────────
@@ -206,21 +273,39 @@ async function extractPaymentReq(response: Response): Promise<string | null> {
 
 // ─── Export ────────────────────────────────────────────────────────────────
 
-export const imageGenCapability: CapabilityHandler = {
-  spec: {
-    name: 'ImageGen',
-    description: 'Generate an image from a text prompt using DALL-E. Costs USDC from the user\'s wallet — confirm before generating. Saves to a local file. Default size: 1024x1024. Do NOT call repeatedly to iterate on style — ask the user first.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        prompt: { type: 'string', description: 'Text description of the image to generate' },
-        output_path: { type: 'string', description: 'Where to save the image. Default: generated-<timestamp>.png in working directory' },
-        size: { type: 'string', description: 'Image size: 1024x1024, 1792x1024, or 1024x1792. Default: 1024x1024' },
-        model: { type: 'string', description: 'Image model to use. Default: openai/gpt-image-1' },
+/**
+ * Build the ImageGen capability. Passing `deps.library` enables the
+ * contentId flow: pre-flight budget check + post-generation asset
+ * recording. With no deps, behavior matches the pre-factory version.
+ */
+export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHandler {
+  return {
+    spec: {
+      name: 'ImageGen',
+      description:
+        "Generate an image from a text prompt. Costs USDC from the user's wallet " +
+        "— confirm before generating. Saves to a local file. Default size: " +
+        "1024x1024. Do NOT call repeatedly to iterate on style — ask the user " +
+        "first. Pass contentId to attach the result to an existing Content " +
+        "piece: the content's budget is checked BEFORE paying, and on success " +
+        "the image is recorded as an asset with its estimated cost. Skipping " +
+        "contentId generates a one-off image with no budget tracking.",
+      input_schema: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: 'Text description of the image to generate' },
+          output_path: { type: 'string', description: 'Where to save the image. Default: generated-<timestamp>.png in working directory' },
+          size: { type: 'string', description: 'Image size: 1024x1024, 1792x1024, or 1024x1792. Default: 1024x1024' },
+          model: { type: 'string', description: 'Image model to use. Default: openai/gpt-image-1' },
+          contentId: { type: 'string', description: 'Optional Content id to attach this generation to. Pre-flight budget check + auto-record on success.' },
+        },
+        required: ['prompt'],
       },
-      required: ['prompt'],
     },
-  },
-  execute,
-  concurrent: false,
-};
+    execute: buildExecute(deps),
+    concurrent: false,
+  };
+}
+
+/** Back-compat static capability for callers that don't want the Content bridge. */
+export const imageGenCapability: CapabilityHandler = createImageGenCapability();

@@ -16,7 +16,7 @@ import { grepCapability } from './grep.js';
 import { webFetchCapability, clearSessionState as clearWebFetchSessionState } from './webfetch.js';
 import { webSearchCapability } from './websearch.js';
 import { taskCapability } from './task.js';
-import { imageGenCapability } from './imagegen.js';
+import { createImageGenCapability } from './imagegen.js';
 import { askUserCapability } from './askuser.js';
 import { tradingSignalCapability, tradingMarketCapability } from './trading.js';
 import { searchXCapability } from './searchx.js';
@@ -80,21 +80,28 @@ const defaultTradingCapabilities = buildDefaultTradingCapabilities();
 // cannot offer.
 const DEFAULT_CONTENT_PATH = path.join(os.homedir(), '.blockrun', 'content.json');
 
-function buildDefaultContentCapabilities() {
-  const library = loadContentLibrary(DEFAULT_CONTENT_PATH) ?? new ContentLibrary();
-  return createContentCapabilities({
-    library,
-    onStateChange: () => {
-      try {
-        saveContentLibrary(library, DEFAULT_CONTENT_PATH);
-      } catch {
-        // Best-effort — in-memory library remains authoritative.
-      }
-    },
-  });
-}
+// Build a single ContentLibrary instance so both the Content capabilities and
+// the content-aware ImageGen capability share state and persistence.
+const defaultContentLibrary =
+  loadContentLibrary(DEFAULT_CONTENT_PATH) ?? new ContentLibrary();
 
-const defaultContentCapabilities = buildDefaultContentCapabilities();
+const persistContentLibrary = () => {
+  try {
+    saveContentLibrary(defaultContentLibrary, DEFAULT_CONTENT_PATH);
+  } catch {
+    // Best-effort — in-memory library remains authoritative.
+  }
+};
+
+const defaultContentCapabilities = createContentCapabilities({
+  library: defaultContentLibrary,
+  onStateChange: persistContentLibrary,
+});
+
+const defaultImageGenCapability = createImageGenCapability({
+  library: defaultContentLibrary,
+  onContentChange: persistContentLibrary,
+});
 
 /**
  * Reset module-level tool state that would otherwise leak between sessions
@@ -118,7 +125,7 @@ export const allCapabilities: CapabilityHandler[] = [
   webFetchCapability,
   webSearchCapability,
   taskCapability,
-  imageGenCapability,
+  defaultImageGenCapability,
   askUserCapability,
   tradingSignalCapability,
   tradingMarketCapability,

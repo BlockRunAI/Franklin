@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased — ImageGen ↔ Content: the spend/track loop closes
+
+Content pieces now track image-generation spend automatically. The agent
+passes `contentId` to ImageGen; pre-flight the content's budget is checked
+(so USDC is never spent on a fill that can't be recorded); on success the
+saved image is attached as an asset with its estimated cost and the
+content's `spentUsd` is incremented.
+
+This is the feedback loop Claude Code structurally can't build — no
+wallet, no persistent content project, no cross-call budget. With
+Franklin the agent can say "generate 5 hero variants within $0.30 for
+the Franklin launch blog" and self-regulate spending against a real,
+per-piece cap that survives session boundaries.
+
+### Added
+
+- `src/content/image-pricing.ts` — `estimateImageCostUsd(model, size)`.
+  Published per-image pricing for `openai/dall-e-3` (standard $0.04,
+  wide/tall $0.08) and `openai/gpt-image-1` ($0.042). Unknown models
+  return 0 — better to undercount than to invent phantom charges.
+- `src/content/record-image.ts` — two pure helpers bridging ImageGen to
+  the Content library:
+  - `checkImageBudget(library, contentId, model, size)` — non-mutating
+    pre-flight that refuses up-front when projected cost would exceed
+    the per-piece budget. Called *before* the paid x402 request.
+  - `recordImageAsset(library, { contentId, imagePath, model, size })`
+    — called *after* a successful generation; looks up the estimated
+    cost, calls `library.addAsset`, and surfaces budget refusals as a
+    structured decision rather than throwing.
+- `createImageGenCapability(deps)` factory. Pass `deps.library` to enable
+  the content-aware flow; omit it for one-off generation. The factory is
+  the form registered by `allCapabilities`.
+- New `contentId` input on `ImageGen` (optional). When set, the agent
+  gets a pre-flight refusal with no USDC spent if the budget can't
+  cover the generation, and on success the output includes a "Content
+  updated" section with attached cost, cumulative spend, and remaining
+  budget.
+
+### Changed
+
+- `src/tools/index.ts` now constructs a single shared
+  `defaultContentLibrary` used by both `createContentCapabilities` and
+  the new content-aware `createImageGenCapability`. Persistence to
+  `~/.blockrun/content.json` fires on every state change (content
+  create, asset record, image-gen attach).
+- `imageGenCapability` is still exported for back-compat callers that
+  don't want the Content bridge. The registry default is now the
+  content-aware variant.
+
 ## Unreleased — Content Generation vertical lands
 
 Second of the three differentiated verticals (after Trading). Same shape
