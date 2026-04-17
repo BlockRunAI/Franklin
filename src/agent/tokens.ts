@@ -108,14 +108,17 @@ export function setEstimationModel(model: string): void {
  * Estimate token count for a string using byte-length heuristic.
  * JSON-heavy content uses 2 bytes/token; general text uses model-specific ratio.
  *
- * Padding reduced from 1.33x to 1.15x to prevent premature compaction.
- * The old 1.33x + ceil() combo caused ~36% overestimation, triggering
- * auto-compact when context was still 15-20% below the actual limit.
+ * Padding history:
+ *   1.33x → ~36% overestimate, auto-compact fired 15-20% below real limit.
+ *   1.15x → still triggered compaction around 60% of real context.
+ *   1.05x (current) — combined with Math.ceil() this still leaves a small
+ *   safety margin, and the LLM surfaces a hard 413/context error long before
+ *   the real limit that recovery code can handle. Net effect: fewer
+ *   unnecessary (and expensive) compaction round-trips on mid-sized sessions.
  */
 export function estimateTokens(text: string, bytesPerToken?: number): number {
   const effectiveBPT = bytesPerToken ?? getModelBytesPerToken(_currentModel);
-  // Pad by 15% for safety margin — still conservative but not premature
-  return Math.ceil(Buffer.byteLength(text, 'utf-8') / effectiveBPT * 1.15);
+  return Math.ceil(Buffer.byteLength(text, 'utf-8') / effectiveBPT * 1.05);
 }
 
 /**
@@ -171,8 +174,12 @@ export function estimateHistoryTokens(history: Dialogue[]): number {
  * Context window sizes for known models.
  */
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  // Anthropic
-  'anthropic/claude-opus-4.7': 1_000_000,
+  // Anthropic. The BlockRun gateway model entry advertises 1M context for
+  // Opus 4.7, but the 1M beta header may not be enabled at the gateway
+  // edge yet — sending more than 200k without it 413s. Keep 200k as the
+  // safe Franklin baseline; bump to 1_000_000 in a separate commit once
+  // a real >200k call has been verified end-to-end.
+  'anthropic/claude-opus-4.7': 200_000,
   'anthropic/claude-opus-4.6': 200_000,
   'anthropic/claude-sonnet-4.6': 200_000,
   'anthropic/claude-sonnet-4': 200_000,

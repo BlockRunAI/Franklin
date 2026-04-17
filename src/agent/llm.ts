@@ -81,6 +81,8 @@ export interface LLMClientOptions {
  */
 export function modelHasExtendedThinking(model: string): boolean {
   const m = model.toLowerCase();
+  // Excluded: Opus 4.7+ uses adaptive thinking; sending `thinking: enabled`
+  // causes the API to 400.
   if (m.includes('opus-4.7') || m.includes('opus-4-7')) return false;
   return (
     m.includes('opus-4.6') || m.includes('opus-4-6') ||
@@ -228,7 +230,6 @@ export class ModelClient {
 
     if (isAnthropic) {
       // ─ Anthropic extended thinking ──────────────────────────────────────
-      // Enable thinking for Claude models that support it (Opus 4.6, Sonnet 4.6).
       // Enable the `thinking` API block only for models that accept it.
       // Claude Opus 4.7 and newer use *adaptive* thinking (built-in, no API
       // flag); passing the extended-thinking flag to them makes Anthropic

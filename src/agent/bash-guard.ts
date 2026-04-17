@@ -42,8 +42,14 @@ const DANGEROUS_PATTERNS: [RegExp, string][] = [
 
   // System-level danger
   [/\bchmod\s+(-R\s+)?777\b/, 'world-writable permissions'],
-  [/\bcurl\s+.*\|\s*(sudo\s+)?(ba)?sh\b/, 'pipe URL to shell'],
-  [/\bwget\s+.*\|\s*(sudo\s+)?(ba)?sh\b/, 'pipe URL to shell'],
+  // Pipe-to-shell: catch sudo/env prefixes and common shell variants (bash/sh/zsh/ksh/dash/fish).
+  // The optional `-e`/`-x` flags after the shell binary are intentionally allowed by \b;
+  // what we block is the routing of downloaded content into an interpreter.
+  [/\bcurl\s+.*\|\s*(sudo\s+)?(env\s+\S*\s*)?(ba|z|k|da|fi)?sh\b/, 'pipe URL to shell'],
+  [/\bwget\s+.*\|\s*(sudo\s+)?(env\s+\S*\s*)?(ba|z|k|da|fi)?sh\b/, 'pipe URL to shell'],
+  // Command substitution of a downloader into argv — `$(curl …)` or `` `curl …` ``.
+  [/\$\(\s*(curl|wget|fetch)\b/, 'command substitution of network downloader'],
+  [/`\s*(curl|wget|fetch)\b[^`]*`/, 'backtick substitution of network downloader'],
   [/\bsudo\s+rm\b/, 'sudo delete'],
 
   // Kill/shutdown
