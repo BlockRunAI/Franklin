@@ -1392,3 +1392,60 @@ test('modelHasExtendedThinking: non-Anthropic models return false', () => {
   assert.equal(modelHasExtendedThinking('google/gemini-3.1-pro'), false);
   assert.equal(modelHasExtendedThinking('anthropic/claude-haiku-4.5'), false);
 });
+
+// ─── End-to-end payload capture: prove the wire body for Opus 4.7 vs 4.6 ─────
+// These tests intercept global fetch to read the JSON body that ModelClient
+// would actually POST to the gateway. They prove the v3.7.10 fix: Opus 4.7
+// must NOT carry a `thinking` field; Opus 4.6 still must.
+
+import { ModelClient } from '../dist/agent/llm.js';
+
+async function captureRequestBodyForModel(model) {
+  const originalFetch = globalThis.fetch;
+  let captured = null;
+  globalThis.fetch = async (_url, init) => {
+    captured = JSON.parse(init.body);
+    // Throw to short-circuit the streamCompletion before it tries to read
+    // the response body — we only care about what was sent.
+    throw new Error('captured');
+  };
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    const gen = client.streamCompletion({
+      model,
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1024,
+    });
+    try { await gen.next(); } catch { /* expected: 'captured' */ }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  return captured;
+}
+
+test('streamCompletion payload: Opus 4.7 must not include thinking field', async () => {
+  const body = await captureRequestBodyForModel('anthropic/claude-opus-4.7');
+  assert.ok(body, 'fetch must have been called and body captured');
+  assert.equal(body.model, 'anthropic/claude-opus-4.7');
+  assert.equal(body.thinking, undefined, 'thinking flag must be omitted for adaptive-thinking models');
+});
+
+test('streamCompletion payload: Opus 4.6 must still include thinking field', async () => {
+  const body = await captureRequestBodyForModel('anthropic/claude-opus-4.6');
+  assert.ok(body, 'fetch must have been called and body captured');
+  assert.equal(body.model, 'anthropic/claude-opus-4.6');
+  assert.ok(body.thinking, 'thinking flag must be present for extended-thinking models');
+  assert.equal(body.thinking.type, 'enabled');
+  assert.equal(body.temperature, 1, 'extended thinking requires temperature=1');
+});
+
+test('streamCompletion payload: Sonnet 4.6 must include thinking field', async () => {
+  const body = await captureRequestBodyForModel('anthropic/claude-sonnet-4.6');
+  assert.ok(body.thinking, 'Sonnet 4.6 supports extended thinking');
+  assert.equal(body.thinking.type, 'enabled');
+});
+
+test('streamCompletion payload: non-Anthropic model must not include thinking field', async () => {
+  const body = await captureRequestBodyForModel('openai/gpt-5.4');
+  assert.equal(body.thinking, undefined, 'non-Anthropic must not get thinking flag');
+});
