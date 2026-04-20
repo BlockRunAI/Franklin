@@ -103,6 +103,27 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     };
   }
 
+  // Write-size cap. A user-intended file write should never exceed a few
+  // MB; larger payloads are almost always accidental (log dumps, serialized
+  // objects) and refusing them explicitly beats a silent disk-full.
+  const MAX_WRITE_BYTES = 10 * 1024 * 1024;
+  const contentBytes = Buffer.byteLength(content, 'utf-8');
+  if (contentBytes > MAX_WRITE_BYTES) {
+    return {
+      output: `Error: refusing to write ${(contentBytes / 1024 / 1024).toFixed(1)}MB to ${resolved} — max allowed is ${MAX_WRITE_BYTES / 1024 / 1024}MB. Split into smaller writes, or use Bash if this is intentional bulk output.`,
+      isError: true,
+    };
+  }
+  // Content sniff — warn (not block) if NUL bytes detected. Text tools
+  // writing binary is almost always a mistake; explicit Buffer writes
+  // should go through Bash.
+  if (content.indexOf('\0') !== -1) {
+    return {
+      output: `Error: refusing to write NUL-byte content to ${resolved}. This tool writes text files only. For binary output use Bash with a base64 decode or an external script.`,
+      isError: true,
+    };
+  }
+
   try {
     // Ensure parent directory exists
     const parentDir = path.dirname(resolved);
