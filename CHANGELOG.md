@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.8.7 — Kimi K2.6 flagship
+
+### Added
+
+- **`moonshot/kimi-k2.6`** — Moonshot's new flagship with 256K context,
+  vision + reasoning. $0.95 input / $4.00 output per 1M tokens.
+  Promoted to the `kimi` CLI shortcut and the default Kimi slot in
+  the router's AUTO and PREMIUM tier fallback chains, in the planner's
+  premium-profile executor, and in the proxy's alias table.
+- Kimi K2.5 stays available via the new `kimi-k2.5` shortcut and is
+  kept in the model picker as a legacy option.
+
+No behavior changes beyond the added model. Existing sessions on K2.5
+continue to work unchanged.
+
 ## 3.8.6 — Opt-in telemetry + canonical source back on BlockRunAI
 
 ### Added

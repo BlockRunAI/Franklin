@@ -211,6 +211,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'xai/grok-4-1-fast-reasoning': 131_072,
   // Others
   'zai/glm-5.1': 200_000,
+  'moonshot/kimi-k2.6': 256_000,
   'moonshot/kimi-k2.5': 128_000,
   'minimax/minimax-m2.7': 128_000,
 };

@@ -138,7 +138,7 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   minimax: 'minimax/minimax-m2.7',
   // Others
   glm: 'zai/glm-5.1',
-  kimi: 'moonshot/kimi-k2.5',
+  kimi: 'moonshot/kimi-k2.6',
 };
 
 // Model pricing now uses shared source from src/pricing.ts

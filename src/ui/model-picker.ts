@@ -61,7 +61,8 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   glm: 'zai/glm-5.1',
   'glm-turbo': 'zai/glm-5-turbo',
   'glm5': 'zai/glm-5.1',
-  kimi: 'moonshot/kimi-k2.5',
+  kimi: 'moonshot/kimi-k2.6',
+  'kimi-k2.5': 'moonshot/kimi-k2.5',
 };
 
 /**
@@ -145,7 +146,8 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'openai/gpt-5-nano',                   shortcut: 'nano',     label: 'GPT-5 Nano',       price: '$0.05/$0.4' },
       { id: 'google/gemini-2.5-flash',             shortcut: 'flash',    label: 'Gemini 2.5 Flash', price: '$0.3/$2.5' },
       { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V3',      price: '$0.28/$0.42' },
-      { id: 'moonshot/kimi-k2.5',                  shortcut: 'kimi',     label: 'Kimi K2.5',        price: '$0.6/$3' },
+      { id: 'moonshot/kimi-k2.6',                  shortcut: 'kimi',     label: 'Kimi K2.6',        price: '$0.95/$4' },
+      { id: 'moonshot/kimi-k2.5',                  shortcut: 'kimi-k2.5', label: 'Kimi K2.5 (legacy)', price: '$0.6/$3' },
       { id: 'minimax/minimax-m2.7',                shortcut: 'minimax',  label: 'Minimax M2.7',     price: '$0.3/$1.2' },
     ],
   },

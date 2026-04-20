@@ -86,7 +86,7 @@ Rules:
 export function getExecutorModel(profile: RoutingProfile): string {
   switch (profile) {
     case 'premium':
-      return 'moonshot/kimi-k2.5';           // Medium-tier, reliable execution
+      return 'moonshot/kimi-k2.6';           // Medium-tier, reliable execution (256K ctx, vision + reasoning)
     case 'auto':
     default:
       return 'google/gemini-2.5-flash';      // Cheap, fast, good at instructions

@@ -56,15 +56,15 @@ export interface RoutingResult {
 const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
     primary: 'google/gemini-2.5-flash',
-    fallback: ['moonshot/kimi-k2.5', 'deepseek/deepseek-chat'],
+    fallback: ['moonshot/kimi-k2.6', 'deepseek/deepseek-chat'],
   },
   MEDIUM: {
     primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.4', 'google/gemini-3.1-pro', 'moonshot/kimi-k2.5'],
+    fallback: ['openai/gpt-5.4', 'google/gemini-3.1-pro', 'moonshot/kimi-k2.6'],
   },
   COMPLEX: {
     primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.7', 'moonshot/kimi-k2.5'],
+    fallback: ['openai/gpt-5.4', 'anthropic/claude-opus-4.7', 'moonshot/kimi-k2.6'],
   },
   REASONING: {
     // Opus 4.7: step-change improvement in agentic coding over 4.6 per
@@ -102,7 +102,7 @@ const ECO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
 
 const PREMIUM_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
-    primary: 'moonshot/kimi-k2.5',
+    primary: 'moonshot/kimi-k2.6',
     fallback: ['anthropic/claude-haiku-4.5'],
   },
   MEDIUM: {
