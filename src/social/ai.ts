@@ -7,8 +7,9 @@
  *
  * Key improvements over social-bot:
  *   - Uses Franklin's multi-model router (tier-based: free / cheap / premium)
- *     instead of hardcoded Claude Sonnet for every call — throwaway replies
- *     can run on free NVIDIA models, high-value leads can escalate to Opus.
+ *     instead of hardcoding one model for every call — throwaway replies
+ *     can run on free NVIDIA models, high-value leads can escalate to the
+ *     top tier.
  *   - x402 payment flow handled by ModelClient — no Anthropic billing relationship.
  *   - SKIP detection lives in the caller so we can commit a 'skipped' record
  *     for visibility in stats.

@@ -115,7 +115,7 @@ export function statsCommand(options: StatsOptions): void {
   }
 
   // Savings comparison
-  console.log(chalk.bold('\n  💰 Savings vs Claude Opus\n'));
+  console.log(chalk.bold('\n  💰 Savings vs Opus-tier baseline\n'));
 
   if (opusCost > 0) {
     console.log(

@@ -209,6 +209,26 @@ program
 }
 
 program
+  .command('telemetry [action]')
+  .description('Manage opt-in local telemetry (status|enable|disable|view|summary)')
+  .action(async (action?: string) => {
+    const { telemetryCommand } = await import('./commands/telemetry.js');
+    await telemetryCommand(action);
+  });
+
+program
+  .command('telegram')
+  .description(
+    'Drive Franklin from Telegram (requires TELEGRAM_BOT_TOKEN + TELEGRAM_OWNER_ID env vars)',
+  )
+  .option('-m, --model <model>', 'Model to use (default from config)')
+  .option('--debug', 'Enable debug logging')
+  .action(async (opts: { model?: string; debug?: boolean }) => {
+    const { telegramCommand } = await import('./commands/telegram.js');
+    await telegramCommand(opts);
+  });
+
+program
   .command('migrate')
   .description('Import preferences and MCP servers from existing AI agent configs')
   .action(async () => {

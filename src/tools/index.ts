@@ -17,6 +17,10 @@ import { webFetchCapability, clearSessionState as clearWebFetchSessionState } fr
 import { webSearchCapability } from './websearch.js';
 import { taskCapability } from './task.js';
 import { createImageGenCapability } from './imagegen.js';
+import { createVideoGenCapability } from './videogen.js';
+import { createMusicGenCapability } from './musicgen.js';
+import { memoryRecallCapability } from './memory.js';
+import { exaSearchCapability, exaAnswerCapability, exaReadUrlsCapability } from './exa.js';
 import { askUserCapability } from './askuser.js';
 import { tradingSignalCapability, tradingMarketCapability } from './trading.js';
 import { searchXCapability } from './searchx.js';
@@ -39,7 +43,7 @@ import { loadLibrary as loadContentLibrary, saveLibrary as saveContentLibrary } 
 // (2.5 positions fully loaded), $900 total exposure cap (keep 10% cash buffer).
 // Live prices from CoinGecko; simulated fills at 10 bps. Portfolio persists
 // to ~/.blockrun/portfolio.json across sessions — that persistence is the
-// whole point of this vertical (Claude Code / Cursor cannot carry trading
+// whole point of this vertical (stateless coding agents can't carry trading
 // state between runs).
 const DEFAULT_PORTFOLIO_PATH = path.join(os.homedir(), '.blockrun', 'portfolio.json');
 const DEFAULT_TRADE_LOG_PATH = path.join(os.homedir(), '.blockrun', 'trades.jsonl');
@@ -76,8 +80,8 @@ const defaultTradingCapabilities = buildDefaultTradingCapabilities();
 
 // ─── Default Content Library ──────────────────────────────────────────────
 // Durable content projects at ~/.blockrun/content.json. Like the portfolio,
-// this is persistent cross-session state — something Claude Code structurally
-// cannot offer.
+// this is persistent cross-session state — something stateless coding agents
+// structurally can't offer.
 const DEFAULT_CONTENT_PATH = path.join(os.homedir(), '.blockrun', 'content.json');
 
 // Build a single ContentLibrary instance so both the Content capabilities and
@@ -99,6 +103,16 @@ const defaultContentCapabilities = createContentCapabilities({
 });
 
 const defaultImageGenCapability = createImageGenCapability({
+  library: defaultContentLibrary,
+  onContentChange: persistContentLibrary,
+});
+
+const defaultVideoGenCapability = createVideoGenCapability({
+  library: defaultContentLibrary,
+  onContentChange: persistContentLibrary,
+});
+
+const defaultMusicGenCapability = createMusicGenCapability({
   library: defaultContentLibrary,
   onContentChange: persistContentLibrary,
 });
@@ -126,6 +140,12 @@ export const allCapabilities: CapabilityHandler[] = [
   webSearchCapability,
   taskCapability,
   defaultImageGenCapability,
+  defaultVideoGenCapability,
+  defaultMusicGenCapability,
+  memoryRecallCapability,
+  exaSearchCapability,
+  exaAnswerCapability,
+  exaReadUrlsCapability,
   askUserCapability,
   tradingSignalCapability,
   tradingMarketCapability,

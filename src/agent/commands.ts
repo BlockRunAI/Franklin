@@ -390,7 +390,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
       `**Session Cost**\n` +
       `  Requests: ${stats.totalRequests}\n` +
       `  Cost:     $${stats.totalCostUsd.toFixed(4)} USDC\n` +
-      `  Saved:    $${saved.toFixed(2)} vs Claude Opus\n` +
+      `  Saved:    $${saved.toFixed(2)} vs Opus tier\n` +
       `  Tokens:   ${formatTokens(stats.totalInputTokens)} in / ${formatTokens(stats.totalOutputTokens)} out\n`;
 
     if (breakdown.length > 0) {

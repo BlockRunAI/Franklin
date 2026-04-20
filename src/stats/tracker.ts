@@ -264,7 +264,7 @@ export function getStatsSummary(): {
 } {
   const stats = loadStats();
 
-  // Calculate what it would cost with Claude Opus
+  // Calculate what it would cost with the Opus-tier baseline
   const opusCost =
     (stats.totalInputTokens / 1_000_000) * OPUS_PRICING.input +
     (stats.totalOutputTokens / 1_000_000) * OPUS_PRICING.output;

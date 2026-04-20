@@ -4,5 +4,6 @@ export {
   loadObservations, getEntityObservations, addObservation,
   loadRelations, getEntityRelations, upsertRelation,
   searchEntities, buildEntityContext, getBrainStats,
+  extractMentions,
 } from './store.js';
 export { extractBrainEntities } from './extract.js';

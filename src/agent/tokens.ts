@@ -10,7 +10,8 @@ const DEFAULT_BYTES_PER_TOKEN = 4;
 
 /**
  * Model-specific bytes-per-token ratios for more accurate estimation.
- * Claude tokenizes more efficiently (~3.5 bytes/token), GPT at ~4, Gemini at ~3.
+ * Anthropic-family models tokenize at ~3.5 bytes/token, GPT-family at ~4,
+ * Gemini-family at ~3.
  */
 const MODEL_BYTES_PER_TOKEN: Record<string, number> = {
   'anthropic': 3.5,

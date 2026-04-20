@@ -49,10 +49,10 @@ export interface RoutingResult {
 
 // ─── Tier Model Configs ───
 
-// Agent-first defaults. Claude Sonnet 4.6 is the industry standard for multi-step
-// tool-use agent work; cheap models keep derailing on simple agent loops.
-// Each tier's fallback ends with a cheaper option so payment/quota failures
-// don't strand users on equally expensive alternatives.
+// Agent-first defaults. Sonnet-tier models are the current sweet spot for
+// multi-step tool-use agent work; cheap models keep derailing on simple agent
+// loops. Each tier's fallback ends with a cheaper option so payment/quota
+// failures don't strand users on equally expensive alternatives.
 const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
     primary: 'google/gemini-2.5-flash',
@@ -334,7 +334,7 @@ export function routeRequest(
   // Auto profile bypasses learned routing. The learned Elo scores grow with
   // usage volume rather than pure quality, which biased the router toward
   // cheap/weak models on agentic work. Classic AUTO_TIERS defaults are
-  // agent-tuned (Claude Sonnet as backbone) and more predictable for users.
+  // agent-tuned (Sonnet-tier backbone) and more predictable for users.
   if (profile === 'auto') {
     return classicRouteRequest(prompt, profile);
   }
