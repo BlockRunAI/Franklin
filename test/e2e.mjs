@@ -26,12 +26,12 @@ const TIMEOUT_MS = 90_000; // 90s per test — model calls can be slow
  * Pass a string for a single turn, or an array of strings for multi-turn.
  * Returns { stdout, stderr, exitCode }.
  */
-function runcode(prompt, { cwd, timeoutMs = TIMEOUT_MS } = {}) {
+function runcode(prompt, { cwd, timeoutMs = TIMEOUT_MS, model: modelOverride } = {}) {
   return new Promise((resolve, reject) => {
     const workDir = cwd ?? tmpdir();
     // Default to GLM for better reliability than free-tier models.
-    // Override with E2E_MODEL when needed.
-    const model = process.env.E2E_MODEL || 'zai/glm-5.1';
+    // Override via the per-call `model` option or the E2E_MODEL env var.
+    const model = modelOverride || process.env.E2E_MODEL || 'zai/glm-5.1';
     const proc = spawn('node', [DIST, '--model', model, '--trust'], {
       cwd: workDir,
       env: { ...process.env },
@@ -289,6 +289,128 @@ test('session cost: /cost command shows cost info', { timeout: 60_000 }, async (
     `Expected "Tokens:" in /cost output.\nstderr:\n${stderr}`
   );
 });
+
+// ─── Weak-model polish regression tests ───────────────────────────────────
+// These run against a live weak model (nemotron is free) to verify the
+// polish round: <think> tag stripping, [TOOLCALL] guardrail, streaming
+// markdown sanitization. Use a trivial prompt so the assertions aren't
+// flaky against model creativity.
+
+test('polish: weak model respects instruction without leaking <think> or [TOOLCALL]',
+  { timeout: 90_000 },
+  async (t) => {
+    const result = await runcode(
+      'reply with exactly and only this token: POLISH_PROBE_OK',
+      { model: 'nvidia/nemotron-ultra-253b', timeoutMs: 80_000 },
+    );
+    if (skipIfRateLimited(t, result)) return;
+    assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
+    // Core content landed
+    assert.ok(result.stdout.includes('POLISH_PROBE_OK'),
+      `Expected POLISH_PROBE_OK in output.\nstdout:\n${result.stdout}`);
+    // <think> stripper: no raw tag leakage in rendered stdout
+    assert.ok(!/<think>|<\/think>|<thinking>|<\/thinking>/i.test(result.stdout),
+      `Raw think tags leaked into output:\n${result.stdout}`);
+    // Hallucination guard: no role-played tool-call tokens in final text
+    assert.ok(!/\[TOOLCALL\]|<tool_call>/.test(result.stdout),
+      `Role-played tool-call tokens leaked:\n${result.stdout}`);
+  },
+);
+
+// ─── Paid tool tests — gated behind RUN_PAID_E2E=1 ────────────────────────
+// These tests actually spend USDC on live generation. Default is skipped so
+// `npm run test:e2e` stays free on CI / repeated local runs. Set
+// RUN_PAID_E2E=1 when you explicitly want to verify paid paths end-to-end.
+
+// Exa paid e2e: use Sonnet-tier for deterministic behavior. Weak/default models
+// can hang for minutes after the tool returns before emitting the follow-up
+// narrative; Sonnet wraps up in seconds. Assertions focus on the tool-call log
+// rather than the agent's narrative response, so we're testing the paid x402
+// path end-to-end, not the agent's writing speed.
+const EXA_MODEL = 'anthropic/claude-sonnet-4.6';
+
+test('ExaSearch tool: returns results via BlockRun /v1/exa/search',
+  { timeout: 120_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.01 USDC per run)' : false },
+  async (t) => {
+    const result = await runcode(
+      'Use the ExaSearch tool with query "x402 payment protocol" and numResults: 3. ' +
+      'Report the URL of the top result verbatim so I can verify.',
+      { model: EXA_MODEL, timeoutMs: 110_000 },
+    );
+    if (skipIfRateLimited(t, result)) return;
+    assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
+    const combined = result.stdout + result.stderr;
+    assert.ok(/ExaSearch/.test(combined), `ExaSearch tool call not evident.\n${combined}`);
+    assert.ok(/https?:\/\/\S+/.test(combined), `No URL surfaced.\n${combined}`);
+  },
+);
+
+test('ExaAnswer tool: cited answer via BlockRun /v1/exa/answer',
+  { timeout: 120_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.01 USDC per run)' : false },
+  async (t) => {
+    const result = await runcode(
+      'Use the ExaAnswer tool to answer exactly this question: ' +
+      '"What is the x402 payment protocol?". Report back briefly.',
+      { model: EXA_MODEL, timeoutMs: 110_000 },
+    );
+    if (skipIfRateLimited(t, result)) return;
+    assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
+    const combined = result.stdout + result.stderr;
+    assert.ok(/ExaAnswer/.test(combined), `ExaAnswer tool call not evident.\n${combined}`);
+    // Grounded answer should mention the concept — x402 / payment / HTTP 402
+    assert.ok(/x402|payment|HTTP 402/i.test(result.stdout),
+      `Answer doesn't mention x402/payment — not grounded.\n${result.stdout}`);
+  },
+);
+
+test('ExaReadUrls tool: batch markdown fetch via BlockRun /v1/exa/contents',
+  { timeout: 120_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.002 USDC per URL)' : false },
+  async (t) => {
+    // Use well-known high-traffic pages Exa definitely has indexed.
+    const result = await runcode(
+      'Use the ExaReadUrls tool to fetch this single URL: ["https://en.wikipedia.org/wiki/HTTP_402"]. ' +
+      'Report briefly what the page is about.',
+      { model: EXA_MODEL, timeoutMs: 110_000 },
+    );
+    if (skipIfRateLimited(t, result)) return;
+    assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
+    const combined = result.stdout + result.stderr;
+    assert.ok(/ExaReadUrls/.test(combined), `ExaReadUrls tool call not evident.\n${combined}`);
+    // HTTP 402 Wikipedia page must mention status code or payment concept
+    assert.ok(/402|payment|status code|HTTP/i.test(result.stdout),
+      `Fetched content doesn't mention HTTP 402 / payment.\n${result.stdout}`);
+  },
+);
+
+test('VideoGen tool: generates an MP4 via BlockRun /v1/videos/generations',
+  { timeout: 300_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs ~$0.42 USDC per run)' : false },
+  async (t) => {
+    const testDir = join(tmpdir(), `rc-e2e-videogen-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const outFile = join(testDir, 'probe.mp4');
+
+    try {
+      const result = await runcode(
+        `Use the VideoGen tool with these exact arguments: ` +
+        `prompt="a red apple spinning slowly on a wooden table, daylight", ` +
+        `output_path="${outFile}". ` +
+        `After it finishes, tell me the final file path and file size.`,
+        { cwd: testDir, timeoutMs: 290_000 },
+      );
+      if (skipIfRateLimited(t, result)) return;
+      assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
+      assert.ok(existsSync(outFile), `MP4 file was not created at ${outFile}.\nstdout:\n${result.stdout}`);
+      const size = readFileSync(outFile).byteLength;
+      assert.ok(size > 50_000, `MP4 suspiciously small (${size} bytes) — expected > 50KB for an 8s clip.`);
+      // Sanity: first 4 bytes of an ISO-BMFF container are the size of the
+      // ftyp box, followed by the literal "ftyp" atom at offset 4.
+      const head = readFileSync(outFile).subarray(4, 8).toString('ascii');
+      assert.equal(head, 'ftyp', `File at ${outFile} doesn't start with an ftyp atom — not a valid MP4. Header: ${head}`);
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  },
+);
 
 test('session cost: estimateCost returns non-negative value for known model', { timeout: 5_000 }, async () => {
   const { estimateCost } = await import('../dist/pricing.js');

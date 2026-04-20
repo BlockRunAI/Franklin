@@ -1449,3 +1449,1223 @@ test('streamCompletion payload: non-Anthropic model must not include thinking fi
   const body = await captureRequestBodyForModel('openai/gpt-5.4');
   assert.equal(body.thinking, undefined, 'non-Anthropic must not get thinking flag');
 });
+
+// ─── Image generation → Content cost tracking ────────────────────────────
+
+test('checkImageBudget: greenlights when content exists and projected cost fits', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { checkImageBudget } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'x', budgetUsd: 0.10 });
+  const decision = checkImageBudget(lib, c.id, 'openai/dall-e-3', '1024x1024');
+  assert.equal(decision.ok, true);
+});
+
+test('checkImageBudget: refuses up-front when projected cost exceeds remaining budget', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { checkImageBudget } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'x', budgetUsd: 0.03 });
+  // dall-e-3 standard costs $0.04; refuse BEFORE paying.
+  const decision = checkImageBudget(lib, c.id, 'openai/dall-e-3', '1024x1024');
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /budget/i);
+});
+
+test('checkImageBudget: unknown content id refuses without throwing', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { checkImageBudget } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const decision = checkImageBudget(lib, 'does-not-exist', 'openai/dall-e-3', '1024x1024');
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /not found/i);
+});
+
+test('recordImageAsset: attaches generated image as an asset with estimated cost', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { recordImageAsset } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'Hero', budgetUsd: 1 });
+
+  const decision = recordImageAsset(lib, {
+    contentId: c.id,
+    imagePath: '/tmp/hero.png',
+    model: 'openai/dall-e-3',
+    size: '1024x1024',
+  });
+
+  assert.equal(decision.ok, true);
+  assert.equal(decision.costUsd, 0.04);
+  const after = lib.get(c.id);
+  assert.equal(after?.assets.length, 1);
+  assert.equal(after?.assets[0].kind, 'image');
+  assert.equal(after?.assets[0].source, 'openai/dall-e-3');
+  assert.equal(after?.assets[0].costUsd, 0.04);
+  assert.equal(after?.assets[0].data, '/tmp/hero.png');
+  assert.equal(after?.spentUsd, 0.04);
+});
+
+test('recordImageAsset: unknown content id returns { ok: false } without throwing', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { recordImageAsset } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const decision = recordImageAsset(lib, {
+    contentId: 'missing',
+    imagePath: '/tmp/x.png',
+    model: 'openai/dall-e-3',
+    size: '1024x1024',
+  });
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /not found/i);
+});
+
+test('recordImageAsset: budget refusal surfaces reason so caller can report it', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { recordImageAsset } = await import('../dist/content/record-image.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'image', title: 'Banner', budgetUsd: 0.03 });
+
+  const decision = recordImageAsset(lib, {
+    contentId: c.id,
+    imagePath: '/tmp/banner.png',
+    model: 'openai/dall-e-3', // $0.04 > $0.03 budget
+    size: '1024x1024',
+  });
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /budget/i);
+  assert.equal(lib.get(c.id)?.assets.length, 0, 'rejected asset must not persist');
+});
+
+test('estimateImageCostUsd: dall-e-3 standard 1024x1024 is $0.04', async () => {
+  const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
+  assert.equal(estimateImageCostUsd('openai/dall-e-3', '1024x1024'), 0.04);
+});
+
+test('estimateImageCostUsd: dall-e-3 wide/tall formats are $0.08', async () => {
+  const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
+  assert.equal(estimateImageCostUsd('openai/dall-e-3', '1792x1024'), 0.08);
+  assert.equal(estimateImageCostUsd('openai/dall-e-3', '1024x1792'), 0.08);
+});
+
+test('estimateImageCostUsd: gpt-image-1 1024x1024 is $0.042', async () => {
+  const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
+  assert.equal(estimateImageCostUsd('openai/gpt-image-1', '1024x1024'), 0.042);
+});
+
+test('estimateImageCostUsd: unknown model returns 0 (free model, no surprise charge in the report)', async () => {
+  const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
+  assert.equal(estimateImageCostUsd('who/knows', '1024x1024'), 0);
+});
+
+// ─── Content generation vertical ──────────────────────────────────────────
+
+test('ContentLibrary: create() produces a Content with generated id, budget, timestamps, empty drafts/assets', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'x-thread', title: 'x402 launch thread', budgetUsd: 5 });
+
+  assert.ok(c.id, 'id should be generated');
+  assert.equal(c.type, 'x-thread');
+  assert.equal(c.title, 'x402 launch thread');
+  assert.equal(c.budgetUsd, 5);
+  assert.equal(c.spentUsd, 0);
+  assert.equal(c.status, 'outline', 'new content starts in outline status');
+  assert.deepEqual(c.assets, []);
+  assert.deepEqual(c.drafts, []);
+  assert.ok(c.createdAt > 0);
+  assert.equal(c.publishedAt, undefined);
+});
+
+test('ContentLibrary: get() returns created content; unknown id returns undefined', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'AEA manifesto', budgetUsd: 20 });
+  assert.equal(lib.get(c.id)?.title, 'AEA manifesto');
+  assert.equal(lib.get('never-created'), undefined);
+});
+
+test('createContentCapabilities: ContentCreate returns the new content id and fields', async () => {
+  const { createContentCapabilities } = await import('../dist/tools/content-execute.js');
+  const { ContentLibrary } = await import('../dist/content/library.js');
+
+  const lib = new ContentLibrary();
+  const caps = createContentCapabilities({ library: lib });
+  const createCap = caps.find((c) => c.spec.name === 'ContentCreate');
+  assert.ok(createCap);
+
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+  const result = await createCap.execute(
+    { type: 'x-thread', title: 'Franklin launch', budgetUsd: 3 },
+    ctx,
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.output, /Franklin launch/);
+  assert.match(result.output, /\$3\.00/);
+  assert.equal(lib.list().length, 1);
+});
+
+test('createContentCapabilities: ContentAddAsset records spend and surfaces budget refusals as normal text', async () => {
+  const { createContentCapabilities } = await import('../dist/tools/content-execute.js');
+  const { ContentLibrary } = await import('../dist/content/library.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'image', title: 'Banner', budgetUsd: 0.05 });
+  const caps = createContentCapabilities({ library: lib });
+  const addCap = caps.find((c) => c.spec.name === 'ContentAddAsset');
+  assert.ok(addCap);
+
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  const ok = await addCap.execute(
+    { id: c.id, kind: 'image', source: 'openai/dall-e-3', costUsd: 0.04 },
+    ctx,
+  );
+  assert.equal(ok.isError, undefined);
+  assert.match(ok.output, /Asset recorded/i);
+
+  const blocked = await addCap.execute(
+    { id: c.id, kind: 'image', source: 'openai/dall-e-3', costUsd: 0.04 },
+    ctx,
+  );
+  // Budget refusal is NOT an agent error — the agent should read the
+  // reason and pick a cheaper model, not trigger retry/recovery.
+  assert.equal(blocked.isError, undefined);
+  assert.match(blocked.output, /budget/i);
+  assert.equal(lib.get(c.id)?.assets.length, 1, 'rejected asset must not persist');
+});
+
+test('createContentCapabilities: ContentShow and ContentList produce useful markdown', async () => {
+  const { createContentCapabilities } = await import('../dist/tools/content-execute.js');
+  const { ContentLibrary } = await import('../dist/content/library.js');
+
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'AEA essay', budgetUsd: 5 });
+  lib.addAsset(c.id, { kind: 'image', source: 'openai/dall-e-3', costUsd: 0.04 });
+
+  const caps = createContentCapabilities({ library: lib });
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  const show = await caps.find((c) => c.spec.name === 'ContentShow').execute({ id: c.id }, ctx);
+  assert.equal(show.isError, undefined);
+  assert.match(show.output, /AEA essay/);
+  assert.match(show.output, /dall-e-3/);
+  assert.match(show.output, /\$0\.04/);
+  assert.match(show.output, /\$5\.00/);
+
+  const list = await caps.find((c) => c.spec.name === 'ContentList').execute({}, ctx);
+  assert.equal(list.isError, undefined);
+  assert.match(list.output, /AEA essay/);
+});
+
+test('content store: save + load roundtrips every field including assets and spend', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const { saveLibrary, loadLibrary } = await import('../dist/content/store.js');
+  const tmpFile = join(tmpdir(), `franklin-content-${Date.now()}.json`);
+
+  try {
+    const lib = new ContentLibrary();
+    const c = lib.create({ type: 'podcast', title: 'Ep. 1', budgetUsd: 10 });
+    lib.addAsset(c.id, { kind: 'audio', source: 'suno-v4', costUsd: 0.5 });
+    saveLibrary(lib, tmpFile);
+
+    const restored = loadLibrary(tmpFile);
+    assert.ok(restored);
+    const list = restored.list();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, c.id);
+    assert.equal(list[0].title, 'Ep. 1');
+    assert.equal(list[0].assets.length, 1);
+    assert.equal(list[0].assets[0].source, 'suno-v4');
+    assert.equal(list[0].spentUsd, 0.5);
+    assert.equal(list[0].budgetUsd, 10);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
+test('content store: loadLibrary returns null when file does not exist', async () => {
+  const { loadLibrary } = await import('../dist/content/store.js');
+  const missing = join(tmpdir(), `franklin-content-missing-${Date.now()}.json`);
+  assert.equal(loadLibrary(missing), null);
+});
+
+test('ContentLibrary: addAsset within budget records the asset and increments spend', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'blog', title: 'Hero image test', budgetUsd: 5 });
+
+  const decision = lib.addAsset(c.id, {
+    kind: 'image',
+    source: 'openai/dall-e-3',
+    costUsd: 0.04,
+    data: 'https://example.com/hero.png',
+  });
+  assert.equal(decision.ok, true);
+
+  const after = lib.get(c.id);
+  assert.equal(after?.assets.length, 1);
+  assert.equal(after?.assets[0].source, 'openai/dall-e-3');
+  assert.equal(after?.spentUsd, 0.04);
+});
+
+test('ContentLibrary: addAsset over budget is rejected and leaves content unchanged', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const c = lib.create({ type: 'image', title: 'Banner', budgetUsd: 0.05 });
+
+  // First asset fits.
+  lib.addAsset(c.id, { kind: 'image', source: 'openai/dall-e-3', costUsd: 0.04 });
+  // Second asset would overshoot.
+  const decision = lib.addAsset(c.id, { kind: 'image', source: 'openai/dall-e-3', costUsd: 0.04 });
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /budget/i);
+
+  const after = lib.get(c.id);
+  assert.equal(after?.assets.length, 1, 'rejected asset must not be recorded');
+  assert.equal(after?.spentUsd, 0.04, 'spent must not increment on rejection');
+});
+
+test('ContentLibrary: addAsset on unknown id is rejected cleanly', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const decision = lib.addAsset('does-not-exist', { kind: 'image', source: 'x', costUsd: 0 });
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? '', /not found/i);
+});
+
+test('ContentLibrary: list() returns all contents newest-first', async () => {
+  const { ContentLibrary } = await import('../dist/content/library.js');
+  const lib = new ContentLibrary();
+  const a = lib.create({ type: 'blog', title: 'A', budgetUsd: 10 });
+  // Ensure distinct timestamps regardless of Date.now() resolution.
+  await new Promise((r) => setTimeout(r, 2));
+  const b = lib.create({ type: 'blog', title: 'B', budgetUsd: 10 });
+
+  const listed = lib.list();
+  assert.equal(listed.length, 2);
+  assert.equal(listed[0].id, b.id, 'list should be newest-first');
+  assert.equal(listed[1].id, a.id);
+});
+
+// ─── Trading execution MVP ────────────────────────────────────────────────
+
+test('Portfolio: buy fill into empty portfolio opens a position and debits cash', async () => {
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const pf = new Portfolio({ startingCashUsd: 1000 });
+  pf.applyFill({ symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000, feeUsd: 0.5 });
+
+  assert.equal(pf.cashUsd, 1000 - 0.01 * 70_000 - 0.5);
+  const pos = pf.getPosition('BTC');
+  assert.ok(pos, 'BTC position should exist');
+  assert.equal(pos.qty, 0.01);
+  assert.equal(pos.avgPriceUsd, 70_000);
+});
+
+test('Portfolio: sell closing at higher price realizes positive P&L', async () => {
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const pf = new Portfolio({ startingCashUsd: 1000 });
+  pf.applyFill({ symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000 });
+  pf.applyFill({ symbol: 'BTC', side: 'sell', qty: 0.01, priceUsd: 72_000 });
+
+  // Cash: 1000 - 700 (buy) + 720 (sell) = 1020 → realized gain of 20.
+  assert.equal(pf.cashUsd, 1020);
+  assert.equal(pf.getPosition('BTC'), undefined, 'position should be closed');
+  assert.equal(pf.realizedPnlUsd, 20);
+});
+
+test('Portfolio: sell more than held throws', async () => {
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const pf = new Portfolio({ startingCashUsd: 1000 });
+  pf.applyFill({ symbol: 'BTC', side: 'buy', qty: 0.005, priceUsd: 70_000 });
+  assert.throws(
+    () => pf.applyFill({ symbol: 'BTC', side: 'sell', qty: 0.01, priceUsd: 72_000 }),
+    /only 0\.005/,
+  );
+});
+
+test('RiskEngine: rejects buy order exceeding per-position cap', async () => {
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const pf = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 200, maxTotalExposureUsd: 800 });
+
+  const decision = risk.check(pf, { symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000 });
+  assert.equal(decision.allowed, false);
+  assert.match(decision.reason ?? '', /position cap/i);
+});
+
+test('RiskEngine: allows order sized within position cap and remaining cash', async () => {
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const pf = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 200, maxTotalExposureUsd: 800 });
+
+  const decision = risk.check(pf, { symbol: 'BTC', side: 'buy', qty: 0.002, priceUsd: 70_000 });
+  assert.equal(decision.allowed, true, decision.reason);
+});
+
+test('RiskEngine: rejects buy when cumulative exposure would exceed total cap', async () => {
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const pf = new Portfolio({ startingCashUsd: 1000 });
+  pf.applyFill({ symbol: 'ETH', side: 'buy', qty: 0.15, priceUsd: 3_500 }); // 525 exposure
+  pf.applyFill({ symbol: 'SOL', side: 'buy', qty: 1, priceUsd: 150 });      // 150 exposure
+  const risk = new RiskEngine({ maxPositionUsd: 300, maxTotalExposureUsd: 800 });
+
+  // Proposed BTC buy of 0.003 * 70000 = 210 would push total to 525+150+210 = 885 > 800 cap
+  const decision = risk.check(pf, { symbol: 'BTC', side: 'buy', qty: 0.003, priceUsd: 70_000 });
+  assert.equal(decision.allowed, false);
+  assert.match(decision.reason ?? '', /total exposure/i);
+});
+
+test('RiskEngine: rejects buy that exceeds available cash regardless of caps', async () => {
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const pf = new Portfolio({ startingCashUsd: 100 });
+  const risk = new RiskEngine({ maxPositionUsd: 10_000, maxTotalExposureUsd: 10_000 });
+
+  const decision = risk.check(pf, { symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000 });
+  assert.equal(decision.allowed, false);
+  assert.match(decision.reason ?? '', /insufficient cash/i);
+});
+
+test('RiskEngine: sell is allowed even when caps are exceeded, as long as position exists', async () => {
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const pf = new Portfolio({ startingCashUsd: 1000 });
+  pf.applyFill({ symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000 });
+  const risk = new RiskEngine({ maxPositionUsd: 1, maxTotalExposureUsd: 1 }); // paranoid caps
+
+  const decision = risk.check(pf, { symbol: 'BTC', side: 'sell', qty: 0.01, priceUsd: 72_000 });
+  assert.equal(decision.allowed, true, 'exits should not be blocked by exposure caps');
+});
+
+test('createTradingCapabilities: TradingHistory reports last N trades and windowed realized P&L', async () => {
+  const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+  const { TradeLog } = await import('../dist/trading/trade-log.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 500, maxTotalExposureUsd: 800 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  const tmpFile = join(tmpdir(), `franklin-history-${Date.now()}.jsonl`);
+  try {
+    const tradeLog = new TradeLog(tmpFile);
+    // Seed the log with two prior trades (from a previous "session").
+    const now = Date.now();
+    tradeLog.append({ timestamp: now - 10 * 86400_000, symbol: 'BTC', side: 'buy',  qty: 0.01, priceUsd: 70000, feeUsd: 0, realizedPnlUsd: 0 });
+    tradeLog.append({ timestamp: now - 10 * 86400_000, symbol: 'BTC', side: 'sell', qty: 0.01, priceUsd: 72000, feeUsd: 0, realizedPnlUsd: 20 });
+    tradeLog.append({ timestamp: now - 1 * 3600_000,   symbol: 'ETH', side: 'buy',  qty: 0.1,  priceUsd: 3500,  feeUsd: 0, realizedPnlUsd: 0 });
+    tradeLog.append({ timestamp: now - 1 * 3600_000,   symbol: 'ETH', side: 'sell', qty: 0.1,  priceUsd: 3400,  feeUsd: 0, realizedPnlUsd: -10 });
+
+    const caps = createTradingCapabilities({ engine, tradeLog });
+    const historyCap = caps.find((c) => c.spec.name === 'TradingHistory');
+    assert.ok(historyCap, 'TradingHistory capability must be registered');
+
+    const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+    const result = await historyCap.execute({ window: '24h', limit: 10 }, ctx);
+    assert.equal(result.isError, undefined);
+    // Should include the two ETH trades (within 24h) but not the BTC ones (10d ago).
+    assert.match(result.output, /ETH/);
+    assert.match(result.output, /-\$10/, 'should show the -$10 realized loss in the 24h window');
+    // 24h P&L is just the one -10 realized entry.
+    assert.match(result.output, /24h P&L.*-\$10/);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
+test('modelHasExtendedThinking: Opus 4.7 is excluded (adaptive thinking), 4.6 still included', async () => {
+  const { modelHasExtendedThinking } = await import('../dist/agent/llm.js');
+
+  // Opus 4.7 uses adaptive thinking; sending `thinking:{type:"enabled"}` 400s.
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4.7'), false);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4-7'), false);
+
+  // Earlier Opus + Sonnet variants still accept the extended-thinking flag.
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4.6'), true);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4-6'), true);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-sonnet-4.6'), true);
+  assert.equal(modelHasExtendedThinking('anthropic/claude-sonnet-4-6'), true);
+
+  // Unknown / non-Anthropic models: false (default safe).
+  assert.equal(modelHasExtendedThinking('anthropic/claude-future-5.0'), false);
+  assert.equal(modelHasExtendedThinking('openai/gpt-5.4'), false);
+});
+
+test('TradeLog: append writes one JSONL line per trade; recent(n) returns newest N', async () => {
+  const { TradeLog } = await import('../dist/trading/trade-log.js');
+  const tmpFile = join(tmpdir(), `franklin-trades-${Date.now()}.jsonl`);
+
+  try {
+    const log = new TradeLog(tmpFile);
+    log.append({
+      timestamp: 1_000,
+      symbol: 'BTC',
+      side: 'buy',
+      qty: 0.01,
+      priceUsd: 70_000,
+      feeUsd: 0.5,
+      realizedPnlUsd: 0,
+    });
+    log.append({
+      timestamp: 2_000,
+      symbol: 'BTC',
+      side: 'sell',
+      qty: 0.01,
+      priceUsd: 72_000,
+      feeUsd: 0.5,
+      realizedPnlUsd: 20,
+    });
+
+    const recent = log.recent(5);
+    assert.equal(recent.length, 2);
+    assert.equal(recent[0].timestamp, 2_000, 'recent should be newest-first');
+    assert.equal(recent[1].timestamp, 1_000);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
+test('TradeLog: cumulative realized P&L across entries since a timestamp', async () => {
+  const { TradeLog } = await import('../dist/trading/trade-log.js');
+  const tmpFile = join(tmpdir(), `franklin-trades-cum-${Date.now()}.jsonl`);
+
+  try {
+    const log = new TradeLog(tmpFile);
+    log.append({ timestamp: 1_000, symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000, feeUsd: 0, realizedPnlUsd: 0 });
+    log.append({ timestamp: 2_000, symbol: 'BTC', side: 'sell', qty: 0.01, priceUsd: 72_000, feeUsd: 0, realizedPnlUsd: 20 });
+    log.append({ timestamp: 3_000, symbol: 'ETH', side: 'buy', qty: 0.1, priceUsd: 3_500, feeUsd: 0, realizedPnlUsd: 0 });
+    log.append({ timestamp: 4_000, symbol: 'ETH', side: 'sell', qty: 0.1, priceUsd: 3_400, feeUsd: 0, realizedPnlUsd: -10 });
+
+    // Last three entries sum: 0 + 0 + -10 = -10
+    assert.equal(log.realizedSince(1_500), 10);
+    // All four sum: 0 + 20 + 0 + -10 = 10
+    assert.equal(log.realizedSince(0), 10);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
+test('TradeLog: recovers gracefully from a corrupt line (skips it, keeps the rest)', async () => {
+  const { TradeLog } = await import('../dist/trading/trade-log.js');
+  const tmpFile = join(tmpdir(), `franklin-trades-corrupt-${Date.now()}.jsonl`);
+
+  try {
+    writeFileSync(
+      tmpFile,
+      '{"timestamp":1000,"symbol":"BTC","side":"buy","qty":0.01,"priceUsd":70000,"feeUsd":0,"realizedPnlUsd":0}\n' +
+        '{this is not valid json\n' +
+        '{"timestamp":2000,"symbol":"BTC","side":"sell","qty":0.01,"priceUsd":72000,"feeUsd":0,"realizedPnlUsd":20}\n',
+    );
+    const log = new TradeLog(tmpFile);
+    const recent = log.recent(10);
+    assert.equal(recent.length, 2, 'corrupt line should be skipped, not crash');
+    assert.equal(recent[0].timestamp, 2_000);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
+test('LiveExchange: getPrice delegates to injected pricing client and returns numeric price', async () => {
+  const { LiveExchange } = await import('../dist/trading/live-exchange.js');
+  const pricingClient = {
+    async getPrice(ticker) {
+      if (ticker === 'BTC') return { price: 71_234.5, change24h: 0, volume24h: 0, marketCap: 0 };
+      return 'unknown ticker'; // data.ts returns string on error
+    },
+  };
+  const ex = new LiveExchange({ pricing: pricingClient, feeBps: 10 });
+  assert.equal(await ex.getPrice('BTC'), 71_234.5);
+  assert.equal(await ex.getPrice('XYZ'), null, 'unknown ticker returns null, not throw');
+});
+
+test('LiveExchange: placeOrder charges fee on notional and echoes price', async () => {
+  const { LiveExchange } = await import('../dist/trading/live-exchange.js');
+  const pricingClient = { async getPrice() { return 'not used for placeOrder'; } };
+  const ex = new LiveExchange({ pricing: pricingClient, feeBps: 15 }); // 0.15%
+  const fill = await ex.placeOrder({ symbol: 'BTC', side: 'buy', qty: 0.005, priceUsd: 70_000 });
+  // Fee: 0.005 * 70000 * 0.0015 = 0.525
+  assert.equal(fill.feeUsd, 0.525);
+  assert.equal(fill.priceUsd, 70_000);
+});
+
+test('createTradingCapabilities: TradingPortfolio reports cash, positions, and P&L in markdown', async () => {
+  const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 500, maxTotalExposureUsd: 800 });
+  const exchange = new MockExchange({ prices: { BTC: 72_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  await engine.openPosition({ symbol: 'BTC', qty: 0.005, priceUsd: 70_000 });
+
+  const caps = createTradingCapabilities({ engine });
+  const portfolioCap = caps.find((c) => c.spec.name === 'TradingPortfolio');
+  assert.ok(portfolioCap, 'TradingPortfolio capability must be registered');
+
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+  const result = await portfolioCap.execute({}, ctx);
+  assert.equal(result.isError, undefined);
+  assert.match(result.output, /BTC/, 'should list the BTC position');
+  assert.match(result.output, /Cash/i);
+  assert.match(result.output, /Equity/i);
+});
+
+test('createTradingCapabilities: TradingOpenPosition routes through risk + exchange + portfolio', async () => {
+  const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 500, maxTotalExposureUsd: 800 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  const caps = createTradingCapabilities({ engine });
+  const openCap = caps.find((c) => c.spec.name === 'TradingOpenPosition');
+  assert.ok(openCap);
+
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+  const result = await openCap.execute(
+    { symbol: 'BTC', qty: 0.002, priceUsd: 70_000 },
+    ctx,
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.output, /filled/i);
+  assert.equal(portfolio.getPosition('BTC')?.qty, 0.002);
+});
+
+test('createTradingCapabilities: TradingOpenPosition surfaces risk-block reason as a normal output', async () => {
+  const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  // Paranoid caps so even a small order is blocked.
+  const risk = new RiskEngine({ maxPositionUsd: 50, maxTotalExposureUsd: 50 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  const caps = createTradingCapabilities({ engine });
+  const openCap = caps.find((c) => c.spec.name === 'TradingOpenPosition');
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+  const result = await openCap.execute(
+    { symbol: 'BTC', qty: 0.01, priceUsd: 70_000 },
+    ctx,
+  );
+
+  // Blocked is not an agent error — it's a correct decision the agent
+  // needs to see and react to. Surfacing this as `isError: true` would
+  // trigger Franklin's retry/recovery paths, which is wrong.
+  assert.equal(result.isError, undefined, 'risk blocks are informational, not errors');
+  assert.match(result.output, /blocked/i);
+  assert.match(result.output, /cap/i);
+  assert.equal(portfolio.cashUsd, 1000, 'blocked order must not debit cash');
+});
+
+test('createTradingCapabilities: TradingClosePosition is a noop on missing symbol', async () => {
+  const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 500, maxTotalExposureUsd: 800 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  const caps = createTradingCapabilities({ engine });
+  const closeCap = caps.find((c) => c.spec.name === 'TradingClosePosition');
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+  const result = await closeCap.execute({ symbol: 'DOGE' }, ctx);
+  assert.equal(result.isError, undefined);
+  assert.match(result.output, /No open DOGE position/i);
+});
+
+test('TradingEngine: executes a compliant order through risk → exchange → portfolio', async () => {
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 300, maxTotalExposureUsd: 600 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  const outcome = await engine.openPosition({ symbol: 'BTC', qty: 0.002, priceUsd: 70_000 });
+  assert.equal(outcome.status, 'filled');
+  assert.equal(portfolio.getPosition('BTC')?.qty, 0.002);
+  // Cash debited by notional 140 + fee 0.14 = 140.14
+  assert.ok(Math.abs(portfolio.cashUsd - (1000 - 140.14)) < 1e-9);
+});
+
+test('TradingEngine: blocks order that violates risk and does NOT touch the exchange', async () => {
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+
+  let placed = 0;
+  const fakeExchange = {
+    async placeOrder() { placed++; throw new Error('should never be called'); },
+    async getPrice() { return null; },
+  };
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 50, maxTotalExposureUsd: 50 });
+  const engine = new TradingEngine({ portfolio, risk, exchange: fakeExchange });
+
+  const outcome = await engine.openPosition({ symbol: 'BTC', qty: 0.01, priceUsd: 70_000 });
+  assert.equal(outcome.status, 'blocked');
+  assert.match(outcome.reason ?? '', /position cap/i);
+  assert.equal(placed, 0, 'exchange must not be called when risk blocks the trade');
+  assert.equal(portfolio.cashUsd, 1000, 'portfolio must be untouched on block');
+});
+
+test('TradingEngine: closePosition liquidates an open position and realizes P&L', async () => {
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+
+  const portfolio = new Portfolio({ startingCashUsd: 1000 });
+  const risk = new RiskEngine({ maxPositionUsd: 300, maxTotalExposureUsd: 600 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+
+  await engine.openPosition({ symbol: 'BTC', qty: 0.002, priceUsd: 70_000 });
+  exchange.setPrice('BTC', 72_000);
+  const outcome = await engine.closePosition({ symbol: 'BTC' });
+
+  assert.equal(outcome.status, 'filled');
+  assert.equal(portfolio.getPosition('BTC'), undefined);
+  // Buy: 0.002 * 70000 + fee(0.14) = 140.14 debit
+  // Sell: 0.002 * 72000 - fee(0.144) = 143.856 credit
+  // Net cash: 1000 - 140.14 + 143.856 = 1003.716
+  assert.ok(Math.abs(portfolio.cashUsd - 1003.716) < 1e-6);
+  assert.ok(portfolio.realizedPnlUsd > 0, 'should realize positive P&L at higher exit price');
+});
+
+test('portfolio store: save + load roundtrips cash, positions, realized P&L', async () => {
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { savePortfolio, loadPortfolio } = await import('../dist/trading/store.js');
+
+  const tmpFile = join(tmpdir(), `franklin-portfolio-${Date.now()}.json`);
+
+  try {
+    const pf = new Portfolio({ startingCashUsd: 1000 });
+    pf.applyFill({ symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000, feeUsd: 0.5 });
+    pf.applyFill({ symbol: 'ETH', side: 'buy', qty: 0.1, priceUsd: 3_500 });
+    savePortfolio(pf, tmpFile);
+
+    const restored = loadPortfolio(tmpFile);
+    assert.ok(restored, 'loadPortfolio must return something');
+    assert.equal(restored.cashUsd, pf.cashUsd);
+    assert.equal(restored.realizedPnlUsd, pf.realizedPnlUsd);
+    assert.equal(restored.getPosition('BTC')?.qty, 0.01);
+    assert.equal(restored.getPosition('ETH')?.qty, 0.1);
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+});
+
+test('portfolio store: loadPortfolio returns null when file does not exist', async () => {
+  const { loadPortfolio } = await import('../dist/trading/store.js');
+  const missing = join(tmpdir(), `franklin-portfolio-missing-${Date.now()}.json`);
+  assert.equal(loadPortfolio(missing), null);
+});
+
+test('MockExchange: fills at the provided price with configured fee bps', async () => {
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+  const ex = new MockExchange({
+    prices: { BTC: 70_000 },
+    feeBps: 10, // 0.1% taker fee
+  });
+
+  const fill = await ex.placeOrder({ symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000 });
+  assert.equal(fill.symbol, 'BTC');
+  assert.equal(fill.qty, 0.01);
+  assert.equal(fill.priceUsd, 70_000);
+  // Fee: 0.01 * 70000 * 0.001 = 0.7
+  assert.equal(fill.feeUsd, 0.7);
+});
+
+test('MockExchange: rejects order when price table has no quote for symbol', async () => {
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+  const ex = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 10 });
+
+  await assert.rejects(
+    () => ex.placeOrder({ symbol: 'DOGE', side: 'buy', qty: 10, priceUsd: 0.2 }),
+    /no quote for DOGE/i,
+  );
+});
+
+test('Portfolio: markToMarket computes unrealized P&L against live price', async () => {
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const pf = new Portfolio({ startingCashUsd: 1000 });
+  pf.applyFill({ symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000 });
+  pf.applyFill({ symbol: 'ETH', side: 'buy', qty: 0.1, priceUsd: 3_500 });
+
+  const snap = pf.markToMarket({ BTC: 72_000, ETH: 3_400 });
+  // BTC: 0.01 * (72000 - 70000) = +20; ETH: 0.1 * (3400 - 3500) = -10
+  assert.equal(snap.unrealizedPnlUsd, 10);
+  assert.equal(snap.equityUsd, pf.cashUsd + 0.01 * 72_000 + 0.1 * 3_400);
+});
+
+test('projectCompactionSavings: skips compaction when history is mostly kept', async () => {
+  const { projectCompactionSavings } = await import('../dist/agent/compact.js');
+
+  // Short history — findKeepBoundary keeps all or nearly all of it, so
+  // summarizing saves little and ROI should say "not worth it".
+  const shortHistory = [
+    { role: 'user', content: 'hello' },
+    { role: 'assistant', content: 'hi there' },
+    { role: 'user', content: 'what is 2+2?' },
+    { role: 'assistant', content: '4' },
+    { role: 'user', content: 'and 3+3?' },
+    { role: 'assistant', content: '6' },
+  ];
+
+  const roi = projectCompactionSavings(shortHistory);
+  assert.equal(roi.worthIt, false, 'tiny history should not trigger compaction');
+  // Projected size is at least the ~4k summary floor.
+  assert.ok(roi.projectedTokens >= 4_000, `projectedTokens=${roi.projectedTokens} should include summary floor`);
+});
+
+test('projectCompactionSavings: greenlights compaction when old payload dominates', async () => {
+  const { projectCompactionSavings } = await import('../dist/agent/compact.js');
+
+  // Build a history where the first N messages are enormous and the last
+  // few are tiny. findKeepBoundary keeps the tail (small); the head is the
+  // huge payload that compaction actually eliminates.
+  const bulk = 'x'.repeat(400_000); // ~100k tokens-ish at 4 bytes/token
+  const history = [];
+  for (let i = 0; i < 15; i++) {
+    history.push({ role: 'user', content: `${bulk} question ${i}` });
+    history.push({ role: 'assistant', content: `${bulk} answer ${i}` });
+  }
+  // Tail: a handful of short messages that will survive as the kept window.
+  for (let i = 0; i < 6; i++) {
+    history.push({ role: 'user', content: 'tiny' });
+    history.push({ role: 'assistant', content: 'ok' });
+  }
+
+  const roi = projectCompactionSavings(history);
+  assert.equal(roi.worthIt, true, 'bulk-old history should greenlight compaction');
+  assert.ok(
+    roi.savings > roi.floor,
+    `expected savings (${roi.savings}) > floor (${roi.floor})`,
+  );
+});
+
+test('telemetry: opt-in gate defaults to disabled, toggles, never exposes content', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const os = await import('node:os');
+
+  // Point BLOCKRUN_DIR at a tempdir by manipulating env before import
+  const fakeHome = mkdtempSync(join(os.tmpdir(), 'rc-telemetry-'));
+  process.env.HOME = fakeHome;
+  // BLOCKRUN_DIR is computed at import time, so we can't re-home the already-
+  // loaded config. Instead test the module's behavior via its exported paths.
+  const {
+    isTelemetryEnabled, setTelemetryEnabled, readConsent,
+    sessionMetaToRecord, getOrCreateInstallId,
+  } = await import('../dist/telemetry/store.js');
+
+  // Record projection rule: no content, only counts + identifiers
+  const record = sessionMetaToRecord(
+    {
+      id: 'session-x',
+      model: 'anthropic/claude-sonnet-4.6',
+      workDir: '/tmp/whatever',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      turnCount: 5,
+      messageCount: 12,
+      inputTokens: 1000,
+      outputTokens: 500,
+      costUsd: 0.05,
+      savedVsOpusUsd: 0.12,
+      toolCallCounts: { Read: 3, Write: 1, Bash: 2 },
+    },
+    'fake-install-id',
+    'base',
+  );
+
+  // Required sanitization properties:
+  assert.equal(record.installId, 'fake-install-id');
+  assert.equal(record.version.match(/^\d+\.\d+\.\d+/) !== null, true, 'must have a version string');
+  assert.equal(record.turns, 5);
+  assert.equal(record.costUsd, 0.05);
+  assert.deepEqual(record.toolCallCounts, { Read: 3, Write: 1, Bash: 2 });
+  assert.equal(record.driver, 'cli', 'default driver must be cli when no channel');
+
+  // No PII / content leakage — these field names must never appear on a record
+  const forbidden = ['workDir', 'content', 'input', 'output', 'prompt', 'text', 'walletAddress', 'address', 'privateKey', 'key'];
+  const json = JSON.stringify(record);
+  for (const f of forbidden) {
+    assert.ok(!new RegExp(`"${f}"`, 'i').test(json),
+      `Record must not expose "${f}" field. Got:\n${json}`);
+  }
+
+  // Telegram channel driver passes through
+  const tg = sessionMetaToRecord(
+    {
+      id: 'session-y',
+      model: 'anthropic/claude-sonnet-4.6',
+      workDir: '/tmp',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      turnCount: 1,
+      messageCount: 2,
+      channel: 'telegram:12345',
+    },
+    'fake-install-id',
+    'base',
+  );
+  assert.equal(tg.driver, 'telegram:12345');
+
+  // Install id is a uuid-ish string when created
+  const id1 = getOrCreateInstallId();
+  const id2 = getOrCreateInstallId();
+  assert.equal(id1, id2, 'install id must be stable across calls');
+  assert.ok(id1.length >= 16, 'install id must look like a uuid');
+
+  // cleanup
+  rmSync(fakeHome, { recursive: true, force: true });
+});
+
+test('Exa capabilities (Search/Answer/ReadUrls) register with right shape', async () => {
+  const tools = await import('../dist/tools/index.js');
+  const names = tools.allCapabilities.map(c => c.spec?.name);
+  for (const n of ['ExaSearch', 'ExaAnswer', 'ExaReadUrls']) {
+    assert.ok(names.includes(n), `${n} must be registered`);
+  }
+  const search = tools.allCapabilities.find(c => c.spec?.name === 'ExaSearch');
+  assert.deepEqual(search.spec.input_schema.required, ['query']);
+  const answer = tools.allCapabilities.find(c => c.spec?.name === 'ExaAnswer');
+  assert.deepEqual(answer.spec.input_schema.required, ['query']);
+  const read = tools.allCapabilities.find(c => c.spec?.name === 'ExaReadUrls');
+  assert.deepEqual(read.spec.input_schema.required, ['urls']);
+  // Exa endpoints are read-only; all three can run concurrently.
+  for (const cap of [search, answer, read]) {
+    assert.equal(cap.concurrent, true, `${cap.spec.name} must be concurrent-safe`);
+  }
+});
+
+test('ExaReadUrls rejects empty url list and over-limit', async () => {
+  const tools = await import('../dist/tools/index.js');
+  const read = tools.allCapabilities.find(c => c.spec?.name === 'ExaReadUrls');
+  const ctx = { workingDir: '/tmp', abortSignal: new AbortController().signal };
+  const empty = await read.execute({ urls: [] }, ctx);
+  assert.equal(empty.isError, true, 'empty urls should error');
+  assert.match(empty.output, /required/i);
+  const over = await read.execute({ urls: new Array(101).fill('https://x.com') }, ctx);
+  assert.equal(over.isError, true, '>100 urls should error');
+  assert.match(over.output, /max 100/);
+});
+
+test('MusicGen capability is registered with the right shape', async () => {
+  const tools = await import('../dist/tools/index.js');
+  const mg = tools.allCapabilities.find(c => c.spec?.name === 'MusicGen');
+  assert.ok(mg, 'MusicGen must be registered');
+  assert.deepEqual(mg.spec.input_schema.required, ['prompt']);
+  for (const key of ['prompt', 'output_path', 'model', 'instrumental', 'lyrics', 'duration_seconds', 'contentId']) {
+    assert.ok(mg.spec.input_schema.properties[key], `MusicGen schema missing: ${key}`);
+  }
+  assert.equal(mg.concurrent, false, 'MusicGen must not run concurrently — it costs real USDC');
+});
+
+test('MusicGen rejects conflicting instrumental + lyrics', async () => {
+  const tools = await import('../dist/tools/index.js');
+  const mg = tools.allCapabilities.find(c => c.spec?.name === 'MusicGen');
+  const ctx = { workingDir: '/tmp', abortSignal: new AbortController().signal };
+  const conflict = await mg.execute({
+    prompt: 'pop song',
+    instrumental: true,
+    lyrics: 'verse one',
+  }, ctx);
+  assert.equal(conflict.isError, true, 'conflicting flags must error');
+  assert.match(conflict.output, /cannot set both/i);
+});
+
+test('VideoGen capability is registered with the right shape', async () => {
+  const tools = await import('../dist/tools/index.js');
+  const vg = tools.allCapabilities.find(c => c.spec?.name === 'VideoGen');
+  assert.ok(vg, 'VideoGen must be registered in allCapabilities');
+  assert.equal(vg.spec.input_schema.required[0], 'prompt', 'VideoGen must require a prompt');
+  const props = vg.spec.input_schema.properties;
+  for (const key of ['prompt', 'model', 'image_url', 'duration_seconds', 'output_path', 'contentId']) {
+    assert.ok(props[key], `VideoGen schema missing property: ${key}`);
+  }
+  // Factory form also exports cleanly
+  const { createVideoGenCapability } = await import('../dist/tools/videogen.js');
+  const solo = createVideoGenCapability();
+  assert.equal(solo.spec.name, 'VideoGen');
+  assert.equal(solo.concurrent, false, 'VideoGen must not run concurrently — it costs real USDC');
+});
+
+test('extractMentions: word-boundary matches entity names and aliases, ignores partials', async () => {
+  const { extractMentions } = await import('../dist/brain/store.js');
+  const entities = [
+    { id: '1', type: 'project', name: 'Franklin', aliases: ['FKL'], created_at: 0, updated_at: 0, reference_count: 3 },
+    { id: '2', type: 'concept', name: 'Base', aliases: [], created_at: 0, updated_at: 0, reference_count: 2 },
+    { id: '3', type: 'person', name: 'Vicky', aliases: ['vicky.fu'], created_at: 0, updated_at: 0, reference_count: 5 },
+  ];
+
+  // Exact-word match on canonical names
+  const a = extractMentions('I talked to Vicky about Franklin yesterday.', entities);
+  assert.deepEqual(a.sort(), ['Franklin', 'Vicky'].sort(), `expected both entities, got ${a}`);
+
+  // Alias match
+  const b = extractMentions('ping FKL about the deploy', entities);
+  assert.deepEqual(b, ['Franklin'], 'alias FKL should map back to canonical Franklin');
+
+  // Word-boundary reject: "Baseline" must NOT match entity "Base"
+  const c = extractMentions('Baseline metrics look good.', entities);
+  assert.deepEqual(c, [], `"Baseline" should not match "Base", got ${c}`);
+
+  // Case-insensitive match
+  const d = extractMentions('FRANKLIN shipped', entities);
+  assert.deepEqual(d, ['Franklin']);
+
+  // Empty / whitespace input → empty
+  assert.deepEqual(extractMentions('', entities), []);
+  assert.deepEqual(extractMentions('   ', entities), []);
+});
+
+test('takeProgressiveChunk: holds below threshold, flushes on paragraph boundary, hard-caps on overflow', async () => {
+  const { takeProgressiveChunk } = await import('../dist/channel/telegram.js');
+
+  // Below threshold → keep everything
+  {
+    const { flush, keep } = takeProgressiveChunk('short text', 1500, 4000);
+    assert.equal(flush, '');
+    assert.equal(keep, 'short text');
+  }
+
+  // Above threshold at a paragraph break → flush the first paragraph
+  {
+    const para1 = 'x'.repeat(1600) + '\n\n';
+    const para2 = 'y'.repeat(50);
+    const { flush, keep } = takeProgressiveChunk(para1 + para2, 1500, 4000);
+    assert.equal(flush, para1, 'should flush the closed paragraph');
+    assert.equal(keep, para2, 'partial paragraph must be preserved');
+  }
+
+  // Above threshold but no newline yet → keep everything (wait for boundary)
+  {
+    const noNl = 'z'.repeat(1800);
+    const { flush, keep } = takeProgressiveChunk(noNl, 1500, 4000);
+    assert.equal(flush, '', 'should wait for a boundary when below hard cap');
+    assert.equal(keep, noNl);
+  }
+
+  // Above hard cap with no newline → hard split anyway (don't exceed 4000 on send)
+  {
+    const wall = 'w'.repeat(4500);
+    const { flush, keep } = takeProgressiveChunk(wall, 1500, 4000);
+    assert.equal(flush.length, 4000, 'must hard-split at cap to keep send under 4096');
+    assert.equal(flush + keep, wall, 'hard-split must preserve data');
+  }
+});
+
+test('splitForTelegram: short text returns a single chunk; long splits on newline with hard-split fallback', async () => {
+  const { splitForTelegram } = await import('../dist/channel/telegram.js');
+
+  // Short text stays as-is
+  assert.deepEqual(splitForTelegram('hi there'), ['hi there']);
+
+  // Multi-line text under the cap — single chunk
+  const small = 'line one\nline two\nline three';
+  assert.deepEqual(splitForTelegram(small, 4000), [small]);
+
+  // Long with newlines: every chunk must be <= max and, except possibly the
+  // last, must end at a newline so the split reads cleanly in Telegram.
+  const big = Array.from({ length: 50 }, (_, i) => `line ${i}: ` + 'x'.repeat(100)).join('\n');
+  const chunks = splitForTelegram(big, 1000);
+  assert.ok(chunks.length >= 2, `expected multiple chunks, got ${chunks.length}`);
+  assert.equal(chunks.join(''), big, 'reassembly must equal the original input');
+  for (let i = 0; i < chunks.length; i++) {
+    assert.ok(chunks[i].length <= 1000, `chunk ${i} exceeds max: ${chunks[i].length}`);
+    if (i < chunks.length - 1) {
+      assert.ok(
+        chunks[i].endsWith('\n'),
+        `non-final chunk ${i} should end at a newline; ends with: ${JSON.stringify(chunks[i].slice(-10))}`,
+      );
+    }
+  }
+
+  // Pathological no-newline input — fall back to hard character split without
+  // hanging and without dropping data.
+  const wall = 'a'.repeat(7500);
+  const hardChunks = splitForTelegram(wall, 3000);
+  assert.equal(hardChunks.length, 3, `7500 / 3000 should produce 3 chunks, got ${hardChunks.length}`);
+  assert.equal(hardChunks.join(''), wall, 'hard-split reassembly must match');
+  assert.ok(hardChunks.every(c => c.length <= 3000), 'every chunk must respect max');
+});
+
+test('classifyToolCallFailure: aborted vs truncated vs malformed produce distinct prefixes', async () => {
+  const { classifyToolCallFailure } = await import('../dist/agent/llm.js');
+
+  const aborted = new AbortController();
+  aborted.abort();
+  const a = classifyToolCallFailure('Write', '{"path":"a', aborted.signal, 'nvidia/nemotron-ultra-253b');
+  assert.match(a, /canceled/i, `aborted case should read as cancellation, got: ${a}`);
+  assert.ok(!/malformed/i.test(a), 'aborted must NOT fall back to malformed text');
+
+  const live = new AbortController();
+  const short = classifyToolCallFailure('Write', '{"p', live.signal, 'nvidia/nemotron-ultra-253b');
+  assert.match(short, /interrupted|timeout|rate/i, `<8 chars should be classified as interrupted, got: ${short}`);
+
+  const trunc = classifyToolCallFailure('Write', '{"path":"/tmp/x","content":"hello wor', live.signal, 'nvidia/nemotron-ultra-253b');
+  assert.match(trunc, /cut off|not closed|mid tool/i, `unclosed JSON should classify as truncated, got: ${trunc}`);
+
+  const mal = classifyToolCallFailure('Write', '{"path":"/tmp/x","content":"ok" "extra"}', live.signal, 'nvidia/nemotron-ultra-253b');
+  assert.match(mal, /malformed/i, `invalid JSON with closed braces should classify as malformed, got: ${mal}`);
+  assert.match(mal, /Preview:/i, 'malformed case must include an input preview');
+});
+
+test('isWeakModel: flags nvidia/nemotron/glm-4, spares frontier and glm-5+', async () => {
+  const { isWeakModel } = await import('../dist/agent/loop.js');
+  assert.equal(isWeakModel('nvidia/nemotron-ultra-253b'), true);
+  assert.equal(isWeakModel('nvidia/qwen3-coder-480b'), true);
+  assert.equal(isWeakModel('zai/glm-4.5'), true, 'GLM-4 is weak');
+  assert.equal(isWeakModel('zai/glm-5.1'), false, 'GLM-5+ is strong enough — must not be nagged');
+  assert.equal(isWeakModel('anthropic/claude-sonnet-4.6'), false, 'frontier Anthropic must be strong');
+  assert.equal(isWeakModel('anthropic/claude-opus-4.7'), false, 'frontier Anthropic must be strong');
+  assert.equal(isWeakModel('openai/gpt-5'), false, 'gpt-5 must be strong');
+});
+
+test('renderMarkdownStreaming: unfinished bold/link pair stays plain', async () => {
+  const { renderMarkdownStreaming } = await import('../dist/ui/markdown.js');
+
+  // Mid-stream: no newlines → everything is partial → plain text, no ANSI
+  const mid = renderMarkdownStreaming('Hello **wor');
+  assert.equal(mid.rendered, '', 'no newline yet → no closed lines rendered');
+  assert.equal(mid.partial, 'Hello **wor', 'partial line preserved verbatim');
+  // eslint-disable-next-line no-control-regex
+  assert.ok(!/\u001b\[/.test(mid.partial), 'partial line must not contain ANSI escape sequences');
+
+  // Closed line + pending partial. The bullet `- ` should be rewritten to `• `
+  // and the `**Music**` should be consumed by the bold regex (whether chalk
+  // emits ANSI or strips it under no-TTY is orthogonal — the marker tokens
+  // must not survive).
+  const split = renderMarkdownStreaming('- **Music**: Upbeat\nnew li');
+  assert.ok(split.rendered.length > 0, 'closed line should render');
+  assert.equal(split.partial, 'new li', 'trailing partial preserved');
+  assert.ok(!split.rendered.includes('**Music**'), 'closed bold markers must be consumed');
+  assert.ok(split.rendered.includes('• '), 'bullet marker must be rewritten');
+
+  // Tightened link regex: URL with embedded parens is no longer gobbled
+  const paren = renderMarkdownStreaming('[label](https://ex.com/bad(url).html)\n');
+  // The old regex would have matched `https://ex.com/bad(url` as the URL; the
+  // new regex rejects URLs containing `(`, leaving the whole thing as text.
+  assert.ok(
+    !paren.rendered.includes('bad(url') || paren.rendered.includes('[label]'),
+    'URLs with parens must not be greedily captured',
+  );
+});
+
+test('ThinkTagStripper splits inline <think> tags across chunk boundaries', async () => {
+  const { ThinkTagStripper } = await import('../dist/agent/think-tag-stripper.js');
+
+  // Simple single-chunk parse
+  {
+    const s = new ThinkTagStripper();
+    const segs = [...s.push('Hello <think>planning</think> world'), ...s.flush()];
+    assert.deepEqual(segs, [
+      { type: 'text', text: 'Hello ' },
+      { type: 'thinking', text: 'planning' },
+      { type: 'text', text: ' world' },
+    ]);
+  }
+
+  // Tag split across three chunks — stripper must buffer the partial
+  {
+    const s = new ThinkTagStripper();
+    const out = [];
+    out.push(...s.push('before <th'));
+    out.push(...s.push('ink>reasoning</thi'));
+    out.push(...s.push('nk>after'));
+    out.push(...s.flush());
+    assert.deepEqual(out, [
+      { type: 'text', text: 'before ' },
+      { type: 'thinking', text: 'reasoning' },
+      { type: 'text', text: 'after' },
+    ]);
+  }
+
+  // <thinking> variant (DeepSeek/QwQ style)
+  {
+    const s = new ThinkTagStripper();
+    const segs = [...s.push('<thinking>deep</thinking>ok'), ...s.flush()];
+    assert.deepEqual(segs, [
+      { type: 'thinking', text: 'deep' },
+      { type: 'text', text: 'ok' },
+    ]);
+  }
+
+  // No tags at all — pass-through
+  {
+    const s = new ThinkTagStripper();
+    const segs = [...s.push('just plain text'), ...s.flush()];
+    assert.deepEqual(segs, [{ type: 'text', text: 'just plain text' }]);
+  }
+
+  // Stream ends mid-tag — the buffered partial flushes as text (not swallowed)
+  {
+    const s = new ThinkTagStripper();
+    const segs = [...s.push('content then <thi'), ...s.flush()];
+    assert.deepEqual(segs, [
+      { type: 'text', text: 'content then ' },
+      { type: 'text', text: '<thi' },
+    ]);
+  }
+
+  // False-positive prefix — `<template>` should NOT be held back forever
+  {
+    const s = new ThinkTagStripper();
+    const segs = [...s.push('code: <template>foo</template>'), ...s.flush()];
+    assert.deepEqual(segs, [{ type: 'text', text: 'code: <template>foo</template>' }]);
+  }
+});
+
+test('resetToolSessionState clears read/webfetch/bash module-level caches across sessions', async () => {
+  const { fileReadTracker, partiallyReadFiles } = await import('../dist/tools/read.js');
+  const { resetToolSessionState } = await import('../dist/tools/index.js');
+
+  // Seed tracker state as if a prior session had read files.
+  fileReadTracker.set('/tmp/franklin-session-a.ts', { mtimeMs: 1, readAt: Date.now() });
+  partiallyReadFiles.set('/tmp/franklin-session-a.ts', { startLine: 0, endLine: 100, totalLines: 500 });
+  assert.equal(fileReadTracker.size, 1, 'precondition: tracker seeded');
+  assert.equal(partiallyReadFiles.size, 1, 'precondition: partial-read seeded');
+
+  // Starting a fresh session should wipe every tool's module-level cache.
+  resetToolSessionState();
+
+  assert.equal(fileReadTracker.size, 0, 'fileReadTracker must be cleared so read-before-edit enforcement resets');
+  assert.equal(partiallyReadFiles.size, 0, 'partiallyReadFiles must be cleared so Edit warnings are not based on a prior session');
+});

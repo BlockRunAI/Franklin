@@ -4,8 +4,8 @@
  * TradingOpenPosition (buy side), TradingClosePosition (sell side).
  *
  * This is the surface that differentiates Franklin from generic coding
- * agents — Claude Code and Cursor cannot hold a wallet, track positions
- * across sessions, or reason about P&L. Every output here is deliberately
+ * agents — stateless tools can't hold a wallet, track positions across
+ * sessions, or reason about P&L. Every output here is deliberately
  * information-rich so the agent has the numbers it needs to make the next
  * economic decision (cash left, risk utilization, unrealized vs realized
  * P&L, fill detail) without a follow-up tool call.

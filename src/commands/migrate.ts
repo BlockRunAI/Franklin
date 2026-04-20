@@ -1,8 +1,10 @@
 /**
- * franklin migrate — one-click import from other AI coding agents.
+ * franklin migrate — one-click import from existing AI-agent configs.
  *
- * Detects installed tools (Claude Code, Cline, Cursor, etc.),
- * shows what can be migrated, and imports with user confirmation.
+ * Detects standard config locations on disk (`~/.claude/`, VS Code extension
+ * storage, `~/Library/Application Support/` editor dirs) and imports what's
+ * there with user confirmation. Recognizes tools by their config layout,
+ * not by brand.
  */
 
 import fs from 'node:fs';
@@ -32,7 +34,7 @@ function detectSources(): MigrationSource[] {
   const sources: MigrationSource[] = [];
   const home = os.homedir();
 
-  // ── Claude Code ──
+  // ── `~/.claude/` config dir (used by several agent CLIs) ──
   const claudeDir = path.join(home, '.claude');
   if (fs.existsSync(claudeDir)) {
     const items: MigrationItem[] = [];
@@ -90,27 +92,27 @@ function detectSources(): MigrationSource[] {
     }
 
     if (items.length > 0) {
-      sources.push({ name: 'Claude Code', dir: claudeDir, items });
+      sources.push({ name: '~/.claude/', dir: claudeDir, items });
     }
   }
 
-  // ── Cline / OpenClaw ──
+  // ── VS Code agent extension storage ──
   const clineDir = path.join(home, 'Library', 'Application Support', 'Code', 'User', 'globalStorage', 'saoudrizwan.claude-dev');
   if (fs.existsSync(clineDir)) {
     const items: MigrationItem[] = [];
-    // TODO: detect Cline data
+    // TODO: detect VS Code agent extension data
     if (items.length > 0) {
-      sources.push({ name: 'Cline', dir: clineDir, items });
+      sources.push({ name: 'VS Code agent extension', dir: clineDir, items });
     }
   }
 
-  // ── Cursor ──
+  // ── ~/Library/Application Support editor agent ──
   const cursorDir = path.join(home, 'Library', 'Application Support', 'Cursor');
   if (fs.existsSync(cursorDir)) {
     const items: MigrationItem[] = [];
-    // TODO: detect Cursor data
+    // TODO: detect editor agent data
     if (items.length > 0) {
-      sources.push({ name: 'Cursor', dir: cursorDir, items });
+      sources.push({ name: 'editor agent config', dir: cursorDir, items });
     }
   }
 
@@ -123,8 +125,8 @@ function migrateMcp(source: string): void {
   const target = path.join(BLOCKRUN_DIR, 'mcp.json');
   const raw = JSON.parse(fs.readFileSync(source, 'utf-8'));
 
-  // Claude Code format: { mcpServers: { name: { command, args, env } } }
-  // Franklin format:    { mcpServers: { name: { transport, command, args, label } } }
+  // Source format:  { mcpServers: { name: { command, args, env } } }
+  // Franklin format: { mcpServers: { name: { transport, command, args, label } } }
   const servers: Record<string, unknown> = {};
   const skipped: string[] = [];
   if (raw.mcpServers) {
@@ -212,7 +214,7 @@ function migrateInstructions(source: string): void {
           learning: text.slice(0, 200),
           category: 'other',
           confidence: 0.8,
-          source_session: 'migrate:claude-code',
+          source_session: 'migrate:dot-claude',
           created_at: now,
           last_confirmed: now,
           times_confirmed: 1,
@@ -381,7 +383,7 @@ export async function migrateCommand(): Promise<void> {
 
   if (sources.length === 0) {
     console.log(chalk.dim('  No other AI tools detected. Nothing to migrate.\n'));
-    console.log(chalk.dim('  Supported: Claude Code, Cline, Cursor\n'));
+    console.log(chalk.dim('  Looked for: ~/.claude/, VS Code agent extension, editor agent configs\n'));
     return;
   }
 

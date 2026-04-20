@@ -10,7 +10,7 @@ import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import VimInput, { type VimMode } from './vim-input.js';
 import type { StreamEvent } from '../agent/types.js';
-import { renderMarkdown } from './markdown.js';
+import { renderMarkdown, renderMarkdownStreaming } from './markdown.js';
 import {
   resolveModel,
   PICKER_CATEGORIES,
@@ -184,7 +184,7 @@ function RunCodeApp({
   // Last completed tool — shown in dynamic area so it can be expanded/collapsed with Tab
   const [expandableTool, setExpandableTool] = useState<(ToolStatus & { key: string }) | null>(null);
   // Full responses committed to Static immediately — goes into terminal scrollback
-  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number }>>([]);
+  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number; thinkMs?: number; thinkChars?: number }>>([]);
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
   const [responsePreview, setResponsePreview] = useState('');
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS_FLAT[0].id);
@@ -228,6 +228,13 @@ function RunCodeApp({
   const pendingTextRef = useRef('');
   const pendingThinkingRef = useRef('');
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Per-turn reasoning meter: first thinking delta starts the clock, first text
+  // delta (or turn_done) stops it. Persists on the committed response as
+  // "✻ Thought for 3.2s · ~420 tokens" so users see the cost of reasoning even
+  // after the live thinking spinner collapses.
+  const thinkStartRef = useRef<number | null>(null);
+  const thinkCharsRef = useRef(0);
+  const thinkMsRef = useRef<number | null>(null);
 
   const flushPendingText = useCallback(() => {
     flushTimerRef.current = null;
@@ -237,12 +244,18 @@ function RunCodeApp({
       pendingTextRef.current = '';
       setWaiting(false);
       setThinking(false);
+      // Text started: freeze the reasoning meter
+      if (thinkStartRef.current !== null && thinkMsRef.current === null) {
+        thinkMsRef.current = Date.now() - thinkStartRef.current;
+      }
       setStreamText(prev => prev + text);
     }
     if (thinking) {
       pendingThinkingRef.current = '';
       setWaiting(false);
       setThinking(true);
+      if (thinkStartRef.current === null) thinkStartRef.current = Date.now();
+      thinkCharsRef.current += thinking.length;
       setThinkingText(prev => {
         const updated = prev + thinking;
         return updated.length > 500 ? updated.slice(-500) : updated;
@@ -294,6 +307,13 @@ function RunCodeApp({
   ) => {
     if (!text.trim()) return;
 
+    // Snapshot the thinking meter for this turn (reset happens in turn_done,
+    // which covers the empty-response-but-thinking case too)
+    const thinkMs = thinkMsRef.current ?? (thinkStartRef.current !== null
+      ? Date.now() - thinkStartRef.current
+      : undefined);
+    const thinkChars = thinkCharsRef.current || undefined;
+
     setCommittedResponses((rs) => {
       const next = [...rs, {
         key: String(Date.now() + Math.random()),
@@ -303,6 +323,8 @@ function RunCodeApp({
         model: turnModelRef.current,
         tier: turnTierRef.current,
         savings: turnSavingsRef.current,
+        thinkMs,
+        thinkChars,
       }];
       // Cap at 300 items — older items are already in terminal scrollback
       return next.length > 300 ? next.slice(-300) : next;
@@ -737,6 +759,10 @@ function RunCodeApp({
               pendingTextRef.current = '';
             }
             pendingThinkingRef.current = '';
+            // Freeze reasoning meter if turn ended while thinking (no text emitted)
+            if (thinkStartRef.current !== null && thinkMsRef.current === null) {
+              thinkMsRef.current = Date.now() - thinkStartRef.current;
+            }
 
             // Flush expandable tool to Static before committing response
             setExpandableTool(prev => {
@@ -765,6 +791,10 @@ function RunCodeApp({
             setWaiting(false);
             setThinking(false);
             setThinkingText('');
+            // Reset reasoning meter for the next turn
+            thinkStartRef.current = null;
+            thinkMsRef.current = null;
+            thinkCharsRef.current = 0;
             // Trigger balance refresh after each completed turn
             turnDoneCallbackRef.current?.();
             // Ring the terminal bell so the user knows the AI finished
@@ -937,6 +967,18 @@ function RunCodeApp({
               {/* User messages get a left border bar + top margin for visual separation */}
               {isUserMsg && (
                 <Box marginTop={1}/>
+              )}
+              {/* Reasoning meter — shown once above the response, only if the
+                  model actually thought. Compact, dim; no spinner. */}
+              {!isUserMsg && r.thinkMs !== undefined && r.thinkMs >= 500 && (
+                <Box paddingLeft={2}>
+                  <Text color="magenta" dimColor>
+                    ✻ Thought for {(r.thinkMs / 1000).toFixed(1)}s
+                    {r.thinkChars && r.thinkChars > 20
+                      ? ` · ~${Math.round(r.thinkChars / 4)} tokens`
+                      : ''}
+                  </Text>
+                </Box>
               )}
               <Box paddingLeft={isUserMsg ? 0 : 2}>
                 <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
@@ -1119,12 +1161,23 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Streaming response — visible while the model is generating */}
-      {streamText && (
-        <Box marginTop={0} marginBottom={0}>
-          <Text wrap="wrap">{renderMarkdown(streamText)}</Text>
-        </Box>
-      )}
+      {/* Streaming response — visible while the model is generating.
+          Closed lines render with full markdown; the trailing partial line
+          renders as plain text until its newline arrives, so mid-stream
+          `**bold` or `[link](` half-pairs can't emit unbalanced ANSI that
+          Ink's wrap would then mangle. */}
+      {streamText && (() => {
+        const { rendered, partial } = renderMarkdownStreaming(streamText);
+        return (
+          <Box marginTop={0} marginBottom={0}>
+            <Text wrap="wrap">
+              {rendered}
+              {rendered && partial ? '\n' : ''}
+              {partial}
+            </Text>
+          </Box>
+        );
+      })()}
 
       {/* Preview of latest response — last 5 lines shown in dynamic area for quick reference.
           Full text is already in Static/scrollback above. Cleared when next turn starts. */}

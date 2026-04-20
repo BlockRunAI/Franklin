@@ -29,7 +29,7 @@ export interface InsightsReport {
   totalInputTokens: number;
   /** Total output tokens in window */
   totalOutputTokens: number;
-  /** Savings vs always using Claude Opus */
+  /** Savings vs always using the Opus-tier baseline */
   savedVsOpusUsd: number;
   /** Per-model breakdown, sorted by cost desc */
   byModel: Array<{

@@ -8,8 +8,8 @@
  *   - "Am I up or down over the last 30 days?"
  *   - "How many times did I flip BTC in the last session?"
  *
- * Claude Code and Cursor can't answer any of these — they have no
- * persistent economic memory across sessions. Franklin can.
+ * Coding-only agents can't answer any of these — they have no persistent
+ * economic memory across sessions. Franklin can.
  *
  * Format: one JSON object per line, append-only. Reads parse lazily and
  * skip malformed lines rather than crash, so a partial write from a

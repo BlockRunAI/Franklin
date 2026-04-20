@@ -16,9 +16,8 @@
 <p>
   <a href="https://npmjs.com/package/@blockrun/franklin"><img src="https://img.shields.io/npm/v/@blockrun/franklin.svg?style=flat-square&color=FFD700&label=npm" alt="npm"></a>
   <a href="https://npmjs.com/package/@blockrun/franklin"><img src="https://img.shields.io/npm/dm/@blockrun/franklin.svg?style=flat-square&color=10B981&label=downloads" alt="downloads"></a>
-  <a href="https://github.com/BlockRunAI/franklin/stargazers"><img src="https://img.shields.io/github/stars/BlockRunAI/franklin?style=flat-square&color=FFD700&label=stars" alt="stars"></a>
+  <a href="https://github.com/BlockRunAI/Franklin/stargazers"><img src="https://img.shields.io/github/stars/BlockRunAI/Franklin?style=flat-square&color=FFD700&label=stars" alt="stars"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square" alt="license"></a>
-  <a href="https://github.com/BlockRunAI/franklin/actions"><img src="https://img.shields.io/github/actions/workflow/status/BlockRunAI/franklin/ci.yml?style=flat-square&label=ci" alt="ci"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-%E2%89%A520-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node"></a>
   <a href="https://x402.org"><img src="https://img.shields.io/badge/x402-native-10B981?style=flat-square" alt="x402"></a>
@@ -31,7 +30,7 @@
   <a href="#a-new-category">Category</a> ·
   <a href="#what-franklin-can-execute">What&nbsp;it&nbsp;does</a> ·
   <a href="#smart-router">Smart&nbsp;Router</a> ·
-  <a href="#the-comparison">vs.&nbsp;Claude&nbsp;Code</a> ·
+  <a href="#the-comparison">Comparison</a> ·
   <a href="#how-it-works">Architecture</a> ·
   <a href="#community">Community</a>
 </p>
@@ -42,7 +41,7 @@
 
 ## The pitch in one paragraph
 
-Claude Code writes code. Cursor writes code. Franklin writes code **and spends money to get the job done**. It holds a USDC wallet, picks the best model per task from 55+ providers, purchases trading data, generates images, pays for web search — all autonomously. You state an outcome and set a budget. Franklin decides what to call, what to pay for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
+Most coding agents write code. Franklin writes code **and spends money to get the job done**. It holds a USDC wallet, picks the best model per task from 55+ providers, purchases trading data, generates images, pays for web search — all autonomously. You state an outcome and set a budget. Franklin decides what to call, what to pay for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
 
 Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships as one npm package.
 
@@ -63,7 +62,7 @@ npm install -g @blockrun/franklin
 # 2. Run (free — uses NVIDIA Nemotron & Qwen3 Coder out of the box)
 franklin
 
-# 3. (optional) Fund a wallet to unlock Claude, GPT, Gemini, Grok, + paid APIs
+# 3. (optional) Fund a wallet to unlock Sonnet, Opus, GPT, Gemini, Grok, + paid APIs
 franklin setup base        # or: franklin setup solana
 franklin balance           # show address + USDC balance
 ```
@@ -78,7 +77,7 @@ That's it. Zero signup, zero credit card, zero phone verification. Send **$5 of 
 
 |                         | You pay for...                               | Result                               |
 | ----------------------- | -------------------------------------------- | ------------------------------------ |
-| Subscription (ChatGPT Plus, Claude Max, Cursor Pro) | Access. Paid whether you use it or not. | $20–200/month, rate-limited.         |
+| AI subscription       | Access. Paid whether you use it or not. | $20–200/month, rate-limited.         |
 | Pay-per-call (OpenAI API, etc.) | Every attempt — even failed ones.    | Hidden cost from retries, dead ends. |
 | **Franklin (YOPO)**     | **The outcome.** Each signed micropayment.  | **Provider cost + 5%. No more.**     |
 
@@ -155,9 +154,9 @@ Live data from CoinGecko. RSI, MACD, Bollinger, and volatility computed locally.
 
 Generates images via DALL-E / GPT Image directly from the CLI. Paid from your wallet — no OpenAI API key needed.
 
-### 🎯 Social growth (with setup)
+### 📱 Remote control via Telegram
 
-After running `franklin social setup && franklin social login x`, Franklin can search X, draft replies, and post with your confirmation — no X API key or developer account needed.
+Run `franklin telegram` on an always-on machine (set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_OWNER_ID`) and drive Franklin from your phone. Owner-locked, session-resumable across restarts, slash commands (`/new`, `/balance`, `/status`). Trading, content, dev work — all reachable from a Telegram chat.
 
 ### 🔎 Research, code, anything with a budget
 
@@ -253,7 +252,7 @@ You don't subscribe to electricity, you pay for what you use. Franklin brings th
 
 ### 🧠 &nbsp;Multi-model is the future
 
-No single model is best at everything. Claude writes better code, Gemini handles longer context, DeepSeek costs 20x less for simple tasks. The Smart Router routes every request to the optimal model in <1ms — up to 89% savings vs. always using Opus.
+No single model is best at everything. Sonnet writes better code, Gemini handles longer context, DeepSeek costs 20x less for simple tasks. The Smart Router routes every request to the optimal model in <1ms — up to 89% savings vs. always using Opus.
 
 </td>
 <td width="33%" valign="top">
@@ -270,19 +269,19 @@ No email. No phone. No KYC. Your Base or Solana address is your account — port
 
 ## The comparison
 
-|                                        | Claude Code     | Cursor           | Chatbots         | **Franklin**                    |
-| -------------------------------------- | --------------- | ---------------- | ---------------- | ------------------------------- |
-| Writes code                            | ✅              | ✅               | ⚠️                | ✅                              |
-| **Spends money for you**               | ❌              | ❌               | ❌               | ✅ **USDC wallet, x402**        |
-| **Buys data + APIs + images + search** | ❌              | ❌               | ❌               | ✅ **55+ APIs, one wallet**     |
-| Picks best model per task              | ❌ Anthropic only | ❌ plan-tied    | ❌               | ✅ **Smart Router, 55+ models** |
-| Pricing model                          | Subscription    | Subscription     | Subscription     | **YOPO** — per outcome, USDC    |
-| Monthly fee                            | $20–$200        | $20–$40          | $20+             | **$0**                          |
-| Rate-limited                           | Yes             | Yes              | Yes              | No — limited only by wallet     |
-| Works when provider goes down          | ❌              | ❌               | ❌               | ✅ **routes to another**        |
-| Identity                               | Anthropic account | Cursor account | Account / email | ✅ **wallet, no signup**        |
-| Start free, no KYC                     | ❌              | ❌               | ❌               | ✅                              |
-| Source                                 | Closed          | Closed           | Closed           | **Apache 2.0, local-first**     |
+|                                        | Coding agents    | Editor IDEs      | Chatbots         | **Franklin**                    |
+| -------------------------------------- | ---------------- | ---------------- | ---------------- | ------------------------------- |
+| Writes code                            | ✅               | ✅               | ⚠️                | ✅                              |
+| **Spends money for you**               | ❌               | ❌               | ❌               | ✅ **USDC wallet, x402**        |
+| **Buys data + APIs + images + search** | ❌               | ❌               | ❌               | ✅ **55+ APIs, one wallet**     |
+| Picks best model per task              | ❌ single-vendor | ❌ plan-tied    | ❌               | ✅ **Smart Router, 55+ models** |
+| Pricing model                          | Subscription     | Subscription     | Subscription     | **YOPO** — per outcome, USDC    |
+| Monthly fee                            | $20–$200         | $20–$40          | $20+             | **$0**                          |
+| Rate-limited                           | Yes              | Yes              | Yes              | No — limited only by wallet     |
+| Works when provider goes down          | ❌               | ❌               | ❌               | ✅ **routes to another**        |
+| Identity                               | Vendor account   | Vendor account   | Account / email  | ✅ **wallet, no signup**        |
+| Start free, no KYC                     | ❌               | ❌               | ❌               | ✅                              |
+| Source                                 | Closed           | Closed           | Closed           | **Apache 2.0, local-first**     |
 
 **Franklin is the economic agent category in one sentence:** software with a wallet that can spend toward a result.
 
@@ -316,7 +315,7 @@ Trained on 2M+ real requests. Classifies your task and picks the best model from
 <td width="50%" valign="top">
 
 **🛠 16 built-in tools**
-Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch, Task, ImageGen, AskUser, SubAgent, TradingSignal, TradingMarket, SearchX, PostToX.
+Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch, Task, ImageGen, VideoGen, MemoryRecall, AskUser, SubAgent, TradingSignal, TradingMarket, TradingPortfolio, TradingOpenPosition, TradingClosePosition, TradingHistory.
 
 **💾 Persistent sessions**
 Every turn is streamed to disk with metadata. Resume any session by ID. Survives crashes, reboots, and compaction.
@@ -402,19 +401,21 @@ src/
 ├── index.ts           CLI entry (franklin + runcode alias)
 ├── banner.ts          Ben Franklin portrait + FRANKLIN gradient text
 ├── agent/             Agent loop, LLM client, compaction, commands
-├── tools/             16 built-in tools (Read/Write/Edit/Bash/Glob/Grep/
-│                      WebFetch/WebSearch/Task/ImageGen/AskUser/SubAgent/
-│                      TradingSignal/TradingMarket/SearchX/PostToX)
+├── tools/             20+ built-in tools (Read/Write/Edit/Bash/Glob/Grep/
+│                      WebFetch/WebSearch/Task/ImageGen/VideoGen/
+│                      MemoryRecall/AskUser/SubAgent/Trading*/Content*)
 ├── trading/           Market data (CoinGecko) + technical indicators
-├── social/            X browser automation (Playwright) + reply engine
-├── events/            Internal event bus (signals, posting, workflow events)
+├── content/           Content library with budget-bound media generation
+├── brain/             Cross-session entity knowledge graph
+├── channel/           Non-CLI ingress drivers (Telegram today)
+├── events/            Internal event bus
 ├── plugin-sdk/        Public plugin contract (Workflow/Plugin/Channel)
 ├── plugins/           Plugin registry + runner (plugin-agnostic)
-├── session/           Persistent sessions + search
+├── session/           Persistent sessions + search + channel tags
 ├── stats/             Usage tracking + insights engine
 ├── ui/                Ink-based terminal UI
 ├── proxy/             Payment proxy for external tools
-├── router/            Learned model router (2M+ requests, Elo scoring)
+├── router/            Learned model router (55+ models, Elo scoring)
 ├── wallet/            Wallet management (Base + Solana)
 ├── mcp/               MCP server auto-discovery
 └── commands/          CLI subcommands
@@ -430,24 +431,27 @@ Start with **zero dollars**. Franklin defaults to free NVIDIA models that need n
 franklin --model nvidia/nemotron-ultra-253b
 ```
 
-When you fund the wallet, Franklin gets more purchasing power: Claude, GPT, Gemini, Grok, and paid tools like Exa, DALL-E, and CoinGecko Pro.
+When you fund the wallet, Franklin gets more purchasing power: Sonnet, Opus, GPT, Gemini, Grok, and paid tools like Exa, DALL-E, and CoinGecko Pro.
 
 ---
 
-## Social automation (advanced)
+## Remote control via Telegram
 
-Once you've tuned Franklin's reply style in chat, you can graduate to **automated batch mode**:
+Drive Franklin from anywhere with a bot token:
 
 ```bash
-franklin social setup              # install Chromium, write default config
-franklin social login x            # log in to X once (cookies persist)
-franklin social config edit        # set handle, products, search queries
-franklin social run                # dry-run — preview drafts
-franklin social run --live         # actually post to X
-franklin social stats              # posted / drafted / skipped / cost
+export TELEGRAM_BOT_TOKEN=<from @BotFather>
+export TELEGRAM_OWNER_ID=<your numeric Telegram user id>
+franklin telegram                # start the bot (owner-locked)
 ```
 
-The chat-based social tools (`SearchX`, `PostToX`) and the batch CLI (`franklin social run`) share the same engine. Chat first, automate later.
+Session state resumes across process restarts (tagged by owner id).
+Slash commands `/new`, `/balance`, `/status`, `/help` handled locally
+by the bot layer; everything else forwards to the agent. Progressive
+streaming flushes partial answers at paragraph boundaries so long
+replies don't wait for turn-end.
+
+Same wallet. Same tools. From your phone.
 
 ---
 
@@ -464,15 +468,14 @@ The chat-based social tools (`SearchX`, `PostToX`) and the batch CLI (`franklin 
 
 - [Telegram](https://t.me/blockrunAI) — realtime help, bug reports, feature requests
 - [@BlockRunAI](https://x.com/BlockRunAI) — release notes, demos
-- [Issues](https://github.com/BlockRunAI/franklin/issues) — bugs and feature requests
-- [Discussions](https://github.com/BlockRunAI/franklin/discussions) — ideas, Q&A, show & tell
+- [Issues](https://github.com/BlockRunAI/Franklin/issues) — bugs and feature requests
 
 ---
 
 ## Development
 
 ```bash
-git clone https://github.com/BlockRunAI/franklin.git
+git clone https://github.com/BlockRunAI/Franklin.git
 cd franklin
 npm install
 npm run build
@@ -482,54 +485,6 @@ node dist/index.js --help
 ```
 
 **Contributing:** open an issue first to discuss meaningful changes. PRs welcome on bugs, docs, new models in pricing, and new tools.
-
----
-
-## VS Code Extension
-
-Franklin ships with a VS Code sidebar extension — the same agent engine as the CLI, inside your editor.
-
-### Install from source (dev)
-
-```bash
-cd franklin
-npm run build                          # build the main package first
-cd vscode-extension
-npm install
-npm run compile
-```
-
-Then open the `franklin` root folder in VS Code and press **F5** to launch the Extension Development Host.
-
-### Usage
-
-1. **Open the sidebar** — click the Franklin icon in the Activity Bar (left), or click `$(sparkle) Franklin` in the Status Bar (bottom-right).
-2. **Type a message** and press Enter. The agent streams its response in real-time, just like the CLI.
-3. **Switch models** — click the model name in the composer toolbar to open the model picker. 35+ models available.
-4. **Stop generation** — press `Esc` or click the stop button.
-5. **Open in a new tab** — run `Franklin: Open Chat in New Tab` from the Command Palette (`Cmd+Shift+P`).
-
-The extension works without a workspace folder (falls back to your home directory), but opening a project folder enables full tool support (file editing, search, shell commands, etc.).
-
-### Features
-
-- Streaming chat with real-time token output
-- 35+ models across 7 categories (Promo, Smart Routing, Premium, Reasoning, Budget, Free)
-- Live USDC balance + context window usage ring
-- Model picker with pricing and context tooltips
-- Works in sidebar or editor tab
-
----
-
-## Star history
-
-<a href="https://star-history.com/#BlockRunAI/franklin&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=BlockRunAI/franklin&type=Date&theme=dark">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=BlockRunAI/franklin&type=Date">
-    <img alt="Star history" src="https://api.star-history.com/svg?repos=BlockRunAI/franklin&type=Date">
-  </picture>
-</a>
 
 ---
 

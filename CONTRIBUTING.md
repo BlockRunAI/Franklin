@@ -1,10 +1,10 @@
-# Contributing to RunCode
+# Contributing to Franklin
 
 ## Setup
 
 ```bash
-git clone https://github.com/BlockRunAI/runcode
-cd runcode
+git clone https://github.com/BlockRunAI/Franklin
+cd franklin
 npm install
 npm run build
 ```

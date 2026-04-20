@@ -9,7 +9,7 @@
  *   ContentShow       — dump a single piece's state as actionable markdown
  *   ContentList       — summary of every piece, newest first
  *
- * This is the surface Claude Code and Cursor cannot cover: durable content
+ * This is the surface generic coding agents can't cover: durable content
  * state with autonomous spending gating. An agent can spin up "Franklin
  * launch thread" with a $3 budget, hit DALL-E twice for hero images, blow
  * the budget, read the refusal, pick a cheaper model, and continue — all
