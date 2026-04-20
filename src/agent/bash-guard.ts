@@ -25,8 +25,27 @@ const DANGEROUS_PATTERNS: [RegExp, string][] = [
   [/\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+[/~]/, 'recursive delete on root/home'],
   [/\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*f/, 'forced recursive delete'],
   [/\brm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]/, 'forced recursive delete'],
+  [/\brm\s+-[a-zA-Z]*f\s+\//, 'forced delete at filesystem root'],
   [/\bmkfs\b/, 'format filesystem'],
   [/\bdd\s+.*of=/, 'raw disk write'],
+  [/\btruncate\s+-s\s+0\b/, 'truncate file to zero'],
+  [/>\s*\/dev\/(sd|nvme|disk|hd)/, 'write to raw block device'],
+
+  // Silently overwriting with mv/cp
+  [/\bmv\s+-f\b/, 'mv -f overwrites target silently'],
+  [/\bcp\s+-[a-zA-Z]*f[a-zA-Z]*r/, 'cp -rf can overwrite directory trees silently'],
+
+  // Writes to system-level paths — most agents should NEVER touch these.
+  // Redirections (`>`, `>>`) or tee'ing to /etc/, /usr/, /boot/, /var/lib/ etc.
+  [/>\s*\/(etc|usr|bin|sbin|boot|lib|lib64|var\/lib|sys|proc)\//, 'write to system path'],
+  [/\btee\s+.*\s+\/(etc|usr|bin|sbin|boot|lib|lib64|var\/lib|sys|proc)\//, 'tee to system path'],
+  // Extract tar/zip at filesystem root — classic traversal foot-gun.
+  [/\btar\s+.*-C\s+\/(?!tmp|var\/tmp|home)/, 'extract archive to system path'],
+  [/\bunzip\s+.*-d\s+\/(?!tmp|var\/tmp|home)/, 'unzip to system path'],
+
+  // Shell-out of untrusted text
+  [/\beval\s/, 'eval executes arbitrary shell'],
+  [/\bexec\s+(bash|sh|zsh)/, 'exec replaces the shell process'],
 
   // Git irreversible operations
   [/\bgit\s+push\s+.*--force\b/, 'force push'],
@@ -35,13 +54,16 @@ const DANGEROUS_PATTERNS: [RegExp, string][] = [
   [/\bgit\s+clean\s+-[a-zA-Z]*f/, 'git clean — deletes untracked files'],
   [/\bgit\s+checkout\s+--\s+\./, 'discard all working changes'],
   [/\bgit\s+branch\s+-D\b/, 'force delete branch'],
+  [/\bgit\s+filter-(repo|branch)\b/, 'history rewrite'],
 
   // Database destructive
   [/\bDROP\s+(TABLE|DATABASE|SCHEMA)\b/i, 'drop database objects'],
   [/\bTRUNCATE\s+TABLE\b/i, 'truncate table'],
+  [/\bDELETE\s+FROM\s+\S+\s*;?\s*$/i, 'DELETE without WHERE'],
 
   // System-level danger
   [/\bchmod\s+(-R\s+)?777\b/, 'world-writable permissions'],
+  [/\bchown\s+-R\s+\S+\s+\//, 'recursive chown at root'],
   // Pipe-to-shell: catch sudo/env prefixes and common shell variants (bash/sh/zsh/ksh/dash/fish).
   // The optional `-e`/`-x` flags after the shell binary are intentionally allowed by \b;
   // what we block is the routing of downloaded content into an interpreter.
@@ -50,12 +72,24 @@ const DANGEROUS_PATTERNS: [RegExp, string][] = [
   // Command substitution of a downloader into argv — `$(curl …)` or `` `curl …` ``.
   [/\$\(\s*(curl|wget|fetch)\b/, 'command substitution of network downloader'],
   [/`\s*(curl|wget|fetch)\b[^`]*`/, 'backtick substitution of network downloader'],
+  // Privilege escalation wrappers to destructive ops — order matters: the
+  // specific `sudo rm` pattern is listed first so its tailored message wins.
   [/\bsudo\s+rm\b/, 'sudo delete'],
+  [/\b(sudo|doas|su\s+-c)\s+.*\b(mv|dd|chmod|chown|mkfs|shutdown|reboot)\b/, 'privileged destructive op'],
+
+  // sed -i (in-place) on any system path
+  [/\bsed\s+-i(\s+'')?\s+.*\/(etc|usr|bin|sbin|boot|lib)\//, 'in-place edit of system path'],
 
   // Kill/shutdown
   [/\bkill\s+-9\s+-1\b/, 'kill all processes'],
+  [/\bkillall\s/, 'killall targets matching processes globally'],
   [/\bshutdown\b/, 'system shutdown'],
   [/\breboot\b/, 'system reboot'],
+  [/\bpoweroff\b/, 'system poweroff'],
+
+  // Cryptocurrency key exfiltration / secret exposure
+  [/\bcat\s+.*\.env(\.\w+)?\s*\|/, 'env file piped — potential secret exfiltration'],
+  [/\bcat\s+.*(\.ssh|\.gnupg)\/.*\s*\|/, 'ssh/gpg key piped — potential secret exfiltration'],
 ];
 
 // ─── Safe Commands ────────────────────────────────────────────────────────

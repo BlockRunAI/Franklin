@@ -102,13 +102,31 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       return { output: `Error: file is too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Use offset/limit to read a portion.`, isError: true };
     }
 
-    // Detect binary files
+    // Detect binary files — first by extension, then by content
+    // (some binaries have no extension: `.env.enc`, `.data`, compiled tools
+    // without suffixes, etc. Content sniff catches those.)
     const ext = path.extname(resolved).toLowerCase();
     const binaryExts = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.pdf', '.zip', '.tar', '.gz', '.woff', '.woff2', '.ttf', '.eot', '.mp3', '.mp4', '.wav', '.avi', '.mov', '.exe', '.dll', '.so', '.dylib']);
     if (binaryExts.has(ext)) {
       const sizeStr = stat.size >= 1024 ? `${(stat.size / 1024).toFixed(1)}KB` : `${stat.size}B`;
       return { output: `Binary file: ${resolved} (${ext}, ${sizeStr}). Cannot display contents.` };
     }
+    // NUL-byte content sniff — read up to 8KB as a Buffer, scan for 0x00.
+    // Text files effectively never contain NUL; binary files almost always
+    // do within the first few KB.
+    try {
+      const SNIFF_BYTES = Math.min(stat.size, 8192);
+      if (SNIFF_BYTES > 0) {
+        const fd = fs.openSync(resolved, 'r');
+        const buf = Buffer.alloc(SNIFF_BYTES);
+        fs.readSync(fd, buf, 0, SNIFF_BYTES, 0);
+        fs.closeSync(fd);
+        if (buf.includes(0)) {
+          const sizeStr = stat.size >= 1024 ? `${(stat.size / 1024).toFixed(1)}KB` : `${stat.size}B`;
+          return { output: `Binary file: ${resolved} (no text extension but NUL bytes detected, ${sizeStr}). Cannot display contents.` };
+        }
+      }
+    } catch { /* best-effort sniff — fall through to text read */ }
 
     const raw = fs.readFileSync(resolved, 'utf-8');
     const allLines = raw.split('\n');
