@@ -1,5 +1,48 @@
 # Changelog
 
+## 3.8.8 — Reliability pass: doctor, bash guard, file-tool guards, philosophy
+
+Motivated by real user feedback that Franklin sometimes takes 2–3 tries
+to execute a task correctly. Closes the widest gaps in the basic
+execution layer before any new capabilities.
+
+### Added
+
+- **`franklin doctor`** — one-command health check covering Node
+  version, config directory writability, chain configuration, wallet
+  and balance, gateway reachability, MCP config validity, telemetry
+  state, and PATH sanity on macOS. Prints color-coded verdicts with
+  remedies; `--json` for machine-parseable output; exits non-zero on
+  any failing check so CI scripts can gate on it.
+- **`PHILOSOPHY.md`** — canonical statement of what Franklin is and
+  isn't. One-line thesis: *Franklin lets you give your AI a budget
+  and walk away.* Names the Economic Agent category, explains why
+  the wallet is the mechanism (not a feature), and gives the
+  decision test every future feature has to pass.
+
+### Changed
+
+- **Bash risk classifier** now covers significantly more destructive
+  paths: `mv -f` / `cp -rf` overwrites, writes redirected into
+  `/etc`, `/usr`, `/bin`, `/sbin`, `/boot`, `/lib`, `/var/lib`,
+  `/sys`, `/proc`; `tar -C /…` / `unzip -d /…` extraction into
+  system paths; `eval` and `exec bash`; `git filter-repo` /
+  `filter-branch` history rewrites; `DELETE FROM x` without
+  `WHERE`; `sed -i` against system paths; `truncate -s 0`; `dd of=`
+  to raw block devices; `killall` / `poweroff`; privilege-escalated
+  (`sudo` / `doas` / `su -c`) destructive ops; secret-exfiltration
+  pipes from `.env` / `.ssh` / `.gnupg`.
+- **Read tool** adds NUL-byte content sniff. Files without a known
+  binary extension are now also rejected when the first 8KB contain
+  a NUL byte — catches encrypted `.env.enc`, raw `.data`, compiled
+  executables with no extension, etc.
+- **Write tool** enforces a 10MB write cap and refuses to write
+  content containing NUL bytes. A text-writing tool silently
+  emitting binary is almost always a bug.
+
+No behavior changes for code paths that were already within limits.
+Existing tests (117 local) all pass.
+
 ## 3.8.7 — Kimi K2.6 flagship
 
 ### Added

@@ -209,6 +209,15 @@ program
 }
 
 program
+  .command('doctor')
+  .description('One-command health check (node, wallet, chain, gateway, MCP, telemetry)')
+  .option('--json', 'Machine-readable output')
+  .action(async (opts: { json?: boolean }) => {
+    const { doctorCommand } = await import('./commands/doctor.js');
+    await doctorCommand(opts);
+  });
+
+program
   .command('telemetry [action]')
   .description('Manage opt-in local telemetry (status|enable|disable|view|summary)')
   .action(async (action?: string) => {
