@@ -173,7 +173,7 @@ they never know about platform-specific code.
 
 ## Boundary Rules
 
-Like OpenClaw, RunCode enforces strict boundaries:
+Franklin's plugin runtime enforces strict boundaries:
 
 1. **Plugins import ONLY from `@blockrun/runcode/plugin-sdk`** — never from
    `src/agent/`, `src/commands/`, or another plugin's `src/`.

@@ -212,10 +212,13 @@ const MAX_BRAIN_CHARS = 1500;
  * Build context string for entities mentioned in the conversation.
  * Returns empty string if no relevant entities found.
  */
-export function buildEntityContext(mentionedNames: string[]): string {
+export function buildEntityContext(
+  mentionedNames: string[],
+  entitiesCache?: Entity[],
+): string {
   if (mentionedNames.length === 0) return '';
 
-  const entities = loadEntities();
+  const entities = entitiesCache ?? loadEntities();
   const matched: Entity[] = [];
 
   for (const name of mentionedNames) {
@@ -225,15 +228,33 @@ export function buildEntityContext(mentionedNames: string[]): string {
 
   if (matched.length === 0) return '';
 
+  // Load observations + relations ONCE and index by entity_id / endpoint
+  // rather than re-reading the JSONL for each matched entity. With N matches
+  // the old path did 2N file reads per turn; this is now 2 reads total.
+  const allObs = loadObservations();
+  const allRels = loadRelations();
+  const obsByEntity = new Map<string, Observation[]>();
+  for (const o of allObs) {
+    const list = obsByEntity.get(o.entity_id);
+    if (list) list.push(o);
+    else obsByEntity.set(o.entity_id, [o]);
+  }
+  const relsByEntity = new Map<string, Relation[]>();
+  for (const r of allRels) {
+    const fromList = relsByEntity.get(r.from_id);
+    if (fromList) fromList.push(r); else relsByEntity.set(r.from_id, [r]);
+    const toList = relsByEntity.get(r.to_id);
+    if (toList) toList.push(r); else relsByEntity.set(r.to_id, [r]);
+  }
+
   const lines: string[] = ['# Known Entities'];
   let chars = lines[0].length;
 
   for (const entity of matched) {
-    const observations = getEntityObservations(entity.id)
+    const observations = (obsByEntity.get(entity.id) ?? [])
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 5);
-
-    const relations = getEntityRelations(entity.id);
+    const relations = relsByEntity.get(entity.id) ?? [];
 
     const header = `\n## ${entity.name} (${entity.type})`;
     if (chars + header.length > MAX_BRAIN_CHARS) break;
@@ -248,7 +269,8 @@ export function buildEntityContext(mentionedNames: string[]): string {
     }
 
     for (const rel of relations.slice(0, 3)) {
-      const otherEntity = entities.find(e => e.id === (rel.from_id === entity.id ? rel.to_id : rel.from_id));
+      const otherId = rel.from_id === entity.id ? rel.to_id : rel.from_id;
+      const otherEntity = entities.find(e => e.id === otherId);
       if (!otherEntity) continue;
       const line = `- ${rel.type} → ${otherEntity.name}`;
       if (chars + line.length + 1 > MAX_BRAIN_CHARS) break;
@@ -258,6 +280,45 @@ export function buildEntityContext(mentionedNames: string[]): string {
   }
 
   return lines.length > 1 ? lines.join('\n') : '';
+}
+
+// ─── Mention extraction (for auto-recall) ────────────────────────────────
+
+/**
+ * Scan `text` for occurrences of any known entity's canonical name or alias
+ * and return the matched canonical names (deduped, case-preserving).
+ * Word-boundary match so "Base" in "Baseline" doesn't match entity "Base".
+ *
+ * This is the read half of the brain — the agent loop calls this on each
+ * user turn to decide which entities to auto-inject into the system prompt.
+ *
+ * Pass `entities` if the caller already has them loaded to avoid re-reading
+ * the JSONL; otherwise we load it ourselves.
+ */
+export function extractMentions(text: string, entities?: Entity[]): string[] {
+  if (!text) return [];
+  const pool = entities ?? loadEntities();
+  if (pool.length === 0) return [];
+  const lower = text.toLowerCase();
+  const out = new Set<string>();
+  for (const e of pool) {
+    const candidates = [e.name, ...e.aliases];
+    for (const c of candidates) {
+      const needle = c.toLowerCase();
+      if (needle.length < 2) continue;
+      // Word boundary: require a non-alphanumeric char (or start/end of string)
+      // on each side of the match. Prevents "ai" matching inside "chain".
+      const idx = lower.indexOf(needle);
+      if (idx === -1) continue;
+      const before = idx === 0 ? '' : lower[idx - 1];
+      const after = idx + needle.length >= lower.length ? '' : lower[idx + needle.length];
+      const wordChar = /[a-z0-9_]/;
+      if (wordChar.test(before) || wordChar.test(after)) continue;
+      out.add(e.name);
+      break; // one match per entity is enough
+    }
+  }
+  return [...out];
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────

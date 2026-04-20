@@ -5,8 +5,8 @@
  * risk engine, store.ts is the persistence adapter, and tools/content-execute.ts
  * wires everything into agent-facing capabilities.
  *
- * Why this exists: Claude Code / Cursor cannot carry a content project across
- * sessions. If you start drafting a podcast episode Monday and come back
+ * Why this exists: stateless coding agents can't carry a content project
+ * across sessions. If you start drafting a podcast episode Monday and come back
  * Wednesday, there's no concept of *the same* piece of work. Franklin tracks
  * outline → drafts → assets → distribution as one durable object and lets
  * the agent spend USDC (image generation, audio, stock footage) against a

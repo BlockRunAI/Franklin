@@ -185,4 +185,11 @@ export interface AgentConfig {
   baseModel?: string;
   /** Resume an existing session by ID — loads prior history and keeps appending to the same JSONL */
   resumeSessionId?: string;
+  /**
+   * Optional channel tag persisted to SessionMeta. Lets non-CLI drivers
+   * (Telegram bot, Discord bot, future ingresses) find their own sessions
+   * later via findLatestSessionByChannel. Regular CLI sessions leave this
+   * unset. Format: "<driver>:<owner-or-chat-id>", e.g. "telegram:12345".
+   */
+  sessionChannel?: string;
 }

@@ -26,6 +26,19 @@ export interface SessionMeta {
   outputTokens?: number;
   costUsd?: number;
   savedVsOpusUsd?: number;
+  /**
+   * Origin channel tag. Unset for regular CLI sessions; set to a string like
+   * `telegram:<ownerId>` when the session was started by a non-CLI driver.
+   * Lets findLatestSessionByChannel pick up the right session on bot restart.
+   */
+  channel?: string;
+  /**
+   * Per-tool invocation counts for this session, aggregated across every
+   * turn. Populated by the agent loop at each tool-call batch. Used by the
+   * opt-in telemetry subsystem to aggregate vertical-usage signals — do NOT
+   * add any tool inputs or outputs here, just the count per tool name.
+   */
+  toolCallCounts?: Record<string, number>;
 }
 
 function getSessionsDir(): string {
@@ -127,6 +140,12 @@ export function updateSessionMeta(
       outputTokens: meta.outputTokens ?? existing?.outputTokens ?? 0,
       costUsd: meta.costUsd ?? existing?.costUsd ?? 0,
       savedVsOpusUsd: meta.savedVsOpusUsd ?? existing?.savedVsOpusUsd ?? 0,
+      ...(meta.channel !== undefined || existing?.channel !== undefined
+        ? { channel: meta.channel ?? existing?.channel }
+        : {}),
+      ...(meta.toolCallCounts !== undefined || existing?.toolCallCounts !== undefined
+        ? { toolCallCounts: meta.toolCallCounts ?? existing?.toolCallCounts }
+        : {}),
     };
     // Atomic write: tmp file + rename. Prevents corruption when parent
     // and sub-agent update the same session meta concurrently.
@@ -203,6 +222,15 @@ export function listSessions(): SessionMeta[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Find the latest saved session tagged with a given channel (e.g.
+ * `telegram:12345`). Used by non-CLI drivers to resume across process
+ * restarts. Returns undefined when no matching session exists.
+ */
+export function findLatestSessionByChannel(channel: string): SessionMeta | undefined {
+  return listSessions().find(m => m.channel === channel);
 }
 
 /**

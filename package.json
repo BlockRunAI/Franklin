@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/franklin",
-  "version": "3.8.2",
+  "version": "3.8.6",
   "description": "Franklin — The AI agent with a wallet. Spends USDC autonomously to get real work done. Pay per action, no subscriptions.",
   "type": "module",
   "exports": {
@@ -15,8 +15,8 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "franklin": "./dist/index.js",
-    "runcode": "./dist/index.js"
+    "franklin": "dist/index.js",
+    "runcode": "dist/index.js"
   },
   "files": [
     "dist",
@@ -52,7 +52,10 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/BlockRunAI/franklin"
+    "url": "git+https://github.com/BlockRunAI/Franklin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BlockRunAI/Franklin/issues"
   },
   "homepage": "https://Franklin.run",
   "engines": {

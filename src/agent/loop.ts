@@ -19,6 +19,7 @@ import { recordSessionUsage } from '../stats/session-tracker.js';
 import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
+import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import type { Tier, RoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
@@ -311,6 +312,29 @@ function getBackoffDelay(attempt: number, maxDelayMs = 32_000): number {
   return Math.max(500, Math.round(base + jitter));
 }
 
+/**
+ * Identify models known to hallucinate tool calls (invented names, literal
+ * `[TOOLCALL]` / `<tool_call>` text in answers) — they need the explicit
+ * "Available tools" inventory appended to the system prompt. Strong frontier
+ * models skip the nag so their prompt cache doesn't turn over.
+ *
+ * Exported so tests can pin the classification without a live API.
+ */
+export function isWeakModel(model: string): boolean {
+  const m = model.toLowerCase();
+  // NVIDIA-hosted open models have been observed confabulating tool calls.
+  // `blockrun/free` and `blockrun/eco` resolve to nvidia/nemotron-ultra in
+  // llm.ts, so catching the `nvidia/` prefix also catches those paths.
+  if (m.startsWith('nvidia/')) return true;
+  if (m.includes('nemotron-ultra')) return true;
+  if (m.includes('qwen3-coder')) return true;
+  // GLM-4* is weak; GLM-5+ is capable enough to skip the nag.
+  if (/^zai\/glm-4/.test(m)) return true;
+  // DeepSeek's smaller / quantized SKUs tend to role-play tools too.
+  if (/deepseek[-_/](r1|v3|chat)-?(lite|mini|tiny)/.test(m)) return true;
+  return false;
+}
+
 // ─── Interactive Session ───────────────────────────────────────────────────
 
 /**
@@ -386,6 +410,10 @@ export async function interactiveSession(
   let sessionOutputTokens = 0;
   let sessionCostUsd = 0;
   let sessionSavedVsOpus = 0;
+  // Per-tool call counts aggregated across every turn. Session-scope, not
+  // per-turn. Counts the *name* of each tool invocation only — no inputs,
+  // outputs, or paths. Fed into opt-in telemetry at session end.
+  const sessionToolCounts = new Map<string, number>();
   const toolGuard = new SessionToolGuard();
   const persistSessionMeta = () => {
     updateSessionMeta(sessionId, {
@@ -397,6 +425,10 @@ export async function interactiveSession(
       outputTokens: sessionOutputTokens,
       costUsd: sessionCostUsd,
       savedVsOpusUsd: sessionSavedVsOpus,
+      ...(config.sessionChannel !== undefined ? { channel: config.sessionChannel } : {}),
+      ...(sessionToolCounts.size > 0
+        ? { toolCallCounts: Object.fromEntries(sessionToolCounts) }
+        : {}),
     });
   };
   const persistSessionMessage = (message: Dialogue) => {
@@ -468,6 +500,41 @@ export async function interactiveSession(
       config.onModelChange?.(baseModel, 'system');
     }
     turnFailedModels = new Set<string>(); // Fresh slate for transient failures this turn
+
+    // ── Brain auto-recall (computed once per user turn) ──
+    // Scan the new user message plus the previous assistant reply (so
+    // cross-turn references like "that company we discussed" still resolve)
+    // for entity mentions, and build the context string. The inner agent
+    // loop can iterate many times (planner + executor steps); the user's
+    // input doesn't change between those iterations, so caching here saves
+    // loadEntities + loadObservations + loadRelations on every re-entry.
+    let turnBrainContext = '';
+    try {
+      const lastAssistantBeforeThisTurn = [...history.slice(0, -1)]
+        .reverse()
+        .find((m: Dialogue) => m.role === 'assistant');
+      const flatten = (d: Dialogue | undefined): string => {
+        if (!d) return '';
+        if (typeof d.content === 'string') return d.content;
+        if (!Array.isArray(d.content)) return '';
+        return (d.content as Array<{ type: string; text?: string }>)
+          .filter(p => p.type === 'text')
+          .map(p => p.text ?? '')
+          .join(' ');
+      };
+      const scanText = input + '\n' + flatten(lastAssistantBeforeThisTurn);
+      if (scanText.trim().length > 0) {
+        const entities = loadEntities();
+        if (entities.length > 0) {
+          const mentioned = extractMentions(scanText, entities);
+          if (mentioned.length > 0) {
+            turnBrainContext = buildEntityContext(mentioned, entities) ?? '';
+          }
+        }
+      }
+    } catch {
+      /* brain is optional — never block a turn on recall */
+    }
 
     const abort = new AbortController();
     onAbortReady?.(() => abort.abort());
@@ -600,6 +667,9 @@ export async function interactiveSession(
         );
       }
 
+      // ── Brain auto-recall (computed once per user turn above) ──
+      if (turnBrainContext) systemParts.push(turnBrainContext);
+
       const systemPrompt = systemParts.join('\n\n');
       const modelMaxOut = getMaxOutputTokens(config.model);
       let maxTokens = Math.min(maxTokensOverride ?? CAPPED_MAX_TOKENS, modelMaxOut);
@@ -678,6 +748,22 @@ export async function interactiveSession(
         callToolDefs = [];  // No tools during planning
         callMaxTokens = 2048;  // Short plan output
         callSystemPrompt = systemPrompt + '\n\n' + getPlanningPrompt();
+      }
+
+      // ── Hallucination guard for weak models ──
+      // Weak / free models (nemotron-ultra, GLM-4, qwen coder, free-profile
+      // resolves) have been observed inventing tool names (e.g. MixtureOfAgents)
+      // and emitting literal `[TOOLCALL]` / `<tool_call>` text pretending to
+      // call tools. Give them an explicit inventory + an anti-roleplay hint.
+      // Skipped for strong models to keep their prompt cache warm.
+      if (isWeakModel(resolvedModel) && callToolDefs.length > 0) {
+        const names = callToolDefs.map(t => t.name).join(', ');
+        callSystemPrompt = callSystemPrompt +
+          '\n\n# Available tools\n' +
+          `You have exactly these tools: ${names}.\n` +
+          'Do not invent other tool names. Do not emit literal "[TOOLCALL]", ' +
+          '"<tool_call>", or similar tokens in your text — call tools via the ' +
+          'proper API only. If no tool fits, explain plainly in prose.';
       }
 
       // Safety net: handled in llm.ts resolveVirtualModel()
@@ -1066,6 +1152,8 @@ export async function interactiveSession(
       for (const [inv] of results) {
         const name = inv.name;
         turnToolCounts.set(name, (turnToolCounts.get(name) || 0) + 1);
+        // Session-scope aggregate (drives telemetry opt-in export).
+        sessionToolCounts.set(name, (sessionToolCounts.get(name) || 0) + 1);
 
         // Read file dedup: track paths already read
         if (name === 'Read' && inv.input.file_path) {

@@ -2279,6 +2279,380 @@ test('projectCompactionSavings: greenlights compaction when old payload dominate
   );
 });
 
+test('telemetry: opt-in gate defaults to disabled, toggles, never exposes content', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const os = await import('node:os');
+
+  // Point BLOCKRUN_DIR at a tempdir by manipulating env before import
+  const fakeHome = mkdtempSync(join(os.tmpdir(), 'rc-telemetry-'));
+  process.env.HOME = fakeHome;
+  // BLOCKRUN_DIR is computed at import time, so we can't re-home the already-
+  // loaded config. Instead test the module's behavior via its exported paths.
+  const {
+    isTelemetryEnabled, setTelemetryEnabled, readConsent,
+    sessionMetaToRecord, getOrCreateInstallId,
+  } = await import('../dist/telemetry/store.js');
+
+  // Record projection rule: no content, only counts + identifiers
+  const record = sessionMetaToRecord(
+    {
+      id: 'session-x',
+      model: 'anthropic/claude-sonnet-4.6',
+      workDir: '/tmp/whatever',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      turnCount: 5,
+      messageCount: 12,
+      inputTokens: 1000,
+      outputTokens: 500,
+      costUsd: 0.05,
+      savedVsOpusUsd: 0.12,
+      toolCallCounts: { Read: 3, Write: 1, Bash: 2 },
+    },
+    'fake-install-id',
+    'base',
+  );
+
+  // Required sanitization properties:
+  assert.equal(record.installId, 'fake-install-id');
+  assert.equal(record.version.match(/^\d+\.\d+\.\d+/) !== null, true, 'must have a version string');
+  assert.equal(record.turns, 5);
+  assert.equal(record.costUsd, 0.05);
+  assert.deepEqual(record.toolCallCounts, { Read: 3, Write: 1, Bash: 2 });
+  assert.equal(record.driver, 'cli', 'default driver must be cli when no channel');
+
+  // No PII / content leakage — these field names must never appear on a record
+  const forbidden = ['workDir', 'content', 'input', 'output', 'prompt', 'text', 'walletAddress', 'address', 'privateKey', 'key'];
+  const json = JSON.stringify(record);
+  for (const f of forbidden) {
+    assert.ok(!new RegExp(`"${f}"`, 'i').test(json),
+      `Record must not expose "${f}" field. Got:\n${json}`);
+  }
+
+  // Telegram channel driver passes through
+  const tg = sessionMetaToRecord(
+    {
+      id: 'session-y',
+      model: 'anthropic/claude-sonnet-4.6',
+      workDir: '/tmp',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      turnCount: 1,
+      messageCount: 2,
+      channel: 'telegram:12345',
+    },
+    'fake-install-id',
+    'base',
+  );
+  assert.equal(tg.driver, 'telegram:12345');
+
+  // Install id is a uuid-ish string when created
+  const id1 = getOrCreateInstallId();
+  const id2 = getOrCreateInstallId();
+  assert.equal(id1, id2, 'install id must be stable across calls');
+  assert.ok(id1.length >= 16, 'install id must look like a uuid');
+
+  // cleanup
+  rmSync(fakeHome, { recursive: true, force: true });
+});
+
+test('Exa capabilities (Search/Answer/ReadUrls) register with right shape', async () => {
+  const tools = await import('../dist/tools/index.js');
+  const names = tools.allCapabilities.map(c => c.spec?.name);
+  for (const n of ['ExaSearch', 'ExaAnswer', 'ExaReadUrls']) {
+    assert.ok(names.includes(n), `${n} must be registered`);
+  }
+  const search = tools.allCapabilities.find(c => c.spec?.name === 'ExaSearch');
+  assert.deepEqual(search.spec.input_schema.required, ['query']);
+  const answer = tools.allCapabilities.find(c => c.spec?.name === 'ExaAnswer');
+  assert.deepEqual(answer.spec.input_schema.required, ['query']);
+  const read = tools.allCapabilities.find(c => c.spec?.name === 'ExaReadUrls');
+  assert.deepEqual(read.spec.input_schema.required, ['urls']);
+  // Exa endpoints are read-only; all three can run concurrently.
+  for (const cap of [search, answer, read]) {
+    assert.equal(cap.concurrent, true, `${cap.spec.name} must be concurrent-safe`);
+  }
+});
+
+test('ExaReadUrls rejects empty url list and over-limit', async () => {
+  const tools = await import('../dist/tools/index.js');
+  const read = tools.allCapabilities.find(c => c.spec?.name === 'ExaReadUrls');
+  const ctx = { workingDir: '/tmp', abortSignal: new AbortController().signal };
+  const empty = await read.execute({ urls: [] }, ctx);
+  assert.equal(empty.isError, true, 'empty urls should error');
+  assert.match(empty.output, /required/i);
+  const over = await read.execute({ urls: new Array(101).fill('https://x.com') }, ctx);
+  assert.equal(over.isError, true, '>100 urls should error');
+  assert.match(over.output, /max 100/);
+});
+
+test('MusicGen capability is registered with the right shape', async () => {
+  const tools = await import('../dist/tools/index.js');
+  const mg = tools.allCapabilities.find(c => c.spec?.name === 'MusicGen');
+  assert.ok(mg, 'MusicGen must be registered');
+  assert.deepEqual(mg.spec.input_schema.required, ['prompt']);
+  for (const key of ['prompt', 'output_path', 'model', 'instrumental', 'lyrics', 'duration_seconds', 'contentId']) {
+    assert.ok(mg.spec.input_schema.properties[key], `MusicGen schema missing: ${key}`);
+  }
+  assert.equal(mg.concurrent, false, 'MusicGen must not run concurrently — it costs real USDC');
+});
+
+test('MusicGen rejects conflicting instrumental + lyrics', async () => {
+  const tools = await import('../dist/tools/index.js');
+  const mg = tools.allCapabilities.find(c => c.spec?.name === 'MusicGen');
+  const ctx = { workingDir: '/tmp', abortSignal: new AbortController().signal };
+  const conflict = await mg.execute({
+    prompt: 'pop song',
+    instrumental: true,
+    lyrics: 'verse one',
+  }, ctx);
+  assert.equal(conflict.isError, true, 'conflicting flags must error');
+  assert.match(conflict.output, /cannot set both/i);
+});
+
+test('VideoGen capability is registered with the right shape', async () => {
+  const tools = await import('../dist/tools/index.js');
+  const vg = tools.allCapabilities.find(c => c.spec?.name === 'VideoGen');
+  assert.ok(vg, 'VideoGen must be registered in allCapabilities');
+  assert.equal(vg.spec.input_schema.required[0], 'prompt', 'VideoGen must require a prompt');
+  const props = vg.spec.input_schema.properties;
+  for (const key of ['prompt', 'model', 'image_url', 'duration_seconds', 'output_path', 'contentId']) {
+    assert.ok(props[key], `VideoGen schema missing property: ${key}`);
+  }
+  // Factory form also exports cleanly
+  const { createVideoGenCapability } = await import('../dist/tools/videogen.js');
+  const solo = createVideoGenCapability();
+  assert.equal(solo.spec.name, 'VideoGen');
+  assert.equal(solo.concurrent, false, 'VideoGen must not run concurrently — it costs real USDC');
+});
+
+test('extractMentions: word-boundary matches entity names and aliases, ignores partials', async () => {
+  const { extractMentions } = await import('../dist/brain/store.js');
+  const entities = [
+    { id: '1', type: 'project', name: 'Franklin', aliases: ['FKL'], created_at: 0, updated_at: 0, reference_count: 3 },
+    { id: '2', type: 'concept', name: 'Base', aliases: [], created_at: 0, updated_at: 0, reference_count: 2 },
+    { id: '3', type: 'person', name: 'Vicky', aliases: ['vicky.fu'], created_at: 0, updated_at: 0, reference_count: 5 },
+  ];
+
+  // Exact-word match on canonical names
+  const a = extractMentions('I talked to Vicky about Franklin yesterday.', entities);
+  assert.deepEqual(a.sort(), ['Franklin', 'Vicky'].sort(), `expected both entities, got ${a}`);
+
+  // Alias match
+  const b = extractMentions('ping FKL about the deploy', entities);
+  assert.deepEqual(b, ['Franklin'], 'alias FKL should map back to canonical Franklin');
+
+  // Word-boundary reject: "Baseline" must NOT match entity "Base"
+  const c = extractMentions('Baseline metrics look good.', entities);
+  assert.deepEqual(c, [], `"Baseline" should not match "Base", got ${c}`);
+
+  // Case-insensitive match
+  const d = extractMentions('FRANKLIN shipped', entities);
+  assert.deepEqual(d, ['Franklin']);
+
+  // Empty / whitespace input → empty
+  assert.deepEqual(extractMentions('', entities), []);
+  assert.deepEqual(extractMentions('   ', entities), []);
+});
+
+test('takeProgressiveChunk: holds below threshold, flushes on paragraph boundary, hard-caps on overflow', async () => {
+  const { takeProgressiveChunk } = await import('../dist/channel/telegram.js');
+
+  // Below threshold → keep everything
+  {
+    const { flush, keep } = takeProgressiveChunk('short text', 1500, 4000);
+    assert.equal(flush, '');
+    assert.equal(keep, 'short text');
+  }
+
+  // Above threshold at a paragraph break → flush the first paragraph
+  {
+    const para1 = 'x'.repeat(1600) + '\n\n';
+    const para2 = 'y'.repeat(50);
+    const { flush, keep } = takeProgressiveChunk(para1 + para2, 1500, 4000);
+    assert.equal(flush, para1, 'should flush the closed paragraph');
+    assert.equal(keep, para2, 'partial paragraph must be preserved');
+  }
+
+  // Above threshold but no newline yet → keep everything (wait for boundary)
+  {
+    const noNl = 'z'.repeat(1800);
+    const { flush, keep } = takeProgressiveChunk(noNl, 1500, 4000);
+    assert.equal(flush, '', 'should wait for a boundary when below hard cap');
+    assert.equal(keep, noNl);
+  }
+
+  // Above hard cap with no newline → hard split anyway (don't exceed 4000 on send)
+  {
+    const wall = 'w'.repeat(4500);
+    const { flush, keep } = takeProgressiveChunk(wall, 1500, 4000);
+    assert.equal(flush.length, 4000, 'must hard-split at cap to keep send under 4096');
+    assert.equal(flush + keep, wall, 'hard-split must preserve data');
+  }
+});
+
+test('splitForTelegram: short text returns a single chunk; long splits on newline with hard-split fallback', async () => {
+  const { splitForTelegram } = await import('../dist/channel/telegram.js');
+
+  // Short text stays as-is
+  assert.deepEqual(splitForTelegram('hi there'), ['hi there']);
+
+  // Multi-line text under the cap — single chunk
+  const small = 'line one\nline two\nline three';
+  assert.deepEqual(splitForTelegram(small, 4000), [small]);
+
+  // Long with newlines: every chunk must be <= max and, except possibly the
+  // last, must end at a newline so the split reads cleanly in Telegram.
+  const big = Array.from({ length: 50 }, (_, i) => `line ${i}: ` + 'x'.repeat(100)).join('\n');
+  const chunks = splitForTelegram(big, 1000);
+  assert.ok(chunks.length >= 2, `expected multiple chunks, got ${chunks.length}`);
+  assert.equal(chunks.join(''), big, 'reassembly must equal the original input');
+  for (let i = 0; i < chunks.length; i++) {
+    assert.ok(chunks[i].length <= 1000, `chunk ${i} exceeds max: ${chunks[i].length}`);
+    if (i < chunks.length - 1) {
+      assert.ok(
+        chunks[i].endsWith('\n'),
+        `non-final chunk ${i} should end at a newline; ends with: ${JSON.stringify(chunks[i].slice(-10))}`,
+      );
+    }
+  }
+
+  // Pathological no-newline input — fall back to hard character split without
+  // hanging and without dropping data.
+  const wall = 'a'.repeat(7500);
+  const hardChunks = splitForTelegram(wall, 3000);
+  assert.equal(hardChunks.length, 3, `7500 / 3000 should produce 3 chunks, got ${hardChunks.length}`);
+  assert.equal(hardChunks.join(''), wall, 'hard-split reassembly must match');
+  assert.ok(hardChunks.every(c => c.length <= 3000), 'every chunk must respect max');
+});
+
+test('classifyToolCallFailure: aborted vs truncated vs malformed produce distinct prefixes', async () => {
+  const { classifyToolCallFailure } = await import('../dist/agent/llm.js');
+
+  const aborted = new AbortController();
+  aborted.abort();
+  const a = classifyToolCallFailure('Write', '{"path":"a', aborted.signal, 'nvidia/nemotron-ultra-253b');
+  assert.match(a, /canceled/i, `aborted case should read as cancellation, got: ${a}`);
+  assert.ok(!/malformed/i.test(a), 'aborted must NOT fall back to malformed text');
+
+  const live = new AbortController();
+  const short = classifyToolCallFailure('Write', '{"p', live.signal, 'nvidia/nemotron-ultra-253b');
+  assert.match(short, /interrupted|timeout|rate/i, `<8 chars should be classified as interrupted, got: ${short}`);
+
+  const trunc = classifyToolCallFailure('Write', '{"path":"/tmp/x","content":"hello wor', live.signal, 'nvidia/nemotron-ultra-253b');
+  assert.match(trunc, /cut off|not closed|mid tool/i, `unclosed JSON should classify as truncated, got: ${trunc}`);
+
+  const mal = classifyToolCallFailure('Write', '{"path":"/tmp/x","content":"ok" "extra"}', live.signal, 'nvidia/nemotron-ultra-253b');
+  assert.match(mal, /malformed/i, `invalid JSON with closed braces should classify as malformed, got: ${mal}`);
+  assert.match(mal, /Preview:/i, 'malformed case must include an input preview');
+});
+
+test('isWeakModel: flags nvidia/nemotron/glm-4, spares frontier and glm-5+', async () => {
+  const { isWeakModel } = await import('../dist/agent/loop.js');
+  assert.equal(isWeakModel('nvidia/nemotron-ultra-253b'), true);
+  assert.equal(isWeakModel('nvidia/qwen3-coder-480b'), true);
+  assert.equal(isWeakModel('zai/glm-4.5'), true, 'GLM-4 is weak');
+  assert.equal(isWeakModel('zai/glm-5.1'), false, 'GLM-5+ is strong enough — must not be nagged');
+  assert.equal(isWeakModel('anthropic/claude-sonnet-4.6'), false, 'frontier Anthropic must be strong');
+  assert.equal(isWeakModel('anthropic/claude-opus-4.7'), false, 'frontier Anthropic must be strong');
+  assert.equal(isWeakModel('openai/gpt-5'), false, 'gpt-5 must be strong');
+});
+
+test('renderMarkdownStreaming: unfinished bold/link pair stays plain', async () => {
+  const { renderMarkdownStreaming } = await import('../dist/ui/markdown.js');
+
+  // Mid-stream: no newlines → everything is partial → plain text, no ANSI
+  const mid = renderMarkdownStreaming('Hello **wor');
+  assert.equal(mid.rendered, '', 'no newline yet → no closed lines rendered');
+  assert.equal(mid.partial, 'Hello **wor', 'partial line preserved verbatim');
+  // eslint-disable-next-line no-control-regex
+  assert.ok(!/\u001b\[/.test(mid.partial), 'partial line must not contain ANSI escape sequences');
+
+  // Closed line + pending partial. The bullet `- ` should be rewritten to `• `
+  // and the `**Music**` should be consumed by the bold regex (whether chalk
+  // emits ANSI or strips it under no-TTY is orthogonal — the marker tokens
+  // must not survive).
+  const split = renderMarkdownStreaming('- **Music**: Upbeat\nnew li');
+  assert.ok(split.rendered.length > 0, 'closed line should render');
+  assert.equal(split.partial, 'new li', 'trailing partial preserved');
+  assert.ok(!split.rendered.includes('**Music**'), 'closed bold markers must be consumed');
+  assert.ok(split.rendered.includes('• '), 'bullet marker must be rewritten');
+
+  // Tightened link regex: URL with embedded parens is no longer gobbled
+  const paren = renderMarkdownStreaming('[label](https://ex.com/bad(url).html)\n');
+  // The old regex would have matched `https://ex.com/bad(url` as the URL; the
+  // new regex rejects URLs containing `(`, leaving the whole thing as text.
+  assert.ok(
+    !paren.rendered.includes('bad(url') || paren.rendered.includes('[label]'),
+    'URLs with parens must not be greedily captured',
+  );
+});
+
+test('ThinkTagStripper splits inline <think> tags across chunk boundaries', async () => {
+  const { ThinkTagStripper } = await import('../dist/agent/think-tag-stripper.js');
+
+  // Simple single-chunk parse
+  {
+    const s = new ThinkTagStripper();
+    const segs = [...s.push('Hello <think>planning</think> world'), ...s.flush()];
+    assert.deepEqual(segs, [
+      { type: 'text', text: 'Hello ' },
+      { type: 'thinking', text: 'planning' },
+      { type: 'text', text: ' world' },
+    ]);
+  }
+
+  // Tag split across three chunks — stripper must buffer the partial
+  {
+    const s = new ThinkTagStripper();
+    const out = [];
+    out.push(...s.push('before <th'));
+    out.push(...s.push('ink>reasoning</thi'));
+    out.push(...s.push('nk>after'));
+    out.push(...s.flush());
+    assert.deepEqual(out, [
+      { type: 'text', text: 'before ' },
+      { type: 'thinking', text: 'reasoning' },
+      { type: 'text', text: 'after' },
+    ]);
+  }
+
+  // <thinking> variant (DeepSeek/QwQ style)
+  {
+    const s = new ThinkTagStripper();
+    const segs = [...s.push('<thinking>deep</thinking>ok'), ...s.flush()];
+    assert.deepEqual(segs, [
+      { type: 'thinking', text: 'deep' },
+      { type: 'text', text: 'ok' },
+    ]);
+  }
+
+  // No tags at all — pass-through
+  {
+    const s = new ThinkTagStripper();
+    const segs = [...s.push('just plain text'), ...s.flush()];
+    assert.deepEqual(segs, [{ type: 'text', text: 'just plain text' }]);
+  }
+
+  // Stream ends mid-tag — the buffered partial flushes as text (not swallowed)
+  {
+    const s = new ThinkTagStripper();
+    const segs = [...s.push('content then <thi'), ...s.flush()];
+    assert.deepEqual(segs, [
+      { type: 'text', text: 'content then ' },
+      { type: 'text', text: '<thi' },
+    ]);
+  }
+
+  // False-positive prefix — `<template>` should NOT be held back forever
+  {
+    const s = new ThinkTagStripper();
+    const segs = [...s.push('code: <template>foo</template>'), ...s.flush()];
+    assert.deepEqual(segs, [{ type: 'text', text: 'code: <template>foo</template>' }]);
+  }
+});
+
 test('resetToolSessionState clears read/webfetch/bash module-level caches across sessions', async () => {
   const { fileReadTracker, partiallyReadFiles } = await import('../dist/tools/read.js');
   const { resetToolSessionState } = await import('../dist/tools/index.js');

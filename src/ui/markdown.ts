@@ -30,6 +30,27 @@ const LANG_LABELS: Record<string, string> = {
 };
 
 /**
+ * Render markdown for a *streaming* buffer: everything up to the last newline
+ * is treated as complete and rendered with full inline formatting; the
+ * trailing partial line is returned as plain text.
+ *
+ * Why this exists: running `renderInline` over a half-written `**bold`,
+ * ``code`` , or `[link](` pair produces broken/unbalanced ANSI, which Ink's
+ * word-wrap then mangles around the wrap boundary (observed as `1mMusic` /
+ * `[Epidemic Sound (https://…)` in terminal output). Keeping the unfinished
+ * line plain until a newline arrives avoids the mid-regex failure mode with
+ * zero latency penalty — the partial line re-renders on the very next delta.
+ */
+export function renderMarkdownStreaming(text: string): { rendered: string; partial: string } {
+  const lastNl = text.lastIndexOf('\n');
+  if (lastNl === -1) return { rendered: '', partial: text };
+  return {
+    rendered: renderMarkdown(text.slice(0, lastNl)),
+    partial: text.slice(lastNl + 1),
+  };
+}
+
+/**
  * Render a complete markdown string to ANSI-colored terminal output.
  */
 export function renderMarkdown(text: string): string {
@@ -141,8 +162,11 @@ function renderInline(text: string): string {
     .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, (_, t) => chalk.italic(t))
     // Strikethrough
     .replace(/~~([^~]+)~~/g, (_, t) => chalk.strikethrough(t))
-    // Links — show label in blue, URL dimmed
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) =>
+    // Links — show label in blue, URL dimmed. URL must not contain parens or
+    // whitespace; that's true for almost every real URL (parens in URLs are
+    // percent-encoded) and rejecting the pathological case keeps the regex
+    // greed from eating past a `)` in adjacent prose.
+    .replace(/\[([^\]]+)\]\(([^()\s]+)\)/g, (_, label, url) =>
       chalk.blue.underline(label) + chalk.dim(` (${url})`)
     );
 }

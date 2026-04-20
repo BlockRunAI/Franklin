@@ -356,6 +356,13 @@ async function runWithInkUI(
   ui.cleanup();
   flushStats();
 
+  // Opt-in telemetry — no-op unless user has run `franklin telemetry enable`.
+  // Appends a sanitized session summary to ~/.blockrun/telemetry.jsonl.
+  try {
+    const { recordLatestSessionIfEnabled } = await import('../telemetry/store.js');
+    recordLatestSessionIfEnabled(process.cwd(), agentConfig.chain);
+  } catch { /* telemetry is best-effort */ }
+
   // Extract learnings from the session (async, 10s timeout, never blocks exit)
   if (sessionHistory && sessionHistory.length >= 4) {
     try {

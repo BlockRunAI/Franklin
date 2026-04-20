@@ -424,7 +424,7 @@ a:hover { text-decoration:underline; }
     <div class="savings-hero" id="savings-hero" style="display:none">
       <div>
         <div class="savings-detail">
-          <div class="label">Saved vs Claude Opus</div>
+          <div class="label">Saved vs Opus tier</div>
         </div>
         <div class="savings-amount" id="savings-amount">&mdash;</div>
         <div class="savings-detail">

@@ -23,6 +23,7 @@ import type {
   TextSegment,
   ThinkingSegment,
 } from './types.js';
+import { ThinkTagStripper } from './think-tag-stripper.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,39 @@ export function modelHasExtendedThinking(model: string): boolean {
     m.includes('sonnet-4') ||
     m.includes('sonnet-3.7')
   );
+}
+
+/**
+ * Classify an unparseable tool-call JSON failure so the user and the model
+ * get an actionable message instead of a single generic line. Exported for
+ * direct unit testing — the happy path hits it only on stream error.
+ */
+export function classifyToolCallFailure(
+  toolName: string,
+  rawInput: string,
+  signal: AbortSignal | undefined,
+  model: string,
+): string {
+  if (signal?.aborted) {
+    return `[Tool call to ${toolName} was canceled before the input finished streaming. ` +
+      `Previous response kept. Resubmit the last message to retry.]`;
+  }
+  const charsReceived = rawInput.length;
+  // If we have almost nothing, the stream stopped early (timeout / model cut off).
+  // If we have a lot but it's still invalid, the model produced malformed JSON.
+  if (charsReceived < 8) {
+    return `[Tool call to ${toolName} was interrupted mid-stream (only ${charsReceived} chars received) — ` +
+      `likely a model timeout or rate limit on ${model}. Try \`/model <other>\` or resubmit.]`;
+  }
+  const looksTruncated = !rawInput.trimEnd().endsWith('}');
+  if (looksTruncated) {
+    return `[Model ${model} cut off mid tool call (${charsReceived} chars received, JSON not closed). ` +
+      `Try \`/model <stronger>\` or shorten the prompt.]`;
+  }
+  const preview = rawInput.slice(0, 120).replace(/\s+/g, ' ');
+  return `[Tool call to ${toolName} had malformed JSON input (${charsReceived} chars). ` +
+    `Preview: ${preview}${rawInput.length > 120 ? '…' : ''} — ` +
+    `this is usually a model output bug; try \`/model <other>\` or retry.]`;
 }
 
 function applyAnthropicPromptCaching(
@@ -352,6 +386,17 @@ export class ModelClient {
     let currentToolId = '';
     let currentToolName = '';
     let currentToolInput = '';
+    // Split inline <think>…</think> emitted by reasoning models (nemotron,
+    // deepseek-r1, qwq, etc.) that use the text field instead of the native
+    // thinking block. Thinking emitted this way is display-only — we don't
+    // store it in history (Anthropic thinking blocks require signatures).
+    // Reset per text block.
+    let textStripper = new ThinkTagStripper();
+    // One-shot observability: log when a weak model starts role-playing tool
+    // calls as literal text tokens. We don't rewrite the stream — the
+    // system-prompt guard in loop.ts is responsible for preventing this.
+    // Debug-only because the user already sees the literal text in the UI.
+    let toolCallRoleplayWarned = false;
 
     for await (const chunk of this.streamCompletion(request, signal)) {
       switch (chunk.kind) {
@@ -367,6 +412,7 @@ export class ModelClient {
             currentThinkingSignature = '';
           } else if (cblock?.type === 'text') {
             currentText = '';
+            textStripper = new ThinkTagStripper();
           }
           break;
         }
@@ -374,9 +420,34 @@ export class ModelClient {
           const delta = chunk.payload['delta'] as Record<string, unknown> | undefined;
           if (!delta) break;
           if (delta.type === 'text_delta') {
-            const text = (delta.text as string) || '';
-            currentText += text;
-            if (text) onStreamDelta?.({ type: 'text', text });
+            const raw = (delta.text as string) || '';
+            if (!toolCallRoleplayWarned) {
+              // Only scan the last ~15 chars of already-emitted text plus the
+              // new delta — enough to catch a token straddling the chunk
+              // boundary (`[TOOLCALL]`=10, `<tool_calls>`=12) without the
+              // O(N²) blowup of re-scanning the whole accumulated text on
+              // every delta.
+              const window = currentText.slice(-15) + raw;
+              if (/\[TOOLCALL\]|<tool_calls?>/i.test(window)) {
+                toolCallRoleplayWarned = true;
+                if (this.debug) {
+                  console.error(
+                    `[franklin] Model ${request.model} emitted a tool-call ` +
+                    'roleplay token ([TOOLCALL] / <tool_call>) in its text. ' +
+                    'This is a model hallucination; real tool calls arrive ' +
+                    'as tool_use blocks, not text.',
+                  );
+                }
+              }
+            }
+            for (const seg of textStripper.push(raw)) {
+              if (seg.type === 'text') {
+                currentText += seg.text;
+                if (seg.text) onStreamDelta?.({ type: 'text', text: seg.text });
+              } else if (seg.text) {
+                onStreamDelta?.({ type: 'thinking', text: seg.text });
+              }
+            }
           } else if (delta.type === 'thinking_delta') {
             const text = (delta.thinking as string) || '';
             currentThinking += text;
@@ -407,11 +478,18 @@ export class ModelClient {
             }
 
             if (inputParseError) {
-              // Don't invoke the tool — add a text block explaining the error
-              // and skip the tool_use entirely. The model will see the error and retry.
+              // Don't invoke the tool — add a classified text block so the
+              // user (and the model) can see the specific cause. Prior streamed
+              // text is already in `collected` from earlier content_block_stop
+              // events, so partial work survives.
               collected.push({
                 type: 'text',
-                text: `[Tool call to ${currentToolName} failed: incomplete JSON input from stream. The request may have been interrupted.]`,
+                text: classifyToolCallFailure(
+                  currentToolName,
+                  currentToolInput,
+                  signal,
+                  request.model,
+                ),
               } as TextSegment);
             } else {
               const toolInvocation = {
@@ -435,12 +513,23 @@ export class ModelClient {
             } as ThinkingSegment);
             currentThinking = '';
             currentThinkingSignature = '';
-          } else if (currentText) {
-            collected.push({
-              type: 'text',
-              text: currentText,
-            } as TextSegment);
-            currentText = '';
+          } else {
+            // Flush any partial tag held in the stripper
+            for (const seg of textStripper.flush()) {
+              if (seg.type === 'text') {
+                currentText += seg.text;
+                if (seg.text) onStreamDelta?.({ type: 'text', text: seg.text });
+              } else if (seg.text) {
+                onStreamDelta?.({ type: 'thinking', text: seg.text });
+              }
+            }
+            if (currentText) {
+              collected.push({
+                type: 'text',
+                text: currentText,
+              } as TextSegment);
+              currentText = '';
+            }
           }
           break;
         }
@@ -475,7 +564,15 @@ export class ModelClient {
       }
     }
 
-    // Flush any remaining text
+    // Flush any remaining text (stream ended without content_block_stop)
+    for (const seg of textStripper.flush()) {
+      if (seg.type === 'text') {
+        currentText += seg.text;
+        if (seg.text) onStreamDelta?.({ type: 'text', text: seg.text });
+      } else if (seg.text) {
+        onStreamDelta?.({ type: 'thinking', text: seg.text });
+      }
+    }
     if (currentText) {
       collected.push({ type: 'text', text: currentText });
     }
