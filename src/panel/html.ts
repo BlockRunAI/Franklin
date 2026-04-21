@@ -1002,7 +1002,7 @@ loadSessions();
 loadMarkets();
 loadLearnings();
 loadWallet();
-setInterval(loadMarkets, 5000);
+document.querySelector('[data-tab="markets"]')?.addEventListener('click', loadMarkets);
 setInterval(() => api('wallet').then(w => {
   if (w) {
     document.getElementById('balance').textContent = usdBig(w.balance) + ' USDC';
