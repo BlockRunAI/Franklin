@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { kickoffVersionCheck, getAvailableUpdate } from './version-check.js';
 
 // ─── Ben Franklin portrait ─────────────────────────────────────────────────
 //
@@ -98,10 +99,29 @@ export function printBanner(version: string): void {
   const style = process.env.FRANKLIN_BANNER?.toLowerCase();
   if (style === 'full' || style === 'legacy') {
     printLegacyBanner(version);
-    return;
+  } else {
+    printCompactBanner(version);
   }
 
-  printCompactBanner(version);
+  // Kick off a background refresh for *next* startup, and print a hint now
+  // if the cache already knows about a newer version. All wrapped in
+  // try/catch because a banner should never be the reason startup breaks.
+  try {
+    kickoffVersionCheck();
+    const update = getAvailableUpdate();
+    if (update) {
+      console.log(
+        chalk.yellow('⟳ ') +
+        chalk.bold(`Franklin ${update.latest}`) +
+        chalk.dim(` available — you have ${update.current}`),
+      );
+      console.log(
+        chalk.dim('  Run: ') +
+        chalk.bold('npm install -g @blockrun/franklin@latest'),
+      );
+      console.log('');
+    }
+  } catch { /* version-check is best-effort; never block startup */ }
 }
 
 function printCompactBanner(version: string): void {

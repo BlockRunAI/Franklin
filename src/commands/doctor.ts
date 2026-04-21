@@ -21,6 +21,7 @@ import {
 } from '@blockrun/llm';
 import { loadChain, API_URLS, VERSION, BLOCKRUN_DIR } from '../config.js';
 import { isTelemetryEnabled, readAllRecords, telemetryPaths } from '../telemetry/store.js';
+import { getAvailableUpdate, kickoffVersionCheck } from '../version-check.js';
 
 interface Check {
   name: string;
@@ -43,10 +44,17 @@ async function runChecks(): Promise<Check[]> {
   });
 
   // ── 2. Franklin version ───────────────────────────────────────────
+  // Kick the daily cache refresh so subsequent doctor runs carry fresh
+  // data. Current run uses whatever's already cached.
+  kickoffVersionCheck();
+  const update = getAvailableUpdate();
   out.push({
     name: 'Franklin',
-    status: 'ok',
-    detail: `v${VERSION}`,
+    status: update ? 'warn' : 'ok',
+    detail: update
+      ? `v${VERSION} — update available: v${update.latest}`
+      : `v${VERSION}`,
+    remedy: update ? 'npm install -g @blockrun/franklin@latest' : undefined,
   });
 
   // ── 3. BLOCKRUN_DIR writable ──────────────────────────────────────
