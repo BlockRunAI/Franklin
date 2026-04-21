@@ -372,13 +372,13 @@ a:hover { text-decoration:underline; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
       Wallet
     </button>
+    <button class="nav-item" data-tab="markets">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/></svg>
+      Markets
+    </button>
     <button class="nav-item" data-tab="sessions">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       Sessions
-    </button>
-    <button class="nav-item" data-tab="social">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l11.733 16h4.267l-11.733-16z"/><path d="M4 20l6.768-6.768M15.232 11.232L20 4"/></svg>
-      Social
     </button>
     <button class="nav-item" data-tab="learnings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
@@ -543,16 +543,34 @@ a:hover { text-decoration:underline; }
     <div class="session-detail" id="session-detail" style="display:none"></div>
   </div>
 
-  <!-- Social -->
-  <div class="tab" id="tab-social">
+  <!-- Markets -->
+  <div class="tab" id="tab-markets">
     <div class="content-header">
-      <h2>Social</h2>
-      <p>X/Twitter engagement stats</p>
+      <h2>Markets</h2>
+      <p>How Franklin gets trading data — and what it costs.</p>
     </div>
-    <div class="grid grid-4" id="social-stats"></div>
-    <div class="card" style="margin-top:12px">
-      <h3>Recent Activity</h3>
-      <div id="social-feed" class="empty">No social activity yet</div>
+
+    <div class="grid grid-4">
+      <div class="card"><h3>Calls today</h3><div class="metric" id="mk-calls">&mdash;</div></div>
+      <div class="card"><h3>Spend today</h3><div class="metric gold" id="mk-spend">&mdash;</div></div>
+      <div class="card"><h3>p50 latency</h3><div class="metric" id="mk-p50">&mdash;</div></div>
+      <div class="card"><h3>Payment chain</h3><div class="metric" id="mk-chain">&mdash;</div></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:14px;margin-top:14px">
+      <div class="card">
+        <h3>Data pipeline</h3>
+        <p style="color:var(--text-dim);font-size:12px;margin:4px 0 14px">
+          Each asset class routes through the provider registry to the active upstream.
+        </p>
+        <div id="mk-pipeline" style="font-family:var(--mono);font-size:12px;line-height:1.75"></div>
+      </div>
+      <div class="card">
+        <h3>Providers</h3>
+        <div id="mk-providers" style="margin-top:6px"></div>
+        <h3 style="margin-top:18px">Recent paid calls</h3>
+        <div id="mk-paid" class="empty" style="margin-top:6px">No paid calls yet</div>
+      </div>
     </div>
   </div>
 
@@ -718,14 +736,84 @@ document.getElementById('session-search').addEventListener('input', (e) => {
   }, 300);
 });
 
-async function loadSocial() {
-  const social = await api('social');
-  if (!social) return;
-  document.getElementById('social-stats').innerHTML =
-    '<div class="card"><h3>Posted</h3><div class="metric success">' + (social.posted || 0) + '</div></div>' +
-    '<div class="card"><h3>Drafted</h3><div class="metric">' + (social.drafted || 0) + '</div></div>' +
-    '<div class="card"><h3>Skipped</h3><div class="metric">' + (social.skipped || 0) + '</div></div>' +
-    '<div class="card"><h3>Social Cost</h3><div class="metric gold">' + usd(social.totalCost || 0) + '</div></div>';
+async function loadMarkets() {
+  const data = await api('markets');
+  if (!data) return;
+
+  const calls = (data.totals && data.totals.callsToday) || 0;
+  const spend = (data.totals && data.totals.spendUsdToday) || 0;
+  const p50 = data.totals && data.totals.p50LatencyMs;
+  document.getElementById('mk-calls').textContent = String(calls);
+  document.getElementById('mk-spend').textContent = usd(spend);
+  document.getElementById('mk-p50').textContent = (p50 == null) ? '—' : (p50 + ' ms');
+  document.getElementById('mk-chain').textContent = (data.chain || 'base').toUpperCase();
+
+  // Pipeline: Franklin → registry → per-asset-class provider → endpoint
+  const rows = (data.wiring || []).filter(function(r){ return r.kind === 'price'; });
+  const singletonRows = (data.wiring || []).filter(function(r){ return r.kind !== 'price'; });
+  const providerLabel = function(name) {
+    if (name === 'coingecko') return '<span style="color:var(--success)">CoinGecko</span>';
+    if (name === 'blockrun') return '<span style="color:var(--gold)">BlockRun Gateway</span>';
+    return esc(name);
+  };
+  const pipeLines = [
+    '<div>Franklin agent</div>',
+    '<div style="color:var(--text-dim);padding-left:8px">↓</div>',
+    '<div>Provider registry</div>',
+    '<div style="color:var(--text-dim);padding-left:8px">↓</div>',
+  ];
+  rows.forEach(function(r, i){
+    const last = i === rows.length - 1;
+    const branch = last ? '└' : '├';
+    const paid = r.paid ? ' <span style="color:var(--gold);font-size:10px">◆ x402</span>' : '';
+    pipeLines.push(
+      '<div>&nbsp;' + branch + '─ ' + esc(r.assetClass).padEnd(9, ' ') +
+      ' → ' + providerLabel(r.provider) + paid + '</div>'
+    );
+  });
+  pipeLines.push('<div style="margin-top:10px;color:var(--text-dim);font-size:11px">Other singleton kinds:</div>');
+  singletonRows.forEach(function(r){
+    pipeLines.push(
+      '<div style="color:var(--text-dim);font-size:11px">&nbsp;&nbsp;' +
+      esc(r.kind) + ' → ' + providerLabel(r.provider) + '</div>'
+    );
+  });
+  document.getElementById('mk-pipeline').innerHTML = pipeLines.join('');
+
+  // Providers health
+  const statusChip = function(s){
+    if (s === 'ok')       return '<span class="dot on"></span> <span style="color:var(--success)">OK</span>';
+    if (s === 'degraded') return '<span class="dot off"></span> <span style="color:var(--danger)">degraded</span>';
+    return '<span class="dot" style="background:var(--text-dim)"></span> <span style="color:var(--text-dim)">cold</span>';
+  };
+  const providers = data.providers || [];
+  document.getElementById('mk-providers').innerHTML = providers.length === 0 ? '<div class="empty">No calls recorded yet.</div>' : providers.map(function(p){
+    const since = p.lastOkAt ? Math.round((Date.now() - p.lastOkAt) / 1000) + 's ago' : '—';
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px">' +
+      '<span>' + statusChip(p.status) + ' &nbsp;<strong>' + esc(p.name) + '</strong></span>' +
+      '<span style="color:var(--text-dim);font-family:var(--mono);font-size:11px">' +
+        p.calls + ' calls · p50 ' + (p.p50LatencyMs == null ? '—' : p.p50LatencyMs + 'ms') + ' · last ' + since +
+      '</span>' +
+    '</div>';
+  }).join('');
+
+  // Recent paid calls
+  const paid = data.recentPaidCalls || [];
+  const paidBox = document.getElementById('mk-paid');
+  if (paid.length === 0) {
+    paidBox.className = 'empty';
+    paidBox.textContent = 'No paid calls yet — stocks ship in the next release.';
+  } else {
+    paidBox.className = '';
+    paidBox.innerHTML = paid.map(function(r){
+      const age = Math.round((Date.now() - r.ts) / 1000) + 's ago';
+      return '<div style="display:flex;justify-content:space-between;padding:4px 0;font-family:var(--mono);font-size:12px">' +
+        '<span>' + esc(r.endpoint) + '</span>' +
+        '<span class="gold">' + usd(r.costUsd) + '</span>' +
+        '<span style="color:var(--text-dim)">' + age + '</span>' +
+      '</div>';
+    }).join('');
+  }
 }
 
 async function loadLearnings() {
@@ -911,9 +999,10 @@ document.querySelector('[data-tab="audit"]')?.addEventListener('click', loadAudi
 
 loadOverview();
 loadSessions();
-loadSocial();
+loadMarkets();
 loadLearnings();
 loadWallet();
+setInterval(loadMarkets, 5000);
 setInterval(() => api('wallet').then(w => {
   if (w) {
     document.getElementById('balance').textContent = usdBig(w.balance) + ' USDC';

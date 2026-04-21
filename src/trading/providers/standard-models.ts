@@ -13,9 +13,28 @@
  * coerce to the standard data type before returning.
  */
 
+/**
+ * Asset classes Franklin recognizes. Crypto is today; the rest unlock the
+ * moment a provider with non-crypto coverage (BlockRun Gateway / Pyth) is
+ * wired into the registry. Fetchers inspect this to pick the correct
+ * upstream endpoint.
+ */
+export type AssetClass = 'crypto' | 'fx' | 'commodity' | 'stock';
+
+/**
+ * Stock exchange market codes BlockRun Gateway understands. Only meaningful
+ * when `assetClass === 'stock'`; ignored otherwise.
+ */
+export type MarketCode =
+  | 'us' | 'hk' | 'jp' | 'kr' | 'gb' | 'de' | 'fr' | 'nl' | 'ie' | 'lu' | 'cn' | 'ca';
+
 /** Common to every query: a ticker the provider will resolve itself. */
 export interface PriceQueryParams {
   ticker: string;
+  /** Defaults to 'crypto' so existing callers keep working without churn. */
+  assetClass?: AssetClass;
+  /** Required when assetClass === 'stock'. Ignored otherwise. */
+  market?: MarketCode;
 }
 
 export interface PriceData {
@@ -79,6 +98,18 @@ export interface MarketCoinData {
 export interface ProviderError {
   kind: 'rate-limited' | 'timeout' | 'not-found' | 'upstream-error' | 'unknown';
   message: string;
+  /**
+   * Optional provider- or endpoint-specific subcode. Populated when the
+   * caller can take a different action than a generic error allows
+   * (e.g. "fund your wallet" vs "retry later"). Consumers should render
+   * `message` when `code` is absent.
+   */
+  code?:
+    | 'insufficient-funds'
+    | 'budget-exceeded'
+    | 'schema-mismatch'
+    | 'unsupported-asset-class'
+    | 'missing-market-code';
 }
 
 export function isProviderError(v: unknown): v is ProviderError {

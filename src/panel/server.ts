@@ -14,7 +14,8 @@ import { listSessions, loadSessionHistory } from '../session/storage.js';
 import { searchSessions } from '../session/search.js';
 import { loadLearnings } from '../learnings/store.js';
 import { readAudit } from '../stats/audit.js';
-import { getStats as getSocialStats } from '../social/db.js';
+import { snapshot as marketsSnapshot } from '../trading/providers/telemetry.js';
+import { describeWiring } from '../trading/providers/registry.js';
 import { getHTML } from './html.js';
 
 const sseClients = new Set<http.ServerResponse>();
@@ -313,9 +314,19 @@ export function createPanelServer(port: number): http.Server {
         return;
       }
 
-      if (p === '/api/social') {
-        const stats = getSocialStats();
-        json(res, stats);
+      if (p === '/api/markets') {
+        // Snapshot of every active data provider for the Markets panel:
+        // pipeline wiring (which endpoint serves which asset class), live
+        // health + latency per provider, and today's paid-call ledger.
+        const snap = marketsSnapshot();
+        const wiring = describeWiring();
+        json(res, {
+          chain: loadChain(),
+          wiring,
+          providers: snap.providers,
+          totals: snap.totals,
+          recentPaidCalls: snap.recentPaidCalls,
+        });
         return;
       }
 

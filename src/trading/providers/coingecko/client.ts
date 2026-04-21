@@ -7,6 +7,7 @@
  */
 
 import type { ProviderError } from '../standard-models.js';
+import { recordFetch } from '../telemetry.js';
 
 const BASE = 'https://api.coingecko.com/api/v3';
 const UA = 'franklin/3.8.9 (trading)';
@@ -25,7 +26,10 @@ export const TICKER_TO_ID: Record<string, string> = {
 };
 
 export function resolveProviderId(ticker: string): string {
-  return TICKER_TO_ID[ticker.toUpperCase()] ?? ticker.toLowerCase();
+  // Accept both "BTC" and "BTC-USD" — Pyth-style callers may pass the pair
+  // form even when the registry routes them to CoinGecko.
+  const normalized = ticker.toUpperCase().replace(/-USD$/, '').replace(/USDT?$/, '');
+  return TICKER_TO_ID[normalized] ?? TICKER_TO_ID[ticker.toUpperCase()] ?? normalized.toLowerCase();
 }
 
 interface CacheEntry<T> {
@@ -51,25 +55,35 @@ export function clearCache(): void {
 export async function coingeckoGet(path: string): Promise<unknown | ProviderError> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const endpoint = path.split('?')[0];
+  const startedAt = Date.now();
   try {
     const res = await fetch(`${BASE}${path}`, {
       headers: { 'User-Agent': UA },
       signal: ctrl.signal,
     });
+    const latencyMs = Date.now() - startedAt;
     if (res.status === 429) {
+      recordFetch({ provider: 'coingecko', endpoint, ok: false, latencyMs });
       return { kind: 'rate-limited', message: 'CoinGecko rate-limited this request (HTTP 429). Retry in a minute.' };
     }
     if (res.status === 404) {
+      recordFetch({ provider: 'coingecko', endpoint, ok: false, latencyMs });
       return { kind: 'not-found', message: `CoinGecko returned 404 for path ${path}` };
     }
     if (!res.ok) {
+      recordFetch({ provider: 'coingecko', endpoint, ok: false, latencyMs });
       return { kind: 'upstream-error', message: `CoinGecko HTTP ${res.status}` };
     }
+    recordFetch({ provider: 'coingecko', endpoint, ok: true, latencyMs });
     return await res.json();
   } catch (e: unknown) {
+    const latencyMs = Date.now() - startedAt;
     if (e instanceof DOMException && e.name === 'AbortError') {
+      recordFetch({ provider: 'coingecko', endpoint, ok: false, latencyMs });
       return { kind: 'timeout', message: `CoinGecko request timed out after ${TIMEOUT_MS}ms` };
     }
+    recordFetch({ provider: 'coingecko', endpoint, ok: false, latencyMs });
     return { kind: 'unknown', message: String(e) };
   } finally {
     clearTimeout(timer);

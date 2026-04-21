@@ -9,9 +9,10 @@
  * classification the string convention can't express.
  */
 
-import { getProvider } from './providers/registry.js';
+import { getProvider, getPriceProvider } from './providers/registry.js';
 import { runFetcher } from './providers/fetcher.js';
 import { isProviderError } from './providers/standard-models.js';
+import type { AssetClass, MarketCode } from './providers/standard-models.js';
 
 export interface PriceData {
   price: number;
@@ -47,8 +48,18 @@ export function resolveId(ticker: string): string {
   return ticker.toLowerCase();
 }
 
-export async function getPrice(ticker: string): Promise<PriceData | string> {
-  const result = await runFetcher(getProvider('price'), { ticker });
+/**
+ * Look up a spot price. `assetClass` defaults to 'crypto' so all existing
+ * crypto-only callers (`TradingSignal`, `LiveExchange.getPrice`) behave
+ * exactly as before. Pass 'fx' / 'commodity' / 'stock' (plus a `market`
+ * code for stocks) to hit the multi-asset Gateway endpoints.
+ */
+export async function getPrice(
+  ticker: string,
+  assetClass: AssetClass = 'crypto',
+  market?: MarketCode,
+): Promise<PriceData | string> {
+  const result = await runFetcher(getPriceProvider(assetClass), { ticker, assetClass, market });
   if (isProviderError(result)) return result.message;
   return {
     price: result.priceUsd,
@@ -56,6 +67,21 @@ export async function getPrice(ticker: string): Promise<PriceData | string> {
     volume24h: result.volume24hUsd,
     marketCap: result.marketCapUsd,
   };
+}
+
+/** Convenience: FX pair lookup (e.g. "EUR-USD"). */
+export async function getFxPrice(ticker: string): Promise<PriceData | string> {
+  return getPrice(ticker, 'fx');
+}
+
+/** Convenience: commodity lookup (e.g. "XAU-USD" for gold). */
+export async function getCommodityPrice(ticker: string): Promise<PriceData | string> {
+  return getPrice(ticker, 'commodity');
+}
+
+/** Convenience: stock lookup (e.g. "AAPL" on market "us"). */
+export async function getStockPrice(ticker: string, market: MarketCode): Promise<PriceData | string> {
+  return getPrice(ticker, 'stock', market);
 }
 
 export async function getOHLCV(ticker: string, days = 30): Promise<OHLCVData | string> {
