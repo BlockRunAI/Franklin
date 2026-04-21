@@ -1,6 +1,13 @@
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import type { SignalDetectedEvent } from '../events/types.js';
-import { getPrice, getOHLCV, getTrending, getMarketOverview } from '../trading/data.js';
+import {
+  getPrice,
+  getOHLCV,
+  getTrending,
+  getMarketOverview,
+  getFxPrice,
+  getCommodityPrice,
+} from '../trading/data.js';
 import { rsi, macd, bollingerBands, volatility } from '../trading/metrics.js';
 import { bus } from '../events/bus.js';
 import { makeEvent } from '../events/types.js';
@@ -120,8 +127,18 @@ export const tradingSignalCapability: CapabilityHandler = {
 // ── TradingMarket ─────────────────────────────────────────────────────────
 
 interface MarketInput {
-  action: 'price' | 'trending' | 'overview';
+  action: 'price' | 'trending' | 'overview' | 'fxPrice' | 'commodityPrice';
   ticker?: string;
+}
+
+function formatPriceLine(label: string, priceUsd: number, change24hPct: number, opts: { fractionDigits?: number; showChange?: boolean } = {}): string {
+  const digits = opts.fractionDigits ?? 2;
+  const priceStr = `$${priceUsd.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+  if (opts.showChange === false || !Number.isFinite(change24hPct)) {
+    return `${label}: ${priceStr}`;
+  }
+  const sign = change24hPct > 0 ? '+' : '';
+  return `${label}: ${priceStr} (${sign}${change24hPct.toFixed(2)}% 24h)`;
 }
 
 async function executeMarket(input: Record<string, unknown>, _ctx: ExecutionScope): Promise<CapabilityResult> {
@@ -143,6 +160,34 @@ async function executeMarket(input: Record<string, unknown>, _ctx: ExecutionScop
       const { price, change24h, marketCap, volume24h } = result;
       return {
         output: `${ticker.toUpperCase()}: $${price.toLocaleString()} (${change24h > 0 ? '+' : ''}${change24h.toFixed(2)}% 24h), Market Cap: ${formatUsd(marketCap)}, Volume: ${formatUsd(volume24h)}`,
+      };
+    }
+
+    case 'fxPrice': {
+      if (!ticker) {
+        return { output: 'Error: ticker is required (e.g. "EUR-USD")', isError: true };
+      }
+      const result = await getFxPrice(ticker);
+      if (typeof result === 'string') {
+        return { output: `Error: ${result}`, isError: true };
+      }
+      return {
+        output: formatPriceLine(ticker.toUpperCase(), result.price, result.change24h, { fractionDigits: 4 }) +
+          ' · source: BlockRun Gateway / Pyth (free)',
+      };
+    }
+
+    case 'commodityPrice': {
+      if (!ticker) {
+        return { output: 'Error: ticker is required (e.g. "XAU-USD" for gold)', isError: true };
+      }
+      const result = await getCommodityPrice(ticker);
+      if (typeof result === 'string') {
+        return { output: `Error: ${result}`, isError: true };
+      }
+      return {
+        output: formatPriceLine(ticker.toUpperCase(), result.price, result.change24h, { fractionDigits: 2 }) +
+          ' · source: BlockRun Gateway / Pyth (free)',
       };
     }
 
@@ -172,7 +217,10 @@ async function executeMarket(input: Record<string, unknown>, _ctx: ExecutionScop
     }
 
     default:
-      return { output: `Error: unknown action "${action}". Use: price, trending, overview`, isError: true };
+      return {
+        output: `Error: unknown action "${action}". Use: price, trending, overview, fxPrice, commodityPrice`,
+        isError: true,
+      };
   }
 }
 
@@ -180,18 +228,25 @@ export const tradingMarketCapability: CapabilityHandler = {
   spec: {
     name: 'TradingMarket',
     description:
-      'Get cryptocurrency market data: price lookup, trending coins, or market overview (top 20 by market cap).',
+      'Get market data across asset classes. Actions: ' +
+      '`price` (crypto spot price + 24h change + market cap, via CoinGecko, free), ' +
+      '`trending` (top trending coins), ' +
+      '`overview` (top 20 by market cap), ' +
+      '`fxPrice` (FX pair like EUR-USD, via BlockRun Gateway/Pyth, free), ' +
+      '`commodityPrice` (XAU-USD for gold, XAG-USD for silver, via BlockRun Gateway/Pyth, free). ' +
+      'Stocks arrive in the next release ($0.001/call via x402).',
     input_schema: {
       type: 'object' as const,
       properties: {
         action: {
           type: 'string',
-          enum: ['price', 'trending', 'overview'],
-          description: 'What to fetch: price lookup, trending coins, or market overview',
+          enum: ['price', 'trending', 'overview', 'fxPrice', 'commodityPrice'],
+          description: 'What to fetch. See tool description for cost + source per action.',
         },
         ticker: {
           type: 'string',
-          description: 'Cryptocurrency ticker (required for price action), e.g. "BTC"',
+          description:
+            'Ticker. Crypto: "BTC". FX: "EUR-USD". Commodity: "XAU-USD" (gold). Required for all price actions.',
         },
       },
       required: ['action'],
