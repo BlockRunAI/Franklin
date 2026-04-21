@@ -1,0 +1,53 @@
+{
+  "stamp": "2026-04-21T23-38-30-828Z",
+  "model": "zai/glm-5.1",
+  "configs": [
+    {
+      "name": "baseline",
+      "summary": "Full harness (v3.8.14)",
+      "env": {}
+    },
+    {
+      "name": "no-plan",
+      "summary": "plan-then-execute OFF",
+      "env": {
+        "FRANKLIN_NOPLAN": "1"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "trivia-short",
+      "category": "edge",
+      "prompt": "What is 2 + 2?"
+    }
+  ],
+  "results": [
+    {
+      "config": "baseline",
+      "prompt_id": "trivia-short",
+      "category": "edge",
+      "prompt": "What is 2 + 2?",
+      "code": 0,
+      "stdout": "4, Your Majesty.\n",
+      "stderr": "",
+      "elapsedMs": 8019,
+      "toolCalls": 0,
+      "answerLength": 16,
+      "costUsd": 0
+    },
+    {
+      "config": "no-plan",
+      "prompt_id": "trivia-short",
+      "category": "edge",
+      "prompt": "What is 2 + 2?",
+      "code": 0,
+      "stdout": "4\n",
+      "stderr": "",
+      "elapsedMs": 6822,
+      "toolCalls": 0,
+      "answerLength": 1,
+      "costUsd": 0
+    }
+  ]
+}
