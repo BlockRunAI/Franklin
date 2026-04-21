@@ -1,0 +1,13 @@
+src/**
+tsconfig.json
+build.mjs
+.vscode/**
+**/*.map
+**/*.ts
+!out/extension.cjs
+out/extension.js
+out/extension.js.map
+node_modules/**
+../**
+images/icon.svg
+images/blockrun-publisher.png

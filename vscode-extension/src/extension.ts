@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import {
   runVsCodeSession,
   getVsCodeWelcomeInfo,
@@ -336,7 +337,9 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
       this.sendHistoryList();
     }
     if (msg.type === 'loadSession' && msg.text) {
-      const history = loadSessionHistory(msg.text);
+      const sessionId = msg.text;
+      if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) { return; }
+      const history = loadSessionHistory(sessionId);
       if (history.length > 0) {
         // Find title from first user message
         let title = msg.text.slice(0, 8);
@@ -403,12 +406,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
 }
 
 function getNonce(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let i = 0; i < 32; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  return randomBytes(16).toString('hex');
 }
 
 function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
@@ -725,6 +723,31 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     .slash-cmd { font-weight: 600; color: var(--vscode-foreground); min-width: 80px; }
     .slash-desc { font-size: 11px; color: var(--vscode-descriptionForeground); }
     .composer-right { display: flex; align-items: center; gap: 6px; }
+    #wallet-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      background: none; border: none; cursor: default;
+      padding: 3px; border-radius: 4px;
+      color: var(--vscode-descriptionForeground);
+      position: relative;
+    }
+    #wallet-btn:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.15); }
+    #wallet-tooltip {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--vscode-editorHoverWidget-background, #252526);
+      border: 1px solid var(--vscode-editorHoverWidget-border, rgba(128,128,128,0.3));
+      color: var(--vscode-editorHoverWidget-foreground, #ccc);
+      font-size: 11px;
+      white-space: nowrap;
+      padding: 4px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+      z-index: 100;
+    }
+    #wallet-btn:hover #wallet-tooltip { display: block; }
     #context-ring { width: 26px; height: 26px; position: relative; cursor: default; }
     #context-ring svg { display: block; }
     .composer-btn {
@@ -1227,12 +1250,21 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
   <div id="composer">
     <input type="text" id="in" placeholder="Plan, @ for context, / for commands" autocomplete="off" />
     <div id="composer-toolbar">
-      <div style="position:relative">
+      <div style="position:relative;display:flex;align-items:center;gap:2px;">
         <button type="button" id="model-picker-btn">
           <span id="modelPickerLabel">Model</span>
           <span class="chevron">&#9662;</span>
         </button>
         <div id="model-dropdown"></div>
+        <button type="button" id="wallet-btn">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <rect x="1" y="4" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M1 7h14" stroke="currentColor" stroke-width="1.3"/>
+            <circle cx="11.5" cy="10.5" r="1" fill="currentColor"/>
+            <path d="M4 4V3a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.3"/>
+          </svg>
+          <span id="wallet-tooltip">loading…</span>
+        </button>
       </div>
       <div class="composer-right">
         <div id="context-ring" title="Context usage">
@@ -1398,6 +1430,8 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         baseBalance = num;
         costAtLastFetch = sessionCost;
       }
+      var tip = document.getElementById('wallet-tooltip');
+      if (tip && balStr) tip.textContent = balStr;
     }
     function computeLiveBalance() {
       if (baseBalance === null) return null;

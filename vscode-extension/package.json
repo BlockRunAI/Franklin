@@ -1,22 +1,41 @@
 {
   "name": "franklin-vscode",
-  "displayName": "Franklin Chat",
-  "description": "Side panel chat with Franklin agent (same engine as CLI)",
+  "displayName": "Franklin",
+  "description": "The AI agent with a wallet. Autonomous marketing & trading agent powered by x402 micropayments.",
   "version": "0.1.0",
-  "publisher": "franklin-local",
-  "private": true,
+  "publisher": "blockrun",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BlockRunAI/Franklin"
+  },
+  "homepage": "https://github.com/BlockRunAI/Franklin#readme",
+  "bugs": {
+    "url": "https://github.com/BlockRunAI/Franklin/issues"
+  },
   "type": "module",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Other"
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "wallet",
+    "usdc",
+    "llm",
+    "marketing",
+    "trading",
+    "x402"
   ],
   "activationEvents": [
     "onView:franklin.chatPanel",
     "onCommand:franklin.openInNewTab"
   ],
-  "main": "./out/extension.js",
+  "main": "./out/extension.cjs",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -55,7 +74,8 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "vscode:prepublish": "npm run compile"
+    "bundle": "node build.mjs",
+    "vscode:prepublish": "npm run bundle"
   },
   "dependencies": {
     "@blockrun/franklin": "file:.."
@@ -63,6 +83,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.7.0"
   }
 }
