@@ -127,6 +127,7 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     'workers are busy',
     'all workers are busy',
     'server busy',
+    'high demand',
     'capacity',
   ])) {
     return {

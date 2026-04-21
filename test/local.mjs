@@ -62,16 +62,25 @@ async function listenOnRandomPort(server) {
 test('cli startup prints banner and model line without model call', { timeout: 20_000 }, async () => {
   const result = await runCli('/exit');
   assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
-  // The tagline line under the FRANKLIN block letters — present in both
-  // side-by-side and text-only layouts. Also uniquely identifies our banner
-  // vs. any other CLI that might print "Franklin" somewhere.
   assert.ok(
+    result.stdout.includes('FRANKLIN') &&
     result.stdout.includes('blockrun.ai') &&
     result.stdout.includes('The AI agent with a wallet'),
     `Missing banner tagline.\nstdout:\n${result.stdout}`
   );
+  assert.ok(!result.stdout.includes('██████╗'), `Default banner should stay compact.\nstdout:\n${result.stdout}`);
   assert.ok(result.stdout.includes('Wallet:'), `Missing wallet line.\nstdout:\n${result.stdout}`);
   assert.ok(result.stderr.includes('Model:'), `Missing model line.\nstderr:\n${result.stderr}`);
+});
+
+test('FRANKLIN_BANNER=full restores the legacy expanded banner', { timeout: 20_000 }, async () => {
+  const result = await runCli('/exit', {
+    env: { FRANKLIN_BANNER: 'full' },
+  });
+
+  assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
+  assert.ok(result.stdout.includes('██████╗'), `Expected legacy block-art banner.\nstdout:\n${result.stdout}`);
+  assert.ok(result.stdout.includes('blockrun.ai'), `Expected legacy banner tagline.\nstdout:\n${result.stdout}`);
 });
 
 test('flags-only start options still honor --help without launching the agent', async () => {
@@ -104,6 +113,18 @@ test('--prompt one-shot mode skips interactive startup chatter', async () => {
   assert.ok(!result.stdout.includes('Wallet:'), `One-shot mode should not print wallet info.\nstdout:\n${result.stdout}`);
   assert.ok(!result.stdout.includes('Dashboard:'), `One-shot mode should not print dashboard info.\nstdout:\n${result.stdout}`);
   assert.ok(!result.stderr.includes('Model:'), `One-shot mode should not print interactive model warnings.\nstderr:\n${result.stderr}`);
+});
+
+test('--prompt preserves non-zero exit code through the CLI entrypoint', async () => {
+  const result = await runCli('', {
+    args: [DIST, '--model', 'nvidia/nemotron-ultra-253b', '--prompt', 'hello', '--resume'],
+  });
+
+  assert.equal(result.code, 1, `Expected exit 1 when --prompt is paired with picker-style --resume.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  assert.ok(
+    result.stderr.includes('`--prompt` requires `--resume` to include an explicit session id.'),
+    `Expected explicit batch-mode resume error.\nstderr:\n${result.stderr}`,
+  );
 });
 
 test('chain shortcut --help does not mutate saved chain or launch the agent', async () => {
@@ -290,6 +311,7 @@ test('session storage falls back to temp dir when HOME is not writable', async (
 test('interactive session persists tool exchanges for resume', { timeout: 20_000 }, async () => {
   const beforeIds = new Set((await import('../dist/session/storage.js')).listSessions().map((s) => s.id));
   let requestCount = 0;
+  const previousDynamicTools = process.env.FRANKLIN_DYNAMIC_TOOLS;
 
   const server = createServer(async (req, res) => {
     let raw = '';
@@ -341,6 +363,7 @@ test('interactive session persists tool exchanges for resume', { timeout: 20_000
   const apiUrl = `http://127.0.0.1:${address.port}`;
 
   try {
+    process.env.FRANKLIN_DYNAMIC_TOOLS = '0';
     const { interactiveSession } = await import('../dist/agent/loop.js');
     const { listSessions, loadSessionHistory, getSessionFilePath } = await import('../dist/session/storage.js');
 
@@ -399,6 +422,8 @@ test('interactive session persists tool exchanges for resume', { timeout: 20_000
     rmSync(sessionFile, { force: true });
     rmSync(join(dirname(sessionFile), `${created.id}.meta.json`), { force: true });
   } finally {
+    if (previousDynamicTools === undefined) delete process.env.FRANKLIN_DYNAMIC_TOOLS;
+    else process.env.FRANKLIN_DYNAMIC_TOOLS = previousDynamicTools;
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   }
 });
@@ -1080,6 +1105,14 @@ test('error classifier catches gateway 503 in all thrown shapes', async () => {
   const plain503 = classifyAgentError('HTTP 503: Internal server error');
   assert.equal(plain503.category, 'server');
   assert.equal(plain503.isTransient, true);
+
+  // Form 5: provider-only wording after nested JSON unwrapping
+  const highDemand = classifyAgentError(
+    'This model is currently experiencing high demand. Please try again later.'
+  );
+  assert.equal(highDemand.category, 'overloaded');
+  assert.equal(highDemand.isTransient, true);
+  assert.equal(highDemand.maxRetries, 3);
 });
 
 test('workflow formatter renders aborted steps with warning icon', async () => {
@@ -1393,7 +1426,7 @@ test('permissions: ActivateTool is auto-allowed in default and plan modes', asyn
 
 // ─── Extended-thinking allowlist (regression: Opus 4.7 must NOT receive flag) ─
 
-import { modelHasExtendedThinking } from '../dist/agent/llm.js';
+import { modelHasExtendedThinking, extractApiErrorMessage } from '../dist/agent/llm.js';
 
 test('modelHasExtendedThinking: Opus 4.7 returns false (adaptive thinking, no flag)', () => {
   assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4.7'), false);
@@ -1413,6 +1446,27 @@ test('modelHasExtendedThinking: non-Anthropic models return false', () => {
   assert.equal(modelHasExtendedThinking('openai/gpt-5.4'), false);
   assert.equal(modelHasExtendedThinking('google/gemini-3.1-pro'), false);
   assert.equal(modelHasExtendedThinking('anthropic/claude-haiku-4.5'), false);
+});
+
+test('extractApiErrorMessage unwraps nested JSON error envelopes', () => {
+  const wrapped = JSON.stringify({
+    error: {
+      message: JSON.stringify({
+        error: {
+          code: 503,
+          message: 'This model is currently experiencing high demand. Please try again later.',
+          status: 'UNAVAILABLE',
+        },
+      }),
+      code: 503,
+      status: 'Service Unavailable',
+    },
+  });
+
+  assert.equal(
+    extractApiErrorMessage(wrapped),
+    'This model is currently experiencing high demand. Please try again later.',
+  );
 });
 
 // ─── End-to-end payload capture: prove the wire body for Opus 4.7 vs 4.6 ─────
@@ -2730,6 +2784,104 @@ test('dynamic tool visibility: ActivateTool adds named tools to the active set',
   assert.ok(activeTools.has('ExaSearch'), 'ExaSearch now active');
   assert.ok(activeTools.has('WebFetch'), 'WebFetch now active');
   assert.ok(result.output.includes('Activated'), 'confirms activation in output');
+});
+
+test('dynamic tool visibility: hidden tools cannot execute before activation', { timeout: 20_000 }, async () => {
+  let requestCount = 0;
+  let hiddenToolCalls = 0;
+
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk.toString();
+    requestCount++;
+
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+
+    const send = (event, data) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    if (requestCount === 1) {
+      send('message_start', { message: { usage: { input_tokens: 10, output_tokens: 0 } } });
+      send('content_block_start', { content_block: { type: 'tool_use', id: 'tool_hidden_1', name: 'HiddenTool' } });
+      send('content_block_delta', { delta: { type: 'input_json_delta', partial_json: '{}' } });
+      send('content_block_stop', {});
+      send('message_delta', { delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 8 } });
+      send('message_stop', {});
+    } else {
+      const payload = JSON.parse(raw);
+      const messages = payload.messages || [];
+      const toolResultSeen = messages.some((msg) =>
+        msg.role === 'user' &&
+        Array.isArray(msg.content) &&
+        msg.content.some((part) =>
+          part.type === 'tool_result' &&
+          String(part.content).includes('Unknown tool "HiddenTool"'),
+        )
+      );
+      assert.ok(toolResultSeen, 'Expected hidden tool use to be rejected as unknown');
+
+      send('message_start', { message: { usage: { input_tokens: 18, output_tokens: 0 } } });
+      send('content_block_start', { content_block: { type: 'text', text: '' } });
+      send('content_block_delta', { delta: { type: 'text_delta', text: 'blocked as expected' } });
+      send('content_block_stop', {});
+      send('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } });
+      send('message_stop', {});
+    }
+
+    res.end('data: [DONE]\n\n');
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object', 'Expected HTTP server address');
+  const apiUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const { interactiveSession } = await import('../dist/agent/loop.js');
+
+    const hiddenCapability = {
+      spec: {
+        name: 'HiddenTool',
+        description: 'Should stay hidden until ActivateTool explicitly enables it.',
+        input_schema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      async execute() {
+        hiddenToolCalls++;
+        return { output: 'should not run' };
+      },
+      concurrent: false,
+    };
+
+    let calls = 0;
+    const history = await interactiveSession(
+      {
+        model: 'local/test-model',
+        apiUrl,
+        chain: 'base',
+        systemInstructions: ['You are a test harness.'],
+        capabilities: [hiddenCapability],
+        workingDir: process.cwd(),
+        permissionMode: 'trust',
+      },
+      async () => (++calls === 1 ? 'try the hidden tool' : null),
+      () => {},
+    );
+
+    assert.equal(hiddenToolCalls, 0, 'Hidden tool should not execute before activation');
+    const finalAssistant = JSON.stringify(history.at(-1)?.content ?? '');
+    assert.ok(finalAssistant.includes('blocked as expected'));
+  } finally {
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
 });
 
 test('dynamic tool visibility: ActivateTool reports unknown names as error without mutating set', async () => {

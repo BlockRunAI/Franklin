@@ -54,6 +54,55 @@ export interface LLMClientOptions {
   debug?: boolean;
 }
 
+/**
+ * Extract the most human-readable message from an error body.
+ * Some gateways wrap provider errors multiple times, e.g.
+ * `{"error":{"message":"{\"error\":{\"message\":\"...\"}}"}}`.
+ * Peel those layers so the UI doesn't show raw nested JSON.
+ */
+export function extractApiErrorMessage(errorBody: string): string {
+  const visited = new Set<unknown>();
+
+  const walk = (value: unknown, depth = 0): string | null => {
+    // Some providers wrap the real message under error.message as a JSON
+    // string, which adds another object/string hop. Allow a few layers of
+    // nesting without risking runaway recursion.
+    if (depth > 8 || visited.has(value)) return null;
+    if (value && (typeof value === 'object' || typeof value === 'string')) {
+      visited.add(value);
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) {
+        try {
+          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            const parsed = JSON.parse(trimmed);
+            const nested = walk(parsed, depth + 1);
+            if (nested) return nested;
+          }
+        } catch { /* plain string — use as-is below */ }
+      }
+      return trimmed || null;
+    }
+
+    if (!value || typeof value !== 'object') return null;
+
+    const obj = value as Record<string, unknown>;
+    for (const key of ['error', 'message', 'detail', 'reason']) {
+      if (key in obj) {
+        const nested = walk(obj[key], depth + 1);
+        if (nested) return nested;
+      }
+    }
+
+    return null;
+  };
+
+  const extracted = walk(errorBody) ?? errorBody;
+  return extracted.replace(/\s+/g, ' ').trim();
+}
+
 // ─── Anthropic Prompt Caching ─────────────────────────────────────────────
 
 /**
@@ -349,12 +398,7 @@ export class ModelClient {
 
     if (!response.ok) {
       const errorBody = await response.text().catch(() => 'unknown error');
-      // Extract human-readable message from JSON error bodies ({"error":{"message":"..."}})
-      let message = errorBody;
-      try {
-        const parsed = JSON.parse(errorBody);
-        message = parsed?.error?.message || parsed?.message || errorBody;
-      } catch { /* not JSON — use raw text */ }
+      const message = extractApiErrorMessage(errorBody);
       yield {
         kind: 'error',
         payload: { status: response.status, message },

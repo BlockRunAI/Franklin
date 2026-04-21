@@ -389,6 +389,10 @@ export async function interactiveSession(
   const allToolDefs = [...capabilityMap.values()].map(c => c.spec);
   const buildCallToolDefs = () =>
     dynamicTools ? allToolDefs.filter(t => activeTools.has(t.name)) : allToolDefs;
+  const buildActiveCapabilityMap = () =>
+    dynamicTools
+      ? new Map([...capabilityMap.entries()].filter(([name]) => activeTools.has(name)))
+      : capabilityMap;
 
   const maxTurns = config.maxTurns ?? 15;
   const workDir = config.workingDir ?? process.cwd();
@@ -717,8 +721,9 @@ export async function interactiveSession(
       let stopReason: string;
 
       // Create streaming executor for concurrent tool execution
+      const activeCapabilityMap = buildActiveCapabilityMap();
       const streamExec = new StreamingExecutor({
-        handlers: capabilityMap,
+        handlers: activeCapabilityMap,
         scope: {
           workingDir: workDir,
           abortSignal: abort.signal,
