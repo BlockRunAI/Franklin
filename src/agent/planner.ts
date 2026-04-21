@@ -29,6 +29,10 @@ export function shouldPlan(
   ultrathink: boolean,
   planDisabled: boolean,
 ): boolean {
+  // Per-process opt-out for ablation / scripting ("is plan-then-execute
+  // still load-bearing?"). Takes precedence over every other heuristic.
+  if (process.env.FRANKLIN_NOPLAN === '1') return false;
+
   // User disabled planning for this session
   if (planDisabled) return false;
 
