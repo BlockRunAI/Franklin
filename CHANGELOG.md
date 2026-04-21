@@ -1,5 +1,161 @@
 # Changelog
 
+## 3.8.15 — Harness audit + ablation bench + FRANKLIN_NOPLAN
+
+Internal tooling and methodology work. No new user-facing features, but a
+reusable rig for deciding which parts of Franklin's harness are still
+load-bearing as frontier models improve — and a new opt-out env flag
+that the bench uses to isolate plan-then-execute overhead.
+
+Inspired directly by Anthropic's harness-design writeup
+(https://www.anthropic.com/engineering/harness-design-long-running-apps).
+Their core principle: every harness component encodes an assumption
+about a model-capability gap, and those assumptions go stale. Remove
+components one at a time, measure, decide.
+
+### Added
+
+- **`docs/harness-audit.md`** — audit of all 17 current harness
+  components, each mapped to the assumption it encodes. 10 classified
+  as permanent (safety, cost, loop-termination). 7 as capability
+  hedges worth re-testing. Priority-ranked ablation list.
+- **`scripts/harness-bench.mjs`** — reusable ablation rig. Runs a
+  fixed prompt set across baseline + one-at-a-time env flag toggles.
+  Records latency, tool-call count, answer length, best-effort cost.
+  Supports `--dry-run`, `--configs`, `--prompts`.
+- **`FRANKLIN_NOPLAN=1`** env flag — disables plan-then-execute for
+  the process. Used by the bench to isolate planner overhead; also
+  useful for users who find the two-call path slower than their model
+  executing solo.
+
+## 3.8.14 — Groundedness evaluator
+
+Architectural response to a real-world failure: Franklin was asked about
+Circle's stock price, ignored the `TradingMarket` tool it had, and
+answered from 2022 training data (naming a dead 2022 SPAC). Root cause
+wasn't a prompt defect — it was an absent evaluator. The existing code
+verifier only fires when the agent writes code, so read-heavy hero use
+cases (trading, research) had zero quality gate.
+
+### Added
+
+- **`src/agent/evaluator.ts`** — independent grading pass that fires
+  on any non-trivial factual answer. Checks whether every claim in the
+  reply traces to a tool-call result OR is explicitly hedged as
+  uncertain. Principle-based prompt (no enumerated tickers or
+  phrasings). Runs on a cheap model (free nvidia/nemotron-ultra by
+  default); override via `FRANKLIN_EVALUATOR_MODEL`. Fully disable via
+  `FRANKLIN_NO_EVAL=1`.
+- Fires alongside, not instead of, the existing code verifier. Both
+  triggers are orthogonal.
+- v1 scope: check-and-annotate. Ungrounded answers get a follow-up ⚠️
+  note pointing to the missing tool. The re-prompt loop (iterate until
+  PASS) is a v2 concern — v1 needs burn-in to calibrate false-positive
+  rate first.
+
+## 3.8.13 — Prompt simplification (principle-based grounding)
+
+### Changed
+
+- Tool-selection prompt rewritten from enumerated examples to
+  principles. The previous version listed specific tickers (CRCL,
+  AAPL, BTC) to steer tool use; that form rots the moment the market
+  changes and reads like a cheat sheet. The replacement states two
+  general rules — live-world questions come from tools, unknown names
+  get researched rather than asking the user — and lets the model
+  generalize. Shorter prompt → more cache hits → cheaper.
+
+## 3.8.12 — Hero tools default-visible + auto-routing UX
+
+Three bugs that were making Franklin answer market and research
+questions from training data instead of calling the paid tools it has.
+
+### Changed
+
+- **`CORE_TOOL_NAMES` expanded.** `TradingMarket`, `TradingSignal`,
+  `ExaAnswer`, `ExaSearch`, `ExaReadUrls`, `WebFetch`, `WebSearch` are
+  now in the always-on core. Previously behind the `ActivateTool`
+  gate, which weak-to-mid-tier models rarely pulled — so stock / price
+  / research questions fell back to training-data guessing. Long tail
+  (VideoGen, MusicGen, ImageGen, WebhookPost, PostToX) stays gated.
+- **Auto-routing visibility.** Each routed turn now prints
+  `*Auto → <resolved-model>*` so the user sees which concrete model
+  was picked. Previously the status bar could read a specific model
+  name and look like it was pinned there forever.
+- **`/auto` slash command.** Hard-reset to smart routing in one word,
+  for users who feel stuck on a pinned model.
+
+### Fixed
+
+- System prompt now steers `TradingMarket` / `ExaAnswer` for ticker,
+  price, and "what happened to X" questions rather than demanding a
+  ticker symbol from the user.
+
+## 3.8.11 — Update-check nag
+
+### Added
+
+- **Daily update check.** Franklin queries
+  `https://registry.npmjs.org/@blockrun/franklin/latest` once per day,
+  caches the result in `~/.blockrun/version-check.json`, and prints a
+  one-liner under the banner when a newer version is available.
+  Non-blocking 2s timeout. Disable with `FRANKLIN_NO_UPDATE_CHECK=1`.
+  CI environments (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`,
+  `CIRCLECI`) auto-skip so pipelines stay quiet.
+- `franklin doctor` Franklin-version line now shows the update as a
+  warning row with the exact upgrade command.
+
+## 3.8.10 — Panel polish: drop Markets 5s poll
+
+### Changed
+
+- Markets panel now refreshes on tab click, not every 5s. Pipeline
+  wiring is code-level and telemetry isn't a price ticker — polling
+  was pure overhead. Matches the Audit Log tab's pattern.
+
+## 3.8.9 — Multi-asset trading data + stocks via x402 + Panel Markets
+
+Trading vertical goes from crypto-only to multi-asset. Franklin now
+actually spends USDC for real market data — stocks cost $0.001/call via
+x402, matching the "agent with a wallet" positioning the rest of the
+product already delivered. Panel gets a new Markets page showing the
+whole data pipeline and today's spend.
+
+### Added
+
+- **Multi-asset price data.** BlockRun Gateway / Pyth provider covers
+  crypto, FX, commodity (all free-tier) and stocks (x402-paid,
+  $0.001/call). 12 stock markets (us/hk/jp/kr/gb/de/fr/nl/ie/lu/cn/ca,
+  ~1,746 tickers). FX pairs like EUR-USD. Commodities like XAU-USD.
+- **`TradingMarket` gains three new actions.** `fxPrice`,
+  `commodityPrice`, `stockPrice` complement the existing `price`
+  (crypto via CoinGecko). `stockPrice` requires a `market` code enum.
+- **Panel Markets tab.** Shows Franklin → provider-registry →
+  per-asset-class upstream pipeline. Four metric cards for today's
+  calls / spend / p50 latency / payment chain. Provider health panel
+  (CoinGecko + BlockRun status chips). Recent paid calls ledger.
+- **`src/trading/providers/blockrun/`** — chain-aware REST client
+  (Base vs Solana), telemetry-enabled fetchers, x402 signing via
+  `@blockrun/llm` primitives. Stocks path handles 402 → sign → retry
+  automatically.
+- **`src/trading/providers/telemetry.ts`** — in-memory ring buffer
+  tracking per-provider calls / ok / failures / p50 latency / daily
+  spend. Exported as `/api/markets` for the panel.
+
+### Changed
+
+- **Registry `price` becomes keyed by asset class.** `getPriceProvider
+  (assetClass)` replaces the single slot. Crypto stays on CoinGecko
+  (free, long tail covered); fx / commodity / stock route to BlockRun.
+  Back-compat: `data.ts::getPrice(ticker)` defaults to crypto.
+- **Panel Social tab removed.** Was a placeholder; agent-side social
+  writer untouched, just the dead panel page dropped.
+
+### Fixed
+
+- CoinGecko crypto fetcher now accepts `BTC-USD` as well as `BTC`
+  (Pyth-style pair suffix auto-stripped).
+
 ## 3.8.8 — Reliability pass: doctor, bash guard, file-tool guards, philosophy
 
 Motivated by real user feedback that Franklin sometimes takes 2–3 tries
