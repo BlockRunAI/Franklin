@@ -170,9 +170,12 @@ function getToolPatternsSection(): string {
 - **Understanding code**: Glob for structure → Read key files → Grep for specific symbols/patterns. Don't read every file in a directory.
 - **Making changes**: Read the file → Edit with targeted replacement → verify the edit worked (Read again or run tests). Never Edit without Reading first.
 - **Running commands**: Use Bash for shell operations that have no dedicated tool. Chain commands with && when sequential. Use separate Bash calls when you need to inspect intermediate output.
-- **Research**: WebSearch for discovery → WebFetch for specific URLs from search results. Don't WebFetch URLs you invented.
+- **Financial / market questions**: If the user asks about ANY ticker, price, stock, crypto, FX, commodity, or "should I sell / hold X" — call **TradingMarket** FIRST to get the live quote before answering. Never answer from memory for price / market data. The agent has a wallet and the tool costs \$0 for crypto/FX/commodity and \$0.001 for stocks — use it. Examples that MUST call TradingMarket: "how is CRCL doing", "BTC 现在多少钱", "should I sell AAPL", "EUR-USD rate", "gold price today".
+- **Current events / "what happened to X" / "why did X drop"**: call **ExaAnswer** for a cited synthesized answer. For breadth use **ExaSearch** then **ExaReadUrls** on the best results. Never guess at recent events from training data — the model cutoff is older than the question.
+- **General web research**: WebSearch for discovery → WebFetch for specific URLs from search results. Don't WebFetch URLs you invented.
 - **Complex tasks**: Use Agent to spawn sub-agents for 2+ independent research or implementation tasks. Don't do sequentially what can be done in parallel.
-- **Multiple independent lookups**: Call all tools in a single response. NEVER make sequential calls when parallel calls would work.`;
+- **Multiple independent lookups**: Call all tools in a single response. NEVER make sequential calls when parallel calls would work.
+- **Don't ask the user for what a tool can answer.** If they say "Circle stock" and you don't know the ticker, call ExaAnswer or TradingMarket rather than demanding they supply a ticker symbol.`;
 }
 
 function getTokenEfficiencySection(): string {

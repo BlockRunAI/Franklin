@@ -223,7 +223,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
       `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
       `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /session-search /context /tasks\n` +
       `  **Power:** /ultrathink [query] /ultraplan /noplan /moa [query] /dump\n` +
-      `  **Info:** /model /wallet /cost /tokens /learnings /brain /mcp /doctor /version /bug /help\n` +
+      `  **Info:** /model /auto /wallet /cost /tokens /learnings /brain /mcp /doctor /version /bug /help\n` +
       `  **UI:** /clear /exit\n` +
       (ultrathinkOn ? `\n  Ultrathink: ON\n` : '')
     });
@@ -644,6 +644,18 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
+  // /auto — hard-reset to smart routing regardless of current state.
+  // Shortcut for `/model auto`. Fixes the common "I got stuck on a model
+  // and want Franklin to pick again" scenario without typing the long form.
+  if (input === '/auto') {
+    ctx.config.model = 'blockrun/auto';
+    ctx.config.baseModel = 'blockrun/auto';
+    ctx.config.onModelChange?.('blockrun/auto', 'user');
+    ctx.onEvent({ kind: 'text_delta', text: `Model → **Auto** (smart routing re-enabled)\n` });
+    emitDone(ctx);
+    return { handled: true };
+  }
+
   // /model — show current model or switch with /model <name>
   if (input === '/model' || input.startsWith('/model ')) {
     if (input === '/model') {
@@ -944,7 +956,7 @@ export async function handleSlashCommand(
     ...Object.keys(DIRECT_COMMANDS),
     ...Object.keys(REWRITE_COMMANDS),
     ...ARG_COMMANDS.map(c => c.prefix.trim()),
-    '/branch', '/resume', '/model', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures',
+    '/branch', '/resume', '/model', '/auto', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures',
   ];
   const cmd = input.split(/\s/)[0];
   const close = allCommands.filter(c => {
