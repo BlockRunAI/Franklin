@@ -22,7 +22,7 @@
 
 import type { Fetcher } from '../fetcher.js';
 import type { PriceData, PriceQueryParams, ProviderError } from '../standard-models.js';
-import { blockrunGet, cached, normalizePythSymbol, TTL } from './client.js';
+import { blockrunGet, blockrunGetPaid, cached, normalizePythSymbol, TTL } from './client.js';
 
 /**
  * Actual Gateway response shape (verified 2026-04-21 against
@@ -102,13 +102,19 @@ export const blockrunPriceFetcher: Fetcher<PriceQueryParams, PriceData> = {
     if ('kind' in resolved) return resolved;
 
     const cacheKey = `blockrun:${assetClass}:${query.market ?? ''}:${query.ticker}`;
-    return cached(cacheKey, TTL.price, async () =>
-      blockrunGet(resolved.path, {
+    return cached(cacheKey, TTL.price, async () => {
+      if (resolved.paid) {
+        return blockrunGetPaid(resolved.path, {
+          endpoint: resolved.endpoint,
+          costUsd: 0.001,
+        });
+      }
+      return blockrunGet(resolved.path, {
         endpoint: resolved.endpoint,
-        paid: resolved.paid,
-        costUsd: resolved.paid ? 0.001 : 0,
-      }),
-    );
+        paid: false,
+        costUsd: 0,
+      });
+    });
   },
 
   transformData(raw, query): PriceData | ProviderError {

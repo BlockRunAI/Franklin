@@ -7,7 +7,13 @@ import {
   getMarketOverview,
   getFxPrice,
   getCommodityPrice,
+  getStockPrice,
 } from '../trading/data.js';
+import type { MarketCode } from '../trading/providers/standard-models.js';
+
+const SUPPORTED_STOCK_MARKETS: MarketCode[] = [
+  'us', 'hk', 'jp', 'kr', 'gb', 'de', 'fr', 'nl', 'ie', 'lu', 'cn', 'ca',
+];
 import { rsi, macd, bollingerBands, volatility } from '../trading/metrics.js';
 import { bus } from '../events/bus.js';
 import { makeEvent } from '../events/types.js';
@@ -127,8 +133,9 @@ export const tradingSignalCapability: CapabilityHandler = {
 // ── TradingMarket ─────────────────────────────────────────────────────────
 
 interface MarketInput {
-  action: 'price' | 'trending' | 'overview' | 'fxPrice' | 'commodityPrice';
+  action: 'price' | 'trending' | 'overview' | 'fxPrice' | 'commodityPrice' | 'stockPrice';
   ticker?: string;
+  market?: MarketCode;
 }
 
 function formatPriceLine(label: string, priceUsd: number, change24hPct: number, opts: { fractionDigits?: number; showChange?: boolean } = {}): string {
@@ -142,7 +149,7 @@ function formatPriceLine(label: string, priceUsd: number, change24hPct: number, 
 }
 
 async function executeMarket(input: Record<string, unknown>, _ctx: ExecutionScope): Promise<CapabilityResult> {
-  const { action, ticker } = input as unknown as MarketInput;
+  const { action, ticker, market } = input as unknown as MarketInput;
 
   if (!action) {
     return { output: 'Error: action is required', isError: true };
@@ -191,6 +198,33 @@ async function executeMarket(input: Record<string, unknown>, _ctx: ExecutionScop
       };
     }
 
+    case 'stockPrice': {
+      if (!ticker) {
+        return { output: 'Error: ticker is required (e.g. "AAPL" on market "us")', isError: true };
+      }
+      if (!market) {
+        return {
+          output: `Error: market code is required for stockPrice. Supported: ${SUPPORTED_STOCK_MARKETS.join(', ')}`,
+          isError: true,
+        };
+      }
+      if (!SUPPORTED_STOCK_MARKETS.includes(market)) {
+        return {
+          output: `Error: unsupported market "${market}". Supported: ${SUPPORTED_STOCK_MARKETS.join(', ')}`,
+          isError: true,
+        };
+      }
+      const result = await getStockPrice(ticker, market);
+      if (typeof result === 'string') {
+        return { output: `Error: ${result}`, isError: true };
+      }
+      const tickerLabel = `${ticker.toUpperCase()} (${market})`;
+      return {
+        output: formatPriceLine(tickerLabel, result.price, result.change24h, { fractionDigits: 2 }) +
+          ' · source: BlockRun Gateway / Pyth · $0.001 paid from wallet',
+      };
+    }
+
     case 'trending': {
       const result = await getTrending();
       if (typeof result === 'string') {
@@ -218,7 +252,7 @@ async function executeMarket(input: Record<string, unknown>, _ctx: ExecutionScop
 
     default:
       return {
-        output: `Error: unknown action "${action}". Use: price, trending, overview, fxPrice, commodityPrice`,
+        output: `Error: unknown action "${action}". Use: price, trending, overview, fxPrice, commodityPrice, stockPrice`,
         isError: true,
       };
   }
@@ -229,24 +263,30 @@ export const tradingMarketCapability: CapabilityHandler = {
     name: 'TradingMarket',
     description:
       'Get market data across asset classes. Actions: ' +
-      '`price` (crypto spot price + 24h change + market cap, via CoinGecko, free), ' +
+      '`price` (crypto spot via CoinGecko, free), ' +
       '`trending` (top trending coins), ' +
       '`overview` (top 20 by market cap), ' +
-      '`fxPrice` (FX pair like EUR-USD, via BlockRun Gateway/Pyth, free), ' +
-      '`commodityPrice` (XAU-USD for gold, XAG-USD for silver, via BlockRun Gateway/Pyth, free). ' +
-      'Stocks arrive in the next release ($0.001/call via x402).',
+      '`fxPrice` (FX pair like EUR-USD, BlockRun Gateway/Pyth, free), ' +
+      '`commodityPrice` (XAU-USD for gold, XAG-USD for silver, etc., free), ' +
+      '`stockPrice` (any of 1,746 tickers across us/hk/jp/kr/gb/de/fr/nl/ie/lu/cn/ca, BlockRun Gateway/Pyth, $0.001 per call paid from the agent wallet). ' +
+      'Prefer stockPrice for any equity question — CRCL, AAPL, 7203.JP, 0005.HK, etc.',
     input_schema: {
       type: 'object' as const,
       properties: {
         action: {
           type: 'string',
-          enum: ['price', 'trending', 'overview', 'fxPrice', 'commodityPrice'],
+          enum: ['price', 'trending', 'overview', 'fxPrice', 'commodityPrice', 'stockPrice'],
           description: 'What to fetch. See tool description for cost + source per action.',
         },
         ticker: {
           type: 'string',
           description:
-            'Ticker. Crypto: "BTC". FX: "EUR-USD". Commodity: "XAU-USD" (gold). Required for all price actions.',
+            'Ticker. Crypto: "BTC". FX: "EUR-USD". Commodity: "XAU-USD" (gold). Stock: "AAPL", "CRCL", "7203" (Toyota on jp), "0005" (HSBC on hk). Required for all price actions.',
+        },
+        market: {
+          type: 'string',
+          enum: ['us', 'hk', 'jp', 'kr', 'gb', 'de', 'fr', 'nl', 'ie', 'lu', 'cn', 'ca'],
+          description: 'Stock exchange market code. Required when action="stockPrice". Ignored for other actions.',
         },
       },
       required: ['action'],
