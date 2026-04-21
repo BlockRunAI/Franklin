@@ -94,6 +94,18 @@ test('flags-only start options still honor --version without launching the agent
   assert.ok(!result.stdout.includes('blockrun.ai'), `Version path should not print startup banner.\nstdout:\n${result.stdout}`);
 });
 
+test('--prompt one-shot mode skips interactive startup chatter', async () => {
+  const result = await runCli('', {
+    args: [DIST, '--model', 'nvidia/nemotron-ultra-253b', '--prompt', '/exit'],
+  });
+
+  assert.equal(result.code, 0, `CLI exited non-zero.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  assert.ok(!result.stdout.includes('blockrun.ai'), `One-shot mode should not print startup banner.\nstdout:\n${result.stdout}`);
+  assert.ok(!result.stdout.includes('Wallet:'), `One-shot mode should not print wallet info.\nstdout:\n${result.stdout}`);
+  assert.ok(!result.stdout.includes('Dashboard:'), `One-shot mode should not print dashboard info.\nstdout:\n${result.stdout}`);
+  assert.ok(!result.stderr.includes('Model:'), `One-shot mode should not print interactive model warnings.\nstderr:\n${result.stderr}`);
+});
+
 test('chain shortcut --help does not mutate saved chain or launch the agent', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-chain-help-'));
   const chainFile = join(fakeHome, '.blockrun', 'payment-chain');
@@ -1367,6 +1379,16 @@ test('bash-guard e2e: non-Bash tools are not affected by risk classifier', async
   // Read is still "allow" (read-only tool)
   const readDecision = await pm.check('Read', { file_path: '/etc/hosts' });
   assert.equal(readDecision.behavior, 'allow');
+});
+
+test('permissions: ActivateTool is auto-allowed in default and plan modes', async () => {
+  const pmDefault = new PermissionManager('default');
+  const defaultDecision = await pmDefault.check('ActivateTool', {});
+  assert.equal(defaultDecision.behavior, 'allow');
+
+  const pmPlan = new PermissionManager('plan');
+  const planDecision = await pmPlan.check('ActivateTool', {});
+  assert.equal(planDecision.behavior, 'allow');
 });
 
 // ─── Extended-thinking allowlist (regression: Opus 4.7 must NOT receive flag) ─
@@ -2668,4 +2690,287 @@ test('resetToolSessionState clears read/webfetch/bash module-level caches across
 
   assert.equal(fileReadTracker.size, 0, 'fileReadTracker must be cleared so read-before-edit enforcement resets');
   assert.equal(partiallyReadFiles.size, 0, 'partiallyReadFiles must be cleared so Edit warnings are not based on a prior session');
+});
+
+test('dynamic tool visibility: ActivateTool catalogs inactive tools when called with no args', async () => {
+  const { createActivateToolCapability } = await import('../dist/tools/activate.js');
+
+  const activeTools = new Set(['Read', 'Write']);
+  const allTools = new Map();
+  allTools.set('Read', { spec: { name: 'Read', description: 'Read a file' } });
+  allTools.set('Write', { spec: { name: 'Write', description: 'Write a file' } });
+  allTools.set('ExaSearch', { spec: { name: 'ExaSearch', description: 'Neural web search via Exa' } });
+  allTools.set('VideoGen', { spec: { name: 'VideoGen', description: 'Generate an MP4 video. Costs $0.05/s.' } });
+
+  const cap = createActivateToolCapability({ activeTools, allTools });
+  const result = await cap.execute({}, { workingDir: '/tmp', abortSignal: new AbortController().signal });
+
+  assert.ok(!result.isError, 'catalog call should not error');
+  assert.ok(result.output.includes('ExaSearch'), 'lists inactive ExaSearch');
+  assert.ok(result.output.includes('VideoGen'), 'lists inactive VideoGen');
+  assert.ok(!result.output.includes('- Read:'), 'does not list already-active Read');
+});
+
+test('dynamic tool visibility: ActivateTool adds named tools to the active set', async () => {
+  const { createActivateToolCapability } = await import('../dist/tools/activate.js');
+
+  const activeTools = new Set(['Read']);
+  const allTools = new Map();
+  allTools.set('Read', { spec: { name: 'Read', description: 'Read a file' } });
+  allTools.set('ExaSearch', { spec: { name: 'ExaSearch', description: 'Exa search' } });
+  allTools.set('WebFetch', { spec: { name: 'WebFetch', description: 'Fetch URL' } });
+
+  const cap = createActivateToolCapability({ activeTools, allTools });
+  const result = await cap.execute(
+    { names: ['ExaSearch', 'WebFetch'] },
+    { workingDir: '/tmp', abortSignal: new AbortController().signal },
+  );
+
+  assert.ok(!result.isError, 'activation should succeed');
+  assert.ok(activeTools.has('ExaSearch'), 'ExaSearch now active');
+  assert.ok(activeTools.has('WebFetch'), 'WebFetch now active');
+  assert.ok(result.output.includes('Activated'), 'confirms activation in output');
+});
+
+test('dynamic tool visibility: ActivateTool reports unknown names as error without mutating set', async () => {
+  const { createActivateToolCapability } = await import('../dist/tools/activate.js');
+
+  const activeTools = new Set(['Read']);
+  const allTools = new Map();
+  allTools.set('Read', { spec: { name: 'Read', description: 'Read a file' } });
+
+  const cap = createActivateToolCapability({ activeTools, allTools });
+  const result = await cap.execute(
+    { names: ['NonexistentTool'] },
+    { workingDir: '/tmp', abortSignal: new AbortController().signal },
+  );
+
+  assert.ok(result.isError, 'unknown-only activation should be an error');
+  assert.ok(result.output.includes('Unknown'), 'reports unknown tool');
+  assert.equal(activeTools.size, 1, 'active set unchanged');
+});
+
+test('dynamic tool visibility: CORE_TOOL_NAMES contains the minimal baseline', async () => {
+  const { CORE_TOOL_NAMES } = await import('../dist/tools/tool-categories.js');
+
+  assert.ok(CORE_TOOL_NAMES.has('Read'));
+  assert.ok(CORE_TOOL_NAMES.has('Write'));
+  assert.ok(CORE_TOOL_NAMES.has('Edit'));
+  assert.ok(CORE_TOOL_NAMES.has('Bash'));
+  assert.ok(CORE_TOOL_NAMES.has('Grep'));
+  assert.ok(CORE_TOOL_NAMES.has('Glob'));
+  assert.ok(CORE_TOOL_NAMES.has('AskUser'));
+  assert.ok(CORE_TOOL_NAMES.has('ActivateTool'));
+  // Extras should NOT be core — that's the whole point.
+  assert.ok(!CORE_TOOL_NAMES.has('ExaSearch'));
+  assert.ok(!CORE_TOOL_NAMES.has('VideoGen'));
+  assert.ok(!CORE_TOOL_NAMES.has('PostToX'));
+});
+
+test('trading provider Fetcher: coingecko price transforms raw /simple/price payload', async () => {
+  const { coingeckoPriceFetcher } = await import('../dist/trading/providers/coingecko/price.js');
+
+  const q = coingeckoPriceFetcher.transformQuery({ ticker: 'btc' });
+  assert.equal(q.ticker, 'BTC', 'transformQuery uppercases');
+
+  const raw = {
+    bitcoin: {
+      usd: 68234.12,
+      usd_24h_change: -1.42,
+      usd_24h_vol: 27_500_000_000,
+      usd_market_cap: 1_344_000_000_000,
+    },
+  };
+  const data = coingeckoPriceFetcher.transformData(raw, q);
+  assert.ok(!('kind' in data), 'should produce PriceData, not ProviderError');
+  assert.equal(data.ticker, 'BTC');
+  assert.equal(data.priceUsd, 68234.12);
+  assert.equal(data.change24hPct, -1.42);
+});
+
+test('trading provider Fetcher: coingecko price returns ProviderError on missing ticker entry', async () => {
+  const { coingeckoPriceFetcher } = await import('../dist/trading/providers/coingecko/price.js');
+
+  const q = coingeckoPriceFetcher.transformQuery({ ticker: 'DOESNOTEXIST' });
+  const result = coingeckoPriceFetcher.transformData({ someOther: {} }, q);
+  assert.ok('kind' in result, 'missing entry should surface as ProviderError');
+  assert.equal(result.kind, 'not-found');
+});
+
+test('trading provider Fetcher: coingecko ohlcv clamps days and coerces prices array', async () => {
+  const { coingeckoOHLCVFetcher } = await import('../dist/trading/providers/coingecko/ohlcv.js');
+
+  assert.equal(coingeckoOHLCVFetcher.transformQuery({ ticker: 'eth', days: 0 }).days, 1, 'clamps to min=1');
+  assert.equal(coingeckoOHLCVFetcher.transformQuery({ ticker: 'eth', days: 999 }).days, 365, 'clamps to max=365');
+
+  const q = coingeckoOHLCVFetcher.transformQuery({ ticker: 'ETH', days: 3 });
+  const data = coingeckoOHLCVFetcher.transformData(
+    { prices: [[100, 1500], [200, 1550], [300, 1600]] },
+    q,
+  );
+  assert.ok(!('kind' in data));
+  assert.deepEqual(data.closes, [1500, 1550, 1600]);
+  assert.deepEqual(data.timestamps, [100, 200, 300]);
+});
+
+test('trading provider Fetcher: runFetcher converts thrown validation into ProviderError', async () => {
+  const { runFetcher } = await import('../dist/trading/providers/fetcher.js');
+  const { coingeckoPriceFetcher } = await import('../dist/trading/providers/coingecko/price.js');
+  const { coingeckoOHLCVFetcher } = await import('../dist/trading/providers/coingecko/ohlcv.js');
+
+  const price = await runFetcher(coingeckoPriceFetcher, { ticker: '' });
+  assert.ok('kind' in price, 'blank price query should surface as ProviderError');
+  assert.equal(price.kind, 'unknown');
+  assert.match(price.message, /ticker is required/i);
+
+  const ohlcv = await runFetcher(coingeckoOHLCVFetcher, { ticker: '', days: 30 });
+  assert.ok('kind' in ohlcv, 'blank OHLCV query should surface as ProviderError');
+  assert.equal(ohlcv.kind, 'unknown');
+  assert.match(ohlcv.message, /ticker is required/i);
+});
+
+test('trading provider registry: setProvider swaps the fetcher and resetProviders restores', async () => {
+  const { getProvider, setProvider, resetProviders } = await import('../dist/trading/providers/registry.js');
+
+  const original = getProvider('price');
+  const stub = {
+    providerName: 'stub',
+    transformQuery: (i) => ({ ticker: String(i.ticker ?? '').toUpperCase() }),
+    fetchData: async () => ({ bitcoin: { usd: 1, usd_24h_change: 0, usd_24h_vol: 0, usd_market_cap: 0 } }),
+    transformData: (_raw, q) => ({ ticker: q.ticker, priceUsd: 99, change24hPct: 0, volume24hUsd: 0, marketCapUsd: 0 }),
+  };
+
+  try {
+    setProvider('price', stub);
+    assert.equal(getProvider('price').providerName, 'stub');
+
+    resetProviders();
+    assert.equal(getProvider('price').providerName, original.providerName);
+  } finally {
+    resetProviders();
+  }
+});
+
+test('WebhookPost: refuses private/loopback hosts', async () => {
+  const { webhookPostCapability } = await import('../dist/tools/webhook.js');
+
+  const ctx = { workingDir: '/tmp', abortSignal: new AbortController().signal };
+
+  const localhost = await webhookPostCapability.execute(
+    { url: 'http://localhost:8080/hook', body: { msg: 'x' } }, ctx,
+  );
+  assert.ok(localhost.isError, 'localhost should be refused');
+  assert.ok(localhost.output.includes('private/loopback'));
+
+  const privateIp = await webhookPostCapability.execute(
+    { url: 'http://192.168.1.1/hook', body: {} }, ctx,
+  );
+  assert.ok(privateIp.isError, 'RFC1918 host should be refused');
+
+  const ipv6Loopback = await webhookPostCapability.execute(
+    { url: 'http://[::1]/hook', body: {} }, ctx,
+  );
+  assert.ok(ipv6Loopback.isError, 'IPv6 loopback should be refused');
+
+  const invalidUrl = await webhookPostCapability.execute(
+    { url: 'not-a-url', body: {} }, ctx,
+  );
+  assert.ok(invalidUrl.isError, 'invalid URL should be refused');
+
+  const fileScheme = await webhookPostCapability.execute(
+    { url: 'file:///etc/passwd', body: {} }, ctx,
+  );
+  assert.ok(fileScheme.isError, 'non-http(s) scheme should be refused');
+});
+
+test('WebhookPost: POSTs JSON body to public URL and surfaces response', async () => {
+  const { webhookPostCapability } = await import('../dist/tools/webhook.js');
+
+  // Start a local HTTP server bound to 127.0.0.1 but use an alias that looks
+  // public to the validator. Simpler: whitelist-bypass with HOST header is
+  // impossible without changing code; instead, hit a real local server via
+  // its loopback name but via a proxy ip — nope, we have to test through
+  // a different mechanism. Use a fetch mock.
+  const origFetch = globalThis.fetch;
+  let captured = null;
+  globalThis.fetch = async (url, init) => {
+    captured = { url: String(url), init };
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '{"ok":true}',
+    };
+  };
+
+  try {
+    const result = await webhookPostCapability.execute(
+      {
+        url: 'https://api.example.com/webhook',
+        body: { content: 'hello' },
+        headers: { Authorization: 'Bearer abc' },
+      },
+      { workingDir: '/tmp', abortSignal: new AbortController().signal },
+    );
+    assert.ok(!result.isError, 'expected success, got: ' + result.output);
+    assert.ok(result.output.includes('200'));
+    assert.ok(captured.url === 'https://api.example.com/webhook');
+    assert.equal(captured.init.method, 'POST');
+    const sentBody = JSON.parse(captured.init.body);
+    assert.equal(sentBody.content, 'hello');
+    assert.equal(captured.init.headers['Authorization'], 'Bearer abc');
+    assert.equal(captured.init.headers['Content-Type'], 'application/json');
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test('WebhookPost: refuses bodies larger than 512KB cap', async () => {
+  const { webhookPostCapability } = await import('../dist/tools/webhook.js');
+
+  const huge = 'x'.repeat(600 * 1024);
+  const result = await webhookPostCapability.execute(
+    { url: 'https://example.com/h', body: huge },
+    { workingDir: '/tmp', abortSignal: new AbortController().signal },
+  );
+  assert.ok(result.isError);
+  assert.ok(result.output.includes('cap'));
+});
+
+test('trading views: renderPortfolio includes cash, positions, and risk utilization', async () => {
+  const { renderPortfolio } = await import('../dist/tools/trading-views.js');
+
+  const output = renderPortfolio({
+    cashUsd: 500,
+    equityUsd: 900,
+    unrealizedPnlUsd: 50,
+    realizedPnlUsd: 0,
+    positions: [
+      { symbol: 'BTC', qty: 0.01, avgPriceUsd: 60000, markUsd: 62000, unrealizedPnlUsd: 20 },
+    ],
+  }, { maxPositionUsd: 400, maxTotalExposureUsd: 900 });
+
+  assert.ok(output.includes('## Portfolio'));
+  assert.ok(output.includes('- Cash: $500.00'));
+  assert.ok(output.includes('**BTC**'));
+  assert.ok(output.includes('Risk utilization'));
+});
+
+test('dynamic tool visibility: FRANKLIN_DYNAMIC_TOOLS=0 opts out of the split', async () => {
+  const { dynamicToolsEnabled } = await import('../dist/tools/tool-categories.js');
+
+  const previous = process.env.FRANKLIN_DYNAMIC_TOOLS;
+  try {
+    delete process.env.FRANKLIN_DYNAMIC_TOOLS;
+    assert.equal(dynamicToolsEnabled(), true, 'default is enabled');
+
+    process.env.FRANKLIN_DYNAMIC_TOOLS = '1';
+    assert.equal(dynamicToolsEnabled(), true, '"1" is enabled');
+
+    process.env.FRANKLIN_DYNAMIC_TOOLS = '0';
+    assert.equal(dynamicToolsEnabled(), false, '"0" disables');
+  } finally {
+    if (previous === undefined) delete process.env.FRANKLIN_DYNAMIC_TOOLS;
+    else process.env.FRANKLIN_DYNAMIC_TOOLS = previous;
+  }
 });
