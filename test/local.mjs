@@ -3126,3 +3126,51 @@ test('dynamic tool visibility: FRANKLIN_DYNAMIC_TOOLS=0 opts out of the split', 
     else process.env.FRANKLIN_DYNAMIC_TOOLS = previous;
   }
 });
+
+test('version-check: compareSemver handles major/minor/patch + malformed input', async () => {
+  const { compareSemver } = await import('../dist/version-check.js');
+  assert.equal(compareSemver('3.8.10', '3.8.9'), 1);
+  assert.equal(compareSemver('3.8.9', '3.8.10'), -1);
+  assert.equal(compareSemver('3.9.0', '3.8.99'), 1);
+  assert.equal(compareSemver('4.0.0', '3.99.99'), 1);
+  assert.equal(compareSemver('3.8.10', '3.8.10'), 0);
+  assert.equal(compareSemver('v3.8.10', '3.8.10'), 0, 'strips leading v');
+  assert.equal(compareSemver('not-a-version', '3.8.10'), 0, 'unparseable returns 0');
+});
+
+test('version-check: getAvailableUpdate reflects cache vs installed version', async () => {
+  const { getAvailableUpdate } = await import('../dist/version-check.js');
+  const { VERSION, BLOCKRUN_DIR } = await import('../dist/config.js');
+  const fs = await import('node:fs');
+  const { join } = await import('node:path');
+
+  fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+  const cacheFile = join(BLOCKRUN_DIR, 'version-check.json');
+  const backup = fs.existsSync(cacheFile) ? fs.readFileSync(cacheFile, 'utf-8') : null;
+
+  try {
+    // Cache ahead of installed → surfaces update
+    const bumped = VERSION.replace(/(\d+)$/, (_, n) => String(parseInt(n, 10) + 1));
+    fs.writeFileSync(cacheFile, JSON.stringify({ latestVersion: bumped, checkedAt: Date.now() }));
+    const u = getAvailableUpdate();
+    assert.ok(u && u.latest === bumped && u.current === VERSION);
+
+    // Cache matches installed → no nag
+    fs.writeFileSync(cacheFile, JSON.stringify({ latestVersion: VERSION, checkedAt: Date.now() }));
+    assert.equal(getAvailableUpdate(), null);
+
+    // Opt-out suppresses even when cache is ahead
+    fs.writeFileSync(cacheFile, JSON.stringify({ latestVersion: bumped, checkedAt: Date.now() }));
+    const prev = process.env.FRANKLIN_NO_UPDATE_CHECK;
+    process.env.FRANKLIN_NO_UPDATE_CHECK = '1';
+    try {
+      assert.equal(getAvailableUpdate(), null);
+    } finally {
+      if (prev === undefined) delete process.env.FRANKLIN_NO_UPDATE_CHECK;
+      else process.env.FRANKLIN_NO_UPDATE_CHECK = prev;
+    }
+  } finally {
+    if (backup !== null) fs.writeFileSync(cacheFile, backup);
+    else if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile);
+  }
+});
