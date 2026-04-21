@@ -27,6 +27,7 @@ import type { Tier, RoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
 import { shouldVerify, runVerification } from './verification.js';
+import { shouldCheckGrounding, checkGrounding, renderGroundingFollowup } from './evaluator.js';
 import {
   createSessionId,
   appendToSession,
@@ -1178,7 +1179,10 @@ export async function interactiveSession(
           }
         }
 
-        // ── Verification gate: run adversarial checks on substantial work ──
+        // ── Verification gate: run adversarial checks on substantial CODE work ──
+        // Fires when the agent Edit/Write/Bash-ed enough to warrant running
+        // the build + tests. Complements the grounding check below, which
+        // covers read-heavy answers this verifier misses.
         if (shouldVerify(turnToolCalls, turnToolCounts, lastUserInput || '')) {
           try {
             const vResult = await runVerification(history, capabilityMap, client, {
@@ -1206,6 +1210,31 @@ export async function interactiveSession(
           } catch {
             // Verification errors never block the main flow
           }
+        }
+
+        // ── Grounding gate: check that factual claims trace to tool calls ──
+        // Fires on any substantive answer to a non-trivial question. Designed
+        // to catch the failure mode the code-verifier misses: model answers
+        // a "what's X / should I buy Y" question from memory instead of
+        // calling the live tools. Evaluator runs as a separate agent on a
+        // cheap model; never blocks the turn, only appends a ⚠️ note when
+        // the answer looks ungrounded so the user can re-ask.
+        try {
+          const assistantText = responseParts
+            .filter(p => p.type === 'text' && typeof (p as { text?: string }).text === 'string')
+            .map(p => (p as { text: string }).text)
+            .join('');
+          if (shouldCheckGrounding(lastUserInput || '', assistantText)) {
+            const gResult = await checkGrounding(lastUserInput, history, assistantText, client, {
+              abortSignal: abort.signal,
+            });
+            const followup = renderGroundingFollowup(gResult);
+            if (followup) {
+              onEvent({ kind: 'text_delta', text: followup });
+            }
+          }
+        } catch {
+          // Grounding check is best-effort — never block the main flow.
         }
 
         // Record success for local Elo learning (include tool call count for efficiency)

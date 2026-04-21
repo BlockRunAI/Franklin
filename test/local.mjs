@@ -3152,6 +3152,64 @@ test('dynamic tool visibility: FRANKLIN_DYNAMIC_TOOLS=0 opts out of the split', 
   }
 });
 
+test('evaluator: shouldCheckGrounding gates on input/answer length + slash commands', async () => {
+  const { shouldCheckGrounding } = await import('../dist/agent/evaluator.js');
+
+  const longAnswer = 'This is a long enough answer with real claims'.padEnd(60, '.');
+  const longQuestion = 'This is a long user question that looks like a factual question';
+
+  assert.equal(shouldCheckGrounding(longQuestion, longAnswer), true, 'normal factual turn → check');
+  assert.equal(shouldCheckGrounding('hi', longAnswer), false, 'short user input → skip');
+  assert.equal(shouldCheckGrounding(longQuestion, 'ok'), false, 'short answer → skip');
+  assert.equal(shouldCheckGrounding('/help', longAnswer), false, 'slash command → skip');
+
+  // Env opt-out
+  const prev = process.env.FRANKLIN_NO_EVAL;
+  process.env.FRANKLIN_NO_EVAL = '1';
+  try {
+    assert.equal(shouldCheckGrounding(longQuestion, longAnswer), false, 'opt-out disables');
+  } finally {
+    if (prev === undefined) delete process.env.FRANKLIN_NO_EVAL;
+    else process.env.FRANKLIN_NO_EVAL = prev;
+  }
+});
+
+test('evaluator: parseGroundingResponse extracts verdict + issue list', async () => {
+  const { parseGroundingResponse } = await import('../dist/agent/evaluator.js');
+
+  const ungrounded = parseGroundingResponse(`VERDICT: UNGROUNDED
+
+- Claim: "CRCL is up 2.1% today" → missing tool: TradingMarket
+- Claim: "Circle is a private company" → missing tool: ExaAnswer`);
+  assert.equal(ungrounded.verdict, 'UNGROUNDED');
+  assert.equal(ungrounded.issues.length, 2);
+  assert.ok(ungrounded.issues[0].includes('TradingMarket'));
+
+  const grounded = parseGroundingResponse('VERDICT: GROUNDED\n');
+  assert.equal(grounded.verdict, 'GROUNDED');
+  assert.equal(grounded.issues.length, 0);
+
+  const malformed = parseGroundingResponse('the evaluator got confused');
+  assert.equal(malformed.verdict, 'PARTIAL', 'unparseable → PARTIAL (fail-cautious)');
+});
+
+test('evaluator: renderGroundingFollowup is silent on PASS/SKIPPED, verbose on fail', async () => {
+  const { renderGroundingFollowup } = await import('../dist/agent/evaluator.js');
+
+  assert.equal(renderGroundingFollowup({ verdict: 'GROUNDED', issues: [], raw: '' }), '');
+  assert.equal(renderGroundingFollowup({ verdict: 'SKIPPED', issues: [], raw: '' }), '');
+
+  const ungrounded = renderGroundingFollowup({
+    verdict: 'UNGROUNDED',
+    issues: ['Claim: "price is $100" → missing tool: TradingMarket'],
+    raw: '',
+  });
+  assert.ok(ungrounded.includes('⚠️'), 'has warning glyph');
+  assert.ok(ungrounded.includes('Grounding check'), 'has header');
+  assert.ok(ungrounded.includes('TradingMarket'), 'surfaces specific tool suggestion');
+  assert.ok(ungrounded.includes('FRANKLIN_NO_EVAL'), 'tells user how to opt out');
+});
+
 test('version-check: compareSemver handles major/minor/patch + malformed input', async () => {
   const { compareSemver } = await import('../dist/version-check.js');
   assert.equal(compareSemver('3.8.10', '3.8.9'), 1);
