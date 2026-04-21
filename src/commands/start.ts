@@ -24,6 +24,10 @@ interface StartOptions {
   resume?: string | boolean | 'picker';
   /** Continue: resume most recent session matching the current working directory */
   continue?: boolean;
+  /** Hard USD cap on total session spend. Stops the loop when exceeded. */
+  maxSpend?: string | number;
+  /** Run a single prompt non-interactively, then exit. For cron/scripted use. */
+  prompt?: string;
 }
 
 export async function startCommand(options: StartOptions) {
@@ -89,6 +93,56 @@ export async function startCommand(options: StartOptions) {
     model = 'nvidia/nemotron-ultra-253b';
   }
 
+  const workDir = process.cwd();
+
+  // --prompt batch mode: skip all interactive startup UI/side effects so
+  // stdout stays clean for cron/scripts. Keep the capability surface to the
+  // built-ins only — no panel, no MCP autoconnect, no wallet/banner chatter.
+  if (options.prompt) {
+    if (options.resume === true || options.resume === 'picker') {
+      console.error(chalk.red('`--prompt` requires `--resume` to include an explicit session id.'));
+      process.exitCode = 1;
+      return;
+    }
+
+    const systemInstructions = assembleInstructions(workDir, model);
+    const subAgent = createSubAgentCapability(apiUrl, chain, allCapabilities, model);
+    const { registerMoAConfig } = await import('../tools/moa.js');
+    registerMoAConfig(apiUrl, chain, model);
+    const capabilities = [...allCapabilities, subAgent];
+
+    if (options.debug) {
+      const issues = validateToolDescriptions(capabilities);
+      for (const issue of issues) {
+        console.error(`[validate] ${issue.severity}: ${issue.toolName} — ${issue.issue}`);
+      }
+    }
+
+    const agentConfig: AgentConfig = {
+      model,
+      apiUrl,
+      chain,
+      systemInstructions,
+      capabilities,
+      maxTurns: 100,
+      workingDir: workDir,
+      permissionMode: 'trust',
+      debug: options.debug,
+      resumeSessionId:
+        (typeof options.resume === 'string' && options.resume !== 'picker')
+          ? options.resume
+          : continueResolvedId,
+      ...(options.maxSpend != null
+        ? { maxSpendUsd: Number(options.maxSpend) }
+        : {}),
+    };
+
+    const exitCode = await runOneShot(agentConfig, options.prompt);
+    flushStats();
+    process.exitCode = exitCode;
+    return;
+  }
+
   // Warn when a paid model is active so users know they'll be charged
   const FREE_MODELS = new Set([
     'nvidia/nemotron-ultra-253b',
@@ -130,9 +184,6 @@ export async function startCommand(options: StartOptions) {
   }
 
   printBanner(version);
-
-  const workDir = process.cwd();
-
   // Auto-start panel in background unless explicitly disabled.
   // Binds loopback-only (wallet secrets on /api/wallet/secret — never expose on LAN).
   let panelUrl: string | undefined;
@@ -262,9 +313,13 @@ export async function startCommand(options: StartOptions) {
     workingDir: workDir,
     // Non-TTY (piped) input = scripted mode → trust all tools automatically.
     // Interactive TTY = default mode (prompts for Bash/Write/Edit).
-    permissionMode: (options.trust || !process.stdin.isTTY) ? 'trust' : 'default',
+    // --prompt is also scripted; the cron driver never sees a TTY.
+    permissionMode: (options.trust || options.prompt || !process.stdin.isTTY) ? 'trust' : 'default',
     debug: options.debug,
     resumeSessionId,
+    ...(options.maxSpend != null
+      ? { maxSpendUsd: Number(options.maxSpend) }
+      : {}),
   };
 
   // Bootstrap learnings from existing CLAUDE.md on first run (async, non-blocking)
@@ -284,6 +339,28 @@ export async function startCommand(options: StartOptions) {
   } else {
     await runWithBasicUI(agentConfig, model, workDir);
   }
+}
+
+// ─── One-shot mode (franklin --prompt "...") ──────────────────────────────
+// Used by cron drivers. Non-interactive, prints text deltas to stdout as
+// they stream, honors --max-spend, exits 0 on completion / 1 on error.
+async function runOneShot(agentConfig: AgentConfig, prompt: string): Promise<number> {
+  let delivered = false;
+  let exitCode = 0;
+  const getInput = async () => {
+    if (delivered) return null;
+    delivered = true;
+    return prompt;
+  };
+  await interactiveSession(agentConfig, getInput, (event) => {
+    if (event.kind === 'text_delta') {
+      process.stdout.write(event.text);
+    } else if (event.kind === 'turn_done') {
+      if (event.reason === 'error') exitCode = 1;
+      process.stdout.write('\n');
+    }
+  });
+  return exitCode;
 }
 
 // ─── Ink UI (interactive terminal) ─────────────────────────────────────────

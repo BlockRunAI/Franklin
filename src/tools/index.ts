@@ -26,6 +26,7 @@ import { tradingSignalCapability, tradingMarketCapability } from './trading.js';
 import { searchXCapability } from './searchx.js';
 import { postToXCapability } from './posttox.js';
 import { moaCapability } from './moa.js';
+import { webhookPostCapability } from './webhook.js';
 import { createTradingCapabilities } from './trading-execute.js';
 import { Portfolio } from '../trading/portfolio.js';
 import { RiskEngine } from '../trading/risk.js';
@@ -154,6 +155,7 @@ export const allCapabilities: CapabilityHandler[] = [
   searchXCapability,
   postToXCapability,
   moaCapability,
+  webhookPostCapability,
 ];
 
 export {

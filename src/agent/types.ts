@@ -192,4 +192,11 @@ export interface AgentConfig {
    * unset. Format: "<driver>:<owner-or-chat-id>", e.g. "telegram:12345".
    */
   sessionChannel?: string;
+  /**
+   * Hard cap on total USD spend for this session. When accumulated API cost
+   * crosses the cap, the loop stops with `reason: 'budget'`. Zero/negative
+   * values disable the cap. Primary use case: cron/daily drivers that must
+   * bound a single run to keep autonomous execution inside a known envelope.
+   */
+  maxSpendUsd?: number;
 }

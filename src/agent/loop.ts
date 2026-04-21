@@ -14,6 +14,8 @@ import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputT
 import { classifyAgentError } from './error-classifier.js';
 import { SessionToolGuard } from './tool-guard.js';
 import { resetToolSessionState } from '../tools/index.js';
+import { CORE_TOOL_NAMES, dynamicToolsEnabled } from '../tools/tool-categories.js';
+import { createActivateToolCapability } from '../tools/activate.js';
 import { recordUsage } from '../stats/tracker.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
@@ -362,12 +364,32 @@ export async function interactiveSession(
     debug: config.debug,
   });
 
+  // ── Dynamic tool visibility ──
+  // Register ActivateTool before building the capability map so the agent
+  // can always reach the meta-tool. When FRANKLIN_DYNAMIC_TOOLS=0 is set,
+  // `activeTools` is seeded with every registered name — behaves as the
+  // pre-3.8.9 static registry.
   const capabilityMap = new Map<string, CapabilityHandler>();
   for (const cap of config.capabilities) {
     capabilityMap.set(cap.spec.name, cap);
   }
+  const activeTools: Set<string> = new Set();
+  const dynamicTools = dynamicToolsEnabled();
+  if (dynamicTools) {
+    for (const name of CORE_TOOL_NAMES) {
+      if (capabilityMap.has(name)) activeTools.add(name);
+    }
+  } else {
+    for (const cap of config.capabilities) activeTools.add(cap.spec.name);
+  }
+  const activateToolCap = createActivateToolCapability({ activeTools, allTools: capabilityMap });
+  capabilityMap.set(activateToolCap.spec.name, activateToolCap);
+  if (dynamicTools) activeTools.add(activateToolCap.spec.name);
 
-  const toolDefs = config.capabilities.map((c) => c.spec);
+  const allToolDefs = [...capabilityMap.values()].map(c => c.spec);
+  const buildCallToolDefs = () =>
+    dynamicTools ? allToolDefs.filter(t => activeTools.has(t.name)) : allToolDefs;
+
   const maxTurns = config.maxTurns ?? 15;
   const workDir = config.workingDir ?? process.cwd();
   const permissions = new PermissionManager(
@@ -637,6 +659,23 @@ export async function interactiveSession(
         );
       }
 
+      // ── Dynamic tool visibility hint ──
+      // When the core/on-demand split is active, tell every model up front
+      // that its tool list is intentionally small and that extras can be
+      // pulled via ActivateTool. Kept byte-stable across turns (no tool
+      // names inlined) so the prompt cache still holds.
+      if (dynamicTools && allToolDefs.length > activeTools.size) {
+        systemParts.push(
+          '# Tool Inventory\n' +
+          'Your current tool list is intentionally minimal. Additional tools ' +
+          '(web search, image/video/music generation, trading, content, brain ' +
+          'recall, etc.) are available on demand. Call `ActivateTool()` with ' +
+          'no arguments to see what is available, then call `ActivateTool({ ' +
+          '"names": ["<name>"] })` to enable the ones you need. Activated ' +
+          'tools become visible on the next turn.',
+        );
+      }
+
       // ── Context awareness injection ──
       // Tell the model how full its context window is so it can self-regulate.
       // At high usage, nudge it to be concise and avoid unnecessary tool calls.
@@ -741,7 +780,10 @@ export async function interactiveSession(
 
       // Build per-call tool defs, max_tokens, and system prompt
       // (planning calls get no tools + short output + planning prompt)
-      let callToolDefs = toolDefs;
+      // Dynamic visibility: `buildCallToolDefs()` returns only the active set
+      // (core + any the agent pulled via ActivateTool). Re-evaluated every
+      // turn so newly activated tools take effect immediately.
+      let callToolDefs = buildCallToolDefs();
       let callMaxTokens = maxTokens;
       let callSystemPrompt = systemPrompt;
       if (planActive && loopCount === 1) {
@@ -1010,6 +1052,25 @@ export async function interactiveSession(
       const opusCost = (inputTokens / 1_000_000) * OPUS_PRICING.input
         + (usage.outputTokens / 1_000_000) * OPUS_PRICING.output;
       sessionSavedVsOpus += Math.max(0, opusCost - costEstimate);
+
+      // ── Max-spend guard ──
+      // Session-level cost ceiling. Cron/daily drivers pass this to bound a
+      // single run ("spend at most $0.50 for today's digest"); interactive
+      // users can pass it to feel safe walking away. Hits as soon as accumulated
+      // cost crosses the cap — the last call that tipped us over still runs,
+      // but no further API calls are made.
+      const maxSpend = (config as { maxSpendUsd?: number }).maxSpendUsd;
+      if (typeof maxSpend === 'number' && Number.isFinite(maxSpend) && maxSpend > 0 &&
+          sessionCostUsd >= maxSpend) {
+        onEvent({
+          kind: 'text_delta',
+          text: `\n\n_Max-spend reached: $${sessionCostUsd.toFixed(4)} ≥ cap $${maxSpend.toFixed(2)}. ` +
+            `Stopping session — further calls would exceed the budget._\n`,
+        });
+        persistSessionMeta();
+        onEvent({ kind: 'turn_done', reason: 'budget' });
+        return history;
+      }
 
       // ── Max output tokens recovery ──
       if (stopReason === 'max_tokens' && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {

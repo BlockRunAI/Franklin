@@ -56,6 +56,8 @@ program
   .option('--trust', 'Trust mode — skip permission prompts for all tools')
   .option('-r, --resume [sessionId]', 'Resume a session by ID (or show picker if omitted)')
   .option('-c, --continue', 'Continue the most recent session in this directory')
+  .option('--max-spend <usd>', 'Hard USD cap on total session API spend — session stops when exceeded')
+  .option('-p, --prompt <text>', 'Run a single prompt non-interactively (for cron/scripted use)')
   .action((options) => startCommand({ ...options, version }));
 
 program
@@ -258,7 +260,7 @@ const args = process.argv.slice(2);
 const firstArg = args[0];
 const HELP_FLAGS = new Set(['-h', '--help']);
 const VERSION_FLAGS = new Set(['-V', '--version']);
-const START_ONLY_FLAGS = new Set(['--trust', '--debug', '-m', '--model', '-r', '--resume', '-c', '--continue']);
+const START_ONLY_FLAGS = new Set(['--trust', '--debug', '-m', '--model', '-r', '--resume', '-c', '--continue', '-p', '--prompt', '--max-spend']);
 
 function hasAnyFlag(argv: string[], flags: Set<string>): boolean {
   return argv.some(arg => flags.has(arg));
@@ -276,6 +278,10 @@ function parseStartFlags(argv: string[], startIdx = 0): Record<string, unknown> 
     else if (arg === '--debug') opts.debug = true;
     else if ((arg === '-m' || arg === '--model') && argv[i + 1]) {
       opts.model = argv[++i];
+    } else if ((arg === '-p' || arg === '--prompt') && argv[i + 1]) {
+      opts.prompt = argv[++i];
+    } else if (arg === '--max-spend' && argv[i + 1]) {
+      opts.maxSpend = argv[++i];
     } else if (arg === '-c' || arg === '--continue') {
       opts.continue = true;
     } else if (arg === '-r' || arg === '--resume') {
