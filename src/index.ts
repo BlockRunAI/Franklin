@@ -311,7 +311,7 @@ if (firstArg === 'solana' || firstArg === 'base') {
   saveChain(firstArg as 'base' | 'solana');
   const startOpts = parseStartFlags(args, 1);
   await startCommand(startOpts as Parameters<typeof startCommand>[0]);
-  process.exit(0);
+  process.exit(process.exitCode ?? 0);
 } else if (!firstArg || firstArg.startsWith('-')) {
   if (hasAnyFlag(args, HELP_FLAGS) && hasStartOnlyFlag(args)) {
     program.parse(['node', 'franklin', 'start', '--help']);
@@ -326,7 +326,7 @@ if (firstArg === 'solana' || firstArg === 'base') {
   // No subcommand or only flags — treat as 'start' with flags
   const startOpts = parseStartFlags(args, 0);
   await startCommand(startOpts as Parameters<typeof startCommand>[0]);
-  process.exit(0);
+  process.exit(process.exitCode ?? 0);
 } else {
   program.parse();
 }

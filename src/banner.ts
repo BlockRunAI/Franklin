@@ -95,6 +95,24 @@ function padVisible(s: string, targetWidth: number): string {
 }
 
 export function printBanner(version: string): void {
+  const style = process.env.FRANKLIN_BANNER?.toLowerCase();
+  if (style === 'full' || style === 'legacy') {
+    printLegacyBanner(version);
+    return;
+  }
+
+  printCompactBanner(version);
+}
+
+function printCompactBanner(version: string): void {
+  const title = chalk.bold.hex(GOLD_START)('FRANKLIN');
+  const meta = chalk.dim(`  ·  blockrun.ai  ·  v${version}`);
+  console.log(`${title}${meta}`);
+  console.log(chalk.dim('The AI agent with a wallet'));
+  console.log('');
+}
+
+function printLegacyBanner(version: string): void {
   const termWidth = process.stdout.columns ?? 80;
   const useSideBySide = termWidth >= MIN_WIDTH_FOR_PORTRAIT;
 

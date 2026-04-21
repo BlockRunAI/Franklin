@@ -60,6 +60,10 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
   onVimModeChange?: (mode: VimMode) => void;
 }) {
   const { cols } = useTerminalSize();
+  // Avoid drawing right up to the terminal edge. Several terminals auto-wrap
+  // a full-width border glyph onto the next row, which leaves "ghost" top
+  // borders behind on re-render after errors / status changes.
+  const boxWidth = Math.max(20, cols - 2);
 
   const placeholder = busy
     ? (queued
@@ -69,7 +73,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Box borderStyle="round" borderDimColor paddingX={1} width={cols}>
+      <Box borderStyle="round" borderDimColor paddingX={1} width={boxWidth}>
         {busy && !input ? <Text color="yellow"><Spinner type="dots" /> </Text> : null}
         <Box flexGrow={1}>
           {vimMode ? (
@@ -118,6 +122,27 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
       </Box>
     </Box>
   );
+}
+
+function formatAgentErrorForDisplay(error: string): string {
+  const lines = error.split('\n').map((line) => line.trim()).filter(Boolean);
+  const tipIndex = lines.findIndex((line) => /^tip:/i.test(line));
+  const mainLines = tipIndex >= 0 ? lines.slice(0, tipIndex) : lines;
+  const tipLines = tipIndex >= 0 ? lines.slice(tipIndex) : [];
+
+  let main = mainLines.join(' ').replace(/\s+/g, ' ').trim();
+  let tip = tipLines.join(' ').replace(/\s+/g, ' ').trim();
+
+  const labelMatch = /^\[([^\]]+)\]\s*/.exec(main);
+  const label = labelMatch?.[1];
+  if (labelMatch) main = main.slice(labelMatch[0].length).trim();
+  if (tip) tip = tip.replace(/^tip:\s*/i, '');
+
+  const out = ['**Request failed**'];
+  if (label) out.push(`- Type: ${label}`);
+  if (main) out.push(`- Message: ${main}`);
+  if (tip) out.push(`- Tip: ${tip}`);
+  return out.join('\n');
 }
 
 // Picker model list is imported from ./model-picker.js (single source of truth).
@@ -777,7 +802,7 @@ function RunCodeApp({
             }
 
             if (event.reason === 'error' && event.error) {
-              commitResponse(`Error: ${event.error}`, turnTokensRef.current, turnCostRef.current);
+              commitResponse(formatAgentErrorForDisplay(event.error), turnTokensRef.current, turnCostRef.current);
               showStatus('Turn failed', 'error', 5000);
             } else if (event.reason === 'aborted') {
               showStatus('Aborted', 'warning', 3000);
