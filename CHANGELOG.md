@@ -135,8 +135,10 @@ budget.
   source of truth for the project, with GitLab kept as a read-only
   historical mirror. README badges, community links, and `git clone`
   instructions all updated.
-- All commit authors rewritten to `VickyXAI` for the new canonical
-  history.
+- All commit authors rewritten to `1bcMax` (the repo owner's canonical
+  identity). Historical context: the v3.8.4 release had briefly rewritten
+  authors to `VickyXAI`; that change was reversed in v3.8.9 so the
+  contributor graph reflects the actual owner.
 
 No behavior changes.
 
