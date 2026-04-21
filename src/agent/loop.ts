@@ -764,6 +764,16 @@ export async function interactiveSession(
         routingSavings = routing.savings;
         lastRoutedModel = routing.model;
         lastRoutedCategory = routing.signals[0] || '';
+        // Surface the routing decision so users know which concrete model
+        // just got picked. Without this the status bar reads "auto" and
+        // users have no idea what's actually running — or worse, they
+        // believe they're stuck on the last-seen concrete name.
+        if (loopCount === 1) {
+          onEvent({
+            kind: 'text_delta',
+            text: `*Auto → ${routing.model}*\n\n`,
+          });
+        }
       }
 
       // Update token estimation model for more accurate byte-per-token ratio
@@ -1059,7 +1069,7 @@ export async function interactiveSession(
       sessionSavedVsOpus += Math.max(0, opusCost - costEstimate);
 
       // ── Max-spend guard ──
-      // Session-level cost ceiling. Cron/daily drivers pass this to bound a
+      // Session-level cost ceiling. Batch/scripted callers pass this to bound a
       // single run ("spend at most $0.50 for today's digest"); interactive
       // users can pass it to feel safe walking away. Hits as soon as accumulated
       // cost crosses the cap — the last call that tipped us over still runs,

@@ -127,6 +127,17 @@ test('--prompt preserves non-zero exit code through the CLI entrypoint', async (
   );
 });
 
+test('oneShotExitCodeForTurnReason treats only completed turns as success', async () => {
+  const { oneShotExitCodeForTurnReason } = await import('../dist/commands/start.js');
+
+  assert.equal(oneShotExitCodeForTurnReason('completed'), 0);
+  assert.equal(oneShotExitCodeForTurnReason('error'), 1);
+  assert.equal(oneShotExitCodeForTurnReason('budget'), 1);
+  assert.equal(oneShotExitCodeForTurnReason('no_progress'), 1);
+  assert.equal(oneShotExitCodeForTurnReason('max_turns'), 1);
+  assert.equal(oneShotExitCodeForTurnReason('aborted'), 1);
+});
+
 test('chain shortcut --help does not mutate saved chain or launch the agent', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-chain-help-'));
   const chainFile = join(fakeHome, '.blockrun', 'payment-chain');
@@ -2902,9 +2913,10 @@ test('dynamic tool visibility: ActivateTool reports unknown names as error witho
   assert.equal(activeTools.size, 1, 'active set unchanged');
 });
 
-test('dynamic tool visibility: CORE_TOOL_NAMES contains the minimal baseline', async () => {
+test('dynamic tool visibility: CORE_TOOL_NAMES contains file/shell + Franklin hero surface', async () => {
   const { CORE_TOOL_NAMES } = await import('../dist/tools/tool-categories.js');
 
+  // File/shell/search baseline
   assert.ok(CORE_TOOL_NAMES.has('Read'));
   assert.ok(CORE_TOOL_NAMES.has('Write'));
   assert.ok(CORE_TOOL_NAMES.has('Edit'));
@@ -2913,9 +2925,22 @@ test('dynamic tool visibility: CORE_TOOL_NAMES contains the minimal baseline', a
   assert.ok(CORE_TOOL_NAMES.has('Glob'));
   assert.ok(CORE_TOOL_NAMES.has('AskUser'));
   assert.ok(CORE_TOOL_NAMES.has('ActivateTool'));
-  // Extras should NOT be core — that's the whole point.
-  assert.ok(!CORE_TOOL_NAMES.has('ExaSearch'));
+
+  // Hero surface — must be always-on so stock/market/research questions
+  // never fall back to training-data guessing.
+  assert.ok(CORE_TOOL_NAMES.has('TradingMarket'), 'TradingMarket must be default-visible');
+  assert.ok(CORE_TOOL_NAMES.has('TradingSignal'), 'TradingSignal must be default-visible');
+  assert.ok(CORE_TOOL_NAMES.has('ExaAnswer'), 'ExaAnswer must be default-visible');
+  assert.ok(CORE_TOOL_NAMES.has('ExaSearch'), 'ExaSearch must be default-visible');
+  assert.ok(CORE_TOOL_NAMES.has('ExaReadUrls'), 'ExaReadUrls must be default-visible');
+  assert.ok(CORE_TOOL_NAMES.has('WebFetch'), 'WebFetch must be default-visible');
+  assert.ok(CORE_TOOL_NAMES.has('WebSearch'), 'WebSearch must be default-visible');
+
+  // Long tail stays gated behind ActivateTool.
   assert.ok(!CORE_TOOL_NAMES.has('VideoGen'));
+  assert.ok(!CORE_TOOL_NAMES.has('MusicGen'));
+  assert.ok(!CORE_TOOL_NAMES.has('ImageGen'));
+  assert.ok(!CORE_TOOL_NAMES.has('WebhookPost'));
   assert.ok(!CORE_TOOL_NAMES.has('PostToX'));
 });
 

@@ -1,15 +1,20 @@
 /**
  * Tool visibility categories.
  *
- * Franklin ships with ~27 capabilities. Exposing all of them to the model on
- * every turn makes the tool inventory large enough that weak models start
- * hallucinating tool names or emitting role-play "[TOOLCALL]" fragments.
- * The fix: keep a minimal always-on core (file ops, shell, ask) and gate the
- * rest behind an `ActivateTool` meta-tool that the agent pulls on demand —
- * the same per-session visibility pattern that OpenBB's MCP server uses.
+ * Franklin ships with ~27 capabilities. Exposing all of them on every turn
+ * makes the tool inventory large enough that weak models start hallucinating
+ * tool names or emitting role-play "[TOOLCALL]" fragments. The compromise:
+ * keep the hero surface always-on (file/shell/search PLUS the trading and
+ * research tools that define Franklin's category), and gate the long tail
+ * (webhook, imagegen, videogen, musicgen, memory, etc.) behind an
+ * `ActivateTool` meta-tool the agent pulls on demand.
  *
- * `CORE_TOOL_NAMES` is the per-session initial active set. Everything else
- * becomes visible only after the agent calls ActivateTool with its name.
+ * History: earlier releases kept only file/shell/search in core, which made
+ * mid-tier models answer stock / market questions from 2022 training data
+ * instead of calling TradingMarket. That's anti-positioning for an agent
+ * whose whole brand is "spends USDC for real market data." Hero tools now
+ * live in the always-on set so the default experience shows the wallet
+ * actually at work.
  */
 
 export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
@@ -28,8 +33,24 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   // so keeping this in the core doesn't leak the full inventory.
   'Task',
   // The meta-tool itself — must always be callable so the agent can
-  // discover and activate the rest.
+  // discover and activate anything not in this core set.
   'ActivateTool',
+  // ── Hero surface: Franklin's reason to exist ────────────────────────
+  // Trading market data — crypto, FX, commodity, stocks (via x402).
+  // "Is NVDA up?" / "Should I sell CRCL?" must never fall back to
+  // training-data guessing.
+  'TradingMarket',
+  'TradingSignal',
+  // Research — synthesized answers with real citations, semantic web
+  // search, and clean URL fetching. Any factual current-events question
+  // ("why did X drop?") should route here rather than the model's prior.
+  'ExaAnswer',
+  'ExaSearch',
+  'ExaReadUrls',
+  // Plain web fetch — specific URL → readable text. Cheap and obvious
+  // enough that every model tends to pick it correctly.
+  'WebFetch',
+  'WebSearch',
 ]);
 
 /** True if this tool is always available without activation. */
