@@ -314,6 +314,137 @@ function classicRouteRequest(
   return { model, tier, confidence, signals, savings };
 }
 
+// ─── LLM-based classifier ───
+//
+// Historical router was a 15-dimension keyword scorer — every new failure
+// mode needed another KEYWORD list (CODE, REASONING, ANALYSIS, ...). Cheap
+// to run but structurally wrong: keywords always lag reality, and users
+// phrase the same intent fifty different ways. A free model can just
+// *read* the prompt and tell us the tier.
+//
+// Design:
+//   - Classification prompt is one word answer: SIMPLE | MEDIUM | COMPLEX | REASONING
+//   - Runs on a free NVIDIA model — $0/call, so we can afford it on every turn
+//   - 2s hard timeout + strict parse; any failure falls through to the
+//     keyword classifier so we always have a routing answer
+//   - Exposed via async `routeRequestAsync(prompt, profile, classify?)`. Callers
+//     that can't be async (proxy, LLM-client bootstrap) keep using the sync
+//     `routeRequest`, which silently does keyword-only routing.
+
+const CLASSIFIER_MODEL = process.env.FRANKLIN_ROUTER_MODEL || 'nvidia/nemotron-ultra-253b';
+const CLASSIFIER_TIMEOUT_MS = 2_500;
+
+const CLASSIFIER_SYSTEM = `You classify a user's message into ONE routing tier for a CLI agent. Reply with EXACTLY ONE WORD from the allowed set. No explanation, no punctuation, no quotes.
+
+Tiers:
+- SIMPLE    — greetings, trivia, arithmetic, short definitions, yes/no questions. A single memory-based reply is acceptable.
+- MEDIUM    — multi-turn code edits, targeted bug fixes, lookups, summaries. Some tool use expected.
+- COMPLEX   — substantive engineering, analysis, recommendations, research questions that depend on current-world data (stock prices, current events, live market state). Multiple tool calls + synthesis.
+- REASONING — formal proofs, derivations, deep chains of logic, multi-variable optimization.
+
+If the message names a ticker, asks for a recommendation, or asks "why did X happen", it is COMPLEX or REASONING — never SIMPLE.
+
+Answer format: a single word. SIMPLE or MEDIUM or COMPLEX or REASONING.`;
+
+export type TierClassifier = (prompt: string) => Promise<Tier | null>;
+
+/**
+ * Parse a one-word classifier reply into a Tier. Returns null on junk so
+ * the caller can fall back to keyword classification.
+ */
+function parseTierWord(reply: string): Tier | null {
+  const m = reply.trim().toUpperCase().match(/\b(SIMPLE|MEDIUM|COMPLEX|REASONING)\b/);
+  return m ? (m[1] as Tier) : null;
+}
+
+/**
+ * Default LLM classifier — lazy-imports the ModelClient to avoid a hard
+ * cycle with agent/llm.ts (which itself imports routing helpers for virtual
+ * profile resolution). Callers can substitute their own classifier for
+ * tests by passing one to `routeRequestAsync`.
+ */
+export async function llmClassifyRequest(prompt: string): Promise<Tier | null> {
+  if (!prompt || prompt.trim().length === 0) return null;
+  // Very short messages: skip the classifier call, let keyword path decide.
+  // Saves ~500ms on "hi" / "thanks" / slash commands.
+  if (prompt.trim().length < 10) return null;
+
+  let ModelClientCtor: typeof import('../agent/llm.js').ModelClient;
+  let chain: import('../config.js').Chain;
+  let apiUrl: string;
+  try {
+    const llmMod = await import('../agent/llm.js');
+    const cfgMod = await import('../config.js');
+    ModelClientCtor = llmMod.ModelClient;
+    chain = cfgMod.loadChain();
+    apiUrl = cfgMod.API_URLS[chain];
+  } catch {
+    return null;
+  }
+  const client = new ModelClientCtor({ apiUrl, chain });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CLASSIFIER_TIMEOUT_MS);
+
+  try {
+    const result = await client.complete(
+      {
+        model: CLASSIFIER_MODEL,
+        system: CLASSIFIER_SYSTEM,
+        messages: [{ role: 'user', content: prompt.slice(0, 2000) }],
+        tools: [],
+        max_tokens: 8,
+      },
+      ctrl.signal,
+    );
+    let text = '';
+    for (const part of result.content) {
+      if (typeof part === 'object' && part.type === 'text' && part.text) text += part.text;
+    }
+    return parseTierWord(text);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Async router — LLM classifier first, keyword classifier as fallback.
+ * Profile-specific tier tables (AUTO / ECO / PREMIUM / FREE) still pick
+ * the concrete model; the classifier only picks the TIER.
+ */
+export async function routeRequestAsync(
+  prompt: string,
+  profile: RoutingProfile = 'auto',
+  classify: TierClassifier = llmClassifyRequest,
+): Promise<RoutingResult> {
+  // Free / short-circuit profiles — no classifier needed.
+  if (profile === 'free') return routeRequest(prompt, profile);
+
+  const tier = await classify(prompt).catch(() => null);
+  if (!tier) {
+    // Classifier miss or disabled — fall through to the sync keyword router.
+    return routeRequest(prompt, profile);
+  }
+
+  // Build a RoutingResult from the LLM-picked tier using the same tier
+  // tables the keyword path uses. Keeps downstream code path-identical.
+  let tierConfigs: Record<Tier, { primary: string; fallback: string[] }>;
+  switch (profile) {
+    case 'eco':     tierConfigs = ECO_TIERS; break;
+    case 'premium': tierConfigs = PREMIUM_TIERS; break;
+    default:        tierConfigs = AUTO_TIERS;
+  }
+  const model = tierConfigs[tier].primary;
+  return {
+    model,
+    tier,
+    confidence: 0.85, // LLM classification — medium-high confidence
+    signals: ['llm-classified'],
+    savings: computeSavings(model),
+  };
+}
+
 // ─── Main Router ───
 
 export function routeRequest(

@@ -3152,6 +3152,34 @@ test('dynamic tool visibility: FRANKLIN_DYNAMIC_TOOLS=0 opts out of the split', 
   }
 });
 
+test('router LLM classifier: parseTierWord + stub-backed routeRequestAsync routes by tier', async () => {
+  const { routeRequestAsync } = await import('../dist/router/index.js');
+
+  // Inject a stub classifier so this test stays offline / hermetic.
+  const stub = async (prompt) => {
+    if (/irrational|prove|theorem/i.test(prompt)) return 'REASONING';
+    if (/CRCL|stock|analyze|为什么|要不要/i.test(prompt)) return 'COMPLEX';
+    if (/typo|rename|fix/i.test(prompt)) return 'MEDIUM';
+    return 'SIMPLE';
+  };
+
+  const crcl = await routeRequestAsync('should I sell CRCL? why did it drop?', 'auto', stub);
+  assert.equal(crcl.tier, 'COMPLEX');
+  assert.ok(/sonnet|opus/.test(crcl.model), `expected strong model, got ${crcl.model}`);
+  assert.ok(crcl.signals.includes('llm-classified'));
+
+  const trivia = await routeRequestAsync('2 + 2', 'auto', stub);
+  assert.equal(trivia.tier, 'SIMPLE');
+
+  const chinese = await routeRequestAsync('CRCL 要不要卖', 'auto', stub);
+  assert.equal(chinese.tier, 'COMPLEX');
+
+  // Classifier returns null → falls back to keyword router (which still works)
+  const fallback = await routeRequestAsync('refactor the wallet module', 'auto', async () => null);
+  assert.ok(fallback.model, 'fallback router produced a model');
+  assert.ok(!fallback.signals.includes('llm-classified'), 'fallback path did not mark llm-classified');
+});
+
 test('evaluator: shouldCheckGrounding gates on input/answer length + slash commands', async () => {
   const { shouldCheckGrounding } = await import('../dist/agent/evaluator.js');
 

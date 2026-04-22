@@ -272,6 +272,34 @@ export function renderGroundingFollowup(result: GroundingResult): string {
   return `\n\n${header}\n${body}\n\n_Ask again with an explicit instruction to call the tools, or disable these checks with \`FRANKLIN_NO_EVAL=1\`._`;
 }
 
+/**
+ * Build a synthetic user message that instructs the agent to retry with the
+ * missing tools. Returned message goes into history so the model's next
+ * generation sees it as the most recent instruction. This is the GAN-like
+ * feedback loop pattern from Anthropic's harness-design writeup —
+ * evaluator findings feed back into the generator until PASS (or retry cap).
+ *
+ * Intentionally terse: the agent already has the original question in
+ * history; we only need to name the gap + the tools to use.
+ */
+export function buildGroundingRetryInstruction(
+  result: GroundingResult,
+  originalUserQuestion: string,
+): string {
+  const lines: string[] = [
+    '[GROUNDING CHECK FAILED]',
+    'Your previous answer stated facts without calling the relevant tools. Specifically:',
+  ];
+  for (const issue of result.issues) {
+    lines.push(`- ${issue}`);
+  }
+  lines.push('');
+  lines.push('Retry: call the missing tools first, then give a concise final answer based on the tool results. Only claim what the tool outputs actually say. If a tool fails, say so rather than falling back to memory.');
+  lines.push('');
+  lines.push(`Original user question: ${originalUserQuestion.trim().slice(0, 500)}`);
+  return lines.join('\n');
+}
+
 // ─── Unused-import shim (keeps CapabilityHandler exportable for tests) ──
 // Type re-export so tests can reference the shape without importing types.js.
 export type { CapabilityHandler };
