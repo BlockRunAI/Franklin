@@ -22,12 +22,17 @@ import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
-import { routeRequest, parseRoutingProfile } from '../router/index.js';
+import { routeRequest, routeRequestAsync, parseRoutingProfile } from '../router/index.js';
 import type { Tier, RoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
 import { shouldVerify, runVerification } from './verification.js';
-import { shouldCheckGrounding, checkGrounding, renderGroundingFollowup } from './evaluator.js';
+import {
+  shouldCheckGrounding,
+  checkGrounding,
+  renderGroundingFollowup,
+  buildGroundingRetryInstruction,
+} from './evaluator.js';
 import {
   createSessionId,
   appendToSession,
@@ -573,6 +578,15 @@ export async function interactiveSession(
     const turnIdleReference = lastSessionActivity;
     lastSessionActivity = Date.now();
 
+    // ── Grounding retry state (per turn) ──
+    // When the post-response evaluator finds UNGROUNDED claims, we inject a
+    // corrective user message and re-enter the loop so the generator can
+    // answer again with the missing tool calls. 1-retry cap: if round 2
+    // still UNGROUNDED, ship the annotated response and let the user
+    // decide — avoids pathological loops, caps wall-clock cost.
+    let groundingRetryCount = 0;
+    const MAX_GROUNDING_RETRIES = 1;
+
     // ── Plan-then-execute state (per turn) ──
     let planActive = false;
     let planPlannerModel = '';
@@ -758,7 +772,7 @@ export async function interactiveSession(
                 .map(p => p.text ?? '')
                 .join(' ')
             : '';
-        const routing = routeRequest(userText, routingProfile);
+        const routing = await routeRequestAsync(userText, routingProfile);
         resolvedModel = routing.model;
         routingTier = routing.tier;
         routingConfidence = routing.confidence;
@@ -1213,12 +1227,15 @@ export async function interactiveSession(
         }
 
         // ── Grounding gate: check that factual claims trace to tool calls ──
-        // Fires on any substantive answer to a non-trivial question. Designed
-        // to catch the failure mode the code-verifier misses: model answers
-        // a "what's X / should I buy Y" question from memory instead of
-        // calling the live tools. Evaluator runs as a separate agent on a
-        // cheap model; never blocks the turn, only appends a ⚠️ note when
-        // the answer looks ungrounded so the user can re-ask.
+        // Fires on any substantive answer to a non-trivial question. Catches
+        // the failure mode the code-verifier misses: model answers a
+        // "what's X / should I buy Y" question from memory instead of
+        // calling the live tools.
+        //
+        // On UNGROUNDED: inject a corrective user message (GAN-style feedback)
+        // and re-enter the loop so the generator can answer again with the
+        // right tools. Up to MAX_GROUNDING_RETRIES attempts — after that,
+        // annotate and ship so the user can decide.
         try {
           const assistantText = responseParts
             .filter(p => p.type === 'text' && typeof (p as { text?: string }).text === 'string')
@@ -1228,6 +1245,23 @@ export async function interactiveSession(
             const gResult = await checkGrounding(lastUserInput, history, assistantText, client, {
               abortSignal: abort.signal,
             });
+
+            if (gResult.verdict === 'UNGROUNDED' && groundingRetryCount < MAX_GROUNDING_RETRIES) {
+              groundingRetryCount++;
+              const retryMsg = buildGroundingRetryInstruction(gResult, lastUserInput);
+              const feedbackMsg: Dialogue = { role: 'user', content: retryMsg };
+              history.push(feedbackMsg);
+              persistSessionMessage(feedbackMsg);
+              onEvent({
+                kind: 'text_delta',
+                text: '\n\n*Ungrounded claims detected — retrying with required tool calls...*\n\n',
+              });
+              continue; // Re-enter outer loop — generator will produce a new response.
+            }
+
+            // Either the verdict is acceptable (GROUNDED / PARTIAL / SKIPPED)
+            // or we've hit the retry cap with UNGROUNDED still outstanding.
+            // In both cases, surface the followup if one applies and exit.
             const followup = renderGroundingFollowup(gResult);
             if (followup) {
               onEvent({ kind: 'text_delta', text: followup });
