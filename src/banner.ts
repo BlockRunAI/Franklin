@@ -96,11 +96,15 @@ function padVisible(s: string, targetWidth: number): string {
 }
 
 export function printBanner(version: string): void {
+  // Full portrait banner (Ben Franklin + FRANKLIN block art) is the default
+  // since v3.8.17 — it's the brand asset and the visual anchor for "Franklin
+  // is Ben Franklin's AI heir." Users who want a 2-line startup (scripting,
+  // narrow terminals, CI) can set FRANKLIN_BANNER=compact.
   const style = process.env.FRANKLIN_BANNER?.toLowerCase();
-  if (style === 'full' || style === 'legacy') {
-    printLegacyBanner(version);
-  } else {
+  if (style === 'compact' || style === 'minimal') {
     printCompactBanner(version);
+  } else {
+    printLegacyBanner(version);
   }
 
   // Kick off a background refresh for *next* startup, and print a hint now

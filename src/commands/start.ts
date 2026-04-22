@@ -13,7 +13,7 @@ import { launchInkUI } from '../ui/app.js';
 import { pickModel, resolveModel } from '../ui/model-picker.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { connectMcpServers, disconnectMcpServers } from '../mcp/client.js';
-import type { AgentConfig, Dialogue } from '../agent/types.js';
+import type { AgentConfig, Dialogue, StreamTurnDone } from '../agent/types.js';
 
 interface StartOptions {
   model?: string;
@@ -26,7 +26,7 @@ interface StartOptions {
   continue?: boolean;
   /** Hard USD cap on total session spend. Stops the loop when exceeded. */
   maxSpend?: string | number;
-  /** Run a single prompt non-interactively, then exit. For cron/scripted use. */
+  /** Run a single prompt non-interactively, then exit. For batch/scripted use. */
   prompt?: string;
 }
 
@@ -89,14 +89,20 @@ export async function startCommand(options: StartOptions) {
   } else if (configModel) {
     model = configModel;
   } else {
-    // Default: free NVIDIA model — zero wallet charges until user explicitly switches
-    model = 'nvidia/nemotron-ultra-253b';
+    // Default: blockrun/auto — the LLM router (v3.8.16) picks a model per
+    // prompt. SIMPLE questions route to cheap/fast models (gemini-flash,
+    // kimi); COMPLEX / REASONING to Sonnet 4.6 / Opus 4.7. Cost fallback
+    // to free models on 402 is handled in the agent loop, so an unfunded
+    // wallet still works — it just degrades to the free tier mid-session
+    // instead of starting there. Much better first-turn quality than the
+    // old nvidia-nemotron default, which stubbed tool use.
+    model = 'blockrun/auto';
   }
 
   const workDir = process.cwd();
 
   // --prompt batch mode: skip all interactive startup UI/side effects so
-  // stdout stays clean for cron/scripts. Keep the capability surface to the
+  // stdout stays clean for scripts and one-shot callers. Keep the capability surface to the
   // built-ins only — no panel, no MCP autoconnect, no wallet/banner chatter.
   if (options.prompt) {
     if (options.resume === true || options.resume === 'picker') {
@@ -313,7 +319,7 @@ export async function startCommand(options: StartOptions) {
     workingDir: workDir,
     // Non-TTY (piped) input = scripted mode → trust all tools automatically.
     // Interactive TTY = default mode (prompts for Bash/Write/Edit).
-    // --prompt is also scripted; the cron driver never sees a TTY.
+    // --prompt is also scripted; batch callers never see a TTY.
     permissionMode: (options.trust || options.prompt || !process.stdin.isTTY) ? 'trust' : 'default',
     debug: options.debug,
     resumeSessionId,
@@ -342,8 +348,13 @@ export async function startCommand(options: StartOptions) {
 }
 
 // ─── One-shot mode (franklin --prompt "...") ──────────────────────────────
-// Used by cron drivers. Non-interactive, prints text deltas to stdout as
-// they stream, honors --max-spend, exits 0 on completion / 1 on error.
+// Used by batch/scripted callers. Non-interactive, prints text deltas to
+// stdout as they stream, honors --max-spend, exits non-zero for any
+// non-completed terminal state.
+export function oneShotExitCodeForTurnReason(reason: StreamTurnDone['reason']): number {
+  return reason === 'completed' ? 0 : 1;
+}
+
 async function runOneShot(agentConfig: AgentConfig, prompt: string): Promise<number> {
   let delivered = false;
   let exitCode = 0;
@@ -356,7 +367,7 @@ async function runOneShot(agentConfig: AgentConfig, prompt: string): Promise<num
     if (event.kind === 'text_delta') {
       process.stdout.write(event.text);
     } else if (event.kind === 'turn_done') {
-      if (event.reason === 'error') exitCode = 1;
+      exitCode = oneShotExitCodeForTurnReason(event.reason);
       process.stdout.write('\n');
     }
   });
