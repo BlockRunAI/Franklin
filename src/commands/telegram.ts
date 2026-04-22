@@ -51,7 +51,7 @@ export async function telegramCommand(opts: TelegramCommandOptions): Promise<voi
   const model =
     opts.model ||
     config['default-model'] ||
-    'nvidia/nemotron-ultra-253b';
+    'nvidia/glm-4.7';
 
   const workingDir = process.cwd();
   const systemInstructions = assembleInstructions(workingDir, model);

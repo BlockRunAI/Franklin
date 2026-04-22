@@ -15,14 +15,14 @@ export type ModelTier = 'free' | 'cheap' | 'premium' | 'none';
 
 /** Maps tier names to actual model identifiers */
 export interface ModelTierConfig {
-  free: string;      // e.g. "nvidia/nemotron-ultra-253b"
+  free: string;      // e.g. "nvidia/glm-4.7"
   cheap: string;     // e.g. "zai/glm-5.1"
   premium: string;   // e.g. "anthropic/claude-sonnet-4.6"
 }
 
 export const DEFAULT_MODEL_TIERS: ModelTierConfig = {
-  free: 'nvidia/nemotron-ultra-253b',
-  cheap: 'nvidia/nemotron-ultra-253b', // Was glm-5.1 ($0.001/call). Free by default; opt-in to paid.
+  free: 'nvidia/glm-4.7',
+  cheap: 'nvidia/glm-4.7', // Free by default; opt-in to paid flat-rate via 'zai/glm-5.1'.
   premium: 'anthropic/claude-sonnet-4.6',
 };
 

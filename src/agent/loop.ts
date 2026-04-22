@@ -910,7 +910,7 @@ export async function interactiveSession(
         const hasTools = responseParts.some(p => p.type === 'tool_use');
         const hasThinking = responseParts.some(p => p.type === 'thinking');
         if (!hasText && !hasTools && !hasThinking) {
-          const EMPTY_FALLBACK_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/nemotron-ultra-253b', 'zai/glm-5.1'];
+          const EMPTY_FALLBACK_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/glm-4.7', 'zai/glm-5.1'];
           const nextModel = EMPTY_FALLBACK_MODELS.find(m => m !== config.model && !turnFailedModels.has(m));
           if (nextModel && recoveryAttempts < 2) {
             recoveryAttempts++;
@@ -1015,7 +1015,7 @@ export async function interactiveSession(
           if (lastRoutedCategory) {
             recordOutcome(lastRoutedCategory, config.model, 'payment');
           }
-          const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/nemotron-ultra-253b', 'nvidia/devstral-2-123b'];
+          const FREE_MODELS = ['nvidia/glm-4.7', 'nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick', 'nvidia/qwen3-next-80b-a3b-thinking'];
           const nextFree = FREE_MODELS.find(m => !turnFailedModels.has(m));
           if (nextFree) {
             const oldModel = config.model;

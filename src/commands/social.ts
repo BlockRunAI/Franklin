@@ -196,7 +196,7 @@ async function runCommand(options: SocialCommandOptions): Promise<void> {
   const apiUrl = API_URLS[chain];
   const appConfig = loadAppConfig();
   const model =
-    options.model || appConfig['default-model'] || 'nvidia/nemotron-ultra-253b';
+    options.model || appConfig['default-model'] || 'nvidia/glm-4.7';
 
   console.log(chalk.dim(`  Model: ${model}`));
   console.log('');

@@ -127,13 +127,19 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   // DeepSeek
   deepseek: 'deepseek/deepseek-chat',
   r1: 'deepseek/deepseek-reasoner',
-  // Free models
-  free: 'nvidia/nemotron-ultra-253b',
-  nemotron: 'nvidia/nemotron-ultra-253b',
+  // Free models (gateway free tier — refreshed 2026-04)
+  free: 'nvidia/glm-4.7',
+  glm4: 'nvidia/glm-4.7',
   'deepseek-free': 'nvidia/deepseek-v3.2',
-  devstral: 'nvidia/devstral-2-123b',
   'qwen-coder': 'nvidia/qwen3-coder-480b',
+  'qwen-think': 'nvidia/qwen3-next-80b-a3b-thinking',
   maverick: 'nvidia/llama-4-maverick',
+  'gpt-oss': 'nvidia/gpt-oss-120b',
+  'gpt-oss-small': 'nvidia/gpt-oss-20b',
+  'mistral-small': 'nvidia/mistral-small-4-119b',
+  // Retired-gateway-model aliases (map to closest current).
+  nemotron: 'nvidia/glm-4.7',
+  devstral: 'nvidia/qwen3-coder-480b',
   // Minimax
   minimax: 'minimax/minimax-m2.7',
   // Others

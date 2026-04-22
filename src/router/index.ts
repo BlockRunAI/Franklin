@@ -83,12 +83,12 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
 
 const ECO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
-    primary: 'nvidia/nemotron-ultra-253b',
+    primary: 'nvidia/glm-4.7',
     fallback: ['nvidia/gpt-oss-120b', 'nvidia/deepseek-v3.2'],
   },
   MEDIUM: {
     primary: 'google/gemini-2.5-flash-lite',
-    fallback: ['nvidia/nemotron-ultra-253b', 'nvidia/qwen3-coder-480b'],
+    fallback: ['nvidia/glm-4.7', 'nvidia/qwen3-coder-480b'],
   },
   COMPLEX: {
     primary: 'google/gemini-2.5-flash-lite',
@@ -96,7 +96,7 @@ const ECO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   },
   REASONING: {
     primary: 'xai/grok-4-1-fast-reasoning',
-    fallback: ['deepseek/deepseek-reasoner', 'nvidia/nemotron-ultra-253b'],
+    fallback: ['deepseek/deepseek-reasoner', 'nvidia/qwen3-next-80b-a3b-thinking'],
   },
 };
 
@@ -331,7 +331,10 @@ function classicRouteRequest(
 //     that can't be async (proxy, LLM-client bootstrap) keep using the sync
 //     `routeRequest`, which silently does keyword-only routing.
 
-const CLASSIFIER_MODEL = process.env.FRANKLIN_ROUTER_MODEL || 'nvidia/nemotron-ultra-253b';
+// llama-4-maverick: clean one-word classification output. glm-4.7 + qwen-
+// thinking emit reasoning into thinking blocks and leave text empty under
+// tight max_tokens — fine for chat, wrong shape for single-word dispatch.
+const CLASSIFIER_MODEL = process.env.FRANKLIN_ROUTER_MODEL || 'nvidia/llama-4-maverick';
 const CLASSIFIER_TIMEOUT_MS = 2_500;
 
 const CLASSIFIER_SYSTEM = `You classify a user's message into ONE routing tier for a CLI agent. Reply with EXACTLY ONE WORD from the allowed set. No explanation, no punctuation, no quotes.
@@ -454,7 +457,7 @@ export function routeRequest(
   // Free profile — always use free model
   if (profile === 'free') {
     return {
-      model: 'nvidia/nemotron-ultra-253b',
+      model: 'nvidia/glm-4.7',
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: ['free-profile'],
@@ -537,7 +540,7 @@ export function getFallbackChain(
       tierConfigs = PREMIUM_TIERS;
       break;
     case 'free':
-      return ['nvidia/nemotron-ultra-253b'];
+      return ['nvidia/glm-4.7'];
     default:
       tierConfigs = AUTO_TIERS;
   }
