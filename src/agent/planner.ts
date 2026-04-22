@@ -8,66 +8,45 @@
  *       → escalate back to strong model if executor gets stuck
  */
 
-import type { Tier, RoutingProfile } from '../router/index.js';
-
-// ─── Agentic keywords that suggest multi-step work ───────────────────────
-
-const AGENTIC_KEYWORDS = /\b(implement|refactor|build|fix|debug|migrate|deploy|create|add|remove|update|restructure|extract|rewrite|optimize|convert|integrate|setup|configure)\b/i;
-const MULTI_STEP_PATTERN = /first.*then|step\s+\d|\d+\.\s|and\s+then|after\s+that|next\s*,|finally\b/i;
+import type { RoutingProfile } from '../router/index.js';
 
 // ─── Detection ───────────────────────────────────────────────────────────
 
 /**
  * Should this task use plan-then-execute?
- * Returns true only for complex, multi-step tasks where the savings justify
- * the overhead of an extra planning call.
+ *
+ * Replaces the former AGENTIC_KEYWORDS / MULTI_STEP_PATTERN regex heuristics
+ * with a single read of `turnAnalysis.needsPlanning`. The free model judged
+ * whether the task is substantive-multi-step from the user's actual phrasing,
+ * no keyword allowlist to maintain.
+ *
+ * Environment gates (opt-in / opt-out / profile / ultrathink / session
+ * override) remain — those are operator decisions, not model decisions.
  */
 export function shouldPlan(
-  tier: Tier | undefined,
   profile: RoutingProfile | undefined,
-  userText: string,
   ultrathink: boolean,
   planDisabled: boolean,
+  analyzerSaysNeedsPlanning: boolean,
 ): boolean {
-  // Default: plan-then-execute is OFF (v3.8.18). Observed failure: router
-  // correctly picks Sonnet for a "should I sell CRCL" prompt, but the
-  // executor swap downgrades actual execution to gemini-2.5-flash, which
-  // then answers from memory instead of calling TradingMarket / ExaAnswer.
-  // The cheap-executor pattern was load-bearing for Sonnet 4.0-era models;
-  // Opus 4.7 / Sonnet 4.6 handle multi-step tool use coherently in a
-  // single pass, so the two-call path is pure overhead — and it actively
-  // hurts when the executor is weaker than the planner.
-  // Opt back in with FRANKLIN_PLAN=1 (for experiments / ablation).
+  // Default: plan-then-execute is OFF (since v3.8.18). The cheap-executor
+  // pattern was load-bearing for Sonnet-4.0-era models but Opus 4.7 /
+  // Sonnet 4.6 handle multi-step tool use in a single pass. Opt in with
+  // FRANKLIN_PLAN=1 for ablation / experiments.
   if (process.env.FRANKLIN_PLAN !== '1') return false;
 
-  // Legacy env opt-out — still honored for users who set it previously.
+  // Legacy env opt-out still honored for users who set it previously.
   if (process.env.FRANKLIN_NOPLAN === '1') return false;
 
-  // User disabled planning for this session
+  // Per-session / per-turn overrides from the agent surface.
   if (planDisabled) return false;
+  if (ultrathink) return false; // ultrathink already provides deep reasoning
 
-  // Ultrathink already provides deep reasoning
-  if (ultrathink) return false;
-
-  // Only auto or premium profiles (eco/free are cost-constrained)
+  // Only auto / premium profiles — eco / free are cost-constrained.
   if (profile !== 'auto' && profile !== 'premium') return false;
 
-  // Explicit multi-step language always plans, regardless of tier / length
-  // ("first ... then ...", "step 1 ... step 2 ...", numbered lists, etc.)
-  if (MULTI_STEP_PATTERN.test(userText)) return true;
-
-  // Planning is high-ROI on COMPLEX / REASONING tiers for agentic verbs,
-  // even when the prompt is short ("refactor the wallet module", "migrate to TS")
-  if (tier === 'COMPLEX' || tier === 'REASONING') {
-    return AGENTIC_KEYWORDS.test(userText) || userText.length >= 60;
-  }
-
-  // On MEDIUM tier: plan only if long AND agentic
-  if (tier === 'MEDIUM' && userText.length >= 120 && AGENTIC_KEYWORDS.test(userText)) {
-    return true;
-  }
-
-  return false;
+  // Final decision comes from the turn analyzer's boolean flag.
+  return analyzerSaysNeedsPlanning;
 }
 
 // ─── Planning Prompt ─────────────────────────────────────────────────────

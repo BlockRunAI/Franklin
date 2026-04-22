@@ -64,76 +64,12 @@ function replaceHistory(target: Dialogue[], replacement: Dialogue[]): void {
 }
 
 // ─── Pushback detection ───────────────────────────────────────────────────
-// Cheap models plough forward when users correct them. This detects common
-// correction patterns so the agent can explicitly reset its approach.
-//
-// Precision-biased: we'd rather miss a real pushback than falsely trigger on
-// casual disagreement ("But how do I deploy?"). False positives pollute the
-// conversation and make the agent abandon working approaches unnecessarily.
-
-// STRONG patterns: high-precision correction language. Fires even on short input.
-const PUSHBACK_STRONG: RegExp[] = [
-  /\b(that'?s?\s+(wrong|incorrect|not\s+right)|you'?re?\s+wrong)\b/i,
-  /\b(i\s+(said|told\s+you)|not\s+what\s+i)\b/i,
-  /^(stop|wrong|incorrect|try\s+again)\b/i,
-  /^(不对|不是|错了|再试|重来)/,
-];
-
-// WEAK patterns: common correction starters that also appear in casual speech.
-// Require a corroborating signal (see detectPushback) to count as pushback.
-const PUSHBACK_WEAK: RegExp[] = [
-  /^(but|however|actually|wait|no+\b|hmm)\b/i,
-  /\b(we\s+are\s+using|the\s+correct|the\s+actual)\b/i,
-  /^(但是|其实|等等|停)/,
-];
-
-/**
- * True if the last assistant turn made a concrete claim worth pushing back
- * against: executed a tool, wrote code, or produced a non-trivial answer.
- * Casual assistant chatter doesn't warrant treating a "but" as a correction.
- */
-function lastAssistantHasClaim(history: Dialogue[]): boolean {
-  for (let i = history.length - 1; i >= 0; i--) {
-    const msg = history[i];
-    if (msg.role !== 'assistant') continue;
-    if (Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        const p = part as { type?: string; text?: string };
-        if (p.type === 'tool_use') return true;
-        if (p.type === 'text' && typeof p.text === 'string' && p.text.trim().length >= 40) {
-          return true;
-        }
-      }
-      return false;
-    }
-    if (typeof msg.content === 'string' && msg.content.trim().length >= 40) return true;
-    return false;
-  }
-  return false;
-}
-
-function detectPushback(input: string, history: Dialogue[]): boolean {
-  // Only count as pushback if there's a prior assistant turn to push back against.
-  if (history.length === 0) return false;
-  if (!lastAssistantHasClaim(history)) return false;
-
-  const trimmed = input.trim();
-  if (trimmed.length === 0 || trimmed.length > 500) return false;
-
-  // Strong patterns: direct correction language — fire immediately.
-  if (PUSHBACK_STRONG.some((re) => re.test(trimmed))) return true;
-
-  // Weak patterns: only count if the message is short (< 120 chars) AND doesn't
-  // also contain a fresh request. A weak starter followed by "can you also X"
-  // or "please do Y" is scope addition, not correction.
-  if (PUSHBACK_WEAK.some((re) => re.test(trimmed))) {
-    if (trimmed.length > 120) return false;
-    if (/\b(can you|could you|please|also|add|include)\b/i.test(trimmed)) return false;
-    return true;
-  }
-
-  return false;
-}
+// Formerly a pair of regex lists (PUSHBACK_STRONG / PUSHBACK_WEAK) plus a
+// claim-on-prior-turn check — ~70 lines of keyword heuristics. Replaced by
+// `turnAnalysis.isPushback` from `turn-analyzer.ts` (v3.8.27): the free
+// classifier reads the user's actual phrasing AND the prior assistant
+// reply and decides whether this turn is a correction. Zero keyword
+// allowlist, works across languages and phrasings the regex never covered.
 
 /**
  * Sanitize history: fix orphaned tool results AND inject missing results.
@@ -508,21 +444,14 @@ export async function interactiveSession(
       }
     }
 
-    // ── Pushback detection ──
-    // When the user corrects us ("no", "but", "actually", "wrong"), we must throw
-    // away the previous plan and reconsider — not continue the failing approach.
-    // Without this signal, cheap models tend to plough forward with the same bad idea.
-    const pushbackSignal = detectPushback(input, history);
-    const effectiveInput = pushbackSignal
-      ? `${input}\n\n[SYSTEM NOTE] The user is correcting you. Your previous response was wrong or off-target. Do NOT continue the previous approach. Re-read the conversation, identify what specifically the user is correcting, and change your strategy. If the user pointed out a fact (e.g. "we are using X"), treat that fact as ground truth and rebuild your answer around it.`
-      : input;
-
     lastUserInput = input;
-    history.push({ role: 'user', content: effectiveInput });
+    // Push the user's clean message; any harness-injected annotations
+    // (pushback SYSTEM NOTE, prefetch context block) are applied AFTER
+    // the turn analyzer runs so they get driven by model-decided flags
+    // instead of keyword regex.
+    history.push({ role: 'user', content: input });
     turnCount++;
     toolGuard.startTurn();
-    // Persist the user's original message, not the injected SYSTEM NOTE scaffold.
-    // Resumed sessions should show what the user typed, not our internal prompt engineering.
     persistSessionMessage({ role: 'user', content: input });
 
     // ── Model recovery: try original model at the start of each new turn ──
@@ -646,6 +575,23 @@ export async function interactiveSession(
       });
     } catch {
       // Analyzer is best-effort; ignore.
+    }
+
+    // ── Pushback annotation ─────────────────────────────────────────
+    // If the analyzer judged this turn as a user correction of the
+    // previous answer, inject a SYSTEM NOTE into the user message so the
+    // model resets its approach rather than doubling down. Replaces the
+    // former PUSHBACK_STRONG / PUSHBACK_WEAK regex lists — model-decided,
+    // no keyword allowlist to rot.
+    if (turnAnalysis?.isPushback) {
+      const lastIdx = history.length - 1;
+      const last = history[lastIdx];
+      if (last && last.role === 'user' && typeof last.content === 'string') {
+        history[lastIdx] = {
+          role: 'user',
+          content: `${last.content}\n\n[SYSTEM NOTE] The user is correcting you. Your previous response was wrong or off-target. Do NOT continue the previous approach. Re-read the conversation, identify what specifically the user is correcting, and change your strategy. If the user pointed out a fact (e.g. "we are using X"), treat that fact as ground truth and rebuild your answer around it.`,
+        };
+      }
     }
 
     // ── Proactive prefetch ────────────────────────────────────────────
@@ -847,8 +793,17 @@ export async function interactiveSession(
       setEstimationModel(resolvedModel);
 
       // ── Plan-then-execute: detect and activate ──
+      // `needsPlanning` flag comes from turn-analyzer (one-word LLM decision
+      // on the user's original prompt). shouldPlan still guards env / profile /
+      // ultrathink / per-session overrides — those are operator policy, not
+      // model decisions.
       if (loopCount === 1 && !planActive && routingProfile &&
-          shouldPlan(routingTier, routingProfile, lastUserInput, !!(config as { ultrathink?: boolean }).ultrathink, !!(config as unknown as Record<string, unknown>).planDisabled)) {
+          shouldPlan(
+            routingProfile,
+            !!(config as { ultrathink?: boolean }).ultrathink,
+            !!(config as unknown as Record<string, unknown>).planDisabled,
+            turnAnalysis?.needsPlanning ?? false,
+          )) {
         planActive = true;
         planPlannerModel = resolvedModel;
         planExecutorModel = getExecutorModel(routingProfile);
