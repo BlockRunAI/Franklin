@@ -195,8 +195,10 @@ export interface AgentConfig {
   /**
    * Hard cap on total USD spend for this session. When accumulated API cost
    * crosses the cap, the loop stops with `reason: 'budget'`. Zero/negative
-   * values disable the cap. Primary use case: cron/daily drivers that must
+   * values disable the cap. Primary use case: batch/scripted callers that must
    * bound a single run to keep autonomous execution inside a known envelope.
    */
   maxSpendUsd?: number;
+  /** Show user-visible harness prefetch status lines (interactive UX only). */
+  showPrefetchStatus?: boolean;
 }

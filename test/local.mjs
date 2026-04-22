@@ -3195,6 +3195,121 @@ test('intent-prefetch: parseIntentReply extracts STOCK / CRYPTO / NONE lines', a
   assert.equal(parseIntentReply(''), null);
 });
 
+test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', { timeout: 20_000 }, async () => {
+  const prevNoPrefetch = process.env.FRANKLIN_NO_PREFETCH;
+  delete process.env.FRANKLIN_NO_PREFETCH;
+
+  let requestCount = 0;
+  let sawPrefetchContext = false;
+
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk.toString();
+    requestCount++;
+
+    if (requestCount === 2) {
+      const payload = JSON.parse(raw);
+      const messages = payload.messages || [];
+      sawPrefetchContext = messages.some((msg) =>
+        msg.role === 'user' &&
+        typeof msg.content === 'string' &&
+        msg.content.includes('[FRANKLIN HARNESS PREFETCH]') &&
+        msg.content.includes('Original user message:')
+      );
+    }
+
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+
+    const send = (event, data) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    send('message_start', { message: { usage: { input_tokens: 10, output_tokens: 0 } } });
+    send('content_block_start', { content_block: { type: 'text', text: '' } });
+    send('content_block_delta', {
+      delta: {
+        type: 'text_delta',
+        text: requestCount === 1 ? 'STOCK CRCL us no' : 'grounded answer',
+      },
+    });
+    send('content_block_stop', {});
+    send('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } });
+    send('message_stop', {});
+    res.end('data: [DONE]\n\n');
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object', 'Expected HTTP server address');
+  const apiUrl = `http://127.0.0.1:${address.port}`;
+
+  const { setPriceProvider, resetProviders } = await import('../dist/trading/providers/registry.js');
+  const stubStockPriceFetcher = {
+    providerName: 'stub-stock',
+    transformQuery(input) {
+      return {
+        ticker: String(input.ticker ?? '').trim().toUpperCase(),
+        assetClass: 'stock',
+        market: input.market ?? 'us',
+      };
+    },
+    async fetchData(query) {
+      return {
+        ticker: query.ticker,
+        priceUsd: 123.45,
+        change24hPct: 1.25,
+        volume24hUsd: 0,
+        marketCapUsd: 0,
+      };
+    },
+    transformData(raw) {
+      return raw;
+    },
+  };
+  setPriceProvider('stock', stubStockPriceFetcher);
+
+  try {
+    const { interactiveSession } = await import('../dist/agent/loop.js');
+    const events = [];
+    let calls = 0;
+
+    const history = await interactiveSession(
+      {
+        model: 'local/test-model',
+        apiUrl,
+        chain: 'base',
+        systemInstructions: ['You are a test harness.'],
+        capabilities: [],
+        workingDir: process.cwd(),
+        permissionMode: 'trust',
+        showPrefetchStatus: false,
+      },
+      async () => (++calls === 1 ? 'should I keep Circle stock right now?' : null),
+      (event) => events.push(event),
+    );
+
+    assert.equal(requestCount, 2, `Expected classifier + main model only.\nSaw ${requestCount} requests.`);
+    assert.ok(sawPrefetchContext, 'Expected the prefetched context block to be injected into the main model turn');
+    const text = events
+      .filter((event) => event.kind === 'text_delta')
+      .map((event) => event.text)
+      .join('');
+    assert.ok(!text.includes('Prefetched'), `Prefetch status should stay hidden.\n${text}`);
+    assert.ok(text.includes('grounded answer'), `Expected main response text.\n${text}`);
+    assert.ok(JSON.stringify(history.at(-1)?.content ?? '').includes('grounded answer'));
+  } finally {
+    resetProviders();
+    if (prevNoPrefetch === undefined) process.env.FRANKLIN_NO_PREFETCH = '1';
+    else process.env.FRANKLIN_NO_PREFETCH = prevNoPrefetch;
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
 test('router LLM classifier: parseTierWord + stub-backed routeRequestAsync routes by tier', async () => {
   const { routeRequestAsync } = await import('../dist/router/index.js');
 

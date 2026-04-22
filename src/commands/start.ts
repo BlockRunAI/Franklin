@@ -134,6 +134,7 @@ export async function startCommand(options: StartOptions) {
       workingDir: workDir,
       permissionMode: 'trust',
       debug: options.debug,
+      showPrefetchStatus: false,
       resumeSessionId:
         (typeof options.resume === 'string' && options.resume !== 'picker')
           ? options.resume
@@ -322,6 +323,7 @@ export async function startCommand(options: StartOptions) {
     // --prompt is also scripted; batch callers never see a TTY.
     permissionMode: (options.trust || options.prompt || !process.stdin.isTTY) ? 'trust' : 'default',
     debug: options.debug,
+    showPrefetchStatus: process.stdin.isTTY,
     resumeSessionId,
     ...(options.maxSpend != null
       ? { maxSpendUsd: Number(options.maxSpend) }
