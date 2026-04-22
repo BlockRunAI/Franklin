@@ -3209,34 +3209,10 @@ test('turn-analyzer: parseAnalysis extracts all five fields + validates enums', 
   assert.equal(parseAnalysis(''), null);
 });
 
-test('intent-prefetch: parseIntentReply extracts STOCK / CRYPTO / NONE lines', async () => {
-  const { parseIntentReply } = await import('../dist/agent/intent-prefetch.js');
-
-  const stock = parseIntentReply('STOCK CRCL us yes');
-  assert.ok(stock);
-  assert.equal(stock.kind, 'ticker');
-  assert.equal(stock.symbol, 'CRCL');
-  assert.equal(stock.market, 'us');
-  assert.equal(stock.assetClass, 'stock');
-  assert.equal(stock.wantNews, true);
-
-  const stockJp = parseIntentReply('STOCK 7203 jp no');
-  assert.ok(stockJp);
-  assert.equal(stockJp.symbol, '7203');
-  assert.equal(stockJp.market, 'jp');
-  assert.equal(stockJp.wantNews, false);
-
-  const crypto = parseIntentReply('CRYPTO BTC no');
-  assert.ok(crypto);
-  assert.equal(crypto.assetClass, 'crypto');
-  assert.equal(crypto.symbol, 'BTC');
-  assert.equal(crypto.wantNews, false);
-
-  assert.equal(parseIntentReply('NONE'), null);
-  assert.equal(parseIntentReply('nothing like the grammar'), null);
-  assert.equal(parseIntentReply('STOCK CRCL xy no'), null, 'unknown market rejected');
-  assert.equal(parseIntentReply(''), null);
-});
+// parseIntentReply (and the standalone classifier it served) was deleted
+// in v3.8.29 after the v3.8.27 turn-analyzer made it dead code. Intent
+// parsing is now covered by 'turn-analyzer: parseAnalysis extracts all
+// five fields + validates enums', which exercises the unified path.
 
 test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', { timeout: 20_000 }, async () => {
   const prevNoPrefetch = process.env.FRANKLIN_NO_PREFETCH;
@@ -3390,6 +3366,20 @@ test('router LLM classifier: parseTierWord + stub-backed routeRequestAsync route
   const fallback = await routeRequestAsync('refactor the wallet module', 'auto', async () => null);
   assert.ok(fallback.model, 'fallback router produced a model');
   assert.ok(!fallback.signals.includes('llm-classified'), 'fallback path did not mark llm-classified');
+});
+
+test('router LLM classifier also returns a real local-elo category', async () => {
+  const { routeRequestAsync } = await import('../dist/router/index.js');
+
+  const routing = await routeRequestAsync(
+    'What is BTC price today and should I sell?',
+    'eco',
+    async () => 'COMPLEX',
+  );
+
+  assert.equal(routing.tier, 'COMPLEX');
+  assert.equal(routing.category, 'trading');
+  assert.ok(routing.signals.includes('llm-classified'));
 });
 
 test('router eco complex fallback chain stays on live models', async () => {

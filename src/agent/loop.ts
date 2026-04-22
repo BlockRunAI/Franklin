@@ -33,7 +33,7 @@ import {
   renderGroundingFollowup,
   buildGroundingRetryInstruction,
 } from './evaluator.js';
-import { augmentUserMessage, classifyIntent, prefetchForIntent } from './intent-prefetch.js';
+import { augmentUserMessage, prefetchForIntent } from './intent-prefetch.js';
 import { analyzeTurn, type TurnAnalysis } from './turn-analyzer.js';
 import {
   createSessionId,
@@ -780,7 +780,7 @@ export async function interactiveSession(
         routingConfidence = routing.confidence;
         routingSavings = routing.savings;
         lastRoutedModel = routing.model;
-        lastRoutedCategory = routing.signals[0] || '';
+        lastRoutedCategory = routing.category || '';
         if (loopCount === 1) {
           onEvent({
             kind: 'text_delta',

@@ -59,115 +59,16 @@ export interface PrefetchResult {
   anyOk: boolean;
 }
 
-// ─── Classifier ──────────────────────────────────────────────────────────
-
-// llama-4-maverick: same rationale as the router classifier — emits plain
-// text under tight max_tokens rather than routing through thinking blocks.
-const CLASSIFIER_MODEL = process.env.FRANKLIN_PREFETCH_MODEL || 'nvidia/llama-4-maverick';
-const CLASSIFIER_TIMEOUT_MS = 2_500;
-
-const CLASSIFIER_PROMPT = `You extract PREFETCH INTENT from a user message for a CLI agent that has live market-data tools.
-
-Your job: decide whether Franklin should fetch live data BEFORE the main model answers, so the answer is grounded in real data instead of model memory.
-
-Output one of:
-
-1. STOCK <TICKER> <MARKET> <NEWS>
-   When the user asks about a specific publicly-traded equity — by ticker (CRCL, AAPL, NVDA, 7203, 0005) or by company name that maps to one (Circle → CRCL, Apple → AAPL, Toyota → 7203, HSBC → 0005).
-   MARKET: us | hk | jp | kr | gb | de | fr | nl | ie | lu | cn | ca
-   NEWS: yes if the user also asks "why / what happened / analysis"; no otherwise.
-   Default market: us.
-
-2. CRYPTO <SYMBOL> <NEWS>
-   When the user asks about a cryptocurrency by symbol or name (BTC, ETH, Bitcoin, Ethereum, SOL, Solana).
-   NEWS: yes if asks why / recent news.
-
-3. NONE
-   Any other message: greetings, coding questions, general chat, questions about non-traded entities.
-
-Rules:
-- If the company could be either public or private and you're unsure, assume PUBLIC and emit STOCK with your best ticker guess. The tool will 404 gracefully if wrong.
-- One output line only. No explanation. No punctuation beyond what's shown.
-- Ticker in UPPERCASE.
-
-Examples:
-User: 帮我看看 CRCL 股票                → STOCK CRCL us no
-User: should I sell Circle stock?      → STOCK CRCL us no
-User: why did CRCL drop this week      → STOCK CRCL us yes
-User: BTC 现在价格                       → CRYPTO BTC no
-User: 为什么以太坊跌了                   → CRYPTO ETH yes
-User: Toyota 股价                        → STOCK 7203 jp no
-User: hi how are you                   → NONE
-User: fix the bug in foo.ts            → NONE
-
-Answer with just the one-line directive.`;
-
-/** Parse the classifier's one-line reply. Very strict — any junk → null. */
-export function parseIntentReply(reply: string): Intent {
-  const line = reply.trim().split('\n')[0].trim().toUpperCase();
-  if (!line || line.startsWith('NONE')) return null;
-
-  const stockMatch = line.match(/^STOCK\s+([A-Z0-9.\-]+)\s+([A-Z]{2})\s+(YES|NO)\b/);
-  if (stockMatch) {
-    const market = stockMatch[2].toLowerCase();
-    const validMarkets: readonly string[] = ['us', 'hk', 'jp', 'kr', 'gb', 'de', 'fr', 'nl', 'ie', 'lu', 'cn', 'ca'];
-    if (!validMarkets.includes(market)) return null;
-    return {
-      kind: 'ticker',
-      symbol: stockMatch[1],
-      market: market as MarketCode,
-      assetClass: 'stock',
-      wantNews: stockMatch[3] === 'YES',
-    };
-  }
-
-  const cryptoMatch = line.match(/^CRYPTO\s+([A-Z0-9.\-]+)\s+(YES|NO)\b/);
-  if (cryptoMatch) {
-    return {
-      kind: 'ticker',
-      symbol: cryptoMatch[1],
-      assetClass: 'crypto',
-      wantNews: cryptoMatch[2] === 'YES',
-    };
-  }
-
-  return null;
-}
-
-export async function classifyIntent(userInput: string, client: ModelClient): Promise<Intent> {
-  if (process.env.FRANKLIN_NO_PREFETCH === '1') return null;
-  const trimmed = userInput.trim();
-  // Only the cheapest gate — skip very short inputs that can't be a real
-  // market question ("hi", "ok", "thanks"). 6 chars covers those while
-  // still letting short-form Chinese / ticker prompts through, e.g.
-  // "BTC 价格" (6), "CRCL 多少" (7). Longer prompts all route to the LLM
-  // classifier, which decides NONE cheaply when not market-related.
-  if (trimmed.length < 6) return null;
-
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), CLASSIFIER_TIMEOUT_MS);
-  try {
-    const result = await client.complete(
-      {
-        model: CLASSIFIER_MODEL,
-        system: CLASSIFIER_PROMPT,
-        messages: [{ role: 'user', content: trimmed.slice(0, 800) }],
-        tools: [],
-        max_tokens: 24,
-      },
-      ctrl.signal,
-    );
-    let raw = '';
-    for (const part of result.content) {
-      if (typeof part === 'object' && part.type === 'text' && part.text) raw += part.text;
-    }
-    return parseIntentReply(raw);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// ─── Intent source ──────────────────────────────────────────────────────
+//
+// Historical note: this file used to host its own LLM classifier
+// (`classifyIntent` + `parseIntentReply` + a ~40-line STOCK/CRYPTO/NONE
+// prompt). Since v3.8.27 the unified `turn-analyzer.ts` produces intent
+// as part of a single pre-turn call, and `loop.ts` reads
+// `turnAnalysis.intent` directly — the standalone classifier was dead
+// code with no remaining callers. Removed in v3.8.29. The TurnIntent
+// shape lives in turn-analyzer and is consumed by `prefetchForIntent`
+// below.
 
 // ─── Prefetch dispatcher ─────────────────────────────────────────────────
 
