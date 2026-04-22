@@ -29,8 +29,18 @@ export function shouldPlan(
   ultrathink: boolean,
   planDisabled: boolean,
 ): boolean {
-  // Per-process opt-out for ablation / scripting ("is plan-then-execute
-  // still load-bearing?"). Takes precedence over every other heuristic.
+  // Default: plan-then-execute is OFF (v3.8.18). Observed failure: router
+  // correctly picks Sonnet for a "should I sell CRCL" prompt, but the
+  // executor swap downgrades actual execution to gemini-2.5-flash, which
+  // then answers from memory instead of calling TradingMarket / ExaAnswer.
+  // The cheap-executor pattern was load-bearing for Sonnet 4.0-era models;
+  // Opus 4.7 / Sonnet 4.6 handle multi-step tool use coherently in a
+  // single pass, so the two-call path is pure overhead — and it actively
+  // hurts when the executor is weaker than the planner.
+  // Opt back in with FRANKLIN_PLAN=1 (for experiments / ablation).
+  if (process.env.FRANKLIN_PLAN !== '1') return false;
+
+  // Legacy env opt-out — still honored for users who set it previously.
   if (process.env.FRANKLIN_NOPLAN === '1') return false;
 
   // User disabled planning for this session
