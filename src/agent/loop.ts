@@ -22,7 +22,7 @@ import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
-import { routeRequest, routeRequestAsync, parseRoutingProfile } from '../router/index.js';
+import { routeRequest, routeRequestAsync, resolveTierToModel, parseRoutingProfile } from '../router/index.js';
 import type { Tier, RoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
@@ -34,6 +34,7 @@ import {
   buildGroundingRetryInstruction,
 } from './evaluator.js';
 import { augmentUserMessage, classifyIntent, prefetchForIntent } from './intent-prefetch.js';
+import { analyzeTurn, type TurnAnalysis } from './turn-analyzer.js';
 import {
   createSessionId,
   appendToSession,
@@ -609,24 +610,54 @@ export async function interactiveSession(
     let turnSpend = 0;                                   // Cost spent this user turn (USD)
     const MAX_TURN_SPEND_USD = 0.25;                    // Hard circuit breaker per user message (lowered — user wallets are real money)
 
-    // ── Proactive prefetch ────────────────────────────────────────────
-    // Before the main model gets a chance to answer a live-world question
-    // from stale training data, the harness detects ticker / price / news
-    // intent and fetches the data itself. Result is prepended to the user's
-    // message so the model sees it as ground truth for this turn. This
-    // makes the answer tool-grounded regardless of the model's willingness
-    // to call tools on its own — important for models with strong
-    // refusal priors on financial data.
+    // ── Turn analysis (one classifier call, drives routing + prefetch) ──
+    // Single LLM pass that answers every routing-adjacent question the
+    // harness needs BEFORE the main model runs: tier, ticker intent,
+    // pushback, planning need, live-data signal. Replaces what used to be
+    // two separate classifier calls (router + prefetch) plus keyword rule
+    // engines for pushback / shouldPlan. Safe-defaults on any failure so
+    // the main flow never blocks on it.
+    let turnAnalysis: TurnAnalysis | null = null;
     try {
-      const intent = await classifyIntent(input, client);
-      if (intent) {
-        const prefetch = await prefetchForIntent(intent, client);
+      // Anchor 1: the user's current message (already in lastUserInput).
+      // Anchor 2: first chunk of the previous assistant reply — gives the
+      // analyzer enough context to resolve deictic follow-ups like "那 AAPL 呢".
+      const lastAssistantText = (() => {
+        const prior = [...history.slice(0, -1)].reverse()
+          .find((m: Dialogue) => m.role === 'assistant');
+        if (!prior) return '';
+        if (typeof prior.content === 'string') return prior.content;
+        if (!Array.isArray(prior.content)) return '';
+        return (prior.content as Array<{ type: string; text?: string }>)
+          .filter(p => p.type === 'text')
+          .map(p => p.text ?? '')
+          .join(' ');
+      })();
+      // Anchor 3: the very first user message in this session (session goal).
+      const sessionGoal = (() => {
+        const first = history.find((m: Dialogue) => m.role === 'user');
+        if (!first) return '';
+        return typeof first.content === 'string' ? first.content : '';
+      })();
+      turnAnalysis = await analyzeTurn(input, {
+        lastAssistantText,
+        sessionGoal,
+        client,
+      });
+    } catch {
+      // Analyzer is best-effort; ignore.
+    }
+
+    // ── Proactive prefetch ────────────────────────────────────────────
+    // Uses the intent the analyzer already extracted. Skips the separate
+    // prefetch-classifier call that previously ran here.
+    try {
+      if (turnAnalysis?.intent) {
+        const prefetch = await prefetchForIntent(turnAnalysis.intent, client);
         if (prefetch && prefetch.anyOk) {
           if (config.showPrefetchStatus !== false) {
             onEvent({ kind: 'text_delta', text: `\n${prefetch.statusLine}\n\n` });
           }
-          // Augment the last user message in history (NOT lastUserInput,
-          // which /retry restores — that should remain the user's original).
           const lastIdx = history.length - 1;
           const last = history[lastIdx];
           if (last && last.role === 'user' && typeof last.content === 'string') {
@@ -635,8 +666,7 @@ export async function interactiveSession(
         }
       }
     } catch {
-      // Prefetch is best-effort — if the classifier or any fetch trips,
-      // fall through and let the main loop do its own thing.
+      // Prefetch is best-effort — never block the main loop.
     }
 
     // Agent loop for this user message
@@ -787,28 +817,24 @@ export async function interactiveSession(
       });
 
       // ── Router: resolve routing profiles to concrete models ──
-      // Classifier always sees the user's ORIGINAL prompt for this turn —
-      // never the `[GROUNDING CHECK FAILED]` / `[VERIFICATION FAILED]` /
-      // pushback-annotated variants the loop injects mid-turn. Same input
-      // across iterations → same tier → stable resolved model. Stops the
-      // failure mode where a retry message classified as SIMPLE dropped
-      // a COMPLEX task down to gemini mid-way.
+      // Uses the tier already decided by the turn-analyzer — one LLM call
+      // up-front rather than a separate classifier here. Fallback to the
+      // stand-alone classifier if analyzer wasn't available.
       const routingProfile = parseRoutingProfile(config.model);
       let resolvedModel = config.model;
       let routingTier: Tier | undefined;
       let routingConfidence: number | undefined;
       let routingSavings: number | undefined;
       if (routingProfile) {
-        const userText = lastUserInput || '';
-        const routing = await routeRequestAsync(userText, routingProfile);
+        const routing = turnAnalysis
+          ? resolveTierToModel(turnAnalysis.tier, routingProfile)
+          : await routeRequestAsync(lastUserInput || '', routingProfile);
         resolvedModel = routing.model;
         routingTier = routing.tier;
         routingConfidence = routing.confidence;
         routingSavings = routing.savings;
         lastRoutedModel = routing.model;
         lastRoutedCategory = routing.signals[0] || '';
-        // Surface the routing decision on the first iteration so the user
-        // sees which concrete model got picked, not just "auto".
         if (loopCount === 1) {
           onEvent({
             kind: 'text_delta',

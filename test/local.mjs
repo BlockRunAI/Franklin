@@ -11,6 +11,7 @@
 // these env toggles.
 process.env.FRANKLIN_NO_PREFETCH = '1';
 process.env.FRANKLIN_NO_EVAL = '1';
+process.env.FRANKLIN_NO_ANALYZER = '1';
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -3166,6 +3167,48 @@ test('dynamic tool visibility: FRANKLIN_DYNAMIC_TOOLS=0 opts out of the split', 
   }
 });
 
+test('turn-analyzer: parseAnalysis extracts all five fields + validates enums', async () => {
+  const { parseAnalysis } = await import('../dist/agent/turn-analyzer.js');
+
+  const stock = parseAnalysis(
+    '{"tier":"COMPLEX","intent":{"kind":"ticker","symbol":"CRCL","assetClass":"stock","market":"us","wantNews":true},"needsPlanning":false,"isPushback":false,"asksForLiveData":true}'
+  );
+  assert.ok(stock);
+  assert.equal(stock.tier, 'COMPLEX');
+  assert.ok(stock.intent);
+  assert.equal(stock.intent.symbol, 'CRCL');
+  assert.equal(stock.intent.assetClass, 'stock');
+  assert.equal(stock.intent.market, 'us');
+  assert.equal(stock.intent.wantNews, true);
+  assert.equal(stock.asksForLiveData, true);
+
+  const simple = parseAnalysis('{"tier":"SIMPLE","intent":null,"needsPlanning":false,"isPushback":false,"asksForLiveData":false}');
+  assert.ok(simple);
+  assert.equal(simple.tier, 'SIMPLE');
+  assert.equal(simple.intent, null);
+
+  const pushback = parseAnalysis('{"tier":"MEDIUM","intent":null,"needsPlanning":false,"isPushback":true,"asksForLiveData":false}');
+  assert.ok(pushback);
+  assert.equal(pushback.isPushback, true);
+
+  // JSON embedded in prose — regex should still extract
+  const wrapped = parseAnalysis('Here is my analysis:\n{"tier":"REASONING","intent":null,"needsPlanning":false,"isPushback":false,"asksForLiveData":false}\nHope this helps.');
+  assert.ok(wrapped);
+  assert.equal(wrapped.tier, 'REASONING');
+
+  // Invalid tier → null (caller falls back to safe default)
+  assert.equal(parseAnalysis('{"tier":"SUPERHARD","intent":null,"needsPlanning":false,"isPushback":false,"asksForLiveData":false}'), null);
+
+  // Invalid market → coerced to "us" rather than rejecting the whole record
+  const badMarket = parseAnalysis('{"tier":"COMPLEX","intent":{"kind":"ticker","symbol":"AAPL","assetClass":"stock","market":"zz","wantNews":false},"needsPlanning":false,"isPushback":false,"asksForLiveData":false}');
+  assert.ok(badMarket);
+  assert.equal(badMarket.intent.market, 'us');
+
+  // Completely malformed → null
+  assert.equal(parseAnalysis('not json at all'), null);
+  assert.equal(parseAnalysis(''), null);
+});
+
 test('intent-prefetch: parseIntentReply extracts STOCK / CRYPTO / NONE lines', async () => {
   const { parseIntentReply } = await import('../dist/agent/intent-prefetch.js');
 
@@ -3197,7 +3240,11 @@ test('intent-prefetch: parseIntentReply extracts STOCK / CRYPTO / NONE lines', a
 
 test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', { timeout: 20_000 }, async () => {
   const prevNoPrefetch = process.env.FRANKLIN_NO_PREFETCH;
+  const prevNoAnalyzer = process.env.FRANKLIN_NO_ANALYZER;
   delete process.env.FRANKLIN_NO_PREFETCH;
+  delete process.env.FRANKLIN_NO_ANALYZER;
+  const { clearAnalyzerCache } = await import('../dist/agent/turn-analyzer.js');
+  clearAnalyzerCache();
 
   let requestCount = 0;
   let sawPrefetchContext = false;
@@ -3229,12 +3276,16 @@ test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
+    // Turn-analyzer call (request 1) now expects a JSON classification
+    // rather than the older 'STOCK CRCL us no' line format. Main-model
+    // call (request 2) returns the normal assistant answer.
+    const analyzerJson = '{"tier":"COMPLEX","intent":{"kind":"ticker","symbol":"CRCL","assetClass":"stock","market":"us","wantNews":false},"needsPlanning":false,"isPushback":false,"asksForLiveData":true}';
     send('message_start', { message: { usage: { input_tokens: 10, output_tokens: 0 } } });
     send('content_block_start', { content_block: { type: 'text', text: '' } });
     send('content_block_delta', {
       delta: {
         type: 'text_delta',
-        text: requestCount === 1 ? 'STOCK CRCL us no' : 'grounded answer',
+        text: requestCount === 1 ? analyzerJson : 'grounded answer',
       },
     });
     send('content_block_stop', {});
@@ -3306,6 +3357,9 @@ test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', {
     resetProviders();
     if (prevNoPrefetch === undefined) process.env.FRANKLIN_NO_PREFETCH = '1';
     else process.env.FRANKLIN_NO_PREFETCH = prevNoPrefetch;
+    if (prevNoAnalyzer === undefined) process.env.FRANKLIN_NO_ANALYZER = '1';
+    else process.env.FRANKLIN_NO_ANALYZER = prevNoAnalyzer;
+    clearAnalyzerCache();
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   }
 });
