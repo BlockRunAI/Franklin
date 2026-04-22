@@ -59,28 +59,24 @@ async function listenOnRandomPort(server) {
   return address.port;
 }
 
-test('cli startup prints banner and model line without model call', { timeout: 20_000 }, async () => {
+test('cli startup prints the full portrait banner by default', { timeout: 20_000 }, async () => {
   const result = await runCli('/exit');
   assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
-  assert.ok(
-    result.stdout.includes('FRANKLIN') &&
-    result.stdout.includes('blockrun.ai') &&
-    result.stdout.includes('The AI agent with a wallet'),
-    `Missing banner tagline.\nstdout:\n${result.stdout}`
-  );
-  assert.ok(!result.stdout.includes('██████╗'), `Default banner should stay compact.\nstdout:\n${result.stdout}`);
+  assert.ok(result.stdout.includes('██████╗'), `Default banner should be the full FRANKLIN block-art + portrait.\nstdout:\n${result.stdout}`);
+  assert.ok(result.stdout.includes('blockrun.ai'), `Banner tagline should include blockrun.ai.\nstdout:\n${result.stdout}`);
+  assert.ok(result.stdout.includes('The AI agent with a wallet'), `Banner tagline should include the slogan.\nstdout:\n${result.stdout}`);
   assert.ok(result.stdout.includes('Wallet:'), `Missing wallet line.\nstdout:\n${result.stdout}`);
   assert.ok(result.stderr.includes('Model:'), `Missing model line.\nstderr:\n${result.stderr}`);
 });
 
-test('FRANKLIN_BANNER=full restores the legacy expanded banner', { timeout: 20_000 }, async () => {
+test('FRANKLIN_BANNER=compact opts into the 2-line banner', { timeout: 20_000 }, async () => {
   const result = await runCli('/exit', {
-    env: { FRANKLIN_BANNER: 'full' },
+    env: { FRANKLIN_BANNER: 'compact' },
   });
 
   assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
-  assert.ok(result.stdout.includes('██████╗'), `Expected legacy block-art banner.\nstdout:\n${result.stdout}`);
-  assert.ok(result.stdout.includes('blockrun.ai'), `Expected legacy banner tagline.\nstdout:\n${result.stdout}`);
+  assert.ok(!result.stdout.includes('██████╗'), `Compact opt-in should drop the block art.\nstdout:\n${result.stdout}`);
+  assert.ok(result.stdout.includes('blockrun.ai'), `Expected compact tagline.\nstdout:\n${result.stdout}`);
 });
 
 test('flags-only start options still honor --help without launching the agent', async () => {
