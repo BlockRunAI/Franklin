@@ -787,48 +787,33 @@ export async function interactiveSession(
       });
 
       // ── Router: resolve routing profiles to concrete models ──
+      // Classifier always sees the user's ORIGINAL prompt for this turn —
+      // never the `[GROUNDING CHECK FAILED]` / `[VERIFICATION FAILED]` /
+      // pushback-annotated variants the loop injects mid-turn. Same input
+      // across iterations → same tier → stable resolved model. Stops the
+      // failure mode where a retry message classified as SIMPLE dropped
+      // a COMPLEX task down to gemini mid-way.
       const routingProfile = parseRoutingProfile(config.model);
       let resolvedModel = config.model;
       let routingTier: Tier | undefined;
       let routingConfidence: number | undefined;
       let routingSavings: number | undefined;
       if (routingProfile) {
-        if (groundingRetryCount > 0 && lastRoutedModel) {
-          // Grounding retry re-enters the loop with a `[GROUNDING CHECK
-          // FAILED]` user message that the router would classify as
-          // SIMPLE on its own — which drops the turn onto a weak model
-          // mid-task (observed in the CRCL log on 2026-04-22). Pin the
-          // model the router picked on the first iteration so retries
-          // stay on the same tier.
-          resolvedModel = lastRoutedModel;
-        } else {
-          // Extract latest user text for classification
-          const lastUser = [...history].reverse().find((m: Dialogue) => m.role === 'user');
-          const userText = typeof lastUser?.content === 'string'
-            ? lastUser.content
-            : Array.isArray(lastUser?.content)
-              ? (lastUser!.content as Array<{ type: string; text?: string }>)
-                  .filter(p => p.type === 'text')
-                  .map(p => p.text ?? '')
-                  .join(' ')
-              : '';
-          const routing = await routeRequestAsync(userText, routingProfile);
-          resolvedModel = routing.model;
-          routingTier = routing.tier;
-          routingConfidence = routing.confidence;
-          routingSavings = routing.savings;
-          lastRoutedModel = routing.model;
-          lastRoutedCategory = routing.signals[0] || '';
-          // Surface the routing decision so users know which concrete model
-          // just got picked. Without this the status bar reads "auto" and
-          // users have no idea what's actually running — or worse, they
-          // believe they're stuck on the last-seen concrete name.
-          if (loopCount === 1) {
-            onEvent({
-              kind: 'text_delta',
-              text: `*Auto → ${routing.model}*\n\n`,
-            });
-          }
+        const userText = lastUserInput || '';
+        const routing = await routeRequestAsync(userText, routingProfile);
+        resolvedModel = routing.model;
+        routingTier = routing.tier;
+        routingConfidence = routing.confidence;
+        routingSavings = routing.savings;
+        lastRoutedModel = routing.model;
+        lastRoutedCategory = routing.signals[0] || '';
+        // Surface the routing decision on the first iteration so the user
+        // sees which concrete model got picked, not just "auto".
+        if (loopCount === 1) {
+          onEvent({
+            kind: 'text_delta',
+            text: `*Auto → ${routing.model}*\n\n`,
+          });
         }
       }
 
