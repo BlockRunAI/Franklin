@@ -3378,6 +3378,38 @@ test('evaluator: shouldCheckGrounding gates on input/answer length + slash comma
   }
 });
 
+test('evaluator: extractPrefetchBlock finds the harness prefetch in the last user message', async () => {
+  const { extractPrefetchBlock } = await import('../dist/agent/evaluator.js');
+
+  const withPrefetch = [
+    { role: 'user', content: 'earlier turn' },
+    { role: 'assistant', content: 'earlier answer' },
+    { role: 'user', content: [
+      '[FRANKLIN HARNESS PREFETCH]',
+      'The harness automatically fetched live data before your turn.',
+      '',
+      '- CRCL (us) live price: $96.18 (BlockRun Gateway / Pyth)',
+      '',
+      'Original user message:',
+      'CRCL 现在多少钱',
+    ].join('\n') },
+  ];
+
+  const block = extractPrefetchBlock(withPrefetch);
+  assert.ok(block, 'returns non-null when prefetch marker present');
+  assert.ok(block.includes('CRCL'), 'captures the prefetch content');
+  assert.ok(block.includes('BlockRun Gateway'), 'captures full payload');
+  assert.ok(!block.includes('Original user message'), 'stops before the divider');
+  assert.ok(!block.includes('earlier answer'), 'does not spill into earlier turns');
+
+  const withoutPrefetch = [
+    { role: 'user', content: 'plain question without prefetch' },
+  ];
+  assert.equal(extractPrefetchBlock(withoutPrefetch), null);
+
+  assert.equal(extractPrefetchBlock([]), null);
+});
+
 test('evaluator: parseGroundingResponse extracts verdict + issue list', async () => {
   const { parseGroundingResponse } = await import('../dist/agent/evaluator.js');
 

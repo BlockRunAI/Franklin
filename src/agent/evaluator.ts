@@ -42,11 +42,13 @@ const EVALUATOR_PROMPT = `You are a GROUNDING CHECK agent. Your job is to verify
 
 ### A. Ungrounded claims
 Every **factual claim** in the answer must trace to ONE of:
-  (a) A successful tool call result from this turn, OR
+  (a) A tool call result from this turn (model-initiated OR listed under "Pre-fetched by Franklin harness"), OR
   (b) Explicit acknowledgment of uncertainty ("I'm not sure", "based on older data")
 
+**Harness-prefetched data is evidence.** When the turn includes a "Pre-fetched by Franklin harness" section, the data listed there was fetched live from tools on the assistant's behalf (TradingMarket, ExaAnswer, etc). Treat it identically to a model-initiated tool call — claims that reference prefetched prices, numbers, or news snippets are GROUNDED.
+
 Flag as ungrounded:
-- Specific current-world facts stated with confidence but not backed by any tool call this turn
+- Specific current-world facts stated with confidence but not backed by any tool call this turn (including prefetch)
 - Recommendations or conclusions that depend on unstated data (e.g. "you should sell" without a price lookup)
 - Invented specifics — names, numbers, dates the model produced without a tool call supporting them
 
@@ -121,7 +123,22 @@ function summarizeTurn(userInput: string, history: Dialogue[], assistantText: st
   lines.push(`## User question`);
   lines.push(userInput.trim().slice(0, 800));
   lines.push('');
-  lines.push(`## Tool calls this turn`);
+
+  // ── Harness prefetch (treated as synthetic tool calls) ──
+  // When intent-prefetch fires, it prepends a [FRANKLIN HARNESS PREFETCH]
+  // block to the user message. The LLM answers based on that data, but
+  // the evaluator previously only looked for tool_use/tool_result pairs
+  // and missed the injection — flagging answers that were actually
+  // grounded in live data as UNGROUNDED. Surface the block explicitly so
+  // the evaluator counts it as evidence.
+  const prefetchBlock = extractPrefetchBlock(history);
+  if (prefetchBlock) {
+    lines.push(`## Pre-fetched by Franklin harness (counts as tool evidence)`);
+    lines.push(prefetchBlock.slice(0, 1200));
+    lines.push('');
+  }
+
+  lines.push(`## Tool calls this turn (model-initiated)`);
 
   // Walk from the end of history back to (but not including) the user message.
   // Each assistant tool_use and each user tool_result get condensed to one line.
@@ -154,7 +171,7 @@ function summarizeTurn(userInput: string, history: Dialogue[], assistantText: st
     }
   }
   if (toolLines.length === 0) {
-    lines.push('  (none)');
+    lines.push(prefetchBlock ? '  (none — but harness pre-fetched data above)' : '  (none)');
   } else {
     lines.push(...toolLines);
   }
@@ -162,6 +179,28 @@ function summarizeTurn(userInput: string, history: Dialogue[], assistantText: st
   lines.push(`## Assistant's answer`);
   lines.push(assistantText.trim().slice(0, 2400));
   return lines.join('\n');
+}
+
+/**
+ * Find the `[FRANKLIN HARNESS PREFETCH]` block in the most recent user
+ * message (that's where intent-prefetch injects it). Returns the inner
+ * payload or null if no prefetch happened this turn.
+ */
+export function extractPrefetchBlock(history: Dialogue[]): string | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg.role !== 'user') continue;
+    const content = typeof msg.content === 'string' ? msg.content : null;
+    if (!content) continue;
+    const startIdx = content.indexOf('[FRANKLIN HARNESS PREFETCH]');
+    if (startIdx < 0) return null; // Most recent user message has no prefetch — we're done
+    // Capture from the marker up to (but not including) the "Original user message:" divider
+    const endMarker = '\nOriginal user message:';
+    const endIdx = content.indexOf(endMarker, startIdx);
+    if (endIdx < 0) return content.slice(startIdx).trim();
+    return content.slice(startIdx, endIdx).trim();
+  }
+  return null;
 }
 
 // ─── Verdict parser ──────────────────────────────────────────────────────
