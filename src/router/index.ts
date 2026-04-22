@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { MODEL_PRICING, OPUS_PRICING } from '../pricing.js';
 import { BLOCKRUN_DIR } from '../config.js';
-import { detectCategory, mapCategoryToTier } from './categories.js';
+import { detectCategory, mapCategoryToTier, type Category } from './categories.js';
 import { selectModel } from './selector.js';
 import type { LearnedWeights } from './selector.js';
 import { computeLocalElo, blendElo } from './local-elo.js';
@@ -45,6 +45,7 @@ export interface RoutingResult {
   confidence: number;
   signals: string[];
   savings: number;
+  category?: Category;
 }
 
 // ─── Tier Model Configs ───
@@ -310,8 +311,9 @@ function classicRouteRequest(
 
   const model = tierConfigs[tier].primary;
   const savings = computeSavings(model);
+  const category = detectCategory(prompt, loadLearnedWeights()?.category_keywords).category;
 
-  return { model, tier, confidence, signals, savings };
+  return { model, tier, confidence, signals, savings, category };
 }
 
 // ─── LLM-based classifier ───
@@ -439,12 +441,14 @@ export async function routeRequestAsync(
     default:        tierConfigs = AUTO_TIERS;
   }
   const model = tierConfigs[tier].primary;
+  const category = detectCategory(prompt, loadLearnedWeights()?.category_keywords).category;
   return {
     model,
     tier,
     confidence: 0.85, // LLM classification — medium-high confidence
     signals: ['llm-classified'],
     savings: computeSavings(model),
+    category,
   };
 }
 
@@ -542,6 +546,7 @@ export function routeRequest(
         confidence,
         signals: [category],
         savings,
+        category,
       };
     }
     // Fall through to classic if selectModel returns null (no candidates for category)
