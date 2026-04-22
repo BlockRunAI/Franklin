@@ -33,6 +33,7 @@ import {
   renderGroundingFollowup,
   buildGroundingRetryInstruction,
 } from './evaluator.js';
+import { classifyIntent, prefetchForIntent } from './intent-prefetch.js';
 import {
   createSessionId,
   appendToSession,
@@ -607,6 +608,37 @@ export async function interactiveSession(
     const MAX_TINY_RESPONSES = 2;                        // Break after N tiny responses — if 2 calls return near-empty, something is wrong
     let turnSpend = 0;                                   // Cost spent this user turn (USD)
     const MAX_TURN_SPEND_USD = 0.25;                    // Hard circuit breaker per user message (lowered — user wallets are real money)
+
+    // ── Proactive prefetch ────────────────────────────────────────────
+    // Before the main model gets a chance to answer a live-world question
+    // from stale training data, the harness detects ticker / price / news
+    // intent and fetches the data itself. Result is prepended to the user's
+    // message so the model sees it as ground truth for this turn. This
+    // makes the answer tool-grounded regardless of the model's willingness
+    // to call tools on its own — important for models with strong
+    // refusal priors on financial data.
+    try {
+      const intent = await classifyIntent(input, client);
+      if (intent) {
+        const prefetch = await prefetchForIntent(intent, client);
+        if (prefetch && prefetch.anyOk) {
+          onEvent({ kind: 'text_delta', text: `\n${prefetch.statusLine}\n\n` });
+          // Augment the last user message in history (NOT lastUserInput,
+          // which /retry restores — that should remain the user's original).
+          const lastIdx = history.length - 1;
+          const last = history[lastIdx];
+          if (last && last.role === 'user' && typeof last.content === 'string') {
+            history[lastIdx] = {
+              role: 'user',
+              content: `${prefetch.contextBlock}\n\nOriginal user message:\n${last.content}`,
+            };
+          }
+        }
+      }
+    } catch {
+      // Prefetch is best-effort — if the classifier or any fetch trips,
+      // fall through and let the main loop do its own thing.
+    }
 
     // Agent loop for this user message
     while (loopCount < maxTurns) {

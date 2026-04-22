@@ -3,6 +3,15 @@
  * These should run fast and reliably in CI/local environments.
  */
 
+// Harness components that issue their own LLM calls (prefetch, grounding
+// evaluator, LLM router) must be disabled for tests that spin up mock HTTP
+// servers and count request iterations. Their presence would double-count
+// requests and break mock-server-based assertions. Unit tests for those
+// modules call them directly with stub classifiers and don't depend on
+// these env toggles.
+process.env.FRANKLIN_NO_PREFETCH = '1';
+process.env.FRANKLIN_NO_EVAL = '1';
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -2794,6 +2803,13 @@ test('dynamic tool visibility: ActivateTool adds named tools to the active set',
 });
 
 test('dynamic tool visibility: hidden tools cannot execute before activation', { timeout: 20_000 }, async () => {
+  // The prefetch classifier would otherwise fire an LLM call against this
+  // mock server before the agent loop itself, skewing requestCount and
+  // starving the main-agent branch. Disable for this test — we're
+  // exercising the tool-gate, not the prefetch.
+  const prevNoPrefetch = process.env.FRANKLIN_NO_PREFETCH;
+  process.env.FRANKLIN_NO_PREFETCH = '1';
+
   let requestCount = 0;
   let hiddenToolCalls = 0;
 
@@ -2888,6 +2904,8 @@ test('dynamic tool visibility: hidden tools cannot execute before activation', {
     assert.ok(finalAssistant.includes('blocked as expected'));
   } finally {
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    if (prevNoPrefetch === undefined) delete process.env.FRANKLIN_NO_PREFETCH;
+    else process.env.FRANKLIN_NO_PREFETCH = prevNoPrefetch;
   }
 });
 
@@ -3148,6 +3166,35 @@ test('dynamic tool visibility: FRANKLIN_DYNAMIC_TOOLS=0 opts out of the split', 
   }
 });
 
+test('intent-prefetch: parseIntentReply extracts STOCK / CRYPTO / NONE lines', async () => {
+  const { parseIntentReply } = await import('../dist/agent/intent-prefetch.js');
+
+  const stock = parseIntentReply('STOCK CRCL us yes');
+  assert.ok(stock);
+  assert.equal(stock.kind, 'ticker');
+  assert.equal(stock.symbol, 'CRCL');
+  assert.equal(stock.market, 'us');
+  assert.equal(stock.assetClass, 'stock');
+  assert.equal(stock.wantNews, true);
+
+  const stockJp = parseIntentReply('STOCK 7203 jp no');
+  assert.ok(stockJp);
+  assert.equal(stockJp.symbol, '7203');
+  assert.equal(stockJp.market, 'jp');
+  assert.equal(stockJp.wantNews, false);
+
+  const crypto = parseIntentReply('CRYPTO BTC no');
+  assert.ok(crypto);
+  assert.equal(crypto.assetClass, 'crypto');
+  assert.equal(crypto.symbol, 'BTC');
+  assert.equal(crypto.wantNews, false);
+
+  assert.equal(parseIntentReply('NONE'), null);
+  assert.equal(parseIntentReply('nothing like the grammar'), null);
+  assert.equal(parseIntentReply('STOCK CRCL xy no'), null, 'unknown market rejected');
+  assert.equal(parseIntentReply(''), null);
+});
+
 test('router LLM classifier: parseTierWord + stub-backed routeRequestAsync routes by tier', async () => {
   const { routeRequestAsync } = await import('../dist/router/index.js');
 
@@ -3177,24 +3224,29 @@ test('router LLM classifier: parseTierWord + stub-backed routeRequestAsync route
 });
 
 test('evaluator: shouldCheckGrounding gates on input/answer length + slash commands', async () => {
-  const { shouldCheckGrounding } = await import('../dist/agent/evaluator.js');
+  // The file-level `FRANKLIN_NO_EVAL=1` disables the gate globally for
+  // mock-server tests. Clear it here so we can exercise the real gating
+  // logic; restore on exit.
+  const savedNoEval = process.env.FRANKLIN_NO_EVAL;
+  delete process.env.FRANKLIN_NO_EVAL;
 
-  const longAnswer = 'This is a long enough answer with real claims'.padEnd(60, '.');
-  const longQuestion = 'This is a long user question that looks like a factual question';
-
-  assert.equal(shouldCheckGrounding(longQuestion, longAnswer), true, 'normal factual turn → check');
-  assert.equal(shouldCheckGrounding('hi', longAnswer), false, 'short user input → skip');
-  assert.equal(shouldCheckGrounding(longQuestion, 'ok'), false, 'short answer → skip');
-  assert.equal(shouldCheckGrounding('/help', longAnswer), false, 'slash command → skip');
-
-  // Env opt-out
-  const prev = process.env.FRANKLIN_NO_EVAL;
-  process.env.FRANKLIN_NO_EVAL = '1';
   try {
+    const { shouldCheckGrounding } = await import('../dist/agent/evaluator.js');
+
+    const longAnswer = 'This is a long enough answer with real claims'.padEnd(60, '.');
+    const longQuestion = 'This is a long user question that looks like a factual question';
+
+    assert.equal(shouldCheckGrounding(longQuestion, longAnswer), true, 'normal factual turn → check');
+    assert.equal(shouldCheckGrounding('hi', longAnswer), false, 'short user input → skip');
+    assert.equal(shouldCheckGrounding(longQuestion, 'ok'), false, 'short answer → skip');
+    assert.equal(shouldCheckGrounding('/help', longAnswer), false, 'slash command → skip');
+
+    // Env opt-out
+    process.env.FRANKLIN_NO_EVAL = '1';
     assert.equal(shouldCheckGrounding(longQuestion, longAnswer), false, 'opt-out disables');
   } finally {
-    if (prev === undefined) delete process.env.FRANKLIN_NO_EVAL;
-    else process.env.FRANKLIN_NO_EVAL = prev;
+    if (savedNoEval === undefined) delete process.env.FRANKLIN_NO_EVAL;
+    else process.env.FRANKLIN_NO_EVAL = savedNoEval;
   }
 });
 
