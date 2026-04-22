@@ -3338,6 +3338,19 @@ test('router LLM classifier: parseTierWord + stub-backed routeRequestAsync route
   assert.ok(!fallback.signals.includes('llm-classified'), 'fallback path did not mark llm-classified');
 });
 
+test('router eco complex fallback chain stays on live models', async () => {
+  const { getFallbackChain } = await import('../dist/router/index.js');
+
+  const chain = getFallbackChain('COMPLEX', 'eco');
+
+  assert.deepEqual(chain, [
+    'google/gemini-2.5-flash-lite',
+    'deepseek/deepseek-chat',
+    'nvidia/glm-4.7',
+  ]);
+  assert.ok(!chain.includes('nvidia/mistral-large-3-675b'));
+});
+
 test('evaluator: shouldCheckGrounding gates on input/answer length + slash commands', async () => {
   // The file-level `FRANKLIN_NO_EVAL=1` disables the gate globally for
   // mock-server tests. Clear it here so we can exercise the real gating

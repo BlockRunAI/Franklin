@@ -92,7 +92,7 @@ const ECO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   },
   COMPLEX: {
     primary: 'google/gemini-2.5-flash-lite',
-    fallback: ['deepseek/deepseek-chat', 'nvidia/mistral-large-3-675b'],
+    fallback: ['deepseek/deepseek-chat', 'nvidia/glm-4.7'],
   },
   REASONING: {
     primary: 'xai/grok-4-1-fast-reasoning',
