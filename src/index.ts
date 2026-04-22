@@ -57,7 +57,7 @@ program
   .option('-r, --resume [sessionId]', 'Resume a session by ID (or show picker if omitted)')
   .option('-c, --continue', 'Continue the most recent session in this directory')
   .option('--max-spend <usd>', 'Hard USD cap on total session API spend — session stops when exceeded')
-  .option('-p, --prompt <text>', 'Run a single prompt non-interactively (for cron/scripted use)')
+  .option('-p, --prompt <text>', 'Run a single prompt non-interactively (for batch/scripted use)')
   .action((options) => startCommand({ ...options, version }));
 
 program

@@ -33,7 +33,7 @@ import {
   renderGroundingFollowup,
   buildGroundingRetryInstruction,
 } from './evaluator.js';
-import { classifyIntent, prefetchForIntent } from './intent-prefetch.js';
+import { augmentUserMessage, classifyIntent, prefetchForIntent } from './intent-prefetch.js';
 import {
   createSessionId,
   appendToSession,
@@ -622,16 +622,15 @@ export async function interactiveSession(
       if (intent) {
         const prefetch = await prefetchForIntent(intent, client);
         if (prefetch && prefetch.anyOk) {
-          onEvent({ kind: 'text_delta', text: `\n${prefetch.statusLine}\n\n` });
+          if (config.showPrefetchStatus !== false) {
+            onEvent({ kind: 'text_delta', text: `\n${prefetch.statusLine}\n\n` });
+          }
           // Augment the last user message in history (NOT lastUserInput,
           // which /retry restores — that should remain the user's original).
           const lastIdx = history.length - 1;
           const last = history[lastIdx];
           if (last && last.role === 'user' && typeof last.content === 'string') {
-            history[lastIdx] = {
-              role: 'user',
-              content: `${prefetch.contextBlock}\n\nOriginal user message:\n${last.content}`,
-            };
+            history[lastIdx] = augmentUserMessage(last.content, prefetch);
           }
         }
       }
