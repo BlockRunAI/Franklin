@@ -275,6 +275,29 @@ a:hover { text-decoration:underline; }
 .empty { color:var(--text-dim); text-align:center; padding:56px 24px; font-size:13px; }
 
 /* ── Wallet page ── */
+.chain-switcher {
+  display:inline-flex; padding:3px; gap:2px;
+  background:oklch(0 0 0 / 35%); border:1px solid var(--border);
+  border-radius:10px; margin-bottom:14px;
+}
+.chain-switcher button {
+  font-family:var(--mono); font-size:12px; font-weight:600;
+  letter-spacing:0.6px; text-transform:uppercase;
+  padding:7px 18px; border-radius:7px;
+  background:transparent; border:none; color:var(--text-muted);
+  cursor:pointer; transition:all .15s ease;
+}
+.chain-switcher button:hover:not(.active):not(:disabled) {
+  color:var(--text); background:oklch(1 0 0 / 5%);
+}
+.chain-switcher button.active {
+  background:var(--brand); color:#fff;
+}
+.chain-switcher button:disabled { opacity:0.5; cursor:wait; }
+.chain-switcher-note {
+  margin-left:10px; font-size:12px; color:var(--text-dim);
+  font-style:italic;
+}
 .wallet-grid { display:grid; grid-template-columns:1.1fr 1fr; gap:14px; }
 .wallet-grid .card { display:flex; flex-direction:column; gap:10px; }
 .wallet-receive { grid-row:span 2; align-items:flex-start; }
@@ -473,8 +496,14 @@ a:hover { text-decoration:underline; }
   <div class="tab" id="tab-wallet">
     <div class="content-header">
       <h2>Wallet</h2>
-      <p>Receive USDC, back up your key, or import an existing wallet</p>
+      <p>Receive USDC, back up your key, or switch chains</p>
     </div>
+
+    <div class="chain-switcher" role="tablist" aria-label="Payment chain">
+      <button type="button" data-chain="base" id="chain-btn-base" role="tab">Base</button>
+      <button type="button" data-chain="solana" id="chain-btn-solana" role="tab">Solana</button>
+    </div>
+    <span class="chain-switcher-note" id="chain-switcher-note"></span>
 
     <div class="wallet-grid">
       <div class="card wallet-receive">
@@ -842,6 +871,14 @@ async function loadWallet() {
   document.getElementById('wallet-balance-big').textContent = usdBig(w.balance) + ' USDC';
   document.getElementById('wallet-chain-pill').textContent = w.chain || '—';
 
+  // Chain switcher — highlight active button
+  const baseBtn = document.getElementById('chain-btn-base');
+  const solanaBtn = document.getElementById('chain-btn-solana');
+  if (baseBtn && solanaBtn) {
+    baseBtn.classList.toggle('active', w.chain === 'base');
+    solanaBtn.classList.toggle('active', w.chain === 'solana');
+  }
+
   // QR via server — never leak address to third parties
   const qrBox = document.getElementById('wallet-qr');
   const hint = document.getElementById('wallet-qr-hint');
@@ -849,13 +886,55 @@ async function loadWallet() {
     const svg = await fetch('/api/wallet/qr?data=' + encodeURIComponent(addr)).then(r => r.ok ? r.text() : null);
     qrBox.innerHTML = svg || '';
     hint.textContent = w.chain === 'solana'
-      ? 'Scan to send USDC (Solana) to this address.'
+      ? 'Scan to send USDC (Solana SPL) to this address.'
       : 'Scan to send USDC on Base to this address.';
   } else {
     qrBox.innerHTML = '';
     hint.textContent = 'No wallet set yet — run: franklin setup';
   }
 }
+
+// Chain switcher — click "Base" or "Solana" to flip payment chain.
+// Creates a wallet on the target chain if one does not exist yet.
+// Note: a currently-running franklin agent reads its chain at startup,
+// so a mid-session switch only affects the next agent invocation.
+['chain-btn-base', 'chain-btn-solana'].forEach((id) => {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const target = btn.getAttribute('data-chain');
+    const note = document.getElementById('chain-switcher-note');
+    const baseBtn = document.getElementById('chain-btn-base');
+    const solanaBtn = document.getElementById('chain-btn-solana');
+    // Skip if already active
+    if (btn.classList.contains('active')) return;
+    baseBtn.disabled = true;
+    solanaBtn.disabled = true;
+    note.textContent = 'Switching to ' + target + '…';
+    try {
+      const r = await fetch('/api/chain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chain: target }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.ok) {
+        note.textContent = 'Error: ' + (data.error || r.statusText);
+        return;
+      }
+      note.textContent = 'Switched to ' + target + ' · restart Franklin to use this chain';
+      await loadWallet();
+      // Sidebar balance + address also refresh
+      document.getElementById('sidebar-balance').textContent = usdBig(data.balance) + ' USDC';
+      document.getElementById('sidebar-addr').textContent = (data.address || '').slice(0, 6) + '…' + (data.address || '').slice(-4);
+    } catch (err) {
+      note.textContent = 'Error: ' + (err && err.message ? err.message : 'network error');
+    } finally {
+      baseBtn.disabled = false;
+      solanaBtn.disabled = false;
+    }
+  });
+});
 
 // Copy button
 document.getElementById('wallet-copy-btn').addEventListener('click', async () => {

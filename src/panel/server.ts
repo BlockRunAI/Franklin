@@ -7,7 +7,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { BLOCKRUN_DIR, loadChain } from '../config.js';
+import { BLOCKRUN_DIR, loadChain, saveChain, type Chain } from '../config.js';
 import { loadStats, getStatsSummary } from '../stats/tracker.js';
 import { generateInsights } from '../stats/insights.js';
 import { listSessions, loadSessionHistory } from '../session/storage.js';
@@ -308,6 +308,52 @@ export function createPanelServer(port: number): http.Server {
             const address = client.getWalletAddress();
             json(res, { ok: true, chain, address });
           }
+        } catch (err) {
+          json(res, { error: (err as Error).message }, 500);
+        }
+        return;
+      }
+
+      // ─── Chain switch (loopback only) ───────────────────────────────
+      // Switches the active payment chain (base ↔ solana) for subsequent
+      // Franklin runs. Writes ~/.blockrun/payment-chain, then ensures a
+      // wallet exists on the target chain (creates if missing). Returns
+      // the new wallet address + balance so the UI can re-render without
+      // a follow-up round trip.
+      //
+      // NOTE: a currently-running `franklin` agent reads the chain once
+      // at startup. The Panel switch takes effect immediately for Panel
+      // reads and for the *next* agent invocation, but won't flip chain
+      // mid-session for an already-running agent. UI copy makes this clear.
+      if (p === '/api/chain' && req.method === 'POST') {
+        if (!isLoopback(req)) {
+          json(res, { error: 'forbidden' }, 403);
+          return;
+        }
+        try {
+          const raw = await readBody(req);
+          const body = JSON.parse(raw) as { chain?: string };
+          const target = body.chain;
+          if (target !== 'base' && target !== 'solana') {
+            json(res, { error: 'chain must be "base" or "solana"' }, 400);
+            return;
+          }
+          saveChain(target as Chain);
+          // Creates-or-loads the wallet on the target chain.
+          let address = '';
+          let balance = 0;
+          if (target === 'solana') {
+            const { setupAgentSolanaWallet } = await import('@blockrun/llm');
+            const client = await setupAgentSolanaWallet({ silent: true });
+            address = await client.getWalletAddress();
+            balance = await client.getBalance();
+          } else {
+            const { setupAgentWallet } = await import('@blockrun/llm');
+            const client = setupAgentWallet({ silent: true });
+            address = client.getWalletAddress();
+            balance = await client.getBalance();
+          }
+          json(res, { ok: true, chain: target, address, balance });
         } catch (err) {
           json(res, { error: (err as Error).message }, 500);
         }
