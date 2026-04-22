@@ -154,7 +154,7 @@ export async function runVerification(
   config.onEvent?.({ kind: 'text_delta', text: '\n*Verifying...*\n' });
 
   // Use cheap model for verification
-  const verificationModel = 'nvidia/nemotron-ultra-253b'; // Free model to keep cost zero
+  const verificationModel = 'nvidia/glm-4.7'; // Free model to keep cost zero
 
   try {
     // Simple single-turn verification call

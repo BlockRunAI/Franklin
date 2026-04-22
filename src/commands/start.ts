@@ -150,11 +150,17 @@ export async function startCommand(options: StartOptions) {
     return;
   }
 
-  // Warn when a paid model is active so users know they'll be charged
+  // Warn when a paid model is active so users know they'll be charged.
+  // Set members = BlockRun gateway's current free tier (refreshed 2026-04).
   const FREE_MODELS = new Set([
-    'nvidia/nemotron-ultra-253b',
+    'nvidia/glm-4.7',
+    'nvidia/qwen3-next-80b-a3b-thinking',
     'nvidia/qwen3-coder-480b',
-    'nvidia/devstral-2-123b',
+    'nvidia/mistral-small-4-119b',
+    'nvidia/llama-4-maverick',
+    'nvidia/deepseek-v3.2',
+    'nvidia/gpt-oss-120b',
+    'nvidia/gpt-oss-20b',
     'blockrun/free',
   ]);
   if (!FREE_MODELS.has(model)) {

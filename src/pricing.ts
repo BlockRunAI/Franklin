@@ -9,18 +9,21 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'blockrun/eco': { input: 0.2, output: 1.0 },
   'blockrun/premium': { input: 3.0, output: 15.0 },
   'blockrun/free': { input: 0, output: 0 },
-  // FREE - NVIDIA models
+  // FREE — BlockRun gateway free tier (refreshed 2026-04)
+  'nvidia/glm-4.7': { input: 0, output: 0 },
+  'nvidia/qwen3-next-80b-a3b-thinking': { input: 0, output: 0 },
+  'nvidia/qwen3-coder-480b': { input: 0, output: 0 },
+  'nvidia/mistral-small-4-119b': { input: 0, output: 0 },
+  'nvidia/llama-4-maverick': { input: 0, output: 0 },
+  'nvidia/deepseek-v3.2': { input: 0, output: 0 },
   'nvidia/gpt-oss-120b': { input: 0, output: 0 },
   'nvidia/gpt-oss-20b': { input: 0, output: 0 },
+  // Retired (kept at 0 for legacy session-cost records; gateway no longer serves these).
   'nvidia/nemotron-ultra-253b': { input: 0, output: 0 },
+  'nvidia/devstral-2-123b': { input: 0, output: 0 },
   'nvidia/nemotron-3-super-120b': { input: 0, output: 0 },
   'nvidia/nemotron-super-49b': { input: 0, output: 0 },
-  'nvidia/deepseek-v3.2': { input: 0, output: 0 },
   'nvidia/mistral-large-3-675b': { input: 0, output: 0 },
-  'nvidia/qwen3-coder-480b': { input: 0, output: 0 },
-  'nvidia/devstral-2-123b': { input: 0, output: 0 },
-  'nvidia/glm-4.7': { input: 0, output: 0 },
-  'nvidia/llama-4-maverick': { input: 0, output: 0 },
   // Anthropic
   'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
   'anthropic/claude-opus-4.7': { input: 5.0, output: 25.0 },

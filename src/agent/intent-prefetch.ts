@@ -61,7 +61,9 @@ export interface PrefetchResult {
 
 // ─── Classifier ──────────────────────────────────────────────────────────
 
-const CLASSIFIER_MODEL = process.env.FRANKLIN_PREFETCH_MODEL || 'nvidia/nemotron-ultra-253b';
+// llama-4-maverick: same rationale as the router classifier — emits plain
+// text under tight max_tokens rather than routing through thinking blocks.
+const CLASSIFIER_MODEL = process.env.FRANKLIN_PREFETCH_MODEL || 'nvidia/llama-4-maverick';
 const CLASSIFIER_TIMEOUT_MS = 2_500;
 
 const CLASSIFIER_PROMPT = `You extract PREFETCH INTENT from a user message for a CLI agent that has live market-data tools.
@@ -135,8 +137,12 @@ export function parseIntentReply(reply: string): Intent {
 export async function classifyIntent(userInput: string, client: ModelClient): Promise<Intent> {
   if (process.env.FRANKLIN_NO_PREFETCH === '1') return null;
   const trimmed = userInput.trim();
-  // Short inputs (<12 chars) are rarely asking for market data — skip the call entirely.
-  if (trimmed.length < 12) return null;
+  // Only the cheapest gate — skip very short inputs that can't be a real
+  // market question ("hi", "ok", "thanks"). 6 chars covers those while
+  // still letting short-form Chinese / ticker prompts through, e.g.
+  // "BTC 价格" (6), "CRCL 多少" (7). Longer prompts all route to the LLM
+  // classifier, which decides NONE cheaply when not market-related.
+  if (trimmed.length < 6) return null;
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), CLASSIFIER_TIMEOUT_MS);
