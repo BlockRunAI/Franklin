@@ -448,6 +448,42 @@ export async function routeRequestAsync(
   };
 }
 
+/**
+ * Map a pre-classified tier to a concrete model + savings using the profile's
+ * tier table. No classifier call — assumes the caller already decided the
+ * tier (typically via the turn-analyzer, which rolls tier classification in
+ * with intent / pushback / planning decisions in one LLM call).
+ *
+ * Use this when you have a tier already. Use `routeRequestAsync` when you
+ * need the classifier to produce the tier.
+ */
+export function resolveTierToModel(tier: Tier, profile: RoutingProfile = 'auto'): RoutingResult {
+  // Free profile short-circuits — everything routes to a single free model.
+  if (profile === 'free') {
+    return {
+      model: 'nvidia/glm-4.7',
+      tier: 'SIMPLE',
+      confidence: 1.0,
+      signals: ['free-profile'],
+      savings: 1.0,
+    };
+  }
+  let tierConfigs: Record<Tier, { primary: string; fallback: string[] }>;
+  switch (profile) {
+    case 'eco':     tierConfigs = ECO_TIERS; break;
+    case 'premium': tierConfigs = PREMIUM_TIERS; break;
+    default:        tierConfigs = AUTO_TIERS;
+  }
+  const model = tierConfigs[tier].primary;
+  return {
+    model,
+    tier,
+    confidence: 0.85,
+    signals: ['pre-classified'],
+    savings: computeSavings(model),
+  };
+}
+
 // ─── Main Router ───
 
 export function routeRequest(
