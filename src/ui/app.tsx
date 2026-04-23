@@ -462,19 +462,25 @@ function RunCodeApp({
     const trimmed = value.trim();
     if (!trimmed) return;
 
+    // Exit commands bypass the busy-queue gate — if the user wants out,
+    // they want out immediately, not after whatever turn is in flight.
+    // Covers bare 'exit' / 'quit' / 'q' and slash-prefixed /exit / /quit.
+    const lower = trimmed.toLowerCase();
+    const isExit =
+      lower === 'exit' || lower === 'quit' || lower === 'q' ||
+      lower === '/exit' || lower === '/quit';
+    if (isExit) {
+      onAbort();
+      onExit();
+      exit();
+      return;
+    }
+
     // If agent is busy, queue the message — it will be auto-submitted when the turn finishes
     if (!ready) {
       setQueuedInputs(prev => [...prev, trimmed]);
       setInput('');
       showStatus(`Queued message (${queuedInputsRef.current.length + 1} pending)`, 'warning', 1500);
-      return;
-    }
-
-    // Bare exit/quit (no slash needed)
-    const lower = trimmed.toLowerCase();
-    if (lower === 'exit' || lower === 'quit' || lower === 'q') {
-      onExit();
-      exit();
       return;
     }
 
@@ -487,11 +493,8 @@ function RunCodeApp({
       const cmd = parts[0].toLowerCase();
 
       switch (cmd) {
-        case '/exit':
-        case '/quit':
-          onExit();
-          exit();
-          return;
+        // /exit and /quit are handled earlier (before the busy-queue gate)
+        // so they exit the session immediately even mid-turn.
 
         case '/model':
         case '/models':
