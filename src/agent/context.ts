@@ -201,7 +201,7 @@ Your training data is frozen in the past. Live-world questions MUST be answered 
 
 If you find yourself about to emit one of these, stop and call the tool instead. If you don't know which ticker the user means, call ExaSearch or AskUser — never deflect.
 
-**Media generation (ImageGen / VideoGen).** Pass just the user's descriptive prompt and the output path — do NOT pass \`model\`. The harness picks the right model for the requested style + budget and surfaces a cost proposal through AskUser before spending. Only pass \`model\` explicitly if the user named one specifically.`;
+**Media generation (ImageGen / VideoGen).** Pass just the user's descriptive prompt and the output path — do NOT pass \`model\`. The harness picks the right model for the requested style + budget, refines loose prompts using a 5-slot template (scene / subject / details / use case / constraints), and surfaces both the refinement and a cost proposal through AskUser before spending. If the user wants their prompt left exactly as written, prefix it with \`///\` to skip refinement. Only pass \`model\` explicitly if the user named one specifically.`;
 }
 
 function getTokenEfficiencySection(): string {
