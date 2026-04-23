@@ -19,6 +19,8 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import type { ContentLibrary } from '../content/library.js';
 import { checkImageBudget, recordImageAsset } from '../content/record-image.js';
+import { ModelClient } from '../agent/llm.js';
+import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
 
 interface ImageGenInput {
   prompt: string;
@@ -53,9 +55,52 @@ function buildExecute(deps: ImageGenDeps) {
       return { output: 'Error: prompt is required', isError: true };
     }
 
-    // ── Content pre-flight: refuse BEFORE paying if budget can't cover this ──
-    const imageModel = model || 'openai/gpt-image-1';
+    // ── Media router + AskUser flow ────────────────────────────────────
+    // If the caller explicitly named a model, or the env auto-approves, or
+    // no AskUser bridge exists (batch / --prompt mode), skip the proposal
+    // step and use the old default. Otherwise: classifier picks a fitting
+    // model, cost preview goes to AskUser, user chooses or cancels.
+    let imageModel = model || 'openai/gpt-image-1';
     const imageSize = size || '1024x1024';
+
+    const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
+    if (!model && !autoApprove && ctx.onAskUser) {
+      try {
+        const chain = loadChain();
+        const client = new ModelClient({ apiUrl: API_URLS[chain], chain });
+        const proposal = await analyzeMediaRequest({
+          kind: 'image',
+          prompt,
+          quantity: 1,
+          client,
+          signal: ctx.abortSignal,
+        });
+        if (proposal) {
+          const { question, options } = renderProposalForAskUser(proposal, prompt);
+          const labels = options.map(o => o.label);
+          const answer = await ctx.onAskUser(question, labels);
+          // Map the user's returned label back to an option id
+          const chosen = options.find(o => o.label === answer) ?? { id: 'cancel' };
+          switch (chosen.id) {
+            case 'cheaper':
+              imageModel = proposal.cheaper?.model ?? proposal.recommended.model;
+              break;
+            case 'premium':
+              imageModel = proposal.premium?.model ?? proposal.recommended.model;
+              break;
+            case 'cancel':
+              return {
+                output: `## Image generation cancelled\n\nNo USDC was spent. Ask again when ready, or pass an explicit \`model\` to skip the confirmation step.`,
+              };
+            case 'recommended':
+            default:
+              imageModel = proposal.recommended.model;
+          }
+        }
+      } catch {
+        // Router / AskUser failed — fall back to default model silently.
+      }
+    }
     if (contentId && deps.library) {
       const decision = checkImageBudget(deps.library, contentId, imageModel, imageSize);
       if (!decision.ok) {
