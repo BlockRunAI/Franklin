@@ -15,6 +15,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import { USER_AGENT, type Chain } from '../config.js';
+import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import type {
   Dialogue,
   CapabilityDefinition,
@@ -52,6 +53,67 @@ export interface LLMClientOptions {
   apiUrl: string;
   chain: Chain;
   debug?: boolean;
+}
+
+function parseTimeoutEnv(name: string): number | null {
+  const raw = process.env[name];
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function getModelRequestTimeoutMs(): number {
+  return (
+    parseTimeoutEnv('FRANKLIN_MODEL_REQUEST_TIMEOUT_MS') ??
+    parseTimeoutEnv('FRANKLIN_MODEL_IDLE_TIMEOUT_MS') ??
+    8_000
+  );
+}
+
+function getModelStreamIdleTimeoutMs(): number {
+  return (
+    parseTimeoutEnv('FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS') ??
+    parseTimeoutEnv('FRANKLIN_MODEL_IDLE_TIMEOUT_MS') ??
+    25_000
+  );
+}
+
+function linkAbortSignal(parent: AbortSignal | undefined, child: AbortController): () => void {
+  if (!parent) return () => {};
+  if (parent.aborted) {
+    child.abort(parent.reason);
+    return () => {};
+  }
+  const forward = () => child.abort(parent.reason);
+  parent.addEventListener('abort', forward, { once: true });
+  return () => parent.removeEventListener('abort', forward);
+}
+
+function createModelTimeoutError(stage: 'request' | 'stream', model: string, timeoutMs: number): Error {
+  return new Error(`Model ${stage} timed out after ${timeoutMs}ms on ${model}`);
+}
+
+async function withAbortableTimeout<T>(
+  work: () => Promise<T>,
+  controller: AbortController,
+  timeoutError: Error,
+  timeoutMs: number,
+): Promise<T> {
+  if (timeoutMs <= 0) return work();
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work(),
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          try { controller.abort(timeoutError); } catch { /* ignore */ }
+          reject(timeoutError);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -257,9 +319,7 @@ export class ModelClient {
   private resolveVirtualModel(model: string): string {
     if (!model.startsWith('blockrun/')) return model;
 
-    // Import router dynamically to avoid circular deps
     try {
-      const { routeRequest, parseRoutingProfile } = require('../router/index.js');
       const profile = parseRoutingProfile(model);
       if (profile) {
         const result = routeRequest('', profile);
@@ -372,42 +432,61 @@ export class ModelClient {
       console.error(`[franklin] POST ${endpoint} model=${request.model}`);
     }
 
-    let response = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body,
-      signal,
-    });
+    const requestTimeoutMs = getModelRequestTimeoutMs();
+    const streamTimeoutMs = getModelStreamIdleTimeoutMs();
+    const requestController = new AbortController();
+    const unlinkAbort = linkAbortSignal(signal, requestController);
 
-    // Handle x402 payment
-    if (response.status === 402) {
-      if (this.debug) console.error('[franklin] Payment required — signing...');
-      const paymentHeader = await this.signPayment(response);
-      if (!paymentHeader) {
-        yield { kind: 'error', payload: { message: 'Payment signing failed' } };
+    try {
+      let response = await withAbortableTimeout(
+        () => fetch(endpoint, {
+          method: 'POST',
+          headers,
+          body,
+          signal: requestController.signal,
+        }),
+        requestController,
+        createModelTimeoutError('request', request.model, requestTimeoutMs),
+        requestTimeoutMs,
+      );
+
+      // Handle x402 payment
+      if (response.status === 402) {
+        if (this.debug) console.error('[franklin] Payment required — signing...');
+        const paymentHeader = await this.signPayment(response);
+        if (!paymentHeader) {
+          yield { kind: 'error', payload: { message: 'Payment signing failed' } };
+          return;
+        }
+
+        response = await withAbortableTimeout(
+          () => fetch(endpoint, {
+            method: 'POST',
+            headers: { ...headers, ...paymentHeader },
+            body,
+            signal: requestController.signal,
+          }),
+          requestController,
+          createModelTimeoutError('request', request.model, requestTimeoutMs),
+          requestTimeoutMs,
+        );
+      }
+
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => 'unknown error');
+        const message = extractApiErrorMessage(errorBody);
+        yield {
+          kind: 'error',
+          payload: { status: response.status, message },
+        };
         return;
       }
 
-      response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { ...headers, ...paymentHeader },
-        body,
-        signal,
-      });
+      // Parse SSE stream
+      yield* this.parseSSEStream(response, requestController, streamTimeoutMs, request.model);
+    } finally {
+      unlinkAbort();
     }
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => 'unknown error');
-      const message = extractApiErrorMessage(errorBody);
-      yield {
-        kind: 'error',
-        payload: { status: response.status, message },
-      };
-      return;
-    }
-
-    // Parse SSE stream
-    yield* this.parseSSEStream(response, signal);
   }
 
   /**
@@ -737,7 +816,9 @@ export class ModelClient {
 
   private async *parseSSEStream(
     response: Response,
-    signal?: AbortSignal
+    controller: AbortController,
+    timeoutMs: number,
+    model: string,
   ): AsyncGenerator<StreamChunk> {
     const reader = response.body?.getReader();
     if (!reader) {
@@ -753,9 +834,14 @@ export class ModelClient {
     const MAX_BUFFER = 1_000_000; // 1MB buffer cap
     try {
       while (true) {
-        if (signal?.aborted) break;
+        if (controller.signal.aborted) break;
 
-        const { done, value } = await reader.read();
+        const { done, value } = await withAbortableTimeout(
+          () => reader.read(),
+          controller,
+          createModelTimeoutError('stream', model, timeoutMs),
+          timeoutMs,
+        );
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });

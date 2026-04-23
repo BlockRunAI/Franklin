@@ -25,7 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { BLOCKRUN_DIR, VERSION } from '../config.js';
-import type { SessionMeta } from '../session/storage.js';
+import { listSessions, type SessionMeta } from '../session/storage.js';
 
 const CONSENT_FILE = path.join(BLOCKRUN_DIR, 'telemetry-consent.json');
 const LOG_FILE = path.join(BLOCKRUN_DIR, 'telemetry.jsonl');
@@ -68,6 +68,14 @@ export interface TelemetryRecord {
 
 function ensureDir(): void {
   fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+}
+
+function canonicalDir(dir: string): string {
+  try {
+    return fs.realpathSync(path.resolve(dir));
+  } catch {
+    return path.resolve(dir);
+  }
 }
 
 /** Enabled-state check. Default: false. */
@@ -166,15 +174,9 @@ export function recordLatestSessionIfEnabled(
   chain?: string,
 ): void {
   if (!isTelemetryEnabled()) return;
-  // Lazy import to avoid a circular session/storage <-> telemetry dependency.
-  // Using require() here keeps this module synchronous for tests.
-  /* eslint-disable @typescript-eslint/no-require-imports */
-  const { listSessions } = require('../session/storage.js') as {
-    listSessions: () => SessionMeta[];
-  };
-  /* eslint-enable @typescript-eslint/no-require-imports */
+  const targetDir = canonicalDir(workingDir);
   const sessions = listSessions();
-  const match = sessions.find(s => s.workDir === workingDir);
+  const match = sessions.find(s => canonicalDir(s.workDir) === targetDir);
   if (!match) return;
   recordSession(match, chain);
 }

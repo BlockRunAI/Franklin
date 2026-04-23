@@ -79,6 +79,15 @@ function skipIfRateLimited(t, result) {
     return true;
   }
   if (
+    combined.includes('fetch failed') ||
+    combined.includes('[Network]') ||
+    combined.includes('[Timeout]') ||
+    combined.toLowerCase().includes('network connection')
+  ) {
+    t.skip('Live gateway/network unavailable in this environment — skipping live e2e');
+    return true;
+  }
+  if (
     combined.toLowerCase().includes('insufficient') ||
     combined.toLowerCase().includes('payment required') ||
     combined.toLowerCase().includes('verification failed')

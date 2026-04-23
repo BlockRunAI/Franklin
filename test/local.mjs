@@ -564,6 +564,83 @@ test('resume: second interactiveSession with resumeSessionId continues prior tra
   }
 });
 
+test('pruneOldSessions removes stale ghost sessions even when visible session count is below the cap', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'franklin-ghost-prune-'));
+  const storagePath = new URL('../dist/session/storage.js', import.meta.url).pathname;
+
+  try {
+    const sessionsDir = join(fakeHome, '.blockrun', 'sessions');
+    mkdirSync(sessionsDir, { recursive: true });
+
+    const staleGhostId = 'session-stale-ghost';
+    const staleGhostMeta = join(sessionsDir, `${staleGhostId}.meta.json`);
+    const staleGhostJsonl = join(sessionsDir, `${staleGhostId}.jsonl`);
+    const oldTs = Date.now() - (10 * 60 * 1000);
+    writeFileSync(staleGhostMeta, JSON.stringify({
+      id: staleGhostId,
+      model: 'local/test-model',
+      workDir: fakeHome,
+      createdAt: oldTs,
+      updatedAt: oldTs,
+      turnCount: 0,
+      messageCount: 0,
+    }, null, 2));
+    writeFileSync(staleGhostJsonl, '');
+
+    const visibleSessionId = 'session-visible';
+    const visibleSessionMeta = join(sessionsDir, `${visibleSessionId}.meta.json`);
+    const visibleSessionJsonl = join(sessionsDir, `${visibleSessionId}.jsonl`);
+    const freshTs = Date.now();
+    writeFileSync(visibleSessionMeta, JSON.stringify({
+      id: visibleSessionId,
+      model: 'local/test-model',
+      workDir: fakeHome,
+      createdAt: freshTs,
+      updatedAt: freshTs,
+      turnCount: 1,
+      messageCount: 2,
+    }, null, 2));
+    writeFileSync(visibleSessionJsonl, '{"role":"user","content":"hello"}\n{"role":"assistant","content":"world"}\n');
+
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', [
+        '--input-type=module',
+        '-e',
+        `
+          const { listSessions, pruneOldSessions } = await import(${JSON.stringify(`file://${storagePath}`)});
+          const beforeVisible = listSessions().map((session) => session.id);
+          pruneOldSessions();
+          const afterVisible = listSessions().map((session) => session.id);
+          process.stdout.write(JSON.stringify({ beforeVisible, afterVisible }));
+        `,
+      ], {
+        env: { ...process.env, HOME: fakeHome, BLOCKRUN_DIR: join(fakeHome, '.blockrun') },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+      proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stdout, stderr });
+        else reject(new Error(`ghost prune subprocess failed (${code})\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      });
+      proc.on('error', reject);
+    });
+
+    const parsed = JSON.parse(result.stdout.trim());
+    assert.deepEqual(parsed.beforeVisible, [visibleSessionId], 'Ghost sessions should stay hidden from the visible session list');
+    assert.deepEqual(parsed.afterVisible, [visibleSessionId], 'Visible session list should stay stable after pruning');
+    assert.ok(!existsSync(staleGhostMeta), 'Expected stale ghost session meta to be removed');
+    assert.ok(!existsSync(staleGhostJsonl), 'Expected stale ghost session transcript to be removed');
+    assert.ok(existsSync(visibleSessionMeta), 'Visible session meta should remain');
+    assert.ok(existsSync(visibleSessionJsonl), 'Visible session transcript should remain');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('resume: --resume with unknown id fails fast with non-zero exit (no wallet/banner)', { timeout: 10_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), 'franklin-e2e-fastfail-'));
   try {
@@ -666,6 +743,40 @@ test('resume: resolveSessionIdInput handles exact, prefix, ambiguous, and not-fo
       rmSync(join(dirname(sf), `${id}.meta.json`), { force: true });
     }
   }
+});
+
+test('resume picker: ambiguous or invalid raw input does not silently pick the first session', async () => {
+  const { resolvePickerSelection } = await import('../dist/ui/session-picker.js');
+
+  const unique = `pickerprefix${Date.now()}`;
+  const sessions = [
+    { id: `session-${unique}-alpha`, updatedAt: Date.now() + 2, model: 'local/test', workDir: process.cwd(), createdAt: Date.now(), turnCount: 1, messageCount: 1 },
+    { id: `session-${unique}-beta`, updatedAt: Date.now() + 1, model: 'local/test', workDir: process.cwd(), createdAt: Date.now(), turnCount: 1, messageCount: 1 },
+    { id: `session-${unique}-gamma`, updatedAt: Date.now(), model: 'local/test', workDir: process.cwd(), createdAt: Date.now(), turnCount: 1, messageCount: 1 },
+  ];
+  const shown = sessions.slice(0, 2);
+
+  const numbered = resolvePickerSelection('2', shown, sessions);
+  assert.equal(numbered.kind, 'selected');
+  assert.equal(numbered.id, shown[1].id);
+
+  const uniquePrefix = resolvePickerSelection(`session-${unique}-g`, shown, sessions);
+  assert.equal(uniquePrefix.kind, 'selected');
+  assert.equal(uniquePrefix.id, sessions[2].id);
+
+  const ambiguous = resolvePickerSelection(`session-${unique}`, shown, sessions);
+  assert.equal(ambiguous.kind, 'invalid');
+  assert.ok(
+    ambiguous.message.includes('Ambiguous session prefix'),
+    `Expected ambiguity warning.\n${JSON.stringify(ambiguous)}`
+  );
+
+  const invalid = resolvePickerSelection('not-a-session', shown, sessions);
+  assert.equal(invalid.kind, 'invalid');
+  assert.ok(
+    invalid.message.includes('No session found'),
+    `Expected missing-session warning.\n${JSON.stringify(invalid)}`
+  );
 });
 
 test('resume: findLatestSessionForDir returns newest session for cwd', async () => {
@@ -1012,6 +1123,34 @@ test('slash /session-search finds saved sessions without hijacking /search', asy
   }
 });
 
+test('session search supports Chinese queries', async () => {
+  const { searchSessions } = await import('../dist/session/search.js');
+  const storage = await import('../dist/session/storage.js');
+  const sessionId = storage.createSessionId();
+  const metaFile = join(dirname(storage.getSessionFilePath(sessionId)), `${sessionId}.meta.json`);
+  const needle = `钱包余额异常${Date.now()}`;
+
+  try {
+    storage.appendToSession(sessionId, { role: 'user', content: `请帮我检查${needle}` });
+    storage.appendToSession(sessionId, { role: 'assistant', content: `已经定位到${needle}` });
+    storage.updateSessionMeta(sessionId, {
+      model: 'local/test',
+      workDir: process.cwd(),
+      turnCount: 1,
+      messageCount: 2,
+    });
+
+    const matches = searchSessions('钱包余额');
+    assert.ok(
+      matches.some((match) => match.session.id === sessionId),
+      `Expected Chinese query to match saved session.\n${JSON.stringify(matches, null, 2)}`
+    );
+  } finally {
+    rmSync(storage.getSessionFilePath(sessionId), { force: true });
+    rmSync(metaFile, { force: true });
+  }
+});
+
 test('slash /resume without id restores the latest non-current session', async () => {
   const { handleSlashCommand } = await import('../dist/agent/commands.js');
   const storage = await import('../dist/session/storage.js');
@@ -1083,11 +1222,18 @@ test('slash /resume without id restores the latest non-current session', async (
 test('error classifier maps common failure modes', async () => {
   const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
 
-  assert.deepEqual(classifyAgentError('fetch failed').category, 'network');
+  const network = classifyAgentError('fetch failed');
+  assert.equal(network.category, 'network');
+  assert.equal(network.maxRetries, 1);
   assert.deepEqual(classifyAgentError('429 rate limit exceeded').category, 'rate_limit');
   assert.deepEqual(classifyAgentError('verification failed: insufficient balance').category, 'payment');
   assert.deepEqual(classifyAgentError('prompt is too long').category, 'context_limit');
   assert.deepEqual(classifyAgentError('500 internal server error').category, 'server');
+
+  const timeout = classifyAgentError('Request timed out after 30000ms');
+  assert.equal(timeout.category, 'timeout');
+  assert.equal(timeout.isTransient, true);
+  assert.equal(timeout.maxRetries, 1);
 });
 
 // Regression: Cheetah saw an upstream 503 that wasn't auto-retried because
@@ -1178,6 +1324,27 @@ test('package exports plugin-sdk subpath', async () => {
   assert.ok(pkg.exports, 'Expected package.json exports field');
   assert.ok(pkg.exports['./plugin-sdk'], 'Expected ./plugin-sdk export');
   assert.equal(pkg.exports['./plugin-sdk'].default, './dist/plugin-sdk/index.js');
+});
+
+test('daemon status works in ESM runtime without require()', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-daemon-esm-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  writeFileSync(join(blockrunDir, 'franklin.pid'), `${process.pid}\n`);
+
+  try {
+    const result = await runCli('', {
+      args: [DIST, 'daemon', 'status'],
+      env: { HOME: fakeHome },
+      timeoutMs: 10_000,
+    });
+
+    assert.equal(result.code, 0, `Expected daemon status to exit 0.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    const combined = result.stdout + result.stderr;
+    assert.ok(!combined.includes('require is not defined'), `ESM runtime should not crash on require().\n${combined}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 });
 
 // ─── Bash Guard (Risk Classifier) ────────────────────────────────────────
@@ -1541,6 +1708,69 @@ test('streamCompletion payload: Sonnet 4.6 must include thinking field', async (
 test('streamCompletion payload: non-Anthropic model must not include thinking field', async () => {
   const body = await captureRequestBodyForModel('openai/gpt-5.4');
   assert.equal(body.thinking, undefined, 'non-Anthropic must not get thinking flag');
+});
+
+test('ModelClient: stream idle timeout surfaces a real timeout error instead of hanging forever', async () => {
+  const originalTimeout = process.env.FRANKLIN_MODEL_IDLE_TIMEOUT_MS;
+  const server = createServer((_req, res) => {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+    // Intentionally never write any SSE frames.
+  });
+
+  const port = await listenOnRandomPort(server);
+  process.env.FRANKLIN_MODEL_IDLE_TIMEOUT_MS = '50';
+
+  try {
+    const client = new ModelClient({ apiUrl: `http://127.0.0.1:${port}`, chain: 'base' });
+    await assert.rejects(
+      () => client.complete({
+        model: 'local/test-model',
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 128,
+        stream: true,
+      }),
+      /timed out after 50ms/i,
+    );
+  } finally {
+    if (originalTimeout === undefined) delete process.env.FRANKLIN_MODEL_IDLE_TIMEOUT_MS;
+    else process.env.FRANKLIN_MODEL_IDLE_TIMEOUT_MS = originalTimeout;
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
+test('ModelClient: request timeout surfaces before waiting on a hung response forever', async () => {
+  const originalRequestTimeout = process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS;
+  const originalStreamTimeout = process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS;
+  const server = createServer(async (_req, _res) => {
+    await new Promise(() => {}); // Never send response headers.
+  });
+
+  const port = await listenOnRandomPort(server);
+  process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS = '50';
+  process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS = '5000';
+
+  try {
+    const client = new ModelClient({ apiUrl: `http://127.0.0.1:${port}`, chain: 'base' });
+    await assert.rejects(
+      () => client.complete({
+        model: 'local/test-model',
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 128,
+        stream: true,
+      }),
+      /request timed out after 50ms/i,
+    );
+  } finally {
+    if (originalRequestTimeout === undefined) delete process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS;
+    else process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS = originalRequestTimeout;
+    if (originalStreamTimeout === undefined) delete process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS;
+    else process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS = originalStreamTimeout;
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
 });
 
 // ─── Image generation → Content cost tracking ────────────────────────────
@@ -2448,6 +2678,68 @@ test('telemetry: opt-in gate defaults to disabled, toggles, never exposes conten
 
   // cleanup
   rmSync(fakeHome, { recursive: true, force: true });
+});
+
+test('telemetry: recordLatestSessionIfEnabled works in ESM runtime when telemetry is enabled', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-telemetry-esm-'));
+  const workDir = join(fakeHome, 'workspace');
+  const blockrunDir = join(fakeHome, '.blockrun');
+  const sessionsDir = join(blockrunDir, 'sessions');
+  const telemetryUrl = new URL('../dist/telemetry/store.js', import.meta.url).href;
+  mkdirSync(workDir, { recursive: true });
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const sessionId = 'session-telemetry-esm';
+  writeFileSync(join(blockrunDir, 'telemetry-consent.json'), JSON.stringify({ enabled: true, enabledAt: Date.now() }, null, 2));
+  writeFileSync(join(sessionsDir, `${sessionId}.jsonl`), '{"role":"user","content":"hello"}\n{"role":"assistant","content":"world"}\n');
+  writeFileSync(join(sessionsDir, `${sessionId}.meta.json`), JSON.stringify({
+    id: sessionId,
+    model: 'local/test-model',
+    workDir,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    turnCount: 1,
+    messageCount: 2,
+    inputTokens: 12,
+    outputTokens: 8,
+    costUsd: 0.001,
+    savedVsOpusUsd: 0,
+  }, null, 2));
+
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', [
+        '--input-type=module',
+        '-e',
+        `
+          const telemetry = await import(${JSON.stringify(telemetryUrl)});
+          telemetry.recordLatestSessionIfEnabled(process.cwd(), 'base');
+          process.stdout.write(JSON.stringify(telemetry.readAllRecords()));
+        `,
+      ], {
+        cwd: workDir,
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+      proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stdout, stderr });
+        else reject(new Error(`telemetry esm subprocess failed (${code})\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      });
+      proc.on('error', reject);
+    });
+
+    const records = JSON.parse(result.stdout.trim());
+    assert.equal(records.length, 1, `Expected one telemetry record.\n${result.stdout}`);
+    assert.equal(records[0].model, 'local/test-model');
+    assert.equal(records[0].messages, 2);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 });
 
 test('Exa capabilities (Search/Answer/ReadUrls) register with right shape', async () => {
