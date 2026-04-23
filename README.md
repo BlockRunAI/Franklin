@@ -428,7 +428,7 @@ src/
 Start with **zero dollars**. Franklin defaults to free NVIDIA models that need no wallet funding.
 
 ```bash
-franklin --model nvidia/nemotron-ultra-253b
+franklin --model nvidia/qwen3-next-80b-a3b-thinking
 ```
 
 When you fund the wallet, Franklin gets more purchasing power: Sonnet, Opus, GPT, Gemini, Grok, and paid tools like Exa, DALL-E, and CoinGecko Pro.
