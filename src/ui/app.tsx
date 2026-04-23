@@ -756,7 +756,16 @@ function RunCodeApp({
             break;
           }
           case 'usage': {
-            setCurrentModel(event.model);
+            // DO NOT setCurrentModel(event.model) here. currentModel
+            // represents the user's selection (e.g. 'blockrun/auto'),
+            // not what the router resolved for this specific turn. The
+            // per-turn resolved model is already captured in
+            // turnModelRef (rendered in the turn-summary line below
+            // each response) and in onModelChange('system') when the
+            // loop itself decides to swap (empty-response / 402 fallback).
+            // Overriding currentModel from every usage event made the
+            // status bar permanently show the last resolved model and
+            // create a false impression that auto mode was stuck.
             setTurnTokens(prev => ({
               input: prev.input + event.inputTokens,
               output: prev.output + event.outputTokens,
