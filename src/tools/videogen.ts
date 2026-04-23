@@ -3,9 +3,20 @@
  * /v1/videos/generations endpoint. Uses x402 payment (Base or Solana).
  *
  * Default model `xai/grok-imagine-video` returns an 8-second clip for ~$0.42.
- * The endpoint is synchronous-over-polling: the HTTP connection stays open
- * until the upstream xAI job finishes (typically 20–60s, timeout 180s), so
- * the caller only needs to issue a single POST.
+ * Seedance 2.0 (bytedance/seedance-2.0 and -fast) runs longer — up to a few
+ * minutes for a 10s clip.
+ *
+ * Flow (async since blockrun@654cd35):
+ *   1. POST /v1/videos/generations with signed x-payment header. The server
+ *      verifies payment (does NOT settle), submits the upstream job, and
+ *      returns 202 { id, poll_url, status: "queued" }.
+ *   2. GET the poll_url with the SAME x-payment header every ~5s until
+ *      status=completed. On the first completed poll the server backs up
+ *      the MP4 to GCS, settles payment, and returns the video URL.
+ *   3. Download the MP4 and write it locally.
+ *
+ * If the upstream job fails, the server returns status=failed and no USDC
+ * is ever transferred. If the client never polls, no charge either.
  */
 
 import fs from 'node:fs';
@@ -44,9 +55,12 @@ export interface VideoGenDeps {
 const DEFAULT_MODEL = 'xai/grok-imagine-video';
 const DEFAULT_DURATION = 8;
 const PRICE_PER_SECOND_USD = 0.05;
-// Long ceiling — the endpoint synchronously waits for xAI's async job (up to
-// ~180s). Give ourselves a bit of headroom for the GCS backup + settle step.
-const GEN_TIMEOUT_MS = 210_000;
+// POST submit is fast (~3-20s). Generation is async upstream (60-300s for
+// Seedance, 20-90s for Grok). We poll until completed, then download. The
+// server signs authorizations for 600s — keep the overall budget below that.
+const SUBMIT_TIMEOUT_MS = 30_000;
+const POLL_INTERVAL_MS = 5_000;
+const POLL_MAX_WAIT_MS = 480_000; // 8 min — covers Seedance worst case
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 
 function estimateVideoCostUsd(durationSeconds = DEFAULT_DURATION): number {
@@ -164,28 +178,36 @@ function buildExecute(deps: VideoGenDeps) {
       'User-Agent': `franklin/${VERSION}`,
     };
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), GEN_TIMEOUT_MS);
-    // Abort on user cancel too
-    const onAbort = () => controller.abort();
-    ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
+    const onAbort = (ctrl: AbortController) => () => ctrl.abort();
+
+    // Phase 1: submit the job. First POST triggers a 402; we sign and retry.
+    // The signed paymentHeaders must be reused on every GET poll — the server
+    // uses the authorization to verify identity on each poll and settles on
+    // the first completed response.
+    const submitCtrl = new AbortController();
+    const submitTimeout = setTimeout(() => submitCtrl.abort(), SUBMIT_TIMEOUT_MS);
+    const submitAbort = onAbort(submitCtrl);
+    ctx.abortSignal.addEventListener('abort', submitAbort, { once: true });
+
+    let paymentHeaders: Record<string, string> | null = null;
+    let submitResult: { id?: string; poll_url?: string };
 
     try {
       let response = await fetch(endpoint, {
         method: 'POST',
-        signal: controller.signal,
+        signal: submitCtrl.signal,
         headers,
         body,
       });
 
       if (response.status === 402) {
-        const paymentHeaders = await signPayment(response, chain, endpoint);
+        paymentHeaders = await signPayment(response, chain, endpoint);
         if (!paymentHeaders) {
           return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };
         }
         response = await fetch(endpoint, {
           method: 'POST',
-          signal: controller.signal,
+          signal: submitCtrl.signal,
           headers: { ...headers, ...paymentHeaders },
           body,
         });
@@ -194,26 +216,74 @@ function buildExecute(deps: VideoGenDeps) {
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
         return {
-          output: `Video generation failed (${response.status}): ${errText.slice(0, 300)}`,
+          output: `Video submit failed (${response.status}): ${errText.slice(0, 300)}`,
           isError: true,
         };
       }
 
-      const result = (await response.json()) as {
-        data?: { url?: string; source_url?: string; duration_seconds?: number; request_id?: string }[];
-      };
-      const videoData = result.data?.[0];
-      if (!videoData?.url) {
-        return { output: 'No video URL returned from API', isError: true };
+      submitResult = await response.json();
+    } catch (err) {
+      const msg = (err as Error).message || '';
+      if (msg.includes('abort')) {
+        return {
+          output: `Video submit timed out or was aborted after ${Math.round(SUBMIT_TIMEOUT_MS / 1000)}s.`,
+          isError: true,
+        };
       }
+      return { output: `Error submitting video job: ${msg}`, isError: true };
+    } finally {
+      clearTimeout(submitTimeout);
+      ctx.abortSignal.removeEventListener('abort', submitAbort);
+    }
 
+    if (!submitResult.poll_url || !paymentHeaders) {
+      return { output: 'API did not return a poll_url for the video job', isError: true };
+    }
+
+    // Phase 2: poll GET /v1/videos/generations/{id} with the SAME signed
+    // x-payment header until the job completes. Server settles on the first
+    // completed poll and returns the backed-up video URL.
+    const origin = new URL(apiUrl).origin;
+    const pollEndpoint = submitResult.poll_url.startsWith('http')
+      ? submitResult.poll_url
+      : `${origin}${submitResult.poll_url}`;
+
+    const outcome = await pollUntilReady(pollEndpoint, { ...headers, ...paymentHeaders }, ctx.abortSignal);
+    if (outcome.kind === 'timed_out') {
+      return {
+        output:
+          `Video generation did not complete within ${Math.round(POLL_MAX_WAIT_MS / 1000)}s. ` +
+          `No USDC was charged (settlement only fires on completion).`,
+        isError: true,
+      };
+    }
+    if (outcome.kind === 'failed') {
+      return {
+        output: `Video generation failed upstream: ${outcome.error ?? 'unknown error'}. No USDC was charged.`,
+        isError: true,
+      };
+    }
+    const videoData = outcome.data;
+    const videoUrl = videoData.url;
+    if (!videoUrl) {
+      return { output: 'No video URL returned from API', isError: true };
+    }
+
+    try {
       // Download the MP4
       const dlCtrl = new AbortController();
       const dlTimeout = setTimeout(() => dlCtrl.abort(), DOWNLOAD_TIMEOUT_MS);
-      const vidResp = await fetch(videoData.url, { signal: dlCtrl.signal });
-      clearTimeout(dlTimeout);
+      const dlAbort = onAbort(dlCtrl);
+      ctx.abortSignal.addEventListener('abort', dlAbort, { once: true });
+      let vidResp: Response;
+      try {
+        vidResp = await fetch(videoUrl, { signal: dlCtrl.signal });
+      } finally {
+        clearTimeout(dlTimeout);
+        ctx.abortSignal.removeEventListener('abort', dlAbort);
+      }
       if (!vidResp.ok) {
-        return { output: `Video fetched URL but download failed (${vidResp.status}): ${videoData.url}`, isError: true };
+        return { output: `Video fetched URL but download failed (${vidResp.status}): ${videoUrl}`, isError: true };
       }
       const buffer = Buffer.from(await vidResp.arrayBuffer());
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -259,16 +329,91 @@ function buildExecute(deps: VideoGenDeps) {
       const msg = (err as Error).message || '';
       if (msg.includes('abort')) {
         return {
-          output: `Video generation timed out or was aborted (limit ${Math.round(GEN_TIMEOUT_MS / 1000)}s).`,
+          output: `Video download timed out or was aborted after ${Math.round(DOWNLOAD_TIMEOUT_MS / 1000)}s.`,
           isError: true,
         };
       }
       return { output: `Error: ${msg}`, isError: true };
-    } finally {
-      clearTimeout(timeout);
-      ctx.abortSignal.removeEventListener('abort', onAbort);
     }
   };
+}
+
+// ─── Polling ───────────────────────────────────────────────────────────────
+
+interface VideoDataItem {
+  url?: string;
+  source_url?: string;
+  duration_seconds?: number;
+  request_id?: string;
+}
+
+interface VideoPollResponse {
+  id?: string;
+  status?: 'queued' | 'in_progress' | 'completed' | 'failed';
+  data?: VideoDataItem[];
+  error?: string;
+  note?: string;
+}
+
+type PollOutcome =
+  | { kind: 'completed'; data: VideoDataItem }
+  | { kind: 'failed'; error?: string }
+  | { kind: 'timed_out' };
+
+/**
+ * Poll the GET /v1/videos/generations/{id} endpoint until the job reaches a
+ * terminal state. Reuses the caller's signed x-payment header verbatim on
+ * every request — the server verifies the same authorization each poll and
+ * settles on the first completed response.
+ */
+async function pollUntilReady(
+  pollEndpoint: string,
+  headers: Record<string, string>,
+  userAbort: AbortSignal,
+): Promise<PollOutcome> {
+  const deadline = Date.now() + POLL_MAX_WAIT_MS;
+
+  while (Date.now() < deadline) {
+    if (userAbort.aborted) throw new Error('aborted');
+
+    const resp = await fetch(pollEndpoint, { method: 'GET', headers, signal: userAbort });
+
+    // 202 = still queued/in_progress; 200 = completed or failed.
+    if (resp.status === 202 || resp.status === 200) {
+      const body = (await resp.json().catch(() => ({}))) as VideoPollResponse;
+      if (body.status === 'completed' && body.data?.[0]?.url) {
+        return { kind: 'completed', data: body.data[0] };
+      }
+      if (body.status === 'failed') {
+        return { kind: 'failed', error: body.error };
+      }
+      // queued / in_progress — sleep and try again.
+    } else if (resp.status === 429 || resp.status >= 500) {
+      // Transient — back off briefly. Fall through to the sleep below.
+    } else {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`Poll failed (${resp.status}): ${text.slice(0, 300)}`);
+    }
+
+    await sleep(POLL_INTERVAL_MS, userAbort);
+  }
+
+  return { kind: 'timed_out' };
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error('aborted'));
+    const t = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new Error('aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 // ─── Payment ───────────────────────────────────────────────────────────────
@@ -297,7 +442,9 @@ async function signPayment(
         {
           resourceUrl: details.resource?.url || endpoint,
           resourceDescription: details.resource?.description || 'Franklin video generation',
-          maxTimeoutSeconds: details.maxTimeoutSeconds || 300,
+          // Video poll can take up to 8 min; honor the server's advertised
+          // value (blockrun sends 600s) and fall back to 600 not 300.
+          maxTimeoutSeconds: details.maxTimeoutSeconds || 600,
           extra: details.extra as Record<string, unknown> | undefined,
         },
       );
