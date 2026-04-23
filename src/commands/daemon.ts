@@ -35,7 +35,6 @@ function isRunning(pid: number): boolean {
     }
   } catch { /* fall through to ps */ }
   try {
-    const { execSync } = require('node:child_process') as typeof import('node:child_process');
     const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
     return /franklin|runcode|node.*dist\/index/.test(cmd);
   } catch {

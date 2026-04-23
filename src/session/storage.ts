@@ -199,10 +199,7 @@ export function loadSessionHistory(sessionId: string): Dialogue[] {
   }
 }
 
-/**
- * List all saved sessions, newest first.
- */
-export function listSessions(): SessionMeta[] {
+function readSessionMetas(includeGhosts = false): SessionMeta[] {
   const sessionsDir = getSessionsDir();
   try {
     const files = fs.readdirSync(sessionsDir)
@@ -216,12 +213,19 @@ export function listSessions(): SessionMeta[] {
         metas.push(meta);
       } catch { /* skip corrupted */ }
     }
-    // Filter out ghost sessions (0 messages)
-    const filtered = metas.filter(m => m.messageCount > 0);
-    return filtered.sort((a, b) => b.updatedAt - a.updatedAt);
+
+    const visible = includeGhosts ? metas : metas.filter(m => m.messageCount > 0);
+    return visible.sort((a, b) => b.updatedAt - a.updatedAt);
   } catch {
     return [];
   }
+}
+
+/**
+ * List all saved sessions, newest first.
+ */
+export function listSessions(): SessionMeta[] {
+  return readSessionMetas(false);
 }
 
 /**
@@ -241,20 +245,22 @@ export function findLatestSessionByChannel(channel: string): SessionMeta | undef
  * Accepts optional activeSessionId to protect from deletion.
  */
 export function pruneOldSessions(activeSessionId?: string): void {
-  const sessions = listSessions();
-  if (sessions.length <= MAX_SESSIONS) return;
+  const sessions = readSessionMetas(false);
+  const allSessions = readSessionMetas(true);
 
-  const toDelete = sessions
-    .slice(MAX_SESSIONS)
-    .filter(s => s.id !== activeSessionId); // Never delete active session
-  for (const s of toDelete) {
-    try { fs.unlinkSync(sessionPath(s.id)); } catch { /* ok */ }
-    try { fs.unlinkSync(metaPath(s.id)); } catch { /* ok */ }
+  if (sessions.length > MAX_SESSIONS) {
+    const toDelete = sessions
+      .slice(MAX_SESSIONS)
+      .filter(s => s.id !== activeSessionId); // Never delete active session
+    for (const s of toDelete) {
+      try { fs.unlinkSync(sessionPath(s.id)); } catch { /* ok */ }
+      try { fs.unlinkSync(metaPath(s.id)); } catch { /* ok */ }
+    }
   }
 
   // Also clean up ghost sessions (0 messages, older than 5 minutes)
   const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-  for (const s of sessions) {
+  for (const s of allSessions) {
     if (s.id === activeSessionId) continue;
     if (s.messageCount === 0 && s.createdAt < fiveMinAgo) {
       try { fs.unlinkSync(sessionPath(s.id)); } catch { /* ok */ }

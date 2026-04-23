@@ -42,6 +42,11 @@ function modelShort(model: string): string {
   return slash >= 0 ? model.slice(slash + 1) : model;
 }
 
+type SessionPickerSelection =
+  | { kind: 'cancel' }
+  | { kind: 'selected'; id: string }
+  | { kind: 'invalid'; message: string };
+
 /**
  * Resolve a user-provided session identifier to a full session ID.
  * Supports exact match and unambiguous prefix match (minimum 8 chars).
@@ -50,7 +55,13 @@ function modelShort(model: string): string {
 export function resolveSessionIdInput(input: string):
   | { ok: true; id: string }
   | { ok: false; error: 'not-found' | 'ambiguous'; candidates: SessionMeta[] } {
-  const sessions = listSessions();
+  return resolveSessionIdFromList(input, listSessions());
+}
+
+function resolveSessionIdFromList(
+  input: string,
+  sessions: SessionMeta[],
+): { ok: true; id: string } | { ok: false; error: 'not-found' | 'ambiguous'; candidates: SessionMeta[] } {
   // Exact match first
   const exact = sessions.find((s) => s.id === input);
   if (exact) return { ok: true, id: exact.id };
@@ -63,6 +74,41 @@ export function resolveSessionIdInput(input: string):
   }
 
   return { ok: false, error: 'not-found', candidates: [] };
+}
+
+export function resolvePickerSelection(
+  input: string,
+  shown: SessionMeta[],
+  sessions: SessionMeta[]
+): SessionPickerSelection {
+  const trimmed = input.trim();
+  if (!trimmed) return { kind: 'cancel' };
+
+  const num = parseInt(trimmed, 10);
+  if (!isNaN(num) && num >= 1 && num <= shown.length) {
+    return { kind: 'selected', id: shown[num - 1].id };
+  }
+
+  const exact = sessions.find((s) => s.id === trimmed);
+  if (exact) return { kind: 'selected', id: exact.id };
+
+  const resolved = resolveSessionIdFromList(trimmed, sessions);
+  if (resolved.ok) {
+    return { kind: 'selected', id: resolved.id };
+  }
+
+  if (resolved.error === 'ambiguous') {
+    const preview = resolved.candidates
+      .slice(0, 3)
+      .map((candidate) => candidate.id)
+      .join(', ');
+    return {
+      kind: 'invalid',
+      message: `Ambiguous session prefix: ${trimmed}${preview ? ` (${preview}${resolved.candidates.length > 3 ? ', …' : ''})` : ''}`,
+    };
+  }
+
+  return { kind: 'invalid', message: `No session found matching: ${trimmed}` };
 }
 
 /**
@@ -116,18 +162,24 @@ export async function pickSession(opts: { workDir?: string } = {}): Promise<stri
   });
 
   return new Promise<string | null>((resolve) => {
-    rl.question(chalk.bold('  session> '), (answer) => {
-      rl.close();
-      const trimmed = answer.trim();
-      if (!trimmed) { resolve(null); return; }
-      const num = parseInt(trimmed, 10);
-      if (!isNaN(num) && num >= 1 && num <= shown.length) {
-        resolve(shown[num - 1].id);
-        return;
-      }
-      // Allow raw ID as well
-      const match = sessions.find(s => s.id === trimmed || s.id.startsWith(trimmed));
-      resolve(match ? match.id : null);
-    });
+    const prompt = () => {
+      rl.question(chalk.bold('  session> '), (answer) => {
+        const selection = resolvePickerSelection(answer, shown, sessions);
+        if (selection.kind === 'cancel') {
+          rl.close();
+          resolve(null);
+          return;
+        }
+        if (selection.kind === 'selected') {
+          rl.close();
+          resolve(selection.id);
+          return;
+        }
+        console.error(chalk.yellow(`  ${selection.message}`));
+        prompt();
+      });
+    };
+
+    prompt();
   });
 }

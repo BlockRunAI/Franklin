@@ -97,7 +97,7 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     'deadline exceeded',
   ])) {
     return {
-      category: 'timeout', label: 'Timeout', isTransient: true,
+      category: 'timeout', label: 'Timeout', isTransient: true, maxRetries: 1,
       suggestion: 'Check your network connection. Use /retry to try again.',
     };
   }
@@ -114,7 +114,7 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     'dns resolution',
   ])) {
     return {
-      category: 'network', label: 'Network', isTransient: true,
+      category: 'network', label: 'Network', isTransient: true, maxRetries: 1,
       suggestion: 'Check your network connection. Use /retry to try again.',
     };
   }

@@ -38,9 +38,9 @@ export interface SearchOptions {
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length > 1);
+    .replace(/[^\p{L}\p{N}_\s]/gu, ' ')
+    .split(/\s+/u)
+    .filter(t => t.length > 1 || /[^\x00-\x7F]/.test(t));
 }
 
 function parseQuery(query: string): { terms: string[]; phrases: string[] } {
