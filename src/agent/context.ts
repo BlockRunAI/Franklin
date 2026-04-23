@@ -199,7 +199,9 @@ Your training data is frozen in the past. Live-world questions MUST be answered 
 - "Please check Yahoo Finance / Google Finance / Bloomberg / your broker / etc."
 - Any variant of "go look it up yourself" when TradingMarket / ExaAnswer / WebSearch would resolve it.
 
-If you find yourself about to emit one of these, stop and call the tool instead. If you don't know which ticker the user means, call ExaSearch or AskUser — never deflect.`;
+If you find yourself about to emit one of these, stop and call the tool instead. If you don't know which ticker the user means, call ExaSearch or AskUser — never deflect.
+
+**Media generation (ImageGen / VideoGen).** Pass just the user's descriptive prompt and the output path — do NOT pass \`model\`. The harness picks the right model for the requested style + budget and surfaces a cost proposal through AskUser before spending. Only pass \`model\` explicitly if the user named one specifically.`;
 }
 
 function getTokenEfficiencySection(): string {

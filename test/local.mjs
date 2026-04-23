@@ -3167,6 +3167,39 @@ test('dynamic tool visibility: FRANKLIN_DYNAMIC_TOOLS=0 opts out of the split', 
   }
 });
 
+test('gateway-models: estimateCostUsd dispatches per billing_mode with 5% margin', async () => {
+  const { estimateCostUsd } = await import('../dist/gateway-models.js');
+
+  // per_image: base * quantity * 1.05
+  const perImage = { id: 'openai/gpt-image-2', name: 'GPT Image 2', billing_mode: 'per_image', categories: ['image'], pricing: { per_image: 0.06 } };
+  assert.equal(estimateCostUsd(perImage, { quantity: 1 }), +(0.06 * 1.05).toFixed(6));
+  assert.equal(estimateCostUsd(perImage, { quantity: 3 }), +(0.06 * 3 * 1.05).toFixed(6));
+
+  // per_second: base * duration * 1.05, honors user override
+  const perSecond = { id: 'bytedance/seedance-2.0-fast', name: 'Seedance Fast', billing_mode: 'per_second', categories: ['video'],
+                     pricing: { per_second: 0.15, default_duration_seconds: 5, max_duration_seconds: 10 } };
+  assert.equal(estimateCostUsd(perSecond, { duration_seconds: 5 }), +(0.15 * 5 * 1.05).toFixed(6));
+  assert.equal(estimateCostUsd(perSecond, { duration_seconds: 10 }), +(0.15 * 10 * 1.05).toFixed(6));
+  // Falls back to default_duration_seconds when unspecified
+  assert.equal(estimateCostUsd(perSecond, {}), +(0.15 * 5 * 1.05).toFixed(6));
+
+  // per_track
+  const perTrack = { id: 'minimax/music-2.5+', name: 'Minimax Music', billing_mode: 'per_track', categories: ['music'], pricing: { per_track: 0.15 } };
+  assert.equal(estimateCostUsd(perTrack), +(0.15 * 1.05).toFixed(6));
+
+  // flat
+  const flat = { id: 'zai/glm-5.1', name: 'GLM-5.1', billing_mode: 'flat', categories: ['chat'], pricing: { flat: 0.001 } };
+  assert.equal(estimateCostUsd(flat), +(0.001 * 1.05).toFixed(6));
+
+  // free always zero
+  const free = { id: 'nvidia/glm-4.7', name: 'GLM-4.7', billing_mode: 'free', categories: ['chat'], pricing: { input: 0, output: 0 } };
+  assert.equal(estimateCostUsd(free), 0);
+
+  // paid is token-metered; estimator returns 0 (unknowable pre-call)
+  const paid = { id: 'openai/gpt-5.4', name: 'GPT-5.4', billing_mode: 'paid', categories: ['chat'], pricing: { input: 2.5, output: 15 } };
+  assert.equal(estimateCostUsd(paid), 0);
+});
+
 test('turn-analyzer: parseAnalysis extracts all five fields + validates enums', async () => {
   const { parseAnalysis } = await import('../dist/agent/turn-analyzer.js');
 

@@ -23,6 +23,8 @@ import {
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import type { ContentLibrary } from '../content/library.js';
+import { ModelClient } from '../agent/llm.js';
+import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
 
 interface VideoGenInput {
   prompt: string;
@@ -60,8 +62,51 @@ function buildExecute(deps: VideoGenDeps) {
 
     if (!prompt) return { output: 'Error: prompt is required', isError: true };
 
-    const videoModel = model || DEFAULT_MODEL;
-    const duration = duration_seconds ?? DEFAULT_DURATION;
+    let videoModel = model || DEFAULT_MODEL;
+    let duration = duration_seconds ?? DEFAULT_DURATION;
+
+    // ── Media router + AskUser flow (video bills per second, always ask) ──
+    const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
+    if (!model && !autoApprove && ctx.onAskUser) {
+      try {
+        const chain = loadChain();
+        const client = new ModelClient({ apiUrl: API_URLS[chain], chain });
+        const proposal = await analyzeMediaRequest({
+          kind: 'video',
+          prompt,
+          durationSeconds: duration_seconds,
+          client,
+          signal: ctx.abortSignal,
+        });
+        if (proposal) {
+          const { question, options } = renderProposalForAskUser(proposal, prompt);
+          const labels = options.map(o => o.label);
+          const answer = await ctx.onAskUser(question, labels);
+          const chosen = options.find(o => o.label === answer) ?? { id: 'cancel' };
+          switch (chosen.id) {
+            case 'cheaper':
+              videoModel = proposal.cheaper?.model ?? proposal.recommended.model;
+              break;
+            case 'premium':
+              videoModel = proposal.premium?.model ?? proposal.recommended.model;
+              break;
+            case 'cancel':
+              return {
+                output: `## Video generation cancelled\n\nNo USDC was spent.`,
+              };
+            case 'recommended':
+            default:
+              videoModel = proposal.recommended.model;
+          }
+          // Use the proposal's duration — the router honored the user's
+          // duration_seconds or filled in the model's default.
+          if (proposal.durationSeconds) duration = proposal.durationSeconds;
+        }
+      } catch {
+        // Router / AskUser failed — fall through to legacy default.
+      }
+    }
+
     const estCost = estimateVideoCostUsd(duration);
 
     if (contentId && deps.library) {
