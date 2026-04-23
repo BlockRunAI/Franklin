@@ -10,6 +10,7 @@ Franklin is an autonomous AI agent that runs directly in VS Code. It doesn't jus
 
 - **Chat interface** — Side panel chat powered by the Franklin agent engine
 - **55+ models** — Claude Opus/Sonnet/Haiku, Gemini, GPT, Grok, Kimi, DeepSeek, and more, switchable mid-session
+- **Image & video generation** — `/image` and `/video` slash commands; the agent picks the best model per prompt and shows a cost preview before spending
 - **Smart routing** — Auto/Eco/Premium profiles pick the right model per task automatically
 - **Extended thinking** — Watch the model reason step-by-step, collapsible per turn
 - **Workflow timeline** — Visual timeline of every tool call and action taken
@@ -39,6 +40,11 @@ Franklin is an autonomous AI agent that runs directly in VS Code. It doesn't jus
 ---
 
 ## Changelog
+
+### 0.3.0
+- Added **image & video generation** — `/image` and `/video` slash commands prefill a natural-language prompt; the agent picks the right model, shows a cost preview with cheaper/premium alternatives, and only spends after you confirm
+- Added **in-chat confirmation prompts** — when the agent needs a yes/no or a choice (e.g. media cost preview), a prompt card now appears inline with buttons instead of silently hanging
+- Synced with Franklin core v3.8.31–v3.8.34: LLM-routed media model selection, model-choice-preserving status bar, exit/quit mid-turn, reliability pass (ESM, timeouts, retry budget)
 
 ### 0.2.1
 - Fixed model switching bug — selected model was reverting to default (Gemini 2.5 Flash) after each turn, because `baseModel` wasn't being updated alongside `model`

@@ -197,6 +197,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
 
   private webview?: vscode.Webview;
   private resolveInput?: (value: string | null) => void;
+  private resolveAskUser?: (value: string) => void;
   private agentRunning = false;
   private walletRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   private agentConfig?: { model: string; baseModel?: string };
@@ -255,9 +256,34 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   }
 
   /** Run doctor checks and push results to webview */
+  /**
+   * Detect ImageGen / VideoGen output and send the generated file to the
+   * webview so it can show an inline preview. Matches the output format
+   * from src/tools/imagegen.ts and src/tools/videogen.ts.
+   */
+  private maybeSendMediaPreview(output: string): void {
+    if (!this.webview) return;
+    const match = output.match(/^(Image|Video) saved to (\S+?\.(?:png|jpg|jpeg|webp|gif|mp4|webm|mov))/i);
+    if (!match) return;
+    const kind = match[1].toLowerCase() === 'video' ? 'video' : 'image';
+    const filePath = match[2];
+    try {
+      const fileUri = vscode.Uri.file(filePath);
+      const webviewUri = this.webview.asWebviewUri(fileUri).toString();
+      void this.webview.postMessage({ type: 'mediaPreview', kind, path: filePath, src: webviewUri });
+    } catch {
+      /* path not previewable — skip silently */
+    }
+  }
+
   private async runDoctor(): Promise<void> {
     try {
-      const checks = await runDoctorChecks();
+      const allChecks = await runDoctorChecks();
+      // Drop the Franklin core version check — it reads the extension's
+      // package.json by mistake (bundled __dirname) and compares to the
+      // npm-published core version, which is apples-to-oranges. Extension
+      // users upgrade via the VS Code Marketplace, not npm.
+      const checks = allChecks.filter(c => c.name !== 'Franklin');
       void this.webview?.postMessage({ type: 'doctorResults', checks });
     } catch (e) {
       void this.webview?.postMessage({ type: 'doctorResults', checks: [], error: String(e) });
@@ -392,9 +418,12 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   private initWebview(webview: vscode.Webview): void {
     this.webview = webview;
 
+    const workspaceFolders = vscode.workspace.workspaceFolders?.map(f => f.uri) ?? [];
     webview.options = {
       enableScripts: true,
-      localResourceRoots: [this.extensionUri],
+      // Allow webview to load images/videos from the extension dir AND any open workspace folder,
+      // so ImageGen / VideoGen outputs saved into the workspace can be previewed inline.
+      localResourceRoots: [this.extensionUri, ...workspaceFolders],
     };
 
     webview.html = getWebviewHtml(webview, this.extensionUri);
@@ -410,6 +439,9 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
       this.walletRefreshTimer = undefined;
     }
     this.finishInput(null);
+    const askR = this.resolveAskUser;
+    this.resolveAskUser = undefined;
+    askR?.('');
   }
 
   private async pushWelcome() {
@@ -482,6 +514,12 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
       this.finishInput(t);
       return;
     }
+    if (msg.type === 'askUserReply' && typeof msg.text === 'string') {
+      const r = this.resolveAskUser;
+      this.resolveAskUser = undefined;
+      r?.(msg.text);
+      return;
+    }
     if (msg.type === 'stop') {
       const hadAbort = latestAbort != null;
       latestAbort?.();
@@ -550,12 +588,19 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
         this.resolveInput = resolve;
       });
 
+    const onAskUser = (question: string, options?: string[]) =>
+      new Promise<string>((resolve) => {
+        this.resolveAskUser = resolve;
+        void this.webview?.postMessage({ type: 'askUser', question, options: options || [] });
+      });
+
     try {
       await runVsCodeSession({
         workDir: dir,
         trust: true,
         debug: false,
         getUserInput,
+        onAskUser,
         onConfigReady: (config) => {
           this.agentConfig = config;
         },
@@ -565,6 +610,9 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
             (event as unknown as Record<string, unknown>).cost = cost;
           }
           this.postEvent(event);
+          if (event.kind === 'capability_done' && !event.result.isError) {
+            this.maybeSendMediaPreview(event.result.output);
+          }
           if (event.kind === 'turn_done' && event.reason === 'completed') {
             this.scheduleWalletRefresh();
           }
@@ -600,6 +648,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     "style-src 'unsafe-inline'",
     `script-src 'nonce-${nonce}'`,
     `img-src ${webview.cspSource} data:`,
+    `media-src ${webview.cspSource}`,
   ].join('; ');
 
   return `<!DOCTYPE html>
@@ -900,6 +949,44 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     }
     .slash-item:hover, .slash-item.selected {
       background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.15));
+    }
+    /* ── AskUser prompt ── */
+    .ask-user-card {
+      border: 1px solid var(--vscode-focusBorder, #007fd4);
+      background: var(--vscode-editorHoverWidget-background, rgba(0,127,212,0.08));
+      border-radius: 6px; padding: 10px 12px; margin: 8px 12px;
+    }
+    .ask-user-question { font-size: 12px; white-space: pre-wrap; margin-bottom: 8px; color: var(--vscode-foreground); }
+    .ask-user-options { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ask-user-btn {
+      font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer;
+      background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #fff);
+      border: 1px solid transparent;
+    }
+    .ask-user-btn:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+    .ask-user-btn.secondary {
+      background: transparent; color: var(--vscode-foreground);
+      border-color: rgba(128,128,128,0.35);
+    }
+    .ask-user-btn.secondary:hover { background: rgba(128,128,128,0.12); }
+    .ask-user-input {
+      width: 100%; box-sizing: border-box; padding: 4px 8px; margin-top: 6px;
+      background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.4)); border-radius: 3px;
+      font: inherit;
+    }
+    /* ── Media preview (ImageGen / VideoGen) ── */
+    .media-preview {
+      margin: 8px 12px; padding: 6px; border-radius: 6px;
+      background: rgba(128,128,128,0.08); border: 1px solid rgba(128,128,128,0.2);
+      max-width: calc(100% - 24px);
+    }
+    .media-preview img, .media-preview video {
+      display: block; max-width: 100%; max-height: 360px; border-radius: 4px;
+    }
+    .media-preview-path {
+      font-size: 10px; color: var(--vscode-descriptionForeground);
+      margin-top: 4px; word-break: break-all; font-family: var(--vscode-editor-font-family, monospace);
     }
     .slash-item.selected { background: var(--vscode-list-activeSelectionBackground, rgba(0,127,212,0.25)); }
     .slash-cmd { font-weight: 600; color: var(--vscode-foreground); min-width: 80px; }
@@ -2319,6 +2406,80 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       refreshHasMessages();
     }
 
+    function renderAskUser(question, options) {
+      var card = document.createElement('div');
+      card.className = 'ask-user-card';
+      var q = document.createElement('div');
+      q.className = 'ask-user-question';
+      q.textContent = question;
+      card.appendChild(q);
+      var replied = false;
+      function reply(answer) {
+        if (replied) return;
+        replied = true;
+        vscode.postMessage({ type: 'askUserReply', text: answer });
+        card.style.opacity = '0.5';
+        Array.prototype.forEach.call(card.querySelectorAll('button,input'), function(el) { el.disabled = true; });
+        var ans = document.createElement('div');
+        ans.style.fontSize = '11px';
+        ans.style.marginTop = '6px';
+        ans.style.color = 'var(--vscode-descriptionForeground)';
+        ans.textContent = 'You: ' + (answer || '(dismissed)');
+        card.appendChild(ans);
+      }
+      if (options && options.length > 0) {
+        var row = document.createElement('div');
+        row.className = 'ask-user-options';
+        options.forEach(function(opt, i) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'ask-user-btn' + (i === 0 ? '' : ' secondary');
+          btn.textContent = opt;
+          btn.addEventListener('click', function() { reply(opt); });
+          row.appendChild(btn);
+        });
+        card.appendChild(row);
+      } else {
+        var inp = document.createElement('input');
+        inp.type = 'text';
+        inp.className = 'ask-user-input';
+        inp.placeholder = 'Type answer and press Enter…';
+        inp.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') { e.preventDefault(); reply(inp.value.trim()); }
+        });
+        card.appendChild(inp);
+        setTimeout(function() { try { inp.focus(); } catch(e) {} }, 50);
+      }
+      log.appendChild(card);
+      log.scrollTop = log.scrollHeight;
+      refreshHasMessages();
+    }
+
+    function renderMediaPreview(kind, src, filePath) {
+      var wrap = document.createElement('div');
+      wrap.className = 'media-preview';
+      var el;
+      if (kind === 'video') {
+        el = document.createElement('video');
+        el.controls = true;
+        el.src = src;
+      } else {
+        el = document.createElement('img');
+        el.src = src;
+        el.alt = filePath || 'generated image';
+      }
+      wrap.appendChild(el);
+      if (filePath) {
+        var pathEl = document.createElement('div');
+        pathEl.className = 'media-preview-path';
+        pathEl.textContent = filePath;
+        wrap.appendChild(pathEl);
+      }
+      log.appendChild(wrap);
+      log.scrollTop = log.scrollHeight;
+      refreshHasMessages();
+    }
+
     function createMsgActions(text, modelName) {
       var bar = document.createElement('div');
       bar.className = 'msg-actions';
@@ -2600,6 +2761,14 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         renderWelcome(null, m.message);
         return;
       }
+      if (m.type === 'askUser') {
+        renderAskUser(m.question || '', m.options || []);
+        return;
+      }
+      if (m.type === 'mediaPreview') {
+        renderMediaPreview(m.kind, m.src, m.path);
+        return;
+      }
       if (m.type === 'stopAck') {
         appendLine(
           'meta',
@@ -2731,6 +2900,8 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       { cmd: '/new',     desc: 'Start a new conversation' },
       { cmd: '/history', desc: 'Browse conversation history' },
       { cmd: '/model',   desc: 'Switch the active model' },
+      { cmd: '/image',   desc: 'Generate an image (agent picks model + previews cost)' },
+      { cmd: '/video',   desc: 'Generate a video (agent picks model + previews cost)' },
       { cmd: '/stop',    desc: 'Stop the current generation' },
       { cmd: '/compact', desc: 'Compact conversation context' },
       { cmd: '/cost',    desc: 'Show session cost so far' }
@@ -2781,7 +2952,13 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       }
     }
     function applySlashCmd(cmd) {
-      input.value = cmd + ' ';
+      if (cmd === '/image') {
+        input.value = 'Generate an image of ';
+      } else if (cmd === '/video') {
+        input.value = 'Generate a video of ';
+      } else {
+        input.value = cmd + ' ';
+      }
       closeSlashMenu();
       try { input.focus(); } catch(e) {}
     }
