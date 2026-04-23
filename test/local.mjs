@@ -3492,6 +3492,88 @@ test('gateway-models: estimateCostUsd dispatches per billing_mode with 5% margin
   assert.equal(estimateCostUsd(paid), 0);
 });
 
+test('media-router: validateRefined caps length, rejects non-string / empty', async () => {
+  const { validateRefined } = await import('../dist/agent/media-router.js');
+
+  assert.equal(validateRefined('   hello world   ', 500), 'hello world', 'trims whitespace');
+  assert.equal(validateRefined('', 500), null, 'empty string → null');
+  assert.equal(validateRefined('   ', 500), null, 'whitespace-only → null');
+  assert.equal(validateRefined(null, 500), null, 'null → null');
+  assert.equal(validateRefined(undefined, 500), null, 'undefined → null');
+  assert.equal(validateRefined(42, 500), null, 'number → null');
+  assert.equal(validateRefined({}, 500), null, 'object → null');
+
+  const long = 'x'.repeat(600);
+  assert.equal(validateRefined(long, 500).length, 500, 'caps at maxChars');
+});
+
+test('media-router: isEffectivelyIdentical is case + whitespace insensitive', async () => {
+  const { isEffectivelyIdentical } = await import('../dist/agent/media-router.js');
+
+  assert.equal(isEffectivelyIdentical('A CAT', 'a cat'), true);
+  assert.equal(isEffectivelyIdentical('a   cat', 'a cat'), true);
+  assert.equal(isEffectivelyIdentical('  a cat  ', 'a cat'), true);
+  assert.equal(isEffectivelyIdentical('a cat on a mat', 'A Cat On A Mat'), true);
+  assert.equal(isEffectivelyIdentical('a cat', 'a dog'), false);
+  assert.equal(isEffectivelyIdentical('a cat on a mat', 'a cat on a rug'), false);
+});
+
+test('media-router: renderProposalForAskUser without refinement has no Refined block + no Use-original option', async () => {
+  const { renderProposalForAskUser } = await import('../dist/agent/media-router.js');
+
+  const proposal = {
+    kind: 'image',
+    quantity: 1,
+    recommended: { model: 'google/nano-banana', estimatedCostUsd: 0.02, rationale: 'Cheap photoreal.' },
+    cheaper: undefined,
+    premium: { model: 'openai/gpt-image-2', estimatedCostUsd: 0.19, rationale: 'Best fidelity.' },
+    intent: { style: 'photoreal', priority: 'balanced' },
+    refinedPrompt: null,
+    refinementSummary: '',
+    totalCostUsd: 0.02,
+  };
+
+  const { question, options } = renderProposalForAskUser(proposal, 'a cat picture');
+  assert.equal(question.includes('Refined:'), false, 'no Refined block when refinedPrompt is null');
+  assert.equal(options.some(o => o.id === 'use-raw'), false, 'no Use-original option');
+  assert.equal(options[0].id, 'recommended');
+  assert.equal(options[0].label.includes('refined prompt'), false, 'recommended label is unchanged when no refinement');
+});
+
+test('media-router: renderProposalForAskUser with refinement adds Refined block + Use-original option', async () => {
+  const { renderProposalForAskUser } = await import('../dist/agent/media-router.js');
+
+  const proposal = {
+    kind: 'image',
+    quantity: 1,
+    recommended: { model: 'google/nano-banana-pro', estimatedCostUsd: 0.04, rationale: 'Photoreal scenes.' },
+    cheaper: { model: 'google/nano-banana', estimatedCostUsd: 0.02, rationale: 'Same family.' },
+    premium: undefined,
+    intent: { style: 'photoreal', priority: 'balanced' },
+    refinedPrompt: 'Eye-level photograph of an orange tabby cat on a wooden windowsill, soft morning side-light, shallow depth of field, 50mm feel, editorial photo use, no watermark.',
+    refinementSummary: 'Added scene, lighting, lens, use case, constraint.',
+    totalCostUsd: 0.04,
+  };
+
+  const { question, options } = renderProposalForAskUser(proposal, 'a cat picture');
+
+  assert.ok(question.includes('Refined:'), 'Refined block appears');
+  assert.ok(question.includes('Eye-level photograph'), 'Refined text is rendered');
+  assert.ok(question.includes('Added scene, lighting'), 'summary appears');
+  assert.ok(options.some(o => o.id === 'use-raw'), 'Use-original option appears');
+  assert.ok(options[0].label.includes('refined prompt'), 'recommended label mentions refined prompt');
+
+  const useRaw = options.find(o => o.id === 'use-raw');
+  assert.ok(useRaw.label.includes('ORIGINAL'), 'use-raw label calls out ORIGINAL');
+  assert.ok(useRaw.label.includes('google/nano-banana-pro'), 'use-raw still points to recommended model');
+});
+
+test('media-router: exported char limits match plan (500 refined / 80 summary)', async () => {
+  const mod = await import('../dist/agent/media-router.js');
+  assert.equal(mod.REFINED_PROMPT_MAX_CHARS, 500);
+  assert.equal(mod.REFINEMENT_SUMMARY_LIMIT, 80);
+});
+
 test('turn-analyzer: parseAnalysis extracts all five fields + validates enums', async () => {
   const { parseAnalysis } = await import('../dist/agent/turn-analyzer.js');
 

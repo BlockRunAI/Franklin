@@ -46,6 +46,15 @@ export interface MediaProposal {
     style: MediaStyle;
     priority: MediaPriority;
   };
+  /**
+   * A fuller rewrite of the user's prompt, following the 5-slot template
+   * (scene/subject/details/use-case/constraints). Null when the classifier
+   * judged the input already well-specified, or when the env opt-out is set,
+   * or when the rewrite was identical to the raw input. When non-null, the
+   * AskUser layout surfaces it as "Refined:" with a "Use ORIGINAL" option.
+   */
+  refinedPrompt: string | null;
+  refinementSummary: string;
   totalCostUsd: number;
 }
 
@@ -53,7 +62,9 @@ export interface MediaProposal {
 
 const CLASSIFIER_MODEL = process.env.FRANKLIN_MEDIA_ROUTER_MODEL || 'nvidia/llama-4-maverick';
 const TIMEOUT_MS = 3_500; // slightly more lenient than the turn-analyzer — we're asking for JSON with reasoning
-const MAX_TOKENS = 256;
+const MAX_TOKENS = 384; // bumped from 256 to leave room for refined_prompt (≤500 chars) + refinement_summary (≤80)
+const REFINED_MAX_CHARS = 500;
+const REFINEMENT_SUMMARY_MAX_CHARS = 80;
 
 function buildSystemPrompt(kind: MediaKind, catalog: GatewayModel[]): string {
   const catalogLines = catalog.map(m => {
@@ -64,7 +75,7 @@ function buildSystemPrompt(kind: MediaKind, catalog: GatewayModel[]): string {
     return `  - ${m.id} · ${price} · ${m.description || m.name}`;
   }).join('\n');
 
-  return `You pick the best ${kind} model for a user's Franklin request. Output ONE LINE of compact JSON. No markdown, no code fences, no explanation.
+  return `You pick the best ${kind} model for a user's Franklin request AND refine the user's prompt. Output ONE LINE of compact JSON. No markdown, no code fences, no explanation.
 
 ## Catalog (${catalog.length} available ${kind} models)
 ${catalogLines}
@@ -73,6 +84,8 @@ ${catalogLines}
 
 {"style":"photoreal|illustration|anime|logo|concept|other",
  "priority":"cost|quality|balanced",
+ "refined_prompt":"<rewritten prompt in the user's language, <=${REFINED_MAX_CHARS} chars, or null if already well-specified>",
+ "refinement_summary":"<one short sentence, <=${REFINEMENT_SUMMARY_MAX_CHARS} chars, user-visible>",
  "recommended":{"model":"<id from catalog>","rationale":"<one sentence, <=140 chars>"},
  "cheaper":{"model":"<id from catalog | null>","rationale":"<one sentence>"},
  "premium":{"model":"<id from catalog | null>","rationale":"<one sentence>"}}
@@ -84,16 +97,33 @@ Rules:
 - Match style → model: anime/illustration prefers CogView, photoreal prefers Nano Banana Pro / Grok Imagine Pro, budget-conscious picks cheapest-acceptable.
 - One sentence rationale, user-visible.
 
+## Refinement (emit refined_prompt + refinement_summary)
+
+If the user's prompt is missing ≥3 of these 5 slots, rewrite to fill them. If it already has ≥3 covered, set refined_prompt to null and refinement_summary to "Already well-specified".
+
+  1. Scene       — location, time of day, environment, background
+  2. Subject     — primary focus (who / what), preserved EXACTLY from the user's input (no substitution)
+  3. Details     — materials, textures, lighting, camera/lens feel, composition, mood (concrete visual facts, not praise)
+  4. Use Case    — editorial photo, product mockup, UI screen, logo, storyboard frame, social-media cover, etc.
+  5. Constraints — aspect ratio, what must not drift (no watermark, preserve face, no text), hard asks
+
+Anti-slop rules:
+- Concrete visual facts ("overcast daylight", "brushed aluminum") beat vague praise ("stunning", "cinematic masterpiece").
+- Wrap literal text that must appear in the image in double quotes. Spell difficult words letter-by-letter.
+- One revision per turn — do not combine conflicting asks.
+- Natural language, not keyword-tag format.
+- refined_prompt stays in the same language as the user input. Chinese in → Chinese out.
+
 Examples:
 
 Input: "a photo of a cat on Mars, photoreal"
-Output: {"style":"photoreal","priority":"balanced","recommended":{"model":"google/nano-banana-pro","rationale":"Photoreal scenes — Nano Banana Pro has strong realism at moderate cost."},"cheaper":{"model":"google/nano-banana","rationale":"Same family, lower cost, slightly less detail."},"premium":{"model":"openai/gpt-image-2","rationale":"Best photoreal fidelity when budget allows."}}
+Output: {"style":"photoreal","priority":"balanced","refined_prompt":"Eye-level photograph of a cat standing on the rust-colored Martian surface, late-afternoon low sun casting long shadows, distant canyon rim in the background, 50mm feel, shallow depth of field, editorial photo use, no watermark.","refinement_summary":"Added scene, lighting, lens, use case, constraint.","recommended":{"model":"google/nano-banana-pro","rationale":"Photoreal scenes — Nano Banana Pro has strong realism at moderate cost."},"cheaper":{"model":"google/nano-banana","rationale":"Same family, lower cost, slightly less detail."},"premium":{"model":"openai/gpt-image-2","rationale":"Best photoreal fidelity when budget allows."}}
 
 Input: "赛博朋克风格的动漫角色"
-Output: {"style":"anime","priority":"balanced","recommended":{"model":"zai/cogview-4","rationale":"CogView-4 specializes in stylized/anime imagery."},"cheaper":{"model":"google/nano-banana","rationale":"Cheaper but less stylized."},"premium":{"model":"xai/grok-imagine-image-pro","rationale":"Premium detail for complex scenes."}}
+Output: {"style":"anime","priority":"balanced","refined_prompt":"赛博朋克风格的动漫角色，站在霓虹灯映照的雨夜街道上，身穿合成纤维夹克与金属反光饰件，头顶全息广告牌漂浮，低角度视角，强烈青粉对比，海报用，居中构图。","refinement_summary":"补全了场景、光线、材质、用途、构图。","recommended":{"model":"zai/cogview-4","rationale":"CogView-4 specializes in stylized/anime imagery."},"cheaper":{"model":"google/nano-banana","rationale":"Cheaper but less stylized."},"premium":{"model":"xai/grok-imagine-image-pro","rationale":"Premium detail for complex scenes."}}
 
 Input: "a 10-second cinematic drone shot over Tokyo at night"
-Output: {"style":"concept","priority":"quality","recommended":{"model":"bytedance/seedance-2.0","rationale":"Seedance 2.0 delivers the best cinematic quality."},"cheaper":{"model":"bytedance/seedance-2.0-fast","rationale":"Faster + cheaper, minor quality trade-off."},"premium":{"model":null,"rationale":"2.0 is already the top tier."}}
+Output: {"style":"concept","priority":"quality","refined_prompt":null,"refinement_summary":"Already well-specified.","recommended":{"model":"bytedance/seedance-2.0","rationale":"Seedance 2.0 delivers the best cinematic quality."},"cheaper":{"model":"bytedance/seedance-2.0-fast","rationale":"Faster + cheaper, minor quality trade-off."},"premium":{"model":null,"rationale":"2.0 is already the top tier."}}
 
 Output JSON only, single line.`;
 }
@@ -123,6 +153,8 @@ interface RawChoice { model?: unknown; rationale?: unknown; }
 interface RawResponse {
   style?: unknown;
   priority?: unknown;
+  refined_prompt?: unknown;
+  refinement_summary?: unknown;
   recommended?: RawChoice | null;
   cheaper?: RawChoice | null;
   premium?: RawChoice | null;
@@ -137,6 +169,34 @@ function validateChoice(raw: RawChoice | null | undefined, catalog: Map<string, 
   return { model, rationale };
 }
 
+/**
+ * Normalize a refined prompt: trim, cap length, reject obvious junk.
+ * Returns null when the value should be treated as absent (missing,
+ * non-string, empty after trim).
+ *
+ * Exported for testability — invariants matter more here than elsewhere
+ * because the output is user-visible and paid for.
+ */
+export function validateRefined(raw: unknown, maxChars: number): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  return trimmed.slice(0, maxChars);
+}
+
+/**
+ * Whitespace-insensitive, case-insensitive identity check — if the
+ * classifier's "refinement" is just the input with different spacing,
+ * don't bother the user with a "Refined:" block.
+ */
+export function isEffectivelyIdentical(a: string, b: string): boolean {
+  const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  return normalize(a) === normalize(b);
+}
+
+export const REFINED_PROMPT_MAX_CHARS = REFINED_MAX_CHARS;
+export const REFINEMENT_SUMMARY_LIMIT = REFINEMENT_SUMMARY_MAX_CHARS;
+
 // ─── Main API ───────────────────────────────────────────────────────────
 
 export interface AnalyzeMediaOpts {
@@ -146,6 +206,13 @@ export interface AnalyzeMediaOpts {
   quantity?: number;           // images: count; videos: always 1
   durationSeconds?: number;    // videos only (user-specified)
   signal?: AbortSignal;
+  /**
+   * One-shot opt-out — caller stripped a `///` prefix from the user's input
+   * and wants the proposal rendered without a Refined block or Use-original
+   * option. The classifier still runs (for model selection), but the
+   * refinement is discarded at parse time.
+   */
+  skipRefine?: boolean;
 }
 
 /**
@@ -165,11 +232,18 @@ export async function analyzeMediaRequest(opts: AnalyzeMediaOpts): Promise<Media
   if (catalog.length === 0) return null;
 
   // Cache check — classifier output is stable for a given prompt + catalog
-  // version, so re-asking within 30s is waste.
+  // version, so re-asking within 30s is waste. Cache stores the FULL
+  // classifier response (refinement + model picks); the per-call mask for
+  // skipRefine / FRANKLIN_NO_MEDIA_PROMPT_REFINE is applied on the way out
+  // so the same cache entry serves callers with different opt-out flags.
   const quantity = Math.max(1, Math.floor(opts.quantity ?? 1));
+  const globalOptOut = process.env.FRANKLIN_NO_MEDIA_PROMPT_REFINE === '1';
+  const shouldDiscard = globalOptOut || opts.skipRefine === true;
+  const maskRefinement = (p: MediaProposal): MediaProposal =>
+    shouldDiscard ? { ...p, refinedPrompt: null, refinementSummary: '' } : p;
   const key = hashKey([kind, prompt.trim().slice(0, 500), String(quantity), String(opts.durationSeconds ?? '')]);
   const hit = cache.get(key);
-  if (hit && hit.expiresAt > Date.now()) return hit.value;
+  if (hit && hit.expiresAt > Date.now()) return maskRefinement(hit.value);
 
   // Call the classifier.
   const catalogMap = new Map(catalog.map(m => [m.id, m]));
@@ -220,6 +294,17 @@ export async function analyzeMediaRequest(opts: AnalyzeMediaOpts): Promise<Media
   const cheaperChoice = validateChoice(parsed.cheaper, catalogMap);
   const premiumChoice = validateChoice(parsed.premium, catalogMap);
 
+  // Refinement fields. The cache stores the full classifier output; the
+  // per-call mask is applied on the way out via maskRefinement() above, so
+  // here we just normalize + discard rewrites that are effectively the
+  // same as the raw input (drift-proof).
+  let refinedPrompt: string | null = validateRefined(parsed.refined_prompt, REFINED_MAX_CHARS);
+  const refinementSummary: string =
+    validateRefined(parsed.refinement_summary, REFINEMENT_SUMMARY_MAX_CHARS) ?? '';
+  if (refinedPrompt !== null && isEffectivelyIdentical(refinedPrompt, prompt)) {
+    refinedPrompt = null;
+  }
+
   // Build proposal with live cost estimates.
   const durationSeconds = kind === 'video'
     ? (opts.durationSeconds ?? defaultDurationSeconds(rec.model))
@@ -250,6 +335,8 @@ export async function analyzeMediaRequest(opts: AnalyzeMediaOpts): Promise<Media
     cheaper: toChoice(cheaperChoice),
     premium: toChoice(premiumChoice),
     intent: { style, priority },
+    refinedPrompt,
+    refinementSummary,
     totalCostUsd: recommended.estimatedCostUsd,
   };
 
@@ -260,7 +347,7 @@ export async function analyzeMediaRequest(opts: AnalyzeMediaOpts): Promise<Media
   }
   cache.set(key, { value: proposal, expiresAt: Date.now() + CACHE_TTL_MS });
 
-  return proposal;
+  return maskRefinement(proposal);
 }
 
 // ─── Presentation ───────────────────────────────────────────────────────
@@ -278,6 +365,13 @@ export function renderProposalForAskUser(p: MediaProposal, userPrompt: string): 
   lines.push(`*Media generation proposal*`);
   lines.push('');
   lines.push(`Prompt: "${userPrompt.trim().slice(0, 200)}"`);
+  if (p.refinedPrompt) {
+    lines.push('');
+    lines.push(`Refined: ${p.refinedPrompt}`);
+    if (p.refinementSummary) {
+      lines.push(`  (${p.refinementSummary})`);
+    }
+  }
   if (p.kind === 'video' && p.durationSeconds) {
     const maxNote = p.maxDurationSeconds ? ` (max ${p.maxDurationSeconds}s)` : '';
     lines.push(`Duration: ${p.durationSeconds}s${maxNote}`);
@@ -296,9 +390,15 @@ export function renderProposalForAskUser(p: MediaProposal, userPrompt: string): 
   lines.push(`  (prices include the 5% gateway fee)`);
 
   const options: Array<{ id: string; label: string }> = [];
-  options.push({ id: 'recommended', label: `Continue with ${p.recommended.model}` });
+  const recLabel = p.refinedPrompt
+    ? `Continue with refined prompt + ${p.recommended.model}`
+    : `Continue with ${p.recommended.model}`;
+  options.push({ id: 'recommended', label: recLabel });
   if (p.cheaper) options.push({ id: 'cheaper', label: `Use cheaper (${p.cheaper.model})` });
   if (p.premium) options.push({ id: 'premium', label: `Use premium (${p.premium.model})` });
+  if (p.refinedPrompt) {
+    options.push({ id: 'use-raw', label: `Use ORIGINAL prompt + ${p.recommended.model}` });
+  }
   options.push({ id: 'cancel', label: 'Cancel (no charge)' });
 
   return { question: lines.join('\n'), options };

@@ -49,19 +49,32 @@ function buildExecute(deps: ImageGenDeps) {
     input: Record<string, unknown>,
     ctx: ExecutionScope,
   ): Promise<CapabilityResult> {
-    const { prompt, output_path, size, model, contentId } = input as unknown as ImageGenInput;
+    const rawInput = input as unknown as ImageGenInput;
+    const { output_path, size, model, contentId } = rawInput;
 
-    if (!prompt) {
+    if (!rawInput.prompt) {
       return { output: 'Error: prompt is required', isError: true };
+    }
+
+    // One-shot refinement opt-out: leading `///` tells Franklin "don't
+    // refine this prompt, I wrote it the way I want it." Strip the prefix
+    // and pass skipRefine through to the router.
+    let prompt = rawInput.prompt;
+    let skipRefine = false;
+    if (prompt.trimStart().startsWith('///')) {
+      prompt = prompt.replace(/^\s*\/\/\/\s?/, '');
+      skipRefine = true;
     }
 
     // ── Media router + AskUser flow ────────────────────────────────────
     // If the caller explicitly named a model, or the env auto-approves, or
     // no AskUser bridge exists (batch / --prompt mode), skip the proposal
     // step and use the old default. Otherwise: classifier picks a fitting
-    // model, cost preview goes to AskUser, user chooses or cancels.
+    // model + rewrites the prompt, the preview goes to AskUser, user
+    // chooses or cancels.
     let imageModel = model || 'openai/gpt-image-1';
     const imageSize = size || '1024x1024';
+    let chosenPrompt = prompt;
 
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
     if (!model && !autoApprove && ctx.onAskUser) {
@@ -74,6 +87,7 @@ function buildExecute(deps: ImageGenDeps) {
           quantity: 1,
           client,
           signal: ctx.abortSignal,
+          skipRefine,
         });
         if (proposal) {
           const { question, options } = renderProposalForAskUser(proposal, prompt);
@@ -92,9 +106,14 @@ function buildExecute(deps: ImageGenDeps) {
               return {
                 output: `## Image generation cancelled\n\nNo USDC was spent. Ask again when ready, or pass an explicit \`model\` to skip the confirmation step.`,
               };
+            case 'use-raw':
+              imageModel = proposal.recommended.model;
+              // chosenPrompt stays as the raw input
+              break;
             case 'recommended':
             default:
               imageModel = proposal.recommended.model;
+              if (proposal.refinedPrompt) chosenPrompt = proposal.refinedPrompt;
           }
         }
       } catch {
@@ -127,7 +146,7 @@ function buildExecute(deps: ImageGenDeps) {
 
   const body = JSON.stringify({
     model: imageModel,
-    prompt,
+    prompt: chosenPrompt,
     n: 1,
     size: imageSize,
     response_format: 'b64_json',

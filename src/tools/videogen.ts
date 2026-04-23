@@ -57,13 +57,23 @@ function buildExecute(deps: VideoGenDeps) {
     input: Record<string, unknown>,
     ctx: ExecutionScope,
   ): Promise<CapabilityResult> {
-    const { prompt, output_path, model, image_url, duration_seconds, contentId } =
-      input as unknown as VideoGenInput;
+    const rawInput = input as unknown as VideoGenInput;
+    const { output_path, model, image_url, duration_seconds, contentId } = rawInput;
 
-    if (!prompt) return { output: 'Error: prompt is required', isError: true };
+    if (!rawInput.prompt) return { output: 'Error: prompt is required', isError: true };
+
+    // One-shot refinement opt-out: leading `///` tells Franklin "don't
+    // refine this prompt." Strip the prefix and pass skipRefine through.
+    let prompt = rawInput.prompt;
+    let skipRefine = false;
+    if (prompt.trimStart().startsWith('///')) {
+      prompt = prompt.replace(/^\s*\/\/\/\s?/, '');
+      skipRefine = true;
+    }
 
     let videoModel = model || DEFAULT_MODEL;
     let duration = duration_seconds ?? DEFAULT_DURATION;
+    let chosenPrompt = prompt;
 
     // ── Media router + AskUser flow (video bills per second, always ask) ──
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
@@ -77,6 +87,7 @@ function buildExecute(deps: VideoGenDeps) {
           durationSeconds: duration_seconds,
           client,
           signal: ctx.abortSignal,
+          skipRefine,
         });
         if (proposal) {
           const { question, options } = renderProposalForAskUser(proposal, prompt);
@@ -94,9 +105,14 @@ function buildExecute(deps: VideoGenDeps) {
               return {
                 output: `## Video generation cancelled\n\nNo USDC was spent.`,
               };
+            case 'use-raw':
+              videoModel = proposal.recommended.model;
+              // chosenPrompt stays as the raw input
+              break;
             case 'recommended':
             default:
               videoModel = proposal.recommended.model;
+              if (proposal.refinedPrompt) chosenPrompt = proposal.refinedPrompt;
           }
           // Use the proposal's duration — the router honored the user's
           // duration_seconds or filled in the model's default.
@@ -135,7 +151,7 @@ function buildExecute(deps: VideoGenDeps) {
 
     const body = JSON.stringify({
       model: videoModel,
-      prompt,
+      prompt: chosenPrompt,
       ...(image_url ? { image_url } : {}),
       ...(duration_seconds ? { duration_seconds } : {}),
     });
