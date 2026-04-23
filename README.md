@@ -480,9 +480,11 @@ cd franklin
 npm install
 npm run build
 npm test              # deterministic local tests — no API calls
-npm run test:e2e      # live e2e tests — hits real models, needs wallet
+npm run test:e2e      # live e2e tests — free smoke works unfunded; paid tools need network + funded wallet
 node dist/index.js --help
 ```
+
+For the recommended live validation order and failure triage, see [docs/live-e2e-checklist.md](docs/live-e2e-checklist.md).
 
 **Contributing:** open an issue first to discuss meaningful changes. PRs welcome on bugs, docs, new models in pricing, and new tools.
 
