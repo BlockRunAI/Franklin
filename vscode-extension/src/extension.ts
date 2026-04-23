@@ -1,5 +1,9 @@
 import * as vscode from 'vscode';
 import * as os from 'node:os';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as net from 'node:net';
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
   runVsCodeSession,
@@ -8,6 +12,10 @@ import {
   estimateCost,
   listSessions,
   loadSessionHistory,
+  generateInsights,
+  runDoctorChecks,
+  saveChain,
+  loadChain,
   type StreamEvent,
   type SessionMeta,
   type Dialogue,
@@ -29,7 +37,9 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   // Anthropic
   sonnet: 'anthropic/claude-sonnet-4.6',
   claude: 'anthropic/claude-sonnet-4.6',
-  opus: 'anthropic/claude-opus-4.6',
+  opus: 'anthropic/claude-opus-4.7',
+  'opus-4.7': 'anthropic/claude-opus-4.7',
+  'opus-4.6': 'anthropic/claude-opus-4.6',
   haiku: 'anthropic/claude-haiku-4.5-20251001',
   // OpenAI
   gpt: 'openai/gpt-5.4',
@@ -52,16 +62,17 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   deepseek: 'deepseek/deepseek-chat',
   r1: 'deepseek/deepseek-reasoner',
   // Others
-  kimi: 'moonshot/kimi-k2.5',
+  kimi: 'moonshot/kimi-k2.6',
+  'kimi-k2.5': 'moonshot/kimi-k2.5',
   minimax: 'minimax/minimax-m2.7',
   glm: 'zai/glm-5.1',
   'glm-turbo': 'zai/glm-5.1-turbo',
   // Free
-  free: 'nvidia/nemotron-ultra-253b',
-  devstral: 'nvidia/devstral-2-123b',
+  free: 'nvidia/glm-4.7',
+  'glm-4.7': 'nvidia/glm-4.7',
   'qwen-coder': 'nvidia/qwen3-coder-480b',
   maverick: 'nvidia/llama-4-maverick',
-  'deepseek-free': 'nvidia/deepseek-v3.2',
+  'qwen-think': 'nvidia/qwen3-next-80b-a3b-thinking',
 };
 function resolveModel(input: string): string {
   return MODEL_SHORTCUTS[input.trim().toLowerCase()] || input.trim();
@@ -69,7 +80,10 @@ function resolveModel(input: string): string {
 
 let latestAbort: (() => void) | undefined;
 
+export const log = vscode.window.createOutputChannel('Franklin');
+
 export function activate(context: vscode.ExtensionContext) {
+  log.appendLine('[Franklin] Extension activating…');
   const provider = new FranklinChatProvider(context.extensionUri);
 
   context.subscriptions.push(
@@ -185,7 +199,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   private resolveInput?: (value: string | null) => void;
   private agentRunning = false;
   private walletRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-  private agentConfig?: { model: string };
+  private agentConfig?: { model: string; baseModel?: string };
 
   constructor(private readonly extensionUri: vscode.Uri) {}
 
@@ -199,6 +213,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
 
     void this.pushWelcome();
     this.sendHistoryList();
+    this.sendLastSession();
     void this.runAgentSession();
   }
 
@@ -218,6 +233,141 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   sendHistoryList(): void {
     const items = getHistoryList();
     void this.webview?.postMessage({ type: 'historyList', items });
+  }
+
+  /** Send the most-recent session for auto-resume banner */
+  sendLastSession(): void {
+    try {
+      const sessions = listSessions().filter(s => s.turnCount > 0 && s.messageCount > 0);
+      if (sessions.length === 0) return;
+      const last = sessions[0];
+      const title = getSessionTitle(last);
+      void this.webview?.postMessage({
+        type: 'lastSession',
+        session: {
+          id: last.id,
+          title,
+          ago: formatTimeAgo(last.updatedAt),
+          model: last.model.split('/').pop() || last.model,
+        },
+      });
+    } catch { /* ignore */ }
+  }
+
+  /** Run doctor checks and push results to webview */
+  private async runDoctor(): Promise<void> {
+    try {
+      const checks = await runDoctorChecks();
+      void this.webview?.postMessage({ type: 'doctorResults', checks });
+    } catch (e) {
+      void this.webview?.postMessage({ type: 'doctorResults', checks: [], error: String(e) });
+    }
+  }
+
+  /** Find an executable by searching process.env.PATH + platform-specific locations */
+  private findBin(name: string): string | null {
+    const isWin = process.platform === 'win32';
+    const extraDirs = isWin
+      ? [
+          path.join(process.env.APPDATA || '', 'npm'),
+          path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs'),
+          path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'nodejs'),
+        ]
+      : [
+          '/usr/local/bin', '/opt/homebrew/bin', '/opt/homebrew/sbin',
+          path.join(os.homedir(), '.nvm', 'current', 'bin'),
+        ];
+    const dirs = [...(process.env.PATH || '').split(path.delimiter), ...extraDirs];
+    const candidates = isWin ? [name + '.cmd', name + '.exe', name] : [name];
+    for (const dir of dirs) {
+      if (!dir) continue;
+      for (const candidate of candidates) {
+        const full = path.join(dir, candidate);
+        if (fs.existsSync(full)) return full;
+      }
+    }
+    return null;
+  }
+
+  /** Auto-launch franklin panel and open browser */
+  private async openTradingDashboard(): Promise<void> {
+    const PORT = 3100;
+    const url = `http://localhost:${PORT}`;
+
+    if (await this.isPortOpen(PORT)) {
+      void vscode.env.openExternal(vscode.Uri.parse(url));
+      return;
+    }
+
+    void vscode.window.showInformationMessage('Franklin: Starting panel…');
+
+    // Strategy: prefer local dist/index.js (dev mode) with real node, else global franklin CLI
+    const localDist = path.join(this.extensionUri.fsPath, '..', 'dist', 'index.js');
+    const hasLocal = fs.existsSync(localDist);
+    const nodeBin = this.findBin('node');
+    const franklinBin = this.findBin('franklin');
+
+    let cmd: string, args: string[];
+    if (hasLocal && nodeBin) {
+      cmd = nodeBin; args = [localDist, 'panel', '--port', String(PORT)];
+    } else if (franklinBin) {
+      cmd = franklinBin; args = ['panel', '--port', String(PORT)];
+    } else {
+      void vscode.window.showErrorMessage("Franklin: Cannot find 'node' or 'franklin'. Run: npm i -g @blockrun/franklin");
+      return;
+    }
+
+    const proc = spawn(cmd, args, {
+      detached: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env },
+    });
+
+    let spawnError = '';
+    proc.stderr?.on('data', (d: unknown) => { spawnError += String(d); });
+    proc.on('error', (err: Error) => {
+      void vscode.window.showErrorMessage(`Franklin: Failed to start panel — ${err.message}`);
+    });
+
+    const ready = await this.waitForPort(PORT, 10000);
+    proc.unref();
+    if (!ready) {
+      const detail = spawnError.trim() ? spawnError.trim().slice(0, 150) : "Run `franklin panel` in terminal to debug.";
+      void vscode.window.showErrorMessage(`Franklin: Panel failed to start — ${detail}`);
+    }
+  }
+
+  private isPortOpen(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const s = net.createConnection({ port, host: '127.0.0.1' });
+      s.on('connect', () => { s.destroy(); resolve(true); });
+      s.on('error', () => resolve(false));
+      s.setTimeout(300, () => { s.destroy(); resolve(false); });
+    });
+  }
+
+  private waitForPort(port: number, timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const deadline = Date.now() + timeoutMs;
+      const poll = () => {
+        void this.isPortOpen(port).then((open) => {
+          if (open) { resolve(true); return; }
+          if (Date.now() >= deadline) { resolve(false); return; }
+          setTimeout(poll, 600);
+        });
+      };
+      setTimeout(poll, 1000);
+    });
+  }
+
+  /** Generate usage insights and push to webview */
+  private sendInsights(): void {
+    try {
+      const data = generateInsights(30);
+      void this.webview?.postMessage({ type: 'insightsData', data });
+    } catch (e) {
+      void this.webview?.postMessage({ type: 'insightsData', error: String(e) });
+    }
   }
 
   /** Load a historical session into the chat view */
@@ -264,11 +414,17 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
 
   private async pushWelcome() {
     const { dir, hasWorkspace } = getWorkDir();
+    log.appendLine(`[pushWelcome] workDir=${dir}`);
+    void this.webview?.postMessage({ type: 'loadingStep', text: 'Resolving workspace…' });
     try {
+      void this.webview?.postMessage({ type: 'loadingStep', text: 'Loading wallet & model…' });
+      log.appendLine('[pushWelcome] calling getVsCodeWelcomeInfo…');
       const info = await getVsCodeWelcomeInfo(dir);
+      log.appendLine(`[pushWelcome] got info: model=${info.model} chain=${info.chain} balance=${info.balance}`);
       void this.webview?.postMessage({ type: 'welcome', info, hasWorkspace });
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
+      log.appendLine(`[pushWelcome] ERROR: ${err}`);
       void this.webview?.postMessage({ type: 'welcomeError', message: err });
     }
   }
@@ -281,6 +437,14 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
 
   private postEvent(ev: StreamEvent) {
     void this.webview?.postMessage({ type: 'event', event: ev });
+  }
+
+  private async handleSwitchChain() {
+    const current = loadChain();
+    const next = current === 'base' ? 'solana' : 'base';
+    saveChain(next);
+    void vscode.window.showInformationMessage(`Franklin: Switched to ${next}`);
+    await this.refreshWalletStatus();
   }
 
   private async refreshWalletStatus() {
@@ -327,14 +491,27 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
       const newModel = resolveModel(msg.text);
       if (this.agentConfig) {
         this.agentConfig.model = newModel;
+        this.agentConfig.baseModel = newModel;
         void this.webview?.postMessage({
           type: 'event',
           event: { kind: 'status_update', model: newModel },
         });
       }
     }
+    if (msg.type === 'switchChain') {
+      void this.handleSwitchChain();
+    }
     if (msg.type === 'requestHistory') {
       this.sendHistoryList();
+    }
+    if (msg.type === 'runDoctor') {
+      void this.runDoctor();
+    }
+    if (msg.type === 'loadInsights') {
+      this.sendInsights();
+    }
+    if (msg.type === 'openTrading') {
+      void this.openTradingDashboard();
     }
     if (msg.type === 'loadSession' && msg.text) {
       const sessionId = msg.text;
@@ -357,7 +534,9 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   private async runAgentSession() {
     if (this.agentRunning) return;
     this.agentRunning = true;
+    log.appendLine('[runAgentSession] starting…');
     const { dir, hasWorkspace } = getWorkDir();
+    log.appendLine(`[runAgentSession] workDir=${dir} hasWorkspace=${hasWorkspace}`);
 
     if (!hasWorkspace) {
       void this.webview?.postMessage({
@@ -396,9 +575,11 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
       });
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
+      log.appendLine(`[runAgentSession] ERROR: ${err}`);
       void this.webview?.postMessage({ type: 'error', message: err });
       void vscode.window.showErrorMessage(`Franklin: ${err}`);
     } finally {
+      log.appendLine('[runAgentSession] session ended');
       void this.webview?.postMessage({ type: 'sessionEnded' });
       this.agentRunning = false;
     }
@@ -667,6 +848,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     #model-dropdown .md-item.active { background: var(--vscode-list-activeSelectionBackground, rgba(0,127,212,0.25)); }
     #model-dropdown .md-price { font-size: 9px; color: var(--vscode-descriptionForeground); margin-left: 8px; }
     .md-item .md-free { font-size: 9px; color: var(--vscode-terminal-ansiGreen, #3fb950); font-weight: 600; }
+    .md-item .md-new { font-size: 8px; background: #e8a020; color: #000; font-weight: 700; border-radius: 3px; padding: 1px 4px; letter-spacing: 0.04em; flex-shrink: 0; }
     #model-dropdown .md-tooltip {
       visibility: hidden;
       opacity: 0;
@@ -723,14 +905,144 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     .slash-cmd { font-weight: 600; color: var(--vscode-foreground); min-width: 80px; }
     .slash-desc { font-size: 11px; color: var(--vscode-descriptionForeground); }
     .composer-right { display: flex; align-items: center; gap: 6px; }
-    #wallet-btn {
+    #wallet-btn, #trading-btn {
       display: inline-flex; align-items: center; justify-content: center;
-      background: none; border: none; cursor: default;
+      background: none; border: none; cursor: pointer;
       padding: 3px; border-radius: 4px;
       color: var(--vscode-descriptionForeground);
       position: relative;
     }
-    #wallet-btn:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.15); }
+    #wallet-btn { cursor: default; }
+    #wallet-btn:hover, #trading-btn:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.15); }
+    #chain-btn {
+      display: inline-flex; align-items: center;
+      background: none; border: 1px solid rgba(128,128,128,0.3); cursor: pointer;
+      padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 600;
+      color: var(--vscode-descriptionForeground); letter-spacing: 0.04em;
+    }
+    #chain-btn:hover { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); }
+    #prefetch-indicator {
+      font-size: 11px; color: var(--vscode-descriptionForeground);
+      padding: 3px 8px; display: flex; align-items: center; gap: 6px;
+    }
+    #prefetch-indicator::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--vscode-focusBorder, #007fd4);
+      animation: prefetch-pulse 1s ease-in-out infinite;
+    }
+    @keyframes prefetch-pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+    /* ── Overlay panels (doctor + insights) ── */
+    .overlay-panel {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(0,0,0,0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .overlay-panel.hidden { display: none; }
+    .overlay-box {
+      background: var(--vscode-editorHoverWidget-background, #1e1e1e);
+      border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
+      border-radius: 8px;
+      width: 100%;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    .overlay-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid var(--vscode-widget-border, #444);
+    }
+    .overlay-header h3 {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--vscode-foreground);
+    }
+    .overlay-close {
+      background: none; border: none; cursor: pointer; padding: 2px;
+      border-radius: 4px; color: var(--vscode-descriptionForeground);
+      display: flex; align-items: center;
+    }
+    .overlay-close:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.15); }
+    .overlay-body { padding: 10px 14px 14px; }
+    /* Doctor check rows */
+    .check-row {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(128,128,128,0.1);
+      font-size: 12px;
+    }
+    .check-row:last-child { border-bottom: none; }
+    .check-icon { font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+    .check-name { font-weight: 600; color: var(--vscode-foreground); min-width: 110px; }
+    .check-detail { color: var(--vscode-descriptionForeground); flex: 1; }
+    .check-remedy {
+      font-size: 10px; color: var(--vscode-inputValidation-warningForeground, #cca700);
+      margin-top: 2px;
+    }
+    /* Insights cards */
+    .insight-summary {
+      display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap;
+    }
+    .insight-card {
+      flex: 1; min-width: 70px;
+      background: rgba(128,128,128,0.08);
+      border: 1px solid rgba(128,128,128,0.15);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+    .insight-card-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vscode-descriptionForeground); }
+    .insight-card-val { font-size: 16px; font-weight: 700; color: var(--vscode-foreground); margin-top: 2px; }
+    .insight-section-title {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--vscode-descriptionForeground); font-weight: 600;
+      margin: 10px 0 6px;
+    }
+    .insight-model-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 0; font-size: 11px;
+      border-bottom: 1px solid rgba(128,128,128,0.08);
+    }
+    .insight-model-row:last-child { border-bottom: none; }
+    .insight-model-name { flex: 1; color: var(--vscode-foreground); font-weight: 500; }
+    .insight-model-cost { color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); }
+    .insight-model-pct { font-size: 10px; color: var(--vscode-descriptionForeground); min-width: 36px; text-align: right; }
+    .insight-bar-wrap { width: 60px; height: 5px; background: rgba(128,128,128,0.15); border-radius: 3px; flex-shrink: 0; }
+    .insight-bar { height: 100%; background: var(--vscode-focusBorder, #007fd4); border-radius: 3px; }
+    /* Resume banner */
+    .resume-banner {
+      display: flex; align-items: center; gap: 8px;
+      margin: 6px 0 10px;
+      padding: 8px 12px;
+      background: rgba(0,127,212,0.1);
+      border: 1px solid rgba(0,127,212,0.3);
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .resume-banner-text { flex: 1; color: var(--vscode-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .resume-banner-sub { font-size: 10px; color: var(--vscode-descriptionForeground); }
+    .resume-btn {
+      background: var(--vscode-button-background, #0078d4);
+      color: var(--vscode-button-foreground, #fff);
+      border: none; border-radius: 4px; padding: 3px 10px;
+      font-size: 11px; cursor: pointer; flex-shrink: 0; white-space: nowrap;
+    }
+    .resume-btn:hover { opacity: 0.9; }
+    .resume-dismiss {
+      background: none; border: none; cursor: pointer; padding: 2px;
+      border-radius: 4px; color: var(--vscode-descriptionForeground);
+      display: flex; align-items: center; flex-shrink: 0;
+    }
+    .resume-dismiss:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.15); }
     #wallet-tooltip {
       display: none;
       position: absolute;
@@ -748,6 +1060,23 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       z-index: 100;
     }
     #wallet-btn:hover #wallet-tooltip { display: block; }
+    #trading-tooltip {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--vscode-editorHoverWidget-background, #252526);
+      border: 1px solid var(--vscode-editorHoverWidget-border, rgba(128,128,128,0.3));
+      color: var(--vscode-editorHoverWidget-foreground, #ccc);
+      font-size: 11px;
+      white-space: nowrap;
+      padding: 4px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+      z-index: 100;
+    }
+    #trading-btn:hover #trading-tooltip { display: block; }
     #context-ring { width: 26px; height: 26px; position: relative; cursor: default; }
     #context-ring svg { display: block; }
     .composer-btn {
@@ -975,10 +1304,36 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     .wf-text-body { font-size: 13px; line-height: 1.55; }
     .wf-body .assistant { margin-top: 0; }
     /* ── Views: chat (default) / history overlay ── */
-    #view-chat { display: flex; flex-direction: column; height: 100vh; }
-    #view-history { display: none; flex-direction: column; height: 100vh; }
-    body.show-history #view-chat { display: none; }
-    body.show-history #view-history { display: flex; }
+    #view-chat { display: flex; flex-direction: column; height: 100vh; position: relative; }
+    #view-history {
+      display: none;
+      flex-direction: column;
+      position: absolute;
+      top: 41px;
+      right: 0;
+      width: 72%;
+      max-height: 60vh;
+      background: var(--vscode-dropdown-background, #1e1e1e);
+      border: 1px solid var(--vscode-widget-border, #444);
+      border-radius: 0 0 8px 8px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+      z-index: 50;
+      overflow: hidden;
+    }
+    #view-history.open { display: flex; }
+    #history-search {
+      width: 100%;
+      padding: 5px 8px;
+      background: rgba(128,128,128,0.1);
+      border: 1px solid var(--vscode-widget-border, #444);
+      border-radius: 4px;
+      color: var(--vscode-foreground);
+      font-size: 11px;
+      outline: none;
+      box-sizing: border-box;
+    }
+    #history-search::placeholder { color: var(--vscode-input-placeholderForeground, #888); }
+    #history-search:focus { border-color: var(--vscode-focusBorder, #007fd4); }
 
     /* ── Empty-state brand ── */
     #empty-state {
@@ -1131,20 +1486,34 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
   </style>
 </head>
 <body>
-  <!-- ── History view ── -->
-  <div id="view-history">
-    <div class="history-header">
-      <h3>History</h3>
-      <div class="history-actions">
-        <button id="history-refresh" title="Refresh">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 1 1-1.3-3.5M13.5 2v2.5H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-        <button id="history-close" title="Close">
+  <!-- ── Doctor overlay ── -->
+  <div id="doctor-overlay" class="overlay-panel hidden">
+    <div class="overlay-box">
+      <div class="overlay-header">
+        <h3>System Health</h3>
+        <button class="overlay-close" id="doctor-close">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         </button>
       </div>
+      <div class="overlay-body" id="doctor-body">
+        <div class="check-row"><span class="check-detail">Running checks…</span></div>
+      </div>
     </div>
-    <div id="history-list"></div>
+  </div>
+
+  <!-- ── Insights overlay ── -->
+  <div id="insights-overlay" class="overlay-panel hidden">
+    <div class="overlay-box">
+      <div class="overlay-header">
+        <h3>Usage Insights · 30 days</h3>
+        <button class="overlay-close" id="insights-close">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="overlay-body" id="insights-body">
+        <div class="check-row"><span class="check-detail">Loading…</span></div>
+      </div>
+    </div>
   </div>
 
   <!-- ── Chat view ── -->
@@ -1152,6 +1521,12 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     <div id="nav-header">
       <span id="nav-title">Untitled</span>
       <div class="nav-actions">
+        <button id="btn-doctor" title="System Health">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2a5 5 0 1 0 0 10A5 5 0 0 0 8 2z" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v3l2 1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M5.5 13.5c.8.3 1.6.5 2.5.5s1.7-.2 2.5-.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+        <button id="btn-insights" title="Usage Insights">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="9" width="3" height="5" rx="0.8" stroke="currentColor" stroke-width="1.3"/><rect x="6.5" y="5" width="3" height="9" rx="0.8" stroke="currentColor" stroke-width="1.3"/><rect x="11" y="2" width="3" height="12" rx="0.8" stroke="currentColor" stroke-width="1.3"/></svg>
+        </button>
         <button id="btn-history" title="History">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.5V8l2.2 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         </button>
@@ -1159,6 +1534,19 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 5.5v5M5.5 8h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         </button>
       </div>
+    </div>
+    <!-- ── History dropdown ── -->
+    <div id="view-history">
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 10px 7px;border-bottom:1px solid var(--vscode-widget-border,#444);flex-shrink:0;">
+        <input id="history-search" type="text" placeholder="Search history…" autocomplete="off" />
+        <button id="history-refresh" title="Refresh" style="background:none;border:none;cursor:pointer;padding:2px;border-radius:3px;color:var(--vscode-descriptionForeground);display:flex;align-items:center;flex-shrink:0;">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 1 1-1.3-3.5M13.5 2v2.5H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button id="history-close" title="Close" style="background:none;border:none;cursor:pointer;padding:2px;border-radius:3px;color:var(--vscode-descriptionForeground);display:flex;align-items:center;flex-shrink:0;">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div id="history-list" style="overflow-y:auto;flex:1;padding:4px;"></div>
     </div>
     <div id="log">
       <div id="empty-state">
@@ -1242,11 +1630,13 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         </svg>
         <div class="brand-name">Franklin</div>
         <div class="brand-slogan">The AI agent with a <span class="accent">wallet</span>.</div>
+        <div id="loading-step" style="font-size:11px;color:var(--vscode-descriptionForeground);margin-top:8px;opacity:0.7;">Initializing…</div>
       </div>
     </div>
   <div id="input-area">
     <div id="slash-menu"></div>
-    <div class="meta" id="status">Ready \u2014 type a message and press Enter</div>
+    <div id="prefetch-indicator" style="display:none;"></div>
+    <div class="meta" id="status"></div>
   <div id="composer">
     <input type="text" id="in" placeholder="Plan, @ for context, / for commands" autocomplete="off" />
     <div id="composer-toolbar">
@@ -1264,6 +1654,16 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
             <path d="M4 4V3a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.3"/>
           </svg>
           <span id="wallet-tooltip">loading…</span>
+        </button>
+        <button type="button" id="chain-btn" title="Switch chain (Base ↔ Solana)">
+          <span id="chain-label">—</span>
+        </button>
+        <button type="button" id="trading-btn">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path d="M2 12l3.5-4 3 2.5L12 5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M10 5h2v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span id="trading-tooltip">Trading Dashboard</span>
         </button>
       </div>
       <div class="composer-right">
@@ -1324,6 +1724,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       document.body.classList.toggle('has-messages', has);
     }
     function resetChatLog() {
+      dismissResumeBanner();
       // Remove messages but keep empty-state node intact
       var kids = Array.from(log.children);
       kids.forEach(function(k) { if (k.id !== 'empty-state') log.removeChild(k); });
@@ -1338,23 +1739,56 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       currentToolGroup = null;
       refreshHasMessages();
     }
+    var historyDropdown = document.getElementById('view-history');
     function showChat(title) {
       if (title) currentChatTitle = title;
-      document.body.classList.remove('show-history');
+      historyDropdown.classList.remove('open');
       navTitle.textContent = currentChatTitle;
     }
-    function showHistory() {
-      document.body.classList.add('show-history');
-      vscode.postMessage({ type: 'requestHistory' });
+    var historySearchEl = document.getElementById('history-search');
+    var allHistoryItems = [];
+
+    function filterHistory(q) {
+      var lower = q.toLowerCase().trim();
+      var filtered = lower ? allHistoryItems.filter(function(i) {
+        return i.title.toLowerCase().indexOf(lower) !== -1 || i.model.toLowerCase().indexOf(lower) !== -1;
+      }) : allHistoryItems;
+      renderHistoryList(filtered, true);
     }
 
+    historySearchEl.addEventListener('input', function() {
+      filterHistory(historySearchEl.value);
+    });
+
+    function showHistory() {
+      historyDropdown.classList.toggle('open');
+      if (historyDropdown.classList.contains('open')) {
+        historySearchEl.value = '';
+        vscode.postMessage({ type: 'requestHistory' });
+        setTimeout(function() { try { historySearchEl.focus(); } catch(e){} }, 50);
+      }
+    }
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(e) {
+      if (!historyDropdown.classList.contains('open')) return;
+      var navHeader = document.getElementById('nav-header');
+      if (!historyDropdown.contains(e.target) && !navHeader.contains(e.target)) {
+        historyDropdown.classList.remove('open');
+      }
+    });
+
     // Top-right nav buttons
-    document.getElementById('btn-history').addEventListener('click', showHistory);
-    document.getElementById('btn-new').addEventListener('click', function() {
+    document.getElementById('btn-history').addEventListener('click', function(e) {
+      e.stopPropagation();
+      showHistory();
+    });
+    function newChat() {
       resetChatLog();
       isLiveChat = true;
       showChat('Untitled');
-    });
+    }
+    document.getElementById('btn-new').addEventListener('click', newChat);
     document.getElementById('history-refresh').addEventListener('click', function() {
       vscode.postMessage({ type: 'requestHistory' });
     });
@@ -1362,13 +1796,159 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       showChat();
     });
 
+    // ── Doctor overlay ──
+    var doctorOverlay = document.getElementById('doctor-overlay');
+    var doctorBody = document.getElementById('doctor-body');
+    document.getElementById('btn-doctor').addEventListener('click', function() {
+      doctorBody.innerHTML = '<div class="check-row"><span class="check-detail">Running checks…</span></div>';
+      doctorOverlay.classList.remove('hidden');
+      vscode.postMessage({ type: 'runDoctor' });
+    });
+    document.getElementById('doctor-close').addEventListener('click', function() {
+      doctorOverlay.classList.add('hidden');
+    });
+    doctorOverlay.addEventListener('click', function(e) {
+      if (e.target === doctorOverlay) doctorOverlay.classList.add('hidden');
+    });
+    function renderDoctorResults(checks, error) {
+      doctorBody.innerHTML = '';
+      if (error) {
+        doctorBody.innerHTML = '<div class="check-row"><span class="check-detail" style="color:var(--vscode-inputValidation-errorForeground,#f44)">Error: ' + error + '</span></div>';
+        return;
+      }
+      checks.forEach(function(c) {
+        var row = document.createElement('div');
+        row.className = 'check-row';
+        var icon = document.createElement('span');
+        icon.className = 'check-icon';
+        icon.textContent = c.status === 'ok' ? '✓' : c.status === 'warn' ? '!' : '✗';
+        icon.style.color = c.status === 'ok' ? 'var(--vscode-terminal-ansiGreen,#3fb950)' : c.status === 'warn' ? 'var(--vscode-editorWarning-foreground,#cca700)' : 'var(--vscode-inputValidation-errorBorder,#f44)';
+        var info = document.createElement('div');
+        info.style.flex = '1';
+        var nameSpan = document.createElement('div');
+        nameSpan.style.display = 'flex'; nameSpan.style.gap = '8px'; nameSpan.style.alignItems = 'baseline';
+        var n = document.createElement('span'); n.className = 'check-name'; n.textContent = c.name;
+        var d = document.createElement('span'); d.className = 'check-detail'; d.textContent = c.detail;
+        nameSpan.appendChild(n); nameSpan.appendChild(d);
+        info.appendChild(nameSpan);
+        if (c.remedy) {
+          var r = document.createElement('div'); r.className = 'check-remedy'; r.textContent = c.remedy;
+          info.appendChild(r);
+        }
+        row.appendChild(icon);
+        row.appendChild(info);
+        doctorBody.appendChild(row);
+      });
+    }
+
+    // ── Insights overlay ──
+    var insightsOverlay = document.getElementById('insights-overlay');
+    var insightsBody = document.getElementById('insights-body');
+    document.getElementById('btn-insights').addEventListener('click', function() {
+      insightsBody.innerHTML = '<div class="check-row"><span class="check-detail">Loading…</span></div>';
+      insightsOverlay.classList.remove('hidden');
+      vscode.postMessage({ type: 'loadInsights' });
+    });
+    document.getElementById('insights-close').addEventListener('click', function() {
+      insightsOverlay.classList.add('hidden');
+    });
+    insightsOverlay.addEventListener('click', function(e) {
+      if (e.target === insightsOverlay) insightsOverlay.classList.add('hidden');
+    });
+    function renderInsights(data, error) {
+      insightsBody.innerHTML = '';
+      if (error) {
+        insightsBody.innerHTML = '<div class="check-row"><span class="check-detail" style="color:var(--vscode-inputValidation-errorForeground,#f44)">Error: ' + error + '</span></div>';
+        return;
+      }
+      // Summary cards
+      var summary = document.createElement('div'); summary.className = 'insight-summary';
+      function card(label, val) {
+        var c = document.createElement('div'); c.className = 'insight-card';
+        var l = document.createElement('div'); l.className = 'insight-card-label'; l.textContent = label;
+        var v = document.createElement('div'); v.className = 'insight-card-val'; v.textContent = val;
+        c.appendChild(l); c.appendChild(v); summary.appendChild(c);
+      }
+      card('Total Cost', '$' + (data.totalCostUsd || 0).toFixed(3));
+      card('Requests', String(data.windowRecords || 0));
+      card('Proj/mo', '$' + ((data.projections && data.projections.projectedMonthlyUsd) || 0).toFixed(2));
+      card('Saved vs Opus', '$' + (data.savedVsOpusUsd || 0).toFixed(3));
+      insightsBody.appendChild(summary);
+      // Top models
+      var models = (data.byModel || []).slice(0, 5);
+      if (models.length > 0) {
+        var t = document.createElement('div'); t.className = 'insight-section-title'; t.textContent = 'Top Models';
+        insightsBody.appendChild(t);
+        var maxCost = models[0].costUsd || 0.0001;
+        models.forEach(function(m) {
+          var row = document.createElement('div'); row.className = 'insight-model-row';
+          var name = document.createElement('span'); name.className = 'insight-model-name';
+          name.textContent = m.model.split('/').pop() || m.model;
+          var barWrap = document.createElement('div'); barWrap.className = 'insight-bar-wrap';
+          var bar = document.createElement('div'); bar.className = 'insight-bar';
+          bar.style.width = Math.round((m.costUsd / maxCost) * 100) + '%';
+          barWrap.appendChild(bar);
+          var cost = document.createElement('span'); cost.className = 'insight-model-cost';
+          cost.textContent = '$' + (m.costUsd || 0).toFixed(4);
+          var pct = document.createElement('span'); pct.className = 'insight-model-pct';
+          pct.textContent = Math.round(m.percentOfTotal || 0) + '%';
+          row.appendChild(name); row.appendChild(barWrap); row.appendChild(cost); row.appendChild(pct);
+          insightsBody.appendChild(row);
+        });
+      }
+    }
+
+    // ── Trading dashboard button ──
+    document.getElementById('trading-btn').addEventListener('click', function() {
+      vscode.postMessage({ type: 'openTrading' });
+    });
+    document.getElementById('chain-btn').addEventListener('click', function() {
+      vscode.postMessage({ type: 'switchChain' });
+    });
+
+    // ── Resume banner ──
+    var resumeBannerEl = null;
+    var resumeSessionId = null;
+    function showResumeBanner(session) {
+      if (resumeBannerEl) return; // already shown
+      resumeSessionId = session.id;
+      resumeBannerEl = document.createElement('div');
+      resumeBannerEl.className = 'resume-banner';
+      var textWrap = document.createElement('div');
+      var titleDiv = document.createElement('div'); titleDiv.className = 'resume-banner-text'; titleDiv.textContent = session.title;
+      var subDiv = document.createElement('div'); subDiv.className = 'resume-banner-sub'; subDiv.textContent = session.ago + ' · ' + session.model;
+      textWrap.appendChild(titleDiv); textWrap.appendChild(subDiv);
+      var continueBtn = document.createElement('button'); continueBtn.className = 'resume-btn'; continueBtn.textContent = 'Continue';
+      continueBtn.addEventListener('click', function() {
+        dismissResumeBanner();
+        isLiveChat = false;
+        vscode.postMessage({ type: 'loadSession', text: session.id });
+      });
+      var dismissBtn = document.createElement('button'); dismissBtn.className = 'resume-dismiss'; dismissBtn.title = 'Dismiss';
+      dismissBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+      dismissBtn.addEventListener('click', dismissResumeBanner);
+      resumeBannerEl.appendChild(textWrap);
+      resumeBannerEl.appendChild(continueBtn);
+      resumeBannerEl.appendChild(dismissBtn);
+      // Insert before empty-state
+      var emptyState = document.getElementById('empty-state');
+      log.insertBefore(resumeBannerEl, emptyState ? emptyState.nextSibling : null);
+    }
+    function dismissResumeBanner() {
+      if (resumeBannerEl && resumeBannerEl.parentNode) {
+        resumeBannerEl.parentNode.removeChild(resumeBannerEl);
+      }
+      resumeBannerEl = null;
+    }
+
     function hasLogMessages() {
       return !!log.querySelector('.user, .assistant, .wf-turn');
     }
-    function renderHistoryList(items) {
+    function renderHistoryList(items, isFiltered) {
       historyList.textContent = '';
+      if (!isFiltered) allHistoryItems = items || [];
       // "Current Chat" entry to resume live session
-      if (isLiveChat && hasLogMessages()) {
+      if (!isFiltered && isLiveChat && hasLogMessages()) {
         var cur = document.createElement('div');
         cur.className = 'history-item';
         cur.style.borderBottom = '1px solid var(--vscode-widget-border, #333)';
@@ -1406,6 +1986,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         el.appendChild(meta);
         el.addEventListener('click', function() {
           isLiveChat = false;
+          historyDropdown.classList.remove('open');
           vscode.postMessage({ type: 'loadSession', text: item.id });
         });
         historyList.appendChild(el);
@@ -1451,7 +2032,8 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       ]},
       {group: 'Premium Frontier', items: [
         {label: 'Claude Sonnet 4.6', shortcut: 'sonnet', price: '$3/$15', desc: 'Anthropic best-value model. Great for everyday coding tasks.', ctx: '200k'},
-        {label: 'Claude Opus 4.6', shortcut: 'opus', price: '$5/$25', desc: 'Anthropic most capable model. Best for complex reasoning.', ctx: '200k'},
+        {label: 'Claude Opus 4.7', shortcut: 'opus', price: '$5/$25', desc: 'Anthropic most capable model. 1M context, 128k output. Best for complex reasoning.', ctx: '1M', isNew: true},
+        {label: 'Claude Opus 4.6', shortcut: 'opus-4.6', price: '$5/$25', desc: 'Previous Opus generation.', ctx: '200k'},
         {label: 'GPT-5.4', shortcut: 'gpt', price: '$2.5/$15', desc: 'OpenAI latest flagship model. Great for complex tasks.', ctx: '272k'},
         {label: 'GPT-5.4 Pro', shortcut: 'gpt-5.4-pro', price: '$30/$180', desc: 'OpenAI most capable. Best for hardest problems.', ctx: '272k'},
         {label: 'Gemini 2.5 Pro', shortcut: 'gemini', price: '$1.25/$10', desc: 'Google flagship model. Strong at code and multimodal.', ctx: '1M'},
@@ -1473,15 +2055,15 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         {label: 'GPT-5 Nano', shortcut: 'nano', price: '$0.05/$0.4', desc: 'Smallest OpenAI. Ultra-low cost for basic tasks.', ctx: '1M'},
         {label: 'Gemini 2.5 Flash', shortcut: 'flash', price: '$0.3/$2.5', desc: 'Google fast model. Low cost with solid quality.', ctx: '1M'},
         {label: 'DeepSeek V3', shortcut: 'deepseek', price: '$0.28/$0.42', desc: 'DeepSeek latest. Excellent code generation.', ctx: '128k'},
-        {label: 'Kimi K2.5', shortcut: 'kimi', price: '$0.6/$3', desc: 'Moonshot model. Strong multilingual support.', ctx: '128k'},
+        {label: 'Kimi K2.6', shortcut: 'kimi', price: '$0.95/$4', desc: 'Moonshot flagship. 256K context, vision + reasoning.', ctx: '256k', isNew: true},
+        {label: 'Kimi K2.5', shortcut: 'kimi-k2.5', price: '$0.6/$3', desc: 'Kimi previous generation.', ctx: '128k'},
         {label: 'Minimax M2.7', shortcut: 'minimax', price: '$0.3/$1.2', desc: 'Minimax model. Good general-purpose budget option.', ctx: '128k'}
       ]},
       {group: 'Free (no USDC needed)', items: [
-        {label: 'Nemotron Ultra 253B', shortcut: 'free', price: '', desc: 'NVIDIA large model. Free tier, no funding required.', ctx: '128k'},
+        {label: 'GLM-4.7', shortcut: 'free', price: '', desc: 'Zhipu GLM-4.7 via NVIDIA. Default free model.', ctx: '128k'},
         {label: 'Qwen3 Coder 480B', shortcut: 'qwen-coder', price: '', desc: 'Alibaba coding model. Free, specialized for code.', ctx: '256k'},
-        {label: 'Devstral 2 123B', shortcut: 'devstral', price: '', desc: 'Mistral coding model. Free, strong at code tasks.', ctx: '128k'},
         {label: 'Llama 4 Maverick', shortcut: 'maverick', price: '', desc: 'Meta Llama 4. Free, strong multilingual.', ctx: '128k'},
-        {label: 'DeepSeek V3.2', shortcut: 'deepseek-free', price: '', desc: 'DeepSeek free tier via NVIDIA.', ctx: '128k'}
+        {label: 'Qwen3 Next 80B Thinking', shortcut: 'qwen-think', price: '', desc: 'Alibaba reasoning model. Free, extended thinking.', ctx: '128k', isNew: true}
       ]}
     ];
 
@@ -1491,11 +2073,11 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
 
     // Fallback keyword → label map for models whose shortcut doesn't appear in the full ID
     var MODEL_ID_KEYWORDS = [
-      ['nemotron', 'Nemotron Ultra 253B'],
+      ['glm-4.7', 'GLM-4.7'],
       ['qwen3-coder', 'Qwen3 Coder 480B'],
-      ['devstral', 'Devstral 2 123B'],
       ['maverick', 'Llama 4 Maverick'],
-      ['deepseek-v3.2', 'DeepSeek V3.2']
+      ['qwen3-next', 'Qwen3 Next 80B Thinking'],
+      ['nemotron', 'Nemotron Ultra'],
     ];
     function shortModelName(raw) {
       var lower = raw.toLowerCase();
@@ -1530,6 +2112,12 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           var name = document.createElement('span');
           name.textContent = item.label;
           row.appendChild(name);
+          if (item.isNew) {
+            var nw = document.createElement('span');
+            nw.className = 'md-new';
+            nw.textContent = 'NEW';
+            row.appendChild(nw);
+          }
           if (item.price) {
             var pr = document.createElement('span');
             pr.className = 'md-price';
@@ -1660,6 +2248,8 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       if (!info) return;
       syncBaseBalance(info.balance);
       applyStatus({ model: info.model });
+      var cl = document.getElementById('chain-label');
+      if (cl && info.chain) cl.textContent = info.chain === 'solana' ? 'SOL' : 'BASE';
     }
 
     var BT = String.fromCharCode(96); // backtick
@@ -1962,6 +2552,18 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         renderHistoryList(m.items);
         return;
       }
+      if (m.type === 'lastSession' && m.session) {
+        showResumeBanner(m.session);
+        return;
+      }
+      if (m.type === 'doctorResults') {
+        renderDoctorResults(m.checks || [], m.error);
+        return;
+      }
+      if (m.type === 'insightsData') {
+        renderInsights(m.data, m.error);
+        return;
+      }
       if (m.type === 'loadHistory') {
         resetChatLog();
         showChat(m.title || 'History');
@@ -1974,12 +2576,23 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         });
         return;
       }
+      if (m.type === 'loadingStep') {
+        var ls = document.getElementById('loading-step');
+        if (ls) ls.textContent = m.text;
+        return;
+      }
       if (m.type === 'welcome') {
+        var ls2 = document.getElementById('loading-step');
+        if (ls2) ls2.style.display = 'none';
         renderWelcome(m.info, null, m.hasWorkspace !== false);
         return;
       }
       if (m.type === 'status' && m.partial) {
         if (m.partial.balance) syncBaseBalance(m.partial.balance);
+        if (m.partial.chain) {
+          var cl = document.getElementById('chain-label');
+          if (cl) cl.textContent = m.partial.chain === 'solana' ? 'SOL' : 'BASE';
+        }
         applyStatus(m.partial);
         return;
       }
@@ -2068,7 +2681,16 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           finishToolStepWf(ev.id || toolNameStr, !ev.error, doneResult);
           updateActivityRow();
           break;
+        case 'prefetch_start':
+          var pfEl = document.getElementById('prefetch-indicator');
+          if (pfEl) {
+            pfEl.textContent = 'Fetching live ' + (ev.assetClass === 'stock' ? 'stock' : 'market') + ' data for ' + ev.symbol + '…';
+            pfEl.style.display = 'flex';
+          }
+          break;
         case 'turn_done':
+          var pfEl2 = document.getElementById('prefetch-indicator');
+          if (pfEl2) pfEl2.style.display = 'none';
           flushTextStepWf();
           commitThinking();
           currentTurnWf = null;
@@ -2205,12 +2827,10 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     });
 
     function send() {
-      const t = input.value.trim();
+      var t = input.value.trim();
       if (!t) return;
       isLiveChat = true;
-      if (document.body.classList.contains('show-history')) {
-        showChat();
-      }
+      historyDropdown.classList.remove('open');
       if (!currentChatTitle || currentChatTitle === 'Untitled' || currentChatTitle === 'New Chat') {
         currentChatTitle = t.length > 30 ? t.slice(0, 30) + '...' : t;
         navTitle.textContent = currentChatTitle;

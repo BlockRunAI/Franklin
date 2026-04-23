@@ -1,26 +1,63 @@
 # Franklin — The AI Agent with a Wallet
 
-Franklin is an autonomous AI agent that runs directly in VS Code. It doesn't just write text — it spends USDC from a user-funded wallet to execute real work: marketing campaigns, trading signals, and content generation.
+Franklin is an autonomous AI agent that runs directly in VS Code. It doesn't just write text — it spends USDC from a user-funded wallet to execute real work: coding, trading signals, and content generation.
+
+> **Install the latest version from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=blockrun.franklin-vscode)** to get all new features and bug fixes.
+
+---
 
 ## Features
 
 - **Chat interface** — Side panel chat powered by the Franklin agent engine
+- **55+ models** — Claude Opus/Sonnet/Haiku, Gemini, GPT, Grok, Kimi, DeepSeek, and more, switchable mid-session
+- **Smart routing** — Auto/Eco/Premium profiles pick the right model per task automatically
 - **Extended thinking** — Watch the model reason step-by-step, collapsible per turn
 - **Workflow timeline** — Visual timeline of every tool call and action taken
-- **Multi-model routing** — Automatically routes tasks to the right model tier
-- **Session history** — Persistent sessions with full search
+- **Proactive market data** — detects tickers in your messages and prefetches live prices before the model responds
+- **Session history** — Persistent sessions with search and auto-resume
+- **Doctor panel** — one-click environment health check (wallet, gateway, Node.js version, MCP config)
+- **Usage insights** — 30-day spend and session analytics dashboard
+- **Trading dashboard** — launches Franklin's web panel with real-time portfolio and market data
+- **Chain switcher** — toggle between Base and Solana payment wallets from the toolbar
+- **MCP support** — connect external tools via MCP servers
+
+---
 
 ## Requirements
 
-- A funded Franklin wallet (USDC on Base)
-- Node.js 20+
+- VS Code 1.85+
+- Node.js 20+ (for Trading Dashboard auto-launch)
+- A funded wallet on Base or Solana to use paid models (free models require no funding)
 
 ## Getting Started
 
-1. Install the extension
+1. Install the extension from the VS Code Marketplace
 2. Open the Franklin panel from the Activity Bar
-3. Fund your wallet at [blockrun.ai](https://blockrun.ai)
-4. Start chatting — Franklin will autonomously execute tasks and pay for APIs on your behalf
+3. Run `franklin setup` in a terminal to create your wallet, or fund the address shown in the panel with USDC
+4. Start chatting — free models work immediately, paid models activate once your wallet has USDC
+
+---
+
+## Changelog
+
+### 0.2.1
+- Fixed model switching bug — selected model was reverting to default (Gemini 2.5 Flash) after each turn, because `baseModel` wasn't being updated alongside `model`
+- Fixed Trading Dashboard on Windows — PATH now split with platform delimiter, executables searched with `.cmd`/`.exe` suffixes, `%APPDATA%\npm` added to search paths
+
+### 0.2.0
+- Added **chain switcher** — toggle Base ↔ Solana payment chain from the toolbar badge
+- Added **prefetch status indicator** — shows a live pulse "Fetching market data for BTC…" when the agent proactively pulls prices before responding
+- Updated free model lineup: GLM-4.7 (new default), Qwen3 Coder 480B, Llama 4 Maverick, Qwen3 Next 80B Thinking (NEW)
+- Synced with Franklin core v3.8.9–v3.8.30: unified turn analyzer, proactive prefetch, stocks via x402, panel Base ↔ Solana chain switcher
+
+### 0.1.0
+- Initial release
+- Chat panel with model picker, wallet balance display, session history with search
+- Doctor health panel, usage insights dashboard
+- Trading dashboard icon (auto-launches `franklin panel` in the background)
+- History dropdown, session auto-resume
+
+---
 
 ## Links
 

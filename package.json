@@ -12,6 +12,10 @@
       "types": "./dist/plugin-sdk/index.d.ts",
       "default": "./dist/plugin-sdk/index.js"
     },
+    "./vscode-session": {
+      "types": "./dist/api/vscode-session.d.ts",
+      "default": "./dist/api/vscode-session.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {

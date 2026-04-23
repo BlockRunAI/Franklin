@@ -3,6 +3,7 @@ node_modules
 *.tsbuildinfo
 .env
 .env.*
+vscode-extension/*.vsix
 *.log
 .gstack/
 

@@ -13,6 +13,9 @@ import { loadMcpConfig } from '../mcp/config.js';
 import { connectMcpServers, disconnectMcpServers } from '../mcp/client.js';
 export { estimateCost } from '../pricing.js';
 export { listSessions, loadSessionHistory, loadSessionMeta } from '../session/storage.js';
+export { generateInsights } from '../stats/insights.js';
+export { runChecks as runDoctorChecks } from '../commands/doctor.js';
+export { saveChain, loadChain } from '../config.js';
 // ─── FRANKLIN plain-text banner for webview (no ANSI) ──────────────────────
 const FRANKLIN_ART = [
     ' ███████╗██████╗  █████╗ ███╗   ██╗██╗  ██╗██╗     ██╗███╗   ██╗',
@@ -45,27 +48,41 @@ function resolveEffectiveModel(explicit) {
 }
 /** On-chain wallet + balance only (no model). */
 export async function getVsCodeWalletStatus(_workDir) {
-    const chain = loadChain();
-    let walletAddress = '';
-    if (chain === 'solana') {
-        const w = await getOrCreateSolanaWallet();
-        walletAddress = w.address;
-    }
-    else {
-        const w = getOrCreateWallet();
-        walletAddress = w.address;
-    }
-    let balance = 'checking…';
+    let chain;
     try {
+        chain = loadChain();
+    }
+    catch {
+        chain = 'base';
+    }
+    let walletAddress = '';
+    try {
+        if (chain === 'solana') {
+            const w = await getOrCreateSolanaWallet();
+            walletAddress = w.address;
+        }
+        else {
+            const w = getOrCreateWallet();
+            walletAddress = w.address;
+        }
+    }
+    catch {
+        walletAddress = '—';
+    }
+    let balance = 'unknown';
+    try {
+        const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000));
         if (chain === 'solana') {
             const { setupAgentSolanaWallet } = await import('@blockrun/llm');
             const client = await setupAgentSolanaWallet({ silent: true });
-            balance = `$${(await client.getBalance()).toFixed(2)} USDC`;
+            const bal = await Promise.race([client.getBalance(), timeout]);
+            balance = `$${bal.toFixed(2)} USDC`;
         }
         else {
             const { setupAgentWallet } = await import('@blockrun/llm');
             const client = setupAgentWallet({ silent: true });
-            balance = `$${(await client.getBalance()).toFixed(2)} USDC`;
+            const bal = await Promise.race([client.getBalance(), timeout]);
+            balance = `$${bal.toFixed(2)} USDC`;
         }
     }
     catch {

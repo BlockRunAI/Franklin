@@ -3,7 +3,7 @@
  */
 
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadChain, saveChain, API_URLS, VERSION } from '../config.js';
 import { flushStats } from '../stats/tracker.js';
 import { loadConfig } from '../commands/config.js';
 import { estimateCost } from '../pricing.js';
@@ -20,6 +20,10 @@ export type { Dialogue } from '../agent/types.js';
 export { estimateCost } from '../pricing.js';
 export { listSessions, loadSessionHistory, loadSessionMeta } from '../session/storage.js';
 export type { SessionMeta } from '../session/storage.js';
+export { generateInsights } from '../stats/insights.js';
+export type { InsightsReport } from '../stats/insights.js';
+export { runChecks as runDoctorChecks } from '../commands/doctor.js';
+export { saveChain, loadChain } from '../config.js';
 
 /** Welcome panel: same branding as CLI, plus live wallet / model / workspace. */
 export interface VsCodeWelcomeInfo {
@@ -72,27 +76,41 @@ export async function getVsCodeWalletStatus(_workDir: string): Promise<{
   walletAddress: string;
   balance: string;
 }> {
-  const chain = loadChain();
-
-  let walletAddress = '';
-  if (chain === 'solana') {
-    const w = await getOrCreateSolanaWallet();
-    walletAddress = w.address;
-  } else {
-    const w = getOrCreateWallet();
-    walletAddress = w.address;
+  let chain: 'base' | 'solana';
+  try {
+    chain = loadChain();
+  } catch {
+    chain = 'base';
   }
 
-  let balance = 'checking…';
+  let walletAddress = '';
   try {
+    if (chain === 'solana') {
+      const w = await getOrCreateSolanaWallet();
+      walletAddress = w.address;
+    } else {
+      const w = getOrCreateWallet();
+      walletAddress = w.address;
+    }
+  } catch {
+    walletAddress = '—';
+  }
+
+  let balance = 'unknown';
+  try {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), 5000)
+    );
     if (chain === 'solana') {
       const { setupAgentSolanaWallet } = await import('@blockrun/llm');
       const client = await setupAgentSolanaWallet({ silent: true });
-      balance = `$${(await client.getBalance()).toFixed(2)} USDC`;
+      const bal = await Promise.race([client.getBalance(), timeout]);
+      balance = `$${(bal as number).toFixed(2)} USDC`;
     } else {
       const { setupAgentWallet } = await import('@blockrun/llm');
       const client = setupAgentWallet({ silent: true });
-      balance = `$${(await client.getBalance()).toFixed(2)} USDC`;
+      const bal = await Promise.race([client.getBalance(), timeout]);
+      balance = `$${(bal as number).toFixed(2)} USDC`;
     }
   } catch {
     balance = 'unknown';

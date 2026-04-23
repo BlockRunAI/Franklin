@@ -599,6 +599,9 @@ export async function interactiveSession(
     // prefetch-classifier call that previously ran here.
     try {
       if (turnAnalysis?.intent) {
+        if (turnAnalysis.intent.kind === 'ticker') {
+          onEvent({ kind: 'prefetch_start', symbol: turnAnalysis.intent.symbol, assetClass: turnAnalysis.intent.assetClass });
+        }
         const prefetch = await prefetchForIntent(turnAnalysis.intent, client);
         if (prefetch && prefetch.anyOk) {
           if (config.showPrefetchStatus !== false) {

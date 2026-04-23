@@ -144,6 +144,12 @@ export interface StreamUsageInfo {
   contextPct?: number; // 0-100
 }
 
+export interface StreamPrefetchStart {
+  kind: 'prefetch_start';
+  symbol: string;
+  assetClass: 'stock' | 'crypto';
+}
+
 export type StreamEvent =
   | StreamTextDelta
   | StreamThinkingDelta
@@ -152,7 +158,8 @@ export type StreamEvent =
   | StreamCapabilityProgress
   | StreamCapabilityDone
   | StreamTurnDone
-  | StreamUsageInfo;
+  | StreamUsageInfo
+  | StreamPrefetchStart;
 
 // ─── Agent Configuration ───────────────────────────────────────────────────
 

@@ -7,6 +7,10 @@ export type { Dialogue } from '../agent/types.js';
 export { estimateCost } from '../pricing.js';
 export { listSessions, loadSessionHistory, loadSessionMeta } from '../session/storage.js';
 export type { SessionMeta } from '../session/storage.js';
+export { generateInsights } from '../stats/insights.js';
+export type { InsightsReport } from '../stats/insights.js';
+export { runChecks as runDoctorChecks } from '../commands/doctor.js';
+export { saveChain, loadChain } from '../config.js';
 /** Welcome panel: same branding as CLI, plus live wallet / model / workspace. */
 export interface VsCodeWelcomeInfo {
     bannerLines: string[];
