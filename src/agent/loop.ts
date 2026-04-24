@@ -1332,6 +1332,28 @@ export async function interactiveSession(
               };
             }
           }
+          // Vision attachments: if a tool returned image bytes (e.g. Read on a
+          // .png), wrap them into Anthropic-native tool_result.content so
+          // vision-capable models can actually see the image. The gateway
+          // preserves these blocks end-to-end via the tool_result side channel.
+          if (result.images && result.images.length > 0) {
+            const content: Array<
+              | { type: 'text'; text: string }
+              | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+            > = [{ type: 'text', text: result.output }];
+            for (const img of result.images) {
+              content.push({
+                type: 'image',
+                source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
+              });
+            }
+            return {
+              type: 'tool_result' as const,
+              tool_use_id: inv.id,
+              content,
+              is_error: result.isError,
+            };
+          }
           return {
             type: 'tool_result' as const,
             tool_use_id: inv.id,
