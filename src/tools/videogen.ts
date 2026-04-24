@@ -22,6 +22,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadConfig } from '../commands/config.js';
 import type { ContentLibrary } from '../content/library.js';
 import { ModelClient } from '../agent/llm.js';
 import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
@@ -62,12 +63,14 @@ function buildExecute(deps: VideoGenDeps) {
 
     if (!prompt) return { output: 'Error: prompt is required', isError: true };
 
-    let videoModel = model || DEFAULT_MODEL;
+    const userDefaultVideo = loadConfig()['default-video-model'];
+    let videoModel = model || userDefaultVideo || DEFAULT_MODEL;
     let duration = duration_seconds ?? DEFAULT_DURATION;
 
     // ── Media router + AskUser flow (video bills per second, always ask) ──
+    // Skip cost preview when caller named a model OR user has set a default.
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
-    if (!model && !autoApprove && ctx.onAskUser) {
+    if (!model && !userDefaultVideo && !autoApprove && ctx.onAskUser) {
       try {
         const chain = loadChain();
         const client = new ModelClient({ apiUrl: API_URLS[chain], chain });

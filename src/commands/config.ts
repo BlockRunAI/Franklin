@@ -11,6 +11,8 @@ const VALID_KEYS = [
   'sonnet-model',
   'opus-model',
   'haiku-model',
+  'default-image-model',
+  'default-video-model',
   'smart-routing',
   'permission-mode',
   'max-turns',
@@ -26,6 +28,8 @@ export interface AppConfig {
   'sonnet-model'?: string;
   'opus-model'?: string;
   'haiku-model'?: string;
+  'default-image-model'?: string;
+  'default-video-model'?: string;
   'smart-routing'?: string;
   'permission-mode'?: string;
   'max-turns'?: string;

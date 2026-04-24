@@ -17,6 +17,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadConfig } from '../commands/config.js';
 import type { ContentLibrary } from '../content/library.js';
 import { checkImageBudget, recordImageAsset } from '../content/record-image.js';
 import { ModelClient } from '../agent/llm.js';
@@ -60,11 +61,14 @@ function buildExecute(deps: ImageGenDeps) {
     // no AskUser bridge exists (batch / --prompt mode), skip the proposal
     // step and use the old default. Otherwise: classifier picks a fitting
     // model, cost preview goes to AskUser, user chooses or cancels.
-    let imageModel = model || 'openai/gpt-image-1';
+    const userDefaultImage = loadConfig()['default-image-model'];
+    let imageModel = model || userDefaultImage || 'openai/gpt-image-1';
     const imageSize = size || '1024x1024';
 
+    // Skip cost preview when the caller named a model explicitly OR the
+    // user has set a default-image-model (they've already chosen).
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
-    if (!model && !autoApprove && ctx.onAskUser) {
+    if (!model && !userDefaultImage && !autoApprove && ctx.onAskUser) {
       try {
         const chain = loadChain();
         const client = new ModelClient({ apiUrl: API_URLS[chain], chain });
