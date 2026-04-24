@@ -67,6 +67,51 @@ function estimateVideoCostUsd(durationSeconds = DEFAULT_DURATION): number {
   return Math.max(1, durationSeconds) * PRICE_PER_SECOND_USD;
 }
 
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  '.png':  'image/png',
+  '.jpg':  'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif':  'image/gif',
+};
+
+// Soft cap on the raw image bytes we'll embed as a data URL. The base64-
+// encoded form is ~33% larger, so 4 MB raw becomes ~5.4 MB in the JSON body
+// — comfortably under typical gateway / upstream body limits (usually 10 MB+).
+// Bigger images silently degrade the user experience (slow upload, risk of
+// 413), so we reject with a clear error rather than try.
+const MAX_SEED_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * If `image_url` points at a local file, read it and return a data URL.
+ * Otherwise (http / https / existing data URL) return it unchanged.
+ * Throws a user-facing Error for files that can't be read or are too big.
+ */
+function resolveSeedImage(raw: string | undefined, workingDir: string): string | undefined {
+  if (!raw) return undefined;
+  if (raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('data:')) {
+    return raw;
+  }
+  const resolved = path.isAbsolute(raw) ? raw : path.resolve(workingDir, raw);
+  const stat = fs.statSync(resolved);  // lets ENOENT bubble up with a useful message
+  if (stat.size > MAX_SEED_IMAGE_BYTES) {
+    throw new Error(
+      `Seed image too large: ${(stat.size / 1024 / 1024).toFixed(1)}MB > ${MAX_SEED_IMAGE_BYTES / 1024 / 1024}MB cap. ` +
+      `Resize the image or host it at a public URL.`
+    );
+  }
+  const ext = path.extname(resolved).toLowerCase();
+  const mime = IMAGE_MIME_BY_EXT[ext];
+  if (!mime) {
+    throw new Error(
+      `Unsupported seed image format: ${ext || '(no extension)'}. ` +
+      `Use one of: ${Object.keys(IMAGE_MIME_BY_EXT).join(', ')}.`
+    );
+  }
+  const data = fs.readFileSync(resolved).toString('base64');
+  return `data:${mime};base64,${data}`;
+}
+
 function buildExecute(deps: VideoGenDeps) {
   return async function execute(
     input: Record<string, unknown>,
@@ -166,10 +211,23 @@ function buildExecute(deps: VideoGenDeps) {
       ? (path.isAbsolute(output_path) ? output_path : path.resolve(ctx.workingDir, output_path))
       : path.resolve(ctx.workingDir, `generated-${Date.now()}.mp4`);
 
+    // Resolve seed image: if the caller passed a local path we read it and
+    // inline it as a data URL so the upstream model (Seedance, Grok Imagine,
+    // etc.) can use it as a starting frame. Remote URLs pass through as-is.
+    let resolvedImageUrl: string | undefined;
+    try {
+      resolvedImageUrl = resolveSeedImage(image_url, ctx.workingDir);
+    } catch (err) {
+      return {
+        output: `Seed image error: ${err instanceof Error ? err.message : String(err)}`,
+        isError: true,
+      };
+    }
+
     const body = JSON.stringify({
       model: videoModel,
       prompt: chosenPrompt,
-      ...(image_url ? { image_url } : {}),
+      ...(resolvedImageUrl ? { image_url: resolvedImageUrl } : {}),
       ...(duration_seconds ? { duration_seconds } : {}),
     });
 
@@ -503,7 +561,7 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
           prompt: { type: 'string', description: 'Text description of the video to generate' },
           output_path: { type: 'string', description: 'Where to save the MP4. Default: generated-<timestamp>.mp4 in working directory' },
           model: { type: 'string', description: 'Video model. Default: xai/grok-imagine-video' },
-          image_url: { type: 'string', description: 'Optional seed image URL (image-to-video)' },
+          image_url: { type: 'string', description: 'Optional seed image for image-to-video. Accepts a remote URL (http/https), a data URL, OR a local file path (absolute or relative to the working directory, up to 4MB, PNG/JPG/WEBP/GIF). Local paths are automatically read and embedded as base64 for the upstream model.' },
           duration_seconds: { type: 'number', description: 'Duration billed for. Default depends on model (8s for grok-imagine-video).' },
           contentId: { type: 'string', description: 'Optional Content id to attach and budget against.' },
         },

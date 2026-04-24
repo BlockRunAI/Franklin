@@ -11,6 +11,10 @@ export { generateInsights } from '../stats/insights.js';
 export type { InsightsReport } from '../stats/insights.js';
 export { runChecks as runDoctorChecks } from '../commands/doctor.js';
 export { saveChain, loadChain } from '../config.js';
+export { loadConfig, saveConfig } from '../commands/config.js';
+export type { AppConfig } from '../commands/config.js';
+export { getModelsByCategory } from '../gateway-models.js';
+export type { GatewayModel } from '../gateway-models.js';
 /** Welcome panel: same branding as CLI, plus live wallet / model / workspace. */
 export interface VsCodeWelcomeInfo {
     bannerLines: string[];

@@ -24,6 +24,10 @@ export { generateInsights } from '../stats/insights.js';
 export type { InsightsReport } from '../stats/insights.js';
 export { runChecks as runDoctorChecks } from '../commands/doctor.js';
 export { saveChain, loadChain } from '../config.js';
+export { loadConfig, saveConfig } from '../commands/config.js';
+export type { AppConfig } from '../commands/config.js';
+export { getModelsByCategory } from '../gateway-models.js';
+export type { GatewayModel } from '../gateway-models.js';
 
 /** Welcome panel: same branding as CLI, plus live wallet / model / workspace. */
 export interface VsCodeWelcomeInfo {
@@ -66,8 +70,11 @@ function resolveEffectiveModel(explicit?: string): string {
   if (configModel) {
     return configModel;
   }
-  const promoExpiry = new Date('2026-04-15');
-  return Date.now() < promoExpiry.getTime() ? 'zai/glm-5' : 'google/gemini-2.5-flash';
+  // Default: blockrun/auto — the LLM router picks a model per prompt
+  // (SIMPLE → gemini-flash/kimi, REASONING → Sonnet/Opus). Mirrors the
+  // CLI default from commands/start.ts. Cost fallback to free models on
+  // 402 is handled in the agent loop, so an unfunded wallet still works.
+  return 'blockrun/auto';
 }
 
 /** On-chain wallet + balance only (no model). */

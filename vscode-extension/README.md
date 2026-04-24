@@ -41,6 +41,22 @@ Franklin is an autonomous AI agent that runs directly in VS Code. It doesn't jus
 
 ## Changelog
 
+### 0.4.0
+- **Settings popover** — new ⚙️ button in the composer toolbar to toggle payment chain (Base / Solana) and set default image / video models in one place; Save dismisses the popover
+- **Inline edit diff cards** — Edit / Write / MultiEdit show a green/red diff in the chat with **Open** and **Revert** buttons; Revert restores the file from an in-memory snapshot
+- **Local-path seed images for VideoGen** — `image_url` on VideoGen now accepts local file paths (auto-converted to a data URL, capped at 4 MB)
+- **Routing-mode picker** — when the active model is Auto / Eco / Premium the picker shows a single profile card with a toggle; click the toggle to exit routing mode and pick a specific model
+- **Preserve routing label across turns** — Auto mode no longer flickers to the per-turn routed model name; the picker stays on "Auto" until you change it
+- **Model picker search + recent** — fuzzy search bar at the top, 3 most recently used models pinned under "Recent"
+- **Inline media preview** — generated images / videos from ImageGen / VideoGen appear as inline preview cards right below the tool result
+- **AskUser inline prompts** — cost previews and multi-option questions from the agent render as clickable buttons instead of silently waiting
+- **Streaming caret** — blinking `▍` at the end of the assistant's reply while it's being streamed
+- **Empty-state example prompts** — three clickable starter prompts on first launch
+- **Inline `franklin config` commands** — typing `franklin config list` / `set` / `get` / `unset` in the chat is handled locally without round-tripping to the LLM
+- **Default model is now `blockrun/auto`** (was `google/gemini-2.5-flash`) — matches the CLI default so the Smart Router picks a model per request
+- Various layout fixes (empty-state centering, model dropdown search clipping, settings panel positioning on narrow sidebars)
+- Synced with Franklin core v3.8.35: prompt refinement for media, VideoGen async submit + polled settlement
+
 ### 0.3.0
 - Added **image & video generation** — `/image` and `/video` slash commands prefill a natural-language prompt; the agent picks the right model, shows a cost preview with cheaper/premium alternatives, and only spends after you confirm
 - Added **in-chat confirmation prompts** — when the agent needs a yes/no or a choice (e.g. media cost preview), a prompt card now appears inline with buttons instead of silently hanging

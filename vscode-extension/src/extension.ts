@@ -16,9 +16,13 @@ import {
   runDoctorChecks,
   saveChain,
   loadChain,
+  loadConfig,
+  saveConfig,
+  getModelsByCategory,
   type StreamEvent,
   type SessionMeta,
   type Dialogue,
+  type GatewayModel,
 } from '@blockrun/franklin/vscode-session';
 
 /** Resolve the working directory: workspace folder if available, else home dir */
@@ -276,6 +280,61 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /**
+   * Snapshots of pre-edit file contents, keyed by absolute path. Kept in
+   * memory only — used when the user clicks "Revert" on an edit diff card.
+   * Stores the exact bytes before the Edit tool touched the file, so Revert
+   * restores the file to its pre-edit state even if the user already kept
+   * working and has unsaved changes in the editor.
+   */
+  private editSnapshots = new Map<string, string>();
+
+  /**
+   * When Edit / Write / MultiEdit returns a structured diff, push a compact
+   * diff preview card to the webview so the user can see exactly what
+   * changed and optionally revert. Side-effect: stash the old content in
+   * memory for Revert.
+   */
+  private maybeSendEditDiff(result: { diff?: { file: string; oldLines: string[]; newLines: string[]; count: number }; output: string }): void {
+    if (!this.webview || !result.diff) return;
+    const { file, oldLines, newLines, count } = result.diff;
+    // Stash the pre-edit content so Revert can write it back even if the
+    // user keeps editing in the meantime.
+    this.editSnapshots.set(file, oldLines.join('\n'));
+    void this.webview.postMessage({
+      type: 'editDiff',
+      file,
+      oldLines,
+      newLines,
+      count,
+    });
+  }
+
+  private openFile(filePath: string): void {
+    try {
+      const uri = vscode.Uri.file(filePath);
+      void vscode.window.showTextDocument(uri, { preview: false });
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Franklin: Cannot open ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private revertEdit(filePath: string): void {
+    const snap = this.editSnapshots.get(filePath);
+    if (snap === undefined) {
+      void vscode.window.showWarningMessage(`Franklin: No snapshot available for ${filePath}. The file may have been edited again after the original change.`);
+      return;
+    }
+    try {
+      fs.writeFileSync(filePath, snap, 'utf-8');
+      this.editSnapshots.delete(filePath);
+      void this.webview?.postMessage({ type: 'editReverted', file: filePath });
+      void vscode.window.showInformationMessage(`Franklin: Reverted ${path.basename(filePath)}`);
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Franklin: Failed to revert ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async runDoctor(): Promise<void> {
     try {
       const allChecks = await runDoctorChecks();
@@ -479,6 +538,66 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     await this.refreshWalletStatus();
   }
 
+  /** Gather current settings + gateway catalog and push to the webview's settings popover. */
+  private async sendSettings(): Promise<void> {
+    const config = loadConfig();
+    let chain: 'base' | 'solana' = 'base';
+    try { chain = loadChain(); } catch { /* default */ }
+
+    let imageModels: GatewayModel[] = [];
+    let videoModels: GatewayModel[] = [];
+    try {
+      imageModels = await getModelsByCategory('image');
+      videoModels = await getModelsByCategory('video');
+      log.appendLine(`[settings] gateway catalog: ${imageModels.length} image, ${videoModels.length} video models`);
+    } catch (err) {
+      log.appendLine(`[settings] gateway fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    const toOption = (m: GatewayModel) => {
+      const p = (m.pricing as Record<string, number> | undefined) ?? {};
+      const price = p.per_image != null
+        ? `$${p.per_image}/img`
+        : p.per_second != null
+          ? `$${p.per_second}/s`
+          : '';
+      return { id: m.id, label: price ? `${m.id} — ${price}` : m.id };
+    };
+
+    void this.webview?.postMessage({
+      type: 'settingsData',
+      current: {
+        chain,
+        'default-image-model': config['default-image-model'] ?? null,
+        'default-video-model': config['default-video-model'] ?? null,
+      },
+      imageModels: imageModels.map(toOption),
+      videoModels: videoModels.map(toOption),
+    });
+  }
+
+  /** Persist the chain + media-model defaults from the settings popover. */
+  private async applySettings(settings: Record<string, string | undefined>): Promise<void> {
+    // Chain
+    if (settings.chain === 'base' || settings.chain === 'solana') {
+      const current = (() => { try { return loadChain(); } catch { return 'base' as const; } })();
+      if (current !== settings.chain) {
+        saveChain(settings.chain);
+        await this.refreshWalletStatus();
+      }
+    }
+    // Media defaults — empty string / '__unset__' means "clear it".
+    const config = loadConfig();
+    const img = settings['default-image-model'];
+    const vid = settings['default-video-model'];
+    if (img && img !== '__unset__') config['default-image-model'] = img;
+    else delete config['default-image-model'];
+    if (vid && vid !== '__unset__') config['default-video-model'] = vid;
+    else delete config['default-video-model'];
+    saveConfig(config);
+    void this.webview?.postMessage({ type: 'settingsSaved' });
+  }
+
   private async refreshWalletStatus() {
     const { dir } = getWorkDir();
     if (!this.webview) return;
@@ -507,7 +626,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     }, 400);
   }
 
-  private async handleMessage(msg: { type?: string; text?: string }) {
+  private async handleMessage(msg: { type?: string; text?: string; settings?: unknown }) {
     if (msg.type === 'send' && typeof msg.text === 'string') {
       const t = msg.text.trim();
       if (!t) return;
@@ -538,6 +657,18 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     }
     if (msg.type === 'switchChain') {
       void this.handleSwitchChain();
+    }
+    if (msg.type === 'loadSettings') {
+      void this.sendSettings();
+    }
+    if (msg.type === 'openFile' && typeof msg.text === 'string') {
+      this.openFile(msg.text);
+    }
+    if (msg.type === 'revertEdit' && typeof msg.text === 'string') {
+      this.revertEdit(msg.text);
+    }
+    if (msg.type === 'saveSettings' && msg.settings && typeof msg.settings === 'object') {
+      await this.applySettings(msg.settings as Record<string, string | undefined>);
     }
     if (msg.type === 'requestHistory') {
       this.sendHistoryList();
@@ -612,6 +743,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
           this.postEvent(event);
           if (event.kind === 'capability_done' && !event.result.isError) {
             this.maybeSendMediaPreview(event.result.output);
+            this.maybeSendEditDiff(event.result);
           }
           if (event.kind === 'turn_done' && event.reason === 'completed') {
             this.scheduleWalletRefresh();
@@ -689,26 +821,32 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       flex-direction: column;
       position: relative;
     }
+    /* User messages are rendered as a quieter, quote-style line —
+     * assistant messages are the main visual weight. Previously user
+     * bubbles were the loudest thing on screen despite usually being the
+     * shortest / lowest-value content in the transcript. */
     .user {
-      display: flex;
-      justify-content: flex-end;
-      margin-top: 10px;
+      display: block;
+      margin: 14px 0 6px;
+      padding: 2px 0 2px 12px;
+      border-left: 2px solid var(--vscode-focusBorder, rgba(0,127,212,0.55));
     }
     .user .bubble {
-      background: rgba(128,128,128,0.2);
-      border-radius: 12px;
-      padding: 8px 14px;
-      max-width: 80%;
-      font-size: 13px;
+      display: block;
+      background: none;
+      border-radius: 0;
+      padding: 0;
+      max-width: none;
+      font-size: 12px;
       line-height: 1.5;
-      color: var(--vscode-foreground);
+      color: var(--vscode-descriptionForeground);
       word-break: break-word;
     }
     .assistant {
       color: var(--vscode-foreground);
-      margin-top: 10px;
+      margin-top: 8px;
       font-size: 13px;
-      line-height: 1.55;
+      line-height: 1.6;
     }
     .assistant .msg-content { }
     .msg-actions {
@@ -870,11 +1008,61 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       background: var(--vscode-dropdown-background, #1e1e1e);
       border: 1px solid var(--vscode-dropdown-border, #444);
       border-radius: 6px;
-      padding: 4px 0;
+      /* No top padding — the sticky search bar handles the gap itself.
+       * Otherwise scrolling items leak into the 4px padding band above
+       * the sticky element, which looks like clipping. */
+      padding: 0 0 4px;
       z-index: 100;
       box-shadow: 0 4px 16px rgba(0,0,0,0.35);
     }
     #model-dropdown.open { display: block; }
+    #model-dropdown .md-search-wrap {
+      position: sticky; top: 0; padding: 8px 8px; z-index: 3;
+      background: var(--vscode-dropdown-background, #1e1e1e);
+      border-bottom: 1px solid rgba(128,128,128,0.25);
+    }
+    #model-dropdown .md-search {
+      width: 100%; box-sizing: border-box; padding: 4px 8px; font: inherit; font-size: 11px;
+      background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.35)); border-radius: 3px;
+      outline: none;
+    }
+    #model-dropdown .md-search:focus {
+      border-color: var(--vscode-focusBorder, #007fd4);
+    }
+    #model-dropdown .md-empty {
+      padding: 14px 16px; font-size: 11px; color: var(--vscode-descriptionForeground); font-style: italic;
+    }
+    /* ── Routing profile card ── */
+    #model-dropdown .md-profile-card {
+      padding: 12px 14px; background: rgba(128,128,128,0.06);
+      border-radius: 5px; margin: 6px;
+      transform-origin: top center;
+      transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+    #model-dropdown .md-profile-card.dismissing {
+      opacity: 0; transform: translateY(-4px) scale(0.98);
+    }
+    .md-profile-hd { display: flex; align-items: center; justify-content: space-between; }
+    .md-profile-name { font-size: 13px; font-weight: 600; color: var(--vscode-foreground); }
+    .md-profile-desc {
+      margin-top: 6px; font-size: 11px; line-height: 1.45;
+      color: var(--vscode-descriptionForeground);
+    }
+    .md-profile-toggle {
+      position: relative; width: 34px; height: 18px; padding: 0; cursor: pointer;
+      background: rgba(128,128,128,0.35); border: none; border-radius: 10px;
+      transition: background 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .md-profile-toggle.on { background: #3fb950; }
+    .md-profile-toggle .md-toggle-thumb {
+      position: absolute; top: 2px; left: 2px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+      /* Spring-ish ease-out so sliding back feels springy instead of linear. */
+      transition: left 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .md-profile-toggle.on .md-toggle-thumb { left: 18px; }
     #model-dropdown .md-group {
       padding: 4px 10px 2px 10px;
       font-size: 9px;
@@ -988,6 +1176,49 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       font-size: 10px; color: var(--vscode-descriptionForeground);
       margin-top: 4px; word-break: break-all; font-family: var(--vscode-editor-font-family, monospace);
     }
+    /* ── Edit diff card (Edit / Write / MultiEdit) ── */
+    .edit-diff-card {
+      margin: 8px 12px; border-radius: 6px; overflow: hidden;
+      background: var(--vscode-editor-background, rgba(128,128,128,0.04));
+      border: 1px solid rgba(128,128,128,0.3);
+    }
+    .edit-diff-card.reverted { opacity: 0.5; }
+    .edit-diff-hd {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px; gap: 8px;
+      background: rgba(128,128,128,0.08);
+      border-bottom: 1px solid rgba(128,128,128,0.25);
+      font-size: 11px;
+    }
+    .edit-diff-title { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }
+    .edit-diff-icon { color: var(--vscode-descriptionForeground); flex-shrink: 0; }
+    .edit-diff-name {
+      font-weight: 600; color: var(--vscode-foreground);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .edit-diff-count {
+      font-size: 10px; color: var(--vscode-descriptionForeground);
+      padding: 1px 6px; background: rgba(128,128,128,0.2); border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .edit-diff-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .edit-diff-open, .edit-diff-revert {
+      font-size: 10px; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+      background: transparent; color: var(--vscode-foreground);
+      border: 1px solid rgba(128,128,128,0.4);
+    }
+    .edit-diff-open:hover { background: rgba(128,128,128,0.15); }
+    .edit-diff-revert:hover { background: rgba(248,81,73,0.15); border-color: rgba(248,81,73,0.5); color: #f85149; }
+    .edit-diff-revert:disabled { opacity: 0.5; cursor: default; background: transparent; }
+    .edit-diff-body {
+      margin: 0; padding: 6px 10px;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 11px; line-height: 1.5; max-height: 260px; overflow-y: auto;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .edit-diff-line { padding: 0 4px; }
+    .edit-diff-del { background: rgba(248,81,73,0.12); color: #f85149; }
+    .edit-diff-add { background: rgba(63,185,80,0.12); color: #3fb950; }
     .slash-item.selected { background: var(--vscode-list-activeSelectionBackground, rgba(0,127,212,0.25)); }
     .slash-cmd { font-weight: 600; color: var(--vscode-foreground); min-width: 80px; }
     .slash-desc { font-size: 11px; color: var(--vscode-descriptionForeground); }
@@ -1000,14 +1231,67 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       position: relative;
     }
     #wallet-btn { cursor: default; }
-    #wallet-btn:hover, #trading-btn:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.15); }
-    #chain-btn {
-      display: inline-flex; align-items: center;
-      background: none; border: 1px solid rgba(128,128,128,0.3); cursor: pointer;
-      padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 600;
-      color: var(--vscode-descriptionForeground); letter-spacing: 0.04em;
+    #wallet-btn:hover, #trading-btn:hover, #settings-btn:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.15); }
+    /* ── Settings button + popover ── */
+    #settings-wrap { position: relative; }
+    #settings-btn {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: none; border: none; cursor: pointer;
+      padding: 3px 5px; border-radius: 4px;
+      color: var(--vscode-descriptionForeground);
     }
-    #chain-btn:hover { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); }
+    #settings-panel {
+      /* Fixed to the webview viewport — NOT absolute inside settings-wrap.
+       * Anchoring to the container was rendering the left half of the panel
+       * outside the webview iframe on narrow sidebars (covered by VS Code's
+       * main editor area). With left/right on the viewport itself the panel
+       * is guaranteed to fit. */
+      position: fixed;
+      left: 8px; right: 8px; bottom: 72px;
+      max-width: 320px;
+      margin-left: auto;
+      padding: 10px 12px; box-sizing: border-box;
+      background: var(--vscode-editorHoverWidget-background, #1e1e1e);
+      border: 1px solid var(--vscode-editorHoverWidget-border, rgba(128,128,128,0.4));
+      border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+      display: none; z-index: 150; font-size: 11px;
+    }
+    #settings-panel.open { display: block; }
+    .settings-row { margin-bottom: 10px; }
+    .settings-row:last-of-type { margin-bottom: 12px; }
+    .settings-label {
+      display: block; font-size: 10px; font-weight: 600;
+      color: var(--vscode-descriptionForeground);
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+    .settings-chain-toggle { display: inline-flex; gap: 4px; }
+    .settings-chain-opt {
+      font-size: 11px; padding: 3px 10px; border-radius: 3px; cursor: pointer;
+      background: transparent; border: 1px solid rgba(128,128,128,0.35);
+      color: var(--vscode-foreground);
+    }
+    .settings-chain-opt.active {
+      background: var(--vscode-button-background, #0e639c);
+      border-color: var(--vscode-button-background, #0e639c);
+      color: var(--vscode-button-foreground, #fff);
+    }
+    .settings-select {
+      width: 100%; box-sizing: border-box; padding: 3px 6px; font: inherit; font-size: 11px;
+      background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.35)); border-radius: 3px;
+    }
+    .settings-actions {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    #settings-status { font-size: 10px; color: var(--vscode-descriptionForeground); }
+    .settings-save {
+      font-size: 11px; padding: 4px 12px; border-radius: 3px; cursor: pointer;
+      background: var(--vscode-button-background, #0e639c);
+      color: var(--vscode-button-foreground, #fff);
+      border: 1px solid transparent;
+    }
+    .settings-save:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
     #prefetch-indicator {
       font-size: 11px; color: var(--vscode-descriptionForeground);
       padding: 3px 8px; display: flex; align-items: center; gap: 6px;
@@ -1389,6 +1673,16 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     /* Text step */
     .wf-step.text { padding-bottom: 8px; }
     .wf-text-body { font-size: 13px; line-height: 1.55; }
+    /* Streaming caret — visible only while text is being streamed in. */
+    .msg-content.streaming::after {
+      content: '▍';
+      display: inline-block;
+      margin-left: 2px;
+      color: var(--vscode-focusBorder, #007fd4);
+      animation: fk-caret-blink 1s steps(1, end) infinite;
+      vertical-align: text-top;
+    }
+    @keyframes fk-caret-blink { 50% { opacity: 0; } }
     .wf-body .assistant { margin-top: 0; }
     /* ── Views: chat (default) / history overlay ── */
     #view-chat { display: flex; flex-direction: column; height: 100vh; position: relative; }
@@ -1422,18 +1716,25 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     #history-search::placeholder { color: var(--vscode-input-placeholderForeground, #888); }
     #history-search:focus { border-color: var(--vscode-focusBorder, #007fd4); }
 
-    /* ── Empty-state brand ── */
+    /* ── Empty-state brand ──
+     * Was absolutely-positioned + vertically centered, which pushed the
+     * pixel portrait off-screen once we added the example-prompts block,
+     * and the pointer-events:none kludge also broke clicks. Now it's a
+     * normal flex column anchored to the top. */
     #empty-state {
-      position: absolute;
-      inset: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
       gap: 14px;
-      pointer-events: none;
-      padding: 20px;
+      padding: 40px 20px 24px;
     }
+    /* Fade-in when the empty state first appears (e.g. after New Chat). */
+    @keyframes fk-fade-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    #empty-state.fk-fade-in { animation: fk-fade-in 0.28s ease-out; }
     #empty-state .pixel-portrait {
       width: 96px;
       height: 96px;
@@ -1455,6 +1756,31 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     }
     #empty-state .brand-slogan .accent { color: #3fb950; font-weight: 500; }
     body.has-messages #empty-state { display: none; }
+    /* ── Example prompts (empty state) ── */
+    #example-prompts {
+      margin-top: 18px; width: 100%; max-width: 320px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .example-prompts-title {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+      color: var(--vscode-descriptionForeground);
+      text-transform: uppercase; padding-left: 2px; margin-bottom: 2px;
+    }
+    .example-prompt {
+      display: flex; align-items: center; gap: 10px;
+      width: 100%; padding: 8px 10px; cursor: pointer;
+      background: var(--vscode-input-background, rgba(128,128,128,0.06));
+      border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.25));
+      border-radius: 6px; color: var(--vscode-foreground);
+      font-size: 12px; text-align: left;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .example-prompt:hover {
+      border-color: var(--vscode-focusBorder, #007fd4);
+      background: rgba(128,128,128,0.12);
+    }
+    .example-prompt-icon { font-size: 14px; line-height: 1; flex-shrink: 0; }
+    .example-prompt-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ── History list ── */
     .history-header {
@@ -1718,6 +2044,21 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         <div class="brand-name">Franklin</div>
         <div class="brand-slogan">The AI agent with a <span class="accent">wallet</span>.</div>
         <div id="loading-step" style="font-size:11px;color:var(--vscode-descriptionForeground);margin-top:8px;opacity:0.7;">Initializing…</div>
+        <div id="example-prompts">
+          <div class="example-prompts-title">Try</div>
+          <button type="button" class="example-prompt" data-prompt="Explain the code in this file and point out anything that could be simplified.">
+            <span class="example-prompt-icon">📝</span>
+            <span class="example-prompt-text">Explain the code in this file</span>
+          </button>
+          <button type="button" class="example-prompt" data-prompt="Generate an image of ">
+            <span class="example-prompt-icon">🎨</span>
+            <span class="example-prompt-text">Generate an image of…</span>
+          </button>
+          <button type="button" class="example-prompt" data-prompt="What is BTC looking like today? Give me a signal with RSI, MACD, and support levels.">
+            <span class="example-prompt-icon">📈</span>
+            <span class="example-prompt-text">What's BTC looking like today?</span>
+          </button>
+        </div>
       </div>
     </div>
   <div id="input-area">
@@ -1742,9 +2083,6 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           </svg>
           <span id="wallet-tooltip">loading…</span>
         </button>
-        <button type="button" id="chain-btn" title="Switch chain (Base ↔ Solana)">
-          <span id="chain-label">—</span>
-        </button>
         <button type="button" id="trading-btn">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
             <path d="M2 12l3.5-4 3 2.5L12 5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1752,6 +2090,35 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           </svg>
           <span id="trading-tooltip">Trading Dashboard</span>
         </button>
+        <div id="settings-wrap">
+          <button type="button" id="settings-btn" title="Settings">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+          <div id="settings-panel">
+            <div class="settings-row">
+              <label class="settings-label">Payment chain</label>
+              <div class="settings-chain-toggle">
+                <button type="button" class="settings-chain-opt" data-chain="base">Base</button>
+                <button type="button" class="settings-chain-opt" data-chain="solana">Solana</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <label class="settings-label" for="settings-img">Default image model</label>
+              <select id="settings-img" class="settings-select"><option value="__unset__">Ask each time</option></select>
+            </div>
+            <div class="settings-row">
+              <label class="settings-label" for="settings-vid">Default video model</label>
+              <select id="settings-vid" class="settings-select"><option value="__unset__">Ask each time</option></select>
+            </div>
+            <div class="settings-actions">
+              <span id="settings-status"></span>
+              <button type="button" id="settings-save" class="settings-save">Save</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="composer-right">
         <div id="context-ring" title="Context usage">
@@ -1874,6 +2241,14 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       resetChatLog();
       isLiveChat = true;
       showChat('Untitled');
+      // Brief fade-in so the empty state doesn't just pop in abruptly.
+      var es = document.getElementById('empty-state');
+      if (es) {
+        es.classList.remove('fk-fade-in');
+        // Force reflow so the animation restarts even on repeat clicks.
+        void es.offsetWidth;
+        es.classList.add('fk-fade-in');
+      }
     }
     document.getElementById('btn-new').addEventListener('click', newChat);
     document.getElementById('history-refresh').addEventListener('click', function() {
@@ -1989,8 +2364,75 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     document.getElementById('trading-btn').addEventListener('click', function() {
       vscode.postMessage({ type: 'openTrading' });
     });
-    document.getElementById('chain-btn').addEventListener('click', function() {
-      vscode.postMessage({ type: 'switchChain' });
+
+    // ── Settings popover ──
+    var settingsWrap = document.getElementById('settings-wrap');
+    var settingsPanel = document.getElementById('settings-panel');
+    var settingsImgSel = document.getElementById('settings-img');
+    var settingsVidSel = document.getElementById('settings-vid');
+    var settingsStatusEl = document.getElementById('settings-status');
+    var pendingChain = 'base';
+
+    function updateChainPill(_chain) { /* pill removed — chain is visible inside the panel */ }
+
+    function setChainToggleActive(chain) {
+      pendingChain = chain;
+      var opts = settingsPanel.querySelectorAll('.settings-chain-opt');
+      Array.prototype.forEach.call(opts, function(el) {
+        if (el.getAttribute('data-chain') === chain) el.classList.add('active');
+        else el.classList.remove('active');
+      });
+    }
+
+    function populateModelSelect(sel, options, current) {
+      // keep the first "Ask each time" option, clear the rest
+      while (sel.options.length > 1) sel.remove(1);
+      (options || []).forEach(function(o) {
+        var opt = document.createElement('option');
+        opt.value = o.id;
+        opt.textContent = o.label;
+        if (o.id === current) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      if (!current) sel.value = '__unset__';
+    }
+
+    document.getElementById('settings-btn').addEventListener('click', function(e) {
+      e.stopPropagation();
+      var isOpen = settingsPanel.classList.contains('open');
+      if (isOpen) {
+        settingsPanel.classList.remove('open');
+      } else {
+        settingsPanel.classList.add('open');
+        if (settingsStatusEl) settingsStatusEl.textContent = '';
+        vscode.postMessage({ type: 'loadSettings' });
+      }
+    });
+    document.addEventListener('click', function(e) {
+      if (!settingsPanel.classList.contains('open')) return;
+      if (settingsWrap && !settingsWrap.contains(e.target)) {
+        settingsPanel.classList.remove('open');
+      }
+    });
+    Array.prototype.forEach.call(
+      settingsPanel.querySelectorAll('.settings-chain-opt'),
+      function(el) {
+        el.addEventListener('click', function() {
+          setChainToggleActive(el.getAttribute('data-chain'));
+        });
+      }
+    );
+    document.getElementById('settings-save').addEventListener('click', function() {
+      vscode.postMessage({
+        type: 'saveSettings',
+        settings: {
+          chain: pendingChain,
+          'default-image-model': settingsImgSel.value,
+          'default-video-model': settingsVidSel.value,
+        },
+      });
+      // Close the popover — dismissing itself is the save confirmation.
+      settingsPanel.classList.remove('open');
     });
 
     // ── Resume banner ──
@@ -2017,9 +2459,15 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       resumeBannerEl.appendChild(textWrap);
       resumeBannerEl.appendChild(continueBtn);
       resumeBannerEl.appendChild(dismissBtn);
-      // Insert before empty-state
+      // Place the resume card ABOVE the pixel portrait by inserting it as
+      // the first child of #empty-state. Previously it was inserted after
+      // empty-state, which put it below everything — easy to miss.
       var emptyState = document.getElementById('empty-state');
-      log.insertBefore(resumeBannerEl, emptyState ? emptyState.nextSibling : null);
+      if (emptyState) {
+        emptyState.insertBefore(resumeBannerEl, emptyState.firstChild);
+      } else {
+        log.insertBefore(resumeBannerEl, log.firstChild);
+      }
     }
     function dismissResumeBanner() {
       if (resumeBannerEl && resumeBannerEl.parentNode) {
@@ -2184,59 +2632,207 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     var modelPickerLabel = document.getElementById('modelPickerLabel');
     var dropdownOpen = false;
 
-    function buildModelDropdown() {
+    // Track the 3 most recently selected models for a "Recent" section at
+    // the top of the dropdown. Persists across webview reloads via getState.
+    var MODEL_RECENT_KEY = 'franklin-recent-models';
+    function getRecentModels() {
+      try {
+        var s = (vscode.getState && vscode.getState()) || {};
+        return Array.isArray(s[MODEL_RECENT_KEY]) ? s[MODEL_RECENT_KEY] : [];
+      } catch(e) { return []; }
+    }
+    function rememberModel(shortcut) {
+      try {
+        var s = (vscode.getState && vscode.getState()) || {};
+        var list = Array.isArray(s[MODEL_RECENT_KEY]) ? s[MODEL_RECENT_KEY] : [];
+        list = [shortcut].concat(list.filter(function(x) { return x !== shortcut; })).slice(0, 3);
+        s[MODEL_RECENT_KEY] = list;
+        vscode.setState && vscode.setState(s);
+      } catch(e) {}
+    }
+
+    // Build a flat index: {shortcut, group, item} for fuzzy filtering.
+    function flatModelIndex() {
+      var flat = [];
+      MODEL_LIST.forEach(function(grp) {
+        grp.items.forEach(function(item) { flat.push({ group: grp.group, item: item }); });
+      });
+      return flat;
+    }
+    // Very small fuzzy matcher — substring on label+shortcut, case-insensitive.
+    function matchesQuery(item, q) {
+      if (!q) return true;
+      q = q.toLowerCase();
+      return (item.label || '').toLowerCase().indexOf(q) !== -1
+          || (item.shortcut || '').toLowerCase().indexOf(q) !== -1
+          || (item.desc || '').toLowerCase().indexOf(q) !== -1;
+    }
+
+    function renderModelRow(item, currentModel) {
+      var row = document.createElement('div');
+      row.className = 'md-item';
+      if (currentModel.indexOf(item.shortcut) !== -1) row.classList.add('active');
+      var name = document.createElement('span');
+      name.textContent = item.label;
+      row.appendChild(name);
+      if (item.isNew) {
+        var nw = document.createElement('span');
+        nw.className = 'md-new';
+        nw.textContent = 'NEW';
+        row.appendChild(nw);
+      }
+      if (item.price) {
+        var pr = document.createElement('span');
+        pr.className = 'md-price';
+        pr.textContent = item.price;
+        row.appendChild(pr);
+      } else {
+        var fr = document.createElement('span');
+        fr.className = 'md-free';
+        fr.textContent = 'FREE';
+        row.appendChild(fr);
+      }
+      var tip = document.createElement('div');
+      tip.className = 'md-tooltip';
+      var tn = document.createElement('div'); tn.className = 'md-tt-name'; tn.textContent = item.label; tip.appendChild(tn);
+      var td = document.createElement('div'); td.className = 'md-tt-desc'; td.textContent = item.desc || ''; tip.appendChild(td);
+      var tc = document.createElement('div'); tc.className = 'md-tt-ctx'; tc.textContent = (item.ctx || '?') + ' context window'; tip.appendChild(tc);
+      row.appendChild(tip);
+      row.addEventListener('mouseenter', function() {
+        var rect = row.getBoundingClientRect();
+        tip.style.left = (rect.right + 6) + 'px';
+        tip.style.top = rect.top + 'px';
+      });
+      row.addEventListener('click', function() {
+        closeDropdown();
+        rememberModel(item.shortcut);
+        vscode.postMessage({ type: 'switchModel', text: item.shortcut });
+      });
+      return row;
+    }
+
+    // When the active model is a routing profile (Auto / Eco / Premium)
+    // the picker defaults to a single "profile active + toggle" card; the
+    // user has to click the toggle to reveal the full model list and
+    // actually switch to a specific model. This prevents accidental
+    // fat-finger exits from routing mode. Reset to the card view every
+    // time the dropdown closes, so next time they reopen they see it again.
+    var ROUTING_PROFILES = {
+      auto:    { label: 'Auto',    desc: 'Balanced quality and speed, recommended for most tasks.' },
+      eco:     { label: 'Eco',     desc: 'Route to the cheapest capable model.' },
+      premium: { label: 'Premium', desc: 'Route to the highest-quality model regardless of cost.' },
+    };
+    function currentRoutingProfile() {
+      var label = (modelPickerLabel.textContent || '').trim().toLowerCase();
+      return ROUTING_PROFILES[label] ? label : null;
+    }
+    var exitRoutingUI = false;
+
+    function buildModelDropdown(query) {
       modelDropdown.textContent = '';
       var currentModel = (modelPickerLabel.textContent || '').toLowerCase();
+
+      // ── Routing profile card (shown when current model is Auto/Eco/Premium) ──
+      var profile = currentRoutingProfile();
+      if (profile && !exitRoutingUI && !(query && query.trim())) {
+        var card = document.createElement('div');
+        card.className = 'md-profile-card';
+        var hd = document.createElement('div'); hd.className = 'md-profile-hd';
+        var nm = document.createElement('span'); nm.className = 'md-profile-name'; nm.textContent = ROUTING_PROFILES[profile].label;
+        var tog = document.createElement('button'); tog.type = 'button'; tog.className = 'md-profile-toggle on';
+        tog.setAttribute('aria-label', 'Exit ' + ROUTING_PROFILES[profile].label + ' mode');
+        tog.innerHTML = '<span class="md-toggle-thumb"></span>';
+        hd.appendChild(nm); hd.appendChild(tog);
+        var desc = document.createElement('div'); desc.className = 'md-profile-desc';
+        desc.textContent = ROUTING_PROFILES[profile].desc;
+        card.appendChild(hd); card.appendChild(desc);
+        tog.addEventListener('click', function(e) {
+          e.stopPropagation();
+          // Two-phase transition so the toggle actually animates before the
+          // card disappears. Otherwise we'd rebuild the dropdown instantly
+          // and the switch would just vanish (no slide, no fade).
+          tog.classList.remove('on');          // thumb slides from right→left
+          card.classList.add('dismissing');    // card fades + shrinks
+          setTimeout(function() {
+            exitRoutingUI = true;
+            buildModelDropdown('');
+            setTimeout(function() {
+              var s = modelDropdown.querySelector('.md-search');
+              if (s) try { s.focus(); } catch(err) {}
+            }, 20);
+          }, 220);
+        });
+        modelDropdown.appendChild(card);
+        return; // skip search + lists while in profile-locked view
+      }
+
+      // Search bar pinned at top.
+      var searchWrap = document.createElement('div');
+      searchWrap.className = 'md-search-wrap';
+      var searchInput = document.createElement('input');
+      searchInput.type = 'text';
+      searchInput.className = 'md-search';
+      searchInput.placeholder = 'Search models…';
+      searchInput.value = query || '';
+      searchInput.addEventListener('input', function() {
+        // Rebuild results in-place; keep focus on the input.
+        buildModelDropdown(searchInput.value);
+        var fresh = modelDropdown.querySelector('.md-search');
+        if (fresh) { fresh.focus(); fresh.setSelectionRange(fresh.value.length, fresh.value.length); }
+      });
+      searchWrap.appendChild(searchInput);
+      modelDropdown.appendChild(searchWrap);
+
+      var q = (query || '').trim();
+
+      // Recent section — only when NOT searching, and only if we have history.
+      if (!q) {
+        var recentIds = getRecentModels();
+        var flat = flatModelIndex();
+        var recentItems = recentIds
+          .map(function(id) { return (flat.find(function(e) { return e.item.shortcut === id; }) || {}).item; })
+          .filter(Boolean);
+        if (recentItems.length > 0) {
+          var rg = document.createElement('div'); rg.className = 'md-group'; rg.textContent = 'Recent';
+          modelDropdown.appendChild(rg);
+          recentItems.forEach(function(it) { modelDropdown.appendChild(renderModelRow(it, currentModel)); });
+        }
+      }
+
+      // Groups — filtered to matching items when searching.
+      var anyShown = false;
       MODEL_LIST.forEach(function(grp) {
+        var matched = grp.items.filter(function(it) { return matchesQuery(it, q); });
+        if (matched.length === 0) return;
+        anyShown = true;
         var g = document.createElement('div');
         g.className = 'md-group';
         g.textContent = grp.group;
         modelDropdown.appendChild(g);
-        grp.items.forEach(function(item) {
-          var row = document.createElement('div');
-          row.className = 'md-item';
-          if (currentModel.indexOf(item.shortcut) !== -1) row.classList.add('active');
-          var name = document.createElement('span');
-          name.textContent = item.label;
-          row.appendChild(name);
-          if (item.isNew) {
-            var nw = document.createElement('span');
-            nw.className = 'md-new';
-            nw.textContent = 'NEW';
-            row.appendChild(nw);
-          }
-          if (item.price) {
-            var pr = document.createElement('span');
-            pr.className = 'md-price';
-            pr.textContent = item.price;
-            row.appendChild(pr);
-          } else {
-            var fr = document.createElement('span');
-            fr.className = 'md-free';
-            fr.textContent = 'FREE';
-            row.appendChild(fr);
-          }
-          var tip = document.createElement('div');
-          tip.className = 'md-tooltip';
-          var tn = document.createElement('div'); tn.className = 'md-tt-name'; tn.textContent = item.label; tip.appendChild(tn);
-          var td = document.createElement('div'); td.className = 'md-tt-desc'; td.textContent = item.desc || ''; tip.appendChild(td);
-          var tc = document.createElement('div'); tc.className = 'md-tt-ctx'; tc.textContent = (item.ctx || '?') + ' context window'; tip.appendChild(tc);
-          row.appendChild(tip);
-          row.addEventListener('mouseenter', function() {
-            var rect = row.getBoundingClientRect();
-            tip.style.left = (rect.right + 6) + 'px';
-            tip.style.top = rect.top + 'px';
-          });
-          row.addEventListener('click', function() {
-            closeDropdown();
-            vscode.postMessage({ type: 'switchModel', text: item.shortcut });
-          });
-          modelDropdown.appendChild(row);
-        });
+        matched.forEach(function(it) { modelDropdown.appendChild(renderModelRow(it, currentModel)); });
       });
+      if (!anyShown && q) {
+        var none = document.createElement('div');
+        none.className = 'md-empty';
+        none.textContent = 'No models match "' + q + '".';
+        modelDropdown.appendChild(none);
+      }
     }
-    function openDropdown() { buildModelDropdown(); modelDropdown.classList.add('open'); dropdownOpen = true; }
-    function closeDropdown() { modelDropdown.classList.remove('open'); dropdownOpen = false; }
+    function openDropdown() {
+      buildModelDropdown('');
+      modelDropdown.classList.add('open');
+      dropdownOpen = true;
+      // Auto-focus the search box so the user can start typing immediately.
+      setTimeout(function() {
+        var s = modelDropdown.querySelector('.md-search');
+        if (s) try { s.focus(); } catch(e) {}
+      }, 30);
+    }
+    function closeDropdown() {
+      modelDropdown.classList.remove('open');
+      dropdownOpen = false;
+      exitRoutingUI = false; // next open of picker shows the profile card again
+    }
     modelPickerBtn.addEventListener('click', function(e) {
       e.stopPropagation();
       if (dropdownOpen) { closeDropdown(); } else { openDropdown(); }
@@ -2335,8 +2931,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       if (!info) return;
       syncBaseBalance(info.balance);
       applyStatus({ model: info.model });
-      var cl = document.getElementById('chain-label');
-      if (cl && info.chain) cl.textContent = info.chain === 'solana' ? 'SOL' : 'BASE';
+      if (info.chain) updateChainPill(info.chain);
     }
 
     var BT = String.fromCharCode(96); // backtick
@@ -2476,6 +3071,70 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         wrap.appendChild(pathEl);
       }
       log.appendChild(wrap);
+      log.scrollTop = log.scrollHeight;
+      refreshHasMessages();
+    }
+
+    function renderEditDiff(file, oldLines, newLines, count) {
+      oldLines = oldLines || []; newLines = newLines || [];
+      var card = document.createElement('div');
+      card.className = 'edit-diff-card';
+      card.setAttribute('data-file', file || '');
+
+      // Header — file basename + change count + action buttons.
+      var hd = document.createElement('div');
+      hd.className = 'edit-diff-hd';
+      var titleWrap = document.createElement('div');
+      titleWrap.className = 'edit-diff-title';
+      var pencil = document.createElement('span');
+      pencil.className = 'edit-diff-icon';
+      pencil.textContent = '✎';
+      var nameEl = document.createElement('span');
+      nameEl.className = 'edit-diff-name';
+      var basename = (file || '').split('/').pop() || file || 'file';
+      nameEl.textContent = basename;
+      var countEl = document.createElement('span');
+      countEl.className = 'edit-diff-count';
+      countEl.textContent = (count > 0 ? '+' : '') + count + ' line' + (Math.abs(count) === 1 ? '' : 's');
+      titleWrap.appendChild(pencil); titleWrap.appendChild(nameEl); titleWrap.appendChild(countEl);
+      var btnWrap = document.createElement('div');
+      btnWrap.className = 'edit-diff-actions';
+      var openBtn = document.createElement('button');
+      openBtn.type = 'button'; openBtn.className = 'edit-diff-open';
+      openBtn.textContent = 'Open';
+      openBtn.addEventListener('click', function() {
+        vscode.postMessage({ type: 'openFile', text: file });
+      });
+      var revertBtn = document.createElement('button');
+      revertBtn.type = 'button'; revertBtn.className = 'edit-diff-revert';
+      revertBtn.textContent = 'Revert';
+      revertBtn.addEventListener('click', function() {
+        vscode.postMessage({ type: 'revertEdit', text: file });
+      });
+      btnWrap.appendChild(openBtn); btnWrap.appendChild(revertBtn);
+      hd.appendChild(titleWrap); hd.appendChild(btnWrap);
+      card.appendChild(hd);
+
+      // Body — unified diff view. Simple: show all removed lines then all
+      // added lines. No hunk alignment (we don't have line numbers), which
+      // matches how the ink UI displays it too.
+      var body = document.createElement('pre');
+      body.className = 'edit-diff-body';
+      oldLines.forEach(function(line) {
+        var row = document.createElement('div');
+        row.className = 'edit-diff-line edit-diff-del';
+        row.textContent = '- ' + line;
+        body.appendChild(row);
+      });
+      newLines.forEach(function(line) {
+        var row = document.createElement('div');
+        row.className = 'edit-diff-line edit-diff-add';
+        row.textContent = '+ ' + line;
+        body.appendChild(row);
+      });
+      card.appendChild(body);
+
+      log.appendChild(card);
       log.scrollTop = log.scrollHeight;
       refreshHasMessages();
     }
@@ -2684,7 +3343,10 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     function flushTextStepWf() {
       if (wfTextStep && assistantBuf) {
         var mc = wfTextStep.content;
-        if (mc) mc.innerHTML = renderMarkdown(escHtml(assistantBuf));
+        if (mc) {
+          mc.innerHTML = renderMarkdown(escHtml(assistantBuf));
+          mc.classList.remove('streaming'); // streaming done — stop the caret
+        }
         if (!wfTextStep.step.querySelector('.msg-actions')) {
           wfTextStep.body.appendChild(createMsgActions(assistantBuf, streamingModelName));
         }
@@ -2750,11 +3412,22 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       }
       if (m.type === 'status' && m.partial) {
         if (m.partial.balance) syncBaseBalance(m.partial.balance);
-        if (m.partial.chain) {
-          var cl = document.getElementById('chain-label');
-          if (cl) cl.textContent = m.partial.chain === 'solana' ? 'SOL' : 'BASE';
-        }
+        if (m.partial.chain) updateChainPill(m.partial.chain);
         applyStatus(m.partial);
+        return;
+      }
+      if (m.type === 'settingsData') {
+        updateChainPill(m.current.chain);
+        setChainToggleActive(m.current.chain);
+        populateModelSelect(settingsImgSel, m.imageModels, m.current['default-image-model']);
+        populateModelSelect(settingsVidSel, m.videoModels, m.current['default-video-model']);
+        return;
+      }
+      if (m.type === 'settingsSaved') {
+        if (settingsStatusEl) {
+          settingsStatusEl.textContent = 'Saved';
+          setTimeout(function() { if (settingsStatusEl) settingsStatusEl.textContent = ''; }, 1500);
+        }
         return;
       }
       if (m.type === 'welcomeError') {
@@ -2767,6 +3440,19 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       }
       if (m.type === 'mediaPreview') {
         renderMediaPreview(m.kind, m.src, m.path);
+        return;
+      }
+      if (m.type === 'editDiff') {
+        renderEditDiff(m.file, m.oldLines, m.newLines, m.count);
+        return;
+      }
+      if (m.type === 'editReverted') {
+        var cards = document.querySelectorAll('.edit-diff-card[data-file="' + (m.file || '').replace(/"/g, '&quot;') + '"]');
+        Array.prototype.forEach.call(cards, function(card) {
+          card.classList.add('reverted');
+          var btn = card.querySelector('.edit-diff-revert');
+          if (btn) { btn.disabled = true; btn.textContent = 'Reverted'; }
+        });
         return;
       }
       if (m.type === 'stopAck') {
@@ -2797,7 +3483,10 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           if (!wfTextStep) streamingModelName = modelPickerLabel.textContent || '';
           assistantBuf += ev.text;
           var ts = getOrCreateTextStepWf();
-          if (ts.content) ts.content.innerHTML = renderMarkdown(escHtml(assistantBuf));
+          if (ts.content) {
+            ts.content.innerHTML = renderMarkdown(escHtml(assistantBuf));
+            ts.content.classList.add('streaming'); // enables blinking caret
+          }
           log.scrollTop = log.scrollHeight;
           activityMode = 'generating';
           updateActivityRow();
@@ -2878,7 +3567,17 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         case 'usage':
           if (typeof ev.cost === 'number') sessionCost += ev.cost;
           var liveBal = computeLiveBalance();
-          applyStatus({ model: ev.model, balance: liveBal });
+          // Preserve the user's explicit model choice — if they picked Auto
+          // (or Eco / Premium), the picker label stays on that profile
+          // instead of flipping to whichever model the router resolved for
+          // this turn. Mirrors the v3.8.32 CLI fix.
+          var labelNow = (modelPickerLabel.textContent || '').trim().toLowerCase();
+          var userInRoutingMode = labelNow === 'auto' || labelNow === 'eco' || labelNow === 'premium';
+          if (userInRoutingMode) {
+            applyStatus({ balance: liveBal });
+          } else {
+            applyStatus({ model: ev.model, balance: liveBal });
+          }
           // Update model name on the current assistant message's action bar
           if (ev.model && wfTextStep) {
             var mSpan = wfTextStep.step.querySelector('.msg-model');
@@ -2972,6 +3671,19 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     }
 
     input.addEventListener('input', handleSlashInput);
+
+    // Example prompts in empty state — click fills the input.
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.example-prompt'),
+      function(btn) {
+        btn.addEventListener('click', function() {
+          var p = btn.getAttribute('data-prompt') || '';
+          input.value = p;
+          try { input.focus(); } catch(e) {}
+        });
+      }
+    );
+
 
     // Intercept arrow/enter/esc/tab for slash menu navigation
     var _origKeydown = null;

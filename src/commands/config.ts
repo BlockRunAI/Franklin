@@ -53,7 +53,7 @@ export function loadConfig(): AppConfig {
   }
 }
 
-function saveConfig(config: AppConfig): void {
+export function saveConfig(config: AppConfig): void {
   try {
     fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + '\n', {
