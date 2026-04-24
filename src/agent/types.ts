@@ -25,10 +25,17 @@ export interface ThinkingSegment {
   signature?: string;
 }
 
+export interface ImageSegment {
+  type: 'image';
+  source:
+    | { type: 'base64'; media_type: string; data: string }
+    | { type: 'url'; url: string };
+}
+
 export interface CapabilityOutcome {
   type: 'tool_result';
   tool_use_id: string;
-  content: string | ContentPart[];
+  content: string | Array<TextSegment | ImageSegment>;
   is_error?: boolean;
 }
 
@@ -70,6 +77,13 @@ export interface CapabilityResult {
   diff?: { file: string; oldLines: string[]; newLines: string[]; count: number };
   /** Full tool output for expandable display — separate from truncated preview. */
   fullOutput?: string;
+  /**
+   * Optional image attachments emitted by a tool (e.g. Read on a .png).
+   * The agent loop wraps these into an Anthropic-native tool_result.content
+   * array so vision-capable models can actually see the bytes instead of
+   * getting a "Binary file" stub.
+   */
+  images?: Array<{ mediaType: string; base64: string }>;
 }
 
 // ─── Execution Scope ───────────────────────────────────────────────────────

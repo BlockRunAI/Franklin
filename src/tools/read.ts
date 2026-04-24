@@ -106,7 +106,36 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     // (some binaries have no extension: `.env.enc`, `.data`, compiled tools
     // without suffixes, etc. Content sniff catches those.)
     const ext = path.extname(resolved).toLowerCase();
-    const binaryExts = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.pdf', '.zip', '.tar', '.gz', '.woff', '.woff2', '.ttf', '.eot', '.mp3', '.mp4', '.wav', '.avi', '.mov', '.exe', '.dll', '.so', '.dylib']);
+
+    // Image extensions → load as vision content so models with vision (Sonnet,
+    // GPT-4o, Gemini) actually see the bytes instead of a "Binary file" stub.
+    // The agent loop wraps `images` into tool_result.content for provider APIs.
+    const IMAGE_MEDIA_TYPES: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+    };
+    if (IMAGE_MEDIA_TYPES[ext]) {
+      const sizeStr = stat.size >= 1024 ? `${(stat.size / 1024).toFixed(1)}KB` : `${stat.size}B`;
+      // Anthropic accepts up to 5MB base64; cap raw bytes at ~3.75MB to be safe.
+      const IMAGE_MAX_BYTES = 3_750_000;
+      if (stat.size > IMAGE_MAX_BYTES) {
+        return {
+          output: `Image file: ${resolved} (${ext}, ${sizeStr}). Too large to inline for vision (>${Math.round(IMAGE_MAX_BYTES / 1_000_000)}MB). Resize or crop first.`,
+        };
+      }
+      const bytes = fs.readFileSync(resolved);
+      const base64 = bytes.toString('base64');
+      fileReadTracker.set(resolved, { mtimeMs: stat.mtimeMs, readAt: Date.now() });
+      return {
+        output: `Image file: ${resolved} (${ext}, ${sizeStr}). Rendered below for vision-capable models.`,
+        images: [{ mediaType: IMAGE_MEDIA_TYPES[ext], base64 }],
+      };
+    }
+
+    const binaryExts = new Set(['.ico', '.bmp', '.pdf', '.zip', '.tar', '.gz', '.woff', '.woff2', '.ttf', '.eot', '.mp3', '.mp4', '.wav', '.avi', '.mov', '.exe', '.dll', '.so', '.dylib']);
     if (binaryExts.has(ext)) {
       const sizeStr = stat.size >= 1024 ? `${(stat.size / 1024).toFixed(1)}KB` : `${stat.size}B`;
       return { output: `Binary file: ${resolved} (${ext}, ${sizeStr}). Cannot display contents.` };
@@ -191,7 +220,7 @@ Usage:
 - This tool can only read files, not directories. To list a directory, use Glob or ls via Bash.
 - If you read a file that exists but has empty contents you will receive a warning.
 - Reads over 2MB are rejected — use offset/limit to read portions.
-- Cannot read binary files (images, PDFs, archives).
+- Image files (.png, .jpg, .jpeg, .gif, .webp) are loaded as vision content — vision-capable models see the actual image. Other binary files (PDFs, archives, fonts) cannot be displayed.
 - You will regularly be asked to read screenshots or images. If the user provides a path, ALWAYS use this tool to view it.
 
 IMPORTANT: Always use Read instead of cat, head, or tail via Bash. This tool provides line numbers and integrates with Edit's read-before-edit enforcement.`,
