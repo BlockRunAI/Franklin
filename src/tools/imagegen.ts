@@ -61,13 +61,37 @@ export const EDIT_SUPPORTED_MODELS = new Set([
 export const REFERENCE_IMAGE_MAX_BYTES = 4_000_000;
 
 /**
- * Normalize a reference image into a data URI suitable for the gateway.
- * Returns the input unchanged for http(s) URLs (gateway fetches them) or
- * already-formed data URIs. Local file paths are read and base64-encoded.
+ * Normalize a reference image into a base64 data URI for the gateway. The
+ * /v1/images/image2image endpoint validates `image` against /^data:image\//,
+ * so http(s) URLs and local paths both have to be inlined client-side before
+ * posting. Already-formed data URIs pass through.
  */
-export function resolveReferenceImage(input: string, workingDir: string): string {
-  if (/^https?:\/\//i.test(input)) return input;
+export async function resolveReferenceImage(input: string, workingDir: string): Promise<string> {
   if (input.startsWith('data:image/')) return input;
+
+  if (/^https?:\/\//i.test(input)) {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 30_000);
+    try {
+      const resp = await fetch(input, { signal: ctrl.signal });
+      if (!resp.ok) {
+        throw new Error(`Reference image fetch failed: ${resp.status} ${resp.statusText}`);
+      }
+      const contentType = (resp.headers.get('content-type') || '').toLowerCase().split(';')[0].trim();
+      if (!contentType.startsWith('image/')) {
+        throw new Error(`Reference image URL returned non-image content-type: ${contentType || '(none)'}`);
+      }
+      const buf = Buffer.from(await resp.arrayBuffer());
+      if (buf.byteLength > REFERENCE_IMAGE_MAX_BYTES) {
+        throw new Error(
+          `Reference image too large: ${(buf.byteLength / 1_000_000).toFixed(1)}MB > ${(REFERENCE_IMAGE_MAX_BYTES / 1_000_000).toFixed(1)}MB cap.`,
+        );
+      }
+      return `data:${contentType};base64,${buf.toString('base64')}`;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   // Treat as local file path.
   const resolved = path.isAbsolute(input) ? input : path.resolve(workingDir, input);
@@ -118,7 +142,7 @@ function buildExecute(deps: ImageGenDeps) {
     let referenceImage: string | undefined;
     if (image_url) {
       try {
-        referenceImage = resolveReferenceImage(image_url, ctx.workingDir);
+        referenceImage = await resolveReferenceImage(image_url, ctx.workingDir);
       } catch (err) {
         return { output: `Error: ${(err as Error).message}`, isError: true };
       }

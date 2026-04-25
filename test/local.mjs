@@ -3945,22 +3945,57 @@ test('version-check: getAvailableUpdate reflects cache vs installed version', as
   }
 });
 
-test('imagegen: resolveReferenceImage passes URLs and data URIs through unchanged', async () => {
+test('imagegen: resolveReferenceImage passes data URIs through unchanged', async () => {
   const { resolveReferenceImage } = await import('../dist/tools/imagegen.js');
 
-  // http(s) URLs flow straight to the gateway — gateway fetches them.
-  assert.equal(
-    resolveReferenceImage('https://example.com/cat.png', '/tmp'),
-    'https://example.com/cat.png',
-  );
-  assert.equal(
-    resolveReferenceImage('http://example.com/cat.png', '/tmp'),
-    'http://example.com/cat.png',
+  // Pre-formed data URIs are already in the gateway-required shape.
+  const dataUri = 'data:image/png;base64,iVBORw0KGgo=';
+  assert.equal(await resolveReferenceImage(dataUri, '/tmp'), dataUri);
+});
+
+test('imagegen: resolveReferenceImage fetches http(s) URLs and inlines them as data URIs', async () => {
+  const { resolveReferenceImage } = await import('../dist/tools/imagegen.js');
+  const pngBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
   );
 
-  // Pre-formed data URIs are already in the correct shape.
-  const dataUri = 'data:image/png;base64,iVBORw0KGgo=';
-  assert.equal(resolveReferenceImage(dataUri, '/tmp'), dataUri);
+  const server = createServer((req, res) => {
+    if (req.url === '/img.png') {
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': pngBytes.length });
+      res.end(pngBytes);
+    } else if (req.url === '/text.html') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html></html>');
+    } else if (req.url === '/missing.png') {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('not found');
+    } else {
+      res.writeHead(500); res.end();
+    }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const out = await resolveReferenceImage(`http://127.0.0.1:${port}/img.png`, '/tmp');
+    assert.match(out, /^data:image\/png;base64,/, 'url should round-trip into a data URI');
+    const decoded = Buffer.from(out.split(',')[1], 'base64');
+    assert.ok(decoded.equals(pngBytes), 'fetched bytes must match original');
+
+    // Non-image content-type → reject before we waste a paid call.
+    await assert.rejects(
+      () => resolveReferenceImage(`http://127.0.0.1:${port}/text.html`, '/tmp'),
+      /non-image content-type/,
+    );
+
+    // Upstream errors surface clearly.
+    await assert.rejects(
+      () => resolveReferenceImage(`http://127.0.0.1:${port}/missing.png`, '/tmp'),
+      /Reference image fetch failed: 404/,
+    );
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
 });
 
 test('imagegen: resolveReferenceImage reads and base64-encodes a local image', async () => {
@@ -3975,13 +4010,13 @@ test('imagegen: resolveReferenceImage reads and base64-encodes a local image', a
   writeFileSync(imgPath, pngBytes);
 
   try {
-    const out = resolveReferenceImage(imgPath, '/tmp');
+    const out = await resolveReferenceImage(imgPath, '/tmp');
     assert.match(out, /^data:image\/png;base64,/);
     const decoded = Buffer.from(out.split(',')[1], 'base64');
     assert.ok(decoded.equals(pngBytes), 'round-trip should preserve bytes');
 
     // Relative paths resolve against workingDir.
-    const relOut = resolveReferenceImage('pixel.png', tmp);
+    const relOut = await resolveReferenceImage('pixel.png', tmp);
     assert.equal(relOut, out);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -3996,12 +4031,12 @@ test('imagegen: resolveReferenceImage rejects unsupported extensions and oversiz
     // Unsupported extension.
     const txt = join(tmp, 'note.txt');
     writeFileSync(txt, 'hello');
-    assert.throws(() => resolveReferenceImage(txt, '/tmp'), /Unsupported reference image extension/);
+    await assert.rejects(() => resolveReferenceImage(txt, '/tmp'), /Unsupported reference image extension/);
 
     // Oversized PNG.
     const big = join(tmp, 'huge.png');
     writeFileSync(big, Buffer.alloc(REFERENCE_IMAGE_MAX_BYTES + 1, 0));
-    assert.throws(() => resolveReferenceImage(big, '/tmp'), /Reference image too large/);
+    await assert.rejects(() => resolveReferenceImage(big, '/tmp'), /Reference image too large/);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
