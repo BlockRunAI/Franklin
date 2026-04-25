@@ -91,6 +91,9 @@ Generate images & videos, pull live market data, fetch web research — all from
 
 ## Changelog
 
+### 0.4.1
+- **Vision-capable models can now see images** — `Read` on `.png` / `.jpg` / `.gif` / `.webp` inlines the bytes as a `tool_result` content block; with the gateway-side fix shipped, Sonnet / Opus / GPT-4o / Gemini describe images instead of hallucinating
+
 ### 0.4.0
 - **Settings popover** — new ⚙️ button in the composer toolbar for payment chain (Base / Solana) + default image / video models; Save dismisses the popover
 - **Inline edit diff cards** — Edit / Write / MultiEdit results show a green/red diff in the chat with **Open** and **Revert** buttons; Revert restores the file from an in-memory pre-edit snapshot

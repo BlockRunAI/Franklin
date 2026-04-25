@@ -41,6 +41,9 @@ Franklin is an autonomous AI agent that runs directly in VS Code. It doesn't jus
 
 ## Changelog
 
+### 0.4.1
+- **Vision-capable models can now actually see images** — Read on `.png` / `.jpg` / `.gif` / `.webp` returns the bytes inline as a `tool_result` content block; combined with the gateway-side fix (BlockRun gateway commit `6ac64da`), Sonnet / Opus / GPT-4o / Gemini now describe user-provided images instead of hallucinating. (Closes #10 via core PR #11.)
+
 ### 0.4.0
 - **Settings popover** — new ⚙️ button in the composer toolbar to toggle payment chain (Base / Solana) and set default image / video models in one place; Save dismisses the popover
 - **Inline edit diff cards** — Edit / Write / MultiEdit show a green/red diff in the chat with **Open** and **Revert** buttons; Revert restores the file from an in-memory snapshot
