@@ -100,9 +100,11 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   'opus-4.6': 'anthropic/claude-opus-4.6',
   haiku: 'anthropic/claude-haiku-4.5',
   // OpenAI
-  gpt: 'openai/gpt-5.4',
-  gpt5: 'openai/gpt-5.4',
-  'gpt-5': 'openai/gpt-5.4',
+  // `gpt` / `gpt5` / `gpt-5` follow the gateway's flagship — currently 5.5.
+  gpt: 'openai/gpt-5.5',
+  gpt5: 'openai/gpt-5.5',
+  'gpt-5': 'openai/gpt-5.5',
+  'gpt-5.5': 'openai/gpt-5.5',
   'gpt-5.4': 'openai/gpt-5.4',
   'gpt-5.4-pro': 'openai/gpt-5.4-pro',
   'gpt-5.3': 'openai/gpt-5.3',
