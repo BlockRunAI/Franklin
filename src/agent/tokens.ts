@@ -187,6 +187,10 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'anthropic/claude-haiku-4.5': 200_000,
   'anthropic/claude-haiku-4.5-20251001': 200_000,
   // OpenAI
+  // gpt-5.5 advertises 1.05M context at the gateway, but Franklin keeps the
+  // conservative 128k baseline matching every other gpt-5.x line — bump in
+  // a separate change once a real >128k call has been verified end-to-end.
+  'openai/gpt-5.5': 128_000,
   'openai/gpt-5.4': 128_000,
   'openai/gpt-5.4-pro': 128_000,
   'openai/gpt-5.3': 128_000,
