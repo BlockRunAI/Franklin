@@ -272,7 +272,7 @@ test('write capability allows files under system temp directory', async () => {
 test('session storage falls back to temp dir when HOME is not writable', async () => {
   const originalHome = process.env.HOME;
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-home-ro-'));
-  const fallbackDir = join(tmpdir(), 'runcode', 'sessions');
+  const fallbackDir = join(tmpdir(), 'franklin', 'sessions');
 
   try {
     mkdirSync(fakeHome, { recursive: true });
@@ -3943,4 +3943,75 @@ test('version-check: getAvailableUpdate reflects cache vs installed version', as
     if (backup !== null) fs.writeFileSync(cacheFile, backup);
     else if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile);
   }
+});
+
+test('imagegen: resolveReferenceImage passes URLs and data URIs through unchanged', async () => {
+  const { resolveReferenceImage } = await import('../dist/tools/imagegen.js');
+
+  // http(s) URLs flow straight to the gateway — gateway fetches them.
+  assert.equal(
+    resolveReferenceImage('https://example.com/cat.png', '/tmp'),
+    'https://example.com/cat.png',
+  );
+  assert.equal(
+    resolveReferenceImage('http://example.com/cat.png', '/tmp'),
+    'http://example.com/cat.png',
+  );
+
+  // Pre-formed data URIs are already in the correct shape.
+  const dataUri = 'data:image/png;base64,iVBORw0KGgo=';
+  assert.equal(resolveReferenceImage(dataUri, '/tmp'), dataUri);
+});
+
+test('imagegen: resolveReferenceImage reads and base64-encodes a local image', async () => {
+  const { resolveReferenceImage } = await import('../dist/tools/imagegen.js');
+  const tmp = mkdtempSync(join(tmpdir(), 'imagegen-ref-'));
+  const imgPath = join(tmp, 'pixel.png');
+  // 1x1 transparent PNG.
+  const pngBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  writeFileSync(imgPath, pngBytes);
+
+  try {
+    const out = resolveReferenceImage(imgPath, '/tmp');
+    assert.match(out, /^data:image\/png;base64,/);
+    const decoded = Buffer.from(out.split(',')[1], 'base64');
+    assert.ok(decoded.equals(pngBytes), 'round-trip should preserve bytes');
+
+    // Relative paths resolve against workingDir.
+    const relOut = resolveReferenceImage('pixel.png', tmp);
+    assert.equal(relOut, out);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('imagegen: resolveReferenceImage rejects unsupported extensions and oversized files', async () => {
+  const { resolveReferenceImage, REFERENCE_IMAGE_MAX_BYTES } = await import('../dist/tools/imagegen.js');
+  const tmp = mkdtempSync(join(tmpdir(), 'imagegen-ref-'));
+
+  try {
+    // Unsupported extension.
+    const txt = join(tmp, 'note.txt');
+    writeFileSync(txt, 'hello');
+    assert.throws(() => resolveReferenceImage(txt, '/tmp'), /Unsupported reference image extension/);
+
+    // Oversized PNG.
+    const big = join(tmp, 'huge.png');
+    writeFileSync(big, Buffer.alloc(REFERENCE_IMAGE_MAX_BYTES + 1, 0));
+    assert.throws(() => resolveReferenceImage(big, '/tmp'), /Reference image too large/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('imagegen: EDIT_SUPPORTED_MODELS lists OpenAI image-edit models', async () => {
+  const { EDIT_SUPPORTED_MODELS } = await import('../dist/tools/imagegen.js');
+  assert.ok(EDIT_SUPPORTED_MODELS.has('openai/gpt-image-1'));
+  assert.ok(EDIT_SUPPORTED_MODELS.has('openai/gpt-image-2'));
+  // Other providers can be added once the gateway wires them up.
+  assert.ok(!EDIT_SUPPORTED_MODELS.has('google/nano-banana-pro'));
+  assert.ok(!EDIT_SUPPORTED_MODELS.has('xai/grok-imagine-image-pro'));
 });
