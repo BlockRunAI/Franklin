@@ -36,6 +36,8 @@ import { loadChain, API_URLS, VERSION } from '../config.js';
 import type { ContentLibrary } from '../content/library.js';
 import { ModelClient } from '../agent/llm.js';
 import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
+import { recordUsage } from '../stats/tracker.js';
+import { findModel, estimateCostUsd } from '../gateway-models.js';
 
 interface VideoGenInput {
   prompt: string;
@@ -289,6 +291,21 @@ function buildExecute(deps: VideoGenDeps) {
       const fileSize = fs.statSync(outPath).size;
       const sizeMB = (fileSize / 1_048_576).toFixed(1);
       const dur = videoData.duration_seconds ?? duration;
+
+      // Stats: record this generation so it shows up in `franklin insights`
+      // alongside chat spend. Before this, media generations bypassed
+      // recordUsage entirely, so the insights panel under-reported total
+      // spend and never surfaced video models in its "top models" list.
+      // Prefer the live gateway price when the model is in the catalog;
+      // fall back to the legacy $0.05/s estimate otherwise. Fire-and-
+      // forget — stats write must not fail a user-visible generation.
+      void (async () => {
+        try {
+          const m = await findModel(videoModel);
+          const estCost = m ? estimateCostUsd(m, { duration_seconds: dur }) : estimateVideoCostUsd(dur);
+          recordUsage(videoModel, 0, 0, estCost, 0);
+        } catch { /* ignore stats errors */ }
+      })();
 
       let contentSummary = '';
       if (contentId && deps.library) {
