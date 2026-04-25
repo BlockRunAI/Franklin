@@ -29,6 +29,17 @@ interface ImageGenInput {
   size?: string;
   model?: string;
   /**
+   * Optional reference image for image-to-image generation (style transfer,
+   * character consistency, edits). When set, the call is routed to
+   * /v1/images/image2image instead of /v1/images/generations and only models
+   * that support reference images may be used (gpt-image-1/2,
+   * nano-banana-pro, grok-imagine-image-pro). Accepts:
+   *   - http(s) URL — fetched server-side
+   *   - data URI (data:image/...;base64,...)
+   *   - local file path — read, base64-encoded, capped at ~4 MB
+   */
+  image_url?: string;
+  /**
    * Optional Content id to attach this generation to. When provided:
    *   (1) Budget is checked BEFORE the paid generation — refusing up-front
    *       saves wasting USDC on a fill that couldn't be recorded.
@@ -36,6 +47,75 @@ interface ImageGenInput {
    *       on that content with the estimated USD cost.
    */
   contentId?: string;
+}
+
+/**
+ * Models that accept a reference image via /v1/images/image2image. Currently
+ * limited to OpenAI's edit endpoint — Gemini Nano Banana Pro and Grok Imagine
+ * Image Pro need gateway-side support before they can be wired in here.
+ */
+export const EDIT_SUPPORTED_MODELS = new Set([
+  'openai/gpt-image-1',
+  'openai/gpt-image-2',
+]);
+
+export const REFERENCE_IMAGE_MAX_BYTES = 4_000_000;
+
+/**
+ * Normalize a reference image into a base64 data URI for the gateway. The
+ * /v1/images/image2image endpoint validates `image` against /^data:image\//,
+ * so http(s) URLs and local paths both have to be inlined client-side before
+ * posting. Already-formed data URIs pass through.
+ */
+export async function resolveReferenceImage(input: string, workingDir: string): Promise<string> {
+  if (input.startsWith('data:image/')) return input;
+
+  if (/^https?:\/\//i.test(input)) {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 30_000);
+    try {
+      const resp = await fetch(input, { signal: ctrl.signal });
+      if (!resp.ok) {
+        throw new Error(`Reference image fetch failed: ${resp.status} ${resp.statusText}`);
+      }
+      const contentType = (resp.headers.get('content-type') || '').toLowerCase().split(';')[0].trim();
+      if (!contentType.startsWith('image/')) {
+        throw new Error(`Reference image URL returned non-image content-type: ${contentType || '(none)'}`);
+      }
+      const buf = Buffer.from(await resp.arrayBuffer());
+      if (buf.byteLength > REFERENCE_IMAGE_MAX_BYTES) {
+        throw new Error(
+          `Reference image too large: ${(buf.byteLength / 1_000_000).toFixed(1)}MB > ${(REFERENCE_IMAGE_MAX_BYTES / 1_000_000).toFixed(1)}MB cap.`,
+        );
+      }
+      return `data:${contentType};base64,${buf.toString('base64')}`;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  // Treat as local file path.
+  const resolved = path.isAbsolute(input) ? input : path.resolve(workingDir, input);
+  const stat = fs.statSync(resolved);
+  if (stat.size > REFERENCE_IMAGE_MAX_BYTES) {
+    throw new Error(
+      `Reference image too large: ${(stat.size / 1_000_000).toFixed(1)}MB > ${(REFERENCE_IMAGE_MAX_BYTES / 1_000_000).toFixed(1)}MB cap. Resize or crop first.`,
+    );
+  }
+  const ext = path.extname(resolved).toLowerCase();
+  const mimeMap: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+  };
+  const mime = mimeMap[ext];
+  if (!mime) {
+    throw new Error(`Unsupported reference image extension ${ext || '(none)'}. Use .png/.jpg/.jpeg/.gif/.webp.`);
+  }
+  const bytes = fs.readFileSync(resolved);
+  return `data:${mime};base64,${bytes.toString('base64')}`;
 }
 
 export interface ImageGenDeps {
@@ -51,10 +131,22 @@ function buildExecute(deps: ImageGenDeps) {
     ctx: ExecutionScope,
   ): Promise<CapabilityResult> {
     const rawInput = input as unknown as ImageGenInput;
-    const { output_path, size, model, contentId } = rawInput;
+    const { output_path, size, model, contentId, image_url } = rawInput;
 
     if (!rawInput.prompt) {
       return { output: 'Error: prompt is required', isError: true };
+    }
+
+    // Resolve the reference image (if any) before any paid call so we fail
+    // cheaply on bad paths / oversize attachments. Holds the resolved data URI
+    // / http URL that gets posted to /v1/images/image2image.
+    let referenceImage: string | undefined;
+    if (image_url) {
+      try {
+        referenceImage = await resolveReferenceImage(image_url, ctx.workingDir);
+      } catch (err) {
+        return { output: `Error: ${(err as Error).message}`, isError: true };
+      }
     }
 
     // One-shot refinement opt-out: leading `///` tells Franklin "don't
@@ -73,15 +165,35 @@ function buildExecute(deps: ImageGenDeps) {
     // step and use the old default. Otherwise: classifier picks a fitting
     // model + rewrites the prompt, the preview goes to AskUser, user
     // chooses or cancels.
+    // Reference-image mode forces an edit-capable model. If the caller named
+    // an unsupported one, fail loudly so we don't silently downgrade their
+    // request to text-only generation. Same check applies to a user-set
+    // default-image-model that doesn't support edits.
     const userDefaultImage = loadConfig()['default-image-model'];
-    let imageModel = model || userDefaultImage || 'openai/gpt-image-1';
+    const explicit = model || userDefaultImage;
+    if (referenceImage && explicit && !EDIT_SUPPORTED_MODELS.has(explicit)) {
+      return {
+        output:
+          `Error: model ${explicit} does not support reference images. ` +
+          `Use one of: ${[...EDIT_SUPPORTED_MODELS].join(', ')}.`,
+        isError: true,
+      };
+    }
+
+    let imageModel = model || userDefaultImage
+      || (referenceImage ? 'openai/gpt-image-2' : 'openai/gpt-image-1');
     const imageSize = size || '1024x1024';
     let chosenPrompt = prompt;
 
-    // Skip cost preview when the caller named a model explicitly OR the
-    // user has set a default-image-model (they've already chosen).
+    // Skip the proposal flow when:
+    //   (a) caller named an explicit model, OR
+    //   (b) user has set a default-image-model (they've already chosen), OR
+    //   (c) auto-approve env is on, OR
+    //   (d) a reference image is set — the media router doesn't know which
+    //       models support image-to-image, so its suggestions would
+    //       frequently be unusable text-only models.
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
-    if (!model && !userDefaultImage && !autoApprove && ctx.onAskUser) {
+    if (!model && !userDefaultImage && !autoApprove && ctx.onAskUser && !referenceImage) {
       try {
         const chain = loadChain();
         const client = new ModelClient({ apiUrl: API_URLS[chain], chain });
@@ -141,20 +253,34 @@ function buildExecute(deps: ImageGenDeps) {
 
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
-  const endpoint = `${apiUrl}/v1/images/generations`;
+  // Reference-image mode hits the dedicated /v1/images/image2image endpoint;
+  // otherwise stay on text-to-image generations.
+  const endpoint = referenceImage
+    ? `${apiUrl}/v1/images/image2image`
+    : `${apiUrl}/v1/images/generations`;
 
   // Default output path
   const outPath = output_path
     ? (path.isAbsolute(output_path) ? output_path : path.resolve(ctx.workingDir, output_path))
     : path.resolve(ctx.workingDir, `generated-${Date.now()}.png`);
 
-  const body = JSON.stringify({
-    model: imageModel,
-    prompt: chosenPrompt,
-    n: 1,
-    size: imageSize,
-    response_format: 'b64_json',
-  });
+  const body = JSON.stringify(
+    referenceImage
+      ? {
+          model: imageModel,
+          prompt: chosenPrompt,
+          image: referenceImage,
+          size: imageSize,
+          n: 1,
+        }
+      : {
+          model: imageModel,
+          prompt: chosenPrompt,
+          n: 1,
+          size: imageSize,
+          response_format: 'b64_json',
+        },
+  );
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -177,7 +303,7 @@ function buildExecute(deps: ImageGenDeps) {
     if (response.status === 402) {
       const paymentHeaders = await signPayment(response, chain, endpoint);
       if (!paymentHeaders) {
-        return { output: 'Payment failed. Check wallet balance with: runcode balance', isError: true };
+        return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };
       }
 
       response = await fetch(endpoint, {
@@ -202,9 +328,19 @@ function buildExecute(deps: ImageGenDeps) {
       return { output: 'No image data returned from API', isError: true };
     }
 
-    // Save image
+    // Save image. The /v1/images/image2image endpoint returns Gemini results
+    // as a data URI in `url`, so decode those locally instead of going through
+    // fetch — saves a network round-trip and avoids data:-URI fetch quirks.
     if (imageData.b64_json) {
       const buffer = Buffer.from(imageData.b64_json, 'base64');
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, buffer);
+    } else if (imageData.url && imageData.url.startsWith('data:')) {
+      const match = imageData.url.match(/^data:[^;]+;base64,(.+)$/);
+      if (!match) {
+        return { output: 'Malformed data URI in response', isError: true };
+      }
+      const buffer = Buffer.from(match[1], 'base64');
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, buffer);
     } else if (imageData.url) {
@@ -294,7 +430,7 @@ async function signPayment(
         feePayer as string,
         {
           resourceUrl: details.resource?.url || endpoint,
-          resourceDescription: details.resource?.description || 'RunCode image generation',
+          resourceDescription: details.resource?.description || 'Franklin image generation',
           maxTimeoutSeconds: details.maxTimeoutSeconds || 300,
           extra: details.extra as Record<string, unknown> | undefined,
         }
@@ -313,7 +449,7 @@ async function signPayment(
         details.network || 'eip155:8453',
         {
           resourceUrl: details.resource?.url || endpoint,
-          resourceDescription: details.resource?.description || 'RunCode image generation',
+          resourceDescription: details.resource?.description || 'Franklin image generation',
           maxTimeoutSeconds: details.maxTimeoutSeconds || 300,
           extra: details.extra as Record<string, unknown> | undefined,
         }
@@ -351,13 +487,16 @@ export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHan
     spec: {
       name: 'ImageGen',
       description:
-        "Generate an image from a text prompt. Costs USDC from the user's wallet " +
-        "— confirm before generating. Saves to a local file. Default size: " +
-        "1024x1024. Do NOT call repeatedly to iterate on style — ask the user " +
-        "first. Pass contentId to attach the result to an existing Content " +
-        "piece: the content's budget is checked BEFORE paying, and on success " +
-        "the image is recorded as an asset with its estimated cost. Skipping " +
-        "contentId generates a one-off image with no budget tracking.",
+        "Generate an image from a text prompt — optionally with a reference " +
+        "image for style transfer / character consistency / edits. Costs USDC " +
+        "from the user's wallet — confirm before generating. Saves to a local " +
+        "file. Default size: 1024x1024. Do NOT call repeatedly to iterate on " +
+        "style — ask the user first. Pass contentId to attach the result to " +
+        "an existing Content piece: the content's budget is checked BEFORE " +
+        "paying, and on success the image is recorded as an asset with its " +
+        "estimated cost. Skipping contentId generates a one-off image with no " +
+        "budget tracking. When image_url is set, only edit-capable models " +
+        "(openai/gpt-image-1, openai/gpt-image-2) are accepted.",
       input_schema: {
         type: 'object',
         properties: {
@@ -365,6 +504,7 @@ export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHan
           output_path: { type: 'string', description: 'Where to save the image. Default: generated-<timestamp>.png in working directory' },
           size: { type: 'string', description: 'Image size: 1024x1024, 1792x1024, or 1024x1792. Default: 1024x1024' },
           model: { type: 'string', description: 'Image model to use. Default: openai/gpt-image-1' },
+          image_url: { type: 'string', description: 'Optional reference image (image-to-image / style transfer). Accepts an http(s) URL, a data URI, or a local file path. Only works with edit-capable models.' },
           contentId: { type: 'string', description: 'Optional Content id to attach this generation to. Pre-flight budget check + auto-record on success.' },
         },
         required: ['prompt'],
