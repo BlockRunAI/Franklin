@@ -21,6 +21,8 @@ import type { ContentLibrary } from '../content/library.js';
 import { checkImageBudget, recordImageAsset } from '../content/record-image.js';
 import { ModelClient } from '../agent/llm.js';
 import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
+import { recordUsage } from '../stats/tracker.js';
+import { findModel, estimateCostUsd } from '../gateway-models.js';
 
 interface ImageGenInput {
   prompt: string;
@@ -352,6 +354,20 @@ function buildExecute(deps: ImageGenDeps) {
     const fileSize = fs.statSync(outPath).size;
     const sizeKB = (fileSize / 1024).toFixed(1);
     const revisedPrompt = imageData.revised_prompt ? `\nRevised prompt: ${imageData.revised_prompt}` : '';
+
+    // Stats: record this generation so it shows up in `franklin insights`
+    // alongside chat spend. Before this, media generations bypassed
+    // recordUsage entirely (only LLM chat calls were tracked), so the
+    // insights panel under-reported total spend and never surfaced
+    // image-generation models in its "top models" list. Fire-and-forget —
+    // stats write must not fail a user-visible generation.
+    void (async () => {
+      try {
+        const m = await findModel(imageModel);
+        const estCost = m ? estimateCostUsd(m, { quantity: 1 }) : 0;
+        recordUsage(imageModel, 0, 0, estCost, 0);
+      } catch { /* ignore stats errors */ }
+    })();
 
     let contentSummary = '';
     if (contentId && deps.library) {
