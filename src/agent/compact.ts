@@ -526,7 +526,7 @@ function pickCompactionModel(primaryModel: string): string {
   if (primaryModel.includes('opus') || primaryModel.includes('pro')) {
     return 'anthropic/claude-sonnet-4.6';
   }
-  if (primaryModel.includes('sonnet') || primaryModel.includes('gpt-5.4') || primaryModel.includes('gemini-2.5-pro')) {
+  if (primaryModel.includes('sonnet') || primaryModel.includes('gpt-5.4') || primaryModel.includes('gpt-5.5') || primaryModel.includes('gemini-2.5-pro')) {
     return 'anthropic/claude-haiku-4.5-20251001';
   }
   if (primaryModel.includes('haiku') || primaryModel.includes('mini') || primaryModel.includes('nano')) {

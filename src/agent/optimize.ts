@@ -35,6 +35,7 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   'anthropic/claude-opus-4.6': 32_000,
   'anthropic/claude-sonnet-4.6': 64_000,
   'anthropic/claude-haiku-4.5-20251001': 16_384,
+  'openai/gpt-5.5': 32_768,
   'openai/gpt-5.4': 32_768,
   'openai/gpt-5-mini': 16_384,
   'google/gemini-2.5-pro': 65_536,
