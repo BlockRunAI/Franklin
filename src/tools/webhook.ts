@@ -17,6 +17,7 @@
 
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { isIP } from 'node:net';
+import { VERSION } from '../config.js';
 
 interface WebhookPostInput {
   url: string;
@@ -109,7 +110,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   const finalHeaders: Record<string, string> = {
     'Content-Type': contentType,
-    'User-Agent': 'franklin/3.8.9 (webhook)',
+    'User-Agent': `franklin/${VERSION} (webhook)`,
     ...(headers ?? {}),
   };
 

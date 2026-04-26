@@ -8,9 +8,10 @@
 
 import type { ProviderError } from '../standard-models.js';
 import { recordFetch } from '../telemetry.js';
+import { VERSION } from '../../../config.js';
 
 const BASE = 'https://api.coingecko.com/api/v3';
-const UA = 'franklin/3.8.9 (trading)';
+const UA = `franklin/${VERSION} (trading)`;
 const TIMEOUT_MS = 10_000;
 
 // Ticker → CoinGecko slug. Not exhaustive; unknown tickers fall through to
