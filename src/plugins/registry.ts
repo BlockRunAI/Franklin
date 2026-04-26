@@ -3,9 +3,9 @@
  *
  * Core stays plugin-agnostic: it knows about the *interface*, not specific plugins.
  * Plugins are discovered from:
- *   1. Bundled: <runcode>/plugins-bundled/* (ships with runcode)
- *   2. User: ~/.blockrun/plugins/* (installed via `runcode plugin install`)
- *   3. Local dev: $RUNCODE_PLUGINS_DIR/* (env var for development)
+ *   1. Bundled: <franklin>/plugins-bundled/* (ships with Franklin)
+ *   2. User: ~/.blockrun/plugins/*
+ *   3. Local dev: $FRANKLIN_PLUGINS_DIR/* (or legacy $RUNCODE_PLUGINS_DIR/*)
  */
 
 import fs from 'node:fs';
@@ -29,7 +29,7 @@ export function getUserPluginsDir(): string {
 }
 
 function getDevPluginsDir(): string | null {
-  return process.env.RUNCODE_PLUGINS_DIR || null;
+  return process.env.FRANKLIN_PLUGINS_DIR || process.env.RUNCODE_PLUGINS_DIR || null;
 }
 
 // ─── Loaded Plugin State ──────────────────────────────────────────────────
@@ -135,7 +135,7 @@ export async function loadAllPlugins(): Promise<Map<string, LoadedPlugin>> {
       if (plugin.onLoad) {
         try {
           await plugin.onLoad({
-            runcodeVersion: getRuncodeVersion(),
+            franklinVersion: getFranklinVersion(),
             dataDir: path.join(os.homedir(), '.blockrun', 'plugins', manifest.id),
             pluginDir: dir,
             log: (msg) => process.stderr.write(`[${manifest.id}] ${msg}\n`),
@@ -172,7 +172,7 @@ export function listChannelPlugins(): LoadedPlugin[] {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-function getRuncodeVersion(): string {
+function getFranklinVersion(): string {
   try {
     const pkgPath = path.resolve(__dirname, '..', '..', 'package.json');
     return JSON.parse(fs.readFileSync(pkgPath, 'utf-8')).version || '0.0.0';

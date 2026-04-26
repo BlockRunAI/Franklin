@@ -209,7 +209,15 @@ export class PermissionManager {
   // ─── Internal ──────────────────────────────────────────────────────────
 
   private loadRules(): PermissionRules {
-    const configPath = path.join(BLOCKRUN_DIR, 'runcode-permissions.json');
+    const configPath = path.join(BLOCKRUN_DIR, 'franklin-permissions.json');
+    const legacyPath = path.join(BLOCKRUN_DIR, 'runcode-permissions.json');
+    // One-shot migration from the old name. If the user only has the legacy
+    // file, rename it so future writes/reads land on the franklin path.
+    try {
+      if (!fs.existsSync(configPath) && fs.existsSync(legacyPath)) {
+        fs.renameSync(legacyPath, configPath);
+      }
+    } catch { /* best effort */ }
     try {
       if (fs.existsSync(configPath)) {
         const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));

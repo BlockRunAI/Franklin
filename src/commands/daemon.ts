@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'node:child_process';
+import { spawn, execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -43,6 +43,17 @@ function isRunning(pid: number): boolean {
   }
 }
 
+function findDaemonBinary(): string | null {
+  for (const name of ['franklin', 'runcode']) {
+    try {
+      return execFileSync('which', [name], { encoding: 'utf-8' }).trim();
+    } catch {
+      // Try the legacy alias next.
+    }
+  }
+  return null;
+}
+
 export async function daemonCommand(action: string, options: { port?: string }) {
   const port = parseInt(options.port || String(DEFAULT_PROXY_PORT));
   if (isNaN(port) || port < 1 || port > 65535) {
@@ -59,18 +70,15 @@ export async function daemonCommand(action: string, options: { port?: string }) 
         return;
       }
 
-      // Find runcode binary
-      let runcodeBin: string;
-      try {
-        runcodeBin = execSync('which runcode', { encoding: 'utf-8' }).trim();
-      } catch {
-        console.log(chalk.red('runcode binary not found in PATH.'));
+      const daemonBin = findDaemonBinary();
+      if (!daemonBin) {
+        console.log(chalk.red('franklin binary not found in PATH.'));
         return;
       }
 
       fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
 
-      const child = spawn(runcodeBin, ['proxy', '--port', String(port)], {
+      const child = spawn(daemonBin, ['proxy', '--port', String(port)], {
         detached: true,
         // stdout → /dev/null (banner + startup messages), stderr → log file (debug/errors only)
         stdio: ['ignore', 'ignore', fs.openSync(LOG_FILE, 'a')],
@@ -78,7 +86,7 @@ export async function daemonCommand(action: string, options: { port?: string }) 
       child.unref();
 
       fs.writeFileSync(PID_FILE, String(child.pid));
-      console.log(chalk.green(`✓ runcode daemon started (PID ${child.pid})`));
+      console.log(chalk.green(`✓ franklin daemon started (PID ${child.pid})`));
       console.log(chalk.dim(`  Proxy: http://localhost:${port}/api`));
       console.log(chalk.dim(`  Logs:  ${LOG_FILE}`));
       break;
@@ -87,7 +95,7 @@ export async function daemonCommand(action: string, options: { port?: string }) 
     case 'stop': {
       const pid = readPid();
       if (!pid) {
-        console.log(chalk.yellow('No runcode daemon found.'));
+        console.log(chalk.yellow('No franklin daemon found.'));
         return;
       }
       if (!isRunning(pid)) {
@@ -106,7 +114,7 @@ export async function daemonCommand(action: string, options: { port?: string }) 
           process.kill(pid, 'SIGKILL');
         }
         try { fs.unlinkSync(PID_FILE); } catch { /* already gone */ }
-        console.log(chalk.green(`✓ runcode daemon stopped (PID ${pid})`));
+        console.log(chalk.green(`✓ franklin daemon stopped (PID ${pid})`));
       } catch (e) {
         console.log(chalk.red(`Failed to stop daemon: ${(e as Error).message}`));
       }
@@ -116,23 +124,23 @@ export async function daemonCommand(action: string, options: { port?: string }) 
     case 'status': {
       const pid = readPid();
       if (!pid) {
-        console.log(chalk.dim('runcode daemon: not running'));
+        console.log(chalk.dim('franklin daemon: not running'));
         return;
       }
       if (isRunning(pid)) {
-        console.log(chalk.green(`✓ runcode daemon running`));
+        console.log(chalk.green(`✓ franklin daemon running`));
         console.log(`  PID:   ${chalk.bold(pid)}`);
         console.log(`  Proxy: ${chalk.cyan(`http://localhost:${port}/api`)}`);
         console.log(chalk.dim(`  Logs:  ${LOG_FILE}`));
       } else {
         fs.unlinkSync(PID_FILE);
-        console.log(chalk.yellow('runcode daemon: not running (stale PID cleaned up)'));
+        console.log(chalk.yellow('franklin daemon: not running (stale PID cleaned up)'));
       }
       break;
     }
 
     default:
       console.log(chalk.red(`Unknown daemon action: ${action}`));
-      console.log('Usage: runcode daemon <start|stop|status>');
+      console.log('Usage: franklin daemon <start|stop|status>');
   }
 }

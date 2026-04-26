@@ -398,7 +398,7 @@ That economic loop is the product.
 
 ```text
 src/
-├── index.ts           CLI entry (franklin + runcode alias)
+├── index.ts           CLI entry (franklin)
 ├── banner.ts          Ben Franklin portrait + FRANKLIN gradient text
 ├── agent/             Agent loop, LLM client, compaction, commands
 ├── tools/             20+ built-in tools (Read/Write/Edit/Bash/Glob/Grep/

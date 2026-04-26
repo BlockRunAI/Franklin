@@ -1,5 +1,5 @@
 /**
- * runcode stats command
+ * franklin stats command
  * Display usage statistics and cost savings
  */
 
@@ -152,6 +152,6 @@ export function statsCommand(options: StatsOptions): void {
 
   console.log('\n' + '─'.repeat(55));
   console.log(
-    chalk.gray('  Run `runcode stats --clear` to reset statistics\n')
+    chalk.gray('  Run `franklin stats --clear` to reset statistics\n')
   );
 }
