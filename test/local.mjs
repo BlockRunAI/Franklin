@@ -204,7 +204,6 @@ test('panel server serves dashboard HTML and stats JSON', async () => {
   } finally {
     await new Promise((resolve) => server.close(() => resolve()));
     unwatchFile(join(homedir(), '.blockrun', 'franklin-stats.json'));
-    unwatchFile(join(homedir(), '.blockrun', 'runcode-stats.json'));
   }
 });
 
@@ -1324,6 +1323,50 @@ test('package exports plugin-sdk subpath', async () => {
   assert.ok(pkg.exports, 'Expected package.json exports field');
   assert.ok(pkg.exports['./plugin-sdk'], 'Expected ./plugin-sdk export');
   assert.equal(pkg.exports['./plugin-sdk'].default, './dist/plugin-sdk/index.js');
+});
+
+test('plugin discovery prefers FRANKLIN_PLUGINS_DIR and keeps RUNCODE_PLUGINS_DIR fallback', async () => {
+  const originalFranklin = process.env.FRANKLIN_PLUGINS_DIR;
+  const originalRuncode = process.env.RUNCODE_PLUGINS_DIR;
+  const preferredDir = mkdtempSync(join(tmpdir(), 'franklin-plugins-'));
+  const legacyDir = mkdtempSync(join(tmpdir(), 'runcode-plugins-'));
+
+  const writePlugin = (base, id) => {
+    const dir = join(base, id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'plugin.json'), JSON.stringify({
+      id,
+      name: id,
+      description: `${id} plugin`,
+      version: '1.0.0',
+      provides: { workflows: [id] },
+      entry: 'index.js',
+    }));
+  };
+
+  try {
+    writePlugin(preferredDir, 'modern-plugin');
+    writePlugin(legacyDir, 'legacy-plugin');
+
+    process.env.FRANKLIN_PLUGINS_DIR = preferredDir;
+    process.env.RUNCODE_PLUGINS_DIR = legacyDir;
+    const preferredRegistry = await import(`../dist/plugins/registry.js?preferred=${Date.now()}`);
+    const preferredIds = preferredRegistry.discoverPluginManifests().map((p) => p.manifest.id);
+    assert.ok(preferredIds.includes('modern-plugin'), 'Expected FRANKLIN_PLUGINS_DIR plugin to be discovered');
+    assert.ok(!preferredIds.includes('legacy-plugin'), 'FRANKLIN_PLUGINS_DIR should take priority when both env vars are set');
+
+    delete process.env.FRANKLIN_PLUGINS_DIR;
+    const legacyRegistry = await import(`../dist/plugins/registry.js?legacy=${Date.now()}`);
+    const legacyIds = legacyRegistry.discoverPluginManifests().map((p) => p.manifest.id);
+    assert.ok(legacyIds.includes('legacy-plugin'), 'Expected RUNCODE_PLUGINS_DIR fallback plugin to be discovered');
+  } finally {
+    if (originalFranklin === undefined) delete process.env.FRANKLIN_PLUGINS_DIR;
+    else process.env.FRANKLIN_PLUGINS_DIR = originalFranklin;
+    if (originalRuncode === undefined) delete process.env.RUNCODE_PLUGINS_DIR;
+    else process.env.RUNCODE_PLUGINS_DIR = originalRuncode;
+    rmSync(preferredDir, { recursive: true, force: true });
+    rmSync(legacyDir, { recursive: true, force: true });
+  }
 });
 
 test('daemon status works in ESM runtime without require()', async () => {

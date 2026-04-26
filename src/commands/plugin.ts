@@ -1,7 +1,7 @@
 /**
  * Generic plugin command dispatcher.
  *
- * `runcode <plugin-id> <action>` works for ANY plugin that registers a workflow.
+ * `franklin <plugin-id> <action>` works for ANY plugin that registers a workflow.
  * Core stays plugin-agnostic — adding a new plugin requires zero changes here.
  */
 
@@ -71,7 +71,7 @@ export async function pluginCommand(
         // No action and already configured: show stats + dry-run hint
         const stats = getStats(workflow.id);
         console.log(formatWorkflowStats(workflow, stats));
-        console.log(chalk.dim(`Run "runcode ${pluginId} run --dry" to preview.\n`));
+        console.log(chalk.dim(`Run "franklin ${pluginId} run --dry" to preview.\n`));
       }
       break;
     }
@@ -97,7 +97,7 @@ export async function pluginCommand(
     case 'leads': {
       const leads = getByAction(workflow.id, 'lead');
       if (leads.length === 0) {
-        console.log(chalk.dim(`\nNo leads found yet. Run "runcode ${pluginId} run" first.\n`));
+        console.log(chalk.dim(`\nNo leads found yet. Run "franklin ${pluginId} run" first.\n`));
         break;
       }
       console.log(chalk.bold(`\n  LEADS (${leads.length})\n`));
@@ -119,12 +119,12 @@ export async function pluginCommand(
       console.log(chalk.red(`Unknown action: ${action}`));
       console.log(chalk.dim(`
 Usage:
-  runcode ${pluginId}              # show stats / first-run setup
-  runcode ${pluginId} init         # interactive setup
-  runcode ${pluginId} run          # execute workflow
-  runcode ${pluginId} run --dry    # dry run (no side effects)
-  runcode ${pluginId} stats        # show statistics
-  runcode ${pluginId} leads        # show tracked leads (if applicable)
+  franklin ${pluginId}              # show stats / first-run setup
+  franklin ${pluginId} init         # interactive setup
+  franklin ${pluginId} run          # execute workflow
+  franklin ${pluginId} run --dry    # dry run (no side effects)
+  franklin ${pluginId} stats        # show statistics
+  franklin ${pluginId} leads        # show tracked leads (if applicable)
 `));
   }
 }
@@ -204,7 +204,7 @@ async function runOnboarding(
     const config = await workflow.buildConfigFromAnswers(answers, llm);
     console.log(chalk.green('  ✓ Configuration saved!\n'));
     console.log(chalk.dim(`  Config: ~/.blockrun/workflows/${workflow.id}.config.json\n`));
-    console.log(chalk.dim(`  Run "runcode ${workflow.id} run --dry" to preview.\n`));
+    console.log(chalk.dim(`  Run "franklin ${workflow.id} run --dry" to preview.\n`));
     return config;
   } catch (err) {
     console.error(chalk.red(`  Setup failed: ${(err as Error).message}`));

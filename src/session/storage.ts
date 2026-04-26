@@ -45,7 +45,7 @@ function getSessionsDir(): string {
   if (resolvedSessionsDir) return resolvedSessionsDir;
 
   const preferred = path.join(BLOCKRUN_DIR, 'sessions');
-  const fallback = path.join(os.tmpdir(), 'runcode', 'sessions');
+  const fallback = path.join(os.tmpdir(), 'franklin', 'sessions');
 
   for (const dir of [preferred, fallback]) {
     try {
@@ -78,7 +78,7 @@ function metaPath(id: string): string {
 
 function withWritableSessionDir(action: () => void): void {
   const preferred = path.join(BLOCKRUN_DIR, 'sessions');
-  const fallback = path.join(os.tmpdir(), 'runcode', 'sessions');
+  const fallback = path.join(os.tmpdir(), 'franklin', 'sessions');
 
   try {
     action();

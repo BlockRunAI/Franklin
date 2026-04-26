@@ -44,4 +44,4 @@ src/
 - ESM (`"type": "module"`)
 - Node >= 20
 - Apache-2.0 license
-- npm registry: `@blockrun/runcode`
+- npm registry: `@blockrun/franklin`

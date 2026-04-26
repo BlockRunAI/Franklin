@@ -297,7 +297,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
     catch { checks.push('⚠ ripgrep not found (using native grep fallback)'); }
     const hasWallet = fs.existsSync(path.join(BLOCKRUN_DIR, 'wallet.json'))
       || fs.existsSync(path.join(BLOCKRUN_DIR, 'solana-wallet.json'));
-    checks.push(hasWallet ? '✓ wallet configured' : '⚠ no wallet — run: runcode setup');
+    checks.push(hasWallet ? '✓ wallet configured' : '⚠ no wallet — run: franklin setup');
     checks.push(fs.existsSync(path.join(BLOCKRUN_DIR, 'franklin-config.json')) || fs.existsSync(path.join(BLOCKRUN_DIR, 'runcode-config.json')) ? '✓ config file exists' : '⚠ no config — using defaults');
     // Check MCP
     const { listMcpServers } = await import('../mcp/client.js');

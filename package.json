@@ -19,8 +19,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "franklin": "dist/index.js",
-    "runcode": "dist/index.js"
+    "franklin": "dist/index.js"
   },
   "files": [
     "dist",
@@ -51,8 +50,7 @@
     "ai-marketing",
     "ai-trading",
     "crypto-native",
-    "blockrun",
-    "runcode"
+    "blockrun"
   ],
   "license": "Apache-2.0",
   "repository": {

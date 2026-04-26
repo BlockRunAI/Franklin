@@ -29,7 +29,7 @@ npm run test:e2e         # end-to-end tests (hits real models, needs wallet fund
 
 ```
 src/
-├── index.ts                # CLI entry point (franklin + runcode alias)
+├── index.ts                # CLI entry point (franklin)
 ├── banner.ts               # FRANKLIN ASCII banner
 ├── agent/                  # Agent loop, LLM client, compaction, commands
 ├── tools/                  # 12 built-in tools (Read/Write/Edit/Bash/Grep/...)
@@ -59,8 +59,8 @@ src/
 - ESM (`"type": "module"`)
 - Node >= 20
 - Apache-2.0 license
-- npm registry: `@blockrun/franklin` (primary), `@blockrun/runcode` (deprecated alias)
-- Binary commands: `franklin` (primary), `runcode` (60-day alias)
+- npm registry: `@blockrun/franklin`
+- Binary command: `franklin`
 
 ## Positioning
 

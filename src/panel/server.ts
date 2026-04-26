@@ -7,8 +7,8 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { BLOCKRUN_DIR, loadChain, saveChain, type Chain } from '../config.js';
-import { loadStats, getStatsSummary } from '../stats/tracker.js';
+import { loadChain, saveChain, type Chain } from '../config.js';
+import { loadStats, getStatsSummary, getStatsFilePath } from '../stats/tracker.js';
 import { generateInsights } from '../stats/insights.js';
 import { listSessions, loadSessionHistory } from '../session/storage.js';
 import { searchSessions } from '../session/search.js';
@@ -408,10 +408,11 @@ export function createPanelServer(port: number): http.Server {
     }
   });
 
-  // Watch stats file for changes → push to SSE clients
-  const statsFile = fs.existsSync(path.join(BLOCKRUN_DIR, 'franklin-stats.json'))
-    ? path.join(BLOCKRUN_DIR, 'franklin-stats.json')
-    : path.join(BLOCKRUN_DIR, 'runcode-stats.json');
+  // Watch stats file for changes → push to SSE clients.
+  // getStatsFilePath() also handles the runcode-stats.json → franklin-stats.json
+  // migration on first call, so users coming from the old binary keep their
+  // history without an extra cleanup step.
+  const statsFile = getStatsFilePath();
   if (fs.existsSync(statsFile)) {
     fs.watchFile(statsFile, { interval: 2000 }, () => {
       try {
