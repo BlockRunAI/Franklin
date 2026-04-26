@@ -1,6 +1,6 @@
-# RunCode Plugin SDK
+# Franklin Plugin SDK
 
-RunCode is plugin-first. Workflows like `social`, `trading`, `content` are
+Franklin is plugin-first. Workflows like `social`, `trading`, `content` are
 plugins, not hardcoded features. Core stays plugin-agnostic — adding a new
 plugin should never require editing core.
 
@@ -20,7 +20,7 @@ src/
 │   ├── registry.ts       # Discover and load plugins
 │   └── runner.ts         # Execute any Workflow
 │
-├── plugins-bundled/      # Plugins shipped with runcode
+├── plugins-bundled/      # Plugins shipped with Franklin
 │   └── social/
 │       ├── plugin.json   # Manifest
 │       ├── index.ts      # Plugin entry
@@ -34,9 +34,9 @@ src/
 
 Plugins are discovered from three locations (highest priority first):
 
-1. **Dev**: `$RUNCODE_PLUGINS_DIR/*` — for local development
-2. **User**: `~/.blockrun/plugins/*` — installed via `runcode plugin install`
-3. **Bundled**: `<runcode>/dist/plugins-bundled/*` — ships with runcode
+1. **Dev**: `$FRANKLIN_PLUGINS_DIR/*` — for local development (`$RUNCODE_PLUGINS_DIR` is still honored as a legacy alias)
+2. **User**: `~/.blockrun/plugins/*`
+3. **Bundled**: `<franklin>/dist/plugins-bundled/*` — ships with Franklin
 
 A plugin is any directory containing a `plugin.json` manifest.
 
@@ -69,8 +69,8 @@ import type {
   WorkflowStepContext,
   WorkflowStepResult,
   WorkflowConfig,
-} from '@blockrun/runcode/plugin-sdk';
-import { DEFAULT_MODEL_TIERS } from '@blockrun/runcode/plugin-sdk';
+} from '@blockrun/franklin/plugin-sdk';
+import { DEFAULT_MODEL_TIERS } from '@blockrun/franklin/plugin-sdk';
 
 const myWorkflow: Workflow = {
   id: 'my-plugin',
@@ -133,12 +133,12 @@ export default plugin;
 ### 3. Use it
 
 ```bash
-runcode my-plugin              # show stats / first-run setup
-runcode my-plugin init         # interactive setup
-runcode my-plugin run          # execute workflow
-runcode my-plugin run --dry    # dry run
-runcode my-plugin stats        # statistics
-runcode my-plugin leads        # tracked leads (if applicable)
+franklin my-plugin              # show stats / first-run setup
+franklin my-plugin init         # interactive setup
+franklin my-plugin run          # execute workflow
+franklin my-plugin run --dry    # dry run
+franklin my-plugin stats        # statistics
+franklin my-plugin leads        # tracked leads (if applicable)
 ```
 
 ## Model Tiers
@@ -175,7 +175,7 @@ they never know about platform-specific code.
 
 Franklin's plugin runtime enforces strict boundaries:
 
-1. **Plugins import ONLY from `@blockrun/runcode/plugin-sdk`** — never from
+1. **Plugins import ONLY from `@blockrun/franklin/plugin-sdk`** — never from
    `src/agent/`, `src/commands/`, or another plugin's `src/`.
 2. **Core never references plugins by id.** No `if (pluginId === 'social')`
    in core code.
@@ -184,5 +184,5 @@ Franklin's plugin runtime enforces strict boundaries:
 4. **Plugin contracts are versioned.** Breaking changes require a major
    version bump.
 
-This is what makes the system extensible: third-party plugins (`runcode-trading`,
-`runcode-content`) can be installed without forking the codebase.
+This is what makes the system extensible: third-party plugins can be installed
+without forking the codebase.

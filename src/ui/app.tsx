@@ -654,7 +654,7 @@ function RunCodeApp({
 
   // Expose event handler, balance updater, and permission bridge
   useEffect(() => {
-    (globalThis as Record<string, unknown>).__runcode_ui = {
+    (globalThis as Record<string, unknown>).__franklin_ui = {
       updateModel: (model: string) => { setCurrentModel(model); },
       updateBalance: (bal: string) => {
         setBalance(bal);
@@ -843,7 +843,7 @@ function RunCodeApp({
               setQueuedInputs((prev) => prev.slice(1));
               // Small delay so React can flush the ready=true state first
               setTimeout(() => {
-                const fn = (globalThis as Record<string, unknown>).__runcode_submit;
+                const fn = (globalThis as Record<string, unknown>).__franklin_submit;
                 if (typeof fn === 'function') fn(queued);
               }, 50);
             }
@@ -852,12 +852,12 @@ function RunCodeApp({
         }
       },
     };
-    (globalThis as Record<string, unknown>).__runcode_submit = (msg: string) => {
+    (globalThis as Record<string, unknown>).__franklin_submit = (msg: string) => {
       handleSubmit(msg);
     };
     return () => {
-      delete (globalThis as Record<string, unknown>).__runcode_ui;
-      delete (globalThis as Record<string, unknown>).__runcode_submit;
+      delete (globalThis as Record<string, unknown>).__franklin_ui;
+      delete (globalThis as Record<string, unknown>).__franklin_submit;
     };
   }, [handleSubmit, commitResponse, showStatus]);
 
@@ -1331,7 +1331,7 @@ export function launchInkUI(opts: {
     <RunCodeApp
       initialModel={opts.model}
       workDir={opts.workDir}
-      walletAddress={opts.walletAddress || 'not set — run: runcode setup'}
+      walletAddress={opts.walletAddress || 'not set — run: franklin setup'}
       walletBalance={opts.walletBalance || 'unknown'}
       chain={opts.chain || 'base'}
       startWithPicker={opts.showPicker}
@@ -1355,7 +1355,7 @@ export function launchInkUI(opts: {
 
   return {
     handleEvent: (event: StreamEvent) => {
-      const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
+      const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         handleEvent: (e: StreamEvent) => void;
         updateModel: (m: string) => void;
         updateBalance: (bal: string) => void;
@@ -1363,19 +1363,19 @@ export function launchInkUI(opts: {
       ui?.handleEvent(event);
     },
     updateModel: (model: string) => {
-      const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
+      const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         updateModel: (m: string) => void;
       } | undefined;
       ui?.updateModel(model);
     },
     updateBalance: (bal: string) => {
-      const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
+      const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         updateBalance: (bal: string) => void;
       } | undefined;
       ui?.updateBalance(bal);
     },
     onTurnDone: (cb: () => void) => {
-      const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
+      const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         onTurnDone: (cb: () => void) => void;
       } | undefined;
       ui?.onTurnDone(cb);
@@ -1393,13 +1393,13 @@ export function launchInkUI(opts: {
     onAbort: (cb: () => void) => { abortCallback = cb; },
     cleanup: () => { mouse.disable(); instance.unmount(); },
     requestPermission: (toolName: string, description: string) => {
-      const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
+      const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
       } | undefined;
       return ui?.requestPermission(toolName, description) ?? Promise.resolve('no' as const);
     },
     requestAskUser: (question: string, options?: string[]) => {
-      const ui = (globalThis as Record<string, unknown>).__runcode_ui as {
+      const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         requestAskUser: (question: string, options?: string[]) => Promise<string>;
       } | undefined;
       return ui?.requestAskUser(question, options) ?? Promise.resolve('(no response)');

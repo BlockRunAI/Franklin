@@ -1,7 +1,7 @@
 /**
- * RunCode Plugin SDK — public surface for plugins.
+ * Franklin Plugin SDK — public surface for plugins.
  *
- * Plugins import ONLY from '@blockrun/runcode/plugin-sdk' (or this barrel).
+ * Plugins import ONLY from '@blockrun/franklin/plugin-sdk' (or this barrel).
  * They MUST NOT import from src/** of core or other plugins.
  *
  * Core stays plugin-agnostic: adding a plugin should never require editing core.

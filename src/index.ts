@@ -298,7 +298,7 @@ function parseStartFlags(argv: string[], startIdx = 0): Record<string, unknown> 
   return opts;
 }
 
-// Handle chain shortcuts: `runcode solana` or `runcode base`
+// Handle chain shortcuts: `franklin solana` or `franklin base`
 if (firstArg === 'solana' || firstArg === 'base') {
   if (hasAnyFlag(args, HELP_FLAGS)) {
     program.parse(['node', 'franklin', 'start', '--help']);

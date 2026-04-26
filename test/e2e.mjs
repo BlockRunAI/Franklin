@@ -1,11 +1,11 @@
 /**
- * Live E2E tests for runcode CLI.
+ * Live E2E tests for franklin CLI.
  * Uses Node's built-in test runner (node:test) — no extra dependencies.
  *
  * Run:  npm run test:e2e
  *       E2E_MODEL=<provider/model> npm run test:e2e
  *
- * Each test pipes a prompt into runcode's piped (non-TTY) mode
+ * Each test pipes a prompt into franklin's piped (non-TTY) mode
  * and asserts the output contains expected content.
  */
 
@@ -22,11 +22,11 @@ const TIMEOUT_MS = 90_000; // 90s per test — model calls can be slow
 // ─── Helper ────────────────────────────────────────────────────────────────
 
 /**
- * Run runcode with the given prompt(s) piped to stdin.
+ * Run franklin with the given prompt(s) piped to stdin.
  * Pass a string for a single turn, or an array of strings for multi-turn.
  * Returns { stdout, stderr, exitCode }.
  */
-function runcode(prompt, { cwd, timeoutMs = TIMEOUT_MS, model: modelOverride } = {}) {
+function franklin(prompt, { cwd, timeoutMs = TIMEOUT_MS, model: modelOverride } = {}) {
   return new Promise((resolve, reject) => {
     const workDir = cwd ?? tmpdir();
     // Default to GLM for better reliability than free-tier models.
@@ -106,7 +106,7 @@ function parseTokenCount(raw) {
 
 test('startup: banner on stdout and model line on stderr', { timeout: 10_000 }, async () => {
   // Startup should be observable without waiting on a model response.
-  const { stdout, stderr } = await runcode('/exit', { timeoutMs: 10_000 });
+  const { stdout, stderr } = await franklin('/exit', { timeoutMs: 10_000 });
   assert.ok(
     stdout.includes('blockrun.ai') && stdout.includes('The AI agent with a wallet'),
     `Missing banner tagline. stdout:\n${stdout}`
@@ -115,14 +115,14 @@ test('startup: banner on stdout and model line on stderr', { timeout: 10_000 }, 
 });
 
 test('simple response: model echoes back a unique token', { timeout: 60_000 }, async (t) => {
-  const result = await runcode('say exactly and only this word: PONG_E2E_42');
+  const result = await franklin('say exactly and only this word: PONG_E2E_42');
   if (skipIfRateLimited(t, result)) return;
   assert.equal(result.exitCode, 0, `Non-zero exit. stdout:\n${result.stdout}`);
   assert.ok(result.stdout.includes('PONG_E2E_42'), `Expected PONG_E2E_42 in output.\nstdout:\n${result.stdout}`);
 });
 
 test('bash tool: executes shell command and returns output', { timeout: 90_000 }, async (t) => {
-  const result = await runcode(
+  const result = await franklin(
     'Use the Bash tool to run: echo BASH_TOOL_WORKS. Report the exact output.'
   );
   if (skipIfRateLimited(t, result)) return;
@@ -139,7 +139,7 @@ test('write tool: creates a file with specified content', { timeout: 90_000 }, a
   const targetFile = join(testDir, 'hello.txt');
 
   try {
-    const result = await runcode(
+    const result = await franklin(
       `Use the Write tool to create a file at ${targetFile} with content: E2E_WRITE_SUCCESS`,
       { cwd: testDir }
     );
@@ -160,7 +160,7 @@ test('read tool: reads a pre-existing file', { timeout: 90_000 }, async (t) => {
   writeFileSync(targetFile, 'E2E_READ_MARKER_XYZ\nline two\nline three\n');
 
   try {
-    const result = await runcode(
+    const result = await franklin(
       `Use the Read tool to read the file at ${targetFile} and tell me the first line exactly.`,
       { cwd: testDir }
     );
@@ -183,7 +183,7 @@ test('glob tool: finds files by pattern', { timeout: 90_000 }, async (t) => {
   writeFileSync(join(testDir, 'gamma.log'), 'c');
 
   try {
-    const result = await runcode(
+    const result = await franklin(
       `Use the Glob tool to find all *.txt files in ${testDir} and list their names.`,
       { cwd: testDir }
     );
@@ -202,7 +202,7 @@ test('grep tool: finds content in files', { timeout: 90_000 }, async (t) => {
   writeFileSync(join(testDir, 'haystack.txt'), 'line one\nGREP_NEEDLE_42\nline three\n');
 
   try {
-    const result = await runcode(
+    const result = await franklin(
       `Use the Grep tool to search for "GREP_NEEDLE_42" in ${testDir}/haystack.txt and tell me if it was found.`,
       { cwd: testDir }
     );
@@ -218,11 +218,11 @@ test('grep tool: finds content in files', { timeout: 90_000 }, async (t) => {
 });
 
 test('bash tool: error exit code is captured', { timeout: 90_000 }, async (t) => {
-  const result = await runcode(
+  const result = await franklin(
     'Use the Bash tool to run: exit 42. Tell me what the exit code was.'
   );
   if (skipIfRateLimited(t, result)) return;
-  assert.equal(result.exitCode, 0, `runcode itself should exit 0. stdout:\n${result.stdout}`);
+  assert.equal(result.exitCode, 0, `franklin itself should exit 0. stdout:\n${result.stdout}`);
   assert.ok(
     result.stdout.includes('42') || result.stdout.toLowerCase().includes('error') || result.stdout.toLowerCase().includes('exit'),
     `Expected mention of exit code 42 or error.\nstdout:\n${result.stdout}`
@@ -235,7 +235,7 @@ test('multi-tool: write then read a file in same session', { timeout: 150_000 },
   const targetFile = join(testDir, 'roundtrip.txt');
 
   try {
-    const result = await runcode(
+    const result = await franklin(
       `Step 1: Use the Write tool to create ${targetFile} with content: ROUNDTRIP_OK_789\n` +
       `Step 2: Use the Read tool to read that file back.\n` +
       `Step 3: Tell me the content you read.`,
@@ -256,7 +256,7 @@ test('multi-tool: write then read a file in same session', { timeout: 150_000 },
 // ─── Session cost tracking tests ───────────────────────────────────────────
 
 test('session cost: token usage reported at session end', { timeout: 60_000 }, async (t) => {
-  const result = await runcode('say exactly: COST_CHECK_OK');
+  const result = await franklin('say exactly: COST_CHECK_OK');
   if (skipIfRateLimited(t, result)) return;
   assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr: ${result.stderr}`);
   assert.ok(
@@ -272,7 +272,7 @@ test('session cost: token usage reported at session end', { timeout: 60_000 }, a
 });
 
 test('session cost: accumulates across multiple turns', { timeout: 120_000 }, async (t) => {
-  const result = await runcode([
+  const result = await franklin([
     'say exactly and only this word: TURN_ONE',
     'say exactly and only this word: TURN_TWO',
   ]);
@@ -288,7 +288,7 @@ test('session cost: accumulates across multiple turns', { timeout: 120_000 }, as
 });
 
 test('session cost: /cost command shows cost info', { timeout: 60_000 }, async () => {
-  const { stderr, exitCode } = await runcode([
+  const { stderr, exitCode } = await franklin([
     'say exactly: BEFORE_COST',
     '/cost',
   ]);
@@ -308,7 +308,7 @@ test('session cost: /cost command shows cost info', { timeout: 60_000 }, async (
 test('polish: weak model respects instruction without leaking <think> or [TOOLCALL]',
   { timeout: 90_000 },
   async (t) => {
-    const result = await runcode(
+    const result = await franklin(
       'reply with exactly and only this token: POLISH_PROBE_OK',
       { model: 'nvidia/nemotron-ultra-253b', timeoutMs: 80_000 },
     );
@@ -341,7 +341,7 @@ const EXA_MODEL = 'anthropic/claude-sonnet-4.6';
 test('ExaSearch tool: returns results via BlockRun /v1/exa/search',
   { timeout: 120_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.01 USDC per run)' : false },
   async (t) => {
-    const result = await runcode(
+    const result = await franklin(
       'Use the ExaSearch tool with query "x402 payment protocol" and numResults: 3. ' +
       'Report the URL of the top result verbatim so I can verify.',
       { model: EXA_MODEL, timeoutMs: 110_000 },
@@ -357,7 +357,7 @@ test('ExaSearch tool: returns results via BlockRun /v1/exa/search',
 test('ExaAnswer tool: cited answer via BlockRun /v1/exa/answer',
   { timeout: 120_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.01 USDC per run)' : false },
   async (t) => {
-    const result = await runcode(
+    const result = await franklin(
       'Use the ExaAnswer tool to answer exactly this question: ' +
       '"What is the x402 payment protocol?". Report back briefly.',
       { model: EXA_MODEL, timeoutMs: 110_000 },
@@ -376,7 +376,7 @@ test('ExaReadUrls tool: batch markdown fetch via BlockRun /v1/exa/contents',
   { timeout: 120_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.002 USDC per URL)' : false },
   async (t) => {
     // Use well-known high-traffic pages Exa definitely has indexed.
-    const result = await runcode(
+    const result = await franklin(
       'Use the ExaReadUrls tool to fetch this single URL: ["https://en.wikipedia.org/wiki/HTTP_402"]. ' +
       'Report briefly what the page is about.',
       { model: EXA_MODEL, timeoutMs: 110_000 },
@@ -399,7 +399,7 @@ test('VideoGen tool: generates an MP4 via BlockRun /v1/videos/generations',
     const outFile = join(testDir, 'probe.mp4');
 
     try {
-      const result = await runcode(
+      const result = await franklin(
         `Use the VideoGen tool with these exact arguments: ` +
         `prompt="a red apple spinning slowly on a wooden table, daylight", ` +
         `output_path="${outFile}". ` +

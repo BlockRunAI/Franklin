@@ -28,8 +28,8 @@ export interface PluginManifest {
   homepage?: string;
   /** License */
   license?: string;
-  /** Required runcode version (semver range) */
-  runcodeVersion?: string;
+  /** Required Franklin version (semver range) */
+  franklinVersion?: string;
 }
 
 export interface PluginProvides {
@@ -59,8 +59,8 @@ export interface Plugin {
 
 /** Context passed to plugin lifecycle hooks */
 export interface PluginContext {
-  /** RunCode version */
-  runcodeVersion: string;
+  /** Franklin version */
+  franklinVersion: string;
   /** Plugin's own data directory (~/.blockrun/plugins/<id>/) */
   dataDir: string;
   /** Path to plugin's installation directory */
