@@ -88,12 +88,21 @@ export interface GroundingResult {
 
 // ─── Trigger policy ──────────────────────────────────────────────────────
 
-const MIN_USER_CHARS = 20;    // Short inputs are greetings/acks, not questions
+const MIN_USER_CHARS = 3;     // "hi"/"ok"/"no" skip; "BTC"/"21044" do not
 const MIN_ANSWER_CHARS = 50;  // Short answers are acks, not factual claims
+
+// Factual-content patterns: digits paired with units, currency, dates, or
+// percent/temperature/time signs. If the assistant emitted any of these in
+// a >= MIN_ANSWER_CHARS reply, we check grounding regardless of how short
+// the user's input was — a 5-char ZIP code "21044" can elicit a fabricated
+// weather paragraph, and the original user-length gate let that through.
+const FACTUAL_PATTERN = /(\$\s*\d|\d[\d,]*\s*(?:°[CF]?|%|km|mi|miles?|mph|kph|kg|lbs?|ft|in|cm|hours?|hrs?|minutes?|mins?|seconds?|secs?|GB|MB|KB|TB|USD|EUR|CNY|JPY|BTC|ETH|SOL)|\b(?:19|20)\d{2}-\d{1,2}-\d{1,2}\b|\b\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\b)/;
 
 /**
  * Decide whether this turn warrants a grounding check. Principles:
- * - Non-trivial user input (not a greeting, not a slash command)
+ * - Non-trivial user input (not a greeting, not a slash command), OR
+ *   the assistant answer contains specific factual claims (numbers + units,
+ *   currency, dates, times) regardless of input length
  * - Non-trivial assistant text output (not just a tool-result echo)
  *
  * Intentionally NOT gating on tool-type (read vs write) — the whole point
@@ -105,9 +114,14 @@ export function shouldCheckGrounding(
 ): boolean {
   if (process.env.FRANKLIN_NO_EVAL === '1') return false;
   const ui = userInput.trim();
-  if (ui.length < MIN_USER_CHARS) return false;
   if (ui.startsWith('/')) return false;
-  if (assistantText.trim().length < MIN_ANSWER_CHARS) return false;
+  const at = assistantText.trim();
+  if (at.length < MIN_ANSWER_CHARS) return false;
+  // If the answer looks factual (numbers + units, dates, prices), check
+  // even when the user's prompt was a single token. The 21044 zip-code
+  // case lived here.
+  if (FACTUAL_PATTERN.test(at)) return true;
+  if (ui.length < MIN_USER_CHARS) return false;
   return true;
 }
 
@@ -337,15 +351,37 @@ export function buildGroundingRetryInstruction(
   result: GroundingResult,
   originalUserQuestion: string,
 ): string {
+  // Pull the named missing tools out of the evaluator's issue list so we
+  // can name them in the imperative. The evaluator outputs lines like
+  //   Claim: "..." → missing tool: WebSearch
+  // grab the bit after "missing tool:" / "should have called:".
+  const namedTools = new Set<string>();
+  for (const issue of result.issues) {
+    const m = issue.match(/(?:missing tool|should have called):\s*([A-Za-z][\w| ,/-]*)/i);
+    if (m) {
+      for (const tok of m[1].split(/[|,/]/)) {
+        const t = tok.trim().split(/\s+/)[0];
+        if (t && t !== '...' && t !== '(or') namedTools.add(t);
+      }
+    }
+  }
+  const toolList = namedTools.size > 0
+    ? Array.from(namedTools).join(', ')
+    : '(see the missing-tool fields in the issues above)';
+
   const lines: string[] = [
-    '[GROUNDING CHECK FAILED]',
-    'Your previous answer stated facts without calling the relevant tools. Specifically:',
+    '[GROUNDING CHECK FAILED — RETRY ROUND]',
+    'Your previous answer stated facts without calling tools. Specifically:',
   ];
   for (const issue of result.issues) {
     lines.push(`- ${issue}`);
   }
   lines.push('');
-  lines.push('Retry: call the missing tools first, then give a concise final answer based on the tool results. Only claim what the tool outputs actually say. If a tool fails, say so rather than falling back to memory.');
+  lines.push('## What you must do this round');
+  lines.push(`1. **Call these tools first**, before any prose: ${toolList}.`);
+  lines.push('2. **Do not write a single factual sentence until the tool results return.** No restatement of the prior answer, no hedging, no "based on general knowledge".');
+  lines.push('3. **Do NOT invent source names** (no fake URLs, no fabricated citation domains, no "per Trippy" / "per drivvin.com" — if you cite a source, it must come from a tool result you just ran).');
+  lines.push('4. After tools return, write a concise answer that ONLY restates what the tool outputs say. If a result is partial or a tool failed, say so explicitly — do not paper over with memory.');
   lines.push('');
   lines.push(`Original user question: ${originalUserQuestion.trim().slice(0, 500)}`);
   return lines.join('\n');
