@@ -32,7 +32,9 @@ import {
   checkGrounding,
   renderGroundingFollowup,
   buildGroundingRetryInstruction,
+  extractMissingToolNames,
 } from './evaluator.js';
+import type { ToolChoice } from './llm.js';
 import { augmentUserMessage, prefetchForIntent } from './intent-prefetch.js';
 import { analyzeTurn, type TurnAnalysis } from './turn-analyzer.js';
 import {
@@ -518,6 +520,13 @@ export async function interactiveSession(
     let groundingRetryCount = 0;
     const MAX_GROUNDING_RETRIES = 1;
 
+    // When the previous round failed grounding and we're retrying, force the
+    // model to actually call a tool this round instead of trusting it to
+    // comply with a soft instruction. Single-shot — cleared after attached.
+    // Set to `{ type: "tool", name: "X" }` if the evaluator named exactly
+    // one available tool, else `{ type: "any" }` so the model picks.
+    let forceToolChoiceNextRound: ToolChoice | null = null;
+
     // ── Plan-then-execute state (per turn) ──
     let planActive = false;
     let planPlannerModel = '';
@@ -856,6 +865,12 @@ export async function interactiveSession(
         replaceHistory(history, sanitized);
       }
 
+      // Consume any pending forced tool_choice from the previous round's
+      // grounding-retry decision. `tool_choice` is dropped automatically in
+      // llm.ts if `tools` ended up empty, so it's safe to attach here.
+      const callToolChoice = forceToolChoiceNextRound;
+      forceToolChoiceNextRound = null;
+
       try {
         const result = await client.complete(
           {
@@ -865,6 +880,7 @@ export async function interactiveSession(
             tools: callToolDefs,
             max_tokens: callMaxTokens,
             stream: true,
+            ...(callToolChoice ? { tool_choice: callToolChoice } : {}),
           },
           abort.signal,
           // Start concurrent tools as soon as their input is fully received
@@ -1262,9 +1278,25 @@ export async function interactiveSession(
               const feedbackMsg: Dialogue = { role: 'user', content: retryMsg };
               history.push(feedbackMsg);
               persistSessionMessage(feedbackMsg);
+
+              // Hard enforcement: set tool_choice so the model can't fabricate
+              // citations in lieu of running tools (the round-2 failure mode
+              // from the Tampa→Miami log). If the evaluator named exactly one
+              // available tool, pin to it; otherwise force "any" tool use.
+              const namedTools = extractMissingToolNames(gResult);
+              const availableNames = new Set(buildCallToolDefs().map(t => t.name));
+              const matched = namedTools.filter(n => availableNames.has(n));
+              if (matched.length === 1) {
+                forceToolChoiceNextRound = { type: 'tool', name: matched[0] };
+              } else if (availableNames.size > 0) {
+                forceToolChoiceNextRound = { type: 'any' };
+              }
+
               onEvent({
                 kind: 'text_delta',
-                text: '\n\n*Ungrounded claims detected — retrying with required tool calls...*\n\n',
+                text: forceToolChoiceNextRound
+                  ? `\n\n*Ungrounded claims detected — forcing tool use (${forceToolChoiceNextRound.type === 'tool' ? forceToolChoiceNextRound.name : 'any'}) and retrying...*\n\n`
+                  : '\n\n*Ungrounded claims detected — retrying with required tool calls...*\n\n',
               });
               continue; // Re-enter outer loop — generator will produce a new response.
             }

@@ -28,6 +28,26 @@ import { ThinkTagStripper } from './think-tag-stripper.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
+/**
+ * Anthropic-compatible tool_choice. Forwarded as-is through the proxy and on
+ * to the backend (Anthropic / OpenAI / Gemini gateways translate as needed).
+ *
+ * - `auto`  — model decides (default if omitted)
+ * - `any`   — must call SOME tool, model picks which
+ * - `tool`  — must call the specifically named tool
+ * - `none`  — must not call any tool
+ *
+ * Used by the grounding-retry path in `loop.ts`: when the evaluator catches
+ * an ungrounded answer that should have invoked tools, the next round sets
+ * `tool_choice` to force tool use rather than relying on a soft instruction
+ * the model can defy by fabricating citations.
+ */
+export type ToolChoice =
+  | { type: 'auto' }
+  | { type: 'any' }
+  | { type: 'tool'; name: string }
+  | { type: 'none' };
+
 export interface ModelRequest {
   model: string;
   messages: Dialogue[];
@@ -36,6 +56,7 @@ export interface ModelRequest {
   max_tokens?: number;
   stream?: boolean;
   temperature?: number;
+  tool_choice?: ToolChoice;
 }
 
 export interface StreamChunk {
@@ -355,6 +376,15 @@ export class ModelClient {
 
     // Build the request payload, injecting model-specific optimizations
     let requestPayload: Record<string, unknown> = { ...request, stream: true };
+
+    // Safety: tool_choice without tools causes upstream 400. Strip rather
+    // than reject so callers don't have to coordinate the two fields.
+    if (
+      requestPayload['tool_choice'] !== undefined &&
+      (!Array.isArray(requestPayload['tools']) || (requestPayload['tools'] as unknown[]).length === 0)
+    ) {
+      delete requestPayload['tool_choice'];
+    }
 
     // ── GLM-specific optimizations ───────────────────────────────────────────
     // GLM models work best with temperature=0.8 per official zai spec.
