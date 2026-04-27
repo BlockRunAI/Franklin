@@ -66,33 +66,55 @@ function franklin(prompt, { cwd, timeoutMs = TIMEOUT_MS, model: modelOverride } 
 }
 
 /**
- * Check if result indicates rate limiting. If so, skip the test.
+ * Check if result indicates the upstream is unavailable (rate limit,
+ * payment, network/DNS failure, or server 5xx). If so, skip the test —
+ * these are environment conditions, not code regressions.
  */
 function skipIfRateLimited(t, result) {
   const combined = (result.stdout || '') + (result.stderr || '');
+  const lower = combined.toLowerCase();
+
   if (
     combined.includes('max 60 requests/hour') ||
-    combined.includes('rate limit') ||
+    lower.includes('rate limit') ||
+    lower.includes('too many requests') ||
     combined.includes('Free tier')
   ) {
     t.skip('Free tier rate limited (60 req/hr) — retry later');
     return true;
   }
   if (
-    combined.includes('fetch failed') ||
-    combined.includes('[Network]') ||
-    combined.includes('[Timeout]') ||
-    combined.toLowerCase().includes('network connection')
+    lower.includes('fetch failed') ||
+    lower.includes('[network]') ||
+    lower.includes('network error') ||
+    lower.includes('check your network') ||
+    lower.includes('[timeout]') ||
+    lower.includes('eai_again') ||
+    lower.includes('enotfound') ||
+    lower.includes('econnrefused') ||
+    lower.includes('econnreset') ||
+    lower.includes('socket hang up')
   ) {
-    t.skip('Live gateway/network unavailable in this environment — skipping live e2e');
+    t.skip('Upstream unreachable from this environment (DNS/network) — skipping live model call');
     return true;
   }
   if (
-    combined.toLowerCase().includes('insufficient') ||
-    combined.toLowerCase().includes('payment required') ||
-    combined.toLowerCase().includes('verification failed')
+    lower.includes('insufficient') ||
+    lower.includes('payment required') ||
+    lower.includes('verification failed') ||
+    lower.includes('[payment]')
   ) {
     t.skip('Model unavailable due to payment/balance constraints — retry with E2E_MODEL or funded wallet');
+    return true;
+  }
+  if (
+    lower.includes('[server]') ||
+    lower.includes('bad gateway') ||
+    lower.includes('service unavailable') ||
+    lower.includes('workers are busy') ||
+    lower.includes('overloaded')
+  ) {
+    t.skip('Upstream gateway is transiently unavailable — retry later');
     return true;
   }
   return false;
@@ -224,8 +246,8 @@ test('bash tool: error exit code is captured', { timeout: 90_000 }, async (t) =>
   if (skipIfRateLimited(t, result)) return;
   assert.equal(result.exitCode, 0, `franklin itself should exit 0. stdout:\n${result.stdout}`);
   assert.ok(
-    result.stdout.includes('42') || result.stdout.toLowerCase().includes('error') || result.stdout.toLowerCase().includes('exit'),
-    `Expected mention of exit code 42 or error.\nstdout:\n${result.stdout}`
+    result.stdout.includes('42'),
+    `Expected mention of exit code 42 in output.\nstdout:\n${result.stdout}`
   );
 });
 
@@ -287,15 +309,16 @@ test('session cost: accumulates across multiple turns', { timeout: 120_000 }, as
   assert.ok(outputTokens >= 2, `Expected ≥2 output tokens for 2 turns, got ${outputTokens}`);
 });
 
-test('session cost: /cost command shows cost info', { timeout: 60_000 }, async () => {
-  const { stderr, exitCode } = await franklin([
+test('session cost: /cost command shows cost info', { timeout: 60_000 }, async (t) => {
+  const result = await franklin([
     'say exactly: BEFORE_COST',
     '/cost',
   ]);
-  assert.equal(exitCode, 0, `Non-zero exit.\nstderr: ${stderr}`);
+  if (skipIfRateLimited(t, result)) return;
+  assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr: ${result.stderr}`);
   assert.ok(
-    stderr.includes('Tokens:'),
-    `Expected "Tokens:" in /cost output.\nstderr:\n${stderr}`
+    result.stderr.includes('Tokens:'),
+    `Expected "Tokens:" in /cost output.\nstderr:\n${result.stderr}`
   );
 });
 

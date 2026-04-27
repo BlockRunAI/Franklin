@@ -16,6 +16,10 @@
       "types": "./dist/api/vscode-session.d.ts",
       "default": "./dist/api/vscode-session.js"
     },
+    "./wallet": {
+      "types": "./dist/wallet/index.d.ts",
+      "default": "./dist/wallet/index.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
