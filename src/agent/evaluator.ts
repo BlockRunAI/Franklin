@@ -347,26 +347,37 @@ export function renderGroundingFollowup(result: GroundingResult): string {
  * Intentionally terse: the agent already has the original question in
  * history; we only need to name the gap + the tools to use.
  */
+/**
+ * Pull the tool names the evaluator suggested out of its issue lines.
+ * Issue lines look like:
+ *   Claim: "..." → missing tool: WebSearch
+ *   Refusal: "..." → should have called: TradingMarket
+ *   ... → missing tool: WebSearch (or any distance calculation tool)
+ *
+ * Returns first-token-of-each-comma/pipe-segment names, deduplicated.
+ * Used by both the retry instruction (to name them in prose) and the
+ * loop's tool_choice selection (to pin the next request to a tool).
+ */
+export function extractMissingToolNames(result: GroundingResult): string[] {
+  const names = new Set<string>();
+  for (const issue of result.issues) {
+    const m = issue.match(/(?:missing tool|should have called):\s*([A-Za-z][\w| ,/-]*)/i);
+    if (!m) continue;
+    for (const tok of m[1].split(/[|,/]/)) {
+      const t = tok.trim().split(/\s+/)[0];
+      if (t && t !== '...' && t !== '(or' && t !== '(any') names.add(t);
+    }
+  }
+  return Array.from(names);
+}
+
 export function buildGroundingRetryInstruction(
   result: GroundingResult,
   originalUserQuestion: string,
 ): string {
-  // Pull the named missing tools out of the evaluator's issue list so we
-  // can name them in the imperative. The evaluator outputs lines like
-  //   Claim: "..." → missing tool: WebSearch
-  // grab the bit after "missing tool:" / "should have called:".
-  const namedTools = new Set<string>();
-  for (const issue of result.issues) {
-    const m = issue.match(/(?:missing tool|should have called):\s*([A-Za-z][\w| ,/-]*)/i);
-    if (m) {
-      for (const tok of m[1].split(/[|,/]/)) {
-        const t = tok.trim().split(/\s+/)[0];
-        if (t && t !== '...' && t !== '(or') namedTools.add(t);
-      }
-    }
-  }
-  const toolList = namedTools.size > 0
-    ? Array.from(namedTools).join(', ')
+  const namedTools = extractMissingToolNames(result);
+  const toolList = namedTools.length > 0
+    ? namedTools.join(', ')
     : '(see the missing-tool fields in the issues above)';
 
   const lines: string[] = [
