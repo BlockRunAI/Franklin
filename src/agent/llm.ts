@@ -86,7 +86,7 @@ function getModelRequestTimeoutMs(): number {
   return (
     parseTimeoutEnv('FRANKLIN_MODEL_REQUEST_TIMEOUT_MS') ??
     parseTimeoutEnv('FRANKLIN_MODEL_IDLE_TIMEOUT_MS') ??
-    8_000
+    45_000
   );
 }
 
@@ -94,7 +94,7 @@ function getModelStreamIdleTimeoutMs(): number {
   return (
     parseTimeoutEnv('FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS') ??
     parseTimeoutEnv('FRANKLIN_MODEL_IDLE_TIMEOUT_MS') ??
-    25_000
+    90_000
   );
 }
 
