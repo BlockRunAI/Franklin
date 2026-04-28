@@ -549,13 +549,16 @@ export async function interactiveSession(
     let turnSpend = 0;                                   // Cost spent this user turn (USD)
     // Hard circuit breaker per user message — defends user wallets against
     // a runaway model+tool combo on a single prompt. User-overridable via
-    // `franklin config set max-turn-spend-usd <number>`. A value of "0"
-    // (or negative / non-numeric) disables the cap entirely.
+    // `franklin config set max-turn-spend-usd <number>`. Explicit "0" or a
+    // negative number disables the cap; a non-numeric / unparseable value
+    // is treated as a typo and falls back to the safe default rather than
+    // silently removing the wallet guard.
     const turnSpendCap = (() => {
       const raw = loadConfig()['max-turn-spend-usd'];
       if (raw == null) return 0.25;
       const parsed = Number(raw);
-      if (!Number.isFinite(parsed) || parsed <= 0) return Infinity;
+      if (!Number.isFinite(parsed)) return 0.25;   // typo → keep default
+      if (parsed <= 0) return Infinity;            // explicit opt-out
       return parsed;
     })();
     const MAX_TURN_SPEND_USD = turnSpendCap;
