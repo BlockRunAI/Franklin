@@ -148,6 +148,14 @@ export interface VsCodeSessionOptions {
   model?: string;
   debug?: boolean;
   trust?: boolean;
+  /**
+   * If set, hydrate history from this session ID instead of starting a
+   * fresh JSONL transcript. Lets the VS Code extension transparently
+   * continue the most recent session when the user reopens the panel,
+   * matching the "always-on chat" mental model of a sidebar tool.
+   * (CLI users get this via `franklin --resume <id>` or `/resume`.)
+   */
+  resumeSessionId?: string;
   onEvent: (event: StreamEvent) => void;
   getUserInput: () => Promise<string | null>;
   onAbortReady?: (abort: () => void) => void;
@@ -199,6 +207,7 @@ export async function runVsCodeSession(options: VsCodeSessionOptions): Promise<v
     debug: options.debug,
     permissionPromptFn: options.permissionPromptFn,
     onAskUser: options.onAskUser,
+    resumeSessionId: options.resumeSessionId,
   };
 
   options.onConfigReady?.(agentConfig);

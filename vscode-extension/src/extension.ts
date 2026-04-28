@@ -203,6 +203,8 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   private resolveInput?: (value: string | null) => void;
   private resolveAskUser?: (value: string) => void;
   private agentRunning = false;
+  /** Set by startNewSession() so the next runAgentSession skips auto-resume. */
+  private forceFreshSession = false;
   private walletRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   private agentConfig?: { model: string; baseModel?: string };
 
@@ -458,20 +460,81 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   /** Load a historical session into the chat view */
   loadHistory(dialogues: Dialogue[], title?: string): void {
     if (!this.webview) return;
-    const messages: { role: string; text: string }[] = [];
+    // Build a richer message list than just role+text — preserve any
+    // image / video paths that were generated mid-conversation so the
+    // webview can re-render them as inline preview cards (instead of
+    // silently dropping them on history replay). Same for the agent's
+    // textual tool_result summary so the user can see which tools were
+    // called per turn.
+    type HistoryItem = {
+      role: string;
+      text: string;
+      mediaPaths?: { kind: 'image' | 'video'; path: string }[];
+    };
+    const messages: HistoryItem[] = [];
     for (const d of dialogues) {
       let text = '';
+      const mediaPaths: HistoryItem['mediaPaths'] = [];
+
       if (typeof d.content === 'string') {
         text = d.content;
       } else if (Array.isArray(d.content)) {
-        text = d.content
-          .filter((p): p is { type: 'text'; text: string } => (p as unknown as Record<string, unknown>).type === 'text')
-          .map(p => p.text)
-          .join('\n');
+        const textParts: string[] = [];
+        for (const p of d.content as Array<Record<string, unknown>>) {
+          if (p.type === 'text' && typeof p.text === 'string') {
+            textParts.push(p.text);
+          } else if (p.type === 'tool_result') {
+            // tool_result.content can be a string or an array of blocks.
+            const tc = p.content;
+            const tcText = typeof tc === 'string'
+              ? tc
+              : Array.isArray(tc)
+                ? (tc as Array<Record<string, unknown>>)
+                    .filter(b => b.type === 'text' && typeof b.text === 'string')
+                    .map(b => b.text as string).join('\n')
+                : '';
+            // Detect ImageGen / VideoGen save lines so we can re-render
+            // the media inline. Same regex used by maybeSendMediaPreview.
+            const m = tcText.match(/^(Image|Video) saved to (\S+?\.(?:png|jpg|jpeg|webp|gif|mp4|webm|mov))/im);
+            if (m) {
+              const kind = m[1].toLowerCase() === 'video' ? 'video' : 'image';
+              mediaPaths.push({ kind, path: m[2] });
+            }
+          }
+          // Skip tool_use, thinking, image, etc. — too noisy to replay
+          // verbatim, and generated media is already captured above.
+        }
+        text = textParts.join('\n');
       }
-      if (text) messages.push({ role: d.role, text });
+
+      if (text || (mediaPaths && mediaPaths.length > 0)) {
+        const item: HistoryItem = { role: d.role, text };
+        if (mediaPaths.length > 0) {
+          // Convert local paths to webview-safe URIs so <img>/<video>
+          // can actually load them.
+          item.mediaPaths = mediaPaths;
+        }
+        messages.push(item);
+      }
     }
-    void this.webview.postMessage({ type: 'loadHistory', messages, title: title || 'History' });
+
+    // Resolve webview URIs for any media paths so the webview JS can use
+    // them directly (it can't call asWebviewUri itself).
+    const enriched = messages.map(m => {
+      if (!m.mediaPaths) return m;
+      const resolved = m.mediaPaths.map(({ kind, path: p }) => {
+        try {
+          const uri = vscode.Uri.file(p);
+          const src = this.webview!.asWebviewUri(uri).toString();
+          return { kind, path: p, src };
+        } catch {
+          return { kind, path: p, src: '' };
+        }
+      }).filter(x => x.src);
+      return { ...m, mediaPaths: resolved };
+    });
+
+    void this.webview.postMessage({ type: 'loadHistory', messages: enriched, title: title || 'History' });
   }
 
   private initWebview(webview: vscode.Webview): void {
@@ -644,6 +707,9 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
       latestAbort?.();
       void this.webview?.postMessage({ type: 'stopAck', hadAbort });
     }
+    if (msg.type === 'newSession') {
+      void this.startNewSession();
+    }
     if (msg.type === 'switchModel' && msg.text) {
       const newModel = resolveModel(msg.text);
       if (this.agentConfig) {
@@ -663,6 +729,13 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     }
     if (msg.type === 'openFile' && typeof msg.text === 'string') {
       this.openFile(msg.text);
+    }
+    if (msg.type === 'openExternal' && typeof msg.text === 'string') {
+      try {
+        void vscode.env.openExternal(vscode.Uri.file(msg.text));
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Franklin: Cannot open ${msg.text}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     if (msg.type === 'revertEdit' && typeof msg.text === 'string') {
       this.revertEdit(msg.text);
@@ -700,6 +773,23 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /**
+   * Tear down the current agent loop and start a fresh one. Called when
+   * the user clicks "+" new chat — without this, the webview clears but
+   * the underlying agent keeps the same sessionId, the same history, and
+   * every session-level state (tool guards, baseModel, completedTools).
+   */
+  private async startNewSession(): Promise<void> {
+    log.appendLine('[startNewSession] aborting current loop and starting fresh');
+    this.forceFreshSession = true;
+    // Cancel the current input wait + loop
+    this.finishInput(null);
+    latestAbort?.();
+    // The agent loop's finally block sets agentRunning=false, then we
+    // kick off a new run. Wait briefly to ensure cleanup happens first.
+    setTimeout(() => { void this.runAgentSession(); }, 50);
+  }
+
   private async runAgentSession() {
     if (this.agentRunning) return;
     this.agentRunning = true;
@@ -712,6 +802,36 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
         type: 'event',
         event: { kind: 'text_delta', text: '' },
       });
+    }
+
+    // ── Auto-resume the most recent session if it's still "warm" ──
+    // Without this, every panel re-open creates a fresh sessionId and the
+    // user's conversation gets fragmented across multiple /history entries
+    // even though they think they're in one continuous chat. We pick the
+    // most recently updated session that's been touched within the last
+    // RESUME_WINDOW_MS — long enough to cover "I closed VS Code overnight"
+    // for active users, short enough that opening Franklin a week later
+    // doesn't dredge up an unrelated old conversation.
+    //
+    // EXCEPT when forceFreshSession is set (user explicitly clicked "+"
+    // new chat). Then we deliberately skip resume so the new chat is
+    // truly clean — no inherited tool guards, no prior context.
+    const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+    let resumeSessionId: string | undefined;
+    if (this.forceFreshSession) {
+      log.appendLine('[runAgentSession] forceFreshSession set — skipping auto-resume');
+      this.forceFreshSession = false;
+    } else {
+      try {
+        const sessions = listSessions().filter(s => s.turnCount > 0 && s.messageCount > 0);
+        const newest = sessions[0];
+        if (newest && Date.now() - newest.updatedAt < RESUME_WINDOW_MS) {
+          resumeSessionId = newest.id;
+          log.appendLine(`[runAgentSession] resuming ${newest.id} (last update ${Math.round((Date.now() - newest.updatedAt) / 60000)}m ago)`);
+        }
+      } catch (err) {
+        log.appendLine(`[runAgentSession] resume probe failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     const getUserInput = () =>
@@ -730,6 +850,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
         workDir: dir,
         trust: true,
         debug: false,
+        resumeSessionId,
         getUserInput,
         onAskUser,
         onConfigReady: (config) => {
@@ -1172,10 +1293,21 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     .media-preview img, .media-preview video {
       display: block; max-width: 100%; max-height: 360px; border-radius: 4px;
     }
+    .media-preview-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; margin-top: 4px;
+    }
     .media-preview-path {
       font-size: 10px; color: var(--vscode-descriptionForeground);
-      margin-top: 4px; word-break: break-all; font-family: var(--vscode-editor-font-family, monospace);
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: var(--vscode-editor-font-family, monospace);
     }
+    .media-preview-open {
+      flex-shrink: 0; font-size: 10px; padding: 2px 8px; cursor: pointer;
+      background: transparent; color: var(--vscode-foreground);
+      border: 1px solid rgba(128,128,128,0.4); border-radius: 3px;
+    }
+    .media-preview-open:hover { background: rgba(128,128,128,0.15); }
     /* ── Edit diff card (Edit / Write / MultiEdit) ── */
     .edit-diff-card {
       margin: 8px 12px; border-radius: 6px; overflow: hidden;
@@ -1526,44 +1658,70 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     }
     /* ── Workflow timeline ── */
     .wf-turn { margin-top: 12px; }
+    /* ── Workflow timeline (line + dots) ──
+     * Design: a continuous vertical track with dots threaded onto it.
+     *   - Track is a 1.5px line that runs the full height of the turn.
+     *   - Dots sit on top of the track (z-index) so the track appears to
+     *     terminate at the dot edge, not under it.
+     *   - Filled dots use a slightly stronger color than the line for hierarchy.
+     *   - Hollow "thinking" dots have an editor-bg fill so the track is
+     *     visually broken (rosary effect — circle on string), not seen
+     *     through the circle.
+     */
     .wf-step {
       display: flex;
       align-items: flex-start;
       position: relative;
-      padding-left: 20px;
-      padding-bottom: 6px;
+      padding-left: 22px;
+      padding-bottom: 8px;
       min-height: 18px;
     }
     .wf-dot {
       position: absolute;
       left: 0;
-      top: 5px;
-      width: 8px;
-      height: 8px;
+      top: 4px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
-      background: rgba(128,128,128,0.45);
+      background: rgba(155,155,155,0.7);
       flex-shrink: 0;
+      z-index: 1;
     }
     .wf-step.thinking .wf-dot {
-      background: transparent;
-      border: 1.5px solid rgba(128,128,128,0.35);
+      /* Hollow ring, but filled with editor bg so the track behind it is
+       * cleanly hidden inside the circle (rosary-bead look). */
+      background: var(--vscode-editor-background, #1e1e1e);
+      border: 1.5px solid rgba(155,155,155,0.55);
+      width: 8px; height: 8px;
+      box-sizing: border-box;
     }
     .wf-step.tool-active .wf-dot {
-      background: rgba(128,128,128,0.55);
-      animation: wf-pulse 1.2s ease-in-out infinite;
+      background: var(--vscode-focusBorder, #007fd4);
+      box-shadow: 0 0 0 3px rgba(0,127,212,0.18);
+      animation: wf-pulse 1.4s ease-in-out infinite;
     }
     @keyframes wf-pulse {
-      0%,100% { transform: scale(1); opacity: 0.7; }
-      50% { transform: scale(1.4); opacity: 1; }
+      0%,100% { box-shadow: 0 0 0 3px rgba(0,127,212,0.18); }
+      50%     { box-shadow: 0 0 0 5px rgba(0,127,212,0.30); }
     }
     .wf-turn .wf-step:not(:last-child)::after {
+      /* Track: a single thin line spanning each step's full vertical
+       * extent. Dots sit on top via z-index so the line appears to end
+       * cleanly at each dot's edge.
+       * Centered on the dot horizontally (dot left=0 width=9 → center=4.5)
+       * but kept at 4px for crisp 1px rendering on standard DPI. */
       content: '';
       position: absolute;
-      left: 3px;
-      top: 15px;
-      bottom: 0;
-      width: 1px;
-      background: rgba(128,128,128,0.22);
+      left: 4px;
+      top: 0;
+      bottom: -8px;
+      width: 1.5px;
+      background: linear-gradient(
+        to bottom,
+        rgba(155,155,155,0.30) 0%,
+        rgba(155,155,155,0.45) 100%
+      );
+      z-index: 0;
     }
     .wf-body { flex: 1; min-width: 0; }
     /* Thinking collapsible */
@@ -2238,9 +2396,16 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       showHistory();
     });
     function newChat() {
+      // Clear the visible UI immediately for responsiveness.
       resetChatLog();
       isLiveChat = true;
       showChat('Untitled');
+      // Tell the extension host to actually start a fresh agent loop.
+      // Without this, "+ new chat" only clears the webview but the
+      // underlying agent keeps the same session — so prior tool guards
+      // (e.g. "ImageGen disabled, open a new conversation") and resumed
+      // history bleed into what looks like a new chat to the user.
+      vscode.postMessage({ type: 'newSession' });
       // Brief fade-in so the empty state doesn't just pop in abruptly.
       var es = document.getElementById('empty-state');
       if (es) {
@@ -3057,6 +3222,11 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       if (kind === 'video') {
         el = document.createElement('video');
         el.controls = true;
+        // Explicitly ensure unmuted — some VS Code webview sandboxes start
+        // <video> at muted=true by default which silently swallows audio.
+        el.muted = false;
+        el.volume = 1.0;
+        el.preload = 'metadata';
         el.src = src;
       } else {
         el = document.createElement('img');
@@ -3065,10 +3235,26 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       }
       wrap.appendChild(el);
       if (filePath) {
+        var footer = document.createElement('div');
+        footer.className = 'media-preview-footer';
         var pathEl = document.createElement('div');
         pathEl.className = 'media-preview-path';
         pathEl.textContent = filePath;
-        wrap.appendChild(pathEl);
+        footer.appendChild(pathEl);
+        // Open externally — VS Code webviews sometimes route audio through
+        // a sandbox that drops it (most reproducible with .mp4 from
+        // remote URIs). Opening in the OS default player is the reliable
+        // fallback and also lets users save / share the file.
+        var openBtn = document.createElement('button');
+        openBtn.type = 'button';
+        openBtn.className = 'media-preview-open';
+        openBtn.textContent = 'Open externally';
+        openBtn.title = 'Open in the system default player';
+        openBtn.addEventListener('click', function() {
+          vscode.postMessage({ type: 'openExternal', text: filePath });
+        });
+        footer.appendChild(openBtn);
+        wrap.appendChild(footer);
       }
       log.appendChild(wrap);
       log.scrollTop = log.scrollHeight;
@@ -3391,10 +3577,16 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         resetChatLog();
         showChat(m.title || 'History');
         (m.messages || []).forEach(function(msg) {
-          if (msg.role === 'user') {
-            appendLine('user', msg.text);
-          } else {
-            appendLine('assistant', msg.text);
+          if (msg.text) {
+            appendLine(msg.role === 'user' ? 'user' : 'assistant', msg.text);
+          }
+          // Re-render any media generated during this turn so history
+          // looks the same as the live session — preview cards inline,
+          // not just text. mediaPaths comes pre-resolved with webview URIs.
+          if (msg.mediaPaths && msg.mediaPaths.length > 0) {
+            msg.mediaPaths.forEach(function(mp) {
+              renderMediaPreview(mp.kind, mp.src, mp.path);
+            });
           }
         });
         return;

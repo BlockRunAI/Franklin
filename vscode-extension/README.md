@@ -41,6 +41,14 @@ Franklin is an autonomous AI agent that runs directly in VS Code. It doesn't jus
 
 ## Changelog
 
+### 0.4.3
+- **History replay shows generated media inline** — closing and reopening a conversation now re-renders any images / videos as preview cards instead of dropping them
+- **"+" New chat truly resets the session** — previously only the UI cleared while the agent kept the same `sessionId`, leaking tool guards (`ImageGen disabled`) and prior context into what looked like a new chat
+- **Auto-resume warm sessions** — opening the panel within 24h of the last reply continues the same chat instead of fragmenting `/history` into pieces
+- **Workflow timeline polish** — line and dots now blend like beads on a string (continuous track, hollow thinking dots filled with editor bg, soft pulsing shadow on active tools)
+- **Tool name shows model for ImageGen / VideoGen** — e.g. `⚙ ImageGen   gpt-image-2` so the picked model is visible at a glance; long prompts hidden to keep the timeline scannable
+- Synced with Franklin core v3.8.36–v3.8.39: image-to-image (gpt-image-2) support, evaluator hardening for short user inputs, grounding retry forces tool use, longer LLM timeouts (45s/90s) for Sonnet / Opus reasoning
+
 ### 0.4.1
 - **Vision-capable models can now actually see images** — Read on `.png` / `.jpg` / `.gif` / `.webp` returns the bytes inline as a `tool_result` content block; combined with the gateway-side fix (BlockRun gateway commit `6ac64da`), Sonnet / Opus / GPT-4o / Gemini now describe user-provided images instead of hallucinating. (Closes #10 via core PR #11.)
 
