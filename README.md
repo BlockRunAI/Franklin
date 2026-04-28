@@ -69,6 +69,18 @@ franklin balance           # show address + USDC balance
 
 That's it. Zero signup, zero credit card, zero phone verification. Send **$5 of USDC** to the wallet and you've unlocked every frontier model and every paid tool in the BlockRun gateway.
 
+### Prefer a GUI? Try Franklin for VS Code
+
+The same agent ships as a [VS Code extension](https://marketplace.visualstudio.com/items?itemName=blockrun.franklin-vscode) — chat panel, model picker, wallet balance, image / video generation, inline diff cards — all driven by the wallet you already funded for the CLI.
+
+```
+VS Code → Extensions  (Cmd+Shift+X / Ctrl+Shift+X)
+        → search "Franklin" → Install
+        → click the Franklin icon in the Activity Bar
+```
+
+Free models work immediately. Paid models, image gen, and video gen activate the moment your wallet has USDC. The CLI and the extension share the same `~/.blockrun/` config and session history, so jumping between terminal and VS Code is seamless.
+
 ---
 
 ## YOPO
