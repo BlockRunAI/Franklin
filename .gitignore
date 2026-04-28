@@ -6,6 +6,11 @@ node_modules
 *.log
 .gstack/
 
+# Alternate package-manager lockfiles — npm is the source of truth.
+# pnpm/yarn lockfiles drift silently because CI only runs `npm ci`.
+pnpm-lock.yaml
+yarn.lock
+
 # Build output (rebuilt from src on every install)
 dist/
 
