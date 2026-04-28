@@ -560,12 +560,22 @@ export async function interactiveSession(
     // negative number disables the cap; a non-numeric / unparseable value
     // is treated as a typo and falls back to the safe default rather than
     // silently removing the wallet guard.
+    //
+    // Default raised from $0.25 → $1.00 in v3.8.42 — the original ceiling
+    // dated from when Franklin was mostly chat. Real workloads (multi-stage
+    // dashboard scaffolds on sonnet, image-to-image edits, research-heavy
+    // turns) routinely land in the $0.20–$0.80 range on a single legit
+    // prompt. $1.00 is still meaningful as a runaway-protection guardrail
+    // (catches the kind of failure v3.8.41's retry-policy was built for)
+    // but doesn't impose a friction tax on every multi-stage task. Users
+    // who liked the old ceiling can opt back in via the config.
+    const TURN_SPEND_DEFAULT_USD = 1.0;
     const turnSpendCap = (() => {
       const raw = loadConfig()['max-turn-spend-usd'];
-      if (raw == null) return 0.25;
+      if (raw == null) return TURN_SPEND_DEFAULT_USD;
       const parsed = Number(raw);
-      if (!Number.isFinite(parsed)) return 0.25;   // typo → keep default
-      if (parsed <= 0) return Infinity;            // explicit opt-out
+      if (!Number.isFinite(parsed)) return TURN_SPEND_DEFAULT_USD;   // typo → keep default
+      if (parsed <= 0) return Infinity;                              // explicit opt-out
       return parsed;
     })();
     const MAX_TURN_SPEND_USD = turnSpendCap;
@@ -1137,7 +1147,9 @@ export async function interactiveSession(
       if (turnSpend > MAX_TURN_SPEND_USD) {
         onEvent({
           kind: 'text_delta',
-          text: `\n\n⚠️ Turn spend limit reached ($${turnSpend.toFixed(3)} > $${MAX_TURN_SPEND_USD}). Stopping to protect your wallet. Try again with a clearer prompt or a different model.\n`,
+          text:
+            `\n\n⚠️ Turn spend limit reached ($${turnSpend.toFixed(3)} > $${MAX_TURN_SPEND_USD}). Stopping to protect your wallet.\n` +
+            `Raise the cap with \`franklin config set max-turn-spend-usd 2.0\` (or \`0\` to disable), then \`/retry\`.\n`,
         });
         onEvent({ kind: 'turn_done', reason: 'budget' });
         break;
