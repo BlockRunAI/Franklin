@@ -1,8 +1,8 @@
 # Changelog
 
-## 3.8.42 — Release hygiene + proxy shortcut parity
+## 3.8.43 — Release hygiene + proxy shortcut parity
 
-Small cleanup release after v3.8.41.
+Small cleanup release after v3.8.42.
 
 ### Fixed
 
@@ -15,6 +15,17 @@ Small cleanup release after v3.8.41.
   `@blockrun/llm`.
 - Brought the legacy `VERSION` file back in sync with the package
   version.
+
+## 3.8.42 — Default per-turn spend cap raised to $1.00
+
+### Changed
+
+- Raised the default per-turn spend guard from `$0.25` to `$1.00` so
+  normal multi-step research, image-to-image, and dashboard/scaffold
+  tasks can finish without an artificial mid-turn stop.
+- Updated the spend-cap error message to tell users how to recover:
+  raise the cap with `franklin config set max-turn-spend-usd <amount>`
+  and then `/retry`.
 
 ## 3.8.41 — Smart timeout recovery
 
