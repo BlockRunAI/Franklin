@@ -38,6 +38,12 @@ import {
 import type { ToolChoice } from './llm.js';
 import { augmentUserMessage, prefetchForIntent } from './intent-prefetch.js';
 import { analyzeTurn, type TurnAnalysis } from './turn-analyzer.js';
+import { evaluateTimeoutRetry } from './retry-policy.js';
+import {
+  MAX_AUTO_CONTINUATIONS_PER_TURN,
+  buildContinuationPrompt,
+  isAutoContinuationDisabled,
+} from './continuation.js';
 import {
   createSessionId,
   appendToSession,
@@ -506,6 +512,7 @@ export async function interactiveSession(
     onAbortReady?.(() => abort.abort());
     let loopCount = 0;
     let recoveryAttempts = 0;
+    let autoContinuationCount = 0;
     const MAX_RECOVERY_ATTEMPTS = 5;
     let compactFailures = 0;
     let maxTokensOverride: number | undefined;
@@ -991,6 +998,61 @@ export async function interactiveSession(
         // ── Transient error recovery (network, rate limit, server errors) ──
         // Respect per-error maxRetries (e.g., 529/overloaded gets only 3 retries)
         const effectiveMaxRetries = classified.maxRetries ?? MAX_RECOVERY_ATTEMPTS;
+        if (classified.category === 'timeout' && recoveryAttempts < effectiveMaxRetries) {
+          const retryDecision = evaluateTimeoutRetry(history, resolvedModel);
+          if (!retryDecision.retry) {
+            // Before surfacing the timeout error, try auto-continuation:
+            // for tasks too big to finish in one streaming turn (multi-file
+            // scaffolds, dashboard builds), inject a chunking-instruction
+            // prompt and let the model take one narrow next step. Capped at
+            // MAX_AUTO_CONTINUATIONS_PER_TURN — if the chunked attempt also
+            // times out, fall through to the normal error path.
+            if (
+              !isAutoContinuationDisabled() &&
+              autoContinuationCount < MAX_AUTO_CONTINUATIONS_PER_TURN
+            ) {
+              autoContinuationCount++;
+              recoveryAttempts++;
+              const continuationPrompt = buildContinuationPrompt();
+              history.push(continuationPrompt);
+              persistSessionMessage(continuationPrompt);
+              if (config.debug) {
+                console.error(
+                  `[franklin] Stream timeout on ${resolvedModel} — auto-continuing with chunked-task prompt`
+                );
+              }
+              onEvent({
+                kind: 'text_delta',
+                text: '\n*Task too big for one streaming turn — auto-continuing with a smaller chunk...*\n',
+              });
+              lastSessionActivity = Date.now();
+              continue;
+            }
+
+            const tokenText = retryDecision.estimatedInputTokens.toLocaleString();
+            const costText = retryDecision.estimatedReplayCostUsd > 0
+              ? ` and at least $${retryDecision.estimatedReplayCostUsd.toFixed(4)} in input charges`
+              : '';
+            if (config.debug) {
+              console.error(
+                `[franklin] Timeout retry skipped for ${resolvedModel}: ` +
+                `~${tokenText} input tokens, replayCost=$${retryDecision.estimatedReplayCostUsd.toFixed(4)}`
+              );
+            }
+            onEvent({
+              kind: 'turn_done',
+              reason: 'error',
+              error:
+                `[${classified.label}] ${errMsg}\n` +
+                `Tip: Automatic retry skipped to avoid re-sending ~${tokenText} input tokens${costText}. ` +
+                'Use /retry if you want to run another full attempt.',
+            });
+            lastSessionActivity = Date.now();
+            persistSessionMeta();
+            break;
+          }
+        }
+
         if (classified.isTransient && recoveryAttempts < effectiveMaxRetries) {
           recoveryAttempts++;
           const backoffMs = getBackoffDelay(recoveryAttempts);
