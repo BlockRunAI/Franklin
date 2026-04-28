@@ -1,11 +1,14 @@
 # Changelog
 
-## 3.8.43 — Release hygiene + proxy shortcut parity
+## 3.8.44 — Release hygiene + changelog correction
 
-Small cleanup release after v3.8.42.
+Small cleanup release after v3.8.43.
 
 ### Fixed
 
+- Corrected the release history after `v3.8.43` was published for the
+  proxy timeout/fallback work, reserving `3.8.44` for the follow-up
+  release metadata cleanup.
 - Proxy-side `use <model>` switching now recognizes the same
   version-suffix shortcuts as the CLI `/model` command, including
   `k2.6`, `k2.5`, `gemini-2.5`, `gemini-3.1`, `grok-3`, `grok-4.1`,
@@ -15,6 +18,26 @@ Small cleanup release after v3.8.42.
   `@blockrun/llm`.
 - Brought the legacy `VERSION` file back in sync with the package
   version.
+
+## 3.8.43 — Proxy per-request timeout + payment-aware fallback chain
+
+### Added
+
+- Added proxy request and stream timeouts so slow upstream models cannot
+  hang the Anthropic-compatible proxy indefinitely. The defaults are
+  45s per backend request and 5min per stream, configurable with
+  `FRANKLIN_PROXY_REQUEST_TIMEOUT_MS` and
+  `FRANKLIN_PROXY_STREAM_TIMEOUT_MS`.
+- Added payment-aware fallback handling for the proxy path. Each model
+  attempt now covers the unpaid 402 probe, payment signing, and paid
+  request, so failures or timeouts at any stage can move on to the next
+  fallback model.
+
+### Fixed
+
+- Slow paid proxy requests now cancel their response bodies and fall
+  through to fallback models instead of leaving the client stuck after a
+  successful payment probe.
 
 ## 3.8.42 — Default per-turn spend cap raised to $1.00
 
