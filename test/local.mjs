@@ -1235,6 +1235,67 @@ test('error classifier maps common failure modes', async () => {
   assert.equal(timeout.maxRetries, 1);
 });
 
+test('timeout retry policy skips expensive full-context replay', async () => {
+  const { evaluateTimeoutRetry } = await import('../dist/agent/retry-policy.js');
+
+  const small = evaluateTimeoutRetry(
+    [{ role: 'user', content: 'hello' }],
+    'anthropic/claude-sonnet-4.6',
+  );
+  assert.equal(small.retry, true, `Small prompts should still get one automatic timeout retry: ${JSON.stringify(small)}`);
+
+  const expensive = evaluateTimeoutRetry(
+    [{ role: 'user', content: 'x'.repeat(90_000) }],
+    'anthropic/claude-sonnet-4.6',
+  );
+  assert.equal(expensive.retry, false, `Expensive timeout replay must be skipped: ${JSON.stringify(expensive)}`);
+  assert.equal(expensive.reason, 'estimated_cost');
+
+  const hugeFree = evaluateTimeoutRetry(
+    [{ role: 'user', content: 'x'.repeat(90_000) }],
+    'nvidia/glm-4.7',
+  );
+  assert.equal(hugeFree.retry, false, `Huge free-model replay still wastes context/time: ${JSON.stringify(hugeFree)}`);
+  assert.equal(hugeFree.reason, 'input_tokens');
+});
+
+test('continuation: auto-continue prompt instructs single-chunk execution', async () => {
+  const {
+    buildContinuationPrompt,
+    isAutoContinuationDisabled,
+    MAX_AUTO_CONTINUATIONS_PER_TURN,
+  } = await import('../dist/agent/continuation.js');
+
+  // The cap is intentional — if the first chunked retry also times out,
+  // the loop should surface the error rather than recurse.
+  assert.equal(MAX_AUTO_CONTINUATIONS_PER_TURN, 1);
+
+  const msg = buildContinuationPrompt();
+  assert.equal(msg.role, 'user');
+  const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+
+  // Must signal the failure mode so the model knows why it's being re-prompted
+  assert.match(text, /timed out/i, 'continuation prompt should explain the timeout');
+
+  // Must direct the model to a single narrow chunk, not a full retry
+  assert.match(text, /one\b/i, 'continuation prompt should call for a single next step');
+  assert.match(text, /entire original task/i, 'continuation prompt should forbid re-attempting the whole task');
+
+  // Env opt-out flag round-trips correctly
+  const prev = process.env.FRANKLIN_NO_AUTO_CONTINUE;
+  delete process.env.FRANKLIN_NO_AUTO_CONTINUE;
+  assert.equal(isAutoContinuationDisabled(), false, 'unset env var → feature on');
+  process.env.FRANKLIN_NO_AUTO_CONTINUE = '1';
+  assert.equal(isAutoContinuationDisabled(), true, 'env=1 → feature off');
+  process.env.FRANKLIN_NO_AUTO_CONTINUE = '0';
+  assert.equal(isAutoContinuationDisabled(), false, 'env=0 → feature on (only "1" disables)');
+  if (prev === undefined) {
+    delete process.env.FRANKLIN_NO_AUTO_CONTINUE;
+  } else {
+    process.env.FRANKLIN_NO_AUTO_CONTINUE = prev;
+  }
+});
+
 // Regression: Cheetah saw an upstream 503 that wasn't auto-retried because
 // the JSON-extracted .message field stripped the status code and the literal
 // "Service Unavailable" string. Both forms must now classify as server/transient
@@ -3857,11 +3918,17 @@ test('evaluator: shouldCheckGrounding gates on input/answer length + slash comma
 
     const longAnswer = 'This is a long enough answer with real claims'.padEnd(60, '.');
     const longQuestion = 'This is a long user question that looks like a factual question';
+    const factyAnswer = 'The temperature is 68°F with light winds at 7 mph from the west.';
 
     assert.equal(shouldCheckGrounding(longQuestion, longAnswer), true, 'normal factual turn → check');
-    assert.equal(shouldCheckGrounding('hi', longAnswer), false, 'short user input → skip');
+    assert.equal(shouldCheckGrounding('hi', longAnswer), false, 'short user input + non-facty answer → skip');
     assert.equal(shouldCheckGrounding(longQuestion, 'ok'), false, 'short answer → skip');
     assert.equal(shouldCheckGrounding('/help', longAnswer), false, 'slash command → skip');
+
+    // Factual-content override — the 21044 weather regression.
+    assert.equal(shouldCheckGrounding('21044', factyAnswer), true, 'short input + facty answer (units, numbers) → check');
+    assert.equal(shouldCheckGrounding('BTC', 'The current price of Bitcoin is around $67,500 USD as of today.'), true, 'short input + currency in answer → check');
+    assert.equal(shouldCheckGrounding('hi', factyAnswer), true, 'even greeting → check when answer fabricates facts');
 
     // Env opt-out
     process.env.FRANKLIN_NO_EVAL = '1';
@@ -3870,6 +3937,27 @@ test('evaluator: shouldCheckGrounding gates on input/answer length + slash comma
     if (savedNoEval === undefined) delete process.env.FRANKLIN_NO_EVAL;
     else process.env.FRANKLIN_NO_EVAL = savedNoEval;
   }
+});
+
+test('evaluator: buildGroundingRetryInstruction names missing tools and forbids fake citations', async () => {
+  const { buildGroundingRetryInstruction } = await import('../dist/agent/evaluator.js');
+
+  const msg = buildGroundingRetryInstruction(
+    {
+      verdict: 'UNGROUNDED',
+      issues: [
+        'Claim: "279–280 miles (451 km)" → missing tool: WebSearch',
+        'Claim: "per drivvin.com and Trippy" → missing tool: WebSearch (sources fabricated)',
+      ],
+      raw: '',
+    },
+    'how far from tampa to miami for driving',
+  );
+
+  assert.match(msg, /WebSearch/, 'pulls named tool out of the issue list');
+  assert.match(msg, /Do not write a single factual sentence/, 'forbids prose before tools return');
+  assert.match(msg, /Do NOT invent source names/, 'explicitly bans fabricated citations');
+  assert.match(msg, /tampa to miami/i, 'preserves original question');
 });
 
 test('evaluator: extractPrefetchBlock finds the harness prefetch in the last user message', async () => {
