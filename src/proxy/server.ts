@@ -16,7 +16,6 @@ import type { Chain } from '../config.js';
 import { recordUsage } from '../stats/tracker.js';
 import { appendAudit } from '../stats/audit.js';
 import {
-  fetchWithFallback,
   buildFallbackChain,
   DEFAULT_FALLBACK_CONFIG,
   ROUTING_PROFILES,
@@ -74,6 +73,62 @@ function log(...args: unknown[]) {
 }
 
 const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_PROXY_REQUEST_TIMEOUT_MS = 45_000;
+const DEFAULT_PROXY_STREAM_TIMEOUT_MS = 5 * 60 * 1000;
+
+function parseTimeoutEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function getProxyRequestTimeoutMs(): number {
+  return parseTimeoutEnv('FRANKLIN_PROXY_REQUEST_TIMEOUT_MS', DEFAULT_PROXY_REQUEST_TIMEOUT_MS);
+}
+
+function getProxyStreamTimeoutMs(): number {
+  return parseTimeoutEnv('FRANKLIN_PROXY_STREAM_TIMEOUT_MS', DEFAULT_PROXY_STREAM_TIMEOUT_MS);
+}
+
+function createProxyTimeoutError(label: string, timeoutMs: number): Error {
+  return new Error(`${label} timed out after ${timeoutMs}ms`);
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  label: string
+): Promise<Response> {
+  if (timeoutMs <= 0) return fetch(url, init);
+
+  const controller = new AbortController();
+  const timeoutError = createProxyTimeoutError(label, timeoutMs);
+  const timeout = setTimeout(() => {
+    try { controller.abort(timeoutError); } catch { /* ignore */ }
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (controller.signal.aborted) throw timeoutError;
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function replaceModelInBody(body: string, model: string): string {
+  try {
+    const parsed = JSON.parse(body);
+    parsed.model = model;
+    return JSON.stringify(parsed);
+  } catch {
+    return body;
+  }
+}
+
 // Per-model last output tokens for adaptive max_tokens (avoids cross-request pollution)
 const MAX_TRACKED_MODELS = 50;
 const lastOutputByModel = new Map<string, number>();
@@ -450,6 +505,7 @@ export function createProxy(options: ProxyOptions): http.Server {
 
         let response: Response;
         let finalModel = requestModel;
+        const requestTimeoutMs = getProxyRequestTimeoutMs();
 
         // Use fallback chain if enabled
         if (fallbackEnabled && body && requestPath.includes('messages')) {
@@ -458,11 +514,19 @@ export function createProxy(options: ProxyOptions): http.Server {
             chain: buildFallbackChain(requestModel),
           };
 
-          const result = await fetchWithFallback(
+          const result = await fetchWithPaymentFallback(
             targetUrl,
             requestInit,
             body,
             fallbackConfig,
+            {
+              method: req.method || 'POST',
+              headers,
+              chain,
+              baseWallet,
+              solanaWallet,
+              timeoutMs: requestTimeoutMs,
+            },
             (failedModel, status, nextModel) => {
               log(
                 `⚠️  ${failedModel} returned ${status}, falling back to ${nextModel}`
@@ -480,36 +544,14 @@ export function createProxy(options: ProxyOptions): http.Server {
             log(`↺ Fallback successful: using ${finalModel}`);
           }
         } else {
-          // Direct fetch without fallback (with timeout)
-          const directCtrl = new AbortController();
-          const directTimeout = setTimeout(() => directCtrl.abort(), 120_000); // 2min
-          response = await fetch(targetUrl, { ...requestInit, signal: directCtrl.signal });
-          clearTimeout(directTimeout);
-        }
-
-        // Handle 402 payment — body now has the correct model after fallback
-        if (response.status === 402) {
-          if (chain === 'solana' && solanaWallet) {
-            response = await handleSolanaPayment(
-              response,
-              targetUrl,
-              req.method || 'POST',
-              headers,
-              body,
-              solanaWallet.privateKey,
-              solanaWallet.address
-            );
-          } else if (baseWallet) {
-            response = await handleBasePayment(
-              response,
-              targetUrl,
-              req.method || 'POST',
-              headers,
-              body,
-              baseWallet.privateKey as `0x${string}`,
-              baseWallet.address
-            );
-          }
+          response = await fetchModelAttempt(targetUrl, requestInit, body, requestModel, {
+            method: req.method || 'POST',
+            headers,
+            chain,
+            baseWallet,
+            solanaWallet,
+            timeoutMs: requestTimeoutMs,
+          });
         }
 
         const responseHeaders: Record<string, string> = {};
@@ -565,7 +607,7 @@ export function createProxy(options: ProxyOptions): http.Server {
           let fullResponse = '';
           const STREAM_CAP = 5_000_000; // 5MB cap on accumulated stream
 
-          const STREAM_TIMEOUT_MS = 5 * 60 * 1000; // 5 min timeout for entire stream
+          const STREAM_TIMEOUT_MS = getProxyStreamTimeoutMs();
           const streamDeadline = Date.now() + STREAM_TIMEOUT_MS;
 
           const pump = async () => {
@@ -700,6 +742,146 @@ export function createProxy(options: ProxyOptions): http.Server {
   return server;
 }
 
+interface ProxyPaymentContext {
+  method: string;
+  headers: Record<string, string>;
+  chain: Chain;
+  baseWallet: { privateKey: string; address: string } | null;
+  solanaWallet: { privateKey: string; address: string } | null;
+  timeoutMs: number;
+}
+
+interface ProxyFallbackResult {
+  response: Response;
+  modelUsed: string;
+  bodyUsed: string;
+  fallbackUsed: boolean;
+  attemptsCount: number;
+  failedModels: string[];
+}
+
+async function fetchModelAttempt(
+  url: string,
+  init: RequestInit,
+  body: string,
+  model: string,
+  payment: ProxyPaymentContext
+): Promise<Response> {
+  let response = await fetchWithTimeout(
+    url,
+    { ...init, body: body || undefined },
+    payment.timeoutMs,
+    `Proxy request for ${model}`
+  );
+
+  if (response.status !== 402) return response;
+
+  if (payment.chain === 'solana' && payment.solanaWallet) {
+    return handleSolanaPayment(
+      response,
+      url,
+      payment.method,
+      payment.headers,
+      body,
+      payment.solanaWallet.privateKey,
+      payment.solanaWallet.address,
+      payment.timeoutMs,
+      model
+    );
+  }
+
+  if (payment.baseWallet) {
+    return handleBasePayment(
+      response,
+      url,
+      payment.method,
+      payment.headers,
+      body,
+      payment.baseWallet.privateKey as `0x${string}`,
+      payment.baseWallet.address,
+      payment.timeoutMs,
+      model
+    );
+  }
+
+  return response;
+}
+
+/**
+ * Try each fallback model as a full x402 attempt:
+ * unpaid 402 probe, payment signing, then the paid provider call. The older
+ * flow only applied fallback to the probe, which meant a slow paid call could
+ * hang Franklin until the outer client gave up.
+ */
+async function fetchWithPaymentFallback(
+  url: string,
+  init: RequestInit,
+  originalBody: string,
+  config: FallbackConfig,
+  payment: ProxyPaymentContext,
+  onFallback?: (model: string, statusCode: number, nextModel: string) => void
+): Promise<ProxyFallbackResult> {
+  const failedModels: string[] = [];
+  let attempts = 0;
+
+  for (let i = 0; i < config.chain.length && attempts < config.maxRetries; i++) {
+    const model = config.chain[i];
+    const body = replaceModelInBody(originalBody, model);
+
+    try {
+      attempts++;
+      const response = await fetchModelAttempt(url, init, body, model, payment);
+
+      if (!config.retryOn.includes(response.status)) {
+        return {
+          response,
+          modelUsed: model,
+          bodyUsed: body,
+          fallbackUsed: i > 0,
+          attemptsCount: attempts,
+          failedModels,
+        };
+      }
+
+      try { await response.body?.cancel(); } catch { /* ignore */ }
+      failedModels.push(model);
+
+      const nextModel = config.chain[i + 1];
+      if (nextModel && onFallback) {
+        onFallback(model, response.status, nextModel);
+      }
+
+      if (i < config.chain.length - 1) {
+        await sleep(config.retryDelayMs);
+      }
+    } catch (err) {
+      failedModels.push(model);
+      const nextModel = config.chain[i + 1];
+
+      if (nextModel && onFallback) {
+        onFallback(model, 0, nextModel);
+      }
+      log(
+        `[fallback] ${model} request error: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+
+      if (i < config.chain.length - 1) {
+        await sleep(config.retryDelayMs);
+      }
+    }
+  }
+
+  throw new Error(
+    `All models in fallback chain failed: ${failedModels.join(', ')}`
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ======================================================================
 // Base (EIP-712) payment handler
 // ======================================================================
@@ -711,7 +893,9 @@ async function handleBasePayment(
   headers: Record<string, string>,
   body: string,
   privateKey: `0x${string}`,
-  fromAddress: string
+  fromAddress: string,
+  timeoutMs = getProxyRequestTimeoutMs(),
+  model = 'unknown'
 ): Promise<Response> {
   const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
@@ -736,14 +920,14 @@ async function handleBasePayment(
     }
   );
 
-  return fetch(url, {
+  return fetchWithTimeout(url, {
     method,
     headers: {
       ...headers,
       'PAYMENT-SIGNATURE': paymentPayload,
     },
     body: body || undefined,
-  });
+  }, timeoutMs, `Paid proxy request for ${model}`);
 }
 
 // ======================================================================
@@ -757,7 +941,9 @@ async function handleSolanaPayment(
   headers: Record<string, string>,
   body: string,
   privateKey: string,
-  fromAddress: string
+  fromAddress: string,
+  timeoutMs = getProxyRequestTimeoutMs(),
+  model = 'unknown'
 ): Promise<Response> {
   const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
@@ -786,14 +972,14 @@ async function handleSolanaPayment(
     }
   );
 
-  return fetch(url, {
+  return fetchWithTimeout(url, {
     method,
     headers: {
       ...headers,
       'PAYMENT-SIGNATURE': paymentPayload,
     },
     body: body || undefined,
-  });
+  }, timeoutMs, `Paid proxy request for ${model}`);
 }
 
 // ======================================================================

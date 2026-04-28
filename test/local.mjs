@@ -267,6 +267,110 @@ test('proxy server handles OPTIONS and local model switching without backend cal
   }
 });
 
+test('proxy server falls back when the paid BlockRun request times out', async () => {
+  const originalHome = process.env.HOME;
+  const originalTimeout = process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS;
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-proxy-timeout-home-'));
+  const proxyUrl = new URL('../dist/proxy/server.js', import.meta.url);
+  const attempts = [];
+  const paymentRequired = Buffer.from(JSON.stringify({
+    x402Version: 2,
+    accepts: [{
+      scheme: 'exact',
+      network: 'eip155:8453',
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '1',
+      payTo: '0x0000000000000000000000000000000000000001',
+      maxTimeoutSeconds: 300,
+    }],
+    resource: { url: 'http://127.0.0.1/test', description: 'test' },
+  })).toString('base64');
+
+  const backend = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk.toString();
+    const payload = raw ? JSON.parse(raw) : {};
+    const model = payload.model || 'unknown';
+    const paid = Boolean(req.headers['payment-signature']);
+    attempts.push({ model, paid });
+
+    if (!paid) {
+      res.writeHead(402, {
+        'content-type': 'application/json',
+        'payment-required': paymentRequired,
+      });
+      res.end(JSON.stringify({ error: 'payment required' }));
+      return;
+    }
+
+    if (model === 'slow/model') {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (!res.destroyed) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ model, content: [] }));
+      }
+      return;
+    }
+
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      id: 'msg_fallback',
+      type: 'message',
+      role: 'assistant',
+      model,
+      content: [{ type: 'text', text: 'fallback ok' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 2 },
+    }));
+  });
+
+  let proxy;
+  try {
+    process.env.HOME = fakeHome;
+    process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS = '40';
+    const backendPort = await listenOnRandomPort(backend);
+    const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
+    proxy = createProxy({
+      port: 0,
+      apiUrl: `http://127.0.0.1:${backendPort}`,
+      chain: 'base',
+      modelOverride: 'slow/model',
+      fallbackEnabled: true,
+    });
+    const proxyPort = await listenOnRandomPort(proxy);
+
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/api/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'slow/model',
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 128,
+      }),
+    });
+
+    assert.equal(response.status, 200, `Expected fallback success, got ${response.status}`);
+    const payload = await response.json();
+    assert.equal(payload.content?.[0]?.text, 'fallback ok');
+    assert.ok(
+      attempts.some((a) => a.model === 'slow/model' && a.paid),
+      `Expected a paid slow/model attempt.\n${JSON.stringify(attempts, null, 2)}`
+    );
+    assert.ok(
+      attempts.some((a) => a.model !== 'slow/model' && a.paid),
+      `Expected a paid fallback attempt.\n${JSON.stringify(attempts, null, 2)}`
+    );
+  } finally {
+    if (proxy) await new Promise((resolve) => proxy.close(() => resolve()));
+    await new Promise((resolve) => backend.close(() => resolve()));
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalTimeout === undefined) delete process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS;
+    else process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS = originalTimeout;
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('write capability allows files under system temp directory', async () => {
   const { writeCapability } = await import('../dist/tools/write.js');
   const target = join(tmpdir(), `rc-local-write-${Date.now()}.txt`);
