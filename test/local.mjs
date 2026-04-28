@@ -242,6 +242,21 @@ test('proxy server handles OPTIONS and local model switching without backend cal
       payload.content?.[0]?.text?.includes('Switched to **anthropic/claude-sonnet-4.6**'),
       `Unexpected switch payload: ${JSON.stringify(payload)}`
     );
+
+    const suffixSwitchRes = await fetch(`http://127.0.0.1:${port}/api/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'use k2.6' }],
+      }),
+    });
+    assert.equal(suffixSwitchRes.status, 200, `Expected suffix switch response 200, got ${suffixSwitchRes.status}`);
+    const suffixPayload = await suffixSwitchRes.json();
+    assert.equal(suffixPayload.model, 'moonshot/kimi-k2.6');
+    assert.ok(
+      suffixPayload.content?.[0]?.text?.includes('Switched to **moonshot/kimi-k2.6**'),
+      `Unexpected suffix switch payload: ${JSON.stringify(suffixPayload)}`
+    );
   } finally {
     if (server) {
       await new Promise((resolve) => server.close(() => resolve()));

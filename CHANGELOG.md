@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.8.42 — Release hygiene + proxy shortcut parity
+
+Small cleanup release after v3.8.41.
+
+### Fixed
+
+- Proxy-side `use <model>` switching now recognizes the same
+  version-suffix shortcuts as the CLI `/model` command, including
+  `k2.6`, `k2.5`, `gemini-2.5`, `gemini-3.1`, `grok-3`, `grok-4.1`,
+  `sonnet-4.6`, `haiku-4.5`, and `m2.7`.
+- Removed the stale `pnpm-lock.yaml`, which was not used by CI or
+  publishing and still contained a local filesystem link for
+  `@blockrun/llm`.
+- Brought the legacy `VERSION` file back in sync with the package
+  version.
+
+## 3.8.41 — Smart timeout recovery
+
+### Added
+
+- Skips automatic timeout retries when replaying the full prompt would
+  be too expensive or too large, and tells the user exactly why.
+- Auto-continues after stream timeouts so long-running answers can
+  recover without forcing a full-context replay.
+
+### Also Included
+
+- Declares `viem` as a direct dependency.
+- Adds missing version-suffix model aliases in the `/model` picker.
+- Mentions the Franklin VS Code extension in the README quick start.
+
 ## 3.8.15 — Harness audit + ablation bench + FRANKLIN_NOPLAN
 
 Internal tooling and methodology work. No new user-facing features, but a
