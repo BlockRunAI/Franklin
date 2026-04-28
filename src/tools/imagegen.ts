@@ -290,7 +290,14 @@ function buildExecute(deps: ImageGenDeps) {
   };
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60_000); // 60s timeout
+  // Reference-image mode (gpt-image-2 edits) is meaningfully slower than
+  // pure text-to-image: the model is reasoning-driven and the request
+  // body carries a few MB of base64. The shared 60s budget covered both
+  // x402 retry attempts and the actual generation, which made image-to-
+  // image effectively always time out. Image-to-image gets 3 minutes;
+  // text-to-image keeps the original 60s.
+  const timeoutMs = referenceImage ? 180_000 : 60_000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     // First request — will get 402
@@ -411,7 +418,12 @@ function buildExecute(deps: ImageGenDeps) {
   } catch (err) {
     const msg = (err as Error).message || '';
     if (msg.includes('abort')) {
-      return { output: 'Image generation timed out (60s limit). Try a simpler prompt.', isError: true };
+      return {
+        output: referenceImage
+          ? 'Image-to-image timed out (180s limit). The reference image may be too large or the model under load — try a smaller/simpler image.'
+          : 'Image generation timed out (60s limit). Try a simpler prompt.',
+        isError: true,
+      };
     }
     return { output: `Error: ${msg}`, isError: true };
   } finally {

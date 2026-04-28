@@ -633,6 +633,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
         chain,
         'default-image-model': config['default-image-model'] ?? null,
         'default-video-model': config['default-video-model'] ?? null,
+        'max-turn-spend-usd': config['max-turn-spend-usd'] ?? '',
       },
       imageModels: imageModels.map(toOption),
       videoModels: videoModels.map(toOption),
@@ -657,6 +658,16 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     else delete config['default-image-model'];
     if (vid && vid !== '__unset__') config['default-video-model'] = vid;
     else delete config['default-video-model'];
+    // Per-turn spend cap — empty string clears (back to default $0.25).
+    const cap = settings['max-turn-spend-usd'];
+    if (cap != null && cap.trim() !== '') {
+      const parsed = Number(cap);
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        config['max-turn-spend-usd'] = String(parsed);
+      }
+    } else {
+      delete config['max-turn-spend-usd'];
+    }
     saveConfig(config);
     void this.webview?.postMessage({ type: 'settingsSaved' });
   }
@@ -893,9 +904,19 @@ function getNonce(): string {
 
 function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const nonce = getNonce();
+  // Mascot used in the empty state. franklin-portrait.jpg is kept around as
+  // a historical fallback. franklin-mascot.png is the original AI+coin
+  // enhanced render; franklin-mascot-transparent.png is the same image
+  // with the dark frame chopped out (flood-fill from the corners) so the
+  // mascot blends seamlessly with whichever theme background sits behind
+  // the panel — no rounded-rectangle frame, no mix-blend-mode hacks.
+  const mascotUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, 'media', 'franklin-mascot-transparent.png')
+  );
   const portraitUri = webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, 'media', 'franklin-portrait.jpg')
   );
+  void portraitUri; // referenced for future use; suppress unused warning
   const csp = [
     "default-src 'none'",
     "style-src 'unsafe-inline'",
@@ -1413,6 +1434,10 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       background: var(--vscode-input-background); color: var(--vscode-input-foreground);
       border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.35)); border-radius: 3px;
     }
+    .settings-hint {
+      margin-top: 4px; font-size: 10px; line-height: 1.4;
+      color: var(--vscode-descriptionForeground);
+    }
     .settings-actions {
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
@@ -1894,10 +1919,14 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     }
     #empty-state.fk-fade-in { animation: fk-fade-in 0.28s ease-out; }
     #empty-state .pixel-portrait {
-      width: 96px;
-      height: 96px;
-      image-rendering: pixelated;
-      image-rendering: crisp-edges;
+      width: 280px;
+      height: 280px;
+      max-width: 90%;
+      object-fit: contain;
+      /* The PNG itself has its frame flood-filled to alpha=0, so it
+       * composites directly onto whatever theme background is behind
+       * the panel — light, dark, or high-contrast all look the same. */
+      filter: drop-shadow(0 8px 24px rgba(0,0,0,0.45));
     }
     #empty-state .brand-name {
       font-size: 40px;
@@ -2121,85 +2150,8 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     </div>
     <div id="log">
       <div id="empty-state">
-        <svg class="pixel-portrait" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
-          <!-- hair (gray, colonial side-wave) -->
-          <g fill="#c9c9c9">
-            <rect x="4"  y="1" width="8" height="1"/>
-            <rect x="3"  y="2" width="10" height="1"/>
-            <rect x="2"  y="3" width="2" height="1"/>
-            <rect x="12" y="3" width="2" height="1"/>
-            <rect x="2"  y="4" width="1" height="2"/>
-            <rect x="13" y="4" width="1" height="2"/>
-            <rect x="1"  y="6" width="2" height="3"/>
-            <rect x="13" y="6" width="2" height="3"/>
-            <rect x="2"  y="9" width="1" height="1"/>
-            <rect x="13" y="9" width="1" height="1"/>
-          </g>
-          <!-- hair highlight -->
-          <g fill="#e8e8e8">
-            <rect x="5" y="2" width="2" height="1"/>
-            <rect x="9" y="2" width="2" height="1"/>
-          </g>
-          <!-- face skin -->
-          <g fill="#e0b080">
-            <rect x="4"  y="3" width="8" height="1"/>
-            <rect x="3"  y="4" width="10" height="1"/>
-            <rect x="3"  y="5" width="10" height="1"/>
-            <rect x="3"  y="6" width="10" height="1"/>
-            <rect x="3"  y="7" width="10" height="1"/>
-            <rect x="4"  y="8" width="8" height="1"/>
-            <rect x="4"  y="9" width="8" height="1"/>
-            <rect x="5"  y="10" width="6" height="1"/>
-          </g>
-          <!-- cheek blush -->
-          <g fill="#d98f6a">
-            <rect x="3"  y="7" width="1" height="1"/>
-            <rect x="12" y="7" width="1" height="1"/>
-          </g>
-          <!-- glasses frames -->
-          <g fill="#2a2018">
-            <rect x="4" y="5" width="3" height="1"/>
-            <rect x="4" y="7" width="3" height="1"/>
-            <rect x="4" y="6" width="1" height="1"/>
-            <rect x="6" y="6" width="1" height="1"/>
-            <rect x="9"  y="5" width="3" height="1"/>
-            <rect x="9"  y="7" width="3" height="1"/>
-            <rect x="9"  y="6" width="1" height="1"/>
-            <rect x="11" y="6" width="1" height="1"/>
-            <rect x="7" y="6" width="2" height="1"/>
-          </g>
-          <!-- eyes -->
-          <g fill="#1a1a1a">
-            <rect x="5"  y="6" width="1" height="1"/>
-            <rect x="10" y="6" width="1" height="1"/>
-          </g>
-          <!-- mouth -->
-          <g fill="#8a3a20">
-            <rect x="7" y="9" width="2" height="1"/>
-          </g>
-          <!-- white shirt / cravat -->
-          <g fill="#f0e8d0">
-            <rect x="5"  y="11" width="6" height="1"/>
-            <rect x="6"  y="12" width="4" height="1"/>
-            <rect x="7"  y="13" width="2" height="2"/>
-          </g>
-          <!-- coat (brown) -->
-          <g fill="#5a3820">
-            <rect x="1" y="11" width="4" height="5"/>
-            <rect x="11" y="11" width="4" height="5"/>
-            <rect x="5"  y="12" width="1" height="4"/>
-            <rect x="10" y="12" width="1" height="4"/>
-            <rect x="6"  y="13" width="1" height="3"/>
-            <rect x="9"  y="13" width="1" height="3"/>
-            <rect x="7"  y="15" width="2" height="1"/>
-          </g>
-          <!-- coat buttons (gold) -->
-          <g fill="#caa45a">
-            <rect x="5" y="14" width="1" height="1"/>
-            <rect x="10" y="14" width="1" height="1"/>
-          </g>
-        </svg>
-        <div class="brand-name">Franklin</div>
+        <!-- mascot — see media/franklin-mascot.png; original pixel-art SVG kept in git history -->
+        <img class="pixel-portrait" src="${mascotUri}" alt="Franklin mascot" />
         <div class="brand-slogan">The AI agent with a <span class="accent">wallet</span>.</div>
         <div id="loading-step" style="font-size:11px;color:var(--vscode-descriptionForeground);margin-top:8px;opacity:0.7;">Initializing…</div>
         <div id="example-prompts">
@@ -2270,6 +2222,11 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
             <div class="settings-row">
               <label class="settings-label" for="settings-vid">Default video model</label>
               <select id="settings-vid" class="settings-select"><option value="__unset__">Ask each time</option></select>
+            </div>
+            <div class="settings-row">
+              <label class="settings-label" for="settings-spend-cap">Per-turn spend cap (USD)</label>
+              <input id="settings-spend-cap" class="settings-select" type="number" min="0" step="0.05" placeholder="0.25 (default) — 0 to disable" />
+              <div class="settings-hint">Stops a single user message once cumulative cost crosses this. Empty = $0.25 default. 0 = no cap.</div>
             </div>
             <div class="settings-actions">
               <span id="settings-status"></span>
@@ -2535,6 +2492,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     var settingsPanel = document.getElementById('settings-panel');
     var settingsImgSel = document.getElementById('settings-img');
     var settingsVidSel = document.getElementById('settings-vid');
+    var settingsSpendCap = document.getElementById('settings-spend-cap');
     var settingsStatusEl = document.getElementById('settings-status');
     var pendingChain = 'base';
 
@@ -2594,6 +2552,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           chain: pendingChain,
           'default-image-model': settingsImgSel.value,
           'default-video-model': settingsVidSel.value,
+          'max-turn-spend-usd': (settingsSpendCap && settingsSpendCap.value) || '',
         },
       });
       // Close the popover — dismissing itself is the save confirmation.
@@ -3613,6 +3572,9 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         setChainToggleActive(m.current.chain);
         populateModelSelect(settingsImgSel, m.imageModels, m.current['default-image-model']);
         populateModelSelect(settingsVidSel, m.videoModels, m.current['default-video-model']);
+        if (settingsSpendCap) {
+          settingsSpendCap.value = m.current['max-turn-spend-usd'] || '';
+        }
         return;
       }
       if (m.type === 'settingsSaved') {

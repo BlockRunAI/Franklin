@@ -17,6 +17,7 @@ import { resetToolSessionState } from '../tools/index.js';
 import { CORE_TOOL_NAMES, dynamicToolsEnabled } from '../tools/tool-categories.js';
 import { createActivateToolCapability } from '../tools/activate.js';
 import { recordUsage } from '../stats/tracker.js';
+import { loadConfig } from '../commands/config.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
@@ -546,7 +547,18 @@ export async function interactiveSession(
     let consecutiveTinyResponses = 0;                    // Count of consecutive calls with <10 output tokens
     const MAX_TINY_RESPONSES = 2;                        // Break after N tiny responses — if 2 calls return near-empty, something is wrong
     let turnSpend = 0;                                   // Cost spent this user turn (USD)
-    const MAX_TURN_SPEND_USD = 0.25;                    // Hard circuit breaker per user message (lowered — user wallets are real money)
+    // Hard circuit breaker per user message — defends user wallets against
+    // a runaway model+tool combo on a single prompt. User-overridable via
+    // `franklin config set max-turn-spend-usd <number>` (or the gear-icon
+    // settings panel in the VS Code extension). A value of "0" (or
+    // negative / non-numeric) disables the cap entirely.
+    const MAX_TURN_SPEND_USD = (() => {
+      const raw = loadConfig()['max-turn-spend-usd'];
+      if (raw == null) return 0.25;
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed <= 0) return Infinity;
+      return parsed;
+    })();
 
     // ── Turn analysis (one classifier call, drives routing + prefetch) ──
     // Single LLM pass that answers every routing-adjacent question the

@@ -41,6 +41,12 @@ Franklin is an autonomous AI agent that runs directly in VS Code. It doesn't jus
 
 ## Changelog
 
+### 0.4.5
+- **New mascot artwork on the empty state** — bigger, transparent-background AI+coin themed Franklin pixel-art portrait (no more dark rounded-rectangle frame, blends seamlessly into any theme background)
+- **Per-turn spend cap is now configurable** — new ⚙️ settings field "Per-turn spend cap (USD)" lets you raise the default \$0.25 limit (or set 0 to disable) without editing source; mirrors the new `franklin config set max-turn-spend-usd <n>` CLI key
+- **Image-to-image timeout fix** — `gpt-image-2` reference-image edits no longer abort after 60s (the old shared budget couldn't cover reasoning-driven edits + base64 upload + x402 retry); image-to-image now gets 180s, text-to-image keeps 60s
+- Synced with Franklin core: PR #19 (i2i timeout), PR #20 (configurable spend cap), PR #21 (README VS Code section)
+
 ### 0.4.3
 - **History replay shows generated media inline** — closing and reopening a conversation now re-renders any images / videos as preview cards instead of dropping them
 - **"+" New chat truly resets the session** — previously only the UI cleared while the agent kept the same `sessionId`, leaking tool guards (`ImageGen disabled`) and prior context into what looked like a new chat

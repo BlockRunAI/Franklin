@@ -16,6 +16,7 @@ const VALID_KEYS = [
   'smart-routing',
   'permission-mode',
   'max-turns',
+  'max-turn-spend-usd',
   'auto-compact',
   'session-save',
   'debug',
@@ -33,6 +34,13 @@ export interface AppConfig {
   'smart-routing'?: string;
   'permission-mode'?: string;
   'max-turns'?: string;
+  /**
+   * Hard per-turn spend ceiling in USD (default $0.25). Numeric string,
+   * e.g. "0.5" or "2". Set to "0" to disable the cap. The agent loop
+   * stops a turn the moment cumulative cost crosses this threshold,
+   * preventing a runaway model + tool combo from draining the wallet.
+   */
+  'max-turn-spend-usd'?: string;
   'auto-compact'?: string;
   'session-save'?: string;
   'debug'?: string;
