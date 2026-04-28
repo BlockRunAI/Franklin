@@ -17,10 +17,12 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   // Anthropic
   sonnet: 'anthropic/claude-sonnet-4.6',
   claude: 'anthropic/claude-sonnet-4.6',
+  'sonnet-4.6': 'anthropic/claude-sonnet-4.6',
   opus: 'anthropic/claude-opus-4.7',
   'opus-4.7': 'anthropic/claude-opus-4.7',
   'opus-4.6': 'anthropic/claude-opus-4.6',
   haiku: 'anthropic/claude-haiku-4.5-20251001',
+  'haiku-4.5': 'anthropic/claude-haiku-4.5-20251001',
   // OpenAI
   // `gpt` / `gpt5` / `gpt-5` follow the gateway's flagship — currently 5.5.
   gpt: 'openai/gpt-5.5',
@@ -42,12 +44,16 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   o1: 'openai/o1',
   // Google
   gemini: 'google/gemini-2.5-pro',
+  'gemini-2.5': 'google/gemini-2.5-pro',
   flash: 'google/gemini-2.5-flash',
   'gemini-3': 'google/gemini-3.1-pro',
+  'gemini-3.1': 'google/gemini-3.1-pro',
   // xAI
   grok: 'xai/grok-3',
+  'grok-3': 'xai/grok-3',
   'grok-4': 'xai/grok-4-0709',
   'grok-fast': 'xai/grok-4-1-fast-reasoning',
+  'grok-4.1': 'xai/grok-4-1-fast-reasoning',
   // DeepSeek
   deepseek: 'deepseek/deepseek-chat',
   r1: 'deepseek/deepseek-reasoner',
@@ -68,11 +74,14 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   devstral: 'nvidia/qwen3-coder-480b',
   // Others
   minimax: 'minimax/minimax-m2.7',
+  'm2.7': 'minimax/minimax-m2.7',
   glm: 'zai/glm-5.1',
   'glm-turbo': 'zai/glm-5-turbo',
   'glm5': 'zai/glm-5.1',
   kimi: 'moonshot/kimi-k2.6',
+  'k2.6': 'moonshot/kimi-k2.6',
   'kimi-k2.5': 'moonshot/kimi-k2.5',
+  'k2.5': 'moonshot/kimi-k2.5',
 };
 
 /**
