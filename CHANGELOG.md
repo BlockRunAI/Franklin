@@ -1,5 +1,41 @@
 # Changelog
 
+## 3.9.3 — `/model` picker trim
+
+The `/model` picker had 28 visible entries across six categories. Most
+sessions use 4–6 models in practice, and the long list created decision
+paralysis without giving any user real new choice — the dropped entries
+were either superseded by a same-family successor, an awkward middle
+trim that nobody picks because the row above or below dominates it, or
+a niche-premium tier ($30/$180) that belongs to power users who already
+know its name. Picker now lists 23 entries; the trimmed shortcuts stay
+live in `MODEL_SHORTCUTS` so muscle memory still works for users who
+type the name directly.
+
+### Removed from the visible picker
+
+- **Premium frontier:** Claude Opus 4.6 (Opus 4.7 strictly better),
+  GPT-5.4 (5.5 is flagship, 5.3 Codex is in Reasoning), GPT-5.4 Pro
+  (niche $30/$180), Grok 3 (Grok 4 + Grok-fast cover it).
+- **Reasoning:** O1 (O3 strictly replaces), O4 Mini (O3 covers, plus
+  Grok-fast for cheap reasoning).
+- **Budget:** GPT-5 Nano (GPT-5 Mini covers the cheap-OpenAI slot,
+  DeepSeek V3 is cheaper still for the absolute floor).
+
+### Still works
+
+`franklin --model opus-4.6 / gpt-5.4 / gpt-5.4-pro / grok / o1 / o4 /
+nano` and the matching proxy aliases all resolve unchanged. Pricing
+entries for hidden models stay in `src/pricing.ts` so historical
+session-cost records keep computing — same pattern PR #33 used for
+retired free-tier models and v3.9.2 used for Kimi K2.5.
+
+### Tests
+
+4 new local tests lock in: hidden entries are absent from the picker
+list, hidden-model shortcuts still resolve, hero shortcuts still in the
+visible list, total entry count stays in the 22–24 band.
+
 ## 3.9.2 — Kimi K2.6 alignment with the gateway
 
 The BlockRun gateway now exposes Kimi K2.6 with a 65K `max_output` cap and

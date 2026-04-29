@@ -138,26 +138,26 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
     ],
   },
   {
+    // Picker trim (v3.9.3): hide superseded / awkward-middle / niche-premium
+    // entries to bring choice paralysis down. Their shortcuts (`opus-4.6`,
+    // `gpt-5.4`, `gpt-5.4-pro`, `grok`, `o1`, `o4`, `nano`) all stay live in
+    // MODEL_SHORTCUTS, so muscle memory keeps working — they just aren't
+    // listed in the visible picker. Same pattern v3.9.0 used to retire dead
+    // free-tier entries and v3.9.2 used to retire Kimi K2.5.
     category: '✨ Premium frontier',
     models: [
       { id: 'anthropic/claude-opus-4.7',   shortcut: 'opus',      label: 'Claude Opus 4.7',   price: '$5/$25', highlight: true },
       { id: 'anthropic/claude-sonnet-4.6', shortcut: 'sonnet',    label: 'Claude Sonnet 4.6', price: '$3/$15' },
-      { id: 'anthropic/claude-opus-4.6',   shortcut: 'opus-4.6',  label: 'Claude Opus 4.6',   price: '$5/$25' },
       { id: 'openai/gpt-5.5',              shortcut: 'gpt',       label: 'GPT-5.5',           price: '$5/$30', highlight: true },
-      { id: 'openai/gpt-5.4',              shortcut: 'gpt-5.4',   label: 'GPT-5.4',           price: '$2.5/$15' },
-      { id: 'openai/gpt-5.4-pro',          shortcut: 'gpt-5.4-pro', label: 'GPT-5.4 Pro',     price: '$30/$180' },
-      { id: 'google/gemini-2.5-pro',       shortcut: 'gemini',    label: 'Gemini 2.5 Pro',    price: '$1.25/$10' },
       { id: 'google/gemini-3.1-pro',       shortcut: 'gemini-3',  label: 'Gemini 3.1 Pro',    price: '$2/$12' },
+      { id: 'google/gemini-2.5-pro',       shortcut: 'gemini',    label: 'Gemini 2.5 Pro',    price: '$1.25/$10' },
       { id: 'xai/grok-4-0709',             shortcut: 'grok-4',    label: 'Grok 4',            price: '$0.2/$1.5' },
-      { id: 'xai/grok-3',                  shortcut: 'grok',      label: 'Grok 3',            price: '$3/$15' },
     ],
   },
   {
     category: '🔬 Reasoning',
     models: [
       { id: 'openai/o3',                     shortcut: 'o3',         label: 'O3',                 price: '$2/$8' },
-      { id: 'openai/o4-mini',                shortcut: 'o4',         label: 'O4 Mini',            price: '$1.1/$4.4' },
-      { id: 'openai/o1',                     shortcut: 'o1',         label: 'O1',                 price: '$15/$60' },
       { id: 'openai/gpt-5.3-codex',          shortcut: 'codex',      label: 'GPT-5.3 Codex',      price: '$1.75/$14' },
       { id: 'deepseek/deepseek-reasoner',    shortcut: 'r1',         label: 'DeepSeek R1',        price: '$0.28/$0.42' },
       { id: 'xai/grok-4-1-fast-reasoning',   shortcut: 'grok-fast',  label: 'Grok 4.1 Fast R.',   price: '$0.2/$0.5' },
@@ -168,7 +168,6 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
     models: [
       { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku',    label: 'Claude Haiku 4.5', price: '$1/$5' },
       { id: 'openai/gpt-5-mini',                   shortcut: 'mini',     label: 'GPT-5 Mini',       price: '$0.25/$2' },
-      { id: 'openai/gpt-5-nano',                   shortcut: 'nano',     label: 'GPT-5 Nano',       price: '$0.05/$0.4' },
       { id: 'google/gemini-2.5-flash',             shortcut: 'flash',    label: 'Gemini 2.5 Flash', price: '$0.3/$2.5' },
       { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V3',      price: '$0.28/$0.42' },
       { id: 'moonshot/kimi-k2.6',                  shortcut: 'kimi',     label: 'Kimi K2.6',        price: '$0.95/$4' },

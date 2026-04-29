@@ -4540,3 +4540,54 @@ test('kimi: pricing keeps K2.5 entries for legacy session-cost records', async (
   assert.ok(MODEL_PRICING['nvidia/kimi-k2.5']);
   assert.ok(MODEL_PRICING['moonshot/kimi-k2.6']);
 });
+
+// ─── picker trim (v3.9.3) ─────────────────────────────────────────────────
+
+test('picker trim: hidden entries are gone from the visible list', async () => {
+  const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
+  const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
+  // Premium frontier — superseded / awkward middle / niche-premium
+  assert.ok(!ids.includes('anthropic/claude-opus-4.6'), 'Opus 4.6 should be hidden (Opus 4.7 strictly better)');
+  assert.ok(!ids.includes('openai/gpt-5.4'), 'GPT-5.4 should be hidden (5.5 is flagship, 5.3 Codex covers reasoning)');
+  assert.ok(!ids.includes('openai/gpt-5.4-pro'), 'GPT-5.4 Pro should be hidden (niche $30/$180)');
+  assert.ok(!ids.includes('xai/grok-3'), 'Grok 3 should be hidden (Grok 4 + Grok-fast cover the use case)');
+  // Reasoning — superseded
+  assert.ok(!ids.includes('openai/o1'), 'O1 should be hidden (O3 strictly replaces)');
+  assert.ok(!ids.includes('openai/o4-mini'), 'O4 Mini should be hidden (overlaps with O3 + Grok-fast)');
+  // Budget — overlapping with sibling
+  assert.ok(!ids.includes('openai/gpt-5-nano'), 'GPT-5 Nano should be hidden (Mini covers budget end, DeepSeek covers cheaper)');
+});
+
+test('picker trim: shortcuts for hidden models still resolve (muscle-memory preserved)', async () => {
+  const { resolveModel } = await import('../dist/ui/model-picker.js');
+  assert.equal(resolveModel('opus-4.6'), 'anthropic/claude-opus-4.6');
+  assert.equal(resolveModel('gpt-5.4'), 'openai/gpt-5.4');
+  assert.equal(resolveModel('gpt-5.4-pro'), 'openai/gpt-5.4-pro');
+  assert.equal(resolveModel('o1'), 'openai/o1');
+  assert.equal(resolveModel('o4'), 'openai/o4-mini');
+  assert.equal(resolveModel('nano'), 'openai/gpt-5-nano');
+  // grok still maps to grok-3 — explicit user intent, picker hiding doesn't
+  // change the alias contract (same as kimi-k2.5 pattern).
+  assert.equal(resolveModel('grok'), 'xai/grok-3');
+});
+
+test('picker trim: hero shortcuts (opus, sonnet, gpt, gemini-3, grok-4) still in visible list', async () => {
+  const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
+  const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
+  assert.ok(ids.includes('anthropic/claude-opus-4.7'));
+  assert.ok(ids.includes('anthropic/claude-sonnet-4.6'));
+  assert.ok(ids.includes('openai/gpt-5.5'));
+  assert.ok(ids.includes('google/gemini-3.1-pro'));
+  assert.ok(ids.includes('google/gemini-2.5-pro'));
+  assert.ok(ids.includes('xai/grok-4-0709'));
+});
+
+test('picker trim: total visible entries dropped meaningfully', async () => {
+  const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
+  const total = PICKER_CATEGORIES.reduce((sum, c) => sum + c.models.length, 0);
+  // Sanity floor: at least the 11 entries we explicitly keep
+  // (2 promo + 3 routing + 6 premium + 4 reasoning + 6 budget + 2 free = 23
+  //  with minimax/2.5-pro kept; at least cover the hard floor).
+  assert.ok(total >= 22, `expected >= 22 visible entries, got ${total}`);
+  assert.ok(total <= 24, `expected <= 24 visible entries (33 → ~22), got ${total}`);
+});
