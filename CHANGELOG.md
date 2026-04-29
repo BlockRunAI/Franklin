@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.9.1 — Status bar shows chain + per-turn cap raised to $2
+
+User-visible follow-ups to v3.9.0. Two friction points users hit on real
+coding sessions: the status bar didn't say which chain the displayed
+balance was on, and the per-turn spend cap was tight enough that complex
+coding tasks routinely tripped it mid-plan.
+
+### Changed
+
+- **Status bar shows chain + wallet tail.** The input-bar status line now
+  appends `· <chain>:<wallet-tail>` after the balance — e.g.
+  `auto · $0.05 USDC · sol:KaH` instead of the previous
+  `auto · $0.05 USDC`. Chain is colored magenta to make the chain label
+  scan-glanceable; the trailing 4 chars of the wallet address help
+  disambiguate multiple installations on the same chain. To see the
+  balance on the other chain, run `franklin setup <chain>` or set
+  `RUNCODE_CHAIN=base|solana` in the environment.
+- **Default per-turn spend cap raised from $1.00 → $2.00.** Real coding
+  turns — full dashboard scaffolds, multi-file refactors that pull in
+  sonnet/opus on a COMPLEX-tier route — routinely crossed $1.00 in their
+  first planning pass alone, leaving no headroom for the execution call
+  and tripping the cap mid-task. $2.00 keeps the runaway-protection
+  promise (catches the buggy-loop drain v3.8.41's retry-policy targets)
+  while letting a legitimate complex coding task finish in one turn.
+  The recovery hint in the cap-trip message also updated from
+  `franklin config set max-turn-spend-usd 2.0` → `… 4.0`. Users who set
+  their cap explicitly (and Franklin sees a `max-turn-spend-usd` value in
+  config) keep their explicit value; only the no-config-set default
+  changes.
+
 ## 3.9.0 — Skills MVP (Phase 1) + first-class Wallet tool + balance retry
 
 First minor bump since v3.8.0. Two themes: (1) Franklin learns to load

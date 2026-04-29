@@ -44,12 +44,16 @@ function useTerminalSize() {
   return size;
 }
 
-function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queued, queuedCount, focused, busy, contextPct, vimMode, onVimModeChange }: {
+function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail, sessionCost, queued, queuedCount, focused, busy, contextPct, vimMode, onVimModeChange }: {
   input: string;
   setInput: (v: string) => void;
   onSubmit: (v: string) => void;
   model: string;
   balance: string;
+  /** 'base' | 'solana' — shown next to the balance so users with wallets on both chains can tell which one they're seeing. */
+  chain?: string;
+  /** Last 4 chars of the wallet address — disambiguates installations on the same chain. */
+  walletTail?: string;
   sessionCost: number;
   queued?: string;
   queuedCount?: number;
@@ -101,6 +105,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, sessionCost, queu
         <Text dimColor>
           {busy ? <Text color="yellow"><Spinner type="dots" /></Text> : null}
           {busy ? ' ' : ''}{shortModelName(model)}  ·  {balance}
+          {chain ? <Text>  ·  <Text color="magenta">{chain}</Text>{walletTail ? <Text dimColor>:{walletTail}</Text> : ''}</Text> : ''}
           {sessionCost > 0.00001 ? <Text color="yellow">  -${sessionCost.toFixed(4)}</Text> : ''}
           {contextPct !== undefined && contextPct > 0 ? (() => {
             // Visual context bar: ▓▓▓▓▓▓░░░░ 75%
@@ -1284,6 +1289,8 @@ function RunCodeApp({
           onSubmit={(permissionRequest || askUserRequest) ? () => {} : handleSubmit}
           model={currentModel}
           balance={liveBalance}
+          chain={chain}
+          walletTail={walletAddress && walletAddress.length >= 4 && !walletAddress.startsWith('not set') ? walletAddress.slice(-4) : undefined}
           sessionCost={totalCost}
           queued={queuedInputs[0] || undefined}
           queuedCount={queuedInputs.length}
