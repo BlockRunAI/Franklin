@@ -4416,3 +4416,94 @@ test('imagegen: EDIT_SUPPORTED_MODELS lists OpenAI image-edit models', async () 
   assert.ok(!EDIT_SUPPORTED_MODELS.has('google/nano-banana-pro'));
   assert.ok(!EDIT_SUPPORTED_MODELS.has('xai/grok-imagine-image-pro'));
 });
+
+// ─── wallet tool ──────────────────────────────────────────────────────────
+
+test('Wallet: formatWalletReport produces a stable two-line USDC summary', async () => {
+  const { formatWalletReport } = await import('../dist/tools/wallet.js');
+  const out = formatWalletReport({
+    chain: 'base',
+    address: '0xabc123',
+    balanceUsd: 39.86,
+  });
+  // Stable, parseable shape — agent reads this verbatim and re-emits to the user.
+  assert.match(out, /^Chain: base$/m);
+  assert.match(out, /^Address: 0xabc123$/m);
+  assert.match(out, /^USDC Balance: \$39\.86$/m);
+});
+
+test('Wallet: formatWalletReport rounds balance to two decimals', async () => {
+  const { formatWalletReport } = await import('../dist/tools/wallet.js');
+  const out = formatWalletReport({
+    chain: 'solana',
+    address: 'So11...',
+    balanceUsd: 12.345678,
+  });
+  assert.match(out, /USDC Balance: \$12\.35/);
+});
+
+test('Wallet: walletCapability is registered with a `Wallet` name and zero-arg input schema', async () => {
+  const { walletCapability } = await import('../dist/tools/wallet.js');
+  assert.equal(walletCapability.spec.name, 'Wallet');
+  assert.equal(walletCapability.spec.input_schema.type, 'object');
+  // Zero-arg tool: no required properties so weak models don't hallucinate args.
+  assert.ok(
+    !walletCapability.spec.input_schema.required ||
+      walletCapability.spec.input_schema.required.length === 0,
+    'Wallet tool should require no input arguments',
+  );
+});
+
+test('Wallet: tool is in CORE_TOOL_NAMES so it stays on every turn', async () => {
+  const { CORE_TOOL_NAMES } = await import('../dist/tools/tool-categories.js');
+  assert.ok(CORE_TOOL_NAMES.has('Wallet'), 'Wallet must be advertised on every turn');
+});
+
+// ─── balance retry ────────────────────────────────────────────────────────
+
+test('retryFetchBalance: returns first non-zero result without retry', async () => {
+  const { retryFetchBalance } = await import('../dist/commands/balance-retry.js');
+  let calls = 0;
+  const fetchOnce = async () => {
+    calls++;
+    return 39.86;
+  };
+  const result = await retryFetchBalance(fetchOnce, { delayMs: 1 });
+  assert.equal(result, 39.86);
+  assert.equal(calls, 1, 'should not retry when first call returns non-zero');
+});
+
+test('retryFetchBalance: retries once when first call returns zero', async () => {
+  const { retryFetchBalance } = await import('../dist/commands/balance-retry.js');
+  let calls = 0;
+  const fetchOnce = async () => {
+    calls++;
+    return calls === 1 ? 0 : 39.86;
+  };
+  const result = await retryFetchBalance(fetchOnce, { delayMs: 1 });
+  assert.equal(result, 39.86);
+  assert.equal(calls, 2, 'should retry exactly once on zero');
+});
+
+test('retryFetchBalance: accepts persistent zero after retry', async () => {
+  const { retryFetchBalance } = await import('../dist/commands/balance-retry.js');
+  let calls = 0;
+  const fetchOnce = async () => {
+    calls++;
+    return 0;
+  };
+  const result = await retryFetchBalance(fetchOnce, { delayMs: 1 });
+  assert.equal(result, 0, 'genuinely-empty wallets must still resolve to zero');
+  assert.equal(calls, 2, 'caps at one retry');
+});
+
+test('retryFetchBalance: surfaces errors from the inner fetch', async () => {
+  const { retryFetchBalance } = await import('../dist/commands/balance-retry.js');
+  const fetchOnce = async () => {
+    throw new Error('rpc unreachable');
+  };
+  await assert.rejects(
+    () => retryFetchBalance(fetchOnce, { delayMs: 1 }),
+    /rpc unreachable/,
+  );
+});

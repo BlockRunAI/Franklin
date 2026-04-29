@@ -51,6 +51,9 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   // enough that every model tends to pick it correctly.
   'WebFetch',
   'WebSearch',
+  // Wallet read — Franklin is the agent with a wallet, so balance + chain
+  // + address must be a one-call answer rather than a Bash shell-out.
+  'Wallet',
 ]);
 
 /** True if this tool is always available without activation. */
