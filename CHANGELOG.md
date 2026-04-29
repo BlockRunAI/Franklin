@@ -1,5 +1,63 @@
 # Changelog
 
+## 3.9.0 — Skills MVP (Phase 1) + first-class Wallet tool + balance retry
+
+First minor bump since v3.8.0. Two themes: (1) Franklin learns to load
+Anthropic-compatible `SKILL.md` files as wallet-aware slash commands, and
+(2) wallet status becomes a first-class tool + the status-bar lock-at-zero
+bug is fixed.
+
+### Added
+
+- **Skills (Phase 1).** Franklin natively reads Anthropic-spec
+  `SKILL.md` files as prompt-rewrite slash commands. Bundled-only this
+  release; user-global and project-local discovery land in Phase 2.
+  - `src/skills/{loader,registry,invoke,bootstrap}.ts` — frontmatter
+    parser (Anthropic spec keys + Franklin extensions `cost-receipt` and
+    `budget-cap-usd`), conflict resolution (project > user > bundled,
+    first-wins tiebreaker), and pure dispatch via `matchSkill()` and
+    `substituteVariables()`.
+  - **Wallet variable injection.** Skill bodies can reference
+    `{{wallet_chain}}`, `{{per_turn_cap}}`, `{{spent_this_turn}}`, and
+    `{{turn_budget_remaining}}`; Franklin substitutes them at slash-
+    command time. Unknown variables stay literal so future variables
+    don't break old skills.
+  - `src/skills-bundled/budget-grill/SKILL.md` — first wallet-flavored
+    bundled skill: a grilling session where every option is framed in
+    USDC cost terms.
+  - `franklin skills [list|which <name>] [--json]` CLI for inspection.
+  - `/help` now shows a Skills block when the registry is non-empty.
+- **Wallet tool.** New first-class read-only `Wallet` capability in
+  `CORE_TOOL_NAMES` returns chain + address + USDC balance in a single
+  zero-arg call. The system prompt steers "balance / 钱包余额 / wallet
+  status" questions there explicitly so they no longer detour through
+  Bash + `franklin balance` + parse, which was burning ~13K input tokens
+  per natural-language balance query.
+- **`CONTEXT.md`** at the repo root — canonical glossary of 24
+  internal terms with explicit "Avoid" alternatives, an example
+  dialogue, and four flagged ambiguities.
+- **`docs/adr/`** — three architectural decision records: x402 as the
+  economic substrate, single BlockRun Gateway, and the harness-as-
+  removable-components discipline.
+
+### Fixed
+
+- **Status bar locked at $0.00 USDC on a funded wallet.** Some wallet
+  client paths return `0` transiently (chain provider not yet
+  initialized, RPC race) and the UI's live-balance formula
+  `Math.max(0, 0 − cost)` then locked the display at `$0.00` for the
+  rest of the session even after the wallet was provably non-empty.
+  `retryFetchBalance` now does one extra round-trip on a zero result;
+  genuinely empty wallets still resolve to `$0.00` quickly.
+
+### Notes
+
+- Skills are bundled-only this release. The frontmatter contract
+  (`cost-receipt: true` printing a receipt under the reply,
+  `budget-cap-usd` weaving into the per-turn cap) ships in Phase 2 along
+  with `~/.blockrun/skills/` user discovery, `.franklin/skills/` project
+  discovery, and `franklin skills install`.
+
 ## 3.8.44 — Release hygiene + changelog correction
 
 Small cleanup release after v3.8.43.
