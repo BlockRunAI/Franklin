@@ -45,6 +45,12 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   'google/gemini-2.5-pro': 65_536,
   'google/gemini-2.5-flash': 65_536,
   'deepseek/deepseek-chat': 8_192,
+  // Kimi K2.6 supports 65K output per the BlockRun gateway model entry
+  // (moonshot/kimi-k2.6 max_output: 65536). Without this entry the default
+  // 16K cap left users with 4× headroom on the table for long-form coding
+  // outputs and dashboard scaffolds the model can otherwise emit in a
+  // single response.
+  'moonshot/kimi-k2.6': 65_536,
 };
 
 /** Get max output tokens for a model */

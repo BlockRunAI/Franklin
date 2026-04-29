@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.9.2 — Kimi K2.6 alignment with the gateway
+
+The BlockRun gateway now exposes Kimi K2.6 with a 65K `max_output` cap and
+has retired the K2.5 endpoint that Franklin's picker still listed as a
+"legacy" option. Without this update K2.6 was capped at Franklin's default
+16K output (4× headroom on the table for long-form coding output) and
+users picking the K2.5 shortcut got routed to a model the gateway no
+longer serves.
+
+### Changed
+
+- **`moonshot/kimi-k2.6` max output bumped 16K → 65K.** Mirrors the
+  gateway's `max_output: 65536`. Long dashboard scaffolds, multi-file
+  refactors, and other workloads that exhausted the implicit 16K default
+  now get the full headroom on a single response.
+- **`kimi-k2.5` and `k2.5` shortcuts now resolve to `moonshot/kimi-k2.6`**
+  in both the agent picker and the proxy alias table. Same pattern used
+  for retired NVIDIA free-tier models in v3.9.0 — muscle memory keeps
+  working without surprise routing through a paid fallback.
+- **`Kimi K2.5 (legacy)` removed from the `/model` picker.** The K2.5
+  pricing entry stays in `src/pricing.ts` so historical session-cost
+  records keep computing correctly, consistent with how the picker
+  treats other gateway-retired models.
+
 ## 3.9.1 — Status bar shows chain + per-turn cap raised to $2
 
 User-visible follow-ups to v3.9.0. Two friction points users hit on real

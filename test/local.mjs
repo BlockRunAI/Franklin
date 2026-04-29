@@ -4507,3 +4507,36 @@ test('retryFetchBalance: surfaces errors from the inner fetch', async () => {
     /rpc unreachable/,
   );
 });
+
+// ─── Kimi K2.6 alignment with the gateway ────────────────────────────────
+
+test('kimi: getMaxOutputTokens(moonshot/kimi-k2.6) honors gateway 65K cap', async () => {
+  const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
+  assert.equal(getMaxOutputTokens('moonshot/kimi-k2.6'), 65_536);
+});
+
+test('kimi: K2.5 picker shortcuts now resolve to K2.6 (gateway retired K2.5)', async () => {
+  const { resolveModel } = await import('../dist/ui/model-picker.js');
+  assert.equal(resolveModel('kimi-k2.5'), 'moonshot/kimi-k2.6');
+  assert.equal(resolveModel('k2.5'), 'moonshot/kimi-k2.6');
+  assert.equal(resolveModel('kimi'), 'moonshot/kimi-k2.6');
+  assert.equal(resolveModel('k2.6'), 'moonshot/kimi-k2.6');
+});
+
+test('kimi: picker no longer lists the retired K2.5 entry', async () => {
+  const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
+  const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
+  assert.ok(!ids.includes('moonshot/kimi-k2.5'),
+    'moonshot/kimi-k2.5 should be removed from the picker (retired by the gateway)');
+  assert.ok(ids.includes('moonshot/kimi-k2.6'),
+    'moonshot/kimi-k2.6 must remain in the picker');
+});
+
+test('kimi: pricing keeps K2.5 entries for legacy session-cost records', async () => {
+  const { MODEL_PRICING } = await import('../dist/pricing.js');
+  // Keeping retired model pricing is the same pattern used for nvidia/gpt-oss-120b
+  // and similar — old session-cost records reference these IDs and must not crash.
+  assert.ok(MODEL_PRICING['moonshot/kimi-k2.5']);
+  assert.ok(MODEL_PRICING['nvidia/kimi-k2.5']);
+  assert.ok(MODEL_PRICING['moonshot/kimi-k2.6']);
+});

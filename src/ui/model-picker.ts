@@ -82,8 +82,11 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'glm5': 'zai/glm-5.1',
   kimi: 'moonshot/kimi-k2.6',
   'k2.6': 'moonshot/kimi-k2.6',
-  'kimi-k2.5': 'moonshot/kimi-k2.5',
-  'k2.5': 'moonshot/kimi-k2.5',
+  // K2.5 was retired by the gateway in favor of K2.6 (256K ctx, vision +
+  // reasoning, $0.95 in / $4 out — strictly better in every dimension).
+  // The aliases stay so muscle memory keeps working but resolve to K2.6.
+  'kimi-k2.5': 'moonshot/kimi-k2.6',
+  'k2.5': 'moonshot/kimi-k2.6',
 };
 
 /**
@@ -169,7 +172,6 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'google/gemini-2.5-flash',             shortcut: 'flash',    label: 'Gemini 2.5 Flash', price: '$0.3/$2.5' },
       { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V3',      price: '$0.28/$0.42' },
       { id: 'moonshot/kimi-k2.6',                  shortcut: 'kimi',     label: 'Kimi K2.6',        price: '$0.95/$4' },
-      { id: 'moonshot/kimi-k2.5',                  shortcut: 'kimi-k2.5', label: 'Kimi K2.5 (legacy)', price: '$0.6/$3' },
       { id: 'minimax/minimax-m2.7',                shortcut: 'minimax',  label: 'Minimax M2.7',     price: '$0.3/$1.2' },
     ],
   },
