@@ -77,7 +77,7 @@ Every feature decision should be tested against this positioning:
 - Does it make Franklin more of "the agent with a wallet"? → yes
 - Does it dilute us back to "another coding tool"? → no
 
-The moat is the payment layer. The category is Autonomous Economic Agent. The verticals are marketing and trading. Coding intelligence is table stakes — necessary but not the differentiator.
+The moat is the payment layer. The category is Autonomous Economic Agent. The verticals are Dev, Trading, and Content. Coding intelligence is table stakes — necessary but not the differentiator.
 
 **What sets Franklin apart:**
 - Most coding agents write great code but can't spend money to buy APIs, data, or ads
