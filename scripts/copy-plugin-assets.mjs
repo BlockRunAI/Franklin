@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Postbuild: copy plugin.json (and any non-TS assets) from src/plugins-bundled
- * to dist/plugins-bundled, since tsc only compiles .ts files.
+ * Postbuild: copy non-TS assets from `src/plugins-bundled` and
+ * `src/skills-bundled` into the matching `dist/` paths, since tsc only
+ * compiles .ts/.tsx.
  */
 
 import fs from 'node:fs';
@@ -10,36 +11,40 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const SRC = path.join(ROOT, 'src', 'plugins-bundled');
-const DIST = path.join(ROOT, 'dist', 'plugins-bundled');
 
-if (!fs.existsSync(SRC)) {
-  console.log('[copy-plugin-assets] no src/plugins-bundled directory, skipping');
-  process.exit(0);
-}
+const ASSET_TREES = [
+  { src: path.join(ROOT, 'src', 'plugins-bundled'), dist: path.join(ROOT, 'dist', 'plugins-bundled'), label: 'plugins-bundled' },
+  { src: path.join(ROOT, 'src', 'skills-bundled'),  dist: path.join(ROOT, 'dist', 'skills-bundled'),  label: 'skills-bundled' },
+];
 
-let copied = 0;
-
-function walk(dir, base) {
+function walk(srcRoot, distRoot, dir) {
+  let copied = 0;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     const srcPath = path.join(dir, entry.name);
-    const rel = path.relative(SRC, srcPath);
-    const distPath = path.join(DIST, rel);
+    const rel = path.relative(srcRoot, srcPath);
+    const distPath = path.join(distRoot, rel);
 
     if (entry.isDirectory()) {
-      walk(srcPath, base);
+      copied += walk(srcRoot, distRoot, srcPath);
     } else if (entry.isFile() && !entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) {
-      // Copy non-TS files (plugin.json, README, etc.)
+      // Copy non-TS files (plugin.json, README, SKILL.md, etc.)
       fs.mkdirSync(path.dirname(distPath), { recursive: true });
       fs.copyFileSync(srcPath, distPath);
       copied++;
     }
   }
+  return copied;
 }
 
-walk(SRC, SRC);
-console.log(`[copy-plugin-assets] copied ${copied} files to dist/plugins-bundled/`);
+for (const tree of ASSET_TREES) {
+  if (!fs.existsSync(tree.src)) {
+    console.log(`[copy-plugin-assets] no src/${tree.label} directory, skipping`);
+    continue;
+  }
+  const copied = walk(tree.src, tree.dist, tree.src);
+  console.log(`[copy-plugin-assets] copied ${copied} files to dist/${tree.label}/`);
+}
 
 // Ensure the CLI entry point stays executable. tsc drops the exec bit every
 // build, and without this a clean `rm -rf dist && npm run build` leaves
