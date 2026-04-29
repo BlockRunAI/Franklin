@@ -147,8 +147,8 @@ Workflows pick a tier per step; the runner resolves to actual models.
 
 | Tier | Default | When to use |
 |------|---------|-------------|
-| `free` | nvidia/nemotron-ultra-253b | Warmup, throwaway calls, $0 cost |
-| `cheap` | zai/glm-5.1 | Filtering, classification, ~$0.001/call |
+| `free` | nvidia/qwen3-coder-480b | Warmup, throwaway calls, $0 cost |
+| `cheap` | nvidia/qwen3-coder-480b | Filtering, classification, $0 cost by default |
 | `premium` | anthropic/claude-sonnet-4.6 | High-stakes content, ~$0.02/call |
 | `none` | (no model) | Steps that don't call LLMs |
 | `dynamic` | (runtime decision) | Step decides based on context |

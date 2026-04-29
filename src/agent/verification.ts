@@ -153,8 +153,8 @@ export async function runVerification(
 
   config.onEvent?.({ kind: 'text_delta', text: '\n*Verifying...*\n' });
 
-  // Use cheap model for verification
-  const verificationModel = 'nvidia/glm-4.7'; // Free model to keep cost zero
+  // Use agent-tested free model for verification.
+  const verificationModel = 'nvidia/qwen3-coder-480b';
 
   try {
     // Simple single-turn verification call

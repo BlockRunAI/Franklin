@@ -57,20 +57,22 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   // DeepSeek
   deepseek: 'deepseek/deepseek-chat',
   r1: 'deepseek/deepseek-reasoner',
-  // Free (BlockRun gateway free tier — refreshed 2026-04)
-  free: 'nvidia/glm-4.7',
-  glm4: 'nvidia/glm-4.7',
-  'deepseek-free': 'nvidia/deepseek-v3.2',
+  // Free (agent-tested BlockRun gateway free tier — refreshed 2026-04)
+  free: 'nvidia/qwen3-coder-480b',
+  glm4: 'nvidia/qwen3-coder-480b',
+  'deepseek-free': 'nvidia/qwen3-coder-480b',
   'qwen-coder': 'nvidia/qwen3-coder-480b',
-  'qwen-think': 'nvidia/qwen3-next-80b-a3b-thinking',
+  'qwen-think': 'nvidia/qwen3-coder-480b',
   maverick: 'nvidia/llama-4-maverick',
-  'gpt-oss': 'nvidia/gpt-oss-120b',
-  'gpt-oss-small': 'nvidia/gpt-oss-20b',
-  'mistral-small': 'nvidia/mistral-small-4-119b',
-  // Backward-compatibility aliases for models the gateway retired.
+  'gpt-oss': 'nvidia/qwen3-coder-480b',
+  'gpt-oss-small': 'nvidia/qwen3-coder-480b',
+  'mistral-small': 'nvidia/llama-4-maverick',
+  // Backward-compatibility aliases for models the gateway retired or exposes
+  // unreliably on /v1/messages. Map to agent-tested free models so shortcuts
+  // keep working without silent paid fallback or empty tool-use turns.
   // Map to the closest current free model so old session records + user
   // muscle memory keep working.
-  nemotron: 'nvidia/glm-4.7',
+  nemotron: 'nvidia/qwen3-coder-480b',
   devstral: 'nvidia/qwen3-coder-480b',
   // Others
   minimax: 'minimax/minimax-m2.7',
@@ -174,14 +176,8 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
   {
     category: '🆓 Free (no USDC needed)',
     models: [
-      { id: 'nvidia/glm-4.7',                   shortcut: 'free',          label: 'GLM-4.7',                   price: 'FREE' },
-      { id: 'nvidia/qwen3-next-80b-a3b-thinking', shortcut: 'qwen-think',  label: 'Qwen3-Next 80B Thinking',   price: 'FREE' },
-      { id: 'nvidia/qwen3-coder-480b',          shortcut: 'qwen-coder',    label: 'Qwen3 Coder 480B',          price: 'FREE' },
-      { id: 'nvidia/llama-4-maverick',          shortcut: 'maverick',      label: 'Llama 4 Maverick',          price: 'FREE' },
-      { id: 'nvidia/deepseek-v3.2',             shortcut: 'deepseek-free', label: 'DeepSeek V3.2',             price: 'FREE' },
-      { id: 'nvidia/gpt-oss-120b',              shortcut: 'gpt-oss',       label: 'GPT-OSS 120B',              price: 'FREE' },
-      { id: 'nvidia/gpt-oss-20b',               shortcut: 'gpt-oss-small', label: 'GPT-OSS 20B',               price: 'FREE' },
-      { id: 'nvidia/mistral-small-4-119b',      shortcut: 'mistral-small', label: 'Mistral Small 4 119B',      price: 'FREE' },
+      { id: 'nvidia/qwen3-coder-480b', shortcut: 'free',     label: 'Qwen3 Coder 480B', price: 'FREE' },
+      { id: 'nvidia/llama-4-maverick', shortcut: 'maverick', label: 'Llama 4 Maverick', price: 'FREE' },
     ],
   },
 ];

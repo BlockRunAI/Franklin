@@ -278,8 +278,8 @@ function getBackoffDelay(attempt: number, maxDelayMs = 32_000): number {
 export function isWeakModel(model: string): boolean {
   const m = model.toLowerCase();
   // NVIDIA-hosted open models have been observed confabulating tool calls.
-  // `blockrun/free` and `blockrun/eco` resolve to nvidia/nemotron-ultra in
-  // llm.ts, so catching the `nvidia/` prefix also catches those paths.
+  // `blockrun/free` resolves to an NVIDIA model before the API call, so
+  // catching the `nvidia/` prefix also catches the free-profile path.
   if (m.startsWith('nvidia/')) return true;
   if (m.includes('nemotron-ultra')) return true;
   if (m.includes('qwen3-coder')) return true;
@@ -1094,7 +1094,7 @@ export async function interactiveSession(
           if (lastRoutedCategory) {
             recordOutcome(lastRoutedCategory, config.model, 'payment');
           }
-          const FREE_MODELS = ['nvidia/glm-4.7', 'nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick', 'nvidia/qwen3-next-80b-a3b-thinking'];
+          const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick', 'nvidia/glm-4.7'];
           const nextFree = FREE_MODELS.find(m => !turnFailedModels.has(m));
           if (nextFree) {
             const oldModel = config.model;

@@ -323,7 +323,7 @@ test('session cost: /cost command shows cost info', { timeout: 60_000 }, async (
 });
 
 // ─── Weak-model polish regression tests ───────────────────────────────────
-// These run against a live weak model (nemotron is free) to verify the
+// These run against a live free model to verify the
 // polish round: <think> tag stripping, [TOOLCALL] guardrail, streaming
 // markdown sanitization. Use a trivial prompt so the assertions aren't
 // flaky against model creativity.
@@ -333,7 +333,7 @@ test('polish: weak model respects instruction without leaking <think> or [TOOLCA
   async (t) => {
     const result = await franklin(
       'reply with exactly and only this token: POLISH_PROBE_OK',
-      { model: 'nvidia/nemotron-ultra-253b', timeoutMs: 80_000 },
+      { model: 'nvidia/qwen3-coder-480b', timeoutMs: 80_000 },
     );
     if (skipIfRateLimited(t, result)) return;
     assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
@@ -453,7 +453,7 @@ test('session cost: estimateCost returns non-negative value for known model', { 
   assert.ok(cost <= 0.001, `GLM-5.1 is flat $0.001/call, got ${cost}`);
 
   // Free model should cost $0
-  const freeCost = estimateCost('nvidia/nemotron-ultra-253b', 1_000_000, 1_000_000);
+  const freeCost = estimateCost('nvidia/qwen3-coder-480b', 1_000_000, 1_000_000);
   assert.equal(freeCost, 0, `Expected $0 for free model, got ${freeCost}`);
 
   // Unknown model should return > 0 (falls back to $2/$10 per 1M)
