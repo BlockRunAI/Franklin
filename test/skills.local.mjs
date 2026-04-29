@@ -10,10 +10,36 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
 
 import { parseSkill, loadSkillsFromDir } from '../dist/skills/loader.js';
-import { substituteVariables } from '../dist/skills/invoke.js';
+import { substituteVariables, matchSkill } from '../dist/skills/invoke.js';
 import { Registry } from '../dist/skills/registry.js';
+import { loadBundledSkills, getSkillVars } from '../dist/skills/bootstrap.js';
+
+const DIST = new URL('../dist/index.js', import.meta.url).pathname;
+
+function runCli(args, { timeoutMs = 8000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('node', [DIST, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    const timer = setTimeout(() => {
+      proc.kill('SIGTERM');
+      reject(new Error(`Timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ stdout, stderr, code: code ?? 0 });
+    });
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
 
 function makeSkillDir(parent, name, content) {
   const dir = join(parent, name);
@@ -343,4 +369,149 @@ test('Registry: list ordering is deterministic by name', () => {
   ]);
   const names = reg.list().map((l) => l.skill.name);
   assert.deepEqual(names, ['alpha', 'mango', 'zebra']);
+});
+
+// ─── bootstrap ────────────────────────────────────────────────────────────
+
+test('loadBundledSkills includes budget-grill from src/skills-bundled', () => {
+  const result = loadBundledSkills();
+  assert.equal(result.errors.length, 0, `unexpected errors: ${JSON.stringify(result.errors)}`);
+  const skill = result.registry.lookup('budget-grill');
+  assert.ok(skill, 'expected budget-grill to be loaded');
+  assert.equal(skill.source, 'bundled');
+  assert.equal(skill.skill.costReceipt, true);
+  // Pre-substitution body keeps the placeholders intact for the dispatch
+  // layer to render against the live runtime context.
+  assert.match(skill.skill.body, /\$ARGUMENTS/);
+  assert.match(skill.skill.body, /\{\{wallet_chain\}\}/);
+  assert.match(skill.skill.body, /\{\{per_turn_cap\}\}/);
+});
+
+test('getSkillVars exposes synchronously-known runtime context', () => {
+  const vars = getSkillVars({ chain: 'base', perTurnCapUsd: 1.0 });
+  assert.equal(vars.wallet_chain, 'base');
+  assert.equal(vars.per_turn_cap, '1.00');
+  assert.equal(vars.spent_this_turn, '0.00');
+  assert.equal(vars.turn_budget_remaining, '1.00');
+  // wallet_balance requires async wallet query — deferred to Phase 2.
+  assert.equal(vars.wallet_balance, undefined);
+});
+
+test('getSkillVars formats per_turn_cap with two decimals across magnitudes', () => {
+  assert.equal(getSkillVars({ perTurnCapUsd: 0.5 }).per_turn_cap, '0.50');
+  assert.equal(getSkillVars({ perTurnCapUsd: 10 }).per_turn_cap, '10.00');
+});
+
+test('getSkillVars omits unknown fields when source is empty', () => {
+  const vars = getSkillVars({});
+  assert.equal(vars.wallet_chain, undefined);
+  assert.equal(vars.per_turn_cap, undefined);
+});
+
+// ─── matchSkill ───────────────────────────────────────────────────────────
+
+function makeRegistry(...skills) {
+  return Registry.fromLoaded(
+    skills.map((s, i) => ({
+      skill: s,
+      source: 'bundled',
+      path: `/fake/${s.name}/SKILL.md`,
+      warnings: [],
+    })),
+  );
+}
+
+test('matchSkill resolves a slash command with no args', () => {
+  const reg = makeRegistry({ name: 'foo', description: 'd', body: 'pure body' });
+  const result = matchSkill('/foo', reg, {});
+  assert.ok(result);
+  assert.equal(result.rewritten, 'pure body');
+});
+
+test('matchSkill resolves a slash command with args', () => {
+  const reg = makeRegistry({ name: 'foo', description: 'd', body: 'do: $ARGUMENTS' });
+  const result = matchSkill('/foo polish the readme', reg, {});
+  assert.ok(result);
+  assert.equal(result.rewritten, 'do: polish the readme');
+});
+
+test('matchSkill substitutes runtime variables before $ARGUMENTS expansion', () => {
+  const reg = makeRegistry({
+    name: 'budget-grill',
+    description: 'd',
+    body: 'on {{wallet_chain}} cap={{per_turn_cap}} task=$ARGUMENTS',
+  });
+  const vars = { wallet_chain: 'base', per_turn_cap: '1.00' };
+  const result = matchSkill('/budget-grill add login', reg, vars);
+  assert.equal(result.rewritten, 'on base cap=1.00 task=add login');
+});
+
+test('matchSkill returns null for unknown commands', () => {
+  const reg = makeRegistry({ name: 'foo', description: 'd', body: 'b' });
+  assert.equal(matchSkill('/bar', reg, {}), null);
+});
+
+test('matchSkill returns null for non-slash input', () => {
+  const reg = makeRegistry({ name: 'foo', description: 'd', body: 'b' });
+  assert.equal(matchSkill('not a slash command', reg, {}), null);
+});
+
+test('matchSkill returns null for bare slash', () => {
+  const reg = makeRegistry({ name: 'foo', description: 'd', body: 'b' });
+  assert.equal(matchSkill('/', reg, {}), null);
+});
+
+test('matchSkill: trailing whitespace in args is trimmed but interior preserved', () => {
+  const reg = makeRegistry({ name: 'foo', description: 'd', body: '$ARGUMENTS' });
+  const result = matchSkill('/foo   hello   world   ', reg, {});
+  assert.equal(result.rewritten, 'hello   world');
+});
+
+// ─── franklin skills CLI ──────────────────────────────────────────────────
+
+test('franklin skills lists the bundled budget-grill skill', { timeout: 15_000 }, async () => {
+  const result = await runCli(['skills']);
+  assert.equal(result.code, 0, `stderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
+  assert.match(result.stdout, /\/budget-grill/);
+  assert.match(result.stdout, /Wallet-aware grilling/);
+  assert.match(result.stdout, /receipt/, 'cost-receipt flag should appear');
+  assert.match(result.stdout, /\(bundled\)/);
+});
+
+test('franklin skills --json emits a parseable structure', { timeout: 15_000 }, async () => {
+  const result = await runCli(['skills', '--json']);
+  assert.equal(result.code, 0);
+  const data = JSON.parse(result.stdout);
+  assert.ok(Array.isArray(data.skills));
+  const grill = data.skills.find((s) => s.name === 'budget-grill');
+  assert.ok(grill, 'budget-grill should appear in JSON output');
+  assert.equal(grill.source, 'bundled');
+  assert.equal(grill.costReceipt, true);
+});
+
+test('franklin skills which prints the bundled SKILL.md path', { timeout: 15_000 }, async () => {
+  const result = await runCli(['skills', 'which', 'budget-grill']);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /skills-bundled[/\\]budget-grill[/\\]SKILL\.md/);
+});
+
+test('franklin skills which exits non-zero for unknown skill', { timeout: 15_000 }, async () => {
+  const result = await runCli(['skills', 'which', 'nonexistent']);
+  assert.notEqual(result.code, 0);
+  assert.match(result.stdout, /not found/i);
+});
+
+test('substituteVariables wired with bundled skill + getSkillVars produces expected interpolation', () => {
+  const result = loadBundledSkills();
+  const skill = result.registry.lookup('budget-grill');
+  const vars = getSkillVars({ chain: 'solana', perTurnCapUsd: 0.75 });
+  const out = substituteVariables(skill.skill.body, vars, 'add a feature');
+  assert.match(out, /on solana/);
+  assert.match(out, /per-turn spend cap of 0\.75 USDC/);
+  assert.match(out, /add a feature\n?$/);
+  // Confirm no leftover known-var placeholders in the rendered output.
+  assert.doesNotMatch(out, /\{\{wallet_chain\}\}/);
+  assert.doesNotMatch(out, /\{\{per_turn_cap\}\}/);
+  assert.doesNotMatch(out, /\{\{spent_this_turn\}\}/);
+  assert.doesNotMatch(out, /\{\{turn_budget_remaining\}\}/);
 });

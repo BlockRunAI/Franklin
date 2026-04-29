@@ -167,6 +167,20 @@ program
     process.stdout.write(formatSearchResults(matches, query));
   });
 
+// ─── franklin skills (file-loaded SKILL.md slash commands) ───────────────
+program
+  .command('skills [action] [arg]')
+  .description('Manage Franklin skills — list | which <name>')
+  .option('--json', 'Output the skill list as JSON')
+  .action(async (
+    action: string | undefined,
+    arg: string | undefined,
+    opts: { json?: boolean }
+  ) => {
+    const { skillsCommand } = await import('./commands/skills.js');
+    await skillsCommand(action, arg, opts);
+  });
+
 // ─── franklin social (native X bot) ───────────────────────────────────────
 // First-class subcommand. Handles setup / login / run / stats / config
 // subactions. No plugin SDK, no MCP — everything lives in src/social/.

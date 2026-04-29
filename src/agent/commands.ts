@@ -22,6 +22,8 @@ import {
   loadSessionHistory,
   type SessionMeta,
 } from '../session/storage.js';
+import type { Registry } from '../skills/registry.js';
+import { matchSkill } from '../skills/invoke.js';
 
 type EventEmitter = (event: StreamEvent) => void;
 
@@ -31,6 +33,10 @@ interface CommandContext {
   client: ModelClient;
   sessionId: string;
   onEvent: EventEmitter;
+  /** Skills loaded for this session — see src/skills/. */
+  skillRegistry?: Registry;
+  /** Runtime variables substituted into skill bodies before $ARGUMENTS. */
+  skillVars?: Record<string, string>;
 }
 
 interface CommandResult {
@@ -216,6 +222,20 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
   },
   '/help': (ctx) => {
     const ultrathinkOn = (ctx.config as { ultrathink?: boolean }).ultrathink;
+    let skillsBlock = '';
+    if (ctx.skillRegistry) {
+      const visible = ctx.skillRegistry
+        .list()
+        .filter((l) => !l.skill.disableModelInvocation);
+      if (visible.length > 0) {
+        skillsBlock =
+          `\n  **Skills:**\n` +
+          visible
+            .map((l) => `    /${l.skill.name.padEnd(22)} ${l.skill.description}`)
+            .join('\n') +
+          `\n`;
+      }
+    }
     ctx.onEvent({ kind: 'text_delta', text:
       `**RunCode Commands**\n\n` +
       `  **Coding:** /commit /review /test /fix /debug /explain /search /find /refactor /scaffold\n` +
@@ -225,6 +245,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
       `  **Power:** /ultrathink [query] /ultraplan /noplan /moa [query] /dump\n` +
       `  **Info:** /model /auto /wallet /cost /tokens /learnings /brain /mcp /doctor /version /bug /help\n` +
       `  **UI:** /clear /exit\n` +
+      skillsBlock +
       (ultrathinkOn ? `\n  Ultrathink: ON\n` : '')
     });
     emitDone(ctx);
@@ -951,11 +972,24 @@ export async function handleSlashCommand(
     }
   }
 
+  // File-loaded skills — registered after built-ins so `/security` etc.
+  // are never shadowed by a user-installed skill of the same name.
+  if (ctx.skillRegistry) {
+    const skillResult = matchSkill(input, ctx.skillRegistry, ctx.skillVars ?? {});
+    if (skillResult) {
+      return { handled: false, rewritten: skillResult.rewritten };
+    }
+  }
+
   // Not a recognized command — suggest closest match
+  const skillNames = ctx.skillRegistry
+    ? ctx.skillRegistry.list().map((s) => `/${s.skill.name}`)
+    : [];
   const allCommands = [
     ...Object.keys(DIRECT_COMMANDS),
     ...Object.keys(REWRITE_COMMANDS),
     ...ARG_COMMANDS.map(c => c.prefix.trim()),
+    ...skillNames,
     '/branch', '/resume', '/model', '/auto', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures',
   ];
   const cmd = input.split(/\s/)[0];

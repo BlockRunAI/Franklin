@@ -7,6 +7,7 @@ import { ModelClient } from './llm.js';
 import { autoCompactIfNeeded, forceCompact, microCompact } from './compact.js';
 import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor, getAnchoredTokenCount, getContextWindow, setEstimationModel } from './tokens.js';
 import { handleSlashCommand } from './commands.js';
+import { loadBundledSkills, getSkillVars } from '../skills/bootstrap.js';
 import { reduceTokens } from './reduce.js';
 import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
@@ -357,6 +358,18 @@ export async function interactiveSession(
   let lastUserInput = ''; // For /retry
   config.baseModel = config.model; // User's intended model — /model command updates this
   let turnFailedModels = new Set<string>(); // Models that failed this turn (cleared each new turn)
+
+  // ── Skills (file-loaded SKILL.md prompt-rewrite slash commands) ──
+  // Bundled-only in Phase 1 of the skills MVP. User-global and project-local
+  // discovery + the budget-cap-usd / cost-receipt enforcement contract land
+  // in Phase 2 — see docs/plans/2026-04-29-franklin-skills-mvp-design.md.
+  const skillBoot = loadBundledSkills();
+  if (skillBoot.errors.length > 0 && config.debug) {
+    for (const err of skillBoot.errors) {
+      onEvent({ kind: 'text_delta', text: `[skills] ${err.path}: ${err.error}\n` });
+    }
+  }
+  const skillRegistry = skillBoot.registry;
   // Track models that failed with 402 (payment required) across turns.
   // These persist until the session ends — unlike transient errors, payment failures
   // will keep failing until the user adds funds. Map stores failure timestamp for future TTL.
@@ -447,6 +460,17 @@ export async function interactiveSession(
       } else {
         const cmdResult = await handleSlashCommand(input, {
           history, config, client, sessionId, onEvent,
+          skillRegistry,
+          skillVars: getSkillVars({
+            chain: config.chain,
+            perTurnCapUsd: (() => {
+              const raw = loadConfig()['max-turn-spend-usd'];
+              if (raw == null) return 1.0;
+              const n = Number(raw);
+              if (!Number.isFinite(n)) return 1.0;
+              return n <= 0 ? Infinity : n;
+            })(),
+          }),
         });
         if (cmdResult.handled) continue;
         if (cmdResult.rewritten) input = cmdResult.rewritten;
