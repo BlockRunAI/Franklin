@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { loadChain, API_URLS } from '../config.js';
+import { retryFetchBalance } from './balance-retry.js';
 import { flushStats, loadStats } from '../stats/tracker.js';
 import { OPUS_PRICING } from '../pricing.js';
 import { loadConfig } from './config.js';
@@ -210,19 +211,25 @@ export async function startCommand(options: StartOptions) {
   console.log(chalk.dim('  Help:      ') + chalk.cyan('/help'));
   console.log('');
 
-  // Balance fetcher — used at startup and after each turn
+  // Balance fetcher — used at startup and after each turn.
+  //
+  // Some wallet client paths return 0 transiently (chain provider not yet
+  // initialized, RPC dust race). Without a defensive retry the UI's status
+  // bar locks at $0.00 USDC for the rest of the session even after the wallet
+  // is provably non-empty. retryFetchBalance does one extra round-trip on a
+  // zero result; genuinely empty wallets still resolve to $0.00 quickly.
   const fetchBalance = async (): Promise<string> => {
     try {
-      let bal: number;
-      if (chain === 'solana') {
-        const { setupAgentSolanaWallet } = await import('@blockrun/llm');
-        const client = await setupAgentSolanaWallet({ silent: true });
-        bal = await client.getBalance();
-      } else {
+      const bal = await retryFetchBalance(async () => {
+        if (chain === 'solana') {
+          const { setupAgentSolanaWallet } = await import('@blockrun/llm');
+          const client = await setupAgentSolanaWallet({ silent: true });
+          return client.getBalance();
+        }
         const { setupAgentWallet } = await import('@blockrun/llm');
         const client = setupAgentWallet({ silent: true });
-        bal = await client.getBalance();
-      }
+        return client.getBalance();
+      });
       return `$${bal.toFixed(2)} USDC`;
     } catch {
       return '$?.?? USDC';
