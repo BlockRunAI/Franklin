@@ -355,12 +355,12 @@ export class ModelClient {
     // Static fallback if router is unavailable. Default to FREE model so
     // users aren't silently charged when their intended model can't resolve.
     const FALLBACKS: Record<string, string> = {
-      'blockrun/auto': 'nvidia/glm-4.7',
-      'blockrun/eco': 'nvidia/glm-4.7',
+      'blockrun/auto': 'nvidia/qwen3-coder-480b',
+      'blockrun/eco': 'nvidia/qwen3-coder-480b',
       'blockrun/premium': 'anthropic/claude-sonnet-4.6',
-      'blockrun/free': 'nvidia/glm-4.7',
+      'blockrun/free': 'nvidia/qwen3-coder-480b',
     };
-    return FALLBACKS[model] || 'nvidia/glm-4.7';
+    return FALLBACKS[model] || 'nvidia/qwen3-coder-480b';
   }
 
   async *streamCompletion(

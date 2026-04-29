@@ -84,20 +84,20 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
 
 const ECO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
-    primary: 'nvidia/glm-4.7',
-    fallback: ['nvidia/gpt-oss-120b', 'nvidia/deepseek-v3.2'],
+    primary: 'nvidia/qwen3-coder-480b',
+    fallback: ['nvidia/llama-4-maverick'],
   },
   MEDIUM: {
     primary: 'google/gemini-2.5-flash-lite',
-    fallback: ['nvidia/glm-4.7', 'nvidia/qwen3-coder-480b'],
+    fallback: ['nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick'],
   },
   COMPLEX: {
     primary: 'google/gemini-2.5-flash-lite',
-    fallback: ['deepseek/deepseek-chat', 'nvidia/glm-4.7'],
+    fallback: ['deepseek/deepseek-chat', 'nvidia/qwen3-coder-480b'],
   },
   REASONING: {
     primary: 'xai/grok-4-1-fast-reasoning',
-    fallback: ['deepseek/deepseek-reasoner', 'nvidia/qwen3-next-80b-a3b-thinking'],
+    fallback: ['deepseek/deepseek-reasoner', 'nvidia/qwen3-coder-480b'],
   },
 };
 
@@ -465,7 +465,7 @@ export function resolveTierToModel(tier: Tier, profile: RoutingProfile = 'auto')
   // Free profile short-circuits — everything routes to a single free model.
   if (profile === 'free') {
     return {
-      model: 'nvidia/glm-4.7',
+      model: 'nvidia/qwen3-coder-480b',
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: ['free-profile'],
@@ -497,7 +497,7 @@ export function routeRequest(
   // Free profile — always use free model
   if (profile === 'free') {
     return {
-      model: 'nvidia/glm-4.7',
+      model: 'nvidia/qwen3-coder-480b',
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: ['free-profile'],
@@ -581,7 +581,7 @@ export function getFallbackChain(
       tierConfigs = PREMIUM_TIERS;
       break;
     case 'free':
-      return ['nvidia/glm-4.7'];
+      return ['nvidia/qwen3-coder-480b'];
     default:
       tierConfigs = AUTO_TIERS;
   }

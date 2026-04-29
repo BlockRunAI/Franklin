@@ -190,18 +190,18 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   // DeepSeek
   deepseek: 'deepseek/deepseek-chat',
   r1: 'deepseek/deepseek-reasoner',
-  // Free models (gateway free tier — refreshed 2026-04)
-  free: 'nvidia/glm-4.7',
-  glm4: 'nvidia/glm-4.7',
-  'deepseek-free': 'nvidia/deepseek-v3.2',
+  // Free models (agent-tested gateway free tier — refreshed 2026-04)
+  free: 'nvidia/qwen3-coder-480b',
+  glm4: 'nvidia/qwen3-coder-480b',
+  'deepseek-free': 'nvidia/qwen3-coder-480b',
   'qwen-coder': 'nvidia/qwen3-coder-480b',
-  'qwen-think': 'nvidia/qwen3-next-80b-a3b-thinking',
+  'qwen-think': 'nvidia/qwen3-coder-480b',
   maverick: 'nvidia/llama-4-maverick',
-  'gpt-oss': 'nvidia/gpt-oss-120b',
-  'gpt-oss-small': 'nvidia/gpt-oss-20b',
-  'mistral-small': 'nvidia/mistral-small-4-119b',
-  // Retired-gateway-model aliases (map to closest current).
-  nemotron: 'nvidia/glm-4.7',
+  'gpt-oss': 'nvidia/qwen3-coder-480b',
+  'gpt-oss-small': 'nvidia/qwen3-coder-480b',
+  'mistral-small': 'nvidia/llama-4-maverick',
+  // Retired/unreliable gateway-model aliases (map to closest agent-tested current).
+  nemotron: 'nvidia/qwen3-coder-480b',
   devstral: 'nvidia/qwen3-coder-480b',
   // Minimax
   minimax: 'minimax/minimax-m2.7',

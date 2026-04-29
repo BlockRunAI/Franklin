@@ -519,7 +519,7 @@ function formatCompactSummary(raw: string): string {
 function pickCompactionModel(primaryModel: string): string {
   // Free parent → free compaction (no silent charge)
   if (primaryModel.startsWith('nvidia/') || primaryModel === 'blockrun/free') {
-    return 'nvidia/glm-4.7';
+    return 'nvidia/qwen3-coder-480b';
   }
   // Use cheapest capable model for summarization to save cost
   // Tier down: opus/pro → sonnet, sonnet → haiku, everything else → flash (cheapest capable)

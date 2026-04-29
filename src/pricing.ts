@@ -16,9 +16,9 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'nvidia/mistral-small-4-119b': { input: 0, output: 0 },
   'nvidia/llama-4-maverick': { input: 0, output: 0 },
   'nvidia/deepseek-v3.2': { input: 0, output: 0 },
+  // Retired (kept at 0 for legacy session-cost records; gateway no longer serves these).
   'nvidia/gpt-oss-120b': { input: 0, output: 0 },
   'nvidia/gpt-oss-20b': { input: 0, output: 0 },
-  // Retired (kept at 0 for legacy session-cost records; gateway no longer serves these).
   'nvidia/nemotron-ultra-253b': { input: 0, output: 0 },
   'nvidia/devstral-2-123b': { input: 0, output: 0 },
   'nvidia/nemotron-3-super-120b': { input: 0, output: 0 },

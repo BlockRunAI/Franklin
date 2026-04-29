@@ -111,7 +111,7 @@ test('flags-only start options still honor --version without launching the agent
 
 test('--prompt one-shot mode skips interactive startup chatter', async () => {
   const result = await runCli('', {
-    args: [DIST, '--model', 'nvidia/nemotron-ultra-253b', '--prompt', '/exit'],
+    args: [DIST, '--model', 'nvidia/qwen3-coder-480b', '--prompt', '/exit'],
   });
 
   assert.equal(result.code, 0, `CLI exited non-zero.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
@@ -123,7 +123,7 @@ test('--prompt one-shot mode skips interactive startup chatter', async () => {
 
 test('--prompt preserves non-zero exit code through the CLI entrypoint', async () => {
   const result = await runCli('', {
-    args: [DIST, '--model', 'nvidia/nemotron-ultra-253b', '--prompt', 'hello', '--resume'],
+    args: [DIST, '--model', 'nvidia/qwen3-coder-480b', '--prompt', 'hello', '--resume'],
   });
 
   assert.equal(result.code, 1, `Expected exit 1 when --prompt is paired with picker-style --resume.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
@@ -257,6 +257,36 @@ test('proxy server handles OPTIONS and local model switching without backend cal
       suffixPayload.content?.[0]?.text?.includes('Switched to **moonshot/kimi-k2.6**'),
       `Unexpected suffix switch payload: ${JSON.stringify(suffixPayload)}`
     );
+
+    const freeSwitches = {
+      free: 'nvidia/qwen3-coder-480b',
+      glm4: 'nvidia/qwen3-coder-480b',
+      'qwen-think': 'nvidia/qwen3-coder-480b',
+      'qwen-coder': 'nvidia/qwen3-coder-480b',
+      maverick: 'nvidia/llama-4-maverick',
+      'deepseek-free': 'nvidia/qwen3-coder-480b',
+      'gpt-oss': 'nvidia/qwen3-coder-480b',
+      'gpt-oss-small': 'nvidia/qwen3-coder-480b',
+      'mistral-small': 'nvidia/llama-4-maverick',
+      nemotron: 'nvidia/qwen3-coder-480b',
+      devstral: 'nvidia/qwen3-coder-480b',
+    };
+    for (const [shortcut, expectedModel] of Object.entries(freeSwitches)) {
+      const freeSwitchRes = await fetch(`http://127.0.0.1:${port}/api/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: `use ${shortcut}` }],
+        }),
+      });
+      assert.equal(freeSwitchRes.status, 200, `Expected free switch ${shortcut} response 200, got ${freeSwitchRes.status}`);
+      const freePayload = await freeSwitchRes.json();
+      assert.equal(freePayload.model, expectedModel, `Proxy shortcut ${shortcut} drifted`);
+      assert.ok(
+        freePayload.content?.[0]?.text?.includes(`Switched to **${expectedModel}**`),
+        `Unexpected free switch payload for ${shortcut}: ${JSON.stringify(freePayload)}`
+      );
+    }
   } finally {
     if (server) {
       await new Promise((resolve) => server.close(() => resolve()));
@@ -4020,9 +4050,95 @@ test('router eco complex fallback chain stays on live models', async () => {
   assert.deepEqual(chain, [
     'google/gemini-2.5-flash-lite',
     'deepseek/deepseek-chat',
-    'nvidia/glm-4.7',
+    'nvidia/qwen3-coder-480b',
   ]);
   assert.ok(!chain.includes('nvidia/mistral-large-3-675b'));
+});
+
+test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay aligned', async () => {
+  const { MODEL_PRICING, estimateCost } = await import('../dist/pricing.js');
+  const { isWeakModel } = await import('../dist/agent/loop.js');
+  const { MODEL_SHORTCUTS, PICKER_CATEGORIES, resolveModel } = await import('../dist/ui/model-picker.js');
+
+  const freeCategory = PICKER_CATEGORIES.find((category) => /Free/.test(category.category));
+  assert.ok(freeCategory, 'Expected a free model picker category');
+  assert.ok(freeCategory.models.length >= 2, `Expected agent-tested free model catalog, got ${freeCategory.models.length}`);
+
+  for (const entry of freeCategory.models) {
+    assert.equal(entry.price, 'FREE', `${entry.id} must render as FREE in the picker`);
+    assert.ok(entry.id.startsWith('nvidia/'), `${entry.id} should stay on the free NVIDIA tier`);
+    assert.equal(resolveModel(entry.shortcut), entry.id, `Picker shortcut ${entry.shortcut} drifted`);
+
+    const pricing = MODEL_PRICING[entry.id];
+    assert.ok(pricing, `${entry.id} missing from MODEL_PRICING`);
+    assert.equal(pricing.input, 0, `${entry.id} input price must be zero`);
+    assert.equal(pricing.output, 0, `${entry.id} output price must be zero`);
+    assert.equal(pricing.perCall ?? 0, 0, `${entry.id} must not gain per-call pricing`);
+    assert.equal(estimateCost(entry.id, 1_000_000, 1_000_000), 0, `${entry.id} should estimate to $0`);
+    assert.equal(isWeakModel(entry.id), true, `${entry.id} should receive weak/free-model guardrails`);
+  }
+
+  const freeAliases = {
+    free: 'nvidia/qwen3-coder-480b',
+    glm4: 'nvidia/qwen3-coder-480b',
+    'qwen-think': 'nvidia/qwen3-coder-480b',
+    'qwen-coder': 'nvidia/qwen3-coder-480b',
+    maverick: 'nvidia/llama-4-maverick',
+    'deepseek-free': 'nvidia/qwen3-coder-480b',
+    'gpt-oss': 'nvidia/qwen3-coder-480b',
+    'gpt-oss-small': 'nvidia/qwen3-coder-480b',
+    'mistral-small': 'nvidia/llama-4-maverick',
+    nemotron: 'nvidia/qwen3-coder-480b',
+    devstral: 'nvidia/qwen3-coder-480b',
+  };
+
+  for (const [shortcut, expectedModel] of Object.entries(freeAliases)) {
+    assert.equal(MODEL_SHORTCUTS[shortcut], expectedModel, `MODEL_SHORTCUTS.${shortcut} drifted`);
+    assert.equal(resolveModel(shortcut), expectedModel, `resolveModel(${shortcut}) drifted`);
+    assert.equal(estimateCost(expectedModel, 100_000, 100_000), 0, `${shortcut} resolves to a non-free model`);
+  }
+});
+
+test('free routing profile stays free across router entry points', async () => {
+  const {
+    getFallbackChain,
+    parseRoutingProfile,
+    resolveTierToModel,
+    routeRequest,
+    routeRequestAsync,
+  } = await import('../dist/router/index.js');
+
+  assert.equal(parseRoutingProfile('free'), 'free');
+  assert.equal(parseRoutingProfile('blockrun/free'), 'free');
+
+  const prompts = [
+    'hello',
+    'fix the failing tests and update the docs',
+    'prove this theorem step by step',
+    'CRCL 要不要卖，为什么？',
+  ];
+
+  for (const prompt of prompts) {
+    const routed = routeRequest(prompt, 'free');
+    assert.equal(routed.model, 'nvidia/qwen3-coder-480b', `routeRequest free drifted for prompt: ${prompt}`);
+    assert.equal(routed.tier, 'SIMPLE');
+    assert.deepEqual(routed.signals, ['free-profile']);
+  }
+
+  let classifierCalled = false;
+  const asyncRouted = await routeRequestAsync('prove this theorem step by step', 'free', async () => {
+    classifierCalled = true;
+    return 'REASONING';
+  });
+  assert.equal(classifierCalled, false, 'free profile should not spend a classifier call');
+  assert.equal(asyncRouted.model, 'nvidia/qwen3-coder-480b');
+  assert.deepEqual(asyncRouted.signals, ['free-profile']);
+
+  for (const tier of ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING']) {
+    const resolved = resolveTierToModel(tier, 'free');
+    assert.equal(resolved.model, 'nvidia/qwen3-coder-480b', `resolveTierToModel free drifted for ${tier}`);
+    assert.deepEqual(getFallbackChain(tier, 'free'), ['nvidia/qwen3-coder-480b'], `free fallback chain drifted for ${tier}`);
+  }
 });
 
 test('evaluator: shouldCheckGrounding gates on input/answer length + slash commands', async () => {

@@ -105,7 +105,7 @@ Concretely — $1 in USDC gets you roughly:
 - ~13M Gemini Flash tokens
 - ~20 DALL-E 3 images
 - ~40 Exa neural web searches
-- Unlimited NVIDIA GPT-OSS (free tier, no wallet needed)
+- Unlimited agent-tested NVIDIA free tier (Qwen3 Coder + Llama 4 Maverick, no wallet needed)
 
 ---
 
@@ -440,7 +440,7 @@ src/
 Start with **zero dollars**. Franklin defaults to free NVIDIA models that need no wallet funding.
 
 ```bash
-franklin --model nvidia/qwen3-next-80b-a3b-thinking
+franklin --model free
 ```
 
 When you fund the wallet, Franklin gets more purchasing power: Sonnet, Opus, GPT, Gemini, Grok, and paid tools like Exa, DALL-E, and CoinGecko Pro.
@@ -493,6 +493,7 @@ npm install
 npm run build
 npm test              # deterministic local tests — no API calls
 npm run test:e2e      # live e2e tests — free smoke works unfunded; paid tools need network + funded wallet
+npm run test:free-models # live matrix across current free NVIDIA models
 node dist/index.js --help
 ```
 
