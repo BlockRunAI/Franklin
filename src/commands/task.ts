@@ -8,9 +8,12 @@
  *   - wait    : block until terminal, exit 0/1/2 by outcome
  */
 
+import fs from 'node:fs';
 import { Command } from 'commander';
-import { listTasks } from '../tasks/store.js';
+import { listTasks, readTaskMeta } from '../tasks/store.js';
 import { reconcileLostTasks } from '../tasks/lost-detection.js';
+import { taskLogPath } from '../tasks/paths.js';
+import { isTerminalTaskStatus } from '../tasks/types.js';
 
 function fmtAge(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -37,6 +40,44 @@ export function buildTaskCommand(): Command {
       for (const t of tasks) {
         const age = fmtAge(now - (t.lastEventAt ?? t.createdAt));
         console.log(`${t.runId}  ${t.status.padEnd(10)}  ${age.padStart(5)}  ${t.label}`);
+      }
+    });
+
+  cmd
+    .command('tail <runId>')
+    .description('Print log + current status for a task')
+    .option('-f, --follow', 'Poll until task reaches terminal state')
+    .action(async (runId: string, opts: { follow?: boolean }) => {
+      const meta0 = readTaskMeta(runId);
+      if (!meta0) {
+        console.error(`No task: ${runId}`);
+        process.exit(1);
+      }
+      let printed = 0;
+      const printNew = () => {
+        try {
+          const buf = fs.readFileSync(taskLogPath(runId));
+          if (buf.length > printed) {
+            process.stdout.write(buf.subarray(printed));
+            printed = buf.length;
+          }
+        } catch {
+          /* log not yet written */
+        }
+      };
+      printNew();
+      if (opts.follow) {
+        while (true) {
+          await new Promise((r) => setTimeout(r, 1000));
+          printNew();
+          const meta = readTaskMeta(runId);
+          if (meta && isTerminalTaskStatus(meta.status)) break;
+        }
+      }
+      const meta = readTaskMeta(runId);
+      if (meta) {
+        console.log(`\n--- ${meta.status} ---`);
+        if (meta.terminalSummary) console.log(meta.terminalSummary);
       }
     });
 

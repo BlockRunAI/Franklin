@@ -5072,3 +5072,40 @@ test('cli: franklin task list prints recent tasks', async () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('cli: franklin task tail <runId> prints log + status', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta } = await import('../dist/tasks/store.js');
+  const { ensureTaskDir, taskLogPath } = await import('../dist/tasks/paths.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'tail-test';
+    writeTaskMeta({ runId, runtime: 'detached-bash', label: 'tail',
+                    command: 'true', workingDir: '/tmp',
+                    status: 'succeeded', createdAt: 100, endedAt: 200,
+                    terminalSummary: 'all good' });
+    ensureTaskDir(runId);
+    fs.writeFileSync(taskLogPath(runId), 'line1\nline2\n');
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, 'task', 'tail', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+    });
+    assert.equal(result.status, 0, result.stderr.toString());
+    const out = result.stdout.toString();
+    assert.match(out, /line1/);
+    assert.match(out, /line2/);
+    assert.match(out, /succeeded/);
+    assert.match(out, /all good/);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
