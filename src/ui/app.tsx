@@ -360,12 +360,7 @@ function RunCodeApp({
       return next.length > 300 ? next.slice(-300) : next;
     });
 
-    const allLines = text.split('\n');
-    if (allLines.length > 20) {
-      setResponsePreview('  ↑ scroll to see full reply\n' + allLines.slice(-20).join('\n'));
-    } else {
-      setResponsePreview('');
-    }
+    setResponsePreview('');
   }, []);
 
   // Permission dialog key handler — captures y/n/a when dialog is visible.
