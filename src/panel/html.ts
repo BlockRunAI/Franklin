@@ -780,8 +780,15 @@ async function loadOverview() {
     document.getElementById('period-info').textContent = stats.period || '';
 
     if (stats.opusCost > 0) {
-      const saved = stats.saved || (stats.opusCost - stats.totalCostUsd);
-      const pct = stats.savedPct || ((1 - stats.totalCostUsd / stats.opusCost) * 100);
+      // tracker.ts now returns saved already clamped to >= 0 and opusCost
+      // already inclusive of media (so comparing to totalCostUsd is
+      // apples-to-apples). Older summaries — or the rare path where saved
+      // is undefined — get the same Math.max clamp here so the panel
+      // never shows a negative dollar amount.
+      const saved = Math.max(0, stats.saved != null ? stats.saved : (stats.opusCost - stats.totalCostUsd));
+      const pct = stats.savedPct != null
+        ? Math.max(0, stats.savedPct)
+        : (stats.opusCost > 0 ? Math.max(0, (saved / stats.opusCost) * 100) : 0);
       document.getElementById('savings-hero').style.display = 'flex';
       document.getElementById('savings-amount').textContent = usdBig(saved);
       document.getElementById('savings-pct').textContent = pct.toFixed(0) + '%';

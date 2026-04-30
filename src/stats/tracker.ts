@@ -257,6 +257,10 @@ export function recordUsage(
 export function getStatsSummary(): {
   stats: Stats;
   opusCost: number;
+  /** All chat / token-billed model spend (excludes image / video / music). */
+  chatOnlyCost: number;
+  /** Per-image / per-second / per-track media generation spend. */
+  mediaCost: number;
   saved: number;
   savedPct: number;
   avgCostPerRequest: number;
@@ -264,12 +268,36 @@ export function getStatsSummary(): {
 } {
   const stats = loadStats();
 
-  // Calculate what it would cost with the Opus-tier baseline
-  const opusCost =
+  // Hypothetical "if you'd used Opus for everything" baseline. Opus is a
+  // chat model — it can't replace ImageGen / VideoGen / Music (per_image,
+  // per_second, per_track billing), so for those rows the Opus-equivalent
+  // cost IS just the actual cost (no alternative). For chat rows, the
+  // baseline is the same tokens repriced at Opus rates.
+  //
+  // Walk byModel: rows with zero tokens are media (recordUsage stores
+  // image/video calls with inputTokens=0 outputTokens=0). Those count
+  // towards both sides equally; chat rows count at actual price on the
+  // "actual" side and at Opus rates on the "baseline" side. Keeping them
+  // on both sides means the displayed totals match the user's real
+  // spend rather than an unfamiliar chat-only subset.
+  let chatOnlyCost = 0;
+  let mediaCost = 0;
+  for (const m of Object.values(stats.byModel)) {
+    if ((m.inputTokens + m.outputTokens) > 0) chatOnlyCost += m.costUsd;
+    else mediaCost += m.costUsd;
+  }
+  const opusChatCost =
     (stats.totalInputTokens / 1_000_000) * OPUS_PRICING.input +
     (stats.totalOutputTokens / 1_000_000) * OPUS_PRICING.output;
+  // Display-side baseline: include media on both sides so "you spent X
+  // instead of Y" shows real, comparable totals.
+  const opusCost = opusChatCost + mediaCost;
 
-  const saved = opusCost - stats.totalCostUsd;
+  // Saved is the chat-side delta only — media nets to zero. Clamp to 0
+  // so a session where the user paid more than Opus-equivalent for chat
+  // (e.g. Sonnet 4.6 with extended thinking enabled) doesn't show a
+  // negative "savings" number; we just say zero saved.
+  const saved = Math.max(0, opusChatCost - chatOnlyCost);
   const savedPct = opusCost > 0 ? (saved / opusCost) * 100 : 0;
   const avgCostPerRequest =
     stats.totalRequests > 0 ? stats.totalCostUsd / stats.totalRequests : 0;
@@ -285,5 +313,5 @@ export function getStatsSummary(): {
     else period = `${days} days`;
   }
 
-  return { stats, opusCost, saved, savedPct, avgCostPerRequest, period };
+  return { stats, opusCost, chatOnlyCost, mediaCost, saved, savedPct, avgCostPerRequest, period };
 }
