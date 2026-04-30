@@ -4999,3 +4999,40 @@ test('runner: nonzero exit → status=failed + tail captured', async () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('startDetachedTask: returns runId immediately, child completes async', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { startDetachedTask } = await import('../dist/tasks/spawn.js');
+  const { readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const t0 = Date.now();
+    const runId = startDetachedTask({
+      label: 'sleep-then-write',
+      command: 'sleep 0.3; printf detached-ok > out.txt',
+      workingDir: fakeHome,
+    });
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < 250, `startDetachedTask returned in ${elapsed}ms (should be <250)`);
+
+    // Initial meta exists
+    const meta = readTaskMeta(runId);
+    assert.ok(meta);
+    assert.equal(meta.status === 'queued' || meta.status === 'running', true);
+
+    // Wait for completion
+    await new Promise(r => setTimeout(r, 1500));
+    const final = readTaskMeta(runId);
+    assert.equal(final.status, 'succeeded');
+    assert.ok(fs.existsSync(path.join(fakeHome, 'out.txt')), 'child wrote output');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
