@@ -25,6 +25,7 @@ import type {
   ThinkingSegment,
 } from './types.js';
 import { ThinkTagStripper } from './think-tag-stripper.js';
+import { isNemotronProseModel, stripNemotronProse } from './nemotron-prose-stripper.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -559,6 +560,7 @@ export class ModelClient {
     let currentToolName = '';
     let currentToolInput = '';
     const textEmission: { mode: 'undecided' | 'stream' | 'hold' } = { mode: 'undecided' };
+    const isNemotronProse = isNemotronProseModel(request.model);
     // Split inline <think>…</think> emitted by reasoning models (nemotron,
     // deepseek-r1, qwq, etc.) that use the text field instead of the native
     // thinking block. Thinking emitted this way is display-only — we don't
@@ -578,7 +580,9 @@ export class ModelClient {
         const trimmed = currentText.trimStart();
         if (!trimmed) return;
 
-        textEmission.mode = trimmed.startsWith('{') ? 'hold' : 'stream';
+        // Nemotron Omni leaks reasoning prose into the text channel without
+        // <think> tags. Hold the buffer for end-of-stream stripping.
+        textEmission.mode = isNemotronProse || trimmed.startsWith('{') ? 'hold' : 'stream';
         if (textEmission.mode === 'stream') {
           onStreamDelta?.({ type: 'text', text: currentText });
         }
@@ -722,6 +726,11 @@ export class ModelClient {
                     'Treating it as non-productive output so recovery can try another model.',
                   );
                 }
+              } else if (textEmission.mode === 'hold' && isNemotronProse) {
+                const { thinking, answer } = stripNemotronProse(currentText);
+                if (thinking) onStreamDelta?.({ type: 'thinking', text: thinking });
+                onStreamDelta?.({ type: 'text', text: answer });
+                collected.push({ type: 'text', text: answer } as TextSegment);
               } else {
                 if (textEmission.mode !== 'stream') {
                   onStreamDelta?.({ type: 'text', text: currentText });
@@ -784,6 +793,11 @@ export class ModelClient {
             'Treating it as non-productive output so recovery can try another model.',
           );
         }
+      } else if (textEmission.mode === 'hold' && isNemotronProse) {
+        const { thinking, answer } = stripNemotronProse(currentText);
+        if (thinking) onStreamDelta?.({ type: 'thinking', text: thinking });
+        onStreamDelta?.({ type: 'text', text: answer });
+        collected.push({ type: 'text', text: answer });
       } else {
         if (textEmission.mode !== 'stream') {
           onStreamDelta?.({ type: 'text', text: currentText });

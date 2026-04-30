@@ -4591,3 +4591,71 @@ test('picker trim: total visible entries dropped meaningfully', async () => {
   assert.ok(total >= 22, `expected >= 22 visible entries, got ${total}`);
   assert.ok(total <= 24, `expected <= 24 visible entries (33 → ~22), got ${total}`);
 });
+
+// ─── nemotron prose stripper ──────────────────────────────────────────────
+
+test('nemotron prose stripper: only matches Nemotron Omni model id', async () => {
+  const { isNemotronProseModel } = await import('../dist/agent/nemotron-prose-stripper.js');
+  assert.equal(isNemotronProseModel('nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'), true);
+  assert.equal(isNemotronProseModel('nvidia/nemotron-3-nano-omni-something-else'), true);
+  assert.equal(isNemotronProseModel('nvidia/qwen3-coder-480b'), false);
+  assert.equal(isNemotronProseModel('nvidia/deepseek-v4-flash'), false);
+  assert.equal(isNemotronProseModel('anthropic/claude-opus-4.7'), false);
+  assert.equal(isNemotronProseModel(''), false);
+});
+
+test('nemotron prose stripper: strips real e2e leak with concatenated answer', async () => {
+  const { stripNemotronProse } = await import('../dist/agent/nemotron-prose-stripper.js');
+  const leak = 'The user asks: "Reply with exactly and only this token: OMNI_E2E_OK". According to instructions, we must obey. There\'s no need for any tool calls. Just output the tokenOMNI_E2E_OK';
+  const { thinking, answer } = stripNemotronProse(leak);
+  assert.equal(answer, 'OMNI_E2E_OK', `expected stripped answer, got: ${answer}`);
+  assert.ok(thinking.startsWith('The user asks:'), 'thinking should retain the reasoning preamble');
+  assert.ok(thinking.includes('Just output the token'), 'thinking should include the answer-introducer phrase');
+});
+
+test('nemotron prose stripper: strips when answer follows colon-separated introducer', async () => {
+  const { stripNemotronProse } = await import('../dist/agent/nemotron-prose-stripper.js');
+  const leak = 'The user wants me to echo a token. The answer is: TOKEN_42';
+  const { answer } = stripNemotronProse(leak);
+  assert.equal(answer, 'TOKEN_42');
+});
+
+test('nemotron prose stripper: leaves non-reasoning text untouched', async () => {
+  const { stripNemotronProse } = await import('../dist/agent/nemotron-prose-stripper.js');
+  const plain = 'TOKEN_ABC';
+  const result = stripNemotronProse(plain);
+  assert.equal(result.answer, plain);
+  assert.equal(result.thinking, '');
+});
+
+test('nemotron prose stripper: leaves text intact when reasoning detected but no transition phrase', async () => {
+  const { stripNemotronProse } = await import('../dist/agent/nemotron-prose-stripper.js');
+  // Starts like reasoning but has no "just output / answer is / output:" phrase.
+  // Conservative: leave it alone rather than swallow a possible real answer.
+  const ambiguous = 'The user asks for the capital of France. Paris.';
+  const { answer, thinking } = stripNemotronProse(ambiguous);
+  assert.equal(answer, ambiguous);
+  assert.equal(thinking, '');
+});
+
+test('nemotron prose stripper: returns empty for empty input', async () => {
+  const { stripNemotronProse } = await import('../dist/agent/nemotron-prose-stripper.js');
+  const { answer, thinking } = stripNemotronProse('');
+  assert.equal(answer, '');
+  assert.equal(thinking, '');
+});
+
+test('nemotron prose stripper: handles "I will respond with" pattern', async () => {
+  const { stripNemotronProse } = await import('../dist/agent/nemotron-prose-stripper.js');
+  const leak = "The user asks for a greeting. I'll respond with: Hello!";
+  const { answer } = stripNemotronProse(leak);
+  assert.equal(answer, 'Hello!');
+});
+
+test('nemotron prose stripper: takes the LAST introducer when multiple exist', async () => {
+  const { stripNemotronProse } = await import('../dist/agent/nemotron-prose-stripper.js');
+  // Reasoning mentions "the answer is X but actually..." then concludes.
+  const leak = "The user wants me to think. The answer is: maybe wrong. Actually, the response is: CORRECT_ANSWER";
+  const { answer } = stripNemotronProse(leak);
+  assert.equal(answer, 'CORRECT_ANSWER');
+});
