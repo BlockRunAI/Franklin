@@ -182,6 +182,19 @@ test('chain shortcut --version does not mutate saved chain or launch the agent',
   }
 });
 
+test('panel HTML wires the Tasks tab (list + detail + /api/tasks polling)', async () => {
+  // Tasks UI shipped in v3.10.1: sidebar nav, content section, and JS module
+  // that polls /api/tasks every 10s. html.ts is one giant template literal —
+  // no JSDOM here, just assert the load-bearing markers are present so the
+  // backend endpoints stay paired with a UI that calls them.
+  const htmlUrl = new URL('../dist/panel/html.js', import.meta.url);
+  const { getHTML } = await import(`${htmlUrl.href}?t=${Date.now()}`);
+  const html = getHTML();
+  assert.ok(html.includes('data-tab="tasks"'), 'Missing Tasks tab nav (data-tab="tasks")');
+  assert.ok(html.includes('id="tab-tasks"'), 'Missing Tasks tab content section (id="tab-tasks")');
+  assert.ok(html.includes('/api/tasks'), 'Tasks JS module not wired (no /api/tasks fetch)');
+});
+
 test('panel server serves dashboard HTML and stats JSON', async () => {
   const panelUrl = new URL('../dist/panel/server.js', import.meta.url);
   const { createPanelServer } = await import(`${panelUrl.href}?t=${Date.now()}`);
