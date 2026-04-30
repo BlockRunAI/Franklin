@@ -71,11 +71,20 @@ export async function runDetachedTask(runId: string): Promise<number> {
   });
   applyEvent(runId, { at: startedAt, kind: 'running', summary: 'runner started' });
 
+  // `finalized` guards against the rare case where the heartbeat timer
+  // already fired but its callback is still on the event-loop queue at
+  // the moment finalize() runs — without this flag, a heartbeat write
+  // could land *after* the terminal event and clobber lastEventAt /
+  // status. We flip it before clearInterval so any pending callback
+  // bails on its first line.
+  let finalized = false;
+
   // Heartbeat: every 5s while child is alive, refresh lastEventAt so
   // observers see "still going." If the meta has been deleted out from
   // under us (someone rm'd the task dir), skip silently — no need to
   // re-create a stub.
   const heartbeat = setInterval(() => {
+    if (finalized) return;
     const cur = readTaskMeta(runId);
     if (!cur) return;
     try {
@@ -94,6 +103,7 @@ export async function runDetachedTask(runId: string): Promise<number> {
     status: Extract<TaskStatus, 'succeeded' | 'failed'>,
     fallbackSummary: string,
   ): void => {
+    finalized = true;
     clearInterval(heartbeat);
     closeLog();
     const endedAt = Date.now();

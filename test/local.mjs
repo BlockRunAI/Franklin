@@ -4931,6 +4931,7 @@ test('runner: executes command, writes log, finalizes status=succeeded', async (
   const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
 
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
   process.env.FRANKLIN_HOME = fakeHome;
   try {
     const runId = 'runner-test-' + Date.now().toString(36);
@@ -4958,7 +4959,8 @@ test('runner: executes command, writes log, finalizes status=succeeded', async (
     const log = fs.readFileSync(path.join(fakeHome, 'tasks', runId, 'log.txt'), 'utf-8');
     assert.match(log, /hello-from-runner/);
   } finally {
-    delete process.env.FRANKLIN_HOME;
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
@@ -4971,6 +4973,7 @@ test('runner: nonzero exit → status=failed + tail captured', async () => {
   const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
 
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
   process.env.FRANKLIN_HOME = fakeHome;
   try {
     const runId = 'fail-test-' + Date.now().toString(36);
@@ -4991,7 +4994,8 @@ test('runner: nonzero exit → status=failed + tail captured', async () => {
     assert.equal(meta.exitCode, 17);
     assert.match(meta.terminalSummary, /oops/);
   } finally {
-    delete process.env.FRANKLIN_HOME;
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
