@@ -24,6 +24,10 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'Edit',
   // Shell execution — needed for running tests, builds, scripts.
   'Bash',
+  // Detached background execution — bash-adjacent: spawns a long-running
+  // command that survives Franklin exiting. Belongs in core so the agent
+  // can offload >20-item iteration without first activating a meta-tool.
+  'Detach',
   // Search — code exploration is table stakes.
   'Grep',
   'Glob',

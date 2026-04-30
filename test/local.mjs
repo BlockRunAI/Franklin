@@ -4659,3 +4659,559 @@ test('nemotron prose stripper: takes the LAST introducer when multiple exist', a
   const { answer } = stripNemotronProse(leak);
   assert.equal(answer, 'CORRECT_ANSWER');
 });
+
+test('TaskRecord types compile and round-trip JSON', async () => {
+  const { isTerminalTaskStatus } = await import('../dist/tasks/types.js');
+  assert.equal(isTerminalTaskStatus('succeeded'), true);
+  assert.equal(isTerminalTaskStatus('failed'), true);
+  assert.equal(isTerminalTaskStatus('cancelled'), true);
+  assert.equal(isTerminalTaskStatus('timed_out'), true);
+  assert.equal(isTerminalTaskStatus('lost'), true);
+  assert.equal(isTerminalTaskStatus('running'), false);
+  assert.equal(isTerminalTaskStatus('queued'), false);
+});
+
+test('task paths: getTasksDir + ensureTaskDir + per-task paths', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { getTasksDir, ensureTaskDir, taskMetaPath, taskEventsPath, taskLogPath } =
+    await import('../dist/tasks/paths.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const dir = getTasksDir();
+    assert.ok(dir.startsWith(fakeHome), `tasks dir under FRANKLIN_HOME: ${dir}`);
+
+    const runId = 'abc12345';
+    const taskDir = ensureTaskDir(runId);
+    assert.ok(fs.existsSync(taskDir), 'task dir created');
+    assert.ok(taskMetaPath(runId).endsWith('meta.json'));
+    assert.ok(taskEventsPath(runId).endsWith('events.jsonl'));
+    assert.ok(taskLogPath(runId).endsWith('log.txt'));
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('task store: writeTaskMeta + readTaskMeta round-trip', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'r' + Date.now().toString(36);
+    const record = {
+      runId,
+      runtime: 'detached-bash',
+      label: 'test',
+      command: 'echo hi',
+      workingDir: '/tmp',
+      status: 'queued',
+      createdAt: 1000,
+    };
+    writeTaskMeta(record);
+    const round = readTaskMeta(runId);
+    assert.deepEqual(round, record);
+    assert.equal(readTaskMeta('does-not-exist'), null);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('task store: appendTaskEvent + applyEvent updates meta', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, readTaskMeta, appendTaskEvent, readTaskEvents, applyEvent } =
+    await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'r1';
+    writeTaskMeta({
+      runId, runtime: 'detached-bash', label: 't', command: 'sleep 0',
+      workingDir: '/tmp', status: 'queued', createdAt: 100,
+    });
+
+    appendTaskEvent(runId, { at: 200, kind: 'running', summary: 'started' });
+    appendTaskEvent(runId, { at: 300, kind: 'progress', summary: '50%' });
+    appendTaskEvent(runId, { at: 400, kind: 'succeeded', summary: 'done' });
+
+    const events = readTaskEvents(runId);
+    assert.equal(events.length, 3);
+    assert.equal(events[0].kind, 'running');
+    assert.equal(events[2].kind, 'succeeded');
+
+    // applyEvent: progress event updates lastEventAt + progressSummary
+    const after = applyEvent(runId, { at: 500, kind: 'progress', summary: 'more' });
+    assert.equal(after.status, 'queued', 'progress does not change status');
+    assert.equal(after.progressSummary, 'more');
+    assert.equal(after.lastEventAt, 500);
+
+    // applyEvent: terminal event sets endedAt + status + terminalSummary
+    const term = applyEvent(runId, { at: 600, kind: 'succeeded', summary: 'wrapped up' });
+    assert.equal(term.status, 'succeeded');
+    assert.equal(term.endedAt, 600);
+    assert.equal(term.terminalSummary, 'wrapped up');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('task store: listTasks returns all + sorts newest first', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, listTasks } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    writeTaskMeta({ runId: 'a', runtime: 'detached-bash', label: 'old', command: 'x',
+                    workingDir: '/tmp', status: 'succeeded', createdAt: 100 });
+    writeTaskMeta({ runId: 'b', runtime: 'detached-bash', label: 'mid', command: 'x',
+                    workingDir: '/tmp', status: 'running', createdAt: 200 });
+    writeTaskMeta({ runId: 'c', runtime: 'detached-bash', label: 'new', command: 'x',
+                    workingDir: '/tmp', status: 'queued', createdAt: 300 });
+
+    const tasks = listTasks();
+    assert.equal(tasks.length, 3);
+    assert.deepEqual(tasks.map(t => t.runId), ['c', 'b', 'a']);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('task store: readTaskEvents tolerates torn last line', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, appendTaskEvent, readTaskEvents } =
+    await import('../dist/tasks/store.js');
+  const { taskEventsPath } = await import('../dist/tasks/paths.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'torn';
+    writeTaskMeta({
+      runId, runtime: 'detached-bash', label: 't', command: 'x',
+      workingDir: '/tmp', status: 'queued', createdAt: 100,
+    });
+    appendTaskEvent(runId, { at: 200, kind: 'running', summary: 'a' });
+    appendTaskEvent(runId, { at: 300, kind: 'progress', summary: 'b' });
+    // Simulate a torn write: append a partial JSON line at the end.
+    fs.appendFileSync(taskEventsPath(runId), '{"at":400,"kind":"prog');
+
+    const events = readTaskEvents(runId);
+    assert.equal(events.length, 2, 'two intact events recovered');
+    assert.equal(events[0].kind, 'running');
+    assert.equal(events[1].kind, 'progress');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('task store: applyEvent throws on missing meta', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { applyEvent } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    assert.throws(
+      () => applyEvent('does-not-exist', { at: 1, kind: 'running' }),
+      /no task does-not-exist/,
+    );
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('task store: listTasks ignores junk entries (e.g. .DS_Store)', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, listTasks } = await import('../dist/tasks/store.js');
+  const { getTasksDir } = await import('../dist/tasks/paths.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    writeTaskMeta({ runId: 'real1', runtime: 'detached-bash', label: 'x', command: 'x',
+                    workingDir: '/tmp', status: 'queued', createdAt: 100 });
+    // Junk file at top of tasks dir
+    fs.writeFileSync(path.join(getTasksDir(), '.DS_Store'), 'junk');
+    // Junk subdirectory with no meta.json
+    fs.mkdirSync(path.join(getTasksDir(), 'half-baked'));
+
+    const tasks = listTasks();
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0].runId, 'real1');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('lost-detection: running task with dead pid → marked lost', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+  const { reconcileLostTasks } = await import('../dist/tasks/lost-detection.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    // Status=running, pid=999999 (almost certainly dead)
+    writeTaskMeta({
+      runId: 'lost1', runtime: 'detached-bash', label: 'x', command: 'x',
+      workingDir: '/tmp', status: 'running', createdAt: 100,
+      startedAt: 100, pid: 999999,
+    });
+    // Status=running, pid=current process (alive)
+    writeTaskMeta({
+      runId: 'alive1', runtime: 'detached-bash', label: 'y', command: 'y',
+      workingDir: '/tmp', status: 'running', createdAt: 200,
+      startedAt: 200, pid: process.pid,
+    });
+    // Status=succeeded, should be ignored
+    writeTaskMeta({
+      runId: 'done1', runtime: 'detached-bash', label: 'z', command: 'z',
+      workingDir: '/tmp', status: 'succeeded', createdAt: 50,
+    });
+
+    reconcileLostTasks();
+
+    assert.equal(readTaskMeta('lost1').status, 'lost');
+    assert.equal(readTaskMeta('alive1').status, 'running');
+    assert.equal(readTaskMeta('done1').status, 'succeeded');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('runner: executes command, writes log, finalizes status=succeeded', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'runner-test-' + Date.now().toString(36);
+    writeTaskMeta({
+      runId, runtime: 'detached-bash',
+      label: 'echo hi',
+      command: 'printf hello-from-runner',
+      workingDir: process.cwd(),
+      status: 'queued', createdAt: Date.now(),
+    });
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, '_task-runner', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome },
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `runner exit: ${result.stderr}`);
+
+    const meta = readTaskMeta(runId);
+    assert.equal(meta.status, 'succeeded');
+    assert.equal(meta.exitCode, 0);
+    assert.ok(meta.startedAt);
+    assert.ok(meta.endedAt);
+
+    const log = fs.readFileSync(path.join(fakeHome, 'tasks', runId, 'log.txt'), 'utf-8');
+    assert.match(log, /hello-from-runner/);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('runner: nonzero exit → status=failed + tail captured', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'fail-test-' + Date.now().toString(36);
+    writeTaskMeta({
+      runId, runtime: 'detached-bash',
+      label: 'fail', command: 'echo oops; exit 17',
+      workingDir: process.cwd(),
+      status: 'queued', createdAt: Date.now(),
+    });
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, '_task-runner', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 10_000,
+    });
+    assert.equal(result.status, 17, 'runner propagates exit code');
+
+    const meta = readTaskMeta(runId);
+    assert.equal(meta.status, 'failed');
+    assert.equal(meta.exitCode, 17);
+    assert.match(meta.terminalSummary, /oops/);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('startDetachedTask: returns runId immediately, child completes async', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { startDetachedTask } = await import('../dist/tasks/spawn.js');
+  const { readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const t0 = Date.now();
+    const runId = startDetachedTask({
+      label: 'sleep-then-write',
+      command: 'sleep 0.3; printf detached-ok > out.txt',
+      workingDir: fakeHome,
+    });
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < 250, `startDetachedTask returned in ${elapsed}ms (should be <250)`);
+
+    // Initial meta exists
+    const meta = readTaskMeta(runId);
+    assert.ok(meta);
+    assert.equal(meta.status === 'queued' || meta.status === 'running', true);
+
+    // Wait for completion
+    await new Promise(r => setTimeout(r, 1500));
+    const final = readTaskMeta(runId);
+    assert.equal(final.status, 'succeeded');
+    assert.ok(fs.existsSync(path.join(fakeHome, 'out.txt')), 'child wrote output');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('cli: franklin task list prints recent tasks', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    writeTaskMeta({ runId: 't1', runtime: 'detached-bash', label: 'first',
+                    command: 'true', workingDir: '/tmp', status: 'succeeded',
+                    createdAt: 100 });
+    writeTaskMeta({ runId: 't2', runtime: 'detached-bash', label: 'second',
+                    command: 'true', workingDir: '/tmp', status: 'running',
+                    createdAt: 200 });
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, 'task', 'list'], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+    });
+    assert.equal(result.status, 0, result.stderr.toString());
+    const out = result.stdout.toString();
+    assert.match(out, /t2/);
+    assert.match(out, /t1/);
+    assert.match(out, /running/);
+    assert.match(out, /succeeded/);
+    assert.ok(out.indexOf('t2') < out.indexOf('t1'), 'newest first');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('cli: franklin task tail <runId> prints log + status', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta } = await import('../dist/tasks/store.js');
+  const { ensureTaskDir, taskLogPath } = await import('../dist/tasks/paths.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'tail-test';
+    writeTaskMeta({ runId, runtime: 'detached-bash', label: 'tail',
+                    command: 'true', workingDir: '/tmp',
+                    status: 'succeeded', createdAt: 100, endedAt: 200,
+                    terminalSummary: 'all good' });
+    ensureTaskDir(runId);
+    fs.writeFileSync(taskLogPath(runId), 'line1\nline2\n');
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, 'task', 'tail', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+    });
+    assert.equal(result.status, 0, result.stderr.toString());
+    const out = result.stdout.toString();
+    assert.match(out, /line1/);
+    assert.match(out, /line2/);
+    assert.match(out, /succeeded/);
+    assert.match(out, /all good/);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('cli: franklin task cancel <runId> kills running task', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { startDetachedTask } = await import('../dist/tasks/spawn.js');
+  const { readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = startDetachedTask({
+      label: 'sleep-long', command: 'sleep 30', workingDir: fakeHome,
+    });
+    // Wait briefly so runner records its own pid
+    await new Promise(r => setTimeout(r, 800));
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, 'task', 'cancel', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+    });
+    assert.equal(result.status, 0, result.stderr.toString());
+
+    // Give runner a moment to finalize
+    await new Promise(r => setTimeout(r, 1500));
+    const meta = readTaskMeta(runId);
+    assert.ok(['cancelled', 'failed', 'lost'].includes(meta.status), `status: ${meta.status}`);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('cli: franklin task wait <runId> blocks until terminal', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { startDetachedTask } = await import('../dist/tasks/spawn.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = startDetachedTask({
+      label: 'short', command: 'sleep 0.5; echo done',
+      workingDir: fakeHome,
+    });
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const t0 = Date.now();
+    const result = spawnSync(process.execPath, [cli, 'task', 'wait', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 10_000,
+    });
+    const elapsed = Date.now() - t0;
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.ok(elapsed >= 400, `wait actually waited (${elapsed}ms)`);
+    assert.match(result.stdout.toString(), /succeeded/);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('Detach tool: kicks off detached task, returns runId in output', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { detachCapability } = await import('../dist/tools/detach.js');
+  const { readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const origHome = process.env.FRANKLIN_HOME;
+  const origCli = process.env.FRANKLIN_CLI_PATH;
+  process.env.FRANKLIN_HOME = fakeHome;
+  process.env.FRANKLIN_CLI_PATH = path.join(process.cwd(), 'dist', 'index.js');
+  try {
+    const result = await detachCapability.execute(
+      { label: 'tool-test', command: 'echo done > marker.txt' },
+      { workingDir: fakeHome, abortSignal: new AbortController().signal },
+    );
+    assert.ok(!result.isError, result.output);
+    const m = result.output.match(/runId: (\S+)/);
+    assert.ok(m, `output missing runId: ${result.output}`);
+    const runId = m[1];
+
+    for (let i = 0; i < 50; i++) {
+      const meta = readTaskMeta(runId);
+      if (meta && (meta.status === 'succeeded' || meta.status === 'failed')) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    const final = readTaskMeta(runId);
+    assert.equal(final.status, 'succeeded');
+    assert.ok(fs.existsSync(path.join(fakeHome, 'marker.txt')));
+  } finally {
+    if (origHome === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = origHome;
+    if (origCli === undefined) delete process.env.FRANKLIN_CLI_PATH;
+    else process.env.FRANKLIN_CLI_PATH = origCli;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});

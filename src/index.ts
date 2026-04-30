@@ -26,6 +26,7 @@ import { daemonCommand } from './commands/daemon.js';
 import { initCommand } from './commands/init.js';
 import { uninitCommand } from './commands/uninit.js';
 import { proxyCommand } from './commands/proxy.js';
+import { buildTaskCommand } from './commands/task.js';
 
 import { VERSION as version } from './config.js';
 
@@ -267,6 +268,23 @@ program
   .action(async () => {
     const { listAvailablePlugins } = await import('./commands/plugin.js');
     listAvailablePlugins();
+  });
+
+// `franklin task <subcmd>` — human-facing CLI for detached background tasks.
+// Defined in src/commands/task.ts; subcommands: list, tail, cancel, wait.
+program.addCommand(buildTaskCommand());
+
+// Hidden internal subcommand — invoked by startDetachedTask via spawn(detached).
+// The underscore prefix signals "not for humans"; we still register it via
+// commander so exit codes and arg parsing stay consistent with the rest of
+// the CLI.
+program
+  .command('_task-runner <runId>')
+  .description('(internal) execute a detached task by runId')
+  .action(async (runId: string) => {
+    const { runDetachedTask } = await import('./tasks/runner.js');
+    const code = await runDetachedTask(runId);
+    process.exit(code);
   });
 
 // Default action: if no subcommand given, run 'start'
