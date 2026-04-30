@@ -4881,3 +4881,44 @@ test('task store: listTasks ignores junk entries (e.g. .DS_Store)', async () => 
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('lost-detection: running task with dead pid → marked lost', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+  const { reconcileLostTasks } = await import('../dist/tasks/lost-detection.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    // Status=running, pid=999999 (almost certainly dead)
+    writeTaskMeta({
+      runId: 'lost1', runtime: 'detached-bash', label: 'x', command: 'x',
+      workingDir: '/tmp', status: 'running', createdAt: 100,
+      startedAt: 100, pid: 999999,
+    });
+    // Status=running, pid=current process (alive)
+    writeTaskMeta({
+      runId: 'alive1', runtime: 'detached-bash', label: 'y', command: 'y',
+      workingDir: '/tmp', status: 'running', createdAt: 200,
+      startedAt: 200, pid: process.pid,
+    });
+    // Status=succeeded, should be ignored
+    writeTaskMeta({
+      runId: 'done1', runtime: 'detached-bash', label: 'z', command: 'z',
+      workingDir: '/tmp', status: 'succeeded', createdAt: 50,
+    });
+
+    reconcileLostTasks();
+
+    assert.equal(readTaskMeta('lost1').status, 'lost');
+    assert.equal(readTaskMeta('alive1').status, 'running');
+    assert.equal(readTaskMeta('done1').status, 'succeeded');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
