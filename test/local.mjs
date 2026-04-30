@@ -4659,3 +4659,14 @@ test('nemotron prose stripper: takes the LAST introducer when multiple exist', a
   const { answer } = stripNemotronProse(leak);
   assert.equal(answer, 'CORRECT_ANSWER');
 });
+
+test('TaskRecord types compile and round-trip JSON', async () => {
+  const { isTerminalTaskStatus } = await import('../dist/tasks/types.js');
+  assert.equal(isTerminalTaskStatus('succeeded'), true);
+  assert.equal(isTerminalTaskStatus('failed'), true);
+  assert.equal(isTerminalTaskStatus('cancelled'), true);
+  assert.equal(isTerminalTaskStatus('timed_out'), true);
+  assert.equal(isTerminalTaskStatus('lost'), true);
+  assert.equal(isTerminalTaskStatus('running'), false);
+  assert.equal(isTerminalTaskStatus('queued'), false);
+});
