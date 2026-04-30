@@ -4728,3 +4728,47 @@ test('task store: writeTaskMeta + readTaskMeta round-trip', async () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('task store: appendTaskEvent + applyEvent updates meta', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, readTaskMeta, appendTaskEvent, readTaskEvents, applyEvent } =
+    await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'r1';
+    writeTaskMeta({
+      runId, runtime: 'detached-bash', label: 't', command: 'sleep 0',
+      workingDir: '/tmp', status: 'queued', createdAt: 100,
+    });
+
+    appendTaskEvent(runId, { at: 200, kind: 'running', summary: 'started' });
+    appendTaskEvent(runId, { at: 300, kind: 'progress', summary: '50%' });
+    appendTaskEvent(runId, { at: 400, kind: 'succeeded', summary: 'done' });
+
+    const events = readTaskEvents(runId);
+    assert.equal(events.length, 3);
+    assert.equal(events[0].kind, 'running');
+    assert.equal(events[2].kind, 'succeeded');
+
+    // applyEvent: progress event updates lastEventAt + progressSummary
+    const after = applyEvent(runId, { at: 500, kind: 'progress', summary: 'more' });
+    assert.equal(after.status, 'queued', 'progress does not change status');
+    assert.equal(after.progressSummary, 'more');
+    assert.equal(after.lastEventAt, 500);
+
+    // applyEvent: terminal event sets endedAt + status + terminalSummary
+    const term = applyEvent(runId, { at: 600, kind: 'succeeded', summary: 'wrapped up' });
+    assert.equal(term.status, 'succeeded');
+    assert.equal(term.endedAt, 600);
+    assert.equal(term.terminalSummary, 'wrapped up');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
