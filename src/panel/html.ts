@@ -568,8 +568,8 @@ a:hover { text-decoration:underline; }
       <p>Browse past conversations</p>
     </div>
     <input class="search-box" id="session-search" placeholder="Search sessions..." />
-    <div class="session-list" id="session-list"></div>
     <div class="session-detail" id="session-detail" style="display:none"></div>
+    <div class="session-list" id="session-list"></div>
   </div>
 
   <!-- Markets -->
@@ -653,7 +653,12 @@ document.querySelectorAll('.nav-item').forEach(btn => {
 const api = (path) => fetch('/api/' + path).then(r => r.json()).catch(() => null);
 const usd = (n) => '$' + (n || 0).toFixed(4);
 const usdBig = (n) => '$' + (n || 0).toFixed(2);
-const esc = (s) => s.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const esc = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 
 async function loadOverview() {
   const [wallet, stats, insights] = await Promise.all([
@@ -720,27 +725,57 @@ async function loadOverview() {
 
 async function loadSessions() {
   const sessions = await api('sessions');
+  clearSessionDetail();
   if (!sessions || sessions.length === 0) {
     document.getElementById('session-list').innerHTML = '<div class="empty">No sessions yet</div>';
     return;
   }
-  document.getElementById('session-list').innerHTML = sessions.slice(0, 50).map(s =>
+  document.getElementById('session-list').innerHTML = sessions.slice(0, 50).map(renderSessionRow).join('');
+  attachSessionClickHandlers();
+}
+
+function renderSessionRow(s) {
+  return (
     '<div class="session-item" data-id="' + esc(s.id) + '">' +
       '<div class="title">' + esc(s.model || 'unknown') + ' &mdash; ' + s.messageCount + ' messages</div>' +
       '<div class="meta">' + new Date(s.createdAt).toLocaleString() + ' &middot; ' + esc((s.workDir || '').split('/').pop()) + '</div>' +
     '</div>'
-  ).join('');
-  document.querySelectorAll('.session-item').forEach(el => {
+  );
+}
+
+function renderSessionSearchRow(r) {
+  const s = r.session || {};
+  const id = s.id || r.sessionId || '';
+  const model = s.model || 'unknown';
+  const score = Number.isFinite(r.score) ? r.score.toFixed(2) : '0.00';
+  return (
+    '<div class="session-item" data-id="' + esc(id) + '">' +
+      '<div class="title">' + esc(r.snippet || '(no snippet)') + '</div>' +
+      '<div class="meta">' + esc(model) + ' &middot; ' + esc(id) + ' &middot; score: ' + score + '</div>' +
+    '</div>'
+  );
+}
+
+function clearSessionDetail() {
+  const detail = document.getElementById('session-detail');
+  detail.style.display = 'none';
+  detail.innerHTML = '';
+}
+
+function attachSessionClickHandlers() {
+  document.querySelectorAll('.session-item[data-id]').forEach(el => {
     el.addEventListener('click', async () => {
+      if (!el.dataset.id) return;
       const history = await api('sessions/' + encodeURIComponent(el.dataset.id));
       if (!history) return;
       const detail = document.getElementById('session-detail');
       detail.style.display = 'block';
       detail.innerHTML = history.map(m => {
         const role = m.role || 'system';
-        let text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content).slice(0, 500);
+        let text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? null).slice(0, 500);
         return '<div class="msg ' + role + '"><div class="role">' + role + '</div><pre>' + esc(text) + '</pre></div>';
       }).join('');
+      detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   });
 }
@@ -752,16 +787,13 @@ document.getElementById('session-search').addEventListener('input', (e) => {
     const q = e.target.value.trim();
     if (!q) { loadSessions(); return; }
     const results = await api('sessions/search?q=' + encodeURIComponent(q));
+    clearSessionDetail();
     if (!results || results.length === 0) {
       document.getElementById('session-list').innerHTML = '<div class="empty">No results</div>';
       return;
     }
-    document.getElementById('session-list').innerHTML = results.map(r =>
-      '<div class="session-item">' +
-        '<div class="title">' + esc(r.snippet) + '</div>' +
-        '<div class="meta">' + esc(r.sessionId) + ' &middot; score: ' + r.score.toFixed(2) + '</div>' +
-      '</div>'
-    ).join('');
+    document.getElementById('session-list').innerHTML = results.map(renderSessionSearchRow).join('');
+    attachSessionClickHandlers();
   }, 300);
 });
 
