@@ -1,13 +1,45 @@
 # Changelog
 
-## 3.10.0 — Detached background tasks (Task tool + `franklin task` CLI)
+## 3.10.1 — Tasks tab in the panel + CHANGELOG correction
+
+### Tasks tab
+
+`franklin panel` now has a "Tasks" tab next to Sessions / Wallet /
+Insights. List view shows newest-first task rows with status badges
+(succeeded green, running blue, queued gray, failed/lost red,
+cancelled yellow), age, and a Cancel button on still-active rows.
+Click a row → detail view with the full TaskRecord, last 10 events,
+and a live log tail.
+
+Polling is intentionally restrained — Task is a long-running concept,
+and pushing real-time SSE for state that genuinely changes every 5+
+seconds would burn cycles for no perceived benefit:
+
+- **List view:** 10-second poll while the tab is visible. Pauses on
+  Page Visibility API hidden / tab switch. Manual Refresh button.
+- **Detail view log tail:** 2-second poll using `Range: bytes=N-`
+  incremental fetches against `GET /api/tasks/:runId/log`. Stops as
+  soon as the task hits a terminal status.
+
+5 new endpoints under `/api/tasks/...` (list / get / log with Range /
+events / cancel). Cancel is loopback-only.
+
+### CHANGELOG correction
+
+The v3.10.0 entry called the new agent tool the "Task tool" — but the
+shipped tool is named `Detach` (the existing in-session task tracker
+kept the `Task` name unchanged). Corrected references in the v3.10.0
+entry to point at `Detach`. The CLI surface (`franklin task list /
+tail / wait / cancel`) is unchanged.
+
+## 3.10.0 — Detached background tasks (Detach tool + `franklin task` CLI)
 
 The agent's job is to design and orchestrate. The for-loop is somebody
 else's problem. v3.10 adds that somebody.
 
 ### What's new
 
-- New **Task** agent tool: `{ label, command }` → detached Bash child
+- New **Detach** agent tool: `{ label, command }` → detached Bash child
   process spawned via `franklin _task-runner <runId>`. Returns a
   `runId` immediately. Survives the parent Franklin process — close
   your terminal, the work continues.
@@ -32,8 +64,8 @@ tool call per item. That burned turns, hit TTFB walls (v3.9.6 raised
 those defaults to 180s as a bandaid), and tied the work's life to the
 foreground session.
 
-The Task tool inverts that: the LLM writes a script, hands it to
-`Task`, gets a runId, and is free. The script does the iteration with
+The Detach tool inverts that: the LLM writes a script, hands it to
+`Detach`, gets a runId, and is free. The script does the iteration with
 a checkpoint file. Franklin restarts have no effect on the work.
 
 ### Out of scope (deliberate)

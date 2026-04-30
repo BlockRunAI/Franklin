@@ -16,6 +16,14 @@ import { loadLearnings } from '../learnings/store.js';
 import { readAudit } from '../stats/audit.js';
 import { snapshot as marketsSnapshot } from '../trading/providers/telemetry.js';
 import { describeWiring } from '../trading/providers/registry.js';
+import {
+  listTasks,
+  readTaskMeta,
+  readTaskEvents,
+} from '../tasks/store.js';
+import { reconcileLostTasks } from '../tasks/lost-detection.js';
+import { taskLogPath } from '../tasks/paths.js';
+import { isTerminalTaskStatus } from '../tasks/types.js';
 import { getHTML } from './html.js';
 
 const sseClients = new Set<http.ServerResponse>();
@@ -379,6 +387,131 @@ export function createPanelServer(port: number): http.Server {
       if (p === '/api/learnings') {
         const learnings = loadLearnings();
         json(res, learnings);
+        return;
+      }
+
+      // ─── Tasks ─────────────────────────────────────────────────────────
+      // Background tasks dispatched via the Detach tool / `franklin task`.
+      // The list endpoint reconciles lost tasks (dead pids) before snapshot
+      // so the UI never displays a zombie as "running". Detail / log /
+      // events endpoints power the per-task drawer in the Tasks tab.
+      if (p === '/api/tasks') {
+        try { reconcileLostTasks(); } catch { /* best-effort */ }
+        json(res, { tasks: listTasks() });
+        return;
+      }
+
+      if (p.startsWith('/api/tasks/')) {
+        const rest = p.slice('/api/tasks/'.length);
+        const segments = rest.split('/');
+        const runId = decodeURIComponent(segments[0] || '');
+        const sub = segments[1];
+
+        if (!runId) {
+          res.writeHead(404);
+          res.end('Not found');
+          return;
+        }
+
+        // GET /api/tasks/:runId
+        if (!sub) {
+          const meta = readTaskMeta(runId);
+          if (!meta) {
+            res.writeHead(404);
+            res.end('Not found');
+            return;
+          }
+          json(res, meta);
+          return;
+        }
+
+        // GET /api/tasks/:runId/log — supports Range: bytes=N- for tail polling.
+        // Brand-new tasks may not have created log.txt yet — return empty 200
+        // rather than 404 so the panel UI's tail loop doesn't surface noise.
+        if (sub === 'log') {
+          const logPath = taskLogPath(runId);
+          let content: Buffer;
+          try {
+            content = fs.readFileSync(logPath);
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+              res.writeHead(200, {
+                'Content-Type': 'text/plain; charset=utf-8',
+                'Cache-Control': 'no-store',
+              });
+              res.end('');
+              return;
+            }
+            throw err;
+          }
+          const total = content.length;
+          const range = req.headers['range'];
+          if (typeof range === 'string') {
+            const m = range.match(/^bytes=(\d+)-$/);
+            if (m) {
+              const start = Math.min(parseInt(m[1], 10), total);
+              const slice = content.subarray(start);
+              res.writeHead(206, {
+                'Content-Type': 'text/plain; charset=utf-8',
+                'Cache-Control': 'no-store',
+                'Content-Range': `bytes ${start}-${Math.max(total - 1, start)}/${total}`,
+              });
+              res.end(slice);
+              return;
+            }
+          }
+          res.writeHead(200, {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'no-store',
+          });
+          res.end(content);
+          return;
+        }
+
+        // GET /api/tasks/:runId/events
+        if (sub === 'events') {
+          json(res, { events: readTaskEvents(runId) });
+          return;
+        }
+
+        // POST /api/tasks/:runId/cancel — loopback only.
+        // Sends SIGTERM to the recorded pid; the runner then writes a
+        // `cancelled` event itself. This endpoint never mutates meta
+        // directly to avoid racing the runner (see store.ts contract).
+        if (sub === 'cancel' && req.method === 'POST') {
+          if (!isLoopback(req)) {
+            json(res, { error: 'forbidden' }, 403);
+            return;
+          }
+          try {
+            const meta = readTaskMeta(runId);
+            if (!meta) {
+              res.writeHead(404);
+              res.end('Not found');
+              return;
+            }
+            if (isTerminalTaskStatus(meta.status)) {
+              json(res, { ok: false, reason: `already ${meta.status}` });
+              return;
+            }
+            if (typeof meta.pid !== 'number') {
+              json(res, { ok: false, reason: 'no pid recorded' });
+              return;
+            }
+            try {
+              process.kill(meta.pid, 'SIGTERM');
+              json(res, { ok: true });
+            } catch (err) {
+              json(res, { ok: false, reason: (err as Error).message });
+            }
+          } catch (err) {
+            json(res, { ok: false, reason: (err as Error).message });
+          }
+          return;
+        }
+
+        res.writeHead(404);
+        res.end('Not found');
         return;
       }
 
