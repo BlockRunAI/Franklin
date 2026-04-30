@@ -1,5 +1,54 @@
 # Changelog
 
+## 3.10.0 — Detached background tasks (Task tool + `franklin task` CLI)
+
+The agent's job is to design and orchestrate. The for-loop is somebody
+else's problem. v3.10 adds that somebody.
+
+### What's new
+
+- New **Task** agent tool: `{ label, command }` → detached Bash child
+  process spawned via `franklin _task-runner <runId>`. Returns a
+  `runId` immediately. Survives the parent Franklin process — close
+  your terminal, the work continues.
+- New **`franklin task`** CLI surface:
+  - `task list` — newest first, with status + age
+  - `task tail <runId> [--follow]` — print log + final status
+  - `task wait <runId> [--timeout ms]` — block until terminal
+  - `task cancel <runId>` — SIGTERM the runner
+- Persistence under `~/.franklin/tasks/<runId>/` (no new dependencies):
+  `meta.json` (TaskRecord), `events.jsonl` (append-only event log),
+  `log.txt` (child stdout/stderr).
+- Lazy lost-task detection — `task list` checks `process.kill(pid, 0)`
+  on still-`running` tasks and marks them `lost` if the backing pid
+  is gone.
+- System prompt updated to point long-task guidance at the new tool.
+
+### Why
+
+Franklin used to drag the LLM through every iteration of long work
+(40k stargazer enrichment, large refactors, multi-page scrapes), one
+tool call per item. That burned turns, hit TTFB walls (v3.9.6 raised
+those defaults to 180s as a bandaid), and tied the work's life to the
+foreground session.
+
+The Task tool inverts that: the LLM writes a script, hands it to
+`Task`, gets a runId, and is free. The script does the iteration with
+a checkpoint file. Franklin restarts have no effect on the work.
+
+### Out of scope (deliberate)
+
+- `acp` / cron / multi-runtime — only `detached-bash` for now.
+  Detached *agent loop* in subprocess is v3.11.
+- sqlite migration — flat JSONL/JSON mirrors `src/session/storage.ts`,
+  good enough for thousands of tasks. Switch if `task list` ever
+  takes >100ms.
+- Notification policy / multi-channel delivery — CLI-first single-user
+  product polls. Add when we wire up Telegram/Discord adapters.
+
+Reference: openclaw/openclaw `src/tasks/`. We took the persistence +
+lifecycle skeleton, dropped channel/delivery and multi-runtime.
+
 ## 3.9.6 — Reasoning-model TTFB defaults + long-task guidance
 
 A bandaid for the bigger problem (long agent loops on slow-TTFB models).
