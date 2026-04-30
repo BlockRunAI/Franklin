@@ -5176,3 +5176,42 @@ test('cli: franklin task wait <runId> blocks until terminal', async () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('Detach tool: kicks off detached task, returns runId in output', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { detachCapability } = await import('../dist/tools/detach.js');
+  const { readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const origHome = process.env.FRANKLIN_HOME;
+  const origCli = process.env.FRANKLIN_CLI_PATH;
+  process.env.FRANKLIN_HOME = fakeHome;
+  process.env.FRANKLIN_CLI_PATH = path.join(process.cwd(), 'dist', 'index.js');
+  try {
+    const result = await detachCapability.execute(
+      { label: 'tool-test', command: 'echo done > marker.txt' },
+      { workingDir: fakeHome, abortSignal: new AbortController().signal },
+    );
+    assert.ok(!result.isError, result.output);
+    const m = result.output.match(/runId: (\S+)/);
+    assert.ok(m, `output missing runId: ${result.output}`);
+    const runId = m[1];
+
+    for (let i = 0; i < 50; i++) {
+      const meta = readTaskMeta(runId);
+      if (meta && (meta.status === 'succeeded' || meta.status === 'failed')) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    const final = readTaskMeta(runId);
+    assert.equal(final.status, 'succeeded');
+    assert.ok(fs.existsSync(path.join(fakeHome, 'marker.txt')));
+  } finally {
+    if (origHome === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = origHome;
+    if (origCli === undefined) delete process.env.FRANKLIN_CLI_PATH;
+    else process.env.FRANKLIN_CLI_PATH = origCli;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});

@@ -16,6 +16,7 @@ import { grepCapability } from './grep.js';
 import { webFetchCapability, clearSessionState as clearWebFetchSessionState } from './webfetch.js';
 import { webSearchCapability } from './websearch.js';
 import { taskCapability } from './task.js';
+import { detachCapability } from './detach.js';
 import { createImageGenCapability } from './imagegen.js';
 import { createVideoGenCapability } from './videogen.js';
 import { createMusicGenCapability } from './musicgen.js';
@@ -141,6 +142,7 @@ export const allCapabilities: CapabilityHandler[] = [
   webFetchCapability,
   webSearchCapability,
   taskCapability,
+  detachCapability,
   defaultImageGenCapability,
   defaultVideoGenCapability,
   defaultMusicGenCapability,
@@ -170,6 +172,7 @@ export {
   webFetchCapability,
   webSearchCapability,
   taskCapability,
+  detachCapability,
 };
 
 export { createSubAgentCapability } from './subagent.js';
