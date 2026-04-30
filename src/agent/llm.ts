@@ -84,10 +84,19 @@ function parseTimeoutEnv(name: string): number | null {
 }
 
 function getModelRequestTimeoutMs(): number {
+  // 180s budget for *time-to-headers* (the gateway flushes SSE headers only
+  // once the upstream model emits its first token). Reasoning-class models
+  // (zai/glm-*, nemotron *-reasoning, deepseek-r*, gpt-5-codex, anthropic
+  // extended-thinking) routinely take 60–120s to first token on cache-cold
+  // prompts or when the gateway is under load — the old 45s default cut
+  // those off and wasted USDC on retries that hit the same wall. 180s is
+  // generous enough for any realistic first-token latency, still bounded
+  // enough that genuinely dead requests surface within ~6 min after the
+  // single timeout retry.
   return (
     parseTimeoutEnv('FRANKLIN_MODEL_REQUEST_TIMEOUT_MS') ??
     parseTimeoutEnv('FRANKLIN_MODEL_IDLE_TIMEOUT_MS') ??
-    45_000
+    180_000
   );
 }
 

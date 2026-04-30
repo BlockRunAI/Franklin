@@ -73,7 +73,13 @@ function log(...args: unknown[]) {
 }
 
 const DEFAULT_MAX_TOKENS = 4096;
-const DEFAULT_PROXY_REQUEST_TIMEOUT_MS = 45_000;
+// 180s budget for *time-to-headers* — reasoning-class models (zai/glm-*,
+// nemotron *-reasoning, deepseek-r*, gpt-5-codex, anthropic extended-thinking)
+// routinely take 60–120s to first token on cache-cold prompts or busy
+// gateways. The old 45s default cut those off and the proxy returned a
+// failed response that downstream agents (Cline, Claude Desktop, etc.) had
+// to retry blindly.
+const DEFAULT_PROXY_REQUEST_TIMEOUT_MS = 180_000;
 const DEFAULT_PROXY_STREAM_TIMEOUT_MS = 5 * 60 * 1000;
 
 function parseTimeoutEnv(name: string, fallback: number): number {

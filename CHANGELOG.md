@@ -1,5 +1,60 @@
 # Changelog
 
+## 3.9.6 — Reasoning-model TTFB defaults + long-task guidance
+
+A bandaid for the bigger problem (long agent loops on slow-TTFB models).
+A real task subsystem comes in v3.10 — see the Tier-1 plan.
+
+### Default request timeout 45s → 180s
+
+`src/agent/llm.ts` and `src/proxy/server.ts` both used to cap *time-to-
+headers* (the moment the gateway flushes SSE response headers, which
+in practice equals the moment the upstream model emits its first
+token) at 45 seconds. That number was set when the picker was
+Claude/GPT-only — both have sub-second TTFB on warm prompts. With the
+catalog now including reasoning-class models the 45s budget is
+routinely too tight:
+
+- `zai/glm-5.1` and other GLM thinking variants — 60–120s TTFB on
+  cold prompts is normal.
+- `nvidia/nemotron-3-nano-omni-*-reasoning` — emits chain-of-thought
+  before the answer, similar latency profile.
+- `openai/gpt-5-codex` / `o*` reasoning families — variable, often
+  slow.
+- Anthropic models with extended thinking enabled — likewise.
+
+Worse, the error classifier only retries timeouts once with the same
+budget, so a slow reasoning model would hit the 45s wall, retry
+(also 45s), and surface "Request failed · Timeout" — burning USDC on
+both attempts even though the model would have answered fine given
+~90s.
+
+180s is generous for any realistic TTFB and still bounded enough that
+genuinely dead requests fail within ~6 min (request × 1 retry).
+Override via `FRANKLIN_MODEL_REQUEST_TIMEOUT_MS=<ms>` /
+`FRANKLIN_PROXY_REQUEST_TIMEOUT_MS=<ms>` per-session.
+
+Stream-idle timeout (per-chunk silence watchdog) stays at 90s — that
+budget catches genuinely stalled SSE connections and bumping it would
+mostly just delay error surfacing.
+
+### Long-task system-prompt guidance
+
+`agent/context.ts:getToolPatternsSection` now includes a "Long-running
+iteration (>20 items)" bullet that tells the agent: don't loop in the
+turn-by-turn agent for paginated work — write a script with a
+checkpoint file, run it once via Bash, re-engage only on errors or
+completion. The motivation is the same case that prompted the
+timeout bump: a 40k-item enrichment task asking GLM-5.1 to be the
+for-loop rather than the orchestrator means 40k tool turns + 40k
+chances to hit a TTFB wall.
+
+This is a soft nudge in the system prompt, not a hard policy. v3.10
+is expected to harden this with a real `franklin task` subsystem
+(sqlite-backed TaskRecord, detached subagent runtime, `task list /
+tail / cancel / wait` CLI) — modelled on the `src/tasks/` layer in
+the upstream openclaw/openclaw repo.
+
 ## 3.9.5 — Nemotron Omni prose stripping + gpt-image-2 size pin
 
 Two robustness fixes — one for a free-model leakage pattern, one for a
