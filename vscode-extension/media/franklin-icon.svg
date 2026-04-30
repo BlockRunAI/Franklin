@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor">
+  <!-- hair top -->
+  <rect x="4" y="0" width="8" height="1"/>
+  <rect x="3" y="1" width="10" height="1"/>
+  <rect x="2" y="2" width="12" height="1"/>
+
+  <!-- hair left side — 2px gap before face -->
+  <rect x="1" y="3" width="2" height="7"/>
+  <rect x="3" y="3" width="1" height="1"/>
+  <rect x="3" y="9" width="1" height="1"/>
+
+  <!-- hair right side — 2px gap before face -->
+  <rect x="13" y="3" width="2" height="7"/>
+  <rect x="12" y="3" width="1" height="1"/>
+  <rect x="12" y="9" width="1" height="1"/>
+
+  <!-- face skin above glasses (gap: col 3 and 12 are empty) -->
+  <rect x="4" y="3" width="8" height="2"/>
+
+  <!-- glasses frames (hollow via evenodd) -->
+  <path fill-rule="evenodd" d="
+    M3,5 h5 v3 h-5 z
+    M4,6 h3 v1 h-3 z
+  "/>
+  <path fill-rule="evenodd" d="
+    M8,5 h5 v3 h-5 z
+    M9,6 h3 v1 h-3 z
+  "/>
+
+  <!-- glasses bridge -->
+  <rect x="7" y="6" width="1" height="1"/>
+
+  <!-- chin -->
+  <rect x="4" y="8" width="8" height="2"/>
+  <!-- mouth cutout -->
+  <path fill-rule="evenodd" d="M4,8 h8 v2 h-8 z M6,9 h4 v1 h-4 z"/>
+
+  <!-- coat shoulders, collar gap in middle -->
+  <rect x="1" y="10" width="4" height="6"/>
+  <rect x="11" y="10" width="4" height="6"/>
+
+  <!-- coat center lower -->
+  <rect x="4" y="12" width="8" height="4"/>
+
+  <!-- coat buttons -->
+  <path fill-rule="evenodd" d="
+    M4,12 h8 v4 h-8 z
+    M6,13 h1 v1 h-1 z
+    M9,13 h1 v1 h-1 z
+  "/>
+</svg>

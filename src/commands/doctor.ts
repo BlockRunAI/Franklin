@@ -30,7 +30,7 @@ interface Check {
   remedy?: string;
 }
 
-async function runChecks(): Promise<Check[]> {
+export async function runChecks(): Promise<Check[]> {
   const out: Check[] = [];
 
   // ── 1. Runtime ────────────────────────────────────────────────────

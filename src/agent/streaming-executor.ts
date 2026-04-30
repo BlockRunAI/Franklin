@@ -294,6 +294,15 @@ export class StreamingExecutor {
       case 'WebFetch':
       case 'WebSearch':
         return ((input.url ?? input.query) as string) || undefined;
+      case 'ImageGen':
+      case 'VideoGen': {
+        // Just the model — prompts can be long and noisy in the timeline.
+        // The full prompt is still visible in the assistant text above
+        // the tool call and in the AskUser cost preview, so hiding it
+        // here keeps the workflow line scannable.
+        const m = (input.model as string) || '';
+        return m ? (m.split('/').pop() || m) : undefined;
+      }
       default:
         return undefined;
     }

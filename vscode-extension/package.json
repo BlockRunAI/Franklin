@@ -1,0 +1,86 @@
+{
+  "name": "franklin-vscode",
+  "displayName": "Franklin",
+  "description": "The AI agent with a wallet. Autonomous marketing & trading agent powered by x402 micropayments.",
+  "version": "0.5.0",
+  "publisher": "blockrun",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BlockRunAI/Franklin"
+  },
+  "homepage": "https://github.com/BlockRunAI/Franklin#readme",
+  "bugs": {
+    "url": "https://github.com/BlockRunAI/Franklin/issues"
+  },
+  "type": "module",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "wallet",
+    "usdc",
+    "llm",
+    "marketing",
+    "trading",
+    "x402"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.cjs",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "franklin-chat",
+          "title": "Franklin",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "franklin-chat": [
+        {
+          "type": "webview",
+          "id": "franklin.chatPanel",
+          "name": "Chat",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "franklin.stopGeneration",
+        "title": "Franklin: Stop generation"
+      },
+      {
+        "command": "franklin.openInNewTab",
+        "title": "Franklin: Open Chat in New Tab"
+      },
+      {
+        "command": "franklin.refreshHistory",
+        "title": "Franklin: Refresh History"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "bundle": "node build.mjs",
+    "vscode:prepublish": "npm run bundle"
+  },
+  "dependencies": {
+    "@blockrun/franklin": "file:.."
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.7.0"
+  }
+}
