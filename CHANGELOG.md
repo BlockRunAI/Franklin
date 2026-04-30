@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.9.5 — Nemotron Omni prose stripping + gpt-image-2 size pin
+
+Two robustness fixes — one for a free-model leakage pattern, one for a
+paid-image-gen timeout pattern.
+
+### Nemotron Omni reasoning prose stripped
+
+`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` emits chain-of-thought
+as plain text *without* `<think>` tags, so the existing think-tag
+stripper can't catch it. The reasoning prose gets concatenated directly
+with the answer, often without a separator — e.g.
+`...Just output the tokenOMNI_E2E_OK`. Before this release, that
+preamble appeared verbatim in the agent transcript and polluted the
+next turn's history.
+
+New `nemotron-prose-stripper.ts`: a heuristic detector recognizing 12+
+reasoning openers (`The user asks:`, `Looking at:`, `We must:`,
+`I'll/I need to:`, `Let me:`, …) and answer-introducer phrases
+(`just output:`, `the answer is:`, `here's the response:`, `output:`,
+…). Splits on the **last** introducer match. Conservative fallback:
+when reasoning is detected but no introducer is found, leaves the text
+intact rather than swallow a possible real answer.
+
+`llm.ts` forces hold-mode for `nvidia/nemotron-3-nano-omni-*` so
+streamed text is buffered. At end-of-stream finalize (both
+`content_block_stop` and the post-loop flush sites), it runs the
+stripper, routes the matched preamble to the thinking channel, and
+pushes only the cleaned answer to `collected` — keeping reasoning out
+of dialogue history on the next turn.
+
+8 new unit tests cover the real e2e leak, the colon-introducer
+pattern, multiple-introducer (takes the last), conservative
+passthroughs (no-reasoning input untouched, reasoning-without-
+introducer untouched), empty input, and the model-id matcher.
+
+### `openai/gpt-image-2` pinned to 1024x1024
+
+The BlockRun gateway reliably serves `openai/gpt-image-2` only at
+1024x1024 — `1792x1024` and `1024x1792` time out before returning,
+which means the request still costs USDC (x402 settled) but the user
+gets nothing. The router and the `size` field both used to let the
+caller request unsupported sizes.
+
+`tools/imagegen.ts` now overrides `imageSize` to `1024x1024` whenever
+the resolved model is `openai/gpt-image-2`, regardless of caller or
+router input. The override runs **after** the AskUser flow (so router
+escalation to gpt-image-2 still gets pinned) and **before** the
+content-budget check (so the budgeting cost matches what we actually
+send). The schema description for `size` now spells out the
+constraint so the LLM stops trying to pass other dimensions. Other
+image models — `gpt-image-1`, the Gemini variants, Grok Imagine — are
+unaffected and still honor caller-supplied sizes.
+
 ## 3.9.4 — Roleplayed JSON tool-calls + V4 Flash / Omni metadata
 
 Two free-model fixes plus a catalog refresh.

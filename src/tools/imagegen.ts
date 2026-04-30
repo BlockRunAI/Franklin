@@ -179,7 +179,7 @@ function buildExecute(deps: ImageGenDeps) {
     }
 
     let imageModel = model || (referenceImage ? 'openai/gpt-image-2' : 'openai/gpt-image-1');
-    const imageSize = size || '1024x1024';
+    let imageSize = size || '1024x1024';
     let chosenPrompt = prompt;
 
     // Skip the proposal flow when a reference image is set: the media router
@@ -231,6 +231,14 @@ function buildExecute(deps: ImageGenDeps) {
         // Router / AskUser failed — fall back to default model silently.
       }
     }
+
+    // gpt-image-2 reliably serves 1024x1024 only — other sizes time out at
+    // the gateway. Force the supported size regardless of caller / router
+    // input so we never burn USDC on a request that's going to abort.
+    if (imageModel === 'openai/gpt-image-2' && imageSize !== '1024x1024') {
+      imageSize = '1024x1024';
+    }
+
     if (contentId && deps.library) {
       const decision = checkImageBudget(deps.library, contentId, imageModel, imageSize);
       if (!decision.ok) {
@@ -523,7 +531,7 @@ export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHan
         properties: {
           prompt: { type: 'string', description: 'Text description of the image to generate' },
           output_path: { type: 'string', description: 'Where to save the image. Default: generated-<timestamp>.png in working directory' },
-          size: { type: 'string', description: 'Image size: 1024x1024, 1792x1024, or 1024x1792. Default: 1024x1024' },
+          size: { type: 'string', description: 'Image size: 1024x1024, 1792x1024, or 1024x1792. Default: 1024x1024. Note: openai/gpt-image-2 is forced to 1024x1024 (other sizes time out at the gateway).' },
           model: { type: 'string', description: 'Image model to use. Default: openai/gpt-image-1' },
           image_url: { type: 'string', description: 'Optional reference image (image-to-image / style transfer). Accepts an http(s) URL, a data URI, or a local file path. Only works with edit-capable models.' },
           contentId: { type: 'string', description: 'Optional Content id to attach this generation to. Pre-flight budget check + auto-record on success.' },
