@@ -5144,3 +5144,35 @@ test('cli: franklin task cancel <runId> kills running task', async () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('cli: franklin task wait <runId> blocks until terminal', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { startDetachedTask } = await import('../dist/tasks/spawn.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = startDetachedTask({
+      label: 'short', command: 'sleep 0.5; echo done',
+      workingDir: fakeHome,
+    });
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const t0 = Date.now();
+    const result = spawnSync(process.execPath, [cli, 'task', 'wait', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 10_000,
+    });
+    const elapsed = Date.now() - t0;
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.ok(elapsed >= 400, `wait actually waited (${elapsed}ms)`);
+    assert.match(result.stdout.toString(), /succeeded/);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});

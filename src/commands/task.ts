@@ -82,6 +82,31 @@ export function buildTaskCommand(): Command {
     });
 
   cmd
+    .command('wait <runId>')
+    .description('Block until task reaches terminal state, then exit')
+    .option('--timeout <ms>', 'Max wait, default 30 minutes', '1800000')
+    .action(async (runId: string, opts: { timeout: string }) => {
+      const cap = parseInt(opts.timeout, 10);
+      const t0 = Date.now();
+      while (true) {
+        const meta = readTaskMeta(runId);
+        if (!meta) {
+          console.error(`No task: ${runId}`);
+          process.exit(1);
+        }
+        if (isTerminalTaskStatus(meta.status)) {
+          console.log(`${meta.status}: ${meta.terminalSummary ?? ''}`);
+          process.exit(meta.status === 'succeeded' ? 0 : 1);
+        }
+        if (Date.now() - t0 > cap) {
+          console.error(`Timed out after ${cap}ms; task still ${meta.status}.`);
+          process.exit(2);
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    });
+
+  cmd
     .command('cancel <runId>')
     .description('Cancel a running task (SIGTERM to runner)')
     .action((runId: string) => {
