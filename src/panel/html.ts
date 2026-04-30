@@ -879,15 +879,24 @@ async function loadWallet() {
     solanaBtn.classList.toggle('active', w.chain === 'solana');
   }
 
-  // QR via server — never leak address to third parties
+  // QR via server — never leak address to third parties.
+  // Encode chain + USDC token in the QR payload so wallet apps land
+  // directly on the right network/token instead of a bare address:
+  //   Base   → EIP-681:  ethereum:<USDC>@8453/transfer?address=<addr>
+  //   Solana → Solana Pay: solana:<addr>?spl-token=<USDC mint>
   const qrBox = document.getElementById('wallet-qr');
   const hint = document.getElementById('wallet-qr-hint');
   if (addr && addr !== 'not set') {
-    const svg = await fetch('/api/wallet/qr?data=' + encodeURIComponent(addr)).then(r => r.ok ? r.text() : null);
+    const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+    const USDC_SOL_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const payload = w.chain === 'solana'
+      ? 'solana:' + addr + '?spl-token=' + USDC_SOL_MINT
+      : 'ethereum:' + USDC_BASE + '@8453/transfer?address=' + addr;
+    const svg = await fetch('/api/wallet/qr?data=' + encodeURIComponent(payload)).then(r => r.ok ? r.text() : null);
     qrBox.innerHTML = svg || '';
     hint.textContent = w.chain === 'solana'
-      ? 'Scan to send USDC (Solana SPL) to this address.'
-      : 'Scan to send USDC on Base to this address.';
+      ? 'Scan with a Solana wallet (Phantom, Solflare) to send USDC SPL.'
+      : 'Scan with an EVM wallet (MetaMask, Coinbase) to send USDC on Base.';
   } else {
     qrBox.innerHTML = '';
     hint.textContent = 'No wallet set yet — run: franklin setup';
