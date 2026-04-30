@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.10.2 — UI gutter alignment
+
+All assistant-side output now aligns to a single column-2 left edge.
+Previously, tool results, the token footer, the input box's status row,
+and the Permission/AskUser dialogs each used a different `marginLeft`
+value (0, 1, 2, or 3), so the eye had to keep refinding the left edge
+as the agent worked. The Permission/AskUser dialogs also had an
+off-by-one between the rounded border (drawn via hardcoded leading
+spaces inside the text) and the button row (drawn via `marginLeft`
+prop), which put `[y][a][n]` one column inside the border instead of
+flush with content.
+
+Fix: agent output, dialog borders, dialog content, streaming preview,
+and the input box's status row all share the same left gutter. The
+input box itself stays full-width (column 0) — that's intentional, it's
+the most prominent UI element. Pure visual change, no behavioral
+impact.
+
 ## 3.10.1 — Tasks tab in the panel + CHANGELOG correction
 
 ### Tasks tab
