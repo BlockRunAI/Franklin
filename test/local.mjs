@@ -4772,3 +4772,30 @@ test('task store: appendTaskEvent + applyEvent updates meta', async () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('task store: listTasks returns all + sorts newest first', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, listTasks } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    writeTaskMeta({ runId: 'a', runtime: 'detached-bash', label: 'old', command: 'x',
+                    workingDir: '/tmp', status: 'succeeded', createdAt: 100 });
+    writeTaskMeta({ runId: 'b', runtime: 'detached-bash', label: 'mid', command: 'x',
+                    workingDir: '/tmp', status: 'running', createdAt: 200 });
+    writeTaskMeta({ runId: 'c', runtime: 'detached-bash', label: 'new', command: 'x',
+                    workingDir: '/tmp', status: 'queued', createdAt: 300 });
+
+    const tasks = listTasks();
+    assert.equal(tasks.length, 3);
+    assert.deepEqual(tasks.map(t => t.runId), ['c', 'b', 'a']);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});

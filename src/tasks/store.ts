@@ -5,6 +5,7 @@ import {
   ensureTaskDir,
   taskMetaPath,
   taskEventsPath,
+  getTasksDir,
 } from './paths.js';
 
 export function writeTaskMeta(record: TaskRecord): void {
@@ -56,4 +57,16 @@ export function applyEvent(runId: string, event: TaskEventRecord): TaskRecord {
   appendTaskEvent(runId, event);
   writeTaskMeta(next);
   return next;
+}
+
+export function listTasks(): TaskRecord[] {
+  let entries: string[];
+  try { entries = fs.readdirSync(getTasksDir()); } catch { return []; }
+  const out: TaskRecord[] = [];
+  for (const name of entries) {
+    const meta = readTaskMeta(name);
+    if (meta) out.push(meta);
+  }
+  out.sort((a, b) => b.createdAt - a.createdAt);
+  return out;
 }
