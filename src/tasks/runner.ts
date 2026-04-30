@@ -98,11 +98,15 @@ export async function runDetachedTask(runId: string): Promise<number> {
 
   // Best-effort finalize. Used by both the normal exit path and the spawn
   // error path. Always closes the log fd and clears the heartbeat.
+  // If `finalized` is already true (cancel path beat us to it), bail —
+  // we would otherwise overwrite the on-disk `cancelled` terminal state
+  // with `failed` after `child.kill('SIGTERM')` causes child.on('exit').
   const finalize = (
     exitCode: number,
     status: Extract<TaskStatus, 'succeeded' | 'failed'>,
     fallbackSummary: string,
   ): void => {
+    if (finalized) return;
     finalized = true;
     clearInterval(heartbeat);
     closeLog();
@@ -141,6 +145,41 @@ export async function runDetachedTask(runId: string): Promise<number> {
     stdio: ['ignore', logFd, logFd],
     env: { ...process.env, FRANKLIN_TASK_RUN_ID: runId },
   });
+
+  // Cancel path: parent CLI sends SIGTERM (or user hits Ctrl-C). We must
+  // (a) flip `finalized` BEFORE the soon-to-fire child.exit handler runs so
+  //     it short-circuits and doesn't write status=failed,
+  // (b) clear the heartbeat for the same reason,
+  // (c) kill the child (SIGTERM) so the bash process actually dies,
+  // (d) applyEvent('cancelled') so the on-disk terminal state is correct,
+  // (e) close the log fd,
+  // (f) exit 130 (the canonical Ctrl-C / SIGTERM exit code) on a small delay
+  //     so any in-flight fs writes flush.
+  const onSignal = () => {
+    if (finalized) return;
+    finalized = true;
+    clearInterval(heartbeat);
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      /* child may already be gone */
+    }
+    closeLog();
+    try {
+      applyEvent(runId, {
+        at: Date.now(),
+        kind: 'cancelled',
+        summary: 'Cancelled via SIGTERM',
+      });
+    } catch (err) {
+      process.stderr.write(
+        `[franklin] runner cancel applyEvent: ${(err as Error).message}\n`,
+      );
+    }
+    setTimeout(() => process.exit(130), 500);
+  };
+  process.on('SIGTERM', onSignal);
+  process.on('SIGINT', onSignal);
 
   return await new Promise<number>((resolve) => {
     let resolved = false;

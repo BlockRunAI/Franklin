@@ -81,5 +81,31 @@ export function buildTaskCommand(): Command {
       }
     });
 
+  cmd
+    .command('cancel <runId>')
+    .description('Cancel a running task (SIGTERM to runner)')
+    .action((runId: string) => {
+      const meta = readTaskMeta(runId);
+      if (!meta) {
+        console.error(`No task: ${runId}`);
+        process.exit(1);
+      }
+      if (isTerminalTaskStatus(meta.status)) {
+        console.log(`Task already ${meta.status}.`);
+        return;
+      }
+      if (typeof meta.pid !== 'number') {
+        console.error('Task has no recorded pid (likely still queued).');
+        process.exit(1);
+      }
+      try {
+        process.kill(meta.pid, 'SIGTERM');
+        console.log(`SIGTERM sent to ${meta.pid}.`);
+      } catch (err) {
+        console.error(`Could not signal pid ${meta.pid}: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    });
+
   return cmd;
 }

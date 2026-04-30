@@ -5109,3 +5109,38 @@ test('cli: franklin task tail <runId> prints log + status', async () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('cli: franklin task cancel <runId> kills running task', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { startDetachedTask } = await import('../dist/tasks/spawn.js');
+  const { readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = startDetachedTask({
+      label: 'sleep-long', command: 'sleep 30', workingDir: fakeHome,
+    });
+    // Wait briefly so runner records its own pid
+    await new Promise(r => setTimeout(r, 800));
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, 'task', 'cancel', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+    });
+    assert.equal(result.status, 0, result.stderr.toString());
+
+    // Give runner a moment to finalize
+    await new Promise(r => setTimeout(r, 1500));
+    const meta = readTaskMeta(runId);
+    assert.ok(['cancelled', 'failed', 'lost'].includes(meta.status), `status: ${meta.status}`);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
