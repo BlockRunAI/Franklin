@@ -4670,3 +4670,30 @@ test('TaskRecord types compile and round-trip JSON', async () => {
   assert.equal(isTerminalTaskStatus('running'), false);
   assert.equal(isTerminalTaskStatus('queued'), false);
 });
+
+test('task paths: getTasksDir + ensureTaskDir + per-task paths', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { getTasksDir, ensureTaskDir, taskMetaPath, taskEventsPath, taskLogPath } =
+    await import('../dist/tasks/paths.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const dir = getTasksDir();
+    assert.ok(dir.startsWith(fakeHome), `tasks dir under FRANKLIN_HOME: ${dir}`);
+
+    const runId = 'abc12345';
+    const taskDir = ensureTaskDir(runId);
+    assert.ok(fs.existsSync(taskDir), 'task dir created');
+    assert.ok(taskMetaPath(runId).endsWith('meta.json'));
+    assert.ok(taskEventsPath(runId).endsWith('events.jsonl'));
+    assert.ok(taskLogPath(runId).endsWith('log.txt'));
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
