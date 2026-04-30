@@ -4922,3 +4922,43 @@ test('lost-detection: running task with dead pid → marked lost', async () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('runner: executes command, writes log, finalizes status=succeeded', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'runner-test-' + Date.now().toString(36);
+    writeTaskMeta({
+      runId, runtime: 'detached-bash',
+      label: 'echo hi',
+      command: 'printf hello-from-runner',
+      workingDir: process.cwd(),
+      status: 'queued', createdAt: Date.now(),
+    });
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, '_task-runner', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome },
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `runner exit: ${result.stderr}`);
+
+    const meta = readTaskMeta(runId);
+    assert.equal(meta.status, 'succeeded');
+    assert.equal(meta.exitCode, 0);
+    assert.ok(meta.startedAt);
+    assert.ok(meta.endedAt);
+
+    const log = fs.readFileSync(path.join(fakeHome, 'tasks', runId, 'log.txt'), 'utf-8');
+    assert.match(log, /hello-from-runner/);
+  } finally {
+    delete process.env.FRANKLIN_HOME;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});

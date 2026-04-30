@@ -269,6 +269,19 @@ program
     listAvailablePlugins();
   });
 
+// Hidden internal subcommand — invoked by startDetachedTask via spawn(detached).
+// The underscore prefix signals "not for humans"; we still register it via
+// commander so exit codes and arg parsing stay consistent with the rest of
+// the CLI.
+program
+  .command('_task-runner <runId>')
+  .description('(internal) execute a detached task by runId')
+  .action(async (runId: string) => {
+    const { runDetachedTask } = await import('./tasks/runner.js');
+    const code = await runDetachedTask(runId);
+    process.exit(code);
+  });
+
 // Default action: if no subcommand given, run 'start'
 const args = process.argv.slice(2);
 const firstArg = args[0];
