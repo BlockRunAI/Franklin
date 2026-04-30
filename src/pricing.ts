@@ -9,7 +9,9 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'blockrun/eco': { input: 0.2, output: 1.0 },
   'blockrun/premium': { input: 3.0, output: 15.0 },
   'blockrun/free': { input: 0, output: 0 },
-  // FREE — BlockRun gateway free tier (refreshed 2026-04)
+  // FREE — BlockRun gateway free tier (refreshed 2026-04-29 with V4 Flash + Omni launch)
+  'nvidia/deepseek-v4-flash': { input: 0, output: 0 },
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': { input: 0, output: 0 },
   'nvidia/glm-4.7': { input: 0, output: 0 },
   'nvidia/qwen3-next-80b-a3b-thinking': { input: 0, output: 0 },
   'nvidia/qwen3-coder-480b': { input: 0, output: 0 },

@@ -908,8 +908,10 @@ export async function interactiveSession(
           '\n\n# Available tools\n' +
           `You have exactly these tools: ${names}.\n` +
           'Do not invent other tool names. Do not emit literal "[TOOLCALL]", ' +
-          '"<tool_call>", or similar tokens in your text — call tools via the ' +
-          'proper API only. If no tool fits, explain plainly in prose.';
+          '"<tool_call>", raw JSON function-call objects like {"type":"function","name":"Tool","parameters":{}}, ' +
+          'or similar tokens in your text — call tools via the proper API only. ' +
+          'If the user asks you to echo a token, marker, or string, echo it as plain text; ' +
+          'do not call Wallet or any other tool unless the user explicitly asks for that tool-backed information.';
       }
 
       // Safety net: handled in llm.ts resolveVirtualModel()

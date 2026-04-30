@@ -259,6 +259,25 @@ export function classifyToolCallFailure(
     `this is usually a model output bug; try \`/model <other>\` or retry.]`;
 }
 
+export function isRoleplayedJsonToolCallText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return false;
+
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    return (
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      parsed.type === 'function' &&
+      typeof parsed.name === 'string' &&
+      ('parameters' in parsed || 'arguments' in parsed)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function applyAnthropicPromptCaching(
   payload: Record<string, unknown>,
   request: ModelRequest
@@ -539,6 +558,7 @@ export class ModelClient {
     let currentToolId = '';
     let currentToolName = '';
     let currentToolInput = '';
+    const textEmission: { mode: 'undecided' | 'stream' | 'hold' } = { mode: 'undecided' };
     // Split inline <think>…</think> emitted by reasoning models (nemotron,
     // deepseek-r1, qwq, etc.) that use the text field instead of the native
     // thinking block. Thinking emitted this way is display-only — we don't
@@ -550,6 +570,25 @@ export class ModelClient {
     // system-prompt guard in loop.ts is responsible for preventing this.
     // Debug-only because the user already sees the literal text in the UI.
     let toolCallRoleplayWarned = false;
+    const appendText = (text: string) => {
+      if (!text) return;
+
+      currentText += text;
+      if (textEmission.mode === 'undecided') {
+        const trimmed = currentText.trimStart();
+        if (!trimmed) return;
+
+        textEmission.mode = trimmed.startsWith('{') ? 'hold' : 'stream';
+        if (textEmission.mode === 'stream') {
+          onStreamDelta?.({ type: 'text', text: currentText });
+        }
+        return;
+      }
+
+      if (textEmission.mode === 'stream') {
+        onStreamDelta?.({ type: 'text', text });
+      }
+    };
 
     for await (const chunk of this.streamCompletion(request, signal)) {
       switch (chunk.kind) {
@@ -565,6 +604,7 @@ export class ModelClient {
             currentThinkingSignature = '';
           } else if (cblock?.type === 'text') {
             currentText = '';
+            textEmission.mode = 'undecided';
             textStripper = new ThinkTagStripper();
           }
           break;
@@ -595,8 +635,7 @@ export class ModelClient {
             }
             for (const seg of textStripper.push(raw)) {
               if (seg.type === 'text') {
-                currentText += seg.text;
-                if (seg.text) onStreamDelta?.({ type: 'text', text: seg.text });
+                appendText(seg.text);
               } else if (seg.text) {
                 onStreamDelta?.({ type: 'thinking', text: seg.text });
               }
@@ -670,18 +709,30 @@ export class ModelClient {
             // Flush any partial tag held in the stripper
             for (const seg of textStripper.flush()) {
               if (seg.type === 'text') {
-                currentText += seg.text;
-                if (seg.text) onStreamDelta?.({ type: 'text', text: seg.text });
+                appendText(seg.text);
               } else if (seg.text) {
                 onStreamDelta?.({ type: 'thinking', text: seg.text });
               }
             }
             if (currentText) {
-              collected.push({
-                type: 'text',
-                text: currentText,
-              } as TextSegment);
+              if (textEmission.mode === 'hold' && isRoleplayedJsonToolCallText(currentText)) {
+                if (this.debug) {
+                  console.error(
+                    `[franklin] Model ${request.model} emitted a raw JSON function-call object as text. ` +
+                    'Treating it as non-productive output so recovery can try another model.',
+                  );
+                }
+              } else {
+                if (textEmission.mode !== 'stream') {
+                  onStreamDelta?.({ type: 'text', text: currentText });
+                }
+                collected.push({
+                  type: 'text',
+                  text: currentText,
+                } as TextSegment);
+              }
               currentText = '';
+              textEmission.mode = 'undecided';
             }
           }
           break;
@@ -720,14 +771,25 @@ export class ModelClient {
     // Flush any remaining text (stream ended without content_block_stop)
     for (const seg of textStripper.flush()) {
       if (seg.type === 'text') {
-        currentText += seg.text;
-        if (seg.text) onStreamDelta?.({ type: 'text', text: seg.text });
+        appendText(seg.text);
       } else if (seg.text) {
         onStreamDelta?.({ type: 'thinking', text: seg.text });
       }
     }
     if (currentText) {
-      collected.push({ type: 'text', text: currentText });
+      if (textEmission.mode === 'hold' && isRoleplayedJsonToolCallText(currentText)) {
+        if (this.debug) {
+          console.error(
+            `[franklin] Model ${request.model} emitted a raw JSON function-call object as text. ` +
+            'Treating it as non-productive output so recovery can try another model.',
+          );
+        }
+      } else {
+        if (textEmission.mode !== 'stream') {
+          onStreamDelta?.({ type: 'text', text: currentText });
+        }
+        collected.push({ type: 'text', text: currentText });
+      }
     }
 
     return { content: collected, usage, stopReason };

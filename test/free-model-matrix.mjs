@@ -158,7 +158,7 @@ function assertNoModelArtifacts(model, stdout) {
     `${model} leaked raw thinking tags:\n${stdout}`,
   );
   assert.ok(
-    !/\[TOOLCALL\]|<tool_call>|<\/tool_call>/i.test(stdout),
+    !/\[TOOLCALL\]|<tool_call>|<\/tool_call>|\{\s*"type"\s*:\s*"function"\s*,\s*"name"\s*:/i.test(stdout),
     `${model} leaked role-played tool-call text:\n${stdout}`,
   );
 }

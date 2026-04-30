@@ -3,7 +3,7 @@ import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { loadChain, API_URLS } from '../config.js';
 import { retryFetchBalance } from './balance-retry.js';
 import { flushStats, loadStats } from '../stats/tracker.js';
-import { OPUS_PRICING } from '../pricing.js';
+import { OPUS_PRICING, MODEL_PRICING } from '../pricing.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
 import { assembleInstructions } from '../agent/context.js';
@@ -152,17 +152,11 @@ export async function startCommand(options: StartOptions) {
   }
 
   // Warn when a paid model is active so users know they'll be charged.
-  // Set members = BlockRun gateway's current live free tier (refreshed 2026-04).
-  const FREE_MODELS = new Set([
-    'nvidia/glm-4.7',
-    'nvidia/qwen3-next-80b-a3b-thinking',
-    'nvidia/qwen3-coder-480b',
-    'nvidia/mistral-small-4-119b',
-    'nvidia/llama-4-maverick',
-    'nvidia/deepseek-v3.2',
-    'blockrun/free',
-  ]);
-  if (!FREE_MODELS.has(model)) {
+  // Derive "free" from MODEL_PRICING so adding a new free entry there is enough —
+  // no second hardcoded list to keep in sync.
+  const pricing = MODEL_PRICING[model];
+  const isFree = pricing != null && pricing.input === 0 && pricing.output === 0 && (pricing.perCall ?? 0) === 0;
+  if (!isFree) {
     console.log(chalk.yellow(`  Model: ${model}  (paid — charges from your wallet per call)`));
     console.log(chalk.dim(`  Switch to free with: /model free\n`));
   }

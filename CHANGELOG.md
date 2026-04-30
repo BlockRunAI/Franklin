@@ -1,5 +1,69 @@
 # Changelog
 
+## 3.9.4 — Roleplayed JSON tool-calls + V4 Flash / Omni metadata
+
+Two free-model fixes plus a catalog refresh.
+
+### Roleplayed JSON tool-calls handled
+
+Some free models (notably nemotron, qwen, deepseek variants under
+load) occasionally emit a raw JSON function-call object as text
+instead of using the proper tool-call channel — e.g. the model
+streams `{"type":"function","name":"Wallet","parameters":{}}` as a
+text segment. Before this release, that JSON appeared verbatim in
+the agent transcript, the tool was never actually invoked, and the
+loop either hung waiting for a tool result that wasn't coming or
+kept echoing the JSON on every retry.
+
+Now, `ModelClient` runs a small state machine over each text segment.
+The first non-whitespace character decides:
+
+- Starts with `{` → **hold** the text without streaming, then check
+  the full segment against `isRoleplayedJsonToolCallText()` once the
+  turn completes.
+- Anything else → **stream** normally.
+
+If the held text parses as `{ type: "function", name: "...",
+parameters|arguments: ... }`, it's discarded as non-productive and
+the recovery layer can switch models. Otherwise the held text is
+flushed into the transcript so legitimate JSON answers (e.g. "give
+me this object as JSON") still render.
+
+The `interactiveSession()` system prompt also names the failure mode
+explicitly — including a "if the user asks you to echo a token,
+echo it as plain text; don't call Wallet" clause — so the better
+free models stop doing it in the first place.
+
+### V4 Flash + Nemotron Omni metadata
+
+`MODEL_PRICING` and `MODEL_CONTEXT_WINDOWS` now include:
+
+- `nvidia/deepseek-v4-flash` — 1M context, $0/$0
+- `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` — 256K context, $0/$0
+
+Both are available on the BlockRun gateway free tier. No new shortcut
+or picker entry yet — pass the full ID until a follow-up release adds
+the `v4-flash` / `omni` shortcuts.
+
+`nvidia/deepseek-v4-pro` is intentionally not listed: NVIDIA's NIM
+deployment is hung and the BlockRun gateway transparently redirects
+V4 Pro requests to V4 Flash, so the entry would be misleading from
+the CLI side.
+
+### `franklin start` derives "free" from pricing
+
+The hardcoded `FREE_MODELS` Set in `commands/start.ts` is replaced
+with a `MODEL_PRICING` lookup (`input === 0 && output === 0 &&
+perCall ?? 0 === 0`). Adding a new free entry to `pricing.ts` is now
+enough — no second list to keep in sync — and the new V4 Flash + Omni
+entries are recognized as free out of the box.
+
+### Tests
+
+`free-model-matrix.mjs` now also rejects raw JSON function-call
+objects in stdout, so a regression on the new state machine surfaces
+as a model-matrix failure instead of as a runtime hang.
+
 ## 3.9.3 — `/model` picker trim
 
 The `/model` picker had 28 visible entries across six categories. Most
