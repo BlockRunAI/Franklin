@@ -16,7 +16,10 @@ export type TaskRuntime = 'detached-bash';
 
 export type TaskTerminalOutcome = 'succeeded' | 'blocked';
 
-export type TaskEventKind = TaskStatus | 'progress';
+// Excludes 'queued' — that's a creation state, not an event. running becomes a
+// transition event when the runner picks the task up; everything else is a
+// terminal kind or a progress heartbeat.
+export type TaskEventKind = Exclude<TaskStatus, 'queued'> | 'progress';
 
 export interface TaskEventRecord {
   at: number;

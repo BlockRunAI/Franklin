@@ -4799,3 +4799,85 @@ test('task store: listTasks returns all + sorts newest first', async () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('task store: readTaskEvents tolerates torn last line', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, appendTaskEvent, readTaskEvents } =
+    await import('../dist/tasks/store.js');
+  const { taskEventsPath } = await import('../dist/tasks/paths.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'torn';
+    writeTaskMeta({
+      runId, runtime: 'detached-bash', label: 't', command: 'x',
+      workingDir: '/tmp', status: 'queued', createdAt: 100,
+    });
+    appendTaskEvent(runId, { at: 200, kind: 'running', summary: 'a' });
+    appendTaskEvent(runId, { at: 300, kind: 'progress', summary: 'b' });
+    // Simulate a torn write: append a partial JSON line at the end.
+    fs.appendFileSync(taskEventsPath(runId), '{"at":400,"kind":"prog');
+
+    const events = readTaskEvents(runId);
+    assert.equal(events.length, 2, 'two intact events recovered');
+    assert.equal(events[0].kind, 'running');
+    assert.equal(events[1].kind, 'progress');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('task store: applyEvent throws on missing meta', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { applyEvent } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    assert.throws(
+      () => applyEvent('does-not-exist', { at: 1, kind: 'running' }),
+      /no task does-not-exist/,
+    );
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('task store: listTasks ignores junk entries (e.g. .DS_Store)', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, listTasks } = await import('../dist/tasks/store.js');
+  const { getTasksDir } = await import('../dist/tasks/paths.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    writeTaskMeta({ runId: 'real1', runtime: 'detached-bash', label: 'x', command: 'x',
+                    workingDir: '/tmp', status: 'queued', createdAt: 100 });
+    // Junk file at top of tasks dir
+    fs.writeFileSync(path.join(getTasksDir(), '.DS_Store'), 'junk');
+    // Junk subdirectory with no meta.json
+    fs.mkdirSync(path.join(getTasksDir(), 'half-baked'));
+
+    const tasks = listTasks();
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0].runId, 'real1');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});

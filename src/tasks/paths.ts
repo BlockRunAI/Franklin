@@ -1,3 +1,10 @@
+/**
+ * Per-task on-disk layout under $FRANKLIN_HOME/tasks/<runId>/.
+ *   meta.json    — single TaskRecord, atomically rewritten
+ *   events.jsonl — append-only event log
+ *   log.txt      — child process stdout/stderr
+ */
+
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
