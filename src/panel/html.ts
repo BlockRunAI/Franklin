@@ -684,8 +684,13 @@ async function loadOverview() {
     document.getElementById('period-info').textContent = stats.period || '';
 
     if (stats.opusCost > 0) {
-      const saved = stats.saved || (stats.opusCost - stats.totalCostUsd);
-      const pct = stats.savedPct || ((1 - stats.totalCostUsd / stats.opusCost) * 100);
+      // tracker.ts now returns saved already clamped to >= 0 and opusCost
+      // already inclusive of media (so comparing to totalCostUsd is
+      // apples-to-apples). Older summaries fall back to clamped recompute.
+      const saved = stats.saved != null
+        ? Math.max(0, stats.saved)
+        : Math.max(0, stats.opusCost - stats.totalCostUsd);
+      const pct = stats.opusCost > 0 ? (saved / stats.opusCost) * 100 : 0;
       document.getElementById('savings-hero').style.display = 'flex';
       document.getElementById('savings-amount').textContent = usdBig(saved);
       document.getElementById('savings-pct').textContent = pct.toFixed(0) + '%';

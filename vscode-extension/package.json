@@ -2,7 +2,7 @@
   "name": "franklin-vscode",
   "displayName": "Franklin",
   "description": "The AI agent with a wallet. Autonomous marketing & trading agent powered by x402 micropayments.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "blockrun",
   "icon": "images/icon.png",
   "repository": {

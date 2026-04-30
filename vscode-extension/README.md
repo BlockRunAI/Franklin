@@ -41,6 +41,9 @@ Franklin is an autonomous AI agent that runs directly in VS Code. It doesn't jus
 
 ## Changelog
 
+### 0.5.1
+- **Fix: \"Saved vs Opus\" no longer goes negative** — when meaningful spend hit ImageGen / VideoGen, the savings widget showed numbers like `$-8.79` because chat-only Opus baseline was being compared against total spend (chat + media). Now compared apples-to-apples (media counts on both sides; saved is the chat-side delta, clamped to >= 0). Mirror of upstream PR #36.
+
 ### 0.5.0
 - **Major core sync** — extension now rides on Franklin core v3.10.0, picking up two months of upstream work since 0.4.5 (no more cherry-pick lag):
   - **Detached background tasks** (v3.10.0) — `Detach` capability spawns long-running work as a separate process; `franklin task list / tail / wait / cancel` to drive them
