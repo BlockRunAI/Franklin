@@ -4697,3 +4697,34 @@ test('task paths: getTasksDir + ensureTaskDir + per-task paths', async () => {
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('task store: writeTaskMeta + readTaskMeta round-trip', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'r' + Date.now().toString(36);
+    const record = {
+      runId,
+      runtime: 'detached-bash',
+      label: 'test',
+      command: 'echo hi',
+      workingDir: '/tmp',
+      status: 'queued',
+      createdAt: 1000,
+    };
+    writeTaskMeta(record);
+    const round = readTaskMeta(runId);
+    assert.deepEqual(round, record);
+    assert.equal(readTaskMeta('does-not-exist'), null);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
