@@ -26,6 +26,7 @@ import { daemonCommand } from './commands/daemon.js';
 import { initCommand } from './commands/init.js';
 import { uninitCommand } from './commands/uninit.js';
 import { proxyCommand } from './commands/proxy.js';
+import { buildTaskCommand } from './commands/task.js';
 
 import { VERSION as version } from './config.js';
 
@@ -268,6 +269,10 @@ program
     const { listAvailablePlugins } = await import('./commands/plugin.js');
     listAvailablePlugins();
   });
+
+// `franklin task <subcmd>` — human-facing CLI for detached background tasks.
+// Defined in src/commands/task.ts; subcommands: list, tail, cancel, wait.
+program.addCommand(buildTaskCommand());
 
 // Hidden internal subcommand — invoked by startDetachedTask via spawn(detached).
 // The underscore prefix signals "not for humans"; we still register it via

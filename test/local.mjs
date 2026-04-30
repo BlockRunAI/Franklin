@@ -5036,3 +5036,39 @@ test('startDetachedTask: returns runId immediately, child completes async', asyn
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('cli: franklin task list prints recent tasks', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    writeTaskMeta({ runId: 't1', runtime: 'detached-bash', label: 'first',
+                    command: 'true', workingDir: '/tmp', status: 'succeeded',
+                    createdAt: 100 });
+    writeTaskMeta({ runId: 't2', runtime: 'detached-bash', label: 'second',
+                    command: 'true', workingDir: '/tmp', status: 'running',
+                    createdAt: 200 });
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, 'task', 'list'], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+    });
+    assert.equal(result.status, 0, result.stderr.toString());
+    const out = result.stdout.toString();
+    assert.match(out, /t2/);
+    assert.match(out, /t1/);
+    assert.match(out, /running/);
+    assert.match(out, /succeeded/);
+    assert.ok(out.indexOf('t2') < out.indexOf('t1'), 'newest first');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
