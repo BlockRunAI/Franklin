@@ -101,7 +101,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
           )}
         </Box>
       </Box>
-      <Box marginLeft={1}>
+      <Box marginLeft={2}>
         <Text dimColor>
           {busy ? <Text color="yellow"><Spinner type="dots" /></Text> : null}
           {busy ? ' ' : ''}{shortModelName(model)}  ·  {balance}
@@ -1021,7 +1021,7 @@ function RunCodeApp({
                 <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
               </Box>
               {(r.tokens.input > 0 || r.tokens.output > 0) && (
-                <Box marginLeft={1} marginBottom={1}>
+                <Box marginLeft={2} marginBottom={1}>
                   <Text dimColor>
                     {r.tier && <Text color="cyan">[{r.tier}] </Text>}
                     {r.model ? shortModelName(r.model) : ''}
@@ -1041,14 +1041,14 @@ function RunCodeApp({
 
       {/* Permission dialog — rendered inline, captured via useInput above */}
       {permissionRequest && (
-        <Box flexDirection="column" marginTop={1} marginLeft={1}>
-          <Text color="yellow">  ╭─ Permission required ─────────────────</Text>
-          <Text color="yellow">  │ <Text bold>{permissionRequest.toolName}</Text></Text>
+        <Box flexDirection="column" marginTop={1} marginLeft={2}>
+          <Text color="yellow">╭─ Permission required ─────────────────</Text>
+          <Text color="yellow">│ <Text bold>{permissionRequest.toolName}</Text></Text>
           {permissionRequest.description.split('\n').map((line, i) => (
-            <Text key={i} dimColor>  │ {line}</Text>
+            <Text key={i} dimColor>│ {line}</Text>
           ))}
-          <Text color="yellow">  ╰─────────────────────────────────────</Text>
-          <Box marginLeft={3}>
+          <Text color="yellow">╰─────────────────────────────────────</Text>
+          <Box marginLeft={2}>
             <Text>
               <Text bold color="green">[y]</Text>
               <Text dimColor> yes  </Text>
@@ -1063,16 +1063,16 @@ function RunCodeApp({
 
       {/* AskUser dialog — text input for agent questions */}
       {askUserRequest && (
-        <Box flexDirection="column" marginTop={1} marginLeft={1}>
-          <Text color="cyan">  ╭─ Question ─────────────────────────────</Text>
-          <Text color="cyan">  │ <Text bold>{askUserRequest.question}</Text></Text>
+        <Box flexDirection="column" marginTop={1} marginLeft={2}>
+          <Text color="cyan">╭─ Question ─────────────────────────────</Text>
+          <Text color="cyan">│ <Text bold>{askUserRequest.question}</Text></Text>
           {askUserRequest.options && askUserRequest.options.length > 0 && (
             askUserRequest.options.map((opt, i) => (
-              <Text key={i} dimColor>  │ {i + 1}. {opt}</Text>
+              <Text key={i} dimColor>│ {i + 1}. {opt}</Text>
             ))
           )}
-          <Text color="cyan">  ╰─────────────────────────────────────</Text>
-          <Box marginLeft={3}>
+          <Text color="cyan">╰─────────────────────────────────────</Text>
+          <Box marginLeft={2}>
             <Text bold>answer&gt; </Text>
             <TextInput
               value={askUserInput}
@@ -1206,7 +1206,7 @@ function RunCodeApp({
       {streamText && (() => {
         const { rendered, partial } = renderMarkdownStreaming(streamText);
         return (
-          <Box marginTop={0} marginBottom={0}>
+          <Box marginTop={0} marginBottom={0} marginLeft={2}>
             <Text wrap="wrap">
               {rendered}
               {rendered && partial ? '\n' : ''}
@@ -1219,7 +1219,7 @@ function RunCodeApp({
       {/* Preview of latest response — last 5 lines shown in dynamic area for quick reference.
           Full text is already in Static/scrollback above. Cleared when next turn starts. */}
       {responsePreview && !streamText && (
-        <Box flexDirection="column" marginBottom={0}>
+        <Box flexDirection="column" marginBottom={0} marginLeft={2}>
           <Text wrap="wrap">{renderMarkdown(responsePreview)}</Text>
         </Box>
       )}
