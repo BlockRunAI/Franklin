@@ -4962,3 +4962,36 @@ test('runner: executes command, writes log, finalizes status=succeeded', async (
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+test('runner: nonzero exit → status=failed + tail captured', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'fail-test-' + Date.now().toString(36);
+    writeTaskMeta({
+      runId, runtime: 'detached-bash',
+      label: 'fail', command: 'echo oops; exit 17',
+      workingDir: process.cwd(),
+      status: 'queued', createdAt: Date.now(),
+    });
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, '_task-runner', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 10_000,
+    });
+    assert.equal(result.status, 17, 'runner propagates exit code');
+
+    const meta = readTaskMeta(runId);
+    assert.equal(meta.status, 'failed');
+    assert.equal(meta.exitCode, 17);
+    assert.match(meta.terminalSummary, /oops/);
+  } finally {
+    delete process.env.FRANKLIN_HOME;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
