@@ -1,13 +1,13 @@
 # Changelog
 
-## 3.10.0 — Detached background tasks (Task tool + `franklin task` CLI)
+## 3.10.0 — Detached background tasks (Detach tool + `franklin task` CLI)
 
 The agent's job is to design and orchestrate. The for-loop is somebody
 else's problem. v3.10 adds that somebody.
 
 ### What's new
 
-- New **Task** agent tool: `{ label, command }` → detached Bash child
+- New **Detach** agent tool: `{ label, command }` → detached Bash child
   process spawned via `franklin _task-runner <runId>`. Returns a
   `runId` immediately. Survives the parent Franklin process — close
   your terminal, the work continues.
@@ -32,8 +32,8 @@ tool call per item. That burned turns, hit TTFB walls (v3.9.6 raised
 those defaults to 180s as a bandaid), and tied the work's life to the
 foreground session.
 
-The Task tool inverts that: the LLM writes a script, hands it to
-`Task`, gets a runId, and is free. The script does the iteration with
+The Detach tool inverts that: the LLM writes a script, hands it to
+`Detach`, gets a runId, and is free. The script does the iteration with
 a checkpoint file. Franklin restarts have no effect on the work.
 
 ### Out of scope (deliberate)
