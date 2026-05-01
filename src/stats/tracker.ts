@@ -277,7 +277,9 @@ export function getStatsSummary(): {
   // Walk byModel: rows with zero tokens are media (recordUsage stores
   // image/video calls with inputTokens=0 outputTokens=0). Those count
   // towards both sides equally; chat rows count at actual price on the
-  // "actual" side and at Opus rates on the "baseline" side.
+  // "actual" side and at Opus rates on the "baseline" side. Keeping them
+  // on both sides means the displayed totals match the user's real
+  // spend rather than an unfamiliar chat-only subset.
   let chatOnlyCost = 0;
   let mediaCost = 0;
   for (const m of Object.values(stats.byModel)) {
@@ -287,14 +289,14 @@ export function getStatsSummary(): {
   const opusChatCost =
     (stats.totalInputTokens / 1_000_000) * OPUS_PRICING.input +
     (stats.totalOutputTokens / 1_000_000) * OPUS_PRICING.output;
-  // What the bill would have been if every chat request had hit Opus
-  // pricing — media stays the same on both sides because there's no
-  // Opus alternative for image/video gen.
+  // Display-side baseline: include media on both sides so "you spent X
+  // instead of Y" shows real, comparable totals.
   const opusCost = opusChatCost + mediaCost;
 
-  // Saved is the chat-side delta only (media nets to zero in the diff).
-  // Clamp to 0 so a session where the user paid more than Opus would have
-  // (e.g. Sonnet 4.6 with thinking enabled) doesn't show negative savings.
+  // Saved is the chat-side delta only — media nets to zero. Clamp to 0
+  // so a session where the user paid more than Opus-equivalent for chat
+  // (e.g. Sonnet 4.6 with extended thinking enabled) doesn't show a
+  // negative "savings" number; we just say zero saved.
   const saved = Math.max(0, opusChatCost - chatOnlyCost);
   const savedPct = opusCost > 0 ? (saved / opusCost) * 100 : 0;
   const avgCostPerRequest =

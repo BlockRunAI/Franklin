@@ -274,6 +274,63 @@ a:hover { text-decoration:underline; }
 .tab.active { display:block; }
 .empty { color:var(--text-dim); text-align:center; padding:56px 24px; font-size:13px; }
 
+/* ── Tasks ── */
+.tasks-toolbar { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+.tasks-table {
+  display:flex; flex-direction:column; gap:4px;
+}
+.task-row {
+  display:grid; grid-template-columns:140px 1fr 110px 90px 92px;
+  gap:12px; align-items:center;
+  background:oklch(0.19 0.006 286 / 75%); border:1px solid var(--border); border-radius:8px;
+  padding:11px 14px; cursor:pointer; transition:all .15s ease;
+  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+}
+.task-row:hover { background:var(--bg-card-hover); border-color:var(--border-strong); }
+.task-row .runid { font-family:var(--mono); font-size:11px; color:var(--text-muted); }
+.task-row .label { font-size:13px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.task-row .age { font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+.task-row .actions { text-align:right; }
+.task-row .cancel-err { grid-column:1 / -1; color:var(--danger); font-size:11px; font-family:var(--mono); padding-top:4px; }
+.task-status {
+  display:inline-block; font-size:9px; font-family:var(--mono); font-weight:700;
+  padding:3px 8px; border-radius:5px; text-transform:uppercase; letter-spacing:0.6px;
+}
+.task-status.succeeded { background:oklch(0.72 0.17 150 / 14%); color:var(--success); }
+.task-status.running   { background:oklch(0.68 0.16 260 / 16%); color:var(--brand); }
+.task-status.queued    { background:oklch(1 0 0 / 6%); color:var(--text-dim); }
+.task-status.failed,
+.task-status.lost      { background:oklch(0.65 0.20 25 / 16%); color:var(--danger); }
+.task-status.cancelled { background:oklch(0.78 0.14 85 / 14%); color:var(--warning); }
+.task-status.timed_out { background:oklch(0.65 0.20 25 / 16%); color:var(--danger); }
+
+.task-detail {
+  background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius);
+  padding:18px; margin-bottom:14px;
+}
+.task-detail h4 { font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.8px; font-weight:600; margin:14px 0 6px; }
+.task-detail .top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
+.task-detail .top .title { font-size:14px; font-weight:600; }
+.task-detail-meta {
+  display:grid; grid-template-columns:max-content 1fr; column-gap:14px; row-gap:4px;
+  font-family:var(--mono); font-size:11.5px; color:var(--text-muted);
+}
+.task-detail-meta .k { color:var(--text-dim); }
+.task-detail-meta .v { word-break:break-all; }
+.task-events { display:flex; flex-direction:column; gap:4px; font-family:var(--mono); font-size:11.5px; }
+.task-event { display:grid; grid-template-columns:90px 130px 1fr; gap:10px; padding:3px 0; color:var(--text-muted); border-bottom:1px solid var(--border); }
+.task-event:last-child { border:none; }
+.task-event .kind { font-weight:600; color:var(--text); }
+.task-log-footer { font-size:11px; color:var(--warning); margin:8px 0 4px; font-family:var(--mono); }
+.task-log {
+  font-family:var(--mono); font-size:11.5px; color:var(--text-muted);
+  background:oklch(0 0 0 / 35%); border:1px solid var(--border);
+  border-radius:8px; padding:10px 12px; max-height:400px;
+  overflow-y:auto; white-space:pre-wrap; word-break:break-all;
+  line-height:1.5;
+}
+.task-detail-actions { display:flex; gap:8px; margin-top:14px; }
+
 /* ── Wallet page ── */
 .chain-switcher {
   display:inline-flex; padding:3px; gap:2px;
@@ -402,6 +459,10 @@ a:hover { text-decoration:underline; }
     <button class="nav-item" data-tab="sessions">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       Sessions
+    </button>
+    <button class="nav-item" data-tab="tasks">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Tasks
     </button>
     <button class="nav-item" data-tab="learnings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
@@ -568,8 +629,22 @@ a:hover { text-decoration:underline; }
       <p>Browse past conversations</p>
     </div>
     <input class="search-box" id="session-search" placeholder="Search sessions..." />
-    <div class="session-list" id="session-list"></div>
     <div class="session-detail" id="session-detail" style="display:none"></div>
+    <div class="session-list" id="session-list"></div>
+  </div>
+
+  <!-- Tasks -->
+  <div class="tab" id="tab-tasks">
+    <div class="content-header">
+      <h2>Tasks</h2>
+      <p>Detached background work — long builds, runs, jobs.</p>
+    </div>
+    <div class="tasks-toolbar">
+      <button class="btn" id="tasks-refresh-btn">Refresh</button>
+      <span id="tasks-summary" style="font-size:12px;color:var(--text-dim);"></span>
+    </div>
+    <div class="task-detail" id="task-detail" style="display:none"></div>
+    <div class="tasks-table" id="tasks-list"></div>
   </div>
 
   <!-- Markets -->
@@ -640,20 +715,41 @@ a:hover { text-decoration:underline; }
 </div>
 
 <script>
-// Tab switching
+// Tab switching — supports URL hash (e.g. #tasks) for deep links.
+// Emits a 'tab:activated' / 'tab:deactivated' event so per-tab modules
+// can start/stop their pollers without coupling to the dispatcher.
+let _activeTab = 'overview';
+function activateTab(name) {
+  if (!document.getElementById('tab-' + name)) name = 'overview';
+  if (name === _activeTab) return;
+  const prev = _activeTab;
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
+  _activeTab = name;
+  document.dispatchEvent(new CustomEvent('tab:deactivated', { detail: { name: prev } }));
+  document.dispatchEvent(new CustomEvent('tab:activated', { detail: { name } }));
+}
 document.querySelectorAll('.nav-item').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    const name = btn.dataset.tab;
+    if (history.replaceState) history.replaceState(null, '', '#' + name);
+    activateTab(name);
   });
+});
+window.addEventListener('hashchange', () => {
+  const name = (location.hash || '').replace(/^#/, '');
+  if (name) activateTab(name);
 });
 
 const api = (path) => fetch('/api/' + path).then(r => r.json()).catch(() => null);
 const usd = (n) => '$' + (n || 0).toFixed(4);
 const usdBig = (n) => '$' + (n || 0).toFixed(2);
-const esc = (s) => s.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const esc = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 
 async function loadOverview() {
   const [wallet, stats, insights] = await Promise.all([
@@ -686,11 +782,13 @@ async function loadOverview() {
     if (stats.opusCost > 0) {
       // tracker.ts now returns saved already clamped to >= 0 and opusCost
       // already inclusive of media (so comparing to totalCostUsd is
-      // apples-to-apples). Older summaries fall back to clamped recompute.
-      const saved = stats.saved != null
-        ? Math.max(0, stats.saved)
-        : Math.max(0, stats.opusCost - stats.totalCostUsd);
-      const pct = stats.opusCost > 0 ? (saved / stats.opusCost) * 100 : 0;
+      // apples-to-apples). Older summaries — or the rare path where saved
+      // is undefined — get the same Math.max clamp here so the panel
+      // never shows a negative dollar amount.
+      const saved = Math.max(0, stats.saved != null ? stats.saved : (stats.opusCost - stats.totalCostUsd));
+      const pct = stats.savedPct != null
+        ? Math.max(0, stats.savedPct)
+        : (stats.opusCost > 0 ? Math.max(0, (saved / stats.opusCost) * 100) : 0);
       document.getElementById('savings-hero').style.display = 'flex';
       document.getElementById('savings-amount').textContent = usdBig(saved);
       document.getElementById('savings-pct').textContent = pct.toFixed(0) + '%';
@@ -725,27 +823,57 @@ async function loadOverview() {
 
 async function loadSessions() {
   const sessions = await api('sessions');
+  clearSessionDetail();
   if (!sessions || sessions.length === 0) {
     document.getElementById('session-list').innerHTML = '<div class="empty">No sessions yet</div>';
     return;
   }
-  document.getElementById('session-list').innerHTML = sessions.slice(0, 50).map(s =>
+  document.getElementById('session-list').innerHTML = sessions.slice(0, 50).map(renderSessionRow).join('');
+  attachSessionClickHandlers();
+}
+
+function renderSessionRow(s) {
+  return (
     '<div class="session-item" data-id="' + esc(s.id) + '">' +
       '<div class="title">' + esc(s.model || 'unknown') + ' &mdash; ' + s.messageCount + ' messages</div>' +
       '<div class="meta">' + new Date(s.createdAt).toLocaleString() + ' &middot; ' + esc((s.workDir || '').split('/').pop()) + '</div>' +
     '</div>'
-  ).join('');
-  document.querySelectorAll('.session-item').forEach(el => {
+  );
+}
+
+function renderSessionSearchRow(r) {
+  const s = r.session || {};
+  const id = s.id || r.sessionId || '';
+  const model = s.model || 'unknown';
+  const score = Number.isFinite(r.score) ? r.score.toFixed(2) : '0.00';
+  return (
+    '<div class="session-item" data-id="' + esc(id) + '">' +
+      '<div class="title">' + esc(r.snippet || '(no snippet)') + '</div>' +
+      '<div class="meta">' + esc(model) + ' &middot; ' + esc(id) + ' &middot; score: ' + score + '</div>' +
+    '</div>'
+  );
+}
+
+function clearSessionDetail() {
+  const detail = document.getElementById('session-detail');
+  detail.style.display = 'none';
+  detail.innerHTML = '';
+}
+
+function attachSessionClickHandlers() {
+  document.querySelectorAll('.session-item[data-id]').forEach(el => {
     el.addEventListener('click', async () => {
+      if (!el.dataset.id) return;
       const history = await api('sessions/' + encodeURIComponent(el.dataset.id));
       if (!history) return;
       const detail = document.getElementById('session-detail');
       detail.style.display = 'block';
       detail.innerHTML = history.map(m => {
         const role = m.role || 'system';
-        let text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content).slice(0, 500);
+        let text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? null).slice(0, 500);
         return '<div class="msg ' + role + '"><div class="role">' + role + '</div><pre>' + esc(text) + '</pre></div>';
       }).join('');
+      detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   });
 }
@@ -757,16 +885,13 @@ document.getElementById('session-search').addEventListener('input', (e) => {
     const q = e.target.value.trim();
     if (!q) { loadSessions(); return; }
     const results = await api('sessions/search?q=' + encodeURIComponent(q));
+    clearSessionDetail();
     if (!results || results.length === 0) {
       document.getElementById('session-list').innerHTML = '<div class="empty">No results</div>';
       return;
     }
-    document.getElementById('session-list').innerHTML = results.map(r =>
-      '<div class="session-item">' +
-        '<div class="title">' + esc(r.snippet) + '</div>' +
-        '<div class="meta">' + esc(r.sessionId) + ' &middot; score: ' + r.score.toFixed(2) + '</div>' +
-      '</div>'
-    ).join('');
+    document.getElementById('session-list').innerHTML = results.map(renderSessionSearchRow).join('');
+    attachSessionClickHandlers();
   }, 300);
 });
 
@@ -884,15 +1009,24 @@ async function loadWallet() {
     solanaBtn.classList.toggle('active', w.chain === 'solana');
   }
 
-  // QR via server — never leak address to third parties
+  // QR via server — never leak address to third parties.
+  // Encode chain + USDC token in the QR payload so wallet apps land
+  // directly on the right network/token instead of a bare address:
+  //   Base   → EIP-681:  ethereum:<USDC>@8453/transfer?address=<addr>
+  //   Solana → Solana Pay: solana:<addr>?spl-token=<USDC mint>
   const qrBox = document.getElementById('wallet-qr');
   const hint = document.getElementById('wallet-qr-hint');
   if (addr && addr !== 'not set') {
-    const svg = await fetch('/api/wallet/qr?data=' + encodeURIComponent(addr)).then(r => r.ok ? r.text() : null);
+    const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+    const USDC_SOL_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const payload = w.chain === 'solana'
+      ? 'solana:' + addr + '?spl-token=' + USDC_SOL_MINT
+      : 'ethereum:' + USDC_BASE + '@8453/transfer?address=' + addr;
+    const svg = await fetch('/api/wallet/qr?data=' + encodeURIComponent(payload)).then(r => r.ok ? r.text() : null);
     qrBox.innerHTML = svg || '';
     hint.textContent = w.chain === 'solana'
-      ? 'Scan to send USDC (Solana SPL) to this address.'
-      : 'Scan to send USDC on Base to this address.';
+      ? 'Scan with a Solana wallet (Phantom, Solflare) to send USDC SPL.'
+      : 'Scan with an EVM wallet (MetaMask, Coinbase) to send USDC on Base.';
   } else {
     qrBox.innerHTML = '';
     hint.textContent = 'No wallet set yet — run: franklin setup';
@@ -1081,12 +1215,351 @@ async function loadAudit() {
 document.getElementById('audit-refresh')?.addEventListener('click', loadAudit);
 document.querySelector('[data-tab="audit"]')?.addEventListener('click', loadAudit);
 
+// ─── Tasks tab ───────────────────────────────────────────────────────────
+// Polls /api/tasks every 10s while the Tasks tab is active AND the page is
+// visible. Detail view layers a 2s log-tail poll using Range: bytes=N- on
+// top, stopping itself once the task hits a terminal status. No SSE — keeps
+// the panel server stateless and the wire format trivial.
+const TASK_TERMINAL = new Set(['succeeded', 'failed', 'timed_out', 'cancelled', 'lost']);
+const tasks = {
+  pollTimer: null,
+  logTimer: null,
+  selected: null,        // runId of currently-open detail
+  logBytesShown: 0,
+  cache: [],             // last list snapshot (for finding the selected meta)
+  finalLogFetched: false // ensures one final 200 fetch after task terminates
+};
+
+function fmtAge(ts) {
+  if (!ts) return '—';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return s + 's ago';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.round(m / 60);
+  if (h < 48) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+function fmtTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleString();
+}
+
+async function fetchTasks() {
+  const data = await api('tasks');
+  if (!data) {
+    document.getElementById('tasks-list').innerHTML = '<div class="empty">API offline</div>';
+    return;
+  }
+  const list = (data.tasks || []).slice().sort((a, b) => {
+    const at = a.lastEventAt || a.createdAt || 0;
+    const bt = b.lastEventAt || b.createdAt || 0;
+    return bt - at;
+  });
+  tasks.cache = list;
+  document.getElementById('tasks-summary').textContent = list.length + ' task' + (list.length === 1 ? '' : 's');
+  if (list.length === 0) {
+    document.getElementById('tasks-list').innerHTML =
+      '<div class="empty">No tasks. Start one via the Detach agent tool, or manually with <code>franklin task ...</code>.</div>';
+  } else {
+    document.getElementById('tasks-list').innerHTML = list.map(renderTaskRow).join('');
+    attachTaskRowHandlers();
+  }
+  // If a detail view is open, refresh its meta panel from the new snapshot
+  if (tasks.selected) {
+    const meta = list.find(t => t.runId === tasks.selected);
+    if (meta) refreshTaskDetailMeta(meta);
+  }
+}
+
+function renderTaskRow(t) {
+  const shortId = t.runId.slice(0, 12) + '…';
+  const age = fmtAge(t.lastEventAt || t.createdAt);
+  const showCancel = t.status === 'running' || t.status === 'queued';
+  const cancelBtn = showCancel
+    ? '<button class="btn btn-warn" data-cancel="' + esc(t.runId) + '">Cancel</button>'
+    : '';
+  return (
+    '<div class="task-row" data-runid="' + esc(t.runId) + '">' +
+      '<span class="runid">' + esc(shortId) + '</span>' +
+      '<span class="label">' + esc(t.label || '(no label)') + '</span>' +
+      '<span><span class="task-status ' + esc(t.status) + '">' + esc(t.status) + '</span></span>' +
+      '<span class="age">' + esc(age) + '</span>' +
+      '<span class="actions">' + cancelBtn + '</span>' +
+    '</div>'
+  );
+}
+
+function attachTaskRowHandlers() {
+  document.querySelectorAll('.task-row[data-runid]').forEach(el => {
+    el.addEventListener('click', (ev) => {
+      // Cancel button: handle and stop propagation so the row doesn't open detail
+      const target = ev.target;
+      if (target instanceof HTMLElement && target.dataset.cancel) {
+        ev.stopPropagation();
+        cancelTask(target.dataset.cancel, el);
+        return;
+      }
+      openTaskDetail(el.dataset.runid);
+    });
+  });
+}
+
+async function cancelTask(runId, rowEl) {
+  if (!confirm('Cancel task ' + runId.slice(0, 12) + '…?\\n\\nFranklin will send SIGTERM to the running process.')) return;
+  try {
+    const r = await fetch('/api/tasks/' + encodeURIComponent(runId) + '/cancel', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (d && d.ok) {
+      fetchTasks();
+    } else {
+      // Show inline error under the row
+      const existing = rowEl && rowEl.querySelector('.cancel-err');
+      if (existing) existing.remove();
+      const err = document.createElement('div');
+      err.className = 'cancel-err';
+      err.textContent = 'Cancel failed: ' + (d && d.reason ? d.reason : 'unknown');
+      if (rowEl) rowEl.appendChild(err);
+    }
+  } catch (err) {
+    alert('Network error: ' + (err && err.message ? err.message : err));
+  }
+}
+
+async function openTaskDetail(runId) {
+  tasks.selected = runId;
+  tasks.logBytesShown = 0;
+  tasks.finalLogFetched = false;
+  const detail = document.getElementById('task-detail');
+  detail.style.display = 'block';
+  detail.innerHTML = '<div style="color:var(--text-dim);font-size:12px">Loading…</div>';
+  detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const meta = await api('tasks/' + encodeURIComponent(runId));
+  if (!meta) {
+    detail.innerHTML = '<div class="empty">Task not found</div>';
+    return;
+  }
+  renderTaskDetail(meta);
+  await Promise.all([loadTaskEvents(runId), pollTaskLog(runId, /*initial*/ true)]);
+  // Start log polling cadence (only if not terminal and visible)
+  startLogPolling();
+}
+
+function refreshTaskDetailMeta(meta) {
+  // Update only the top metadata fields without resetting the log box.
+  const top = document.getElementById('td-top');
+  const metaBox = document.getElementById('td-meta');
+  const cancelSlot = document.getElementById('td-cancel-slot');
+  if (top) top.innerHTML = renderTaskDetailTop(meta);
+  if (metaBox) metaBox.innerHTML = renderTaskDetailMetaRows(meta);
+  if (cancelSlot) cancelSlot.innerHTML = renderTaskDetailCancelBtn(meta);
+  attachTaskDetailButtonHandlers(meta);
+  // If the task just hit terminal, surface the footer + stop polling
+  if (TASK_TERMINAL.has(meta.status)) {
+    const footer = document.getElementById('td-log-footer');
+    if (footer && !footer.textContent) {
+      footer.textContent = 'Final status: ' + meta.status + ' — log polling stopped.';
+    }
+  }
+}
+
+function renderTaskDetailTop(t) {
+  return (
+    '<span class="title">' + esc(t.label || '(no label)') + '</span>' +
+    '<span class="task-status ' + esc(t.status) + '">' + esc(t.status) + '</span>'
+  );
+}
+
+function renderTaskDetailMetaRows(t) {
+  const rows = [
+    ['runId', t.runId],
+    ['command', t.command],
+    ['workingDir', t.workingDir],
+    ['pid', t.pid != null ? String(t.pid) : '—'],
+    ['createdAt', fmtTime(t.createdAt)],
+    ['startedAt', fmtTime(t.startedAt)],
+    ['lastEventAt', fmtTime(t.lastEventAt)],
+    ['endedAt', fmtTime(t.endedAt)],
+  ];
+  if (t.exitCode !== undefined) rows.push(['exitCode', String(t.exitCode)]);
+  if (t.terminalSummary) rows.push(['terminalSummary', t.terminalSummary]);
+  if (t.error) rows.push(['error', t.error]);
+  return rows.map(([k, v]) =>
+    '<span class="k">' + esc(k) + '</span><span class="v">' + esc(v == null ? '—' : v) + '</span>'
+  ).join('');
+}
+
+function renderTaskDetailCancelBtn(t) {
+  if (TASK_TERMINAL.has(t.status)) return '';
+  return '<button class="btn btn-warn" id="td-cancel-btn" data-runid="' + esc(t.runId) + '">Cancel</button>';
+}
+
+function renderTaskDetail(t) {
+  const detail = document.getElementById('task-detail');
+  detail.innerHTML =
+    '<div class="top" id="td-top">' + renderTaskDetailTop(t) + '</div>' +
+    '<div class="task-detail-meta" id="td-meta">' + renderTaskDetailMetaRows(t) + '</div>' +
+    '<h4>Recent events</h4>' +
+    '<div class="task-events" id="td-events"><div style="color:var(--text-dim);font-size:11px">Loading…</div></div>' +
+    '<h4>Log tail</h4>' +
+    '<div class="task-log-footer" id="td-log-footer"></div>' +
+    '<pre class="task-log" id="td-log"></pre>' +
+    '<div class="task-detail-actions">' +
+      '<span id="td-cancel-slot">' + renderTaskDetailCancelBtn(t) + '</span>' +
+      '<button class="btn btn-ghost" id="td-close-btn">Close</button>' +
+    '</div>';
+  attachTaskDetailButtonHandlers(t);
+}
+
+function attachTaskDetailButtonHandlers(t) {
+  const closeBtn = document.getElementById('td-close-btn');
+  if (closeBtn) closeBtn.onclick = closeTaskDetail;
+  const cancelBtn = document.getElementById('td-cancel-btn');
+  if (cancelBtn) cancelBtn.onclick = () => cancelTask(t.runId, null);
+}
+
+function closeTaskDetail() {
+  tasks.selected = null;
+  stopLogPolling();
+  const detail = document.getElementById('task-detail');
+  detail.style.display = 'none';
+  detail.innerHTML = '';
+}
+
+async function loadTaskEvents(runId) {
+  const data = await api('tasks/' + encodeURIComponent(runId) + '/events');
+  const box = document.getElementById('td-events');
+  if (!box) return;
+  const events = (data && data.events ? data.events : [])
+    .slice()
+    .sort((a, b) => (b.at || 0) - (a.at || 0))
+    .slice(0, 10);
+  if (events.length === 0) {
+    box.innerHTML = '<div style="color:var(--text-dim);font-size:11px">No events recorded.</div>';
+    return;
+  }
+  box.innerHTML = events.map(e =>
+    '<div class="task-event">' +
+      '<span class="kind">' + esc(e.kind) + '</span>' +
+      '<span>' + esc(fmtTime(e.at)) + '</span>' +
+      '<span>' + esc(e.summary || '') + '</span>' +
+    '</div>'
+  ).join('');
+}
+
+async function pollTaskLog(runId, initial) {
+  const logEl = document.getElementById('td-log');
+  if (!logEl) return;
+  try {
+    const headers = (!initial && tasks.logBytesShown > 0)
+      ? { 'Range': 'bytes=' + tasks.logBytesShown + '-' }
+      : {};
+    const res = await fetch('/api/tasks/' + encodeURIComponent(runId) + '/log', { headers });
+    if (res.status === 206) {
+      const body = await res.text();
+      if (body.length > 0) {
+        logEl.textContent += body;
+        tasks.logBytesShown += new Blob([body]).size;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    } else if (res.status === 200) {
+      const body = await res.text();
+      logEl.textContent = body;
+      tasks.logBytesShown = new Blob([body]).size;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  } catch { /* network blip — next tick will retry */ }
+}
+
+function startLogPolling() {
+  stopLogPolling();
+  if (!tasks.selected) return;
+  tasks.logTimer = setInterval(async () => {
+    if (!tasks.selected) { stopLogPolling(); return; }
+    if (document.visibilityState !== 'visible') return;
+    const runId = tasks.selected;
+    const meta = tasks.cache.find(t => t.runId === runId);
+    const status = meta ? meta.status : 'running';
+    if (TASK_TERMINAL.has(status)) {
+      // One final 200 fetch to flush, then stop.
+      if (!tasks.finalLogFetched) {
+        tasks.finalLogFetched = true;
+        await pollTaskLog(runId, /*initial*/ true);
+      }
+      const footer = document.getElementById('td-log-footer');
+      if (footer && !footer.textContent) footer.textContent = 'Final status: ' + status + ' — log polling stopped.';
+      stopLogPolling();
+      return;
+    }
+    pollTaskLog(runId, /*initial*/ false);
+  }, 2000);
+}
+
+function stopLogPolling() {
+  if (tasks.logTimer) {
+    clearInterval(tasks.logTimer);
+    tasks.logTimer = null;
+  }
+}
+
+function startTasksPolling() {
+  stopTasksPolling();
+  fetchTasks();
+  tasks.pollTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') fetchTasks();
+  }, 10000);
+}
+
+function stopTasksPolling() {
+  if (tasks.pollTimer) {
+    clearInterval(tasks.pollTimer);
+    tasks.pollTimer = null;
+  }
+}
+
+document.addEventListener('tab:activated', (e) => {
+  if (e.detail && e.detail.name === 'tasks') {
+    startTasksPolling();
+    if (tasks.selected) startLogPolling();
+  }
+});
+document.addEventListener('tab:deactivated', (e) => {
+  if (e.detail && e.detail.name === 'tasks') {
+    stopTasksPolling();
+    stopLogPolling();
+  }
+});
+document.addEventListener('visibilitychange', () => {
+  const visible = document.visibilityState === 'visible';
+  if (_activeTab === 'tasks') {
+    if (visible) {
+      startTasksPolling();
+      if (tasks.selected) startLogPolling();
+    } else {
+      stopTasksPolling();
+      stopLogPolling();
+    }
+  }
+});
+
+document.getElementById('tasks-refresh-btn')?.addEventListener('click', fetchTasks);
+
 loadOverview();
 loadSessions();
 loadMarkets();
 loadLearnings();
 loadWallet();
 document.querySelector('[data-tab="markets"]')?.addEventListener('click', loadMarkets);
+
+// Honor URL hash on initial load (e.g. /#tasks deep link)
+{
+  const initialHash = (location.hash || '').replace(/^#/, '');
+  if (initialHash && initialHash !== 'overview' && document.getElementById('tab-' + initialHash)) {
+    activateTab(initialHash);
+  }
+}
+
 setInterval(() => api('wallet').then(w => {
   if (w) {
     document.getElementById('balance').textContent = usdBig(w.balance) + ' USDC';

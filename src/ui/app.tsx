@@ -22,6 +22,28 @@ import { mouse, forceDisableMouseTracking, type MouseEvent as TermMouseEvent } f
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
+const DISABLE_AUTO_WRAP = '\x1b[?7l';
+const ENABLE_AUTO_WRAP = '\x1b[?7h';
+
+function disableTerminalAutoWrap(): (() => void) | undefined {
+  if (!process.stdout.isTTY) return undefined;
+
+  let restored = false;
+  const restore = () => {
+    if (restored || !process.stdout.writable) return;
+    restored = true;
+    process.stdout.write(ENABLE_AUTO_WRAP);
+  };
+
+  process.stdout.write(DISABLE_AUTO_WRAP);
+  process.once('exit', restore);
+
+  return () => {
+    process.off('exit', restore);
+    restore();
+  };
+}
+
 // Subscribe to terminal resize so React re-renders with fresh dimensions.
 // Without this, useStdout() returns a stable ref and children that read
 // stdout.columns on each render still need React to re-execute them — which
@@ -101,7 +123,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
           )}
         </Box>
       </Box>
-      <Box marginLeft={1}>
+      <Box marginLeft={2}>
         <Text dimColor>
           {busy ? <Text color="yellow"><Spinner type="dots" /></Text> : null}
           {busy ? ' ' : ''}{shortModelName(model)}  ·  {balance}
@@ -360,12 +382,7 @@ function RunCodeApp({
       return next.length > 300 ? next.slice(-300) : next;
     });
 
-    const allLines = text.split('\n');
-    if (allLines.length > 20) {
-      setResponsePreview('  ↑ scroll to see full reply\n' + allLines.slice(-20).join('\n'));
-    } else {
-      setResponsePreview('');
-    }
+    setResponsePreview('');
   }, []);
 
   // Permission dialog key handler — captures y/n/a when dialog is visible.
@@ -1026,7 +1043,7 @@ function RunCodeApp({
                 <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
               </Box>
               {(r.tokens.input > 0 || r.tokens.output > 0) && (
-                <Box marginLeft={1} marginBottom={1}>
+                <Box marginLeft={2} marginBottom={1}>
                   <Text dimColor>
                     {r.tier && <Text color="cyan">[{r.tier}] </Text>}
                     {r.model ? shortModelName(r.model) : ''}
@@ -1046,14 +1063,14 @@ function RunCodeApp({
 
       {/* Permission dialog — rendered inline, captured via useInput above */}
       {permissionRequest && (
-        <Box flexDirection="column" marginTop={1} marginLeft={1}>
-          <Text color="yellow">  ╭─ Permission required ─────────────────</Text>
-          <Text color="yellow">  │ <Text bold>{permissionRequest.toolName}</Text></Text>
+        <Box flexDirection="column" marginTop={1} marginLeft={2}>
+          <Text color="yellow">╭─ Permission required ─────────────────</Text>
+          <Text color="yellow">│ <Text bold>{permissionRequest.toolName}</Text></Text>
           {permissionRequest.description.split('\n').map((line, i) => (
-            <Text key={i} dimColor>  │ {line}</Text>
+            <Text key={i} dimColor>│ {line}</Text>
           ))}
-          <Text color="yellow">  ╰─────────────────────────────────────</Text>
-          <Box marginLeft={3}>
+          <Text color="yellow">╰─────────────────────────────────────</Text>
+          <Box marginLeft={2}>
             <Text>
               <Text bold color="green">[y]</Text>
               <Text dimColor> yes  </Text>
@@ -1068,16 +1085,16 @@ function RunCodeApp({
 
       {/* AskUser dialog — text input for agent questions */}
       {askUserRequest && (
-        <Box flexDirection="column" marginTop={1} marginLeft={1}>
-          <Text color="cyan">  ╭─ Question ─────────────────────────────</Text>
-          <Text color="cyan">  │ <Text bold>{askUserRequest.question}</Text></Text>
+        <Box flexDirection="column" marginTop={1} marginLeft={2}>
+          <Text color="cyan">╭─ Question ─────────────────────────────</Text>
+          <Text color="cyan">│ <Text bold>{askUserRequest.question}</Text></Text>
           {askUserRequest.options && askUserRequest.options.length > 0 && (
             askUserRequest.options.map((opt, i) => (
-              <Text key={i} dimColor>  │ {i + 1}. {opt}</Text>
+              <Text key={i} dimColor>│ {i + 1}. {opt}</Text>
             ))
           )}
-          <Text color="cyan">  ╰─────────────────────────────────────</Text>
-          <Box marginLeft={3}>
+          <Text color="cyan">╰─────────────────────────────────────</Text>
+          <Box marginLeft={2}>
             <Text bold>answer&gt; </Text>
             <TextInput
               value={askUserInput}
@@ -1211,7 +1228,7 @@ function RunCodeApp({
       {streamText && (() => {
         const { rendered, partial } = renderMarkdownStreaming(streamText);
         return (
-          <Box marginTop={0} marginBottom={0}>
+          <Box marginTop={0} marginBottom={0} marginLeft={2}>
             <Text wrap="wrap">
               {rendered}
               {rendered && partial ? '\n' : ''}
@@ -1224,7 +1241,7 @@ function RunCodeApp({
       {/* Preview of latest response — last 5 lines shown in dynamic area for quick reference.
           Full text is already in Static/scrollback above. Cleared when next turn starts. */}
       {responsePreview && !streamText && (
-        <Box flexDirection="column" marginBottom={0}>
+        <Box flexDirection="column" marginBottom={0} marginLeft={2}>
           <Text wrap="wrap">{renderMarkdown(responsePreview)}</Text>
         </Box>
       )}
@@ -1333,6 +1350,7 @@ export function launchInkUI(opts: {
   let pendingInput: string | null = null; // Queue for inputs that arrive before waitForInput
   let exiting = false;
   let abortCallback: (() => void) | null = null;
+  const restoreTerminalAutoWrap = disableTerminalAutoWrap();
 
   const instance = render(
     <RunCodeApp
@@ -1398,7 +1416,11 @@ export function launchInkUI(opts: {
       return new Promise<string | null>((resolve) => { resolveInput = resolve; });
     },
     onAbort: (cb: () => void) => { abortCallback = cb; },
-    cleanup: () => { mouse.disable(); instance.unmount(); },
+    cleanup: () => {
+      mouse.disable();
+      instance.unmount();
+      restoreTerminalAutoWrap?.();
+    },
     requestPermission: (toolName: string, description: string) => {
       const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;

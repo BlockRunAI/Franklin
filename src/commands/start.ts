@@ -21,6 +21,10 @@ interface StartOptions {
   debug?: boolean;
   trust?: boolean;
   version?: string;
+  /** Start a new Franklin session seeded from another agent's saved context. */
+  from?: string;
+  /** Optional external agent session id/path for --from. If omitted, show a picker. */
+  fromSessionId?: string;
   /** Resume: explicit session ID, or true for "most recent in cwd", or 'picker' to prompt */
   resume?: string | boolean | 'picker';
   /** Continue: resume most recent session matching the current working directory */
@@ -100,7 +104,47 @@ export async function startCommand(options: StartOptions) {
     model = 'blockrun/auto';
   }
 
-  const workDir = process.cwd();
+  let workDir = process.cwd();
+
+  let importedKickoffPrompt: string | undefined;
+  if (options.from) {
+    const { importExternalSessionAsFranklin, parseExternalAgentSource } = await import('../session/from-import.js');
+    const source = parseExternalAgentSource(options.from);
+    if (!source) {
+      console.error(chalk.red(`Unknown --from source: ${options.from}`));
+      console.error(chalk.dim('Supported sources: claude, codex'));
+      process.exitCode = 1;
+      return;
+    }
+
+    try {
+      const imported = await importExternalSessionAsFranklin(source, options.fromSessionId, { model, workDir });
+      if (imported.imported.cwd) {
+        try {
+          process.chdir(imported.imported.cwd);
+          workDir = process.cwd();
+        } catch {
+          // Keep the caller's cwd if the source session directory no longer exists.
+        }
+      }
+      options.resume = imported.sessionId;
+      options.continue = false;
+      importedKickoffPrompt = [
+        `Continue from the imported ${source} handoff context.`,
+        'Briefly explain what you understand the previous session was working on, what state it appears to be in, and the most likely next step.',
+        'Do not claim you resumed or modified the source agent session. This is a new Franklin session with imported context awareness.',
+        'If the next action is clear, offer to proceed; if it is not clear, ask one concise question.',
+      ].join('\n');
+      console.log(chalk.green(`  Imported ${source} context into Franklin session ${imported.sessionId.slice(0, 24)}…`));
+      console.log(chalk.dim(`  Source session: ${imported.imported.id}`));
+      if (imported.imported.cwd) console.log(chalk.dim(`  Dir: ${workDir}`));
+      console.log('');
+    } catch (err) {
+      console.error(chalk.red((err as Error).message));
+      process.exitCode = 1;
+      return;
+    }
+  }
 
   // --prompt batch mode: skip all interactive startup UI/side effects so
   // stdout stays clean for scripts and one-shot callers. Keep the capability surface to the
@@ -348,9 +392,9 @@ export async function startCommand(options: StartOptions) {
   if (process.stdin.isTTY) {
     await runWithInkUI(agentConfig, model, workDir, version, walletInfo, (cb) => {
       onBalanceFetched = cb;
-    }, fetchBalance);
+    }, fetchBalance, importedKickoffPrompt);
   } else {
-    await runWithBasicUI(agentConfig, model, workDir);
+    await runWithBasicUI(agentConfig, model, workDir, importedKickoffPrompt);
   }
 }
 
@@ -391,6 +435,7 @@ async function runWithInkUI(
   walletInfo?: { address: string; balance: string; chain: string },
   onBalanceReady?: (cb: (bal: string) => void) => void,
   fetchBalance?: () => Promise<string>,
+  initialInput?: string,
 ) {
   const startSnapshot = snapshotStats();
   const ui = launchInkUI({
@@ -430,10 +475,15 @@ async function runWithInkUI(
   }
 
   let sessionHistory: Dialogue[] | undefined;
+  let deliveredInitialInput = false;
   try {
     sessionHistory = await interactiveSession(
       agentConfig,
       async () => {
+        if (initialInput && !deliveredInitialInput) {
+          deliveredInitialInput = true;
+          return initialInput;
+        }
         const input = await ui.waitForInput();
         if (input === null) return null;
         if (input === '') return '';
@@ -499,7 +549,8 @@ async function runWithInkUI(
 async function runWithBasicUI(
   agentConfig: AgentConfig,
   model: string,
-  workDir: string
+  workDir: string,
+  initialInput?: string,
 ) {
   const { TerminalUI } = await import('../ui/terminal.js');
   const ui = new TerminalUI();
@@ -507,10 +558,16 @@ async function runWithBasicUI(
   const startSnapshot = snapshotStats();
 
   let lastTerminalPrompt = '';
+  let deliveredInitialInput = false;
   try {
     await interactiveSession(
       agentConfig,
       async () => {
+        if (initialInput && !deliveredInitialInput) {
+          deliveredInitialInput = true;
+          lastTerminalPrompt = initialInput;
+          return initialInput;
+        }
         while (true) {
           const input = await ui.promptUser();
           if (input === null) return null;

@@ -259,6 +259,39 @@ function stripMediaFromHistory(history: Dialogue[]): { history: Dialogue[]; stri
 }
 
 /**
+ * Detect when the gateway leaked an upstream rate-limit / quota error as a
+ * 200-OK text content block instead of a real HTTP error. The Anthropic
+ * provider in particular surfaces per-day TPM exhaustion as a bracketed
+ * "[Error: Too many tokens per day, please wait before trying again.]"
+ * message glued into the assistant text channel, which then poisons grounding
+ * checks and gets persisted to session history as if it were a real reply.
+ *
+ * Treat any assistant turn whose entire text payload is a single bracketed
+ * `[Error: ...]` line — and contains no tool_use / thinking blocks — as a
+ * masquerading transport error. The caller throws to let the existing
+ * classifier + retry path take over.
+ */
+export function looksLikeGatewayErrorAsText(parts: ContentPart[]): { match: boolean; message: string } {
+  if (parts.length === 0) return { match: false, message: '' };
+  // Reject if any non-text content (real tool calls, real thinking) was emitted.
+  const textParts: string[] = [];
+  for (const p of parts) {
+    if (p.type === 'tool_use') return { match: false, message: '' };
+    if (p.type === 'text' && typeof (p as { text?: string }).text === 'string') {
+      textParts.push((p as { text: string }).text);
+    }
+  }
+  const joined = textParts.join('').trim();
+  if (!joined) return { match: false, message: '' };
+  // Pattern: `[Error: ...]` taking up the entire text payload, modulo
+  // surrounding whitespace. Allow the bracket to be the whole message OR
+  // the message to start with it (some gateways append a stray newline).
+  const m = /^\[Error:\s*([^\]]+?)\]\s*$/.exec(joined);
+  if (!m) return { match: false, message: '' };
+  return { match: true, message: m[1].trim() };
+}
+
+/**
  * Calculate backoff delay with jitter to avoid thundering herd.
  * Base: exponential (2^attempt * 1000ms), jitter: ±25%.
  */
@@ -1133,6 +1166,34 @@ export async function interactiveSession(
           }
         }
 
+        // ── Rate-limit / quota: auto-fallback to a different provider ──
+        // Per-day TPM caps (Anthropic) won't clear in this session; per-second
+        // limits already had their backoff retry above and still failed. In
+        // both cases, the productive next move is to run the same turn on a
+        // model from a different provider rather than thrash on the failing
+        // one. Mirror the payment fallback shape: mark the model as failed
+        // for this turn and pick the next free model that hasn't failed yet.
+        if (classified.category === 'rate_limit') {
+          turnFailedModels.add(config.model);
+          if (lastRoutedCategory) {
+            recordOutcome(lastRoutedCategory, config.model, 'rate_limit');
+          }
+          const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick', 'nvidia/glm-4.7'];
+          const nextFree = FREE_MODELS.find(m => !turnFailedModels.has(m));
+          if (nextFree) {
+            const oldModel = config.model;
+            config.model = nextFree;
+            config.onModelChange?.(nextFree, 'system');
+            // Reset retry counter — the new model gets its own retry budget.
+            recoveryAttempts = 0;
+            onEvent({
+              kind: 'text_delta',
+              text: `\n*${oldModel} rate-limited — switching to ${nextFree}*\n`,
+            });
+            continue;
+          }
+        }
+
         // ── Unrecoverable: show error with suggestion from classifier ──
         const suggestion = classified.suggestion ? `\nTip: ${classified.suggestion}` : '';
         onEvent({
@@ -1284,6 +1345,23 @@ export async function interactiveSession(
         persistSessionMessage(continuationPrompt);
         lastSessionActivity = Date.now();
         continue; // Retry with higher limit
+      }
+
+      // ── Gateway error masquerading as text (BlockRun → Anthropic TPM) ──
+      // Some upstreams swallow rate-limit / quota errors and emit them as a
+      // single bracketed text block on a 200 OK. Persisting that as a real
+      // assistant reply poisons history (the next turn sees an "answer" that
+      // is actually a transport error) and triggers grounding-check retries
+      // that hit the same wall. Detect, throw into the classifier, and let
+      // the existing recovery flow handle it.
+      const gatewayErr = looksLikeGatewayErrorAsText(responseParts);
+      if (gatewayErr.match) {
+        if (config.debug) {
+          console.error(
+            `[franklin] Gateway returned an error text in lieu of an answer (${resolvedModel}): ${gatewayErr.message}`
+          );
+        }
+        throw new Error(gatewayErr.message);
       }
 
       // Reset recovery counter on successful completion

@@ -1,13 +1,123 @@
 # Changelog
 
-## 3.10.0 — Detached background tasks (Task tool + `franklin task` CLI)
+## 3.10.4 — UI: kill ghost border lines on terminal resize
+
+After a window resize, Franklin's input box would leave stacked
+`╭────` fragments behind. Root cause: the terminal reflowed the long
+border into multiple lines, but Ink only erased its previously
+rendered row count, so the extra reflowed rows survived as ghost
+output.
+
+Fix: disable terminal autowrap (DECAWM, `\x1b[?7l`) when the Ink UI
+mounts and restore it (`\x1b[?7h`) on unmount and on `process.exit`.
+With autowrap off, layout stays fully under Ink's control — no
+terminal-side reflow, no ghost rows. TTY-gated so non-interactive
+runs are unaffected.
+
+## 3.10.3 — gateway rate-limit unmasking + Solana ESM fix
+
+Two independent bug fixes that surfaced in the same session.
+
+### Gateway rate-limit errors leaking as 200-OK text
+
+Some upstream providers (Anthropic in particular) returned per-day
+TPM exhaustion as a single bracketed `[Error: Too many tokens per
+day, please wait before trying again.]` text content block on a 200
+OK response — not as an HTTP 429. Three things cascaded:
+
+1. The loop persisted that text as the assistant's reply, poisoning
+   history.
+2. The grounding evaluator read it as a "tool-use refusal", forced a
+   retry, hit the same wall, and showed a misleading "Grounding check
+   failed" follow-up to the user.
+3. `error-classifier` didn't match the wording, so even when the
+   error did surface as an exception it fell through to Unknown and
+   nothing recovered.
+
+Fix: a new `looksLikeGatewayErrorAsText` detector in `loop.ts` —
+when the entire assistant payload is a lone `[Error: ...]` text
+block with no tool_use, throw it into the existing classifier path
+instead of persisting and grounding-checking. `error-classifier`
+gained the Anthropic-specific patterns ("too many tokens", "tokens
+per day", "please wait before trying", "quota exceeded") and capped
+rate-limit retries at 1 (a per-day quota won't clear in this
+session). On rate_limit the loop now mirrors the payment-failure
+fallback — mark the model failed for this turn and switch to the
+next free non-Anthropic model (qwen / llama / glm) instead of
+thrashing on the exhausted provider. `local-elo` learned a new
+`'rate_limit'` outcome with a -K×1.2 penalty so the router
+remembers to avoid the failing provider.
+
+### `franklin setup solana` no longer throws under Node ESM
+
+`franklin setup solana` was failing immediately with
+`Dynamic require of "@solana/web3.js" is not supported`. Root cause
+was upstream: `@blockrun/llm@1.6.2`'s ESM build wrapped a
+CJS-style lazy `require()` inside `createSolanaWallet()` in
+esbuild's `__require` shim, which throws on call. Fixed in
+`@blockrun/llm@1.13.0` (now uses `await import()` for the optional
+`@solana/web3.js` and `bs58` deps, matching the pattern already used
+by `solanaPublicKey` and `solanaKeyToBytes`). Bumped the dep floor
+to `^1.13.0`.
+
+## 3.10.2 — UI gutter alignment
+
+All assistant-side output now aligns to a single column-2 left edge.
+Previously, tool results, the token footer, the input box's status row,
+and the Permission/AskUser dialogs each used a different `marginLeft`
+value (0, 1, 2, or 3), so the eye had to keep refinding the left edge
+as the agent worked. The Permission/AskUser dialogs also had an
+off-by-one between the rounded border (drawn via hardcoded leading
+spaces inside the text) and the button row (drawn via `marginLeft`
+prop), which put `[y][a][n]` one column inside the border instead of
+flush with content.
+
+Fix: agent output, dialog borders, dialog content, streaming preview,
+and the input box's status row all share the same left gutter. The
+input box itself stays full-width (column 0) — that's intentional, it's
+the most prominent UI element. Pure visual change, no behavioral
+impact.
+
+## 3.10.1 — Tasks tab in the panel + CHANGELOG correction
+
+### Tasks tab
+
+`franklin panel` now has a "Tasks" tab next to Sessions / Wallet /
+Insights. List view shows newest-first task rows with status badges
+(succeeded green, running blue, queued gray, failed/lost red,
+cancelled yellow), age, and a Cancel button on still-active rows.
+Click a row → detail view with the full TaskRecord, last 10 events,
+and a live log tail.
+
+Polling is intentionally restrained — Task is a long-running concept,
+and pushing real-time SSE for state that genuinely changes every 5+
+seconds would burn cycles for no perceived benefit:
+
+- **List view:** 10-second poll while the tab is visible. Pauses on
+  Page Visibility API hidden / tab switch. Manual Refresh button.
+- **Detail view log tail:** 2-second poll using `Range: bytes=N-`
+  incremental fetches against `GET /api/tasks/:runId/log`. Stops as
+  soon as the task hits a terminal status.
+
+5 new endpoints under `/api/tasks/...` (list / get / log with Range /
+events / cancel). Cancel is loopback-only.
+
+### CHANGELOG correction
+
+The v3.10.0 entry called the new agent tool the "Task tool" — but the
+shipped tool is named `Detach` (the existing in-session task tracker
+kept the `Task` name unchanged). Corrected references in the v3.10.0
+entry to point at `Detach`. The CLI surface (`franklin task list /
+tail / wait / cancel`) is unchanged.
+
+## 3.10.0 — Detached background tasks (Detach tool + `franklin task` CLI)
 
 The agent's job is to design and orchestrate. The for-loop is somebody
 else's problem. v3.10 adds that somebody.
 
 ### What's new
 
-- New **Task** agent tool: `{ label, command }` → detached Bash child
+- New **Detach** agent tool: `{ label, command }` → detached Bash child
   process spawned via `franklin _task-runner <runId>`. Returns a
   `runId` immediately. Survives the parent Franklin process — close
   your terminal, the work continues.
@@ -32,8 +142,8 @@ tool call per item. That burned turns, hit TTFB walls (v3.9.6 raised
 those defaults to 180s as a bandaid), and tied the work's life to the
 foreground session.
 
-The Task tool inverts that: the LLM writes a script, hands it to
-`Task`, gets a runId, and is free. The script does the iteration with
+The Detach tool inverts that: the LLM writes a script, hands it to
+`Detach`, gets a runId, and is free. The script does the iteration with
 a checkpoint file. Franklin restarts have no effect on the work.
 
 ### Out of scope (deliberate)
