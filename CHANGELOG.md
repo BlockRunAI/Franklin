@@ -1,5 +1,51 @@
 # Changelog
 
+## 3.10.3 — gateway rate-limit unmasking + Solana ESM fix
+
+Two independent bug fixes that surfaced in the same session.
+
+### Gateway rate-limit errors leaking as 200-OK text
+
+Some upstream providers (Anthropic in particular) returned per-day
+TPM exhaustion as a single bracketed `[Error: Too many tokens per
+day, please wait before trying again.]` text content block on a 200
+OK response — not as an HTTP 429. Three things cascaded:
+
+1. The loop persisted that text as the assistant's reply, poisoning
+   history.
+2. The grounding evaluator read it as a "tool-use refusal", forced a
+   retry, hit the same wall, and showed a misleading "Grounding check
+   failed" follow-up to the user.
+3. `error-classifier` didn't match the wording, so even when the
+   error did surface as an exception it fell through to Unknown and
+   nothing recovered.
+
+Fix: a new `looksLikeGatewayErrorAsText` detector in `loop.ts` —
+when the entire assistant payload is a lone `[Error: ...]` text
+block with no tool_use, throw it into the existing classifier path
+instead of persisting and grounding-checking. `error-classifier`
+gained the Anthropic-specific patterns ("too many tokens", "tokens
+per day", "please wait before trying", "quota exceeded") and capped
+rate-limit retries at 1 (a per-day quota won't clear in this
+session). On rate_limit the loop now mirrors the payment-failure
+fallback — mark the model failed for this turn and switch to the
+next free non-Anthropic model (qwen / llama / glm) instead of
+thrashing on the exhausted provider. `local-elo` learned a new
+`'rate_limit'` outcome with a -K×1.2 penalty so the router
+remembers to avoid the failing provider.
+
+### `franklin setup solana` no longer throws under Node ESM
+
+`franklin setup solana` was failing immediately with
+`Dynamic require of "@solana/web3.js" is not supported`. Root cause
+was upstream: `@blockrun/llm@1.6.2`'s ESM build wrapped a
+CJS-style lazy `require()` inside `createSolanaWallet()` in
+esbuild's `__require` shim, which throws on call. Fixed in
+`@blockrun/llm@1.13.0` (now uses `await import()` for the optional
+`@solana/web3.js` and `bs58` deps, matching the pattern already used
+by `solanaPublicKey` and `solanaKeyToBytes`). Bumped the dep floor
+to `^1.13.0`.
+
 ## 3.10.2 — UI gutter alignment
 
 All assistant-side output now aligns to a single column-2 left edge.
