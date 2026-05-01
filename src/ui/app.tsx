@@ -22,6 +22,28 @@ import { mouse, forceDisableMouseTracking, type MouseEvent as TermMouseEvent } f
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
+const DISABLE_AUTO_WRAP = '\x1b[?7l';
+const ENABLE_AUTO_WRAP = '\x1b[?7h';
+
+function disableTerminalAutoWrap(): (() => void) | undefined {
+  if (!process.stdout.isTTY) return undefined;
+
+  let restored = false;
+  const restore = () => {
+    if (restored || !process.stdout.writable) return;
+    restored = true;
+    process.stdout.write(ENABLE_AUTO_WRAP);
+  };
+
+  process.stdout.write(DISABLE_AUTO_WRAP);
+  process.once('exit', restore);
+
+  return () => {
+    process.off('exit', restore);
+    restore();
+  };
+}
+
 // Subscribe to terminal resize so React re-renders with fresh dimensions.
 // Without this, useStdout() returns a stable ref and children that read
 // stdout.columns on each render still need React to re-execute them — which
@@ -1328,6 +1350,7 @@ export function launchInkUI(opts: {
   let pendingInput: string | null = null; // Queue for inputs that arrive before waitForInput
   let exiting = false;
   let abortCallback: (() => void) | null = null;
+  const restoreTerminalAutoWrap = disableTerminalAutoWrap();
 
   const instance = render(
     <RunCodeApp
@@ -1393,7 +1416,11 @@ export function launchInkUI(opts: {
       return new Promise<string | null>((resolve) => { resolveInput = resolve; });
     },
     onAbort: (cb: () => void) => { abortCallback = cb; },
-    cleanup: () => { mouse.disable(); instance.unmount(); },
+    cleanup: () => {
+      mouse.disable();
+      instance.unmount();
+      restoreTerminalAutoWrap?.();
+    },
     requestPermission: (toolName: string, description: string) => {
       const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
