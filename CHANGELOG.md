@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.10.4 — UI: kill ghost border lines on terminal resize
+
+After a window resize, Franklin's input box would leave stacked
+`╭────` fragments behind. Root cause: the terminal reflowed the long
+border into multiple lines, but Ink only erased its previously
+rendered row count, so the extra reflowed rows survived as ghost
+output.
+
+Fix: disable terminal autowrap (DECAWM, `\x1b[?7l`) when the Ink UI
+mounts and restore it (`\x1b[?7h`) on unmount and on `process.exit`.
+With autowrap off, layout stays fully under Ink's control — no
+terminal-side reflow, no ghost rows. TTY-gated so non-interactive
+runs are unaffected.
+
 ## 3.10.3 — gateway rate-limit unmasking + Solana ESM fix
 
 Two independent bug fixes that surfaced in the same session.
