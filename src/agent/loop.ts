@@ -1234,11 +1234,15 @@ export async function interactiveSession(
       // ── Circuit breakers: prevent infinite-loop wallet drain ──
       turnSpend += costEstimate;
       if (turnSpend > MAX_TURN_SPEND_USD) {
+        const capDisplay = MAX_TURN_SPEND_USD === Infinity ? '∞' : `$${MAX_TURN_SPEND_USD.toFixed(2)}`;
         onEvent({
           kind: 'text_delta',
           text:
-            `\n\n⚠️ Turn spend limit reached ($${turnSpend.toFixed(3)} > $${MAX_TURN_SPEND_USD}). Stopping to protect your wallet.\n` +
-            `Raise the cap with \`franklin config set max-turn-spend-usd 4.0\` (or \`0\` to disable), then \`/retry\`.\n`,
+            `\n\n⚠️ Turn spend limit reached ($${turnSpend.toFixed(3)} > ${capDisplay}). Stopping to protect your wallet.\n\n` +
+            `What to do next — pick ONE (do NOT just type a number, that becomes a new prompt):\n` +
+            `  • Continue this turn:    /retry\n` +
+            `  • Raise cap to $4:       franklin config set max-turn-spend-usd 4\n` +
+            `  • Disable cap entirely:  franklin config set max-turn-spend-usd 0   (then /retry)\n`,
         });
         onEvent({ kind: 'turn_done', reason: 'budget' });
         break;

@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.10.6 — turn-spend-limit message no longer reads as a UI prompt
+
+The limit-reached message was confusing users into draining their
+wallet. Old text:
+
+> Raise the cap with \`franklin config set max-turn-spend-usd 4.0\`
+> (or \`0\` to disable), then \`/retry\`.
+
+The "(or \`0\` to disable)" parenthetical sits next to \`/retry\` and
+reads like a single-keystroke choice. A user who hit the limit typed
+\`0\` thinking it would disable the cap. \`0\` was sent as a new user
+message, a fresh turn started (with the cap reset to its default
+\$2), the agent kept its tool-loop going, and the wallet kept
+draining.
+
+New message lays out three labelled options on their own lines, with
+an explicit warning that typing a bare number becomes a new prompt:
+
+\`\`\`
+⚠️ Turn spend limit reached (\$2.064 > \$2.00). Stopping to protect your wallet.
+
+What to do next — pick ONE (do NOT just type a number, that becomes a new prompt):
+  • Continue this turn:    /retry
+  • Raise cap to \$4:       franklin config set max-turn-spend-usd 4
+  • Disable cap entirely:  franklin config set max-turn-spend-usd 0   (then /retry)
+\`\`\`
+
+Also displays \`∞\` instead of \`Infinity\` when the cap is disabled.
+
 ## 3.10.5 — teach Franklin the BlockRun gateway API surface
 
 Symptom: when asked to "test all BlockRun APIs", the agent guessed
