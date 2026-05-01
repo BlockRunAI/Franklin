@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.10.5 — teach Franklin the BlockRun gateway API surface
+
+Symptom: when asked to "test all BlockRun APIs", the agent guessed
+endpoints from memory. It tried \`POST /v1/image/generate\` (singular,
+404), claimed \`GET /v1/spending\` returned 200 (route doesn't
+exist), and listed \`/v1/x/*\` routes that aren't on the gateway.
+
+Root cause: Franklin's system prompt taught the agent how to use its
+own *tools* (TradingMarket, ExaAnswer, etc.) but never taught it the
+real gateway HTTP surface. With nothing to ground against, the agent
+fell back to plausible-looking OpenAI-style guesses.
+
+Fix: a new \`BlockRun Gateway API\` section in the system prompt
+(\`src/agent/context.ts\`). It enumerates the actual routes —
+\`/v1/chat/completions\`, \`/v1/messages\`, \`/v1/images/generations\`,
+\`/v1/images/image2image\`, \`/v1/videos/generations\` (+ \`/{id}\` poll),
+\`/v1/audio/generations\`, \`/v1/search\`, \`/v1/exa/...\`, the markets
+endpoints (\`crypto/fx/commodity/usstock/stocks/{market}\`),
+\`/v1/balance\`, \`/v1/models\`, \`/v1/health/*\`, \`/v1/modal/...\`,
+\`/v1/pm/...\` — with request shapes, free-vs-paid annotation, and the
+x402 auth flow. It also calls out three specific hallucinations to
+avoid (\`/v1/image/generate\`, \`/v1/spending\`, \`/v1/x/*\`) and points
+at the canonical discovery contracts (\`GET /openapi.json\`, \`GET
+/.well-known/x402\`) as the source of truth when in doubt.
+
+The agent now stops inventing routes — and a bare 402 on a POST is
+correctly read as a working endpoint, not a bug.
+
 ## 3.10.4 — UI: kill ghost border lines on terminal resize
 
 After a window resize, Franklin's input box would leave stacked
