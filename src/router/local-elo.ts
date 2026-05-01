@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BLOCKRUN_DIR } from '../config.js';
 
-export type Outcome = 'continued' | 'switched' | 'retried' | 'error' | 'max_turns' | 'payment';
+export type Outcome = 'continued' | 'switched' | 'retried' | 'error' | 'max_turns' | 'payment' | 'rate_limit';
 
 interface HistoryRecord {
   ts: number;
@@ -97,6 +97,11 @@ export function computeLocalElo(): Map<string, Map<string, number>> {
           case 'retried':   delta = -K_FACTOR * 0.8; break;
           case 'error':     delta = -K_FACTOR * 0.5; break;
           case 'payment':   delta = -K_FACTOR * 1.5; break;
+          // Rate-limited: provider isn't broken, just exhausted right now.
+          // Penalize less than payment (which won't clear without action) but
+          // more than a generic error so the router avoids the same provider
+          // for the rest of the session.
+          case 'rate_limit': delta = -K_FACTOR * 1.2; break;
           case 'max_turns': delta = -K_FACTOR * 0.3; break;
           default: delta = 0;
         }

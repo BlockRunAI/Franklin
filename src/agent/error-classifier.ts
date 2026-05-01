@@ -71,9 +71,16 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     '429',
     'rate limit',
     'too many requests',
+    'too many tokens',           // Anthropic per-day TPM cap leak via gateway
+    'tokens per day',
+    'please wait before trying',
+    'quota exceeded',
   ])) {
+    // 1 retry is plenty: a per-second rate limit clears in seconds (one
+    // backoff covers it), but a per-day TPM quota won't clear in this
+    // session at all — caller falls back to a different provider after.
     return {
-      category: 'rate_limit', label: 'RateLimit', isTransient: true,
+      category: 'rate_limit', label: 'RateLimit', isTransient: true, maxRetries: 1,
       suggestion: 'Try /model to switch to a different model, or wait a moment and /retry.',
     };
   }
