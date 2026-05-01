@@ -1,5 +1,55 @@
 # Changelog
 
+## 3.11.0 — remove per-turn spend cap (match Claude Code's wallet-trust default)
+
+The `MAX_TURN_SPEND_USD` per-turn cap and the `max-turn-spend-usd`
+config key are removed. v3.10.6 patched the cap's confusing
+limit-reached message; this release removes the underlying feature.
+
+The cap was originally introduced as a runaway-loop guard at $0.25
+per turn (commit 562e1f0). It has only ever been **raised** since —
+never lowered after a real incident:
+
+- $0.25 → $1.00 (v3.8.42) because legitimate dashboard scaffolds
+  routinely tripped it.
+- $1.00 → $2.00 (v3.9.1) because COMPLEX-tier sonnet/opus planning
+  passes regularly cross $1 in their first call.
+
+Even at $2 it kept firing mid-task on real work and confusing users,
+who were then nudged toward draining their wallet through the very
+mechanism designed to prevent it. Anthropic's own Claude Code has no
+equivalent ceiling and works fine, because the runtime catches
+runaway loops with structural guards instead of an opaque $-cap. The
+wallet itself is the ultimate ceiling — Franklin can never spend
+more than the user funded.
+
+The structural guards remain in place:
+
+- \`MAX_TOOL_CALLS_PER_TURN = 25\` — hard \`break\` after 25 tool
+  calls in one turn (\`src/agent/loop.ts:598\`).
+- \`MAX_TINY_RESPONSES = 2\` — hard \`break\` after 2 consecutive
+  responses with no tool_use and no meaningful text
+  (\`src/agent/loop.ts:603\`).
+- \`SAME_TOOL_WARN_THRESHOLD = 3\` — warn when the same tool is
+  called 3+ times in a turn.
+- \`readFileCache\` — dedupe Reads of the same path within a turn.
+- Session-level \`config.maxSpendUsd\` — unchanged; batch/scripted
+  callers can still pass it to bound a single run.
+
+**Migration**
+
+- Existing users with \`max-turn-spend-usd\` in
+  \`~/.blockrun/franklin-config.json\`: the value is silently ignored.
+  \`franklin config set max-turn-spend-usd <n>\` is now an error
+  (unknown config key). Remove it with \`franklin config unset\` if
+  you want a clean config — but leaving it does no harm.
+- Skill authors: the \`{{per_turn_cap}}\`, \`{{spent_this_turn}}\`,
+  and \`{{turn_budget_remaining}}\` placeholders are no longer
+  substituted. Skills that reference them will render the literal
+  placeholder text. The bundled \`budget-grill\` skill was rewritten
+  to drop these placeholders and frame cost discipline against the
+  wallet balance instead.
+
 ## 3.10.6 — turn-spend-limit message no longer reads as a UI prompt
 
 The limit-reached message was confusing users into draining their
