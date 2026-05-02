@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.12.2 — DefiLlama built-in tools (auto x402-paid, response-filtered)
+
+v3.12.0 told the agent the gateway has \`/v1/defillama/*\` endpoints, but
+didn't ship a way to actually call them with x402 payment headers
+attached — \`Bash + curl\` would just hit the 402 wall. v3.12.2 closes
+that gap with five built-in tools that handle the x402 dance the same
+way \`ExaSearch\` / \`ExaAnswer\` already do.
+
+Critically, the tools also **filter the response** before returning to
+agent context. DefiLlama's raw payloads are 5–10 MB (3000+ protocols,
+10000+ yield pools); dumping that wastes the entire context window.
+Each tool takes filter / limit params and returns a ranked, formatted
+summary instead.
+
+New tools:
+
+- **\`DeFiLlamaProtocols\`** \$0.005 — top-N protocols by TVL, filterable
+  by category / chain / min TVL.
+- **\`DeFiLlamaProtocol\`** \$0.005 — full TVL + chain breakdown for a
+  single protocol slug.
+- **\`DeFiLlamaChains\`** \$0.005 — TVL ranked by chain.
+- **\`DeFiLlamaYields\`** \$0.005 — yield pools, filterable by symbol /
+  chain / project / TVL / APY / stablecoin-only. Defaults to top-10 by
+  APY with TVL > \$1M.
+- **\`DeFiLlamaPrice\`** \$0.001 — batch token price lookup (DefiLlama
+  syntax: \`coingecko:bitcoin\`, \`ethereum:0x...\`, \`solana:mint\`).
+
+Each tool calls \`/v1/defillama/*\` on the BlockRun gateway, which is the
+revenue surface — every \`DeFiLlama*\` call from any Franklin user
+becomes a paid USDC transaction settled on-chain.
+
+Updated \`getBlockRunApiSection\` prompt block to point the agent at the
+five tools instead of the gateway URLs (and explicitly tell it NOT to
+try \`Bash + curl\` against the gateway, which won't sign payments).
+
 ## 3.12.1 — Jupiter swap via Ultra + on-chain referral fee (ToU-clean redo)
 
 v3.12.0 told the agent to call `/v1/jupiter/{quote,swap}` on the

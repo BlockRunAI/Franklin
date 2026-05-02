@@ -217,9 +217,8 @@ You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun
 - \`GET /v1/models\` — full model catalog (id, owner, context window, pricing).
 - \`GET /v1/health/overview\` · \`/v1/health/regions\` · \`/v1/health/chain\` · \`/v1/health/models\` — gateway status.
 
-**Trading & DeFi (mixed methods, x402-paid; new in v3.12.0)**
-- \`GET  /v1/defillama/protocols\` · \`/v1/defillama/protocol/{slug}\` · \`/v1/defillama/chains\` · \`/v1/defillama/yields\` — TVL / yield-pool data, Apache-2.0 source. \$0.005/call.
-- \`GET  /v1/defillama/prices/{coins}\` — token price lookup (coingecko:bitcoin, ethereum:0x..., solana:mint, comma-separated). \$0.001/call.
+**Trading & DeFi (mixed methods, x402-paid)**
+- For DefiLlama data, **use the built-in tools** \`DeFiLlamaProtocols\`, \`DeFiLlamaProtocol\`, \`DeFiLlamaChains\`, \`DeFiLlamaYields\`, \`DeFiLlamaPrice\`. They handle x402 payment automatically and filter responses (DefiLlama raw payloads are 5–10 MB; the tools return ranked summaries). Do NOT call \`/v1/defillama/*\` via Bash + curl — the wallet won't sign payments through that path.
 - \`POST /v1/solana/rpc\` — JSON-RPC passthrough to public mainnet-beta (getAccountInfo, getTokenSupply, sendTransaction, etc.). \$0.0005 per call (per element of a batch). Use this instead of running your own RPC infra.
 
 **Solana DEX swap (Jupiter Ultra)**

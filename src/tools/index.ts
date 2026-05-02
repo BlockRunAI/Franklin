@@ -30,6 +30,13 @@ import { moaCapability } from './moa.js';
 import { webhookPostCapability } from './webhook.js';
 import { walletCapability } from './wallet.js';
 import { jupiterQuoteCapability, jupiterSwapCapability } from './jupiter.js';
+import {
+  defiLlamaProtocolsCapability,
+  defiLlamaProtocolCapability,
+  defiLlamaChainsCapability,
+  defiLlamaYieldsCapability,
+  defiLlamaPriceCapability,
+} from './defillama.js';
 import { createTradingCapabilities } from './trading-execute.js';
 import { Portfolio } from '../trading/portfolio.js';
 import { RiskEngine } from '../trading/risk.js';
@@ -163,6 +170,11 @@ export const allCapabilities: CapabilityHandler[] = [
   walletCapability,
   jupiterQuoteCapability,
   jupiterSwapCapability,
+  defiLlamaProtocolsCapability,
+  defiLlamaProtocolCapability,
+  defiLlamaChainsCapability,
+  defiLlamaYieldsCapability,
+  defiLlamaPriceCapability,
 ];
 
 export {
