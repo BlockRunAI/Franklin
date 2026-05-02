@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.14.0 — Base 0x routes through BlockRun gateway (no user signup)
+
+v3.13.x required each Franklin user to register at dashboard.0x.org
+and supply their own \`ZERO_EX_API_KEY\`. v3.14.0 routes \`Base0xQuote\` /
+\`Base0xSwap\` through BlockRun gateway's new \`/v1/zerox/{price,quote}\`
+endpoints — the 0x API key lives server-side as gateway env, never
+reaches users.
+
+User experience: zero setup. Run \`franklin\`, ask "swap 0.001 ETH for
+USDC on Base", confirm — done.
+
+Two revenue layers per swap (both flow to BlockRun treasury
+\`0xe9030014F5DAe217d0A152f02A043567b16c1aBf\`):
+1. Per-call gateway fee — $0.001 USDC via x402 (settled to treasury at
+   every quote/swap call)
+2. On-chain affiliate fee — 20 bps of \`sellAmount\` via 0x's
+   \`swapFeeRecipient\` mechanism (settled at swap execution)
+
+The gateway force-overrides \`swapFeeRecipient\` / \`swapFeeBps\` /
+\`swapFeeToken\` server-side, so every gateway-routed swap pays the
+on-chain affiliate to BlockRun regardless of caller-supplied
+parameters.
+
+**ToS posture (Phantom Wallet model):** 0x's "Monetize Your App" guide
+treats this as the intended app-developer integration pattern. BlockRun
+is the registered 0x App; Franklin users are end users of that App.
+This is the same model Phantom and Coinbase Wallet use. We will pursue
+an explicit distributor agreement with 0x once volume crosses the free
+tier ceiling (10 req/s).
+
+The legacy user-supplied-key path (\`ZERO_EX_API_KEY\` env or
+\`zerox-api-key\` config from v3.13.1) is no longer wired; v3.14.0 strictly
+goes through the gateway. If the gateway \`/v1/zerox/*\` returns 503 (key
+not configured server-side), the swap tools surface that clearly so
+the operator can fix the gateway env, not the user.
+
+Companion gateway commit: \`84333cf feat(zerox)\` adds the
+\`/v1/zerox/{price,quote}\` endpoints + force-affiliate proxy.
+
+263/263 vitest, build clean.
+
 ## 3.13.1 — persist 0x API key in franklin config (no env var needed)
 
 v3.13.0 required users to set \`ZERO_EX_API_KEY\` as an env var per

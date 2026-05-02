@@ -39,9 +39,19 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
-import { getOrCreateWallet } from '@blockrun/llm';
+import {
+  getOrCreateWallet,
+  createPaymentPayload,
+  createSolanaPaymentPayload,
+  parsePaymentRequired,
+  extractPaymentDetails,
+  getOrCreateSolanaWallet,
+  solanaKeyToBytes,
+  SOLANA_NETWORK,
+} from '@blockrun/llm';
 
 import { loadConfig } from '../commands/config.js';
+import { loadChain, API_URLS, VERSION } from '../config.js';
 import type { CapabilityHandler, ExecutionScope } from '../agent/types.js';
 
 // ─── BlockRun affiliate identity on Base ─────────────────────────────────
@@ -52,10 +62,13 @@ const BLOCKRUN_BASE_AFFILIATE: Address =
   '0xe9030014F5DAe217d0A152f02A043567b16c1aBf';
 const BLOCKRUN_AFFILIATE_FEE_BPS = 20; // 0.2% — matches Jupiter Ultra path.
 
-// ─── 0x API endpoints ─────────────────────────────────────────────────────
-const ZEROX_BASE = 'https://api.0x.org/swap/permit2';
-const ZEROX_VERSION = 'v2';
-const ZEROX_TIMEOUT_MS = 20_000;
+// ─── BlockRun gateway path for 0x ────────────────────────────────────────
+// As of v3.14.0 we route through the BlockRun gateway (server-side 0x key),
+// not directly to api.0x.org. User pays $0.001 via x402 per gateway call;
+// affiliate 20 bps is force-set server-side and lands on-chain in the same
+// BlockRun treasury that already collects x402 settlements.
+const ZEROX_GATEWAY_PATH = '/v1/zerox';
+const ZEROX_TIMEOUT_MS = 30_000;
 
 // ─── Default Base RPC ────────────────────────────────────────────────────
 // Public Base mainnet endpoint. Override via BASE_RPC_URL env or
@@ -69,10 +82,6 @@ function resolveBaseRpcUrl(): string {
     loadConfig()['base-rpc-url'] ||
     DEFAULT_BASE_RPC
   );
-}
-
-function resolveZeroxApiKey(): string | undefined {
-  return process.env.ZERO_EX_API_KEY || loadConfig()['zerox-api-key'];
 }
 
 // ─── Session safety: cumulative live-swap counter ─────────────────────────
@@ -227,40 +236,115 @@ function makeClient(account: ReturnType<typeof privateKeyToAccount>) {
   }).extend(publicActions);
 }
 
-function zeroxHeaders(): Record<string, string> {
-  const apiKey = resolveZeroxApiKey();
-  if (!apiKey) {
-    throw new Error(
-      "Base swaps need a 0x API key. Each Franklin user sets their own (free, no credit card, 10 req/s): " +
-        "1) Sign up at https://dashboard.0x.org · " +
-        "2) Copy the API key from the Demo App or your own app · " +
-        "3a) Persist it: `franklin setup zerox` (interactive) or `franklin config set zerox-api-key zx_...`, OR " +
-        "3b) Per-session: `ZERO_EX_API_KEY=zx_... franklin`. " +
-        "BlockRun does NOT need a 0x account — the affiliate fee routes to BlockRun's wallet regardless of whose key is making the call.",
-    );
-  }
-  return {
-    'Content-Type': 'application/json',
-    '0x-api-key': apiKey,
-    '0x-version': ZEROX_VERSION,
+// ─── 0x calls via BlockRun gateway (x402-paid) ───────────────────────────
+
+async function gatewayGetWithPayment<T>(
+  path: 'price' | 'quote',
+  params: URLSearchParams,
+  ctx: ExecutionScope,
+): Promise<T> {
+  const chain = loadChain();
+  const apiUrl = API_URLS[chain];
+  const endpoint = `${apiUrl}${ZEROX_GATEWAY_PATH}/${path}?${params.toString()}`;
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'User-Agent': `franklin/${VERSION}`,
   };
-}
 
-// ─── 0x API calls ────────────────────────────────────────────────────────
-
-async function zeroxFetch<T>(path: 'price' | 'quote', params: URLSearchParams): Promise<T> {
-  const url = `${ZEROX_BASE}/${path}?${params.toString()}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ZEROX_TIMEOUT_MS);
+  const onAbort = () => controller.abort();
+  ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
+
   try {
-    const res = await fetch(url, { headers: zeroxHeaders(), signal: controller.signal });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`0x ${path} returned ${res.status}: ${text.slice(0, 300)}`);
+    let response = await fetch(endpoint, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    });
+
+    if (response.status === 402) {
+      const paymentHeaders = await signGatewayPayment(response, chain, endpoint);
+      if (!paymentHeaders) {
+        throw new Error('Payment signing failed — check wallet balance');
+      }
+      response = await fetch(endpoint, {
+        method: 'GET',
+        headers: { ...headers, ...paymentHeaders },
+        signal: controller.signal,
+      });
     }
-    return (await res.json()) as T;
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`BlockRun gateway /v1/zerox/${path} returned ${response.status}: ${text.slice(0, 300)}`);
+    }
+
+    return (await response.json()) as T;
   } finally {
     clearTimeout(timer);
+    ctx.abortSignal.removeEventListener('abort', onAbort);
+  }
+}
+
+async function signGatewayPayment(
+  response: Response,
+  chain: 'base' | 'solana',
+  endpoint: string,
+): Promise<Record<string, string> | null> {
+  try {
+    let header = response.headers.get('payment-required');
+    if (!header) {
+      try {
+        const body = (await response.json()) as Record<string, unknown>;
+        if (body.x402 || body.accepts) header = btoa(JSON.stringify(body));
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!header) return null;
+
+    if (chain === 'solana') {
+      const wallet = await getOrCreateSolanaWallet();
+      const paymentRequired = parsePaymentRequired(header);
+      const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
+      const secretBytes = await solanaKeyToBytes(wallet.privateKey);
+      const feePayer = details.extra?.feePayer || details.recipient;
+      const payload = await createSolanaPaymentPayload(
+        secretBytes,
+        wallet.address,
+        details.recipient,
+        details.amount,
+        feePayer as string,
+        {
+          resourceUrl: details.resource?.url || endpoint,
+          resourceDescription: details.resource?.description || 'Franklin 0x swap call',
+          maxTimeoutSeconds: details.maxTimeoutSeconds || 60,
+          extra: details.extra as Record<string, unknown> | undefined,
+        },
+      );
+      return { 'PAYMENT-SIGNATURE': payload };
+    }
+    const wallet = await getOrCreateWallet();
+    const paymentRequired = parsePaymentRequired(header);
+    const details = extractPaymentDetails(paymentRequired);
+    const payload = await createPaymentPayload(
+      wallet.privateKey as `0x${string}`,
+      wallet.address,
+      details.recipient,
+      details.amount,
+      details.network || 'eip155:8453',
+      {
+        resourceUrl: details.resource?.url || endpoint,
+        resourceDescription: details.resource?.description || 'Franklin 0x swap call',
+        maxTimeoutSeconds: details.maxTimeoutSeconds || 60,
+        extra: details.extra as Record<string, unknown> | undefined,
+      },
+    );
+    return { 'PAYMENT-SIGNATURE': payload };
+  } catch (err) {
+    console.error(`[franklin] 0x gateway payment error: ${(err as Error).message}`);
+    return null;
   }
 }
 
@@ -269,23 +353,18 @@ function buildSwapParams(args: {
   buyTokenAddr: Address;
   sellAmountAtomic: string;
   taker: Address;
-  feeRecipient?: Address;
-  feeBps?: number;
-  feeToken?: Address;
 }): URLSearchParams {
-  const p = new URLSearchParams({
+  // Affiliate params (swapFeeRecipient/Bps/Token) are NOT set here —
+  // the BlockRun gateway forces them server-side, ensuring every
+  // gateway-routed swap pays affiliate to BlockRun treasury regardless
+  // of what the agent passes. See blockrun/src/lib/zerox.ts:proxyToZerox.
+  return new URLSearchParams({
     chainId: String(base.id),
     sellToken: args.sellTokenAddr,
     buyToken: args.buyTokenAddr,
     sellAmount: args.sellAmountAtomic,
     taker: args.taker,
   });
-  if (args.feeRecipient && args.feeBps && args.feeBps > 0 && args.feeToken) {
-    p.set('swapFeeRecipient', args.feeRecipient);
-    p.set('swapFeeBps', String(args.feeBps));
-    p.set('swapFeeToken', args.feeToken);
-  }
-  return p;
 }
 
 // ─── Formatting ──────────────────────────────────────────────────────────
@@ -333,7 +412,10 @@ interface SwapInput extends QuoteInput {
 
 // ─── Quote (read-only) ───────────────────────────────────────────────────
 
-async function executeBase0xQuote(input: QuoteInput): Promise<{ output: string; isError?: boolean }> {
+async function executeBase0xQuote(
+  input: QuoteInput,
+  ctx: ExecutionScope,
+): Promise<{ output: string; isError?: boolean }> {
   let walletAddress: Address;
   try {
     const wallet = await loadEvmWallet();
@@ -355,15 +437,10 @@ async function executeBase0xQuote(input: QuoteInput): Promise<{ output: string; 
     buyTokenAddr,
     sellAmountAtomic: sellAmount,
     taker: walletAddress,
-    feeRecipient: BLOCKRUN_BASE_AFFILIATE,
-    feeBps: BLOCKRUN_AFFILIATE_FEE_BPS,
-    // Take the fee in the sell token so it's deterministic and doesn't
-    // depend on the output token having an existing recipient ATA / balance.
-    feeToken: sellTokenAddr,
   });
 
   try {
-    const price = await zeroxFetch<ZeroXQuoteResponse>('price', params);
+    const price = await gatewayGetWithPayment<ZeroXQuoteResponse>('price', params, ctx);
     if (!price.liquidityAvailable && price.liquidityAvailable !== undefined) {
       return {
         output: `0x reports no liquidity for ${symbolFor(sellTokenAddr)} → ${symbolFor(buyTokenAddr)} on Base.`,
@@ -372,7 +449,7 @@ async function executeBase0xQuote(input: QuoteInput): Promise<{ output: string; 
     }
     return { output: formatQuoteText(price) };
   } catch (err) {
-    return { output: `0x /price failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+    return { output: `BlockRun gateway 0x /price failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
   }
 }
 
@@ -414,18 +491,16 @@ async function executeBase0xSwap(
     buyTokenAddr,
     sellAmountAtomic: sellAmount,
     taker: wallet.address,
-    feeRecipient: BLOCKRUN_BASE_AFFILIATE,
-    feeBps: BLOCKRUN_AFFILIATE_FEE_BPS,
-    feeToken: sellTokenAddr,
   });
 
-  // Step 1 — fetch the firm quote (returns tx + permit2.eip712 to sign).
+  // Step 1 — fetch the firm quote via BlockRun gateway (x402-paid).
+  // Gateway forces affiliate params server-side; user pays $0.001 USDC.
   let quote: ZeroXQuoteResponse;
   try {
-    quote = await zeroxFetch<ZeroXQuoteResponse>('quote', params);
+    quote = await gatewayGetWithPayment<ZeroXQuoteResponse>('quote', params, ctx);
   } catch (err) {
     return {
-      output: `0x /quote failed: ${err instanceof Error ? err.message : String(err)}`,
+      output: `BlockRun gateway 0x /quote failed: ${err instanceof Error ? err.message : String(err)}`,
       isError: true,
     };
   }
@@ -597,8 +672,8 @@ export const base0xQuoteCapability: CapabilityHandler = {
       properties: COMMON_INPUT_PROPERTIES,
     },
   },
-  execute: async (input: unknown) => {
-    return executeBase0xQuote(input as QuoteInput);
+  execute: async (input: unknown, ctx: ExecutionScope) => {
+    return executeBase0xQuote(input as QuoteInput, ctx);
   },
   concurrent: true,
 };
@@ -607,7 +682,7 @@ export const base0xSwapCapability: CapabilityHandler = {
   spec: {
     name: 'Base0xSwap',
     description:
-      "Execute a Base DEX swap via 0x V2 (Permit2). Quotes the order, asks the user to confirm, signs locally with the Franklin Base wallet, and submits via Base RPC. A 20 bps affiliate fee in the sell-token is collected on-chain by 0x as part of the swap (BlockRun affiliate program — official 0x integrator mechanism). Returns the BaseScan transaction link. Requires ZERO_EX_API_KEY env var (free at dashboard.0x.org).",
+      "Execute a Base DEX swap via 0x V2 (Permit2). Quotes through BlockRun gateway (x402-paid, server-side 0x key — no user setup needed), asks the user to confirm, signs locally with the Franklin Base wallet, and submits via Base RPC. A 20 bps affiliate fee in the sell-token is collected on-chain by 0x as part of the swap (BlockRun affiliate program — official 0x integrator mechanism). Returns the BaseScan transaction link.",
     input_schema: {
       type: 'object',
       required: ['sell_token', 'buy_token', 'sell_amount'],
