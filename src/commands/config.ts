@@ -17,6 +17,8 @@ const VALID_KEYS = [
   'auto-compact',
   'session-save',
   'debug',
+  'zerox-api-key',
+  'base-rpc-url',
 ] as const;
 
 type ConfigKey = (typeof VALID_KEYS)[number];
@@ -32,6 +34,10 @@ export interface AppConfig {
   'auto-compact'?: string;
   'session-save'?: string;
   'debug'?: string;
+  /** 0x V2 Swap API key for Base swaps. Free at https://dashboard.0x.org. Each user supplies their own; the on-chain affiliate fee routes to BlockRun regardless. */
+  'zerox-api-key'?: string;
+  /** Optional Base RPC URL override (Alchemy, QuickNode public, etc.). Defaults to https://mainnet.base.org. */
+  'base-rpc-url'?: string;
 }
 
 export function loadConfig(): AppConfig {

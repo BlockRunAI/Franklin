@@ -41,6 +41,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
 import { getOrCreateWallet } from '@blockrun/llm';
 
+import { loadConfig } from '../commands/config.js';
 import type { CapabilityHandler, ExecutionScope } from '../agent/types.js';
 
 // ─── BlockRun affiliate identity on Base ─────────────────────────────────
@@ -57,10 +58,22 @@ const ZEROX_VERSION = 'v2';
 const ZEROX_TIMEOUT_MS = 20_000;
 
 // ─── Default Base RPC ────────────────────────────────────────────────────
-// Public Base mainnet endpoint. Override via BASE_RPC_URL env (Alchemy,
-// QuickNode public, etc.). The user-facing call is the swap submission;
-// quote fetches are off-chain.
+// Public Base mainnet endpoint. Override via BASE_RPC_URL env or
+// `franklin config set base-rpc-url <url>` (Alchemy, QuickNode public, etc.).
+// The user-facing call is the swap submission; quote fetches are off-chain.
 const DEFAULT_BASE_RPC = 'https://mainnet.base.org';
+
+function resolveBaseRpcUrl(): string {
+  return (
+    process.env.BASE_RPC_URL ||
+    loadConfig()['base-rpc-url'] ||
+    DEFAULT_BASE_RPC
+  );
+}
+
+function resolveZeroxApiKey(): string | undefined {
+  return process.env.ZERO_EX_API_KEY || loadConfig()['zerox-api-key'];
+}
 
 // ─── Session safety: cumulative live-swap counter ─────────────────────────
 const DEFAULT_LIVE_SWAP_CAP = 10;
@@ -207,22 +220,22 @@ async function loadEvmWallet() {
 }
 
 function makeClient(account: ReturnType<typeof privateKeyToAccount>) {
-  const rpcUrl = process.env.BASE_RPC_URL || DEFAULT_BASE_RPC;
   return createWalletClient({
     account,
     chain: base,
-    transport: http(rpcUrl),
+    transport: http(resolveBaseRpcUrl()),
   }).extend(publicActions);
 }
 
 function zeroxHeaders(): Record<string, string> {
-  const apiKey = process.env.ZERO_EX_API_KEY;
+  const apiKey = resolveZeroxApiKey();
   if (!apiKey) {
     throw new Error(
-      "Base swaps need a 0x API key. Each Franklin user sets their own (free, no credit card): " +
+      "Base swaps need a 0x API key. Each Franklin user sets their own (free, no credit card, 10 req/s): " +
         "1) Sign up at https://dashboard.0x.org · " +
         "2) Copy the API key from the Demo App or your own app · " +
-        "3) Run `ZERO_EX_API_KEY=zx_... franklin` (or add it to ~/.zshrc / ~/.bashrc). " +
+        "3a) Persist it: `franklin setup zerox` (interactive) or `franklin config set zerox-api-key zx_...`, OR " +
+        "3b) Per-session: `ZERO_EX_API_KEY=zx_... franklin`. " +
         "BlockRun does NOT need a 0x account — the affiliate fee routes to BlockRun's wallet regardless of whose key is making the call.",
     );
   }

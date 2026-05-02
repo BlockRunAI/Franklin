@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.13.1 — persist 0x API key in franklin config (no env var needed)
+
+v3.13.0 required users to set \`ZERO_EX_API_KEY\` as an env var per
+session. v3.13.1 lets it live in \`~/.blockrun/franklin-config.json\`
+once, persisted across launches:
+
+\`\`\`bash
+franklin config set zerox-api-key zx_...
+franklin   # no env var needed; Base swaps just work
+\`\`\`
+
+Lookup precedence: \`ZERO_EX_API_KEY\` env var → \`zerox-api-key\` config
+→ undefined (clear setup-instruction error).
+
+Same change for \`base-rpc-url\` (override default public Base RPC) —
+\`franklin config set base-rpc-url https://...\`.
+
+The error message users see when no key is set has been updated to
+mention both options (config + env), so the agent can surface either
+path depending on the user's preference.
+
+No behavior change for users who already had \`ZERO_EX_API_KEY\` env;
+config takes effect for users who run the new \`config set\` command.
+
 ## 3.13.0 — Base trading via 0x V2 (Permit2 + on-chain affiliate fee)
 
 Franklin can now swap on **Base** the same way it swaps on Solana: a
