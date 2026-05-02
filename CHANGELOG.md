@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.12.0 — surface BlockRun gateway's new Trading & DeFi endpoints
+
+BlockRun gateway just shipped Layer 1 of the trading-API marketplace —
+five new paid endpoints across three legally-clean providers (open data
+or public infrastructure, no resale-ToS violations):
+
+- \`GET  /v1/jupiter/quote\`           \$0.001 — Solana DEX-aggregator price quote
+- \`POST /v1/jupiter/swap\`            \$0.001 — build unsigned Solana swap tx (caller signs locally)
+- \`GET  /v1/defillama/protocols\`     \$0.005 — every DeFi protocol with TVL
+- \`GET  /v1/defillama/protocol/{slug}\` \$0.005 — single protocol details
+- \`GET  /v1/defillama/chains\`        \$0.005 — TVL by chain
+- \`GET  /v1/defillama/yields\`        \$0.005 — every yield pool (APY/TVL)
+- \`GET  /v1/defillama/prices/{coins}\` \$0.001 — token price lookup
+- \`POST /v1/solana/rpc\`              \$0.0005 — JSON-RPC passthrough to mainnet-beta
+
+This release teaches Franklin's system prompt about all of them so the
+agent routes traffic through the gateway instead of WebSearch / scraping
+when a user asks "what's pumping on Solana", "swap X for Y on Jupiter",
+"what's the APY on Aave USDC", "what's the SOL balance of address …".
+
+No code changes — just a prompt-section update in
+\`src/agent/context.ts:getBlockRunApiSection\`. Ship-first-light usage
+funnel for the gateway's new revenue surface.
+
 ## 3.11.0 — remove per-turn spend cap (match Claude Code's wallet-trust default)
 
 The `MAX_TURN_SPEND_USD` per-turn cap and the `max-turn-spend-usd`

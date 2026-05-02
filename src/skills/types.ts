@@ -23,6 +23,8 @@ export interface ParsedSkill {
   budgetCapUsd?: number;
   /** Franklin extension: append a paid-call receipt under the agent reply. */
   costReceipt?: boolean;
+  /** Trigger phrases that should auto-invoke this skill when matched. */
+  triggers?: string[];
 }
 
 export type ParseResult =
