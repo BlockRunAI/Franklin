@@ -177,6 +177,66 @@ Franklin stores wallet keys in ~/.blockrun/. When the user asks about wallet loc
 When the user asks about "my wallet" without qualifier, default to Base (it's the primary chain shown at launch). Only mention Solana if the chain file says solana or the user explicitly asks.`;
 }
 
+function getBlockRunApiSection(): string {
+  return `# BlockRun Gateway API (the network you live on)
+You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun API", "check all endpoints", or call the gateway directly, use ONLY the paths below. **Never invent, pluralize, or singularize an endpoint** — \`/v1/image/generate\` (singular) is wrong, \`/v1/images/generations\` (plural) is correct. If a path you have in mind isn't in this list, fetch the canonical discovery endpoints before calling it.
+
+**Base URLs**
+- Base chain: \`https://blockrun.ai/api\` (alias: \`https://api.blockrun.ai\`)
+- Solana chain: \`https://sol.blockrun.ai/api\`
+
+**Discovery (always free, GET) — fetch these BEFORE guessing a path**
+- \`GET /openapi.json\` (or \`/.well-known/openapi.json\`) — full OpenAPI 3.1 contract, every route + request schema
+- \`GET /.well-known/x402\` — x402 resource list with prices
+
+**LLM (POST, x402-paid)**
+- \`POST /v1/chat/completions\` — OpenAI-compatible. Body: \`{ model, messages, stream?, tools?, max_tokens?, temperature? }\`. \`model\` MUST come from \`GET /v1/models\` (e.g. \`anthropic/claude-sonnet-4.6\`, \`openai/gpt-5.1\`, \`xai/grok-5\`). Wrong model name → 400 with the valid list in the error body.
+- \`POST /v1/messages\` — Anthropic-compatible. Body: \`{ model, messages, max_tokens, system?, tools? }\`.
+
+**Media (POST, x402-paid; GET to poll async jobs)**
+- \`POST /v1/images/generations\` — text-to-image. Body: \`{ model, prompt, size?, n?, response_format? }\`.
+- \`POST /v1/images/image2image\` — image-to-image. Body: \`{ model, prompt, image, ... }\`.
+- \`GET  /v1/images/generations/{id}\` — fetch a generated image by id.
+- \`POST /v1/videos/generations\` — text/image-to-video. Body: \`{ model, prompt, ... }\`. Returns job id; poll with the GET below.
+- \`GET  /v1/videos/generations/{id}\` — poll video job (settles payment when complete).
+- \`POST /v1/audio/generations\` — music/audio. Body: \`{ model, prompt, ... }\`. Default \`model\`: \`minimax/music-2.5+\`.
+
+**Search (POST, x402-paid)**
+- \`POST /v1/search\` — Exa-backed web search. Body: \`{ query }\` (1–1000 chars).
+- \`/v1/exa/{...path}\` — Exa passthrough (answer / search / contents).
+
+**Markets (GET, free for crypto/FX/commodity; \`stocks\`/\`usstock\` are x402-paid at \$0.001/call)**
+- \`/v1/crypto/list\` · \`/v1/crypto/price/{symbol}\` · \`/v1/crypto/history/{symbol}\`
+- \`/v1/fx/list\` · \`/v1/fx/price/{symbol}\` · \`/v1/fx/history/{symbol}\`
+- \`/v1/commodity/list\` · \`/v1/commodity/price/{symbol}\` · \`/v1/commodity/history/{symbol}\`
+- \`/v1/usstock/list\` · \`/v1/usstock/price/{symbol}\` · \`/v1/usstock/history/{symbol}\`
+- \`/v1/stocks/{market}/list\` · \`/v1/stocks/{market}/price/{symbol}\` · \`/v1/stocks/{market}/history/{symbol}\` (e.g. market = \`hk\`, \`cn\`)
+
+**Wallet & meta (GET, free)**
+- \`GET /v1/balance?address={evmAddress}\` — USDC balance on the configured chain.
+- \`GET /v1/models\` — full model catalog (id, owner, context window, pricing).
+- \`GET /v1/health/overview\` · \`/v1/health/regions\` · \`/v1/health/chain\` · \`/v1/health/models\` — gateway status.
+
+**Sandbox (POST, x402-paid)**
+- \`/v1/modal/{...path}\` — Modal GPU sandbox passthrough (create/exec/etc.).
+- \`/v1/pm/{...path}\` — prediction-market data passthrough.
+
+**Endpoints that DO NOT exist** (common hallucinations — do NOT call):
+- \`/v1/image/generate\` (singular — use \`/v1/images/generations\`)
+- \`/v1/spending\` (no such route — derive from on-chain history if needed)
+- \`/v1/x/...\` (X/Twitter routes are NOT on the gateway; if a marketing skill exposes \`/v1/x/*\` it's a separate downstream service, not BlockRun gateway)
+
+**Auth pattern (x402)**
+1. POST without a payment header → server returns \`402 Payment Required\` with payment requirements in JSON.
+2. Sign a USDC transfer to the resource address (Base or Solana, per gateway).
+3. Re-POST with header \`X-PAYMENT: <base64-payload>\`.
+4. Server settles on-chain and returns the result.
+
+A bare \`402\` on a POST means the endpoint is healthy and the payment flow is working — that is **not** a bug, do not report it as one. A \`404\` means the path is wrong; fix the path. A \`400\` means the body shape or \`model\` is wrong; the error body lists the valid values.
+
+**Verifying gateway health**: GET \`/v1/health/overview\` (free) is the right probe. Listing endpoints? Fetch \`/openapi.json\` and read the \`paths\` object — that is the source of truth, not your training memory.`;
+}
+
 function getToolPatternsSection(): string {
   return `# Tool Selection Patterns
 - **Finding files**: Glob first (by name/pattern), then Grep (by content), then Read (specific file). Don't start with Read unless you know the exact path.
@@ -248,6 +308,7 @@ export function assembleInstructions(workingDir: string, model?: string): string
     getSocialMarketingSection(),
     getMissingAccessSection(),
     getWalletKnowledgeSection(),
+    getBlockRunApiSection(),
     getToolPatternsSection(),
     getTokenEfficiencySection(),
     getVerificationSection(),

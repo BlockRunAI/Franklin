@@ -494,16 +494,7 @@ export async function interactiveSession(
         const cmdResult = await handleSlashCommand(input, {
           history, config, client, sessionId, onEvent,
           skillRegistry,
-          skillVars: getSkillVars({
-            chain: config.chain,
-            perTurnCapUsd: (() => {
-              const raw = loadConfig()['max-turn-spend-usd'];
-              if (raw == null) return 1.0;
-              const n = Number(raw);
-              if (!Number.isFinite(n)) return 1.0;
-              return n <= 0 ? Infinity : n;
-            })(),
-          }),
+          skillVars: getSkillVars({ chain: config.chain }),
         });
         if (cmdResult.handled) continue;
         if (cmdResult.rewritten) input = cmdResult.rewritten;
@@ -610,34 +601,6 @@ export async function interactiveSession(
     // ── No-progress guardrail: kill infinite tiny-response loops ──
     let consecutiveTinyResponses = 0;                    // Count of consecutive calls with <10 output tokens
     const MAX_TINY_RESPONSES = 2;                        // Break after N tiny responses — if 2 calls return near-empty, something is wrong
-    let turnSpend = 0;                                   // Cost spent this user turn (USD)
-    // Hard circuit breaker per user message — defends user wallets against
-    // a runaway model+tool combo on a single prompt. User-overridable via
-    // `franklin config set max-turn-spend-usd <number>`. Explicit "0" or a
-    // negative number disables the cap; a non-numeric / unparseable value
-    // is treated as a typo and falls back to the safe default rather than
-    // silently removing the wallet guard.
-    //
-    // Default lineage: $0.25 (≤ v3.8.41) → $1.00 (v3.8.42) → $2.00 (v3.9.1).
-    // v3.8.42's $1.00 was tuned for "multi-stage dashboard scaffold" workloads
-    // landing in the $0.20–$0.80 range on a single prompt. Real coding turns
-    // since — full BTC-style dashboards, multi-file refactors that pull in
-    // sonnet/opus on a COMPLEX-tier route — routinely cross $1.00 in their
-    // first planning pass alone, leaving no headroom for the execution call
-    // and tripping the cap mid-task. $2.00 keeps the runaway-protection
-    // promise (catches the buggy-loop drain v3.8.41's retry-policy targets)
-    // while letting a legitimate complex coding task finish in one turn.
-    // Users who liked the old ceiling can pin it via the config.
-    const TURN_SPEND_DEFAULT_USD = 2.0;
-    const turnSpendCap = (() => {
-      const raw = loadConfig()['max-turn-spend-usd'];
-      if (raw == null) return TURN_SPEND_DEFAULT_USD;
-      const parsed = Number(raw);
-      if (!Number.isFinite(parsed)) return TURN_SPEND_DEFAULT_USD;   // typo → keep default
-      if (parsed <= 0) return Infinity;                              // explicit opt-out
-      return parsed;
-    })();
-    const MAX_TURN_SPEND_USD = turnSpendCap;
 
     // ── Turn analysis (one classifier call, drives routing + prefetch) ──
     // Single LLM pass that answers every routing-adjacent question the
@@ -1232,17 +1195,12 @@ export async function interactiveSession(
       recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, 0);
 
       // ── Circuit breakers: prevent infinite-loop wallet drain ──
-      turnSpend += costEstimate;
-      if (turnSpend > MAX_TURN_SPEND_USD) {
-        onEvent({
-          kind: 'text_delta',
-          text:
-            `\n\n⚠️ Turn spend limit reached ($${turnSpend.toFixed(3)} > $${MAX_TURN_SPEND_USD}). Stopping to protect your wallet.\n` +
-            `Raise the cap with \`franklin config set max-turn-spend-usd 4.0\` (or \`0\` to disable), then \`/retry\`.\n`,
-        });
-        onEvent({ kind: 'turn_done', reason: 'budget' });
-        break;
-      }
+      // Per-turn $-cap was removed in v3.11.0 — runaway loops are caught by
+      // MAX_TOOL_CALLS_PER_TURN (25) and MAX_TINY_RESPONSES (2) above; the
+      // wallet balance itself is the ultimate ceiling. Batch callers that
+      // need a hard $ ceiling can still pass `config.maxSpendUsd` (handled
+      // a few lines below).
+      //
       // Count a response as "no progress" only if it made no meaningful output:
       // no tool call, and no text content longer than a few chars. A short but
       // legitimate response (e.g. "done" or a compact tool_use) resets the counter.

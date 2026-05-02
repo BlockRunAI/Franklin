@@ -1,5 +1,112 @@
 # Changelog
 
+## 3.11.0 — remove per-turn spend cap (match Claude Code's wallet-trust default)
+
+The `MAX_TURN_SPEND_USD` per-turn cap and the `max-turn-spend-usd`
+config key are removed. v3.10.6 patched the cap's confusing
+limit-reached message; this release removes the underlying feature.
+
+The cap was originally introduced as a runaway-loop guard at $0.25
+per turn (commit 562e1f0). It has only ever been **raised** since —
+never lowered after a real incident:
+
+- $0.25 → $1.00 (v3.8.42) because legitimate dashboard scaffolds
+  routinely tripped it.
+- $1.00 → $2.00 (v3.9.1) because COMPLEX-tier sonnet/opus planning
+  passes regularly cross $1 in their first call.
+
+Even at $2 it kept firing mid-task on real work and confusing users,
+who were then nudged toward draining their wallet through the very
+mechanism designed to prevent it. Anthropic's own Claude Code has no
+equivalent ceiling and works fine, because the runtime catches
+runaway loops with structural guards instead of an opaque $-cap. The
+wallet itself is the ultimate ceiling — Franklin can never spend
+more than the user funded.
+
+The structural guards remain in place:
+
+- \`MAX_TOOL_CALLS_PER_TURN = 25\` — hard \`break\` after 25 tool
+  calls in one turn (\`src/agent/loop.ts:598\`).
+- \`MAX_TINY_RESPONSES = 2\` — hard \`break\` after 2 consecutive
+  responses with no tool_use and no meaningful text
+  (\`src/agent/loop.ts:603\`).
+- \`SAME_TOOL_WARN_THRESHOLD = 3\` — warn when the same tool is
+  called 3+ times in a turn.
+- \`readFileCache\` — dedupe Reads of the same path within a turn.
+- Session-level \`config.maxSpendUsd\` — unchanged; batch/scripted
+  callers can still pass it to bound a single run.
+
+**Migration**
+
+- Existing users with \`max-turn-spend-usd\` in
+  \`~/.blockrun/franklin-config.json\`: the value is silently ignored.
+  \`franklin config set max-turn-spend-usd <n>\` is now an error
+  (unknown config key). Remove it with \`franklin config unset\` if
+  you want a clean config — but leaving it does no harm.
+- Skill authors: the \`{{per_turn_cap}}\`, \`{{spent_this_turn}}\`,
+  and \`{{turn_budget_remaining}}\` placeholders are no longer
+  substituted. Skills that reference them will render the literal
+  placeholder text. The bundled \`budget-grill\` skill was rewritten
+  to drop these placeholders and frame cost discipline against the
+  wallet balance instead.
+
+## 3.10.6 — turn-spend-limit message no longer reads as a UI prompt
+
+The limit-reached message was confusing users into draining their
+wallet. Old text:
+
+> Raise the cap with \`franklin config set max-turn-spend-usd 4.0\`
+> (or \`0\` to disable), then \`/retry\`.
+
+The "(or \`0\` to disable)" parenthetical sits next to \`/retry\` and
+reads like a single-keystroke choice. A user who hit the limit typed
+\`0\` thinking it would disable the cap. \`0\` was sent as a new user
+message, a fresh turn started (with the cap reset to its default
+\$2), the agent kept its tool-loop going, and the wallet kept
+draining.
+
+New message lays out three labelled options on their own lines, with
+an explicit warning that typing a bare number becomes a new prompt:
+
+\`\`\`
+⚠️ Turn spend limit reached (\$2.064 > \$2.00). Stopping to protect your wallet.
+
+What to do next — pick ONE (do NOT just type a number, that becomes a new prompt):
+  • Continue this turn:    /retry
+  • Raise cap to \$4:       franklin config set max-turn-spend-usd 4
+  • Disable cap entirely:  franklin config set max-turn-spend-usd 0   (then /retry)
+\`\`\`
+
+Also displays \`∞\` instead of \`Infinity\` when the cap is disabled.
+
+## 3.10.5 — teach Franklin the BlockRun gateway API surface
+
+Symptom: when asked to "test all BlockRun APIs", the agent guessed
+endpoints from memory. It tried \`POST /v1/image/generate\` (singular,
+404), claimed \`GET /v1/spending\` returned 200 (route doesn't
+exist), and listed \`/v1/x/*\` routes that aren't on the gateway.
+
+Root cause: Franklin's system prompt taught the agent how to use its
+own *tools* (TradingMarket, ExaAnswer, etc.) but never taught it the
+real gateway HTTP surface. With nothing to ground against, the agent
+fell back to plausible-looking OpenAI-style guesses.
+
+Fix: a new \`BlockRun Gateway API\` section in the system prompt
+(\`src/agent/context.ts\`). It enumerates the actual routes —
+\`/v1/chat/completions\`, \`/v1/messages\`, \`/v1/images/generations\`,
+\`/v1/images/image2image\`, \`/v1/videos/generations\` (+ \`/{id}\` poll),
+\`/v1/audio/generations\`, \`/v1/search\`, \`/v1/exa/...\`, the markets
+endpoints (\`crypto/fx/commodity/usstock/stocks/{market}\`),
+\`/v1/balance\`, \`/v1/models\`, \`/v1/health/*\`, \`/v1/modal/...\`,
+\`/v1/pm/...\` — with request shapes, free-vs-paid annotation, and the
+x402 auth flow. It also calls out three specific hallucinations to
+avoid (\`/v1/image/generate\`, \`/v1/spending\`, \`/v1/x/*\`) and points
+at the canonical discovery contracts (\`GET /openapi.json\`, \`GET
+/.well-known/x402\`) as the source of truth when in doubt.
+
+The agent now stops inventing routes — and a bare 402 on a POST is
+correctly read as a working endpoint, not a bug.
+
 ## 3.10.4 — UI: kill ghost border lines on terminal resize
 
 After a window resize, Franklin's input box would leave stacked

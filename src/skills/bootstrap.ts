@@ -37,20 +37,10 @@ export function loadBundledSkills(): BundledLoad {
 
 export interface SkillVarSource {
   chain?: 'base' | 'solana';
-  /** Per-turn spend cap in USD; mirrors the `max-turn-spend-usd` config key. */
-  perTurnCapUsd?: number;
 }
 
 export function getSkillVars(src: SkillVarSource): Record<string, string> {
   const out: Record<string, string> = {};
   if (src.chain) out.wallet_chain = src.chain;
-  if (typeof src.perTurnCapUsd === 'number' && Number.isFinite(src.perTurnCapUsd)) {
-    const cap = src.perTurnCapUsd.toFixed(2);
-    out.per_turn_cap = cap;
-    // Skills run at turn boundary, so spent-this-turn is always zero at
-    // substitution time and remaining equals the cap.
-    out.spent_this_turn = '0.00';
-    out.turn_budget_remaining = cap;
-  }
   return out;
 }

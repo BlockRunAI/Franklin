@@ -193,17 +193,16 @@ test('substituteVariables collapses $ARGUMENTS when args empty', () => {
 
 test('substituteVariables handles multiple substitutions in one body', () => {
   const out = substituteVariables(
-    'Wallet: {{wallet_balance}} on {{wallet_chain}}; cap: {{per_turn_cap}}; task: $ARGUMENTS',
+    'Wallet: {{wallet_balance}} on {{wallet_chain}}; task: $ARGUMENTS',
     {
       wallet_balance: '5.00',
       wallet_chain: 'base',
-      per_turn_cap: '1.00',
     },
     'refactor auth',
   );
   assert.equal(
     out,
-    'Wallet: 5.00 on base; cap: 1.00; task: refactor auth',
+    'Wallet: 5.00 on base; task: refactor auth',
   );
 });
 
@@ -384,28 +383,18 @@ test('loadBundledSkills includes budget-grill from src/skills-bundled', () => {
   // layer to render against the live runtime context.
   assert.match(skill.skill.body, /\$ARGUMENTS/);
   assert.match(skill.skill.body, /\{\{wallet_chain\}\}/);
-  assert.match(skill.skill.body, /\{\{per_turn_cap\}\}/);
 });
 
 test('getSkillVars exposes synchronously-known runtime context', () => {
-  const vars = getSkillVars({ chain: 'base', perTurnCapUsd: 1.0 });
+  const vars = getSkillVars({ chain: 'base' });
   assert.equal(vars.wallet_chain, 'base');
-  assert.equal(vars.per_turn_cap, '1.00');
-  assert.equal(vars.spent_this_turn, '0.00');
-  assert.equal(vars.turn_budget_remaining, '1.00');
   // wallet_balance requires async wallet query — deferred to Phase 2.
   assert.equal(vars.wallet_balance, undefined);
-});
-
-test('getSkillVars formats per_turn_cap with two decimals across magnitudes', () => {
-  assert.equal(getSkillVars({ perTurnCapUsd: 0.5 }).per_turn_cap, '0.50');
-  assert.equal(getSkillVars({ perTurnCapUsd: 10 }).per_turn_cap, '10.00');
 });
 
 test('getSkillVars omits unknown fields when source is empty', () => {
   const vars = getSkillVars({});
   assert.equal(vars.wallet_chain, undefined);
-  assert.equal(vars.per_turn_cap, undefined);
 });
 
 // ─── matchSkill ───────────────────────────────────────────────────────────
@@ -439,11 +428,11 @@ test('matchSkill substitutes runtime variables before $ARGUMENTS expansion', () 
   const reg = makeRegistry({
     name: 'budget-grill',
     description: 'd',
-    body: 'on {{wallet_chain}} cap={{per_turn_cap}} task=$ARGUMENTS',
+    body: 'on {{wallet_chain}} task=$ARGUMENTS',
   });
-  const vars = { wallet_chain: 'base', per_turn_cap: '1.00' };
+  const vars = { wallet_chain: 'base' };
   const result = matchSkill('/budget-grill add login', reg, vars);
-  assert.equal(result.rewritten, 'on base cap=1.00 task=add login');
+  assert.equal(result.rewritten, 'on base task=add login');
 });
 
 test('matchSkill returns null for unknown commands', () => {
@@ -504,14 +493,10 @@ test('franklin skills which exits non-zero for unknown skill', { timeout: 15_000
 test('substituteVariables wired with bundled skill + getSkillVars produces expected interpolation', () => {
   const result = loadBundledSkills();
   const skill = result.registry.lookup('budget-grill');
-  const vars = getSkillVars({ chain: 'solana', perTurnCapUsd: 0.75 });
+  const vars = getSkillVars({ chain: 'solana' });
   const out = substituteVariables(skill.skill.body, vars, 'add a feature');
   assert.match(out, /on solana/);
-  assert.match(out, /per-turn spend cap of 0\.75 USDC/);
   assert.match(out, /add a feature\n?$/);
   // Confirm no leftover known-var placeholders in the rendered output.
   assert.doesNotMatch(out, /\{\{wallet_chain\}\}/);
-  assert.doesNotMatch(out, /\{\{per_turn_cap\}\}/);
-  assert.doesNotMatch(out, /\{\{spent_this_turn\}\}/);
-  assert.doesNotMatch(out, /\{\{turn_budget_remaining\}\}/);
 });
