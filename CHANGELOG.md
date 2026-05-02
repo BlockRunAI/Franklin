@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.12.1 — Jupiter swap via Ultra + on-chain referral fee (ToU-clean redo)
+
+v3.12.0 told the agent to call `/v1/jupiter/{quote,swap}` on the
+BlockRun gateway. Re-reading Jupiter's Terms of Use revealed those
+gateway routes were non-compliant — Jupiter's general ToU forbids
+"permit any third party to access or use the Interface" at every
+tier (free `lite-api.jup.ag` included), and the paid SDK License
+Agreement is even stricter ("solely for Licensee's internal
+development efforts"; explicit ban on key disclosure). Many Solana
+wrappers in the wild ignore this; BlockRun's "trustworthy gateway"
+positioning doesn't get to.
+
+The legally-clean redo uses Jupiter's **own** monetization mechanism:
+Jupiter Ultra Referral. The agent calls `lite-api.jup.ag/ultra/v1`
+**directly from this Franklin process** (the user is the first-party
+caller, not redistributing to third parties), embedding BlockRun's
+referral identity (`DUGyfGMTAvyHtrvCa2qPE2KJd3qtGBe4ra7u6URne4xQ`) and
+a 20 bps platform fee in every order. At settlement, Jupiter's
+on-chain router transfers 0.2% of the swap output to BlockRun's
+referral wallet. Same pattern Phantom + every legit Solana wallet
+uses; explicitly endorsed by Jupiter Labs.
+
+Two new tools:
+
+- **`JupiterQuote`** — read-only price quote (free; no signing)
+- **`JupiterSwap`** — quote → AskUser confirm → sign locally → submit
+  via Ultra `/execute`. Returns Solscan tx link.
+
+Symbol shortcuts pre-mapped: SOL, USDC, USDT, JUP, BONK, WIF, TRUMP,
+PUMP. Raw mint addresses pass through.
+
+Companion BlockRun gateway commit: `b0fbac2 revert(jupiter)` removes
+the gateway proxy that violated Jupiter's ToU. Other Layer-1 wraps
+(DefiLlama, Solana RPC) are unaffected and continue to serve x402
+traffic — those upstreams have ToS-compliant redistribution
+(DefiLlama is Apache 2.0; Solana mainnet-beta is public infra).
+
+Updated `src/agent/context.ts:getBlockRunApiSection` to drop the
+`/v1/jupiter/*` lines and point at the local `JupiterSwap` /
+`JupiterQuote` tools instead.
+
 ## 3.12.0 — surface BlockRun gateway's new Trading & DeFi endpoints
 
 BlockRun gateway just shipped Layer 1 of the trading-API marketplace —
