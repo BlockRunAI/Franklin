@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.14.1 — drop x402 fee on /v1/zerox; rely purely on on-chain affiliate
+
+Per user direction: simpler revenue model. The per-call $0.001 USDC
+gateway fee added in v3.14.0 is removed. \`/v1/zerox/{price,quote}\`
+becomes a free public passthrough; revenue is only the on-chain 20 bps
+affiliate (still force-set server-side). Cleaner UX (no x402 round
+trip on every quote), simpler accounting, lower friction for casual
+swap exploration.
+
+Trade-off: quote calls are now free for anyone hitting the gateway.
+The "value capture" is purely at swap-execution time via the affiliate
+fee — same as Phantom Wallet's economics. Lookers (people who quote
+without swapping) cost us nothing to serve and spend nothing on us.
+
+Companion gateway commit: blockrun's \`/v1/zerox/[...path]/route.ts\`
+now skips x402 verify/settle, just proxies to 0x with our key.
+
+In Franklin: \`gatewayGet()\` replaces \`gatewayGetWithPayment()\` in
+\`src/tools/zerox-base.ts\` — straight \`fetch\` call, no payment
+signing. The Solana / Base wallet imports for x402 signing dropped.
+
 ## 3.14.0 — Base 0x routes through BlockRun gateway (no user signup)
 
 v3.13.x required each Franklin user to register at dashboard.0x.org

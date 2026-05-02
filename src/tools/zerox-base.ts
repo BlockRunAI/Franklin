@@ -39,16 +39,7 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
-import {
-  getOrCreateWallet,
-  createPaymentPayload,
-  createSolanaPaymentPayload,
-  parsePaymentRequired,
-  extractPaymentDetails,
-  getOrCreateSolanaWallet,
-  solanaKeyToBytes,
-  SOLANA_NETWORK,
-} from '@blockrun/llm';
+import { getOrCreateWallet } from '@blockrun/llm';
 
 import { loadConfig } from '../commands/config.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
@@ -236,9 +227,9 @@ function makeClient(account: ReturnType<typeof privateKeyToAccount>) {
   }).extend(publicActions);
 }
 
-// ─── 0x calls via BlockRun gateway (x402-paid) ───────────────────────────
+// ─── 0x calls via BlockRun gateway (free public passthrough) ─────────────
 
-async function gatewayGetWithPayment<T>(
+async function gatewayGet<T>(
   path: 'price' | 'quote',
   params: URLSearchParams,
   ctx: ExecutionScope,
@@ -257,23 +248,11 @@ async function gatewayGetWithPayment<T>(
   ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
 
   try {
-    let response = await fetch(endpoint, {
+    const response = await fetch(endpoint, {
       method: 'GET',
       headers,
       signal: controller.signal,
     });
-
-    if (response.status === 402) {
-      const paymentHeaders = await signGatewayPayment(response, chain, endpoint);
-      if (!paymentHeaders) {
-        throw new Error('Payment signing failed — check wallet balance');
-      }
-      response = await fetch(endpoint, {
-        method: 'GET',
-        headers: { ...headers, ...paymentHeaders },
-        signal: controller.signal,
-      });
-    }
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
@@ -284,67 +263,6 @@ async function gatewayGetWithPayment<T>(
   } finally {
     clearTimeout(timer);
     ctx.abortSignal.removeEventListener('abort', onAbort);
-  }
-}
-
-async function signGatewayPayment(
-  response: Response,
-  chain: 'base' | 'solana',
-  endpoint: string,
-): Promise<Record<string, string> | null> {
-  try {
-    let header = response.headers.get('payment-required');
-    if (!header) {
-      try {
-        const body = (await response.json()) as Record<string, unknown>;
-        if (body.x402 || body.accepts) header = btoa(JSON.stringify(body));
-      } catch {
-        /* ignore */
-      }
-    }
-    if (!header) return null;
-
-    if (chain === 'solana') {
-      const wallet = await getOrCreateSolanaWallet();
-      const paymentRequired = parsePaymentRequired(header);
-      const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
-      const secretBytes = await solanaKeyToBytes(wallet.privateKey);
-      const feePayer = details.extra?.feePayer || details.recipient;
-      const payload = await createSolanaPaymentPayload(
-        secretBytes,
-        wallet.address,
-        details.recipient,
-        details.amount,
-        feePayer as string,
-        {
-          resourceUrl: details.resource?.url || endpoint,
-          resourceDescription: details.resource?.description || 'Franklin 0x swap call',
-          maxTimeoutSeconds: details.maxTimeoutSeconds || 60,
-          extra: details.extra as Record<string, unknown> | undefined,
-        },
-      );
-      return { 'PAYMENT-SIGNATURE': payload };
-    }
-    const wallet = await getOrCreateWallet();
-    const paymentRequired = parsePaymentRequired(header);
-    const details = extractPaymentDetails(paymentRequired);
-    const payload = await createPaymentPayload(
-      wallet.privateKey as `0x${string}`,
-      wallet.address,
-      details.recipient,
-      details.amount,
-      details.network || 'eip155:8453',
-      {
-        resourceUrl: details.resource?.url || endpoint,
-        resourceDescription: details.resource?.description || 'Franklin 0x swap call',
-        maxTimeoutSeconds: details.maxTimeoutSeconds || 60,
-        extra: details.extra as Record<string, unknown> | undefined,
-      },
-    );
-    return { 'PAYMENT-SIGNATURE': payload };
-  } catch (err) {
-    console.error(`[franklin] 0x gateway payment error: ${(err as Error).message}`);
-    return null;
   }
 }
 
@@ -440,7 +358,7 @@ async function executeBase0xQuote(
   });
 
   try {
-    const price = await gatewayGetWithPayment<ZeroXQuoteResponse>('price', params, ctx);
+    const price = await gatewayGet<ZeroXQuoteResponse>('price', params, ctx);
     if (!price.liquidityAvailable && price.liquidityAvailable !== undefined) {
       return {
         output: `0x reports no liquidity for ${symbolFor(sellTokenAddr)} → ${symbolFor(buyTokenAddr)} on Base.`,
@@ -497,7 +415,7 @@ async function executeBase0xSwap(
   // Gateway forces affiliate params server-side; user pays $0.001 USDC.
   let quote: ZeroXQuoteResponse;
   try {
-    quote = await gatewayGetWithPayment<ZeroXQuoteResponse>('quote', params, ctx);
+    quote = await gatewayGet<ZeroXQuoteResponse>('quote', params, ctx);
   } catch (err) {
     return {
       output: `BlockRun gateway 0x /quote failed: ${err instanceof Error ? err.message : String(err)}`,
