@@ -1,6 +1,17 @@
 ---
 name: budget-grill
 description: Wallet-aware grilling — interview me about a plan one question at a time, with each branch of the decision tree framed as a USDC cost impact
+triggers:
+  - "grill my plan"
+  - "interview my plan"
+  - "budget review"
+  - "cost analysis"
+  - "wallet drain"
+  - "spending review"
+  - "cost impact"
+  - "plan review"
+  - "challenge my idea"
+  - "stress test plan"
 argument-hint: <plan or topic to grill on>
 cost-receipt: true
 ---
