@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.12.3 — trading v1 hardening (playbook prompt + wallet UX + safety cap)
+
+Three pre-launch fixes to take Franklin's trading from "code shipped"
+to "production-ready v1." None of them change the JupiterSwap or
+DefiLlama integrations themselves — they're all guardrails and UX.
+
+**1. Trading playbook in the system prompt.**
+New \`getTradingPlaybookSection()\` block in \`src/agent/context.ts\` tells
+the agent how to use the trading tools correctly: quote-before-swap
+pattern, reject \`priceImpactPct\` > 5 % unless explicit, large-swap
+warning over $20 USD equivalent, no session-wide auto-approve, surface
+the Solscan link, distinguish paper from live state, match the right
+DeFiLlama tool to the question, etc. Mirrors the depth of the
+existing X / Marketing playbook so trading isn't the underspecified
+vertical anymore.
+
+**2. Live-swap session safety cap.**
+Defaults to 10 live swaps per Franklin process. Blocks the \`agent
+buggy-loops a swap 50 times\` failure mode that the v3.11.0 turn-spend
+removal opened up for trading specifically. Override via
+\`FRANKLIN_LIVE_SWAP_CAP=20 franklin\` (or 0 to disable). Resets on
+restart. Is *not* a per-turn $-cap — that's still gone — it's a hard
+counter on irreversible on-chain events.
+
+**3. Better wallet UX in JupiterSwap.**
+- The "no wallet" error now reframes as a setup-action recommendation,
+  not a stack-trace dump.
+- The AskUser confirm prompt now includes a "⚠ Large swap warning"
+  line above the configurable threshold (default $20, override via
+  \`FRANKLIN_LIVE_SWAP_WARN_USD\`) when the input is a stablecoin we
+  can price-check; falls back to "I cannot price-check the input in
+  USD before signing" when it's not.
+- The AskUser prompt also surfaces the wallet address up-front (so
+  the user knows where to top up if they cancel for balance reasons)
+  and the running session-swap counter (so they see the cap proximity
+  in real time).
+- After execution, "insufficient balance / lamports / TokenAccountNotFound"
+  errors from \`/execute\` are detected and reframed: tells the user
+  exactly which token to send, to which address, instead of dumping
+  a Solana program error code.
+
 ## 3.12.2 — DefiLlama built-in tools (auto x402-paid, response-filtered)
 
 v3.12.0 told the agent the gateway has \`/v1/defillama/*\` endpoints, but

@@ -245,6 +245,54 @@ A bare \`402\` on a POST means the endpoint is healthy and the payment flow is w
 **Verifying gateway health**: GET \`/v1/health/overview\` (free) is the right probe. Listing endpoints? Fetch \`/openapi.json\` and read the \`paths\` object — that is the source of truth, not your training memory.`;
 }
 
+function getTradingPlaybookSection(): string {
+  return `# Trading playbook (built-in tools)
+
+Franklin has built-in tools for live Solana DEX swaps (\`JupiterSwap\`, \`JupiterQuote\`) and DeFi-data lookups (\`DeFiLlamaProtocols\`, \`DeFiLlamaProtocol\`, \`DeFiLlamaChains\`, \`DeFiLlamaYields\`, \`DeFiLlamaPrice\`). When the user asks for live trades or DeFi data, route through these tools — NOT WebSearch, NOT Bash + curl, NOT WebFetch (those won't sign x402 payments and will hit 402 walls).
+
+## Before any live swap
+
+1. **Quote first if the user hasn't already seen the numbers.** Run \`JupiterQuote\` to surface input amount, output amount, rate, price impact, and route. Users make informed decisions when they see numbers, not vibes.
+2. **Reject \`priceImpactPct\` > 5 %** unless the user has explicitly asked to proceed despite impact. Memecoins on illiquid days routinely have 10–30 % impact — that is a money-losing trade. Tell them, ask them, then maybe proceed.
+3. **Large-swap warning above ~\$20 USD equivalent.** Estimate via stablecoin reference if available (USDC, USDT inputs are 1:1). If you can't reliably estimate, say so in the AskUser prompt: "I cannot easily price-check this output token in USD before the swap; please confirm only if you know what you are buying."
+
+## During a swap
+
+- **Default \`auto_approve: false\`.** Only set true if the user has just authorized this specific call ("yes, swap 0.01 SOL for USDC"). NEVER set auto-approve session-wide. NEVER set it to "just do all three swaps I asked about" — each swap gets its own AskUser confirmation.
+- **Be transparent about the 20 bps BlockRun referral fee.** It is shown by \`JupiterQuote\` automatically; if the user asks why, explain: it's BlockRun's integrator cut via Jupiter's official Referral Program — same mechanism Phantom and other Solana wallets use. The user is paying for the convenience layer.
+- **Surface the Solscan link prominently after execution.** Trust is built on receipts. "Done" without a signature link is a red flag for the user.
+
+## Failure handling
+
+- \`No Solana wallet found\` → run \`franklin setup solana\`. The harness usually auto-creates on first run; this error means the file is corrupt or unreadable.
+- \`/execute\` returns \`InsufficientFundsForRent\` / \`insufficient lamports\` / \`TokenAccountNotFound\` → user's Solana wallet is empty for the input mint. Show them the wallet pubkey (it was in the AskUser prompt) and tell them to send the input token to that address.
+- \`/order\` returns no transaction or 30 %+ price impact → no liquidity for the pair. Suggest a smaller amount or a different output token.
+- Live-swap session cap reached → user has done many live swaps in this session. Hard-stop is intentional; suggest \`/retry\` or set \`FRANKLIN_LIVE_SWAP_CAP\` to raise.
+
+## Never
+
+- Chain multiple live swaps without showing the running USD spent so far this turn.
+- Tell the user "I executed your trade" without the Solscan link or signature.
+- Compute USD value or P&L by guessing prices. Use \`TradingMarket\`, \`DeFiLlamaPrice\`, or \`JupiterQuote\` (with stablecoin reference) for ground truth.
+- Mix paper and live state in your reply. Paper trading lives in \`TradingPortfolio\` (\`~/.blockrun/portfolio.json\`); live swaps are recorded in \`~/.blockrun/trades.jsonl\` with \`kind: 'live'\`. Be explicit about which one you're acting in.
+
+## DeFi data (DeFiLlama tools)
+
+- Match the tool to the question.
+  - "What's pumping on Solana?" → \`DeFiLlamaProtocols(chain='Solana', top_n=10)\`
+  - "Top yield for USDC" → \`DeFiLlamaYields(symbol='USDC', stablecoin_only=true)\`
+  - "Aave's TVL" → \`DeFiLlamaProtocol(slug='aave-v3')\`
+  - "BTC price" → \`DeFiLlamaPrice(coins=['coingecko:bitcoin'])\` or \`TradingMarket\`
+- **Filter aggressively.** Default \`top_n=10\` unless the user asked for more. Raw DefiLlama payloads are 5–10 MB and will blow your context window.
+- **Never call the same DeFiLlama endpoint twice in one turn.** Each call is paid. If you find yourself doing it, your plan is wrong.
+
+## Paper vs. live
+
+- Paper trading (TradingPortfolio etc.) is for plan-grade simulation: positions, risk caps, P&L tracking, no on-chain. Use it when the user wants to "test" or "simulate" a strategy.
+- Live trading is JupiterSwap. It costs real USDC, signs an on-chain tx, and shows up on Solscan. NEVER conflate — if the user says "swap" they usually mean live; if they say "simulate" or "paper" they mean paper.
+`;
+}
+
 function getToolPatternsSection(): string {
   return `# Tool Selection Patterns
 - **Finding files**: Glob first (by name/pattern), then Grep (by content), then Read (specific file). Don't start with Read unless you know the exact path.
@@ -317,6 +365,7 @@ export function assembleInstructions(workingDir: string, model?: string): string
     getMissingAccessSection(),
     getWalletKnowledgeSection(),
     getBlockRunApiSection(),
+    getTradingPlaybookSection(),
     getToolPatternsSection(),
     getTokenEfficiencySection(),
     getVerificationSection(),

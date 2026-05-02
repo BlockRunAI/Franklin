@@ -37,6 +37,45 @@ const ULTRA_BASE = 'https://lite-api.jup.ag/ultra/v1';
 const ORDER_TIMEOUT_MS = 15_000;
 const EXECUTE_TIMEOUT_MS = 30_000;
 
+// ─── Session safety: cumulative live-swap counter ─────────────────────────
+// We removed the per-turn $-cap in v3.11.0 because it kept firing on legit
+// LLM workloads — but a live on-chain swap is irreversible, so a cap here is
+// different in kind. Default 10 swaps per Franklin process; user can override
+// via FRANKLIN_LIVE_SWAP_CAP env (set to 0 to disable). Resets on restart.
+const DEFAULT_LIVE_SWAP_CAP = 10;
+const liveSwapCap = (() => {
+  const raw = process.env.FRANKLIN_LIVE_SWAP_CAP;
+  if (!raw) return DEFAULT_LIVE_SWAP_CAP;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_LIVE_SWAP_CAP;
+  if (n <= 0) return Infinity;
+  return Math.floor(n);
+})();
+let liveSwapCount = 0;
+
+// ─── Large-swap warning threshold ────────────────────────────────────────
+// USD value above which we surface a "Large swap" line in the AskUser
+// confirm — only computable when input is a known stablecoin. Override via
+// FRANKLIN_LIVE_SWAP_WARN_USD env (default $20).
+const DEFAULT_LARGE_SWAP_USD = 20;
+const largeSwapThresholdUsd = (() => {
+  const raw = process.env.FRANKLIN_LIVE_SWAP_WARN_USD;
+  if (!raw) return DEFAULT_LARGE_SWAP_USD;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_LARGE_SWAP_USD;
+  return n;
+})();
+
+const STABLECOIN_MINTS = new Set<string>([
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+]);
+
+function estimateUsdValue(inputMint: string, humanAmount: number): number | null {
+  if (STABLECOIN_MINTS.has(inputMint)) return humanAmount;
+  return null; // unknown — caller will surface a "couldn't price" warning instead
+}
+
 // ─── Symbol → mint shortcuts ──────────────────────────────────────────────
 // Agents prefer "USDC" / "SOL" over 44-char base58 mint addresses. Anything
 // not in this map is passed through verbatim — power users can drop in any
@@ -244,23 +283,41 @@ async function executeJupiterSwap(
   input: SwapInput,
   ctx: ExecutionScope
 ): Promise<{ output: string; isError?: boolean }> {
+  // Session-cap pre-check (cheapest, fail fast).
+  if (liveSwapCount >= liveSwapCap) {
+    return {
+      output:
+        `Live-swap session cap reached (${liveSwapCount}/${liveSwapCap}). ` +
+        `Stopping to protect your wallet — this is a deliberate guardrail, not an error in your prompt.\n\n` +
+        `To raise: \`FRANKLIN_LIVE_SWAP_CAP=20 franklin\` (or 0 to disable).\n` +
+        `To continue with a fresh count: restart Franklin (\`exit\` then re-launch).`,
+      isError: true,
+    };
+  }
+
   const inputMint = resolveMint(input.input_mint);
   const outputMint = resolveMint(input.output_mint);
   const inDec = decimalsFor(inputMint);
   const amountAtomic = toAtomicUnits(input.amount, inDec);
 
-  // Load wallet first — fail fast if Solana isn't set up.
+  // Load wallet — `getOrCreateSolanaWallet` auto-creates on first run, so this
+  // path firing means the file is corrupt or the .blockrun dir is unreadable.
   let keypair: Keypair;
   try {
     keypair = await loadSolanaKeypair();
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     return {
       output:
-        `No Solana wallet found. Run \`franklin setup solana\` to generate one, or check ~/.blockrun/solana-wallet.json.\n` +
-        `(${err instanceof Error ? err.message : 'unknown error'})`,
+        `Couldn't load your Solana wallet. ` +
+        `Run \`franklin setup solana\` to (re)generate one. ` +
+        `If that's already worked before, check ~/.blockrun/solana-wallet.json is readable.\n\n` +
+        `Underlying error: ${msg}`,
       isError: true,
     };
   }
+
+  const walletAddress = keypair.publicKey.toBase58();
 
   // Step 1 — fetch order with our referral identity attached.
   let order: UltraOrderResponse;
@@ -269,7 +326,7 @@ async function executeJupiterSwap(
       inputMint,
       outputMint,
       amount: amountAtomic,
-      taker: keypair.publicKey.toBase58(),
+      taker: walletAddress,
     });
   } catch (err) {
     return {
@@ -287,9 +344,28 @@ async function executeJupiterSwap(
   // Step 2 — confirm with user (unless explicit auto_approve override).
   if (!input.auto_approve && ctx.onAskUser) {
     const quoteText = formatQuote(order);
-    const question =
-      `Execute this Jupiter swap?\n\n${quoteText}\n\nWallet: ${keypair.publicKey.toBase58()}`;
-    const answer = await ctx.onAskUser(question, ['Confirm', 'Cancel']);
+    const usdEst = estimateUsdValue(inputMint, input.amount);
+    const sections: string[] = ['Execute this Jupiter swap?', '', quoteText];
+
+    if (usdEst != null && usdEst >= largeSwapThresholdUsd) {
+      sections.push(
+        '',
+        `⚠ Large swap warning — input is ~$${usdEst.toFixed(2)} (above $${largeSwapThresholdUsd} threshold). Confirm only if this matches your intent.`,
+      );
+    } else if (usdEst == null) {
+      sections.push(
+        '',
+        `Note: input is not a stablecoin, so I cannot price-check this in USD before signing. Verify the output amount matches your intent.`,
+      );
+    }
+
+    sections.push(
+      '',
+      `Wallet: ${walletAddress}`,
+      `Live-swap session count: ${liveSwapCount}/${liveSwapCap === Infinity ? '∞' : liveSwapCap}`,
+    );
+
+    const answer = await ctx.onAskUser(sections.join('\n'), ['Confirm', 'Cancel']);
     if (answer.toLowerCase() !== 'confirm') {
       return { output: 'Swap cancelled by user.' };
     }
@@ -316,6 +392,21 @@ async function executeJupiterSwap(
       requestId: order.requestId,
     });
     if (exec.status !== 'Success') {
+      const errStr = (exec.error ?? '').toLowerCase();
+      const looksInsufficient =
+        errStr.includes('insufficient') ||
+        errStr.includes('lamports') ||
+        errStr.includes('tokenaccountnotfound') ||
+        errStr.includes('not enough');
+      if (looksInsufficient) {
+        return {
+          output:
+            `Swap failed: insufficient balance. Your Solana wallet (${walletAddress}) does not hold enough of the input token.\n\n` +
+            `Send ${symbolFor(inputMint)} to that address (or fund it via the Franklin UI), then retry.\n\n` +
+            `Underlying error: ${exec.error ?? exec.code ?? 'unknown'}`,
+          isError: true,
+        };
+      }
       return {
         output:
           `Jupiter Ultra /execute reported ${exec.status}` +
@@ -324,6 +415,7 @@ async function executeJupiterSwap(
         isError: true,
       };
     }
+    liveSwapCount += 1;
     const sig = exec.signature ?? '<unknown>';
     const explorer = `https://solscan.io/tx/${sig}`;
     return {
@@ -332,6 +424,7 @@ async function executeJupiterSwap(
         formatQuote(order),
         `Signature: ${sig}`,
         explorer,
+        `(Session live-swap count: ${liveSwapCount}/${liveSwapCap === Infinity ? '∞' : liveSwapCap})`,
       ].join('\n'),
     };
   } catch (err) {
