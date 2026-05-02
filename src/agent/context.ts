@@ -225,11 +225,20 @@ You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun
 - Use the **\`JupiterQuote\` and \`JupiterSwap\` built-in tools** — they call Jupiter's Ultra API directly from this process. The user is the first-party caller of Jupiter; we are not a gateway proxy here. A 20 bps platform fee is collected on-chain as part of the swap (Jupiter Referral Program — official integrator mechanism, not a hidden cost).
 - Do NOT try to call \`/v1/jupiter/...\` on the BlockRun gateway — there is no such endpoint (Jupiter ToU forbids the gateway-proxy model).
 
-**Base DEX swap (0x V2 Permit2 via BlockRun gateway)**
-- Use the **\`Base0xQuote\` and \`Base0xSwap\` built-in tools** for swaps on Base (chain id 8453). Tools route through BlockRun gateway \`/v1/zerox/{price,quote}\` (server-side 0x key, x402-paid). User pays $0.001 USDC per quote/swap call to the gateway; on-chain affiliate (20 bps in the sell-token) flows automatically to BlockRun treasury at swap settlement. **No 0x signup needed** — BlockRun manages the upstream key.
-- Symbol shortcuts pre-mapped: ETH (native), WETH, USDC, USDT, CBBTC, CBETH, AERO, DAI. Raw \`0x...\` addresses pass through.
-- For native ETH → token: no Permit2 approval needed (native value path). For ERC-20 → token: first-time-per-token Permit2 approval auto-runs before the swap (one-time gas cost; future swaps of the same sell-token reuse it).
-- The user signs Permit2 typed data locally with their Base keypair; the signed transaction is submitted to a Base RPC (default public mainnet-beta) — BlockRun never custodies keys.
+**Base DEX swap (0x V2 via BlockRun gateway)** — three modes, pick by user's wallet state:
+
+- **\`Base0xQuote\`** (read-only): inspect price + impact + route. Free.
+- **\`Base0xSwap\`** (Permit2): user signs Permit2 typed-data + submits the tx themselves to Base RPC. **User needs ETH for gas.** Routes through BlockRun gateway \`/v1/zerox/{price,quote}\` — no 0x signup needed.
+- **\`Base0xGaslessSwap\`** (Gasless V2): user signs ONLY EIP-712 typed-data (offline, no on-chain action). 0x's relayer broadcasts the trade and pays gas. **User does NOT need any ETH.** Only works for Permit-supporting input tokens (USDC, DAI). USDT etc. do not support Permit on Base — the tool errors with that instruction. Routes through \`/v1/zerox/gasless/*\`.
+
+**Pick the right tool:**
+- User holds ETH on Base → use \`Base0xSwap\` (more flexibility, supports any input token).
+- User holds USDC/DAI but no ETH → use \`Base0xGaslessSwap\` (zero gas needed).
+- User asks for a quote without committing → use \`Base0xQuote\`.
+
+Symbol shortcuts pre-mapped on all three: ETH (native, Base0xSwap only), WETH, USDC, USDT, CBBTC, CBETH, AERO, DAI. Raw \`0x...\` addresses pass through.
+
+On-chain affiliate (20 bps in sell-token, force-set server-side) flows to BlockRun treasury at settlement on all three paths. BlockRun never custodies user keys; signing is always local.
 
 **Sandbox (POST, x402-paid)**
 - \`/v1/modal/{...path}\` — Modal GPU sandbox passthrough (create/exec/etc.).

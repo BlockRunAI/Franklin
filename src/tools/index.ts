@@ -31,6 +31,7 @@ import { webhookPostCapability } from './webhook.js';
 import { walletCapability } from './wallet.js';
 import { jupiterQuoteCapability, jupiterSwapCapability } from './jupiter.js';
 import { base0xQuoteCapability, base0xSwapCapability } from './zerox-base.js';
+import { base0xGaslessSwapCapability } from './zerox-gasless.js';
 import {
   defiLlamaProtocolsCapability,
   defiLlamaProtocolCapability,
@@ -173,6 +174,7 @@ export const allCapabilities: CapabilityHandler[] = [
   jupiterSwapCapability,
   base0xQuoteCapability,
   base0xSwapCapability,
+  base0xGaslessSwapCapability,
   defiLlamaProtocolsCapability,
   defiLlamaProtocolCapability,
   defiLlamaChainsCapability,

@@ -1,5 +1,47 @@
 # Changelog
 
+## 3.15.0 — Base0xGaslessSwap (user pays NO ETH for gas)
+
+New tool: **\`Base0xGaslessSwap\`** — Base swaps where the user signs only
+EIP-712 typed data (offline, no on-chain action), and 0x's relayer
+broadcasts the trade and pays gas. **The user holds zero ETH.** Major
+UX win for Base users who only have USDC.
+
+Flow:
+1. \`GET /v1/zerox/gasless/quote\` — returns \`trade.eip712\` + optional \`approval.eip712\`
+2. User signs the trade typed-data locally with viem.
+3. If approval is required AND the input token supports Permit (USDC,
+   DAI), user signs the approval typed-data too. If the token doesn't
+   support Permit (USDT etc.), the tool errors with "use Base0xSwap
+   instead" rather than silently falling back to a paid on-chain
+   approve.
+4. \`POST /v1/zerox/gasless/submit\` — submit signed objects.
+5. \`GET /v1/zerox/gasless/status/{tradeHash}\` — poll until confirmed
+   (60-second hard ceiling); returns BaseScan link.
+
+Limitations (gracefully surfaced when hit):
+- Sell token must support Permit (USDC and DAI on Base; not USDT).
+- ETH-input is native — use \`Base0xSwap\` for that.
+- 0x relayer reserves the right to throttle / reject under congestion;
+  poll loop returns "still pending after 60s" message in that case.
+
+Three Base swap tools now coexist (the agent picks based on user's
+wallet state):
+- \`Base0xQuote\` — read-only price check.
+- \`Base0xSwap\` — Permit2 path; user pays ETH gas; supports any token.
+- **\`Base0xGaslessSwap\`** — gasless path; zero ETH needed; Permit
+  tokens only.
+
+Companion gateway commit: \`blockrun:7c53aa5 feat(zerox)\` adds the
+gasless endpoints to the gateway.
+
+Updated \`src/agent/context.ts\` trading playbook with a "pick the right
+tool" guide so the agent routes the user correctly. Symbol shortcuts
+unchanged across all three tools (ETH, WETH, USDC, USDT, CBBTC, CBETH,
+AERO, DAI).
+
+263/263 vitest, build clean.
+
 ## 3.14.1 — drop x402 fee on /v1/zerox; rely purely on on-chain affiliate
 
 Per user direction: simpler revenue model. The per-call $0.001 USDC
