@@ -1,5 +1,70 @@
 # Changelog
 
+## 3.13.0 — Base trading via 0x V2 (Permit2 + on-chain affiliate fee)
+
+Franklin can now swap on **Base** the same way it swaps on Solana: a
+local tool call, a user-signed transaction, on-chain affiliate fee
+routing to BlockRun. Same posture as JupiterSwap (v3.12.1) — different
+chain, different aggregator.
+
+**Two new tools:**
+
+- **\`Base0xQuote\`** — read-only price quote for a Base DEX swap via
+  0x V2. Returns sell/buy amounts, rate, minimum-received, route, and
+  the affiliate fee that would apply. Free.
+- **\`Base0xSwap\`** — full quote → AskUser confirm → Permit2 sign →
+  submit raw tx → BaseScan link. 20 bps affiliate fee on the sell
+  token routes to BlockRun's existing Base wallet on-chain.
+
+**Pre-mapped symbols:** ETH (native), WETH, USDC, USDT, CBBTC, CBETH,
+AERO, DAI. Raw \`0x…\` addresses pass through.
+
+**Architecture (per official 0x V2 Permit2 example):**
+
+1. Tool reads the user's existing Base keypair via \`@blockrun/llm\`'s
+   \`getOrCreateWallet()\`.
+2. Calls \`https://api.0x.org/swap/permit2/{price,quote}\` with
+   \`swapFeeRecipient=BLOCKRUN_BASE_AFFILIATE\`,
+   \`swapFeeBps=20\`, \`swapFeeToken=<sell token>\`.
+3. For ERC-20 sell tokens, ensures Permit2 has an allowance (one-time
+   per token; auto-approves \`maxUint256\`). Native ETH skips this.
+4. Signs the \`permit2.eip712\` typed data with viem's
+   \`signTypedData\`.
+5. Appends \`<sigLen-32B-BE><signature>\` to \`transaction.data\` per
+   the canonical 0x recipe.
+6. ERC-20 path: \`signTransaction\` + \`sendRawTransaction\`. Native
+   ETH path: \`sendTransaction\` with \`value\`.
+7. Returns BaseScan link.
+
+**Setup the user does (one-time):**
+
+\`\`\`bash
+# Each Franklin user gets their own free 0x key (10 req/s, no credit card):
+# 1. Sign up at https://dashboard.0x.org
+# 2. Copy the API key from the Demo App
+# 3. Add to shell config or run inline:
+ZERO_EX_API_KEY=zx_... franklin
+\`\`\`
+
+**Why each user supplies their own key**: 0x's affiliate program
+routes the basis-point fee to whatever address the swap-call specifies
+(\`swapFeeRecipient\`), independent of which API key is making the
+call. So users register their own free 0x account; BlockRun gets the
+20 bps regardless. This is the pattern Phantom Wallet, Coinbase
+Wallet, and other consumer wallets use — official 0x integrator
+mechanism, not a workaround.
+
+**Reuses v3.12.3 trading-hardening:** live-swap session cap,
+large-swap warning, wallet-address-in-AskUser, insufficient-balance
+error reframing — all carry over to Base unchanged.
+
+**Optional env vars:**
+- \`ZERO_EX_API_KEY\` — required. User-provided. Free at dashboard.0x.org.
+- \`BASE_RPC_URL\` — optional. Defaults to \`https://mainnet.base.org\` (public).
+- \`FRANKLIN_LIVE_SWAP_CAP\` / \`FRANKLIN_LIVE_SWAP_WARN_USD\` — same as v3.12.3.
+
+263/263 vitest, build clean.
+
 ## 3.12.3 — trading v1 hardening (playbook prompt + wallet UX + safety cap)
 
 Three pre-launch fixes to take Franklin's trading from "code shipped"

@@ -30,6 +30,7 @@ import { moaCapability } from './moa.js';
 import { webhookPostCapability } from './webhook.js';
 import { walletCapability } from './wallet.js';
 import { jupiterQuoteCapability, jupiterSwapCapability } from './jupiter.js';
+import { base0xQuoteCapability, base0xSwapCapability } from './zerox-base.js';
 import {
   defiLlamaProtocolsCapability,
   defiLlamaProtocolCapability,
@@ -170,6 +171,8 @@ export const allCapabilities: CapabilityHandler[] = [
   walletCapability,
   jupiterQuoteCapability,
   jupiterSwapCapability,
+  base0xQuoteCapability,
+  base0xSwapCapability,
   defiLlamaProtocolsCapability,
   defiLlamaProtocolCapability,
   defiLlamaChainsCapability,
