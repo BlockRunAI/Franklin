@@ -175,6 +175,11 @@ const AGENTIC_URL_PATTERNS = [
   /github\.com/i, /gitlab\.com/i, /bitbucket\.org/i,
   /npmjs\.com/i, /pypi\.org/i, /crates\.io/i,
   /stackoverflow\.com/i, /docs\.\w+/i,
+  // Media URLs need the model to actually fetch+understand content,
+  // not just regurgitate from weights. Bumping these prevents the
+  // "user pastes 3 YouTube links → SIMPLE-tier model gives up" path.
+  /youtube\.com/i, /youtu\.be/i,
+  /twitter\.com/i, /x\.com/i,
 ];
 
 // ─── Classifier ───

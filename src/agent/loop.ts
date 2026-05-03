@@ -716,14 +716,28 @@ export async function interactiveSession(
       // Circuit breaker: stop retrying after 3 consecutive failures
       if (compactFailures < 3) {
         try {
+          // Capture pre-compaction size so we can surface "saved X%" to the
+          // user. Without this, the per-turn input-token count would silently
+          // drop from e.g. 215K → 9K and look like a metric bug.
+          const beforeTokens = estimateHistoryTokens(history);
           const { history: compacted, compacted: didCompact } =
             await autoCompactIfNeeded(history, config.model, client, config.debug);
           if (didCompact) {
             replaceHistory(history, compacted);
             resetTokenAnchor();
             compactFailures = 0;
+            const afterTokens = estimateHistoryTokens(history);
+            const pct = beforeTokens > 0
+              ? Math.round((1 - afterTokens / beforeTokens) * 100)
+              : 0;
+            // Visible to the user — explains the upcoming token-count drop
+            // in the next turn footer and frames it as a feature, not a bug.
+            onEvent({
+              kind: 'text_delta',
+              text: `\n*🗜 Auto-compacted: ~${(beforeTokens / 1000).toFixed(0)}K → ~${(afterTokens / 1000).toFixed(0)}K tokens (saved ${pct}%)*\n\n`,
+            });
             if (config.debug) {
-              console.error(`[franklin] History compacted: ~${estimateHistoryTokens(history)} tokens`);
+              console.error(`[franklin] History compacted: ~${afterTokens} tokens`);
             }
           }
         } catch (compactErr) {

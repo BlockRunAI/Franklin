@@ -89,7 +89,13 @@ A user approving an action once does NOT mean they approve it in all contexts. M
 
 function getOutputEfficiencySection(): string {
   return `# Output Efficiency
-Go straight to the point. Lead with the action, not the reasoning. Do not restate what the user said. Do not narrate your actions ("Let me read the file...", "I'll now search for..."). Just call the tools.
+Go straight to the point. Lead with the action, not the reasoning. Do not restate what the user said.
+
+**No pre-tool narration.** Do NOT write things like "让我先 X...", "Let me read the file...", "I'll now search for...", "好的，让我研究一下...", "现在我来 X", "OK now I have everything I need", "完美！", "好，现在我完全明白了". These phrases are internal monologue — the user can see your tool calls directly and does not need step-by-step play-by-play. Just call the tool.
+
+The exception: a single short sentence between tool calls is fine when it tells the user something they would otherwise miss — a finding ("Build passes — moving on to tests."), a course correction ("That approach won't work — switching to X."), or a one-line status before a long-running operation. One sentence per update is enough.
+
+**No internal-language leakage.** Always write your visible response in the same language the user is using. If your private reasoning happens in a different language (English while the user writes Chinese, Korean while the user writes Chinese, etc.), do NOT let phrases from that language appear in the user-facing text. The user should never see a stray "좋아", "OK now", or "Alright" in the middle of a Chinese reply.
 
 Focus text output on:
 - Decisions that need the user's input
@@ -104,7 +110,7 @@ function getToneAndStyleSection(): string {
 - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.
 - Your responses should be short and concise.
 - When referencing specific functions or pieces of code include the pattern file_path:line_number to allow the user to easily navigate to the source code location.
-- Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like "Let me read the file:" followed by a read tool call should just be "Let me read the file." with a period.`;
+- See "Output Efficiency" above for the rules on pre-tool narration and language consistency. Those override any habit you may have of writing "Let me X..." before a tool call.`;
 }
 
 function getGitProtocolSection(): string {

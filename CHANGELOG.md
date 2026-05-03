@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.15.5 — Quieter agent voice; YouTube transcripts; visible auto-compaction
+
+UX polish driven by a real session log: the model narrated every step
+("让我先 X...", "Now I have...", "好，现在我..."), Korean phrases leaked
+into a Chinese reply, three pasted YouTube URLs returned 32 tokens of
+"can't access YouTube", and a 215K→9K context drop between turns had
+no explanation.
+
+- `system-prompt`: removed an internal contradiction. The Output
+  Efficiency section said "do not narrate" while Tone & Style said
+  "use a period not a colon" with the same example — models followed
+  the latter and narrated freely. New rule explicitly bans pre-tool
+  phrases ("Let me read…", "让我先…", "好，现在我…") and adds a
+  language-consistency rule so private reasoning in another language
+  ("좋아", "OK now") doesn't leak into user-facing text.
+- `WebFetch`: detects YouTube URLs (`youtube.com/watch`, `youtu.be`,
+  `youtube.com/shorts`) and fetches the auto-caption transcript
+  directly via `ytInitialPlayerResponse`. No external dependencies, no
+  yt-dlp shellout. Replaces the old failure mode where YouTube URLs
+  returned a JS bundle and the model gave up.
+- `router`: YouTube and X/Twitter URLs now count as agentic-URL
+  signals, so prompts like "summarize these three videos" no longer
+  drop to a SIMPLE-tier text-only model that can't fetch.
+- `loop`: auto-compaction now emits a visible
+  `🗜 Auto-compacted: ~215K → ~9K tokens (saved 96%)` line. Previously
+  it ran silently and made the next turn's footer look like a metric
+  bug.
+
 ## 3.15.4 — Better routing for fact questions; richer turn footer
 
 UX/quality fixes from a real session where Franklin sent a "best
