@@ -133,8 +133,27 @@ const REASONING_KEYWORDS = [
 ];
 
 const SIMPLE_KEYWORDS = [
-  'what is', 'define', 'translate', 'hello', 'yes or no', 'capital of',
-  'how old', 'who is', 'when was', '什么是', '翻译', '你好',
+  // True simple intents: greeting, definition lookup, translation. Factual
+  // lookups ("who is", "when was", "capital of") were moved to RESEARCH below
+  // because they look easy but require external recall — sending them to
+  // SIMPLE-tier models reliably produces hallucinated subscriber counts,
+  // birth years, etc. that the post-hoc grounding check then has to flag.
+  'define', 'translate', 'hello', 'yes or no', '翻译', '你好',
+];
+
+// Research / fact-retrieval intent: questions whose correct answer depends
+// on data the model can't reliably recall from weights — current statistics,
+// latest news, comparisons, "best" rankings, identities of people/orgs.
+// Bumping tier here pushes them to a MEDIUM/COMPLEX model that has
+// WebSearch in its toolset, instead of letting a cheap text-only model
+// fabricate plausible-looking numbers.
+const RESEARCH_KEYWORDS = [
+  'who is', 'who was', 'when was', 'when did', 'what is the capital',
+  'how old', 'how many', 'how much',
+  'best', 'top ', 'most popular', 'compare', 'vs ', ' vs.',
+  'latest', 'current', 'recent', 'today', 'now',
+  'subscribers', 'members', 'followers', 'market cap', 'price of',
+  '最好的', '最新', '最近', '现在', '当前', '排名', '对比',
 ];
 
 const TECHNICAL_KEYWORDS = [
@@ -215,6 +234,18 @@ function classifyRequest(prompt: string, tokenCount: number): ClassifyResult {
     // Only mark as simple if no code and very short
     score -= 0.25;
     signals.push('simple');
+  }
+
+  // Research / fact-lookup detection (weight: +0.30). Bumps tier upward so
+  // questions like "best subreddit", "current price of X", "how many members"
+  // route to a model that can actually call WebSearch instead of guessing
+  // from weights. Capped at one keyword's worth — research questions
+  // typically signal with one phrase, and stacking would push trivial
+  // questions into REASONING.
+  const researchMatches = countMatches(prompt, RESEARCH_KEYWORDS);
+  if (researchMatches >= 1) {
+    score += 0.30;
+    signals.push('research');
   }
 
   // Technical complexity (weight: 0.15) - increased

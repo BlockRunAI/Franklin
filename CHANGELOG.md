@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.15.4 — Better routing for fact questions; richer turn footer
+
+UX/quality fixes from a real session where Franklin sent a "best
+subreddit?" question to a SIMPLE-tier model with no web tool, the
+model fabricated a subscriber count, and the post-hoc grounding check
+had to flag it.
+
+- `router`: new `RESEARCH` signal (`+0.30` score). Detects fact-lookup
+  intent — `who is`, `when was`, `best`, `top`, `compare`, `latest`,
+  `current`, `members`, `price of`, plus Chinese equivalents. Pushes
+  these prompts to a tier with WebSearch in its toolset instead of
+  letting a cheap text-only model guess. Removed `who is` / `when was`
+  / `capital of` / `how old` from `SIMPLE_KEYWORDS` for the same reason.
+- `evaluator`: rewrote the post-hoc grounding warning. Old wording
+  ("re-run with the suggested tools, or disable with `FRANKLIN_NO_EVAL=1`")
+  put the burden on the user and exposed the quality gate's escape
+  hatch. New wording names the gap ("Unverified answer") and offers a
+  concrete next action ("Reply 'verify'"); env-var opt-outs no longer
+  appear in user-facing text.
+- `ui`: turn footer now shows `· ctx 23%` (yellow at 50%, red at 80%)
+  so users can see context growth between turns. Footer also renders
+  `[direct]` when `tier` is undefined — disambiguates "user picked a
+  concrete model" from "metadata bug".
+
 ## 3.15.3 — Preserve terminal scrollback; dock dialogs to bottom
 
 Bug fix: Ink's `clearTerminal` escape (`\x1b[3J`) wipes the entire

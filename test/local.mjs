@@ -4518,9 +4518,12 @@ test('evaluator: renderGroundingFollowup is silent on PASS/SKIPPED, verbose on f
     raw: '',
   });
   assert.ok(ungrounded.includes('⚠️'), 'has warning glyph');
-  assert.ok(ungrounded.includes('Grounding check'), 'has header');
+  assert.ok(ungrounded.includes('Unverified answer'), 'names the failure mode');
   assert.ok(ungrounded.includes('TradingMarket'), 'surfaces specific tool suggestion');
-  assert.ok(ungrounded.includes('FRANKLIN_NO_EVAL'), 'tells user how to opt out');
+  assert.ok(ungrounded.includes('verify'), 'gives the user a one-word follow-up command');
+  // FRANKLIN_NO_EVAL is intentionally NOT in the user-facing text (config concern,
+  // not a "make this warning go away" knob); confirm we didn't regress that.
+  assert.ok(!ungrounded.includes('FRANKLIN_NO_EVAL'), 'does not expose env-var escape hatch');
 });
 
 test('version-check: compareSemver handles major/minor/patch + malformed input', async () => {

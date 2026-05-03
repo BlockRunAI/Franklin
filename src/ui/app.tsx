@@ -241,7 +241,7 @@ function RunCodeApp({
   // Last completed tool — shown in dynamic area so it can be expanded/collapsed with Tab
   const [expandableTool, setExpandableTool] = useState<(ToolStatus & { key: string }) | null>(null);
   // Full responses committed to Static immediately — goes into terminal scrollback
-  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number; thinkMs?: number; thinkChars?: number }>>([]);
+  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number; thinkMs?: number; thinkChars?: number; ctxPct?: number }>>([]);
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
   const [responsePreview, setResponsePreview] = useState('');
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS_FLAT[0].id);
@@ -334,6 +334,7 @@ function RunCodeApp({
   const turnModelRef = useRef<string | undefined>(undefined);
   const turnTierRef = useRef<string | undefined>(undefined);
   const turnSavingsRef = useRef<number | undefined>(undefined);
+  const turnCtxPctRef = useRef<number | undefined>(undefined);
   const queuedInputsRef = useRef<string[]>([]);
 
   // Keep refs in sync so memoized event handlers can read current values
@@ -380,6 +381,7 @@ function RunCodeApp({
         model: turnModelRef.current,
         tier: turnTierRef.current,
         savings: turnSavingsRef.current,
+        ctxPct: turnCtxPctRef.current,
         thinkMs,
         thinkChars,
       }];
@@ -570,6 +572,7 @@ function RunCodeApp({
           turnModelRef.current = undefined;
           turnTierRef.current = undefined;
           turnSavingsRef.current = undefined;
+          turnCtxPctRef.current = undefined;
           setWaiting(true);
           setReady(false);
           // Pass through to agent loop to clear the actual conversation history
@@ -592,6 +595,7 @@ function RunCodeApp({
           turnModelRef.current = undefined;
           turnTierRef.current = undefined;
           turnSavingsRef.current = undefined;
+          turnCtxPctRef.current = undefined;
           onSubmit(lastPrompt);
           return;
 
@@ -643,6 +647,7 @@ function RunCodeApp({
     turnModelRef.current = undefined;
     turnTierRef.current = undefined;
     turnSavingsRef.current = undefined;
+    turnCtxPctRef.current = undefined;
     onSubmit(trimmed);
   }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory, showStatus]);
 
@@ -808,7 +813,10 @@ function RunCodeApp({
             turnModelRef.current = event.model;
             if (event.tier) turnTierRef.current = event.tier;
             if (event.savings !== undefined) turnSavingsRef.current = event.savings;
-            if (event.contextPct !== undefined) setContextPct(event.contextPct);
+            if (event.contextPct !== undefined) {
+              setContextPct(event.contextPct);
+              turnCtxPctRef.current = event.contextPct;
+            }
             break;
           }
           case 'turn_done': {
@@ -1050,7 +1058,9 @@ function RunCodeApp({
               {(r.tokens.input > 0 || r.tokens.output > 0) && (
                 <Box marginLeft={2} marginBottom={1}>
                   <Text dimColor>
-                    {r.tier && <Text color="cyan">[{r.tier}] </Text>}
+                    {r.tier
+                      ? <Text color="cyan">[{r.tier}] </Text>
+                      : (r.model ? <Text dimColor>[direct] </Text> : null)}
                     {r.model ? shortModelName(r.model) : ''}
                     {r.model ? '  ·  ' : ''}
                     {r.tokens.calls > 0 && r.tokens.input === 0
@@ -1058,6 +1068,9 @@ function RunCodeApp({
                       : `${formatTokens(r.tokens.input)} in / ${formatTokens(r.tokens.output)} out`}
                     {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)}` : ''}
                     {r.savings !== undefined && r.savings > 0 ? <Text color="green">  saved {Math.round(r.savings * 100)}%</Text> : ''}
+                    {r.ctxPct !== undefined && r.ctxPct >= 5
+                      ? <Text color={r.ctxPct >= 80 ? 'red' : r.ctxPct >= 50 ? 'yellow' : undefined} dimColor={r.ctxPct < 50}>  ·  ctx {r.ctxPct}%</Text>
+                      : ''}
                   </Text>
                 </Box>
               )}

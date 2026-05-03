@@ -326,15 +326,26 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
 export function renderGroundingFollowup(result: GroundingResult): string {
   if (result.verdict === 'GROUNDED' || result.verdict === 'SKIPPED') return '';
 
+  // Headers state the situation directly. Old phrasing told the user to "re-run
+  // with the suggested tools" which both put the burden on them and exposed
+  // FRANKLIN_NO_EVAL as a one-flag escape hatch from the quality gate. New
+  // phrasing names the gap and offers a concrete next action.
   const header = result.verdict === 'UNGROUNDED'
-    ? '⚠️ **Grounding check failed** — the previous answer relied on memory where a tool call was available:'
-    : '⚠️ **Grounding check flagged some claims** — re-run with the suggested tools for a verified answer:';
+    ? '⚠️ **Unverified answer** — the model produced specific claims without calling any tool to back them up:'
+    : '⚠️ **Partial verification** — some claims in the answer aren\'t backed by tool output:';
 
   const body = result.issues.length > 0
     ? result.issues.map(i => `- ${i}`).join('\n')
-    : '(evaluator returned no specific items — check the transcript manually)';
+    : '_(evaluator returned no specific items — check the transcript manually)_';
 
-  return `\n\n${header}\n${body}\n\n_Ask again with an explicit instruction to call the tools, or disable these checks with \`FRANKLIN_NO_EVAL=1\`._`;
+  // Action line: tell the user exactly how to follow up, in their own voice.
+  // No env-var escape hatch in the user-facing text — that's a config concern,
+  // not a "make this warning go away" concern.
+  const action = result.verdict === 'UNGROUNDED'
+    ? '\n\n_Reply "verify" to re-run with required tool use, or accept the answer as-is._'
+    : '\n\n_Reply "verify" to fact-check the flagged claims, or accept the answer as-is._';
+
+  return `\n\n${header}\n${body}${action}`;
 }
 
 /**
