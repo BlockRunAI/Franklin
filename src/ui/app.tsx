@@ -226,6 +226,11 @@ function RunCodeApp({
   startWithPicker, onSubmit, onModelChange, onAbort, onExit,
 }: AppProps) {
   const { exit } = useApp();
+  // Track terminal rows so we can cap the dynamic-region height. Ink wipes the
+  // terminal scrollback (via ansiEscapes.clearTerminal → \x1b[3J) whenever the
+  // dynamic output exceeds rows, so any tall live region (streaming text,
+  // model picker) must be windowed to preserve "scroll to the start" history.
+  const { rows: termRows } = useTerminalSize();
   const [input, setInput] = useState('');
   const [streamText, setStreamText] = useState('');
   const [thinking, setThinking] = useState(false);
@@ -1112,8 +1117,9 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Expandable tool — last completed tool, can be toggled with Tab */}
-      {expandableTool && (() => {
+      {/* Expandable tool — last completed tool, can be toggled with Tab.
+          Hidden while a dialog is active so the dialog stays at the bottom. */}
+      {expandableTool && !permissionRequest && !askUserRequest && (() => {
         const tool = expandableTool;
         const elapsedFmt = tool.elapsed >= 1000
           ? `${(tool.elapsed / 1000).toFixed(1)}s`
@@ -1224,11 +1230,24 @@ function RunCodeApp({
           Closed lines render with full markdown; the trailing partial line
           renders as plain text until its newline arrives, so mid-stream
           `**bold` or `[link](` half-pairs can't emit unbalanced ANSI that
-          Ink's wrap would then mangle. */}
+          Ink's wrap would then mangle.
+
+          Capped to the last ~(rows - 12) lines: the full text is committed to
+          Static at turn end (committedResponses), so scrollback retains every
+          word. Capping here is purely to keep Ink's dynamic region under the
+          terminal height — when it exceeds rows, Ink fires clearTerminal
+          which wipes the user's entire scrollback buffer. */}
       {streamText && (() => {
-        const { rendered, partial } = renderMarkdownStreaming(streamText);
+        const maxLines = Math.max(8, termRows - 12);
+        const lines = streamText.split('\n');
+        const truncated = lines.length > maxLines;
+        const visible = truncated ? lines.slice(-maxLines).join('\n') : streamText;
+        const { rendered, partial } = renderMarkdownStreaming(visible);
         return (
-          <Box marginTop={0} marginBottom={0} marginLeft={2}>
+          <Box flexDirection="column" marginTop={0} marginBottom={0} marginLeft={2}>
+            {truncated && (
+              <Text dimColor>↑ {lines.length - maxLines} earlier line{lines.length - maxLines === 1 ? '' : 's'} — full response will appear in scrollback when this turn finishes</Text>
+            )}
             <Text wrap="wrap">
               {rendered}
               {rendered && partial ? '\n' : ''}
@@ -1239,8 +1258,9 @@ function RunCodeApp({
       })()}
 
       {/* Preview of latest response — last 5 lines shown in dynamic area for quick reference.
-          Full text is already in Static/scrollback above. Cleared when next turn starts. */}
-      {responsePreview && !streamText && (
+          Full text is already in Static/scrollback above. Cleared when next turn starts.
+          Hidden while a dialog is active so the dialog stays at the bottom. */}
+      {responsePreview && !streamText && !permissionRequest && !askUserRequest && (
         <Box flexDirection="column" marginBottom={0} marginLeft={2}>
           <Text wrap="wrap">{renderMarkdown(responsePreview)}</Text>
         </Box>
@@ -1249,47 +1269,84 @@ function RunCodeApp({
       {/* Model picker — rendered inline below scrollback. Categories shown as
           dim headers, flat cursor (pickerIdx) navigates all non-header rows.
           Hides the InputBox while active but leaves all Static scrollback
-          above it mounted, so conversation history visually survives a switch. */}
+          above it mounted, so conversation history visually survives a switch.
+
+          Viewport: at most ~(rows - 12) model rows are shown at once, windowed
+          around pickerIdx. Beyond that we render "↑ N more" / "↓ N more"
+          markers. Same reason as streamText — Ink wipes scrollback the moment
+          dynamic output exceeds the terminal height. */}
       {inPicker && (() => {
-        let flatIdx = 0;
+        const totalModels = PICKER_MODELS_FLAT.length;
+        const maxModels = Math.max(6, termRows - 12);
+        let start = Math.max(0, pickerIdx - Math.floor(maxModels / 2));
+        let end = Math.min(totalModels, start + maxModels);
+        // Expand window backward if we hit the bottom of the list, so we
+        // always fill `maxModels` rows when the list is long enough.
+        if (end - start < maxModels) start = Math.max(0, end - maxModels);
+        const hiddenAbove = start;
+        const hiddenBelow = totalModels - end;
+        // Pre-compute each category's base offset into the flat model list so
+        // we can map (cat, localIdx) → globalIdx in one pass without re-walking.
+        let cursor = 0;
+        const catBases = PICKER_CATEGORIES.map((cat) => {
+          const base = cursor;
+          cursor += cat.models.length;
+          return base;
+        });
         return (
           <Box flexDirection="column" marginTop={1}>
             <Box marginLeft={2}>
               <Text bold>Select a model </Text>
               <Text dimColor>(↑↓ navigate, Enter select, Esc cancel)</Text>
             </Box>
-            {PICKER_CATEGORIES.map((cat) => (
-              <Box key={cat.category} flexDirection="column" marginTop={1}>
-                <Box marginLeft={2}>
-                  <Text dimColor>── {cat.category} ──</Text>
-                </Box>
-                {cat.models.map((m) => {
-                  const myIdx = flatIdx++;
-                  const isSelected = myIdx === pickerIdx;
-                  const isCurrent = m.id === currentModel;
-                  const isHighlight = m.highlight === true;
-                  return (
-                    <Box key={m.id} marginLeft={2}>
-                      <Text
-                        inverse={isSelected}
-                        color={isSelected ? 'cyan' : isHighlight ? 'yellow' : undefined}
-                        bold={isSelected || isHighlight}
-                      >
-                        {' '}{m.label.padEnd(26)}{' '}
-                      </Text>
-                      <Text dimColor> {m.shortcut.padEnd(14)}</Text>
-                      <Text
-                        color={m.price === 'FREE' ? 'green' : isHighlight ? 'yellow' : undefined}
-                        dimColor={!isHighlight && m.price !== 'FREE'}
-                      >
-                        {m.price}
-                      </Text>
-                      {isCurrent && <Text color="green"> ←</Text>}
-                    </Box>
-                  );
-                })}
+            {hiddenAbove > 0 && (
+              <Box marginLeft={2} marginTop={1}>
+                <Text dimColor>↑ {hiddenAbove} more above</Text>
               </Box>
-            ))}
+            )}
+            {PICKER_CATEGORIES.map((cat, catIdx) => {
+              const base = catBases[catIdx];
+              const visible = cat.models
+                .map((m, localIdx) => ({ m, globalIdx: base + localIdx }))
+                .filter(({ globalIdx }) => globalIdx >= start && globalIdx < end);
+              if (visible.length === 0) return null;
+              return (
+                <Box key={cat.category} flexDirection="column" marginTop={1}>
+                  <Box marginLeft={2}>
+                    <Text dimColor>── {cat.category} ──</Text>
+                  </Box>
+                  {visible.map(({ m, globalIdx }) => {
+                    const isSelected = globalIdx === pickerIdx;
+                    const isCurrent = m.id === currentModel;
+                    const isHighlight = m.highlight === true;
+                    return (
+                      <Box key={m.id} marginLeft={2}>
+                        <Text
+                          inverse={isSelected}
+                          color={isSelected ? 'cyan' : isHighlight ? 'yellow' : undefined}
+                          bold={isSelected || isHighlight}
+                        >
+                          {' '}{m.label.padEnd(26)}{' '}
+                        </Text>
+                        <Text dimColor> {m.shortcut.padEnd(14)}</Text>
+                        <Text
+                          color={m.price === 'FREE' ? 'green' : isHighlight ? 'yellow' : undefined}
+                          dimColor={!isHighlight && m.price !== 'FREE'}
+                        >
+                          {m.price}
+                        </Text>
+                        {isCurrent && <Text color="green"> ←</Text>}
+                      </Box>
+                    );
+                  })}
+                </Box>
+              );
+            })}
+            {hiddenBelow > 0 && (
+              <Box marginLeft={2} marginTop={1}>
+                <Text dimColor>↓ {hiddenBelow} more below</Text>
+              </Box>
+            )}
             <Box marginTop={1} marginLeft={2}>
               <Text dimColor>Your conversation stays above — picking a model keeps all history intact.</Text>
             </Box>
@@ -1297,13 +1354,15 @@ function RunCodeApp({
         );
       })()}
 
-      {/* Full-width input box — blocked when permission or askUser dialog is active
-          or while the model picker is open. */}
-      {!inPicker && (
+      {/* Full-width input box — hidden while a dialog is active (dialog has its own
+          input row) or while the model picker is open. Hiding it when the dialog
+          shows lets the dialog sit at the visual bottom instead of stranding an
+          empty input below it. */}
+      {!inPicker && !permissionRequest && !askUserRequest && (
         <InputBox
-          input={(permissionRequest || askUserRequest) ? '' : input}
-          setInput={(permissionRequest || askUserRequest) ? () => {} : setInput}
-          onSubmit={(permissionRequest || askUserRequest) ? () => {} : handleSubmit}
+          input={input}
+          setInput={setInput}
+          onSubmit={handleSubmit}
           model={currentModel}
           balance={liveBalance}
           chain={chain}
