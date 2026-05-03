@@ -4,10 +4,10 @@
  */
 
 export const MODEL_PRICING: Record<string, { input: number; output: number; perCall?: number }> = {
-  // Routing profiles (blended averages)
+  // Routing profiles (blended averages). Auto + Free are the only profiles
+  // surfaced after the 2026-05-03 collapse; eco/premium were retired and
+  // their parser mapping promotes them to Auto upstream of cost estimation.
   'blockrun/auto': { input: 0.8, output: 4.0 },
-  'blockrun/eco': { input: 0.2, output: 1.0 },
-  'blockrun/premium': { input: 3.0, output: 15.0 },
   'blockrun/free': { input: 0, output: 0 },
   // FREE — BlockRun gateway free tier (refreshed 2026-04-29 with V4 Flash + Omni launch)
   'nvidia/deepseek-v4-flash': { input: 0, output: 0 },
@@ -68,9 +68,13 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'xai/grok-3-mini': { input: 0.3, output: 0.5 },
   'xai/grok-2-vision': { input: 2.0, output: 10.0 },
   'xai/grok-3': { input: 3.0, output: 15.0 },
-  // DeepSeek
-  'deepseek/deepseek-chat': { input: 0.28, output: 0.42 },
-  'deepseek/deepseek-reasoner': { input: 0.28, output: 0.42 },
+  // DeepSeek (gateway re-aliased these to V4 Flash on 2026-05-03; price
+  // dropped from $0.28/$0.42 to $0.20/$0.40, context bumped 128K→1M).
+  'deepseek/deepseek-chat': { input: 0.20, output: 0.40 },
+  'deepseek/deepseek-reasoner': { input: 0.20, output: 0.40 },
+  // V4 Pro (1.6T MoE / 49B active, 1M ctx, 65K out). 75% launch promo
+  // through 2026-05-31 — list is $2.00/$4.00, promo is $0.50/$1.00.
+  'deepseek/deepseek-v4-pro': { input: 0.50, output: 1.00 },
   // Minimax
   'minimax/minimax-m2.7': { input: 0.3, output: 1.2 },
   'minimax/minimax-m2.5': { input: 0.3, output: 1.2 },

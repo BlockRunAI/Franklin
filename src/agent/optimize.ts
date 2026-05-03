@@ -44,7 +44,11 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   'openai/gpt-5-mini': 16_384,
   'google/gemini-2.5-pro': 65_536,
   'google/gemini-2.5-flash': 65_536,
-  'deepseek/deepseek-chat': 8_192,
+  // DeepSeek V4 family — upstream max_output is 65K on V4 Flash + V4 Pro;
+  // gateway re-aliased deepseek-chat/-reasoner to V4 Flash modes 2026-05-03.
+  'deepseek/deepseek-chat': 65_536,
+  'deepseek/deepseek-reasoner': 65_536,
+  'deepseek/deepseek-v4-pro': 65_536,
   // Kimi K2.6 supports 65K output per the BlockRun gateway model entry
   // (moonshot/kimi-k2.6 max_output: 65536). Without this entry the default
   // 16K cap left users with 4× headroom on the table for long-form coding

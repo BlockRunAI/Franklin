@@ -4293,7 +4293,7 @@ test('router LLM classifier also returns a real local-elo category', async () =>
 
   const routing = await routeRequestAsync(
     'What is BTC price today and should I sell?',
-    'eco',
+    'auto',
     async () => 'COMPLEX',
   );
 
@@ -4302,17 +4302,19 @@ test('router LLM classifier also returns a real local-elo category', async () =>
   assert.ok(routing.signals.includes('llm-classified'));
 });
 
-test('router eco complex fallback chain stays on live models', async () => {
-  const { getFallbackChain } = await import('../dist/router/index.js');
-
-  const chain = getFallbackChain('COMPLEX', 'eco');
-
-  assert.deepEqual(chain, [
-    'google/gemini-2.5-flash-lite',
-    'deepseek/deepseek-chat',
-    'nvidia/qwen3-coder-480b',
-  ]);
-  assert.ok(!chain.includes('nvidia/mistral-large-3-675b'));
+test('router: legacy eco/premium profile strings still parse to auto', async () => {
+  // Eco / Premium routing profiles were retired 2026-05-03 — Auto now spans
+  // the cost/quality range that Eco and Premium used to split. Old configs
+  // and saved sessions can still pass `blockrun/eco` or `blockrun/premium`;
+  // the parser silently promotes them to Auto so nothing breaks.
+  const { parseRoutingProfile } = await import('../dist/router/index.js');
+  assert.equal(parseRoutingProfile('blockrun/eco'), 'auto');
+  assert.equal(parseRoutingProfile('eco'), 'auto');
+  assert.equal(parseRoutingProfile('blockrun/premium'), 'auto');
+  assert.equal(parseRoutingProfile('premium'), 'auto');
+  assert.equal(parseRoutingProfile('blockrun/auto'), 'auto');
+  assert.equal(parseRoutingProfile('blockrun/free'), 'free');
+  assert.equal(parseRoutingProfile('anthropic/claude-opus-4.7'), null);
 });
 
 test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay aligned', async () => {

@@ -42,8 +42,10 @@ export function shouldPlan(
   if (planDisabled) return false;
   if (ultrathink) return false; // ultrathink already provides deep reasoning
 
-  // Only auto / premium profiles — eco / free are cost-constrained.
-  if (profile !== 'auto' && profile !== 'premium') return false;
+  // Only the 'auto' profile uses planning. 'free' is cost-constrained;
+  // legacy 'eco' / 'premium' both alias to 'auto' via parseRoutingProfile,
+  // so this check covers them implicitly.
+  if (profile !== 'auto') return false;
 
   // Final decision comes from the turn analyzer's boolean flag.
   return analyzerSaysNeedsPlanning;
@@ -76,14 +78,10 @@ Rules:
  * These models are good at following structured instructions (the plan)
  * but much cheaper than the planning model.
  */
-export function getExecutorModel(profile: RoutingProfile): string {
-  switch (profile) {
-    case 'premium':
-      return 'moonshot/kimi-k2.6';           // Medium-tier, reliable execution (256K ctx, vision + reasoning)
-    case 'auto':
-    default:
-      return 'google/gemini-2.5-flash';      // Cheap, fast, good at instructions
-  }
+export function getExecutorModel(_profile: RoutingProfile): string {
+  // Auto is the only profile that runs planning (see shouldPlan above), so
+  // there's only one executor branch to pick. 'free' never reaches here.
+  return 'google/gemini-2.5-flash';
 }
 
 // ─── Plan Parsing ────────────────────────────────────────────────────────

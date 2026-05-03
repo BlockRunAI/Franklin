@@ -361,10 +361,12 @@ export class ModelClient {
    * Handles x402 payment automatically on 402 responses.
    */
   /**
-   * Resolve virtual routing profiles (blockrun/auto, blockrun/eco, etc.)
-   * to concrete models. This is the final safety net — if the router in
+   * Resolve virtual routing profiles (blockrun/auto, blockrun/free) to
+   * concrete models. This is the final safety net — if the router in
    * loop.ts didn't resolve it (e.g. old global install without router),
-   * we resolve it here before hitting the API.
+   * we resolve it here before hitting the API. Legacy blockrun/eco and
+   * blockrun/premium fall through the unknown-key path to the same
+   * default model.
    */
   private resolveVirtualModel(model: string): string {
     if (!model.startsWith('blockrun/')) return model;
@@ -381,12 +383,13 @@ export class ModelClient {
       // Router not available (e.g. old build) — use hardcoded fallback table
     }
 
-    // Static fallback if router is unavailable. Default to FREE model so
-    // users aren't silently charged when their intended model can't resolve.
+    // Static fallback when the router module isn't loadable. Defaults to a
+    // FREE model so users aren't silently charged. The unknown-key path also
+    // falls through to qwen, so legacy `blockrun/eco` / `blockrun/premium`
+    // strings (now retired routing profiles) end up at the same place
+    // without needing dedicated entries.
     const FALLBACKS: Record<string, string> = {
       'blockrun/auto': 'nvidia/qwen3-coder-480b',
-      'blockrun/eco': 'nvidia/qwen3-coder-480b',
-      'blockrun/premium': 'anthropic/claude-sonnet-4.6',
       'blockrun/free': 'nvidia/qwen3-coder-480b',
     };
     return FALLBACKS[model] || 'nvidia/qwen3-coder-480b';

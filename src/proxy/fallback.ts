@@ -167,9 +167,9 @@ export function getCurrentModelFromChain(
   return config.chain[0];
 }
 
-/** Routing profiles that must never be sent to the backend directly */
+/** Routing profiles that must never be sent to the backend directly. */
 export const ROUTING_PROFILES = new Set([
-  'blockrun/auto', 'blockrun/eco', 'blockrun/premium', 'blockrun/free',
+  'blockrun/auto', 'blockrun/free',
 ]);
 
 /**

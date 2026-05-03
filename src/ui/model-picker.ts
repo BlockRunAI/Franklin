@@ -9,11 +9,15 @@ import chalk from 'chalk';
 // ─── Model Shortcuts (same as proxy) ───────────────────────────────────────
 
 export const MODEL_SHORTCUTS: Record<string, string> = {
-  // Routing profiles
+  // Routing profiles — Auto is the only profile surfaced in the picker.
+  // `eco` / `premium` were retired 2026-05-03 (V4 Pro launch made Auto cheap
+  // enough that separate profiles for "cheap" and "best" were redundant).
+  // The shortcuts still resolve through parseRoutingProfile() for back-compat
+  // with old configs/sessions, which silently promotes them to Auto.
   auto: 'blockrun/auto',
   smart: 'blockrun/auto',
-  eco: 'blockrun/eco',
-  premium: 'blockrun/premium',
+  eco: 'blockrun/auto',
+  premium: 'blockrun/auto',
   // Anthropic
   sonnet: 'anthropic/claude-sonnet-4.6',
   claude: 'anthropic/claude-sonnet-4.6',
@@ -54,9 +58,23 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'grok-4': 'xai/grok-4-0709',
   'grok-fast': 'xai/grok-4-1-fast-reasoning',
   'grok-4.1': 'xai/grok-4-1-fast-reasoning',
-  // DeepSeek
-  deepseek: 'deepseek/deepseek-chat',
-  r1: 'deepseek/deepseek-reasoner',
+  // DeepSeek — paid SKUs route through deepseek/* (gateway aliases serve V4
+  // Flash modes upstream); free tier routes through nvidia/*.
+  deepseek: 'deepseek/deepseek-chat',     // V4 Flash Chat (paid, $0.20/$0.40)
+  r1: 'deepseek/deepseek-reasoner',       // V4 Flash Reasoner (paid)
+  // V4 Pro: paid flagship, 1.6T MoE / 49B active, 1M ctx, 75% launch promo.
+  'deepseek-v4-pro': 'deepseek/deepseek-v4-pro',
+  'dsv4-pro': 'deepseek/deepseek-v4-pro',
+  'v4-pro': 'deepseek/deepseek-v4-pro',
+  // V4 Flash: free on NVIDIA inference. Bare `deepseek-v4` resolves here
+  // since the paid V4 Flash SKU was dropped (overlapped with this free one).
+  'deepseek-v4': 'nvidia/deepseek-v4-flash',
+  'deepseek-v4-flash': 'nvidia/deepseek-v4-flash',
+  dsv4: 'nvidia/deepseek-v4-flash',
+  // V3.2 free fallback for users who specifically want the older Terminus
+  // checkpoint instead of the V4 Flash default.
+  'deepseek-v3.2': 'nvidia/deepseek-v3.2',
+  'deepseek-v3': 'nvidia/deepseek-v3.2',
   // Free (agent-tested BlockRun gateway free tier — refreshed 2026-04)
   free: 'nvidia/qwen3-coder-480b',
   glm4: 'nvidia/qwen3-coder-480b',
@@ -132,9 +150,14 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
   {
     category: '🧠 Smart routing (auto-pick)',
     models: [
-      { id: 'blockrun/auto',    shortcut: 'auto',    label: 'Auto',    price: 'routed' },
-      { id: 'blockrun/eco',     shortcut: 'eco',     label: 'Eco',     price: 'cheapest' },
-      { id: 'blockrun/premium', shortcut: 'premium', label: 'Premium', price: 'best' },
+      // Auto is the only routing profile surfaced in the picker. Eco and
+      // Premium are kept as shortcut aliases (`eco`, `premium`) and resolve
+      // through the router for back-compat with older configs/sessions, but
+      // they're hidden from new users — Auto already covers the cheap end
+      // (V4 Pro at $0.50/$1.00 for SIMPLE/MEDIUM) and the quality end (Opus
+      // for COMPLEX), so a separate Eco/Premium picker entry just adds
+      // choice paralysis without distinct value.
+      { id: 'blockrun/auto', shortcut: 'auto', label: 'Auto', price: 'routed' },
     ],
   },
   {
@@ -157,28 +180,39 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
   {
     category: '🔬 Reasoning',
     models: [
-      { id: 'openai/o3',                     shortcut: 'o3',         label: 'O3',                 price: '$2/$8' },
-      { id: 'openai/gpt-5.3-codex',          shortcut: 'codex',      label: 'GPT-5.3 Codex',      price: '$1.75/$14' },
-      { id: 'deepseek/deepseek-reasoner',    shortcut: 'r1',         label: 'DeepSeek R1',        price: '$0.28/$0.42' },
-      { id: 'xai/grok-4-1-fast-reasoning',   shortcut: 'grok-fast',  label: 'Grok 4.1 Fast R.',   price: '$0.2/$0.5' },
+      { id: 'openai/o3',                     shortcut: 'o3',           label: 'O3',                    price: '$2/$8' },
+      { id: 'openai/gpt-5.3-codex',          shortcut: 'codex',        label: 'GPT-5.3 Codex',         price: '$1.75/$14' },
+      // V4 Pro on launch promo (75% off through 2026-05-31). 1M context,
+      // 1.6T MoE → punches up to GPT-5.5/Opus on hard tasks at <1/10 the price.
+      { id: 'deepseek/deepseek-v4-pro',      shortcut: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro',    price: '$0.5/$1 (promo)', highlight: true },
+      { id: 'deepseek/deepseek-reasoner',    shortcut: 'r1',           label: 'DeepSeek V4 Flash R.',  price: '$0.2/$0.4' },
+      { id: 'xai/grok-4-1-fast-reasoning',   shortcut: 'grok-fast',    label: 'Grok 4.1 Fast R.',      price: '$0.2/$0.5' },
     ],
   },
   {
     category: '💰 Budget',
     models: [
-      { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku',    label: 'Claude Haiku 4.5', price: '$1/$5' },
-      { id: 'openai/gpt-5-mini',                   shortcut: 'mini',     label: 'GPT-5 Mini',       price: '$0.25/$2' },
-      { id: 'google/gemini-2.5-flash',             shortcut: 'flash',    label: 'Gemini 2.5 Flash', price: '$0.3/$2.5' },
-      { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V3',      price: '$0.28/$0.42' },
-      { id: 'moonshot/kimi-k2.6',                  shortcut: 'kimi',     label: 'Kimi K2.6',        price: '$0.95/$4' },
-      { id: 'minimax/minimax-m2.7',                shortcut: 'minimax',  label: 'Minimax M2.7',     price: '$0.3/$1.2' },
+      { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku',    label: 'Claude Haiku 4.5',    price: '$1/$5' },
+      { id: 'openai/gpt-5-mini',                   shortcut: 'mini',     label: 'GPT-5 Mini',          price: '$0.25/$2' },
+      { id: 'google/gemini-2.5-flash',             shortcut: 'flash',    label: 'Gemini 2.5 Flash',    price: '$0.3/$2.5' },
+      // Re-aliased to V4 Flash Chat upstream — context 1M, price 30% lower.
+      { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V4 Flash Chat', price: '$0.2/$0.4' },
+      { id: 'moonshot/kimi-k2.6',                  shortcut: 'kimi',     label: 'Kimi K2.6',           price: '$0.95/$4' },
+      // Minimax M2.7 hidden to make room for V4 Pro in Reasoning + V4 Flash
+      // (free) without exceeding the picker's 24-entry cap. Shortcut `minimax`
+      // still resolves to it.
     ],
   },
   {
     category: '🆓 Free (no USDC needed)',
     models: [
-      { id: 'nvidia/qwen3-coder-480b', shortcut: 'free',     label: 'Qwen3 Coder 480B', price: 'FREE' },
-      { id: 'nvidia/llama-4-maverick', shortcut: 'maverick', label: 'Llama 4 Maverick', price: 'FREE' },
+      // V4 Flash leads the section: newest gateway addition, general-purpose,
+      // fast — better default for most users than the coder-specialized Qwen.
+      // V3.2 hidden (shortcut `deepseek-v3` still works) since V4 Flash
+      // supersedes it; keeping the picker tight.
+      { id: 'nvidia/deepseek-v4-flash', shortcut: 'deepseek-v4', label: 'DeepSeek V4 Flash', price: 'FREE', highlight: true },
+      { id: 'nvidia/qwen3-coder-480b',  shortcut: 'free',        label: 'Qwen3 Coder 480B', price: 'FREE' },
+      { id: 'nvidia/llama-4-maverick',  shortcut: 'maverick',    label: 'Llama 4 Maverick', price: 'FREE' },
     ],
   },
 ];

@@ -148,11 +148,13 @@ function trackOutputTokens(model: string, tokens: number) {
 
 // Model shortcuts for quick switching
 const MODEL_SHORTCUTS: Record<string, string> = {
-  // Routing profiles
+  // Routing profiles — Auto-only since 2026-05-03 (Eco/Premium retired).
+  // `eco` / `premium` aliases retained for back-compat with proxy clients;
+  // they parse to Auto downstream.
   auto: 'blockrun/auto',
   smart: 'blockrun/auto',
-  eco: 'blockrun/eco',
-  premium: 'blockrun/premium',
+  eco: 'blockrun/auto',
+  premium: 'blockrun/auto',
   // Anthropic
   sonnet: 'anthropic/claude-sonnet-4.6',
   claude: 'anthropic/claude-sonnet-4.6',

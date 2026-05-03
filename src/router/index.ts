@@ -37,7 +37,13 @@ function loadLearnedWeights(): LearnedWeights | null {
 }
 
 export type Tier = 'SIMPLE' | 'MEDIUM' | 'COMPLEX' | 'REASONING';
-export type RoutingProfile = 'auto' | 'eco' | 'premium' | 'free';
+// 2026-05-03: collapsed Eco / Premium routing profiles into Auto. With V4 Pro
+// at $0.50/$1.00 (launch promo) covering SIMPLE+MEDIUM and Opus covering
+// COMPLEX, separate Eco ("free models everywhere") and Premium ("Opus
+// everywhere") profiles became redundant — Auto already spans the cost/
+// quality spectrum. `blockrun/eco` and `blockrun/premium` still parse to
+// 'auto' below so existing configs keep working.
+export type RoutingProfile = 'auto' | 'free';
 
 export interface RoutingResult {
   model: string;
@@ -50,75 +56,43 @@ export interface RoutingResult {
 
 // ─── Tier Model Configs ───
 
-// Agent-first defaults. Sonnet-tier models are the current sweet spot for
-// multi-step tool-use agent work; cheap models keep derailing on simple agent
-// loops. Each tier's fallback ends with a cheaper option so payment/quota
-// failures don't strand users on equally expensive alternatives.
+// Auto-routing strategy (post-DeepSeek-V4-Pro launch promo, 2026-05-03):
+// V4 Pro at $0.50/$1.00 with 1M context is the new sweet spot for SIMPLE +
+// MEDIUM agent work — Sonnet-quality reasoning at ~1/6 the price. Reserve
+// Opus only for genuinely complex multi-file/multi-decision tasks where
+// the model's wider context handling and tighter tool-use discipline still
+// pay for themselves. Sonnet drops to fallback because V4 Pro covers most
+// of what users were calling Sonnet for, at a fraction of the cost.
 const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
-    primary: 'google/gemini-2.5-flash',
-    fallback: ['moonshot/kimi-k2.6', 'deepseek/deepseek-chat'],
+    primary: 'deepseek/deepseek-v4-pro',
+    fallback: ['google/gemini-2.5-flash', 'moonshot/kimi-k2.6', 'deepseek/deepseek-chat'],
   },
   MEDIUM: {
-    primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.5', 'google/gemini-3.1-pro', 'moonshot/kimi-k2.6'],
+    primary: 'deepseek/deepseek-v4-pro',
+    fallback: ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.5', 'google/gemini-3.1-pro'],
   },
   COMPLEX: {
-    primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.5', 'anthropic/claude-opus-4.7', 'moonshot/kimi-k2.6'],
+    // Hard tasks — multi-file refactors, ambiguous specs, dense reasoning
+    // chains — still go to Opus. V4 Pro is great but not a Sonnet/Opus
+    // replacement at the high end of difficulty per recent agent-bench runs.
+    primary: 'anthropic/claude-opus-4.7',
+    fallback: ['openai/gpt-5.5', 'anthropic/claude-sonnet-4.6', 'deepseek/deepseek-v4-pro'],
   },
   REASONING: {
     // Opus 4.7: step-change improvement in agentic coding over 4.6 per
-    // Anthropic. Same price, same 200k ctx in Franklin's baseline, so
-    // swap is cost-neutral. 4.6 stays in the fallback chain in case of
-    // rollout delays on the gateway side.
+    // Anthropic. 4.6 stays in the fallback chain in case of rollout delays.
     primary: 'anthropic/claude-opus-4.7',
     fallback: [
       'anthropic/claude-opus-4.6',
       'openai/o3',
+      'deepseek/deepseek-v4-pro',
       'xai/grok-4-1-fast-reasoning',
       'deepseek/deepseek-reasoner',
     ],
   },
 };
 
-const ECO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
-  SIMPLE: {
-    primary: 'nvidia/qwen3-coder-480b',
-    fallback: ['nvidia/llama-4-maverick'],
-  },
-  MEDIUM: {
-    primary: 'google/gemini-2.5-flash-lite',
-    fallback: ['nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick'],
-  },
-  COMPLEX: {
-    primary: 'google/gemini-2.5-flash-lite',
-    fallback: ['deepseek/deepseek-chat', 'nvidia/qwen3-coder-480b'],
-  },
-  REASONING: {
-    primary: 'xai/grok-4-1-fast-reasoning',
-    fallback: ['deepseek/deepseek-reasoner', 'nvidia/qwen3-coder-480b'],
-  },
-};
-
-const PREMIUM_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
-  SIMPLE: {
-    primary: 'moonshot/kimi-k2.6',
-    fallback: ['anthropic/claude-haiku-4.5'],
-  },
-  MEDIUM: {
-    primary: 'openai/gpt-5.3-codex',
-    fallback: ['anthropic/claude-sonnet-4.6'],
-  },
-  COMPLEX: {
-    primary: 'anthropic/claude-opus-4.7',
-    fallback: ['anthropic/claude-opus-4.6', 'openai/gpt-5.5', 'anthropic/claude-sonnet-4.6'],
-  },
-  REASONING: {
-    primary: 'anthropic/claude-opus-4.7',
-    fallback: ['anthropic/claude-opus-4.6', 'anthropic/claude-sonnet-4.6', 'openai/o3'],
-  },
-};
 
 // ─── Keywords for Classification ───
 
@@ -332,18 +306,11 @@ function classicRouteRequest(
   // Classify the request
   const { tier, confidence, signals } = classifyRequest(prompt, tokenCount);
 
-  // Select tier config based on profile
-  let tierConfigs: Record<Tier, { primary: string; fallback: string[] }>;
-  switch (profile) {
-    case 'eco':
-      tierConfigs = ECO_TIERS;
-      break;
-    case 'premium':
-      tierConfigs = PREMIUM_TIERS;
-      break;
-    default:
-      tierConfigs = AUTO_TIERS;
-  }
+  // Auto is the only routing profile now (Eco/Premium were retired
+  // 2026-05-03 — see comment on RoutingProfile above). 'free' is handled
+  // earlier by the caller path; if it ever reaches here, fall through to
+  // AUTO_TIERS rather than crashing.
+  const tierConfigs = AUTO_TIERS;
 
   const model = tierConfigs[tier].primary;
   const savings = computeSavings(model);
@@ -470,12 +437,7 @@ export async function routeRequestAsync(
 
   // Build a RoutingResult from the LLM-picked tier using the same tier
   // tables the keyword path uses. Keeps downstream code path-identical.
-  let tierConfigs: Record<Tier, { primary: string; fallback: string[] }>;
-  switch (profile) {
-    case 'eco':     tierConfigs = ECO_TIERS; break;
-    case 'premium': tierConfigs = PREMIUM_TIERS; break;
-    default:        tierConfigs = AUTO_TIERS;
-  }
+  const tierConfigs = AUTO_TIERS;
   const model = tierConfigs[tier].primary;
   const category = detectCategory(prompt, loadLearnedWeights()?.category_keywords).category;
   return {
@@ -508,12 +470,7 @@ export function resolveTierToModel(tier: Tier, profile: RoutingProfile = 'auto')
       savings: 1.0,
     };
   }
-  let tierConfigs: Record<Tier, { primary: string; fallback: string[] }>;
-  switch (profile) {
-    case 'eco':     tierConfigs = ECO_TIERS; break;
-    case 'premium': tierConfigs = PREMIUM_TIERS; break;
-    default:        tierConfigs = AUTO_TIERS;
-  }
+  const tierConfigs = AUTO_TIERS;
   const model = tierConfigs[tier].primary;
   return {
     model,
@@ -608,21 +565,8 @@ export function getFallbackChain(
   tier: Tier,
   profile: RoutingProfile = 'auto'
 ): string[] {
-  let tierConfigs: Record<Tier, { primary: string; fallback: string[] }>;
-  switch (profile) {
-    case 'eco':
-      tierConfigs = ECO_TIERS;
-      break;
-    case 'premium':
-      tierConfigs = PREMIUM_TIERS;
-      break;
-    case 'free':
-      return ['nvidia/qwen3-coder-480b'];
-    default:
-      tierConfigs = AUTO_TIERS;
-  }
-
-  const config = tierConfigs[tier];
+  if (profile === 'free') return ['nvidia/qwen3-coder-480b'];
+  const config = AUTO_TIERS[tier];
   return [config.primary, ...config.fallback];
 }
 
@@ -632,8 +576,11 @@ export function getFallbackChain(
 export function parseRoutingProfile(model: string): RoutingProfile | null {
   const lower = model.toLowerCase();
   if (lower === 'blockrun/auto' || lower === 'auto') return 'auto';
-  if (lower === 'blockrun/eco' || lower === 'eco') return 'eco';
-  if (lower === 'blockrun/premium' || lower === 'premium') return 'premium';
   if (lower === 'blockrun/free' || lower === 'free') return 'free';
+  // Back-compat: Eco / Premium routing profiles were retired 2026-05-03.
+  // Existing configs / sessions that still pass these values get silently
+  // promoted to Auto so nothing breaks; new code should use 'auto' directly.
+  if (lower === 'blockrun/eco' || lower === 'eco') return 'auto';
+  if (lower === 'blockrun/premium' || lower === 'premium') return 'auto';
   return null;
 }

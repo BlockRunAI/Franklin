@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.15.6 — DeepSeek V4 catalog refresh; Auto-only routing
+
+Tracks the BlockRun gateway's 2026-05-03 DeepSeek V4 launch (V4 Pro paid +
+V4 Flash free) and collapses three routing profiles into one. Three
+indecisive profiles (Auto / Eco / Premium) implied "we couldn't pick"; V4
+Pro on launch promo makes Auto cheap and capable enough to span both ends.
+
+- `pricing`: added `deepseek/deepseek-v4-pro` (75% launch promo $0.50 in /
+  $1.00 out per 1M tokens through 2026-05-31, list $2.00/$4.00 after).
+  Re-priced `deepseek/deepseek-chat` and `deepseek/deepseek-reasoner` to
+  $0.20/$0.40 (down from $0.28/$0.42) and bumped their context window
+  from 64K → 1M to match the gateway's V4 Flash re-aliasing.
+- `picker`: surfaced V4 Pro under 🔬 Reasoning (highlighted with "promo"
+  tag), V4 Flash (free) under 🆓 Free as the new default, relabeled
+  "DeepSeek V3" → "DeepSeek V4 Flash Chat" and "DeepSeek R1" → "DeepSeek
+  V4 Flash Reasoner". Hid Minimax M2.7 from the picker (shortcut still
+  works) to keep the list under 24 entries.
+- `router`: AUTO now uses V4 Pro as the SIMPLE + MEDIUM primary, with
+  Sonnet / GPT-5.5 / Gemini 3.1 Pro as paid fallbacks. Opus stays the
+  COMPLEX + REASONING primary. V4 Pro slots into REASONING fallback for
+  cost-sensitive deep-reasoning paths.
+- `router`: retired the `blockrun/eco` and `blockrun/premium` routing
+  profiles. Auto already spans cost+quality. `parseRoutingProfile()` now
+  maps both legacy strings to `'auto'` so old configs and saved sessions
+  keep working — no breaking change for existing callers.
+- `picker`: 🧠 Smart routing category now contains only Auto. `eco` /
+  `premium` / `smart` shortcuts still resolve through to Auto.
+
 ## 3.15.5 — Quieter agent voice; YouTube transcripts; visible auto-compaction
 
 UX polish driven by a real session log: the model narrated every step
