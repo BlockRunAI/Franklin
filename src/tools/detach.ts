@@ -46,13 +46,16 @@ export const detachCapability: CapabilityHandler = {
       "Run a Bash command as a detached background job. Returns immediately " +
       "with a runId. The command continues even if Franklin exits or the user " +
       "closes their terminal. Use this for any iteration over more than ~20 " +
-      "items, large data fetches, paginated API loops, or anything you'd " +
-      "otherwise loop on turn-by-turn (which would burn turns and trip " +
-      "timeouts). The agent's job is to design and orchestrate, not to be " +
-      "the for-loop. Pair with a script that writes a checkpoint file so " +
-      "progress survives restarts. Tail logs with `franklin task tail " +
-      "<runId> --follow` and check completion with `franklin task wait " +
-      "<runId>`.",
+      "items, large data fetches, paginated API loops, polling external async " +
+      "jobs (waiting for an Apify run / video generation / deploy / build to " +
+      "complete), or anything you'd otherwise loop on turn-by-turn (which " +
+      "would burn turns and trip timeouts). The agent's job is to design and " +
+      "orchestrate, not to be the for-loop. Pair with a script that writes a " +
+      "checkpoint file so progress survives restarts. Tail logs with " +
+      "`franklin task tail <runId> --follow` and check completion with " +
+      "`franklin task wait <runId>`. ALWAYS prefer Detach over a single " +
+      "foreground Bash call with `sleep` inside a for/while/until loop — that " +
+      "antipattern blocks the agent for the full duration and looks frozen.",
     input_schema: {
       type: 'object',
       properties: {

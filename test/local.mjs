@@ -1118,6 +1118,74 @@ test('session tool guard blocks repetitive SearchX the same as WebSearch', async
   assert.ok(blocked.output.includes('Search stopped'), `Expected early-stop.\n${blocked.output}`);
 });
 
+test('session tool guard blocks blocking poll-loops in foreground Bash', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  guard.startTurn();
+
+  // The exact antipattern from the Apify polling incident: for-loop with
+  // sleep inside a single foreground bash call. Should be rejected with
+  // guidance toward Detach.
+  const pollLoop = {
+    type: 'tool_use',
+    id: 'bash-poll-1',
+    name: 'Bash',
+    input: {
+      command: 'RUN_ID="abc"\nfor i in $(seq 1 30); do\n  status=$(curl -s "https://api.apify.com/v2/runs/$RUN_ID" | jq -r .status)\n  echo "[$i] Status: $status"\n  [ "$status" = "SUCCEEDED" ] && break\n  sleep 10\ndone',
+    },
+  };
+  const blocked = await guard.beforeExecute(pollLoop, ctx);
+  assert.ok(blocked, 'Expected blocking poll-loop to be rejected');
+  assert.equal(blocked.isError, true);
+  assert.ok(
+    blocked.output.includes('Detach'),
+    `Expected Detach guidance.\n${blocked.output}`,
+  );
+  assert.ok(
+    blocked.output.includes('frozen'),
+    `Expected explanation of why it looks frozen.\n${blocked.output}`,
+  );
+
+  // Same command with run_in_background:true is allowed (model owns the trade-off).
+  const allowed = await guard.beforeExecute(
+    { ...pollLoop, id: 'bash-poll-2', input: { ...pollLoop.input, run_in_background: true } },
+    ctx,
+  );
+  assert.equal(allowed, null, 'run_in_background:true should bypass the poll-loop block');
+
+  // A `while` loop with sleep also gets blocked.
+  const whileLoop = {
+    type: 'tool_use',
+    id: 'bash-poll-3',
+    name: 'Bash',
+    input: { command: 'while ! curl -sf https://api/healthz >/dev/null; do sleep 5; done' },
+  };
+  const blockedWhile = await guard.beforeExecute(whileLoop, ctx);
+  assert.ok(blockedWhile, 'while+sleep should also be blocked');
+
+  // A non-polling command with `sleep 0.1` (e.g. micro-pause) is NOT a poll loop.
+  const microSleep = {
+    type: 'tool_use',
+    id: 'bash-poll-4',
+    name: 'Bash',
+    input: { command: 'for f in *.json; do echo "$f"; sleep 0.1; done' },
+  };
+  const allowedMicro = await guard.beforeExecute(microSleep, ctx);
+  assert.equal(allowedMicro, null, 'sleep < 1s in a loop is not the antipattern');
+
+  // No loop, just a single sleep — irrelevant to this guard.
+  const justSleep = {
+    type: 'tool_use',
+    id: 'bash-poll-5',
+    name: 'Bash',
+    input: { command: 'sleep 5 && ls' },
+  };
+  const allowedSleep = await guard.beforeExecute(justSleep, ctx);
+  assert.equal(allowedSleep, null, 'A single sleep without a loop is not blocked');
+});
+
 test('session tool guard does not kill WebFetch on HTTP 4xx (agent-input errors)', async () => {
   const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
   const guard = new SessionToolGuard();

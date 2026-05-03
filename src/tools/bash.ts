@@ -562,6 +562,10 @@ IMPORTANT: Avoid using this tool to run \`find\`, \`grep\`, \`cat\`, \`head\`, \
 - Avoid unnecessary \`sleep\` commands:
   - Do not sleep between commands that can run immediately — just run them.
   - Do not retry failing commands in a sleep loop — diagnose the root cause.
+  - Do NOT write \`sleep\` inside a for/while/until loop in a single foreground Bash call to poll an external async job. That blocks the agent for the whole poll duration and looks frozen to the user; they will cancel before it finishes. Pick one:
+    1. Use the \`Detach\` tool for polling-style work (waiting for an Apify run, video generation, deploy, or build to complete). It returns a runId immediately and the polling runs persistently; check status later with \`franklin task wait/tail <runId>\`.
+    2. Use the upstream sync endpoint when one exists (e.g. Apify's \`run-sync-get-dataset-items\`) with an explicit \`timeout\` up to 600000ms — usually simpler than orchestrating async + poll yourself.
+    3. Break the poll into discrete single-call polls — one poll per Bash call, reason about the status between calls, decide whether to poll again. The user can then see progress and course-correct.
 
 Output is capped at 512KB capture / 32KB return.`,
     input_schema: {

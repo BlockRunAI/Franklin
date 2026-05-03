@@ -41,6 +41,15 @@ function globKey(invocation: CapabilityInvocation): string {
   return `${pattern}::${path}`;
 }
 
+// Detect a blocking poll-loop in a foreground bash command:
+// any `for|while|until` loop containing a `sleep` of ≥1 second. This is
+// the canonical antipattern that makes the agent feel frozen — see
+// beforeBash() for the full rationale and the recommended alternatives.
+// Use [\s\S] for cross-line match so we catch multi-line scripts; require
+// `sleep [1-9]` so trivial `sleep 0` / `sleep 0.1` micro-pauses don't trip.
+export const BLOCKING_POLL_LOOP_RE: RegExp =
+  /\b(?:for|while|until)\b[\s\S]*?\bsleep\s+[1-9]/;
+
 const WRITE_KEYWORDS: RegExp = (() => {
   const words = [
     'rm', 'mv', 'cp', 'mkdir', 'touch', 'chmod', 'chown', 'ln',
@@ -257,6 +266,33 @@ export class SessionToolGuard {
   private beforeBash(invocation: CapabilityInvocation): CapabilityResult | null {
     const cmd = String(invocation.input.command ?? '').trim();
     if (!cmd) return null;
+
+    // Reject blocking poll-loops in foreground bash. A single bash call with
+    // `sleep N` inside a for/while/until loop blocks the agent for the full
+    // duration — the UI repeats the same status line and the user almost
+    // always cancels before it finishes. The right pattern is `Detach`
+    // (persistent background task) or `run_in_background: true`.
+    const runInBackground = Boolean(invocation.input.run_in_background);
+    if (!runInBackground && BLOCKING_POLL_LOOP_RE.test(cmd)) {
+      return {
+        output:
+          'Blocked: this Bash command runs `sleep` inside a for/while/until loop in the ' +
+          'foreground. That blocks the agent for the full poll duration and looks frozen ' +
+          'to the user — they almost always cancel before it finishes.\n\n' +
+          'Use the `Detach` tool for polling-style work (waiting for an Apify run, video ' +
+          'generation, deploy, build, or any external async job to complete). It returns ' +
+          'a runId immediately and the polling continues persistently. Check status later ' +
+          'with `franklin task wait <runId>` or `franklin task tail <runId>` via a ' +
+          'separate Bash call.\n\n' +
+          'If you need the result inline, break the loop into discrete single-poll Bash ' +
+          'calls — poll once, reason about the status, then decide whether to poll again. ' +
+          'Or, if the upstream API has a sync variant (e.g. Apify\'s ' +
+          '`run-sync-get-dataset-items`), use that with a `timeout` of 300000–600000 ms ' +
+          'instead of orchestrating async + poll yourself.',
+        isError: true,
+      };
+    }
+
     // Only dedup deterministic read-only commands. Skip anything writing/network/long-running.
     if (WRITE_KEYWORDS.test(cmd)) return null;
     // Normalize whitespace so "ls   -la" and "ls -la" share a cache entry.
