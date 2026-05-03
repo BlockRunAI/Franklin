@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.15.3 — Preserve terminal scrollback; dock dialogs to bottom
+
+Bug fix: Ink's `clearTerminal` escape (`\x1b[3J`) wipes the entire
+terminal scrollback buffer, and Ink fires it whenever the dynamic
+region exceeds the terminal height. Franklin's streaming response and
+model picker routinely tripped that threshold, so users could only
+scroll up through the most recent slice of session history.
+
+- `ui`: cap streamText render to the last `(rows - 12)` lines with an
+  "↑ N earlier lines" indicator. Full text is still committed to
+  `<Static>` at turn end, so scrollback retains every word once the
+  turn finishes.
+- `ui`: window the model picker around `pickerIdx` to a viewport of
+  `(rows - 12)` rows with "↑/↓ N more" markers — same overflow pattern
+  was nuking history when the picker opened on a small terminal.
+- `ui`: hide `expandableTool`, `responsePreview`, and `InputBox` while
+  a permission/askUser dialog is active. The dialog now docks to the
+  bottom of the screen instead of stranding stale UI below it.
+
 ## 3.15.2 — Block foreground Bash poll-loops; route to Detach
 
 Bug fix: a single Bash call with `sleep N` inside a for/while/until
