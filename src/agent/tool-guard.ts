@@ -170,6 +170,32 @@ function fetchKey(url: string, maxLength?: number): string {
   return `${url}::${maxLength ?? 12288}`;
 }
 
+// Circuit-breaker classifier for the per-tool kill switch.
+//
+// `isError: true` covers everything from "tool itself broke" (network, parse,
+// timeout) to "agent fed me a bad input" (404 on a guessed URL, malformed URL).
+// Only the first category should count toward disabling the tool — otherwise
+// three hallucinated URLs in one prompt permanently kill WebFetch for the
+// session, even though the tool worked correctly each time.
+export function isToolClassFailure(name: string, result: CapabilityResult): boolean {
+  if (!result.isError) return false;
+  const out = String(result.output ?? '');
+
+  if (name === 'WebFetch') {
+    // HTTP 4xx/5xx — the URL was real-but-wrong or the upstream had issues.
+    // Either way, the tool worked; the agent should pick a different URL.
+    if (/^HTTP \d{3}\b/.test(out)) return false;
+    // Bad URL syntax / unsupported protocol / missing arg — agent input error.
+    if (out.startsWith('Error: invalid URL')) return false;
+    if (out.startsWith('Error: only http')) return false;
+    if (out.startsWith('Error: url is required')) return false;
+    // User interrupt — not a tool failure.
+    if (out.startsWith('Error: request aborted')) return false;
+  }
+
+  return true;
+}
+
 export class SessionToolGuard {
   private turn = 0;
   private webSearchesThisTurn = 0;
@@ -278,12 +304,16 @@ export class SessionToolGuard {
   }
 
   afterExecute(invocation: CapabilityInvocation, result: CapabilityResult): void {
-    // Track per-tool error counts across the session
-    if (result.isError) {
+    // Per-tool circuit breaker: count consecutive tool-class failures, reset on
+    // any success. Agent-input errors (e.g. WebFetch 404 on a guessed URL) are
+    // not tool failures and must not trip the breaker.
+    if (isToolClassFailure(invocation.name, result)) {
       this.toolErrorCounts.set(
         invocation.name,
         (this.toolErrorCounts.get(invocation.name) ?? 0) + 1,
       );
+    } else if (!result.isError) {
+      this.toolErrorCounts.delete(invocation.name);
     }
 
     switch (invocation.name) {

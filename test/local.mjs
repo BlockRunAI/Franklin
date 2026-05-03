@@ -1118,6 +1118,126 @@ test('session tool guard blocks repetitive SearchX the same as WebSearch', async
   assert.ok(blocked.output.includes('Search stopped'), `Expected early-stop.\n${blocked.output}`);
 });
 
+test('session tool guard does not kill WebFetch on HTTP 4xx (agent-input errors)', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  guard.startTurn();
+
+  // Simulate the agent guessing four wrong URLs in a row — each returns 404.
+  // The tool worked correctly every time; the agent picked bad URLs. The kill
+  // switch must not trip, otherwise WebFetch becomes unrecoverable for the
+  // rest of the session.
+  for (let i = 0; i < 4; i++) {
+    const inv = {
+      type: 'tool_use',
+      id: `wf-404-${i}`,
+      name: 'WebFetch',
+      input: { url: `https://example.com/guess-${i}` },
+    };
+    const pre = await guard.beforeExecute(inv, ctx);
+    assert.equal(pre, null, `Call ${i}: WebFetch should not be hard-blocked by HTTP-class errors`);
+    guard.afterExecute(inv, {
+      output: `HTTP 404 Not Found for https://example.com/guess-${i}`,
+      isError: true,
+    });
+  }
+
+  // A fifth call must still be allowed — confirms the breaker never tripped.
+  const fifth = {
+    type: 'tool_use',
+    id: 'wf-404-5',
+    name: 'WebFetch',
+    input: { url: 'https://example.com/real-url' },
+  };
+  const pre = await guard.beforeExecute(fifth, ctx);
+  assert.equal(pre, null, '5th WebFetch must still be allowed after 4 HTTP 404s');
+});
+
+test('session tool guard kills WebFetch on real network failures', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  guard.startTurn();
+
+  // Three real tool-class failures (network) in a row — these *should* trip
+  // the breaker, since they suggest the tool itself is broken.
+  for (let i = 0; i < 3; i++) {
+    const inv = {
+      type: 'tool_use',
+      id: `wf-net-${i}`,
+      name: 'WebFetch',
+      input: { url: `https://unreachable-${i}.invalid/` },
+    };
+    assert.equal(await guard.beforeExecute(inv, ctx), null);
+    guard.afterExecute(inv, {
+      output: `Error fetching https://unreachable-${i}.invalid/: ENOTFOUND`,
+      isError: true,
+    });
+  }
+
+  const blocked = await guard.beforeExecute(
+    { type: 'tool_use', id: 'wf-net-4', name: 'WebFetch', input: { url: 'https://example.com/' } },
+    ctx,
+  );
+  assert.ok(blocked, 'Expected hard-block after 3 network-class WebFetch failures');
+  assert.ok(
+    blocked.output.includes('disabled'),
+    `Expected kill-switch message.\n${blocked.output}`,
+  );
+});
+
+test('session tool guard resets failure counter on a successful call', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  guard.startTurn();
+
+  // Two real network failures.
+  for (let i = 0; i < 2; i++) {
+    const inv = {
+      type: 'tool_use',
+      id: `wf-flaky-${i}`,
+      name: 'WebFetch',
+      input: { url: `https://flaky-${i}.invalid/` },
+    };
+    assert.equal(await guard.beforeExecute(inv, ctx), null);
+    guard.afterExecute(inv, {
+      output: `Error fetching https://flaky-${i}.invalid/: ECONNRESET`,
+      isError: true,
+    });
+  }
+
+  // A success — should clear the counter (circuit-breaker semantics).
+  const ok = {
+    type: 'tool_use',
+    id: 'wf-ok',
+    name: 'WebFetch',
+    input: { url: 'https://example.com/' },
+  };
+  assert.equal(await guard.beforeExecute(ok, ctx), null);
+  guard.afterExecute(ok, { output: 'URL: https://example.com/\nStatus: 200\n\n<body>' });
+
+  // After reset we should be able to absorb 2 more failures without tripping.
+  for (let i = 0; i < 2; i++) {
+    const inv = {
+      type: 'tool_use',
+      id: `wf-after-${i}`,
+      name: 'WebFetch',
+      input: { url: `https://post-reset-${i}.invalid/` },
+    };
+    const pre = await guard.beforeExecute(inv, ctx);
+    assert.equal(pre, null, `Post-reset call ${i} must not be blocked`);
+    guard.afterExecute(inv, {
+      output: `Error fetching https://post-reset-${i}.invalid/: ENOTFOUND`,
+      isError: true,
+    });
+  }
+});
+
 test('SearchX auto-detects notifications intent from query (no LLM needed)', async () => {
   const { detectNotificationsIntent } = await import('../dist/tools/searchx.js');
 
