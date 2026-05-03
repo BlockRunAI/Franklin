@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.15.2 — Block foreground Bash poll-loops; route to Detach
+
+Bug fix: a single Bash call with `sleep N` inside a for/while/until
+loop blocks the agent for the full poll duration and looks frozen to
+the user — the same status line repeats with no way to course-correct
+short of Ctrl+C. This was the antipattern behind the "Franklin got
+stuck on Apify polling" report.
+
+- `tool-guard`: detect `for|while|until` + `sleep [1-9]` in foreground
+  Bash and reject with concrete guidance (use `Detach`, the upstream
+  sync endpoint, or per-poll discrete calls). `run_in_background:true`
+  bypasses the block.
+- `Bash` description: explicit "do not write sleep+loop in foreground"
+  rule with the three correct alternatives.
+- `Detach` description: call out polling external async jobs (Apify,
+  video gen, deploys) as a primary use case.
+
 ## 3.15.1 — Don't kill WebFetch on agent-input errors
 
 Bug fix: the per-tool kill-switch in `SessionToolGuard` counted any
