@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.15.8 — WebFetch: short-circuit known anti-bot domains
+
+Reported: a "what's the Austin housing market doing" turn climbed to
+step 12 because the agent kept retrying Zillow URLs (every variant
+returns 403), burning step budget and user money on requests that
+were never going to succeed.
+
+- `WebFetch`: pre-flight block list. Hostname matched against a curated
+  table of domains that systematically reject scripted GETs (zillow,
+  redfin, realtor, linkedin, instagram, facebook, x.com, twitter,
+  tiktok, reuters, bloomberg, wsj). Match returns one actionable error
+  naming the right alternative tool (WebSearch, or SearchX for X.com)
+  instead of fetching at all. The model sees a hard "don't retry,
+  switch tools" signal in one step.
+- `WebFetch`: post-flight 403/429/503 hint. For domains not on the
+  static list, surface "X likely blocks automated fetch — try
+  WebSearch" alongside the HTTP status so the model has the same
+  course-correction prompt without us needing perfect prior knowledge
+  of every blocked surface.
+
 ## 3.15.7 — Visible retry detail; auto-switch on persistent 5xx
 
 When the gateway 5xx'd, users saw four identical "Retrying (X/5) after

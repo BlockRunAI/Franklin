@@ -81,6 +81,24 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     return { output: `Error: only http/https URLs are supported`, isError: true };
   }
 
+  // ── Pre-flight: known anti-bot domains ──
+  // Sites that systematically block scripted access return 403 / 429 /
+  // captcha challenges to plain GET requests no matter what UA we send.
+  // Without this guard the model burns multiple turns retrying variations
+  // (Zillow → /research/austin-tx, /homedetails/X, /sold/Y...) that all
+  // 403 the same way, padding the step counter and the user's bill.
+  // Short-circuiting here returns a single actionable error instead.
+  const blocked = isBlockedDomain(parsed.hostname);
+  if (blocked) {
+    return {
+      output:
+        `${parsed.hostname} systematically blocks automated fetch (${blocked.reason}). ` +
+        `Switch tools: ${blocked.alternative}. Don't retry this URL with WebFetch — ` +
+        `every variant of the same hostname returns the same block.`,
+      isError: true,
+    };
+  }
+
   const maxLen = Math.min(max_length ?? DEFAULT_MAX_LENGTH, MAX_BODY_BYTES);
 
   // ── YouTube special case ──
@@ -136,8 +154,19 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     });
 
     if (!response.ok) {
+      // 403 / 429 from a domain not in the static block list often still
+      // means anti-bot — many sites tier their detection (first hit OK,
+      // subsequent ones blocked) or rely on UA fingerprinting. Surface
+      // this as an actionable hint so the model switches strategy
+      // instead of retrying the same URL with a different path.
+      const isAntiBot = response.status === 403 || response.status === 429 ||
+                       response.status === 503;
+      const hint = isAntiBot
+        ? ` — ${parsed.hostname} likely blocks automated fetch. Try WebSearch for the same query, ` +
+          `or fetch a different domain that publishes the same data.`
+        : '';
       return {
-        output: `HTTP ${response.status} ${response.statusText} for ${url}`,
+        output: `HTTP ${response.status} ${response.statusText} for ${url}${hint}`,
         isError: true,
       };
     }
@@ -207,6 +236,96 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     clearTimeout(timeout);
     ctx.abortSignal.removeEventListener('abort', onAbort);
   }
+}
+
+// ─── Anti-bot domain table ──────────────────────────────────────────────────
+// Domains that systematically block scripted access. Hitting these with a
+// plain GET reliably produces 403 / captcha / consent walls regardless of
+// User-Agent, and the right answer is "switch to a tool that has API
+// authority for this surface" — usually WebSearch (which uses search-engine
+// crawls of cached snapshots) or a domain-specific MCP.
+//
+// Match is by suffix so both `zillow.com` and `www.zillow.com` resolve.
+// Keep this list tight: only domains we've seen FAIL repeatedly in the
+// wild, not just "might block in theory". False positives waste user
+// money by skipping fetches that would have succeeded.
+
+interface BlockedDomain {
+  pattern: RegExp;
+  reason: string;
+  alternative: string;
+}
+
+const BLOCKED_DOMAINS: BlockedDomain[] = [
+  {
+    pattern: /(^|\.)zillow\.com$/i,
+    reason: '403 to all non-browser GETs',
+    alternative: 'use WebSearch for "Austin TX home price trends" or similar',
+  },
+  {
+    pattern: /(^|\.)redfin\.com$/i,
+    reason: '403 / captcha challenge to scripted requests',
+    alternative: 'use WebSearch with the property address or zip code',
+  },
+  {
+    pattern: /(^|\.)realtor\.com$/i,
+    reason: '403 / interstitial to non-browser UAs',
+    alternative: 'use WebSearch',
+  },
+  {
+    pattern: /(^|\.)linkedin\.com$/i,
+    reason: 'auth wall on every page',
+    alternative: 'use SearchX (X is the better discovery surface for the same people) or WebSearch',
+  },
+  {
+    pattern: /(^|\.)instagram\.com$/i,
+    reason: 'auth wall + 401 to public profile fetches',
+    alternative: 'use WebSearch for the username',
+  },
+  {
+    pattern: /(^|\.)facebook\.com$/i,
+    reason: 'auth wall on most public content',
+    alternative: 'use WebSearch',
+  },
+  {
+    pattern: /(^|\.)x\.com$/i,
+    reason: 'X.com requires authenticated API',
+    alternative: 'use SearchX (the dedicated X tool) instead of WebFetch',
+  },
+  {
+    pattern: /(^|\.)twitter\.com$/i,
+    reason: 'X.com requires authenticated API',
+    alternative: 'use SearchX (the dedicated X tool) instead of WebFetch',
+  },
+  {
+    pattern: /(^|\.)tiktok\.com$/i,
+    reason: 'returns SPA shell + JS challenge',
+    alternative: 'use WebSearch with the @username',
+  },
+  {
+    pattern: /(^|\.)reuters\.com$/i,
+    reason: 'paywall + bot detection',
+    alternative: 'use WebSearch which surfaces cached headlines',
+  },
+  {
+    pattern: /(^|\.)bloomberg\.com$/i,
+    reason: 'paywall + bot detection',
+    alternative: 'use WebSearch for the same story',
+  },
+  {
+    pattern: /(^|\.)wsj\.com$/i,
+    reason: 'paywall',
+    alternative: 'use WebSearch for the same story',
+  },
+];
+
+function isBlockedDomain(hostname: string): { reason: string; alternative: string } | null {
+  for (const entry of BLOCKED_DOMAINS) {
+    if (entry.pattern.test(hostname)) {
+      return { reason: entry.reason, alternative: entry.alternative };
+    }
+  }
+  return null;
 }
 
 // ─── YouTube transcript fetcher ─────────────────────────────────────────────
