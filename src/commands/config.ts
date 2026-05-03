@@ -16,7 +16,6 @@ const VALID_KEYS = [
   'smart-routing',
   'permission-mode',
   'max-turns',
-  'batch-concurrency',
   'auto-compact',
   'session-save',
   'debug',
@@ -34,14 +33,6 @@ export interface AppConfig {
   'smart-routing'?: string;
   'permission-mode'?: string;
   'max-turns'?: string;
-  /**
-   * Max concurrent batch tools (ImageGen / VideoGen) per turn. Numeric
-   * string, e.g. "4". Defaults to 4 when unset, matching industry norms
-   * (Midjourney grid, Leonardo default). Lower this if your gateway / RPC
-   * gets rate-limited; raise it if you have headroom and want faster
-   * multi-image bursts.
-   */
-  'batch-concurrency'?: string;
   'auto-compact'?: string;
   'session-save'?: string;
   'debug'?: string;

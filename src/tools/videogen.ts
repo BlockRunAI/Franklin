@@ -37,11 +37,6 @@ import type { ContentLibrary } from '../content/library.js';
 import { ModelClient } from '../agent/llm.js';
 import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
 import { recordUsage } from '../stats/tracker.js';
-// Note: VideoGen does NOT use walletReservation. Video calls are 1-2 at a
-// time in practice (per-call cost is large relative to balance, and each
-// call takes minutes), so the local accounting layer adds little value
-// here vs. ImageGen. Re-evaluate if users start kicking off 5+ videos
-// at once.
 import { findModel, estimateCostUsd } from '../gateway-models.js';
 import { loadConfig } from '../commands/config.js';
 
@@ -110,7 +105,6 @@ function buildExecute(deps: VideoGenDeps) {
     // ── Media router + AskUser flow (video bills per second, always ask) ──
     const autoApprove =
       process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1' ||
-      ctx.skipAskUser === true ||
       !!userDefaultModel;
     if (!model && !autoApprove && ctx.onAskUser) {
       try {
@@ -180,12 +174,9 @@ function buildExecute(deps: VideoGenDeps) {
     const apiUrl = API_URLS[chain];
     const endpoint = `${apiUrl}/v1/videos/generations`;
 
-    // Random suffix on the default path prevents collisions when several
-    // VideoGen tools run in parallel under `concurrent: 'batch'`.
-    const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const outPath = output_path
       ? (path.isAbsolute(output_path) ? output_path : path.resolve(ctx.workingDir, output_path))
-      : path.resolve(ctx.workingDir, `generated-${uniqueSuffix}.mp4`);
+      : path.resolve(ctx.workingDir, `generated-${Date.now()}.mp4`);
 
     const body = JSON.stringify({
       model: videoModel,
@@ -547,12 +538,6 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
       },
     },
     execute: buildExecute(deps),
-    // 'batch' = multiple VideoGen invocations run in a parallel pool.
-    // Each has its own random output path, x402 nonce, and serialized
-    // askUser, so concurrent execution is safe. Polling is async-friendly
-    // (long sleeps) so concurrency wins are large here.
-    concurrent: 'batch',
+    concurrent: false,
   };
 }
-
-export const videoGenCapability: CapabilityHandler = createVideoGenCapability();

@@ -23,7 +23,6 @@ import { ModelClient } from '../agent/llm.js';
 import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
 import { recordUsage } from '../stats/tracker.js';
 import { findModel, estimateCostUsd } from '../gateway-models.js';
-import { walletReservation } from '../wallet/reservation.js';
 import { loadConfig } from '../commands/config.js';
 
 interface ImageGenInput {
@@ -214,7 +213,6 @@ function buildExecute(deps: ImageGenDeps) {
     // point of the setting: stop asking, just use my pick.
     const autoApprove =
       process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1' ||
-      ctx.skipAskUser === true ||
       !!userDefaultModel;
     if (!model && !autoApprove && ctx.onAskUser && !referenceImage) {
       try {
@@ -290,14 +288,10 @@ function buildExecute(deps: ImageGenDeps) {
     ? `${apiUrl}/v1/images/image2image`
     : `${apiUrl}/v1/images/generations`;
 
-  // Default output path. Random suffix prevents collisions when several
-  // ImageGen tools run in parallel (`concurrent: 'batch'`) and would
-  // otherwise hit the same Date.now() ms — the second writer would
-  // overwrite the first.
-  const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // Default output path uses Date.now() — fine for serial calls.
   const outPath = output_path
     ? (path.isAbsolute(output_path) ? output_path : path.resolve(ctx.workingDir, output_path))
-    : path.resolve(ctx.workingDir, `generated-${uniqueSuffix}.png`);
+    : path.resolve(ctx.workingDir, `generated-${Date.now()}.png`);
 
   // OpenAI's gpt-image-1 / gpt-image-2 family removed the `response_format`
   // parameter — they always return base64 by default, and including the
@@ -332,27 +326,6 @@ function buildExecute(deps: ImageGenDeps) {
     'User-Agent': `franklin/${VERSION}`,
   };
 
-  // Wallet reservation: hold the estimated cost in a local accounting layer
-  // so concurrent ImageGens can't all see the same balance and overspend.
-  // Released in finally — whether the payment succeeds, fails, or aborts.
-  let reservationToken: import('../wallet/reservation.js').ReservationToken | null = null;
-  try {
-    const m = await findModel(imageModel);
-    const estCost = m ? estimateCostUsd(m, { quantity: 1 }) : 0;
-    reservationToken = await walletReservation.hold(estCost);
-    if (!reservationToken) {
-      return {
-        output:
-          `Insufficient USDC for ${imageModel} (~$${estCost.toFixed(2)}). ` +
-          `Other in-flight image / video generations may be holding your balance — ` +
-          `wait for them to finish or fund the wallet.`,
-        isError: true,
-      };
-    }
-  } catch {
-    // Reservation lookup failed (e.g. RPC down) — continue without holding;
-    // x402 will surface the real funds error if it actually fails.
-  }
 
   const controller = new AbortController();
   // Overall budget covers: initial POST + 402 sign retry + (if async) poll
@@ -578,7 +551,6 @@ function buildExecute(deps: ImageGenDeps) {
     return { output: `Error: ${msg}`, isError: true };
   } finally {
     clearTimeout(timeout);
-    walletReservation.release(reservationToken);
   }
   };
 }
@@ -761,11 +733,7 @@ export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHan
       },
     },
     execute: buildExecute(deps),
-    // 'batch' = paid + needs askUser, but multiple ImageGen invocations are
-    // safe to run in parallel (random output paths, random x402 nonces,
-    // executor-serialized askUser). Lets `/image cat × 6` run as 4-up
-    // pool instead of 6-up serial.
-    concurrent: 'batch',
+    concurrent: false,
   };
 }
 

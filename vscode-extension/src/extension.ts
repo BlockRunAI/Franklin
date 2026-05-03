@@ -852,7 +852,6 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
         'default-video-model': config['default-video-model'] ?? null,
         // max-turn-spend-usd was removed in core v3.11.0 — wallet balance
         // is now the ceiling. Field intentionally absent here.
-        'batch-concurrency': config['batch-concurrency'] ?? '',
       },
       imageModels: imageModels.map(toOption),
       videoModels: videoModels.map(toOption),
@@ -884,17 +883,11 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     if ('max-turn-spend-usd' in (config as Record<string, unknown>)) {
       delete (config as Record<string, unknown>)['max-turn-spend-usd'];
     }
-    // Batch concurrency — empty string / 0 / non-numeric clears (default 4).
-    const bc = settings['batch-concurrency'];
-    if (bc != null && bc.trim() !== '') {
-      const parsedBc = Math.floor(Number(bc));
-      if (Number.isFinite(parsedBc) && parsedBc >= 1 && parsedBc <= 12) {
-        config['batch-concurrency'] = String(parsedBc);
-      } else {
-        delete config['batch-concurrency'];
-      }
-    } else {
-      delete config['batch-concurrency'];
+    // Strip stale batch-concurrency from old configs (parallel media gen
+    // is deferred to feature/parallel-media-gen branch and not in this
+    // build).
+    if ('batch-concurrency' in (config as Record<string, unknown>)) {
+      delete (config as Record<string, unknown>)['batch-concurrency'];
     }
     saveConfig(config);
     void this.webview?.postMessage({ type: 'settingsSaved' });
@@ -3123,11 +3116,6 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
                   <label class="settings-label" for="settings-vid">Default video model</label>
                   <select id="settings-vid" class="settings-select"><option value="__unset__">Ask each time</option></select>
                 </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="settings-batch-concurrency">Parallel image / video</label>
-                  <input id="settings-batch-concurrency" class="settings-select" type="number" min="1" max="12" step="1" placeholder="4 (default)" />
-                  <div class="settings-hint">Max ImageGen / VideoGen running at once when the agent emits a batch. 1 = serial. 12 = max.</div>
-                </div>
               </div>
 
               <!-- Spending-limits section was removed in v3.11.0 sync —
@@ -3846,7 +3834,9 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     // in v3.11.0 — keep var as null so any leftover code referencing it
     // short-circuits cleanly instead of throwing.
     var settingsSpendCap = null;
-    var settingsBatchConcurrency = document.getElementById('settings-batch-concurrency');
+    // settings-batch-concurrency removed — parallel media gen is on the
+    // feature/parallel-media-gen branch, not in this stable build.
+    var settingsBatchConcurrency = null;
     var settingsStatusEl = document.getElementById('settings-status');
     var pendingChain = 'base';
 
@@ -3906,7 +3896,6 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           chain: pendingChain,
           'default-image-model': settingsImgSel.value,
           'default-video-model': settingsVidSel.value,
-          'batch-concurrency': (settingsBatchConcurrency && settingsBatchConcurrency.value) || '',
         },
       });
       // Close the popover — dismissing itself is the save confirmation.
@@ -5109,9 +5098,6 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         setChainToggleActive(m.current.chain);
         populateModelSelect(settingsImgSel, m.imageModels, m.current['default-image-model']);
         populateModelSelect(settingsVidSel, m.videoModels, m.current['default-video-model']);
-        if (settingsBatchConcurrency) {
-          settingsBatchConcurrency.value = m.current['batch-concurrency'] || '';
-        }
         return;
       }
       if (m.type === 'settingsSaved') {

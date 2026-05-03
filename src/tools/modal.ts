@@ -350,9 +350,7 @@ export const modalCreateCapability: CapabilityHandler = {
     }
 
     // ── AskUser cost preview (skipped if env auto-approve or non-UI mode) ──
-    const autoApprove =
-      process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1' ||
-      ctx.skipAskUser === true;
+    const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
     if (ctx.onAskUser && !autoApprove) {
       const timeoutSec = raw.timeout ?? 300;
       const lines = [

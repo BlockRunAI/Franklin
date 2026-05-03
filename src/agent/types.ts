@@ -65,16 +65,7 @@ export interface CapabilityDefinition {
 export interface CapabilityHandler {
   spec: CapabilityDefinition;
   execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult>;
-  /**
-   * Concurrency mode:
-   *   - `true` / `'streaming'` — read-only, no permission, no payment. Fired
-   *     while the model is still streaming (Read / Grep / Glob / WebFetch).
-   *   - `'batch'` — needs permission or paid work, but multiple invocations
-   *     of this kind can run in parallel after streaming completes
-   *     (ImageGen / VideoGen). Run via a bounded pool, not strictly serial.
-   *   - `false` (default) — must run strictly serial (Edit / Write / Bash).
-   */
-  concurrent?: boolean | 'batch';
+  concurrent?: boolean; // safe to run in parallel with other concurrent capabilities
   /** Dynamic concurrency check — called per-invocation. Overrides `concurrent` when provided. */
   isConcurrentSafe?: (input: Record<string, unknown>) => boolean;
 }
@@ -103,19 +94,6 @@ export interface ExecutionScope {
   onProgress?: (text: string) => void;
   /** Routes AskUser questions through ink UI input to avoid raw-mode stdin conflict */
   onAskUser?: (question: string, options?: string[]) => Promise<string>;
-  /**
-   * Set by the executor when a batch group has been pre-approved via a single
-   * merged confirmation. Tools that own per-invocation cost previews
-   * (ImageGen / VideoGen) skip their own askUser flow when this is true,
-   * since the user has already approved the whole batch.
-   */
-  skipAskUser?: boolean;
-  /**
-   * Optional reservation token from WalletReservation.hold(). Tools can
-   * release it on failure to free the local accounting hold. Set per-call
-   * by the executor when batch wallet reservations are active.
-   */
-  reservationId?: string;
   /** Context from parent agent — helps sub-agents avoid duplicate work */
   parentContext?: {
     goal?: string;
