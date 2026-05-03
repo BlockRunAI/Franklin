@@ -24,7 +24,7 @@ import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
-import { routeRequest, routeRequestAsync, resolveTierToModel, parseRoutingProfile } from '../router/index.js';
+import { routeRequest, routeRequestAsync, resolveTierToModel, parseRoutingProfile, getFallbackChain } from '../router/index.js';
 import type { Tier, RoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
@@ -562,6 +562,11 @@ export async function interactiveSession(
     let recoveryAttempts = 0;
     let autoContinuationCount = 0;
     const MAX_RECOVERY_ATTEMPTS = 5;
+    // Track per-model server-error streak so we can break out of a stuck
+    // upstream and try the next model in the routing fallback chain instead
+    // of burning all MAX_RECOVERY_ATTEMPTS retries on the same failure.
+    const serverErrorsByModel = new Map<string, number>();
+    const SERVER_ERROR_STREAK_BEFORE_SWITCH = 2;
     let compactFailures = 0;
     let maxTokensOverride: number | undefined;
     const turnIdleReference = lastSessionActivity;
@@ -1102,6 +1107,39 @@ export async function interactiveSession(
         }
 
         if (classified.isTransient && recoveryAttempts < effectiveMaxRetries) {
+          // Server-error streak guard: if the same model 5xx's twice in a row
+          // it's almost always an upstream incident, not a blip. Switch to
+          // the next routing fallback instead of waiting out 5 backoffs on a
+          // dead provider — same idea as the payment-failure auto-fallback
+          // below, but for transient server errors. Skipped for non-server
+          // transients (rate limits, network blips) where retry is the right
+          // call. Also skipped when the user picked a concrete model — they
+          // explicitly chose this one, so we shouldn't silently swap.
+          if (classified.category === 'server' && parseRoutingProfile(config.model)) {
+            const streak = (serverErrorsByModel.get(resolvedModel) ?? 0) + 1;
+            serverErrorsByModel.set(resolvedModel, streak);
+            if (streak >= SERVER_ERROR_STREAK_BEFORE_SWITCH) {
+              const fallbackChain = getFallbackChain(routingTier ?? 'MEDIUM',
+                parseRoutingProfile(config.model) ?? 'auto');
+              const nextModel = fallbackChain.find(m =>
+                m !== resolvedModel && (serverErrorsByModel.get(m) ?? 0) < SERVER_ERROR_STREAK_BEFORE_SWITCH
+              );
+              if (nextModel) {
+                config.model = nextModel;
+                config.onModelChange?.(nextModel, 'system');
+                recoveryAttempts = 0;
+                onEvent({
+                  kind: 'text_delta',
+                  text: `\n*${resolvedModel} keeps 5xx'ing (${streak} in a row) — switching to ${nextModel}*\n`,
+                });
+                continue;
+              }
+              // No alternative left in the fallback chain — fall through to
+              // the normal retry path so we at least exhaust attempts before
+              // surrender.
+            }
+          }
+
           recoveryAttempts++;
           const backoffMs = getBackoffDelay(recoveryAttempts);
           if (config.debug) {
@@ -1109,9 +1147,14 @@ export async function interactiveSession(
               `[franklin] ${classified.label} error — retrying in ${(backoffMs / 1000).toFixed(1)}s (attempt ${recoveryAttempts}/${effectiveMaxRetries}): ${errMsg.slice(0, 100)}`
             );
           }
+          // Surface the actual error + model so the user can see which model
+          // is failing and what the upstream said. Old "Retrying after Server
+          // error" was uninformative — users couldn't tell whether to wait,
+          // /retry, or /model-switch.
+          const errSnippet = errMsg.replace(/\s+/g, ' ').slice(0, 100);
           onEvent({
             kind: 'text_delta',
-            text: `\n*Retrying (${recoveryAttempts}/${effectiveMaxRetries}) after ${classified.label} error...*\n`,
+            text: `\n*Retrying ${recoveryAttempts}/${effectiveMaxRetries} on ${resolvedModel} — ${classified.label}: ${errSnippet}*\n`,
           });
           await new Promise(r => setTimeout(r, backoffMs));
           continue;

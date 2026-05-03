@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.15.7 — Visible retry detail; auto-switch on persistent 5xx
+
+When the gateway 5xx'd, users saw four identical "Retrying (X/5) after
+Server error" lines and no idea which model was failing or what the
+upstream actually said. Then Franklin gave up after 30+ seconds of
+exponential backoff on the same dead provider.
+
+- `loop`: retry message now includes the model name and a 100-char
+  slice of the actual upstream error.
+  `*Retrying 1/5 on anthropic/claude-opus-4.7 — Server: HTTP 503 Service
+  Unavailable*` instead of `*Retrying (1/5) after Server error...*`.
+- `loop`: server-error streak guard. When the same model 5xx's twice
+  in a row on a routed request (Auto profile), break out of the retry
+  loop and switch to the next model in the routing fallback chain
+  instead of burning all 5 backoffs on the same upstream incident.
+  Mirrors the existing payment-failure auto-fallback. Skipped when the
+  user picked a concrete model — explicit choice isn't second-guessed.
+
 ## 3.15.6 — DeepSeek V4 catalog refresh; Auto-only routing
 
 Tracks the BlockRun gateway's 2026-05-03 DeepSeek V4 launch (V4 Pro paid +
