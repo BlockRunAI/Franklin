@@ -5692,3 +5692,83 @@ test('panel /api/tasks/:runId/cancel: rejects already-terminal task; 404 unknown
     assert.equal(missing.status, 404);
   });
 });
+
+// ─── Secret redaction ─────────────────────────────────────────────────────
+// Test fixtures are runtime-assembled (prefix + repeat) so the source file
+// never contains a literal token-shaped string. GitHub push protection
+// scans for token-format literals and would otherwise reject the commit
+// even though these are obviously synthetic values.
+
+const FAKE_GH = "ghp_" + "A".repeat(36);
+const FAKE_AWS = "AKIA" + "I".repeat(16);
+
+test("redactSecrets: catches GitHub PAT in mid-sentence text", async () => {
+  const { redactSecrets } = await import("../dist/agent/secret-redact.js");
+  const { redactedText, matches } = redactSecrets(
+    `you can use this token ${FAKE_GH} as our access token`
+  );
+  assert.equal(redactedText, "you can use this token [REDACTED:github_pat] as our access token");
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].label, "github_pat");
+  assert.equal(matches[0].envVar, "GITHUB_TOKEN");
+  assert.equal(matches[0].preview, "ghp_…");
+  assert.ok(matches[0].value.startsWith("ghp_"));
+});
+
+test("redactSecrets: passes through clean text unchanged", async () => {
+  const { redactSecrets } = await import("../dist/agent/secret-redact.js");
+  const input = "what is the capital of France";
+  const { redactedText, matches } = redactSecrets(input);
+  assert.equal(redactedText, input);
+  assert.equal(matches.length, 0);
+});
+
+test("redactSecrets: handles multiple distinct token types in one message", async () => {
+  const { redactSecrets } = await import("../dist/agent/secret-redact.js");
+  const { redactedText, matches } = redactSecrets(
+    `github=${FAKE_GH} and aws=${FAKE_AWS}`
+  );
+  assert.ok(redactedText.includes("[REDACTED:github_pat]"));
+  assert.ok(redactedText.includes("[REDACTED:aws_access_key]"));
+  assert.equal(matches.length, 2);
+});
+
+test("redactSecrets: dedupes the same token appearing twice", async () => {
+  const { redactSecrets } = await import("../dist/agent/secret-redact.js");
+  const { matches } = redactSecrets(`use ${FAKE_GH} and again ${FAKE_GH}`);
+  assert.equal(matches.length, 1);
+});
+
+test("stashSecretsToEnv: sets process.env and reports names", async () => {
+  const { redactSecrets, stashSecretsToEnv } = await import("../dist/agent/secret-redact.js");
+  delete process.env.GITHUB_TOKEN;
+  const { matches } = redactSecrets(FAKE_GH);
+  const set = stashSecretsToEnv(matches);
+  assert.deepEqual(set, ["GITHUB_TOKEN"]);
+  assert.equal(process.env.GITHUB_TOKEN, FAKE_GH);
+  delete process.env.GITHUB_TOKEN;
+});
+
+test("stashSecretsToEnv: preserves existing env var the user already exported", async () => {
+  const { redactSecrets, stashSecretsToEnv } = await import("../dist/agent/secret-redact.js");
+  process.env.GITHUB_TOKEN = "user-existing-token-do-not-clobber";
+  const { matches } = redactSecrets(FAKE_GH);
+  stashSecretsToEnv(matches);
+  assert.equal(process.env.GITHUB_TOKEN, "user-existing-token-do-not-clobber");
+  delete process.env.GITHUB_TOKEN;
+});
+
+test("formatRedactionWarning: lists what was caught and points at env var", async () => {
+  const { redactSecrets, formatRedactionWarning, stashSecretsToEnv } = await import("../dist/agent/secret-redact.js");
+  delete process.env.GITHUB_TOKEN;
+  const { matches } = redactSecrets(FAKE_GH);
+  const set = stashSecretsToEnv(matches);
+  const msg = formatRedactionWarning(matches, set);
+  assert.ok(msg.includes("Secret detected"));
+  assert.ok(msg.includes("GitHub personal access token"));
+  assert.ok(msg.includes("$GITHUB_TOKEN"));
+  assert.ok(msg.includes("rotate it now"));
+  assert.ok(!msg.includes(FAKE_GH));
+  delete process.env.GITHUB_TOKEN;
+});
+

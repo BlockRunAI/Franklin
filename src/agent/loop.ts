@@ -9,6 +9,7 @@ import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor, getAnchore
 import { handleSlashCommand } from './commands.js';
 import { loadBundledSkills, getSkillVars } from '../skills/bootstrap.js';
 import { reduceTokens } from './reduce.js';
+import { redactSecrets, stashSecretsToEnv, formatRedactionWarning } from './secret-redact.js';
 import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
@@ -533,6 +534,23 @@ export async function interactiveSession(
         if (cmdResult.handled) continue;
         if (cmdResult.rewritten) input = cmdResult.rewritten;
       }
+    }
+
+    // ── Secret redaction at the input boundary ──
+    // Catch GitHub PATs / API keys / private keys before they enter
+    // history, get persisted, or hit the model. Detected values are
+    // stashed on process.env (predictable name like GITHUB_TOKEN) so
+    // subsequent Bash tool calls can still use them via `$GITHUB_TOKEN`
+    // — the user keeps the convenience of "remember this credential"
+    // without the chat-history exposure that just happened.
+    const { redactedText, matches: secretMatches } = redactSecrets(input);
+    if (secretMatches.length > 0) {
+      const envVarsSet = stashSecretsToEnv(secretMatches);
+      onEvent({
+        kind: 'text_delta',
+        text: formatRedactionWarning(secretMatches, envVarsSet),
+      });
+      input = redactedText;
     }
 
     lastUserInput = input;

@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.15.10 — Detect and stash secrets pasted into chat
+
+User pasted a real GitHub PAT (`ghp_…`) into chat as a way to give
+Franklin authenticated GitHub access. The model correctly refused to
+use the raw value, but by then the token had already entered the LLM
+request body, the persisted session file on disk, and any later
+compaction summary. Refusing to *use* a secret isn't the same as
+protecting it; the value still leaked.
+
+- `secret-redact`: new module with conservative regex patterns for
+  GitHub PAT / OAuth / app / fine-grained, Anthropic API, OpenAI
+  project + legacy keys, AWS access key ID, Google API key, Slack
+  bot/user/app, Stripe live + test, Twilio account SID, PEM private
+  keys, and Ethereum-style private keys (when prefixed by
+  `private_key:`-style label). Each pattern has a unique prefix +
+  length so false positives stay rare — pasting a hex hash or a
+  random base64 blob won't trigger.
+- `loop`: at the user-input boundary, before the message reaches
+  history / persistence / the model, run `redactSecrets` and replace
+  matches with `[REDACTED:label]`. Detected values are stashed on
+  `process.env` under predictable names (GITHUB_TOKEN,
+  ANTHROPIC_API_KEY, AWS_ACCESS_KEY_ID, etc.) so subsequent Bash and
+  WebFetch tool calls can still reference them via `$GITHUB_TOKEN`.
+  The user keeps the convenience of "remember this credential"
+  without the chat-history exposure.
+- `loop`: emit a prominent warning when redaction fires —
+  description + 4-char preview (never the value), the env var to
+  reference, and rotation guidance. Existing exports in the user's
+  shell are preserved (no silent clobber).
+
 ## 3.15.9 — Grounding-retry tool domain validation; reasoning_content classifier
 
 User report: a real-estate "can I lowball 20%" turn was correctly
