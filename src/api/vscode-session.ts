@@ -14,11 +14,21 @@ import { resolveModel } from '../ui/model-picker.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { connectMcpServers, disconnectMcpServers } from '../mcp/client.js';
 import type { AgentConfig, StreamEvent } from '../agent/types.js';
+import {
+  sessionSandboxTracker,
+  terminateAllSessionSandboxes,
+} from '../tools/modal.js';
 
 export type { StreamEvent } from '../agent/types.js';
 export type { Dialogue } from '../agent/types.js';
 export { estimateCost } from '../pricing.js';
-export { listSessions, loadSessionHistory, loadSessionMeta } from '../session/storage.js';
+export {
+  listSessions,
+  loadSessionHistory,
+  loadSessionMeta,
+  deleteSession,
+  renameSession,
+} from '../session/storage.js';
 export type { SessionMeta } from '../session/storage.js';
 export { generateInsights } from '../stats/insights.js';
 export type { InsightsReport } from '../stats/insights.js';
@@ -28,6 +38,64 @@ export { loadConfig, saveConfig } from '../commands/config.js';
 export type { AppConfig } from '../commands/config.js';
 export { getModelsByCategory } from '../gateway-models.js';
 export type { GatewayModel } from '../gateway-models.js';
+
+// Tasks subsystem — exposed so the extension can render an in-panel Tasks
+// view (Detach tool spawns long-running detached jobs that the CLI shows
+// via `franklin task list`). Reading directly from the on-disk store +
+// killing pids by SIGTERM keeps the surface tiny and avoids depending on
+// the panel HTTP server being up.
+export { listTasks, readTaskMeta, readTaskEvents } from '../tasks/store.js';
+export { reconcileLostTasks } from '../tasks/lost-detection.js';
+export { taskLogPath } from '../tasks/paths.js';
+export type {
+  TaskRecord,
+  TaskStatus,
+  TaskEventRecord,
+  TaskEventKind,
+} from '../tasks/types.js';
+
+// Session import — bring in existing Claude Code / Codex sessions and
+// continue them as a Franklin session. Surface used by the extension's
+// "Import session" menu next to the New chat button.
+export {
+  listExternalSessionCandidates,
+  importExternalSessionAsFranklin,
+} from '../session/from-import.js';
+export type {
+  ExternalAgentSource,
+  ExternalSessionCandidate,
+} from '../session/from-import.js';
+
+/**
+ * Build the QR payload + SVG for the user's wallet, encoding chain + USDC
+ * token so wallet apps land on the right network/token instead of a bare
+ * address. Mirrors the panel's `/api/wallet/qr` endpoint.
+ *
+ *   Base   → EIP-681:    ethereum:<USDC>@8453/transfer?address=<addr>
+ *   Solana → Solana Pay: solana:<addr>?spl-token=<USDC mint>
+ */
+export async function generateWalletQrSvg(
+  address: string,
+  chain: 'base' | 'solana',
+): Promise<{ svg: string; payload: string }> {
+  if (!address) throw new Error('address required');
+  const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+  const USDC_SOL_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const payload =
+    chain === 'solana'
+      ? `solana:${address}?spl-token=${USDC_SOL_MINT}`
+      : `ethereum:${USDC_BASE}@8453/transfer?address=${address}`;
+  // Dynamic import keeps qrcode out of the cold-start path for callers
+  // that never need a QR.
+  const QRCode = (await import('qrcode')).default;
+  const svg = await QRCode.toString(payload, {
+    type: 'svg',
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    color: { dark: '#000000', light: '#ffffff' },
+  });
+  return { svg, payload };
+}
 
 /** Welcome panel: same branding as CLI, plus live wallet / model / workspace. */
 export interface VsCodeWelcomeInfo {
@@ -222,5 +290,29 @@ export async function runVsCodeSession(options: VsCodeSessionOptions): Promise<v
   } finally {
     flushStats();
     await disconnectMcpServers();
+    // Modal sandbox cleanup — terminate any sandboxes the agent forgot.
+    // Best-effort; logged but never blocks shutdown. Modal would also
+    // self-terminate at the per-sandbox `timeout`, this just stops the
+    // wall-clock GPU billing earlier.
+    try {
+      const result = await terminateAllSessionSandboxes();
+      if (result.attempted > 0) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[franklin] Modal sandbox cleanup: ` +
+          `${result.succeeded}/${result.attempted} terminated` +
+          (result.failed.length > 0 ? `, ${result.failed.length} failed` : ''),
+        );
+      }
+    } catch { /* swallow — never block on cleanup */ }
   }
 }
+
+// ─── Modal sandbox state — exposed for the extension's GPU sandboxes UI ─
+
+/** Snapshot of currently-tracked sandboxes for this session. */
+export function listSessionSandboxes(): Array<{ id: string; gpu: string; createdAt: number; timeoutSeconds?: number }> {
+  return sessionSandboxTracker.list();
+}
+
+export { terminateAllSessionSandboxes } from '../tools/modal.js';

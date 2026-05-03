@@ -288,6 +288,64 @@ export function isRoleplayedJsonToolCallText(text: string): boolean {
   }
 }
 
+/**
+ * Defensive sanitizer for the messages array before it leaves the agent.
+ *
+ * Anthropic rejects requests where any text block has `text: null/undefined`
+ * (Pydantic: "Input should be a valid string"). Such blocks can leak into
+ * history through a couple of paths — partial assistant streams persisted
+ * mid-turn, malformed thinking-as-text conversions on certain models, or
+ * corrupted JSONL on disk after an unclean exit. Once the bad block is in
+ * history, every subsequent turn 400s and the user has no obvious recovery.
+ *
+ * This pass walks the outgoing messages and:
+ *   1. Coerces text-block .text to a string (null/undefined → '[empty]')
+ *   2. Coerces thinking-block .thinking to a string
+ *   3. Drops fully-malformed blocks the API would reject outright (no type)
+ *
+ * Mutation is in-place on the copy held by applyAnthropicPromptCaching's
+ * messagesCopy. We log when sanitization fired so the underlying root cause
+ * remains visible in debug builds.
+ */
+function sanitizeOutgoingMessages(messages: Dialogue[], debug = false): void {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (!Array.isArray(msg.content)) continue;
+    for (let j = 0; j < msg.content.length; j++) {
+      const block = msg.content[j] as unknown as Record<string, unknown> | null;
+      if (!block || typeof block !== 'object') continue;
+      const type = block['type'];
+      if (type === 'text') {
+        if (typeof block['text'] !== 'string') {
+          if (debug) {
+            console.error(`[franklin] sanitized messages[${i}].content[${j}].text (was ${typeof block['text']})`);
+          }
+          block['text'] = '[empty]';
+        }
+      } else if (type === 'thinking') {
+        if (typeof block['thinking'] !== 'string') {
+          block['thinking'] = '';
+        }
+      } else if (type === 'tool_use') {
+        if (typeof block['name'] !== 'string') block['name'] = 'Unknown';
+        if (typeof block['input'] !== 'object' || block['input'] === null) block['input'] = {};
+      } else if (type === 'tool_result') {
+        const c = block['content'];
+        if (typeof c !== 'string' && !Array.isArray(c)) {
+          block['content'] = '[empty]';
+        } else if (Array.isArray(c)) {
+          // Inner text blocks of tool_result content can also have null text.
+          for (const inner of c as Array<Record<string, unknown>>) {
+            if (inner && inner['type'] === 'text' && typeof inner['text'] !== 'string') {
+              inner['text'] = '[empty]';
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 function applyAnthropicPromptCaching(
   payload: Record<string, unknown>,
   request: ModelRequest
@@ -315,20 +373,31 @@ function applyAnthropicPromptCaching(
   // conversation grows. Older cached prefixes expire after 5 min but newer
   // ones keep the cache warm.
   if (request.messages && request.messages.length > 0) {
-    const messagesCopy = request.messages.map(m => ({ ...m }));
+    // Deep-copy each message's content array so the sanitizer doesn't mutate
+    // the caller's history. Without this, a sanitized '[empty]' text would
+    // get persisted back into the session JSONL.
+    const messagesCopy = request.messages.map(m => ({
+      ...m,
+      content: Array.isArray(m.content)
+        ? m.content.map(c => ({ ...(c as unknown as Record<string, unknown>) }))
+        : m.content,
+    })) as Dialogue[];
+    // Defensive pass — drop / coerce malformed blocks that would 400 at the
+    // upstream Pydantic schema layer. See sanitizeOutgoingMessages comment.
+    sanitizeOutgoingMessages(messagesCopy, false);
     // Mark last 3 messages (or fewer if history is shorter)
     const start = Math.max(0, messagesCopy.length - 3);
     for (let idx = start; idx < messagesCopy.length; idx++) {
       const msg = messagesCopy[idx];
       if (typeof msg.content === 'string') {
-        (messagesCopy[idx] as Record<string, unknown>)['content'] = [
+        (messagesCopy[idx] as unknown as Record<string, unknown>)['content'] = [
           { type: 'text', text: msg.content, cache_control: cacheMarker },
         ];
       } else if (Array.isArray(msg.content) && msg.content.length > 0) {
         const contentCopy = msg.content.map(c => ({ ...(c as unknown as Record<string, unknown>) }));
         // cache_control goes on the last content block
         contentCopy[contentCopy.length - 1]['cache_control'] = cacheMarker;
-        (messagesCopy[idx] as Record<string, unknown>)['content'] = contentCopy;
+        (messagesCopy[idx] as unknown as Record<string, unknown>)['content'] = contentCopy;
       }
     }
     out['messages'] = messagesCopy;

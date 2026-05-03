@@ -39,6 +39,13 @@ export interface SessionMeta {
    * add any tool inputs or outputs here, just the count per tool name.
    */
   toolCallCounts?: Record<string, number>;
+  /**
+   * User-assigned conversation title. When set, takes precedence over the
+   * derived-from-first-message title in any UI. Lets users rename a chat
+   * (e.g. "草莓AI 短剧分镜") so it's findable later. Unset by default —
+   * UIs should fall back to the derived title.
+   */
+  title?: string;
 }
 
 function getSessionsDir(): string {
@@ -146,6 +153,9 @@ export function updateSessionMeta(
       ...(meta.toolCallCounts !== undefined || existing?.toolCallCounts !== undefined
         ? { toolCallCounts: meta.toolCallCounts ?? existing?.toolCallCounts }
         : {}),
+      ...(meta.title !== undefined || existing?.title !== undefined
+        ? { title: meta.title ?? existing?.title }
+        : {}),
     };
     // Atomic write: tmp file + rename. Prevents corruption when parent
     // and sub-agent update the same session meta concurrently.
@@ -164,6 +174,41 @@ export function updateSessionMeta(
       try { fs.writeFileSync(target, payload); } catch { /* give up; stats just get stale */ }
     }
   });
+}
+
+/**
+ * Permanently delete a session — both the JSONL turn log and its meta file.
+ * Idempotent: missing files are silently ignored. Returns true if anything
+ * was actually removed (useful for UI "deleted N sessions" feedback).
+ *
+ * Validation: only allows ids matching the session-id format we generate
+ * (alphanumeric + underscore + dash) so a caller passing untrusted input
+ * can't traverse out of the sessions directory.
+ */
+export function deleteSession(sessionId: string): boolean {
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) return false;
+  let removed = false;
+  for (const p of [sessionPath(sessionId), metaPath(sessionId)]) {
+    try {
+      fs.unlinkSync(p);
+      removed = true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw err;
+    }
+  }
+  return removed;
+}
+
+/**
+ * Set or clear a user-assigned title on a session. Pass an empty string or
+ * undefined to clear (UI then falls back to the derived first-message
+ * title). Trimmed, capped at 200 chars to keep the meta file small.
+ */
+export function renameSession(sessionId: string, title: string | undefined): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) return;
+  const trimmed = (title ?? '').trim().slice(0, 200);
+  updateSessionMeta(sessionId, { title: trimmed.length > 0 ? trimmed : undefined });
 }
 
 /**

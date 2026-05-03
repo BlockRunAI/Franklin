@@ -79,6 +79,15 @@ export async function importExternalSessionAsFranklin(
   return { sessionId, imported: picked };
 }
 
+/**
+ * Public discovery used by non-CLI drivers (the VS Code extension surfaces
+ * a "Import session from Claude / Codex" menu and needs the candidate list
+ * without going through the readline picker).
+ */
+export function listExternalSessionCandidates(source: ExternalAgentSource): ExternalSessionCandidate[] {
+  return discoverExternalSessions(source);
+}
+
 function discoverExternalSessions(source: ExternalAgentSource): ExternalSessionCandidate[] {
   const roots = source === 'codex' ? codexRoots() : claudeRoots();
   const files = roots.flatMap((root) => walkSessionFiles(root, source));

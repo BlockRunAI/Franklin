@@ -57,6 +57,25 @@ export interface InsightsReport {
   avgRequestCostUsd: number;
   /** Efficiency: cost per 1K tokens */
   costPer1KTokens: number;
+  /**
+   * Cost breakdown by capability category. Lets the UI show a clean
+   * "where did your USDC go" split alongside the per-model bar list.
+   *   - chat:    LLM token-billed calls (anything with non-zero tokens)
+   *   - media:   ImageGen / VideoGen / MusicGen (per_image / per_second / per_track)
+   *   - sandbox: Modal GPU sandbox lifecycle (create / exec / status / terminate)
+   *
+   * Categorization is by `model` name prefix:
+   *   - `modal/*`              → sandbox
+   *   - rows with 0 input + 0 output tokens → media (image/video/music are
+   *     stored with 0 tokens by recordUsage; modal/* matches first)
+   *   - everything else        → chat
+   */
+  byCategory: {
+    chatCostUsd: number;
+    mediaCostUsd: number;
+    sandboxCostUsd: number;
+    sandboxRequests: number;
+  };
 }
 
 // ─── Generate Report ──────────────────────────────────────────────────────
@@ -72,6 +91,11 @@ export function generateInsights(days = 30): InsightsReport {
   let totalCost = 0;
   let totalInput = 0;
   let totalOutput = 0;
+  // Category totals — see InsightsReport.byCategory doc.
+  let chatCost = 0;
+  let mediaCost = 0;
+  let sandboxCost = 0;
+  let sandboxRequests = 0;
   const modelAgg = new Map<string, {
     requests: number;
     costUsd: number;
@@ -84,6 +108,17 @@ export function generateInsights(days = 30): InsightsReport {
     totalCost += r.costUsd;
     totalInput += r.inputTokens;
     totalOutput += r.outputTokens;
+
+    // Categorize: modal/* always goes to sandbox; zero-token entries are
+    // media (image/video/music recordUsage stores 0/0 tokens); rest = chat.
+    if (r.model.startsWith('modal/')) {
+      sandboxCost += r.costUsd;
+      sandboxRequests++;
+    } else if ((r.inputTokens + r.outputTokens) === 0) {
+      mediaCost += r.costUsd;
+    } else {
+      chatCost += r.costUsd;
+    }
 
     const existing = modelAgg.get(r.model) ?? {
       requests: 0,
@@ -164,6 +199,12 @@ export function generateInsights(days = 30): InsightsReport {
     projections,
     avgRequestCostUsd,
     costPer1KTokens,
+    byCategory: {
+      chatCostUsd: chatCost,
+      mediaCostUsd: mediaCost,
+      sandboxCostUsd: sandboxCost,
+      sandboxRequests,
+    },
   };
 }
 

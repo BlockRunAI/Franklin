@@ -12,6 +12,8 @@ import {
   estimateCost,
   listSessions,
   loadSessionHistory,
+  deleteSession,
+  renameSession,
   generateInsights,
   runDoctorChecks,
   saveChain,
@@ -19,10 +21,27 @@ import {
   loadConfig,
   saveConfig,
   getModelsByCategory,
+  // Task subsystem (v3.10.0 Detach tool integration) — extension surfaces
+  // running / completed background tasks in a Tasks overlay.
+  listTasks,
+  readTaskMeta,
+  readTaskEvents,
+  reconcileLostTasks,
+  taskLogPath,
+  // Session import (v3.10 PR #37) — bring in Claude Code / Codex sessions.
+  listExternalSessionCandidates,
+  importExternalSessionAsFranklin,
+  // Wallet QR — chain-aware payload (EIP-681 / Solana Pay).
+  generateWalletQrSvg,
+  // Modal GPU sandboxes — list active + bulk-terminate.
+  listSessionSandboxes,
+  terminateAllSessionSandboxes,
   type StreamEvent,
   type SessionMeta,
   type Dialogue,
   type GatewayModel,
+  type TaskRecord,
+  type ExternalAgentSource,
 } from '@blockrun/franklin/vscode-session';
 
 /** Resolve the working directory: workspace folder if available, else home dir */
@@ -88,6 +107,41 @@ export const log = vscode.window.createOutputChannel('Franklin');
 
 export function activate(context: vscode.ExtensionContext) {
   log.appendLine('[Franklin] Extension activating…');
+
+  // ── Tell the bundled core where the franklin CLI script actually lives ──
+  // Without this, src/tasks/spawn.ts's `import.meta.url` resolves to the
+  // bundled extension.cjs (because esbuild inlines spawn.js into the
+  // bundle), which produces e.g. <ext>/index.js — a path that doesn't
+  // exist. The npm-style file:.. dep means @blockrun/franklin/dist/index.js
+  // lives next to the extension's node_modules, so we compute that path
+  // here and inject it via the FRANKLIN_CLI_PATH env var (highest-priority
+  // strategy in resolveCliPath).
+  try {
+    const candidates = [
+      // Dev / file:.. install: vscode-extension/node_modules/@blockrun/franklin/dist/index.js
+      path.resolve(__dirname, '..', 'node_modules', '@blockrun', 'franklin', 'dist', 'index.js'),
+      // Packaged VSIX (if/when @blockrun/franklin is bundled as a real dep):
+      path.resolve(context.extensionPath, 'node_modules', '@blockrun', 'franklin', 'dist', 'index.js'),
+    ];
+    for (const p of candidates) {
+      try {
+        if (fs.statSync(p).isFile()) {
+          process.env.FRANKLIN_CLI_PATH = p;
+          log.appendLine(`[Franklin] FRANKLIN_CLI_PATH = ${p}`);
+          break;
+        }
+      } catch { /* try next */ }
+    }
+    if (!process.env.FRANKLIN_CLI_PATH) {
+      log.appendLine(
+        `[Franklin] WARNING: could not locate franklin/dist/index.js next to extension. ` +
+        `Detached tasks will fall back to spawn.ts heuristics.`
+      );
+    }
+  } catch (e) {
+    log.appendLine(`[Franklin] FRANKLIN_CLI_PATH probe error: ${(e as Error).message}`);
+  }
+
   const provider = new FranklinChatProvider(context.extensionUri);
 
   context.subscriptions.push(
@@ -148,6 +202,8 @@ function formatTimeAgo(ts: number): string {
 }
 
 function getSessionTitle(m: SessionMeta): string {
+  // User-assigned title (via the rename button) wins over the auto-derived one.
+  if (m.title && m.title.trim().length > 0) return m.title;
   // Try to get first user message as title
   try {
     const history = loadSessionHistory(m.id);
@@ -457,6 +513,167 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /** Pull task list (with zombie reconciliation) and push to webview. */
+  private sendTasks(): void {
+    try {
+      try { reconcileLostTasks(); } catch { /* best-effort */ }
+      const tasks = listTasks();
+      // Trim payload — only the fields the panel needs. Avoids shipping
+      // command strings (can be huge) to the webview on every refresh.
+      const slim = tasks.map((t: TaskRecord) => ({
+        runId: t.runId,
+        label: t.label,
+        status: t.status,
+        runtime: t.runtime,
+        createdAt: t.createdAt,
+        startedAt: t.startedAt,
+        endedAt: t.endedAt,
+        exitCode: t.exitCode,
+        progressSummary: t.progressSummary,
+        terminalSummary: t.terminalSummary,
+        error: t.error,
+        // Truncate command preview at 120 chars — full command available on
+        // demand via tail-log if user wants more detail.
+        command: t.command.length > 120 ? t.command.slice(0, 120) + '…' : t.command,
+        pid: t.pid,
+      }));
+      void this.webview?.postMessage({ type: 'tasksData', tasks: slim });
+    } catch (e) {
+      void this.webview?.postMessage({ type: 'tasksData', tasks: [], error: String(e) });
+    }
+  }
+
+  /** Tail a task's log file and push the (possibly truncated) tail to the panel. */
+  private sendTaskLog(runId: string): void {
+    if (!/^[a-zA-Z0-9_-]+$/.test(runId)) return;
+    try {
+      const meta = readTaskMeta(runId);
+      const logPath = taskLogPath(runId);
+      let content = '';
+      try {
+        const raw = fs.readFileSync(logPath, 'utf-8');
+        // Tail to last ~12KB so a giant log doesn't blow up the webview.
+        const TAIL_BYTES = 12_000;
+        content = raw.length > TAIL_BYTES
+          ? '… (truncated head — showing last ' + (TAIL_BYTES / 1000).toFixed(0) + 'KB) …\n' + raw.slice(-TAIL_BYTES)
+          : raw;
+      } catch {
+        content = '(no log output yet)';
+      }
+      const events = readTaskEvents(runId).slice(-20);
+      void this.webview?.postMessage({ type: 'taskLogData', runId, meta, log: content, events });
+    } catch (e) {
+      void this.webview?.postMessage({ type: 'taskLogData', runId, error: String(e) });
+    }
+  }
+
+  /** Cancel a task by SIGTERM-ing its pid; runner writes the cancelled event itself. */
+  private cancelTask(runId: string): void {
+    if (!/^[a-zA-Z0-9_-]+$/.test(runId)) return;
+    try {
+      const meta = readTaskMeta(runId);
+      if (!meta) {
+        void this.webview?.postMessage({ type: 'taskCancelResult', runId, ok: false, reason: 'not found' });
+        return;
+      }
+      if (typeof meta.pid !== 'number') {
+        void this.webview?.postMessage({ type: 'taskCancelResult', runId, ok: false, reason: 'no pid recorded' });
+        return;
+      }
+      try {
+        process.kill(meta.pid, 'SIGTERM');
+        void this.webview?.postMessage({ type: 'taskCancelResult', runId, ok: true });
+      } catch (err) {
+        void this.webview?.postMessage({ type: 'taskCancelResult', runId, ok: false, reason: (err as Error).message });
+      }
+    } catch (e) {
+      void this.webview?.postMessage({ type: 'taskCancelResult', runId, ok: false, reason: String(e) });
+    }
+  }
+
+  /** Generate and push the wallet QR (chain-aware payload). */
+  private async sendWalletQr(): Promise<void> {
+    try {
+      const { dir } = getWorkDir();
+      const w = await getVsCodeWalletStatus(dir);
+      if (!w.walletAddress) {
+        void this.webview?.postMessage({ type: 'walletQrData', error: 'No wallet found yet. Run `franklin setup` first.' });
+        return;
+      }
+      const chain: 'base' | 'solana' = w.chain === 'solana' ? 'solana' : 'base';
+      const result = await generateWalletQrSvg(w.walletAddress, chain);
+      void this.webview?.postMessage({
+        type: 'walletQrData',
+        svg: result.svg,
+        payload: result.payload,
+        address: w.walletAddress,
+        chain,
+      });
+    } catch (e) {
+      void this.webview?.postMessage({ type: 'walletQrData', error: String(e) });
+    }
+  }
+
+  /** Push current Modal GPU sandbox list to webview (badge + overlay). */
+  private sendSandboxes(): void {
+    try {
+      const sandboxes = listSessionSandboxes();
+      void this.webview?.postMessage({ type: 'sandboxesData', sandboxes });
+    } catch (e) {
+      void this.webview?.postMessage({ type: 'sandboxesData', sandboxes: [], error: String(e) });
+    }
+  }
+
+  /** Bulk-terminate every tracked sandbox (called from the overlay's "kill all" button). */
+  private async cleanupSandboxes(): Promise<void> {
+    try {
+      const result = await terminateAllSessionSandboxes();
+      void this.webview?.postMessage({
+        type: 'sandboxesCleanup',
+        attempted: result.attempted,
+        succeeded: result.succeeded,
+        failed: result.failed,
+      });
+      this.sendSandboxes();
+    } catch (e) {
+      void this.webview?.postMessage({ type: 'sandboxesCleanup', error: String(e) });
+    }
+  }
+
+  /** List importable external sessions (Claude Code or Codex). */
+  private sendImportCandidates(source: ExternalAgentSource): void {
+    try {
+      const candidates = listExternalSessionCandidates(source).slice(0, 25);
+      void this.webview?.postMessage({ type: 'importCandidates', source, candidates });
+    } catch (e) {
+      void this.webview?.postMessage({ type: 'importCandidates', source, candidates: [], error: String(e) });
+    }
+  }
+
+  /**
+   * Import a Claude Code / Codex session as a new Franklin session, then
+   * load it in the chat view so the user can keep going from where they
+   * left off in the other tool.
+   */
+  private async importSession(source: ExternalAgentSource, externalId: string): Promise<void> {
+    if (!externalId || externalId.length > 200) return;
+    const { dir } = getWorkDir();
+    try {
+      const config = loadConfig();
+      const model = config['default-model'] || 'blockrun/auto';
+      const result = await importExternalSessionAsFranklin(source, externalId, { model, workDir: dir });
+      void this.webview?.postMessage({ type: 'importDone', sessionId: result.sessionId });
+      // Auto-load the imported session into the chat view.
+      const history = loadSessionHistory(result.sessionId);
+      if (history.length > 0) {
+        const summary = result.imported.summary || `${source} session ${result.imported.id.slice(0, 8)}`;
+        this.loadHistory(history, summary.slice(0, 40));
+      }
+    } catch (e) {
+      void this.webview?.postMessage({ type: 'importDone', error: String(e) });
+    }
+  }
+
   /** Load a historical session into the chat view */
   loadHistory(dialogues: Dialogue[], title?: string): void {
     if (!this.webview) return;
@@ -480,7 +697,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
         text = d.content;
       } else if (Array.isArray(d.content)) {
         const textParts: string[] = [];
-        for (const p of d.content as Array<Record<string, unknown>>) {
+        for (const p of d.content as unknown as Array<Record<string, unknown>>) {
           if (p.type === 'text' && typeof p.text === 'string') {
             textParts.push(p.text);
           } else if (p.type === 'tool_result') {
@@ -618,7 +835,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     }
 
     const toOption = (m: GatewayModel) => {
-      const p = (m.pricing as Record<string, number> | undefined) ?? {};
+      const p = (m.pricing as unknown as Record<string, number> | undefined) ?? {};
       const price = p.per_image != null
         ? `$${p.per_image}/img`
         : p.per_second != null
@@ -633,7 +850,9 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
         chain,
         'default-image-model': config['default-image-model'] ?? null,
         'default-video-model': config['default-video-model'] ?? null,
-        'max-turn-spend-usd': config['max-turn-spend-usd'] ?? '',
+        // max-turn-spend-usd was removed in core v3.11.0 — wallet balance
+        // is now the ceiling. Field intentionally absent here.
+        'batch-concurrency': config['batch-concurrency'] ?? '',
       },
       imageModels: imageModels.map(toOption),
       videoModels: videoModels.map(toOption),
@@ -658,15 +877,24 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     else delete config['default-image-model'];
     if (vid && vid !== '__unset__') config['default-video-model'] = vid;
     else delete config['default-video-model'];
-    // Per-turn spend cap — empty string clears (back to default $0.25).
-    const cap = settings['max-turn-spend-usd'];
-    if (cap != null && cap.trim() !== '') {
-      const parsed = Number(cap);
-      if (Number.isFinite(parsed) && parsed >= 0) {
-        config['max-turn-spend-usd'] = String(parsed);
+    // Defensively strip the legacy max-turn-spend-usd from any old config
+    // file written by a pre-v3.11.0 build. Without this, a stale value
+    // hangs around in franklin-config.json forever even though core no
+    // longer reads it.
+    if ('max-turn-spend-usd' in (config as Record<string, unknown>)) {
+      delete (config as Record<string, unknown>)['max-turn-spend-usd'];
+    }
+    // Batch concurrency — empty string / 0 / non-numeric clears (default 4).
+    const bc = settings['batch-concurrency'];
+    if (bc != null && bc.trim() !== '') {
+      const parsedBc = Math.floor(Number(bc));
+      if (Number.isFinite(parsedBc) && parsedBc >= 1 && parsedBc <= 12) {
+        config['batch-concurrency'] = String(parsedBc);
+      } else {
+        delete config['batch-concurrency'];
       }
     } else {
-      delete config['max-turn-spend-usd'];
+      delete config['batch-concurrency'];
     }
     saveConfig(config);
     void this.webview?.postMessage({ type: 'settingsSaved' });
@@ -757,11 +985,63 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     if (msg.type === 'requestHistory') {
       this.sendHistoryList();
     }
+    if (msg.type === 'deleteSession' && typeof msg.text === 'string') {
+      const id = msg.text;
+      if (/^[a-zA-Z0-9_-]+$/.test(id)) {
+        try {
+          const removed = deleteSession(id);
+          void this.webview?.postMessage({ type: 'sessionDeleted', id, ok: removed });
+        } catch (e) {
+          void this.webview?.postMessage({ type: 'sessionDeleted', id, ok: false, error: String(e) });
+        }
+        // Push a fresh history list so the row vanishes immediately.
+        this.sendHistoryList();
+      }
+    }
+    if (msg.type === 'renameSession' && msg.settings && typeof msg.settings === 'object') {
+      const s = msg.settings as { id?: string; title?: string };
+      if (typeof s.id === 'string' && /^[a-zA-Z0-9_-]+$/.test(s.id)) {
+        try {
+          renameSession(s.id, s.title);
+          void this.webview?.postMessage({ type: 'sessionRenamed', id: s.id, ok: true });
+        } catch (e) {
+          void this.webview?.postMessage({ type: 'sessionRenamed', id: s.id, ok: false, error: String(e) });
+        }
+        this.sendHistoryList();
+      }
+    }
     if (msg.type === 'runDoctor') {
       void this.runDoctor();
     }
     if (msg.type === 'loadInsights') {
       this.sendInsights();
+    }
+    if (msg.type === 'loadTasks') {
+      this.sendTasks();
+    }
+    if (msg.type === 'tailTaskLog' && typeof msg.text === 'string') {
+      this.sendTaskLog(msg.text);
+    }
+    if (msg.type === 'cancelTask' && typeof msg.text === 'string') {
+      this.cancelTask(msg.text);
+    }
+    if (msg.type === 'loadWalletQr') {
+      void this.sendWalletQr();
+    }
+    if (msg.type === 'loadSandboxes') {
+      this.sendSandboxes();
+    }
+    if (msg.type === 'cleanupSandboxes') {
+      void this.cleanupSandboxes();
+    }
+    if (msg.type === 'listImportCandidates' && typeof msg.text === 'string') {
+      const src = msg.text === 'claude' || msg.text === 'codex' ? msg.text : null;
+      if (src) this.sendImportCandidates(src);
+    }
+    if (msg.type === 'importSession' && msg.settings && typeof msg.settings === 'object') {
+      const s = msg.settings as { source?: string; id?: string };
+      const src = s.source === 'claude' || s.source === 'codex' ? s.source : null;
+      if (src && typeof s.id === 'string') void this.importSession(src, s.id);
     }
     if (msg.type === 'openTrading') {
       void this.openTradingDashboard();
@@ -1105,6 +1385,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     }
     #in {
       width: 100%;
+      box-sizing: border-box;
       padding: 12px 14px 8px 14px;
       background: transparent;
       color: var(--vscode-input-foreground);
@@ -1112,7 +1393,19 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       outline: none;
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
+      line-height: 1.45;
+      /* textarea defaults */
       resize: none;
+      overflow-y: auto;
+      /* Auto-grow logic in JS sets height up to this; beyond it scrolls. */
+      max-height: 220px;
+      /* Whitespace handling: wrap long lines automatically, including
+         long unbroken tokens (URLs, base64) so the composer never
+         widens horizontally past the panel. */
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      display: block;
     }
     #in:disabled { opacity: 0.55; cursor: not-allowed; }
     #in::placeholder { color: var(--vscode-input-placeholderForeground, #888); }
@@ -1383,7 +1676,67 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       color: var(--vscode-descriptionForeground);
       position: relative;
     }
-    #wallet-btn { cursor: default; }
+    #wallet-btn { cursor: pointer; }
+    #wallet-popover {
+      position: fixed;
+      left: 8px; right: 8px; bottom: 72px;
+      max-width: 280px;
+      margin-left: auto;
+      box-sizing: border-box;
+      background: var(--vscode-editorHoverWidget-background, #1e1e1e);
+      border: 1px solid var(--vscode-editorHoverWidget-border, rgba(128,128,128,0.4));
+      border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.25);
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+      pointer-events: none;
+      visibility: hidden;
+      transition:
+        opacity 160ms cubic-bezier(0.2,0.8,0.2,1),
+        transform 160ms cubic-bezier(0.2,0.8,0.2,1),
+        visibility 0s linear 160ms;
+      z-index: 150;
+      padding: 12px 14px;
+    }
+    #wallet-popover.open {
+      opacity: 1; transform: translateY(0) scale(1);
+      pointer-events: auto; visibility: visible;
+      transition: opacity 180ms, transform 180ms, visibility 0s;
+    }
+    .wallet-pop-title {
+      font-size: 11px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--vscode-foreground); opacity: 0.85;
+      margin-bottom: 8px;
+    }
+    .wallet-pop-row {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 11.5px;
+      margin-bottom: 6px;
+    }
+    .wallet-pop-row-label {
+      font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.06em; opacity: 0.65;
+      width: 60px; flex-shrink: 0;
+    }
+    .wallet-pop-addr {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 10.5px;
+      flex: 1;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      cursor: pointer;
+      padding: 3px 6px;
+      border-radius: 3px;
+    }
+    .wallet-pop-addr:hover { background: rgba(128,128,128,0.12); }
+    .wallet-pop-copy {
+      background: transparent; border: 1px solid rgba(128,128,128,0.3);
+      color: var(--vscode-foreground);
+      font-size: 10px;
+      padding: 2px 8px; border-radius: 3px; cursor: pointer;
+      flex-shrink: 0;
+    }
+    .wallet-pop-copy:hover { background: rgba(128,128,128,0.12); }
     #wallet-btn:hover, #trading-btn:hover, #settings-btn:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.15); }
     /* ── Settings button + popover ── */
     #settings-wrap { position: relative; }
@@ -1401,54 +1754,187 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
        * is guaranteed to fit. */
       position: fixed;
       left: 8px; right: 8px; bottom: 72px;
-      max-width: 320px;
+      max-width: 340px;
+      max-height: calc(100vh - 120px);
       margin-left: auto;
-      padding: 10px 12px; box-sizing: border-box;
+      box-sizing: border-box;
       background: var(--vscode-editorHoverWidget-background, #1e1e1e);
       border: 1px solid var(--vscode-editorHoverWidget-border, rgba(128,128,128,0.4));
-      border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.35);
-      display: none; z-index: 150; font-size: 11px;
+      border-radius: 8px;
+      box-shadow:
+        0 12px 32px rgba(0,0,0,0.45),
+        0 2px 8px rgba(0,0,0,0.25),
+        inset 0 1px 0 rgba(255,255,255,0.04);
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+      pointer-events: none;
+      visibility: hidden;
+      transition:
+        opacity 160ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        visibility 0s linear 160ms;
+      z-index: 150;
+      font-size: 11px;
+      display: flex; flex-direction: column;
+      overflow: hidden;
     }
-    #settings-panel.open { display: block; }
-    .settings-row { margin-bottom: 10px; }
-    .settings-row:last-of-type { margin-bottom: 12px; }
-    .settings-label {
-      display: block; font-size: 10px; font-weight: 600;
-      color: var(--vscode-descriptionForeground);
-      text-transform: uppercase; letter-spacing: 0.05em;
-      margin-bottom: 4px;
+    #settings-panel.open {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+      visibility: visible;
+      transition:
+        opacity 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        visibility 0s;
     }
-    .settings-chain-toggle { display: inline-flex; gap: 4px; }
-    .settings-chain-opt {
-      font-size: 11px; padding: 3px 10px; border-radius: 3px; cursor: pointer;
-      background: transparent; border: 1px solid rgba(128,128,128,0.35);
+    .settings-header {
+      padding: 10px 14px 9px;
+      border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.2));
+      background: linear-gradient(
+        to bottom,
+        rgba(255,255,255,0.025),
+        transparent
+      );
+    }
+    .settings-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       color: var(--vscode-foreground);
+      opacity: 0.85;
     }
+    .settings-body {
+      padding: 12px 14px 4px;
+      overflow-y: auto;
+      flex: 1 1 auto;
+    }
+    .settings-section {
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.12));
+    }
+    .settings-section:last-of-type {
+      margin-bottom: 4px;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+    .settings-section-title {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.7;
+      margin-bottom: 8px;
+      padding-left: 1px;
+    }
+    .settings-row { margin-bottom: 10px; }
+    .settings-row:last-child { margin-bottom: 0; }
+    .settings-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--vscode-foreground);
+      opacity: 0.92;
+      margin-bottom: 5px;
+      letter-spacing: 0.01em;
+    }
+    .settings-chain-toggle {
+      display: inline-flex;
+      gap: 0;
+      background: var(--vscode-input-background, rgba(0,0,0,0.2));
+      border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.25));
+      border-radius: 5px;
+      padding: 2px;
+    }
+    .settings-chain-opt {
+      font-size: 11px;
+      padding: 4px 14px;
+      border-radius: 3px;
+      cursor: pointer;
+      background: transparent;
+      border: none;
+      color: var(--vscode-foreground);
+      opacity: 0.7;
+      transition: background 120ms, color 120ms, opacity 120ms;
+    }
+    .settings-chain-opt:hover { opacity: 1; }
     .settings-chain-opt.active {
       background: var(--vscode-button-background, #0e639c);
-      border-color: var(--vscode-button-background, #0e639c);
       color: var(--vscode-button-foreground, #fff);
+      opacity: 1;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
     }
     .settings-select {
-      width: 100%; box-sizing: border-box; padding: 3px 6px; font: inherit; font-size: 11px;
-      background: var(--vscode-input-background); color: var(--vscode-input-foreground);
-      border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.35)); border-radius: 3px;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 5px 8px;
+      font: inherit;
+      font-size: 11.5px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.25));
+      border-radius: 4px;
+      transition: border-color 120ms, box-shadow 120ms;
+    }
+    .settings-select:hover {
+      border-color: var(--vscode-input-border, rgba(128,128,128,0.45));
+    }
+    .settings-select:focus {
+      outline: none;
+      border-color: var(--vscode-focusBorder, #007fd4);
+      box-shadow: 0 0 0 1px var(--vscode-focusBorder, #007fd4);
     }
     .settings-hint {
-      margin-top: 4px; font-size: 10px; line-height: 1.4;
+      margin-top: 5px;
+      font-size: 10px;
+      line-height: 1.45;
       color: var(--vscode-descriptionForeground);
+      opacity: 0.85;
     }
     .settings-actions {
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 9px 14px;
+      border-top: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.2));
+      background: linear-gradient(
+        to top,
+        rgba(0,0,0,0.18),
+        transparent
+      );
     }
-    #settings-status { font-size: 10px; color: var(--vscode-descriptionForeground); }
+    #settings-status {
+      font-size: 10.5px;
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.85;
+      transition: opacity 200ms;
+    }
     .settings-save {
-      font-size: 11px; padding: 4px 12px; border-radius: 3px; cursor: pointer;
+      font-size: 11.5px;
+      font-weight: 500;
+      padding: 5px 16px;
+      border-radius: 4px;
+      cursor: pointer;
       background: var(--vscode-button-background, #0e639c);
       color: var(--vscode-button-foreground, #fff);
       border: 1px solid transparent;
+      transition: background 120ms, transform 80ms;
     }
     .settings-save:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+    .settings-save:active { transform: translateY(1px); }
+    /* Custom scrollbar inside the body so it blends */
+    .settings-body::-webkit-scrollbar { width: 6px; }
+    .settings-body::-webkit-scrollbar-thumb {
+      background: rgba(128,128,128,0.25);
+      border-radius: 3px;
+    }
+    .settings-body::-webkit-scrollbar-thumb:hover {
+      background: rgba(128,128,128,0.4);
+    }
     #prefetch-indicator {
       font-size: 11px; color: var(--vscode-descriptionForeground);
       padding: 3px 8px; display: flex; align-items: center; gap: 6px;
@@ -1502,6 +1988,239 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     }
     .overlay-close:hover { color: var(--vscode-foreground); background: rgba(128,128,128,0.15); }
     .overlay-body { padding: 10px 14px 14px; }
+    /* Nav-action badge (active task count) */
+    .nav-badge {
+      position: absolute;
+      top: -2px; right: -2px;
+      min-width: 14px; height: 14px;
+      padding: 0 3px;
+      border-radius: 7px;
+      background: var(--vscode-statusBarItem-prominentBackground, #007fd4);
+      color: var(--vscode-statusBarItem-prominentForeground, #fff);
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 14px;
+      text-align: center;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+    /* Generic popup menu (used by new-chat dropdown). */
+    .popup-menu {
+      position: absolute;
+      top: 100%; right: 0;
+      margin-top: 4px;
+      min-width: 180px;
+      background: var(--vscode-editorHoverWidget-background, #1e1e1e);
+      border: 1px solid var(--vscode-editorHoverWidget-border, rgba(128,128,128,0.4));
+      border-radius: 6px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+      padding: 4px;
+      z-index: 160;
+    }
+    .popup-item {
+      display: block; width: 100%;
+      text-align: left;
+      padding: 5px 10px;
+      background: transparent; border: none;
+      color: var(--vscode-foreground);
+      font-size: 11.5px; cursor: pointer;
+      border-radius: 3px;
+    }
+    .popup-item:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.12)); }
+    .popup-divider { height: 1px; background: rgba(128,128,128,0.18); margin: 4px 0; }
+    .popup-section-title {
+      font-size: 9px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--vscode-descriptionForeground);
+      padding: 4px 10px 2px; opacity: 0.7;
+    }
+    /* Tasks overlay rows */
+    .task-row {
+      display: flex; flex-direction: column; gap: 4px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(128,128,128,0.12);
+      font-size: 12px;
+    }
+    .task-row:last-child { border-bottom: none; }
+    .task-row-head {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .task-status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .task-status-dot.running {
+      background: var(--vscode-charts-green, #3fb950);
+      box-shadow: 0 0 6px var(--vscode-charts-green, #3fb950);
+      animation: task-pulse 1.4s ease-in-out infinite;
+    }
+    .task-status-dot.queued { background: var(--vscode-charts-yellow, #e5c07b); }
+    .task-status-dot.succeeded { background: var(--vscode-charts-green, #3fb950); opacity: 0.6; }
+    .task-status-dot.failed,
+    .task-status-dot.timed_out,
+    .task-status-dot.cancelled,
+    .task-status-dot.lost {
+      background: var(--vscode-charts-red, #f85149); opacity: 0.7;
+    }
+    @keyframes task-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+    .task-label {
+      flex: 1; min-width: 0;
+      font-weight: 500;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .task-status-text {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--vscode-descriptionForeground);
+      flex-shrink: 0;
+    }
+    .task-cmd {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 10.5px;
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.85;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      padding-left: 16px;
+    }
+    .task-actions {
+      display: flex; gap: 8px;
+      padding-left: 16px;
+      margin-top: 2px;
+    }
+    .task-action-btn {
+      background: transparent;
+      border: 1px solid rgba(128,128,128,0.3);
+      color: var(--vscode-foreground);
+      font-size: 10.5px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      opacity: 0.85;
+    }
+    .task-action-btn:hover { opacity: 1; background: rgba(128,128,128,0.12); }
+    .task-action-btn.danger:hover {
+      border-color: var(--vscode-charts-red, #f85149);
+      color: var(--vscode-charts-red, #f85149);
+    }
+    .task-log-pre {
+      margin: 6px 0 0 16px;
+      padding: 8px 10px;
+      background: var(--vscode-textCodeBlock-background, rgba(0,0,0,0.25));
+      border-radius: 4px;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 10.5px;
+      color: var(--vscode-foreground);
+      max-height: 240px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    /* Import candidate rows */
+    .import-row {
+      display: flex; flex-direction: column; gap: 3px;
+      padding: 10px 12px;
+      border-radius: 5px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      margin-bottom: 4px;
+    }
+    .import-row:hover {
+      background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.08));
+      border-color: rgba(128,128,128,0.18);
+    }
+    .import-row-summary {
+      font-size: 12px;
+      color: var(--vscode-foreground);
+      overflow: hidden; text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      line-height: 1.35;
+    }
+    .import-row-meta {
+      font-size: 10.5px;
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.85;
+      display: flex; gap: 8px;
+    }
+    .import-row-meta .mono {
+      font-family: var(--vscode-editor-font-family, monospace);
+    }
+    /* Toast stack */
+    #toast-stack {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      display: flex; flex-direction: column; gap: 6px;
+      z-index: 300;
+      pointer-events: none;
+      max-width: calc(100% - 32px);
+    }
+    .toast {
+      background: var(--vscode-notifications-background, #1e1e1e);
+      border: 1px solid var(--vscode-notifications-border, rgba(128,128,128,0.3));
+      color: var(--vscode-notifications-foreground, var(--vscode-foreground));
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+      border-radius: 5px;
+      padding: 8px 12px;
+      font-size: 11.5px;
+      max-width: 320px;
+      pointer-events: auto;
+      animation: toast-slide 220ms cubic-bezier(0.2,0.8,0.2,1);
+    }
+    .toast.warning {
+      border-left: 3px solid var(--vscode-editorWarning-foreground, #cca700);
+    }
+    .toast.info {
+      border-left: 3px solid var(--vscode-charts-blue, #0078d4);
+    }
+    @keyframes toast-slide {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    /* Wallet QR popover (toggled from wallet status row) */
+    .wallet-qr-wrap {
+      margin-top: 8px;
+      padding: 10px;
+      border-radius: 6px;
+      background: rgba(0,0,0,0.2);
+      border: 1px solid rgba(128,128,128,0.18);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .wallet-qr-wrap.open { display: flex; }
+    .wallet-qr-svg-host {
+      background: white;
+      padding: 10px;
+      border-radius: 4px;
+      line-height: 0;
+      width: 200px;
+      height: 200px;
+      box-sizing: content-box;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    /* The qrcode lib emits an SVG with viewBox but no explicit width/height,
+       so the browser renders it at the spec-default 300×150 — squashed and
+       overflowing the host. Force the inner SVG to fill the host box so the
+       QR is square and crisp at 200×200. */
+    .wallet-qr-svg-host svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      shape-rendering: crispEdges;
+    }
+    .wallet-qr-caption {
+      font-size: 10.5px;
+      color: var(--vscode-descriptionForeground);
+      text-align: center;
+      max-width: 220px;
+      line-height: 1.35;
+    }
     /* Doctor check rows */
     .check-row {
       display: flex; align-items: flex-start; gap: 8px;
@@ -2010,6 +2729,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       border-radius: 6px;
       cursor: pointer;
       margin-bottom: 2px;
+      position: relative;
     }
     .history-item:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.12)); }
     .history-item .hi-title {
@@ -2018,12 +2738,79 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      padding-right: 44px; /* leave room for action buttons */
     }
     .history-item .hi-meta {
       font-size: 10px;
       color: var(--vscode-descriptionForeground);
       margin-top: 2px;
     }
+    /* Per-row action buttons (rename / delete) — shown on hover only so
+       the resting state stays clean. Absolute-positioned inside the row
+       so they don't push the title around. */
+    .history-item .hi-actions {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      display: flex;
+      gap: 2px;
+      opacity: 0;
+      transition: opacity 120ms;
+    }
+    .history-item:hover .hi-actions { opacity: 1; }
+    .hi-action-btn {
+      background: transparent;
+      border: none;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 3px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .hi-action-btn:hover {
+      background: rgba(128,128,128,0.18);
+      color: var(--vscode-foreground);
+    }
+    .hi-action-btn.danger:hover {
+      color: var(--vscode-charts-red, #f85149);
+      background: rgba(248,81,73,0.12);
+    }
+    /* Inline rename input replaces the title row in-place. Same font / size
+       as the static title so the row doesn't jump on edit. */
+    .history-item .hi-title-input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 2px 4px;
+      font-size: 12px;
+      font-family: inherit;
+      color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background, rgba(0,0,0,0.2));
+      border: 1px solid var(--vscode-focusBorder, #007fd4);
+      border-radius: 3px;
+      outline: none;
+    }
+    /* Delete confirmation inline pill — replaces actions row briefly. */
+    .history-item .hi-confirm {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      display: flex;
+      gap: 2px;
+      align-items: center;
+      font-size: 10px;
+      color: var(--vscode-charts-red, #f85149);
+      background: var(--vscode-editor-background, #1e1e1e);
+      border: 1px solid var(--vscode-charts-red, #f85149);
+      border-radius: 3px;
+      padding: 1px 4px;
+    }
+    .history-item .hi-confirm button {
+      background: transparent; border: none; cursor: pointer;
+      color: inherit; font-size: 10px; padding: 0 4px;
+    }
+    .history-item .hi-confirm button:hover { text-decoration: underline; }
     .history-empty {
       padding: 20px 12px;
       font-size: 11px;
@@ -2116,11 +2903,102 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     </div>
   </div>
 
+  <!-- ── Tasks overlay (background tasks spawned via Detach tool) ── -->
+  <div id="tasks-overlay" class="overlay-panel hidden">
+    <div class="overlay-box">
+      <div class="overlay-header">
+        <h3>Background Tasks</h3>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button class="overlay-close" id="tasks-refresh" title="Refresh">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 1 1-1.3-3.5M13.5 2v2.5H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="overlay-close" id="tasks-close">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="overlay-body" id="tasks-body">
+        <div class="check-row"><span class="check-detail">Loading…</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GPU sandboxes overlay (Modal sandbox lifecycle) ── -->
+  <div id="sandboxes-overlay" class="overlay-panel hidden">
+    <div class="overlay-box">
+      <div class="overlay-header">
+        <h3>GPU Sandboxes</h3>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button class="overlay-close" id="sandboxes-cleanup" title="Terminate ALL active sandboxes" style="color:var(--vscode-charts-red,#f85149);">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M5 4V2h6v2M6 7v5M10 7v5M4 4l1 10h6l1-10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="overlay-close" id="sandboxes-refresh" title="Refresh">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 1 1-1.3-3.5M13.5 2v2.5H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="overlay-close" id="sandboxes-close">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="overlay-body" id="sandboxes-body">
+        <div class="check-row"><span class="check-detail">Loading…</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Import session overlay ── -->
+  <div id="import-overlay" class="overlay-panel hidden">
+    <div class="overlay-box">
+      <div class="overlay-header">
+        <h3 id="import-title">Import session</h3>
+        <button class="overlay-close" id="import-close">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="overlay-body" id="import-body">
+        <div class="check-row"><span class="check-detail">Scanning…</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Toast notifications (rate-limit, etc.) ── -->
+  <div id="toast-stack" aria-live="polite"></div>
+
+  <!-- ── Wallet popover (address + QR + copy) ── -->
+  <div id="wallet-popover">
+    <div class="wallet-pop-title">Wallet</div>
+    <div class="wallet-pop-row">
+      <span class="wallet-pop-row-label">Chain</span>
+      <span id="wallet-pop-chain" style="font-size:11px;text-transform:capitalize;">—</span>
+    </div>
+    <div class="wallet-pop-row">
+      <span class="wallet-pop-row-label">Balance</span>
+      <span id="wallet-pop-balance" style="font-size:11px;color:var(--vscode-charts-green,#3fb950);">—</span>
+    </div>
+    <div class="wallet-pop-row" style="align-items:flex-start;">
+      <span class="wallet-pop-row-label" style="padding-top:3px;">Address</span>
+      <span id="wallet-pop-addr" class="wallet-pop-addr" title="Click to copy">—</span>
+      <button type="button" class="wallet-pop-copy" id="wallet-pop-copy">Copy</button>
+    </div>
+    <div id="wallet-qr-host" class="wallet-qr-wrap">
+      <div id="wallet-qr-svg" class="wallet-qr-svg-host"></div>
+      <div id="wallet-qr-caption" class="wallet-qr-caption">Scan with a USDC-capable wallet to send funds.</div>
+    </div>
+  </div>
+
   <!-- ── Chat view ── -->
   <div id="view-chat">
     <div id="nav-header">
       <span id="nav-title">Untitled</span>
       <div class="nav-actions">
+        <button id="btn-tasks" title="Background tasks" style="position:relative;">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="2.5" rx="1.2" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="6.75" width="12" height="2.5" rx="1.2" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="10.5" width="12" height="2.5" rx="1.2" stroke="currentColor" stroke-width="1.3"/></svg>
+          <span id="tasks-badge" class="nav-badge" style="display:none;">0</span>
+        </button>
+        <button id="btn-sandboxes" title="Active GPU sandboxes" style="position:relative;">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5l5 2.5v4.5c0 3-2 5-5 6-3-1-5-3-5-6V4l5-2.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M6 8l1.5 1.5L11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="sandboxes-badge" class="nav-badge" style="display:none;">0</span>
+        </button>
         <button id="btn-doctor" title="System Health">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2a5 5 0 1 0 0 10A5 5 0 0 0 8 2z" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v3l2 1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M5.5 13.5c.8.3 1.6.5 2.5.5s1.7-.2 2.5-.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         </button>
@@ -2130,9 +3008,21 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         <button id="btn-history" title="History">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.5V8l2.2 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         </button>
-        <button id="btn-new" title="New chat">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 5.5v5M5.5 8h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-        </button>
+        <div id="new-chat-wrap" style="position:relative;display:inline-flex;align-items:center;">
+          <button id="btn-new" title="New chat" style="padding-right:2px;">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 5.5v5M5.5 8h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          </button>
+          <button id="btn-new-menu" title="More options" style="padding:4px 3px;opacity:0.6;">
+            <svg width="8" height="8" viewBox="0 0 16 16" fill="none"><path d="M3 6l5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div id="new-chat-menu" class="popup-menu" style="display:none;">
+            <button type="button" class="popup-item" data-action="new">New chat</button>
+            <div class="popup-divider"></div>
+            <div class="popup-section-title">Import session from</div>
+            <button type="button" class="popup-item" data-action="import-claude">Claude Code…</button>
+            <button type="button" class="popup-item" data-action="import-codex">Codex…</button>
+          </div>
+        </div>
       </div>
     </div>
     <!-- ── History dropdown ── -->
@@ -2176,7 +3066,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     <div id="prefetch-indicator" style="display:none;"></div>
     <div class="meta" id="status"></div>
   <div id="composer">
-    <input type="text" id="in" placeholder="Plan, @ for context, / for commands" autocomplete="off" />
+    <textarea id="in" rows="1" placeholder="Plan, @ for context, / for commands. Enter to send, Shift+Enter for newline." autocomplete="off"></textarea>
     <div id="composer-toolbar">
       <div style="position:relative;display:flex;align-items:center;gap:2px;">
         <button type="button" id="model-picker-btn">
@@ -2208,25 +3098,42 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
             </svg>
           </button>
           <div id="settings-panel">
-            <div class="settings-row">
-              <label class="settings-label">Payment chain</label>
-              <div class="settings-chain-toggle">
-                <button type="button" class="settings-chain-opt" data-chain="base">Base</button>
-                <button type="button" class="settings-chain-opt" data-chain="solana">Solana</button>
+            <div class="settings-header">
+              <span class="settings-title">Settings</span>
+            </div>
+            <div class="settings-body">
+              <div class="settings-section">
+                <div class="settings-section-title">Wallet</div>
+                <div class="settings-row">
+                  <label class="settings-label">Payment chain</label>
+                  <div class="settings-chain-toggle">
+                    <button type="button" class="settings-chain-opt" data-chain="base">Base</button>
+                    <button type="button" class="settings-chain-opt" data-chain="solana">Solana</button>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div class="settings-row">
-              <label class="settings-label" for="settings-img">Default image model</label>
-              <select id="settings-img" class="settings-select"><option value="__unset__">Ask each time</option></select>
-            </div>
-            <div class="settings-row">
-              <label class="settings-label" for="settings-vid">Default video model</label>
-              <select id="settings-vid" class="settings-select"><option value="__unset__">Ask each time</option></select>
-            </div>
-            <div class="settings-row">
-              <label class="settings-label" for="settings-spend-cap">Per-turn spend cap (USD)</label>
-              <input id="settings-spend-cap" class="settings-select" type="number" min="0" step="0.05" placeholder="0.25 (default) — 0 to disable" />
-              <div class="settings-hint">Stops a single user message once cumulative cost crosses this. Empty = $0.25 default. 0 = no cap.</div>
+
+              <div class="settings-section">
+                <div class="settings-section-title">Media</div>
+                <div class="settings-row">
+                  <label class="settings-label" for="settings-img">Default image model</label>
+                  <select id="settings-img" class="settings-select"><option value="__unset__">Ask each time</option></select>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="settings-vid">Default video model</label>
+                  <select id="settings-vid" class="settings-select"><option value="__unset__">Ask each time</option></select>
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="settings-batch-concurrency">Parallel image / video</label>
+                  <input id="settings-batch-concurrency" class="settings-select" type="number" min="1" max="12" step="1" placeholder="4 (default)" />
+                  <div class="settings-hint">Max ImageGen / VideoGen running at once when the agent emits a batch. 1 = serial. 12 = max.</div>
+                </div>
+              </div>
+
+              <!-- Spending-limits section was removed in v3.11.0 sync —
+                   core no longer enforces a per-turn cap (wallet balance
+                   is the only ceiling). Re-add here if a future feature
+                   reintroduces a tunable spend limit. -->
             </div>
             <div class="settings-actions">
               <span id="settings-status"></span>
@@ -2458,6 +3365,43 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       card('Proj/mo', '$' + ((data.projections && data.projections.projectedMonthlyUsd) || 0).toFixed(2));
       card('Saved vs Opus', '$' + (data.savedVsOpusUsd || 0).toFixed(3));
       insightsBody.appendChild(summary);
+
+      // ── Cost breakdown by capability category (chat / media / sandbox) ──
+      // Pulls byCategory from generateInsights (added 2026-05-02 to surface
+      // Modal sandbox spend explicitly, since per-call cost is small enough
+      // to get hidden in the Top Models bar list otherwise).
+      var cat = data.byCategory;
+      if (cat && (cat.chatCostUsd > 0 || cat.mediaCostUsd > 0 || cat.sandboxCostUsd > 0)) {
+        var catTitle = document.createElement('div');
+        catTitle.className = 'insight-section-title';
+        catTitle.textContent = 'By Category';
+        insightsBody.appendChild(catTitle);
+
+        var catSummary = document.createElement('div');
+        catSummary.className = 'insight-summary';
+        function catCard(label, val, sub) {
+          var c = document.createElement('div'); c.className = 'insight-card';
+          var l = document.createElement('div'); l.className = 'insight-card-label'; l.textContent = label;
+          var v = document.createElement('div'); v.className = 'insight-card-val'; v.textContent = val;
+          c.appendChild(l); c.appendChild(v);
+          if (sub) {
+            var s = document.createElement('div');
+            s.style.cssText = 'font-size:9.5px;color:var(--vscode-descriptionForeground);margin-top:2px;opacity:0.85;';
+            s.textContent = sub;
+            c.appendChild(s);
+          }
+          catSummary.appendChild(c);
+        }
+        catCard('Chat', '$' + (cat.chatCostUsd || 0).toFixed(3), 'LLM token spend');
+        catCard('Media', '$' + (cat.mediaCostUsd || 0).toFixed(3), 'image/video/music');
+        catCard(
+          'Sandbox',
+          '$' + (cat.sandboxCostUsd || 0).toFixed(3),
+          (cat.sandboxRequests || 0) + ' Modal calls'
+        );
+        insightsBody.appendChild(catSummary);
+      }
+
       // Top models
       var models = (data.byModel || []).slice(0, 5);
       if (models.length > 0) {
@@ -2467,7 +3411,22 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         models.forEach(function(m) {
           var row = document.createElement('div'); row.className = 'insight-model-row';
           var name = document.createElement('span'); name.className = 'insight-model-name';
-          name.textContent = m.model.split('/').pop() || m.model;
+          // Prettify Modal entries — modal/T4 → "Modal T4 GPU",
+          // modal/exec → "Modal exec". Other models keep the
+          // last path segment to stay consistent with previous UX.
+          var displayName;
+          if (m.model.indexOf('modal/') === 0) {
+            var tier = m.model.slice('modal/'.length);
+            if (tier === 'cpu') displayName = '🖥 Modal CPU';
+            else if (tier === 'exec' || tier === 'status' || tier === 'terminate') {
+              displayName = '🖥 Modal ' + tier;
+            } else {
+              displayName = '🖥 Modal ' + tier + ' GPU';
+            }
+          } else {
+            displayName = m.model.split('/').pop() || m.model;
+          }
+          name.textContent = displayName;
           var barWrap = document.createElement('div'); barWrap.className = 'insight-bar-wrap';
           var bar = document.createElement('div'); bar.className = 'insight-bar';
           bar.style.width = Math.round((m.costUsd / maxCost) * 100) + '%';
@@ -2482,6 +3441,397 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       }
     }
 
+    // ── Tasks overlay ──
+    var tasksOverlay = document.getElementById('tasks-overlay');
+    var tasksBody = document.getElementById('tasks-body');
+    var tasksBadge = document.getElementById('tasks-badge');
+    var tasksAutoRefresh = null;
+    var openTaskLogId = null;
+    document.getElementById('btn-tasks').addEventListener('click', function() {
+      tasksBody.innerHTML = '<div class="check-row"><span class="check-detail">Loading…</span></div>';
+      tasksOverlay.classList.remove('hidden');
+      vscode.postMessage({ type: 'loadTasks' });
+      // Auto-refresh while overlay is open so running tasks tick.
+      if (tasksAutoRefresh) clearInterval(tasksAutoRefresh);
+      tasksAutoRefresh = setInterval(function() {
+        if (!tasksOverlay.classList.contains('hidden')) {
+          vscode.postMessage({ type: 'loadTasks' });
+          if (openTaskLogId) vscode.postMessage({ type: 'tailTaskLog', text: openTaskLogId });
+        }
+      }, 3000);
+    });
+    function closeTasks() {
+      tasksOverlay.classList.add('hidden');
+      openTaskLogId = null;
+      if (tasksAutoRefresh) { clearInterval(tasksAutoRefresh); tasksAutoRefresh = null; }
+    }
+    document.getElementById('tasks-close').addEventListener('click', closeTasks);
+    document.getElementById('tasks-refresh').addEventListener('click', function() {
+      vscode.postMessage({ type: 'loadTasks' });
+      if (openTaskLogId) vscode.postMessage({ type: 'tailTaskLog', text: openTaskLogId });
+    });
+    tasksOverlay.addEventListener('click', function(e) {
+      if (e.target === tasksOverlay) closeTasks();
+    });
+    function fmtTaskTime(ms) {
+      if (!ms) return '—';
+      var d = new Date(ms);
+      var now = Date.now();
+      var diff = now - ms;
+      if (diff < 60000) return Math.floor(diff / 1000) + 's ago';
+      if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+      return d.toLocaleDateString();
+    }
+    function renderTasks(tasks, error) {
+      tasksBody.innerHTML = '';
+      if (error) {
+        tasksBody.innerHTML = '<div class="check-row"><span class="check-detail" style="color:var(--vscode-inputValidation-errorForeground,#f44)">Error: ' + error + '</span></div>';
+        return;
+      }
+      var activeCount = 0;
+      tasks.forEach(function(t) {
+        if (t.status === 'running' || t.status === 'queued') activeCount++;
+      });
+      if (tasksBadge) {
+        if (activeCount > 0) {
+          tasksBadge.textContent = String(activeCount);
+          tasksBadge.style.display = '';
+        } else {
+          tasksBadge.style.display = 'none';
+        }
+      }
+      if (tasks.length === 0) {
+        tasksBody.innerHTML = '<div class="check-row"><span class="check-detail">No tasks yet. Detached jobs spawned by the agent appear here.</span></div>';
+        return;
+      }
+      tasks.forEach(function(t) {
+        var row = document.createElement('div');
+        row.className = 'task-row';
+        var head = document.createElement('div'); head.className = 'task-row-head';
+        var dot = document.createElement('span'); dot.className = 'task-status-dot ' + t.status;
+        var label = document.createElement('span'); label.className = 'task-label';
+        label.textContent = t.label || t.runId.slice(0, 12);
+        var status = document.createElement('span'); status.className = 'task-status-text';
+        var when = t.endedAt ? fmtTaskTime(t.endedAt) : t.startedAt ? fmtTaskTime(t.startedAt) : fmtTaskTime(t.createdAt);
+        status.textContent = t.status + ' · ' + when;
+        head.appendChild(dot); head.appendChild(label); head.appendChild(status);
+        row.appendChild(head);
+
+        if (t.command) {
+          var cmd = document.createElement('div'); cmd.className = 'task-cmd';
+          cmd.textContent = '$ ' + t.command;
+          row.appendChild(cmd);
+        }
+        if (t.terminalSummary || t.progressSummary || t.error) {
+          var sum = document.createElement('div'); sum.className = 'task-cmd';
+          sum.style.opacity = '1';
+          sum.textContent = t.error ? '✗ ' + t.error : (t.terminalSummary || t.progressSummary);
+          row.appendChild(sum);
+        }
+
+        var actions = document.createElement('div'); actions.className = 'task-actions';
+        var tailBtn = document.createElement('button'); tailBtn.className = 'task-action-btn';
+        tailBtn.textContent = openTaskLogId === t.runId ? 'Hide log' : 'View log';
+        tailBtn.addEventListener('click', function() {
+          if (openTaskLogId === t.runId) {
+            openTaskLogId = null;
+            vscode.postMessage({ type: 'loadTasks' });
+          } else {
+            openTaskLogId = t.runId;
+            vscode.postMessage({ type: 'tailTaskLog', text: t.runId });
+          }
+        });
+        actions.appendChild(tailBtn);
+        if (t.status === 'running' || t.status === 'queued') {
+          var cancelBtn = document.createElement('button');
+          cancelBtn.className = 'task-action-btn danger';
+          cancelBtn.textContent = 'Cancel';
+          cancelBtn.addEventListener('click', function() {
+            vscode.postMessage({ type: 'cancelTask', text: t.runId });
+            cancelBtn.disabled = true;
+            cancelBtn.textContent = 'Cancelling…';
+          });
+          actions.appendChild(cancelBtn);
+        }
+        row.appendChild(actions);
+
+        if (openTaskLogId === t.runId) {
+          var logHost = document.createElement('pre');
+          logHost.className = 'task-log-pre';
+          logHost.id = 'task-log-' + t.runId;
+          logHost.textContent = '(loading…)';
+          row.appendChild(logHost);
+        }
+
+        tasksBody.appendChild(row);
+      });
+    }
+    function renderTaskLog(runId, log) {
+      if (openTaskLogId !== runId) return;
+      var host = document.getElementById('task-log-' + runId);
+      if (host) host.textContent = log || '(no output yet)';
+    }
+
+    // ── GPU Sandboxes overlay ──
+    var sandboxesOverlay = document.getElementById('sandboxes-overlay');
+    var sandboxesBody = document.getElementById('sandboxes-body');
+    var sandboxesBadge = document.getElementById('sandboxes-badge');
+    var sandboxesAutoRefresh = null;
+    document.getElementById('btn-sandboxes').addEventListener('click', function() {
+      sandboxesBody.innerHTML = '<div class="check-row"><span class="check-detail">Loading…</span></div>';
+      sandboxesOverlay.classList.remove('hidden');
+      vscode.postMessage({ type: 'loadSandboxes' });
+      if (sandboxesAutoRefresh) clearInterval(sandboxesAutoRefresh);
+      sandboxesAutoRefresh = setInterval(function() {
+        if (!sandboxesOverlay.classList.contains('hidden')) {
+          vscode.postMessage({ type: 'loadSandboxes' });
+        }
+      }, 5000);
+    });
+    function closeSandboxes() {
+      sandboxesOverlay.classList.add('hidden');
+      if (sandboxesAutoRefresh) { clearInterval(sandboxesAutoRefresh); sandboxesAutoRefresh = null; }
+    }
+    document.getElementById('sandboxes-close').addEventListener('click', closeSandboxes);
+    document.getElementById('sandboxes-refresh').addEventListener('click', function() {
+      vscode.postMessage({ type: 'loadSandboxes' });
+    });
+    document.getElementById('sandboxes-cleanup').addEventListener('click', function() {
+      // Confirm — terminating everything is destructive (and costs $0.001 each).
+      var n = sandboxesBody.querySelectorAll('.sandbox-row').length;
+      if (n === 0) return;
+      if (!window.confirm('Terminate all ' + n + ' sandboxes? Each terminate costs $0.001.')) return;
+      vscode.postMessage({ type: 'cleanupSandboxes' });
+      sandboxesBody.innerHTML = '<div class="check-row"><span class="check-detail">Terminating…</span></div>';
+    });
+    sandboxesOverlay.addEventListener('click', function(e) {
+      if (e.target === sandboxesOverlay) closeSandboxes();
+    });
+    function fmtSandboxAge(createdMs) {
+      var diff = Date.now() - createdMs;
+      if (diff < 60000) return Math.floor(diff / 1000) + 's ago';
+      if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+      return Math.floor(diff / 3600000) + 'h ago';
+    }
+    function gpuLabel(tier) {
+      if (tier === 'cpu') return 'CPU only';
+      return 'GPU ' + tier;
+    }
+    function renderSandboxes(items, error) {
+      sandboxesBody.innerHTML = '';
+      if (error) {
+        sandboxesBody.innerHTML = '<div class="check-row"><span class="check-detail" style="color:var(--vscode-inputValidation-errorForeground,#f44)">Error: ' + error + '</span></div>';
+        return;
+      }
+      if (sandboxesBadge) {
+        if (items.length > 0) {
+          sandboxesBadge.textContent = String(items.length);
+          sandboxesBadge.style.display = '';
+        } else {
+          sandboxesBadge.style.display = 'none';
+        }
+      }
+      if (items.length === 0) {
+        sandboxesBody.innerHTML = '<div class="check-row"><span class="check-detail">No active sandboxes. Created via ModalCreate appear here.</span></div>';
+        return;
+      }
+      items.forEach(function(s) {
+        var row = document.createElement('div');
+        row.className = 'task-row sandbox-row';
+        var head = document.createElement('div'); head.className = 'task-row-head';
+        var dot = document.createElement('span'); dot.className = 'task-status-dot running';
+        var label = document.createElement('span'); label.className = 'task-label';
+        label.textContent = s.id;
+        label.style.fontFamily = 'var(--vscode-editor-font-family, monospace)';
+        label.style.fontSize = '11px';
+        var status = document.createElement('span'); status.className = 'task-status-text';
+        status.textContent = gpuLabel(s.gpu) + ' · ' + fmtSandboxAge(s.createdAt);
+        head.appendChild(dot); head.appendChild(label); head.appendChild(status);
+        row.appendChild(head);
+        if (s.timeoutSeconds) {
+          var meta = document.createElement('div'); meta.className = 'task-cmd';
+          var ageS = Math.floor((Date.now() - s.createdAt) / 1000);
+          var remaining = Math.max(0, s.timeoutSeconds - ageS);
+          meta.textContent = 'auto-terminates in ' + Math.floor(remaining / 60) + 'm ' + (remaining % 60) + 's';
+          row.appendChild(meta);
+        }
+        sandboxesBody.appendChild(row);
+      });
+    }
+
+    // ── Import session overlay ──
+    var importOverlay = document.getElementById('import-overlay');
+    var importBody = document.getElementById('import-body');
+    var importTitle = document.getElementById('import-title');
+    function openImport(source) {
+      importTitle.textContent = source === 'codex' ? 'Import from Codex' : 'Import from Claude Code';
+      importBody.innerHTML = '<div class="check-row"><span class="check-detail">Scanning…</span></div>';
+      importOverlay.classList.remove('hidden');
+      vscode.postMessage({ type: 'listImportCandidates', text: source });
+    }
+    document.getElementById('import-close').addEventListener('click', function() {
+      importOverlay.classList.add('hidden');
+    });
+    importOverlay.addEventListener('click', function(e) {
+      if (e.target === importOverlay) importOverlay.classList.add('hidden');
+    });
+    function renderImportCandidates(source, candidates, error) {
+      importBody.innerHTML = '';
+      if (error) {
+        importBody.innerHTML = '<div class="check-row"><span class="check-detail" style="color:var(--vscode-inputValidation-errorForeground,#f44)">Error: ' + error + '</span></div>';
+        return;
+      }
+      if (!candidates || candidates.length === 0) {
+        var label = source === 'codex' ? 'Codex' : 'Claude Code';
+        importBody.innerHTML =
+          '<div class="check-row"><span class="check-detail">No ' + label + ' sessions found. ' +
+          (source === 'codex' ? 'Looked in ~/.codex/sessions and ~/.codex/archived_sessions.' : 'Looked in ~/.claude/projects.') +
+          '</span></div>';
+        return;
+      }
+      candidates.forEach(function(c) {
+        var row = document.createElement('div'); row.className = 'import-row';
+        var s = document.createElement('div'); s.className = 'import-row-summary';
+        s.textContent = c.summary || '(no summary)';
+        var meta = document.createElement('div'); meta.className = 'import-row-meta';
+        var idSpan = document.createElement('span'); idSpan.className = 'mono';
+        idSpan.textContent = (c.id || '').slice(0, 8);
+        var when = document.createElement('span');
+        when.textContent = fmtTaskTime(c.updatedAt);
+        var cwd = document.createElement('span');
+        if (c.cwd) {
+          cwd.textContent = '· ' + c.cwd.split('/').slice(-2).join('/');
+          cwd.style.opacity = '0.7';
+        }
+        meta.appendChild(idSpan); meta.appendChild(when);
+        if (c.cwd) meta.appendChild(cwd);
+        row.appendChild(s); row.appendChild(meta);
+        row.addEventListener('click', function() {
+          importBody.innerHTML = '<div class="check-row"><span class="check-detail">Importing…</span></div>';
+          vscode.postMessage({
+            type: 'importSession',
+            settings: { source: source, id: c.id },
+          });
+        });
+        importBody.appendChild(row);
+      });
+    }
+
+    // ── New chat dropdown menu ──
+    var newChatMenu = document.getElementById('new-chat-menu');
+    var btnNewMenu = document.getElementById('btn-new-menu');
+    if (btnNewMenu && newChatMenu) {
+      btnNewMenu.addEventListener('click', function(e) {
+        e.stopPropagation();
+        newChatMenu.style.display = newChatMenu.style.display === 'none' ? 'block' : 'none';
+      });
+      newChatMenu.addEventListener('click', function(e) {
+        var btn = e.target.closest && e.target.closest('.popup-item');
+        if (!btn) return;
+        var action = btn.getAttribute('data-action');
+        newChatMenu.style.display = 'none';
+        if (action === 'new') newChat();
+        else if (action === 'import-claude') openImport('claude');
+        else if (action === 'import-codex') openImport('codex');
+      });
+      document.addEventListener('click', function(e) {
+        if (newChatMenu.style.display === 'none') return;
+        var wrap = document.getElementById('new-chat-wrap');
+        if (wrap && !wrap.contains(e.target)) newChatMenu.style.display = 'none';
+      });
+    }
+
+    // ── Toast stack (rate-limit + import notifications) ──
+    var toastStack = document.getElementById('toast-stack');
+    function showToast(text, kind, durationMs) {
+      if (!toastStack) return;
+      var t = document.createElement('div');
+      t.className = 'toast ' + (kind || 'info');
+      t.textContent = text;
+      toastStack.appendChild(t);
+      setTimeout(function() {
+        t.style.transition = 'opacity 240ms';
+        t.style.opacity = '0';
+        setTimeout(function() { try { toastStack.removeChild(t); } catch(e){} }, 260);
+      }, durationMs || 4500);
+    }
+    // Rate-limit detection: when we see a stream error event whose message
+    // looks like 429 / "rate limit", surface as a friendly toast instead
+    // of the raw red stack trace inline.
+    var lastRateLimitToastAt = 0;
+    function maybeShowRateLimitToast(errorText) {
+      if (!errorText) return false;
+      var msg = String(errorText).toLowerCase();
+      var isRateLimit =
+        /\brate.?limit/.test(msg) ||
+        msg.indexOf('429') !== -1 ||
+        msg.indexOf('too many requests') !== -1 ||
+        msg.indexOf('quota exceeded') !== -1;
+      if (!isRateLimit) return false;
+      // Throttle to 1 per 6s so a flurry doesn't stack up.
+      var now = Date.now();
+      if (now - lastRateLimitToastAt < 6000) return true;
+      lastRateLimitToastAt = now;
+      showToast('⏳ Gateway rate-limited — auto-retrying in a few seconds…', 'warning', 5000);
+      return true;
+    }
+
+    // ── Wallet popover (chain-aware QR + copy) ──
+    var walletPopover = document.getElementById('wallet-popover');
+    var walletPopBtn = document.getElementById('wallet-btn');
+    var walletQrHost = document.getElementById('wallet-qr-host');
+    var walletQrSvg = document.getElementById('wallet-qr-svg');
+    var walletQrCaption = document.getElementById('wallet-qr-caption');
+    var walletPopAddr = document.getElementById('wallet-pop-addr');
+    var walletPopChain = document.getElementById('wallet-pop-chain');
+    var walletPopBalance = document.getElementById('wallet-pop-balance');
+    var walletPopCopyBtn = document.getElementById('wallet-pop-copy');
+    var walletQrLoaded = false;
+
+    function copyToClipboard(text) {
+      try {
+        navigator.clipboard.writeText(text);
+        showToast('Copied to clipboard', 'info', 1500);
+      } catch (e) { showToast('Copy failed', 'warning', 2500); }
+    }
+    if (walletPopAddr) {
+      walletPopAddr.addEventListener('click', function() {
+        var t = walletPopAddr.textContent || '';
+        if (t && t !== '—') copyToClipboard(t);
+      });
+    }
+    if (walletPopCopyBtn) {
+      walletPopCopyBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var t = walletPopAddr.textContent || '';
+        if (t && t !== '—') copyToClipboard(t);
+      });
+    }
+
+    if (walletPopBtn && walletPopover) {
+      walletPopBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var isOpen = walletPopover.classList.contains('open');
+        if (isOpen) {
+          walletPopover.classList.remove('open');
+        } else {
+          walletPopover.classList.add('open');
+          // Lazy-load QR on first open; subsequent opens reuse cached SVG.
+          if (!walletQrLoaded) {
+            walletQrSvg.innerHTML = '<div style="font-size:10px;color:var(--vscode-descriptionForeground);">Loading QR…</div>';
+            walletQrHost.classList.add('open');
+            vscode.postMessage({ type: 'loadWalletQr' });
+          }
+        }
+      });
+      document.addEventListener('click', function(e) {
+        if (!walletPopover.classList.contains('open')) return;
+        if (walletPopBtn.contains(e.target) || walletPopover.contains(e.target)) return;
+        walletPopover.classList.remove('open');
+      });
+    }
+
     // ── Trading dashboard button ──
     document.getElementById('trading-btn').addEventListener('click', function() {
       vscode.postMessage({ type: 'openTrading' });
@@ -2492,7 +3842,11 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     var settingsPanel = document.getElementById('settings-panel');
     var settingsImgSel = document.getElementById('settings-img');
     var settingsVidSel = document.getElementById('settings-vid');
-    var settingsSpendCap = document.getElementById('settings-spend-cap');
+    // settings-spend-cap input was removed when core dropped max-turn-spend-usd
+    // in v3.11.0 — keep var as null so any leftover code referencing it
+    // short-circuits cleanly instead of throwing.
+    var settingsSpendCap = null;
+    var settingsBatchConcurrency = document.getElementById('settings-batch-concurrency');
     var settingsStatusEl = document.getElementById('settings-status');
     var pendingChain = 'base';
 
@@ -2552,7 +3906,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           chain: pendingChain,
           'default-image-model': settingsImgSel.value,
           'default-video-model': settingsVidSel.value,
-          'max-turn-spend-usd': (settingsSpendCap && settingsSpendCap.value) || '',
+          'batch-concurrency': (settingsBatchConcurrency && settingsBatchConcurrency.value) || '',
         },
       });
       // Close the popover — dismissing itself is the save confirmation.
@@ -2635,20 +3989,124 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       items.forEach(function(item) {
         var el = document.createElement('div');
         el.className = 'history-item';
+        el.dataset.sessionId = item.id;
+
         var title = document.createElement('div');
         title.className = 'hi-title';
         title.textContent = item.title;
         el.appendChild(title);
+
         var meta = document.createElement('div');
         meta.className = 'hi-meta';
         meta.textContent = item.ago;
         el.appendChild(meta);
+
+        // ── Per-row actions: rename + delete ──
+        var actions = document.createElement('div');
+        actions.className = 'hi-actions';
+
+        var renameBtn = document.createElement('button');
+        renameBtn.type = 'button';
+        renameBtn.className = 'hi-action-btn';
+        renameBtn.title = 'Rename';
+        renameBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L5 13l-3 .5.5-3 9-8z" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        renameBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          beginRename(el, item);
+        });
+        actions.appendChild(renameBtn);
+
+        var deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'hi-action-btn danger';
+        deleteBtn.title = 'Delete';
+        deleteBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+        deleteBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          beginDeleteConfirm(el, item);
+        });
+        actions.appendChild(deleteBtn);
+
+        el.appendChild(actions);
+
         el.addEventListener('click', function() {
+          // Skip if user is editing or confirming on this row
+          if (el.querySelector('.hi-title-input')) return;
+          if (el.querySelector('.hi-confirm')) return;
           isLiveChat = false;
           historyDropdown.classList.remove('open');
           vscode.postMessage({ type: 'loadSession', text: item.id });
         });
         historyList.appendChild(el);
+      });
+    }
+
+    function beginRename(rowEl, item) {
+      var titleEl = rowEl.querySelector('.hi-title');
+      var actionsEl = rowEl.querySelector('.hi-actions');
+      if (!titleEl || titleEl.querySelector('input')) return;
+      if (actionsEl) actionsEl.style.display = 'none';
+      var oldText = titleEl.textContent;
+      titleEl.textContent = '';
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'hi-title-input';
+      input.value = oldText;
+      input.maxLength = 200;
+      titleEl.appendChild(input);
+      try { input.focus(); input.select(); } catch (e) {}
+
+      var done = false;
+      function commit(save) {
+        if (done) return;
+        done = true;
+        var newTitle = input.value.trim();
+        titleEl.textContent = save && newTitle ? newTitle : oldText;
+        if (actionsEl) actionsEl.style.display = '';
+        if (save && newTitle && newTitle !== oldText) {
+          vscode.postMessage({
+            type: 'renameSession',
+            settings: { id: item.id, title: newTitle },
+          });
+        }
+      }
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); commit(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
+      });
+      input.addEventListener('blur', function() { commit(true); });
+    }
+
+    function beginDeleteConfirm(rowEl, item) {
+      var actionsEl = rowEl.querySelector('.hi-actions');
+      if (rowEl.querySelector('.hi-confirm')) return;
+      if (actionsEl) actionsEl.style.display = 'none';
+      var confirm = document.createElement('div');
+      confirm.className = 'hi-confirm';
+      var label = document.createElement('span');
+      label.textContent = 'Delete?';
+      var yes = document.createElement('button');
+      yes.type = 'button';
+      yes.textContent = 'Yes';
+      var no = document.createElement('button');
+      no.type = 'button';
+      no.textContent = 'No';
+      confirm.appendChild(label);
+      confirm.appendChild(yes);
+      confirm.appendChild(no);
+      rowEl.appendChild(confirm);
+
+      yes.addEventListener('click', function(e) {
+        e.stopPropagation();
+        vscode.postMessage({ type: 'deleteSession', text: item.id });
+        // Optimistic removal — host will push fresh historyList anyway.
+        rowEl.style.opacity = '0.5';
+        rowEl.style.pointerEvents = 'none';
+      });
+      no.addEventListener('click', function(e) {
+        e.stopPropagation();
+        rowEl.removeChild(confirm);
+        if (actionsEl) actionsEl.style.display = '';
       });
     }
 
@@ -3532,6 +4990,75 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         renderInsights(m.data, m.error);
         return;
       }
+      if (m.type === 'tasksData') {
+        renderTasks(m.tasks || [], m.error);
+        return;
+      }
+      if (m.type === 'taskLogData') {
+        if (m.error) {
+          showToast('Task log error: ' + m.error, 'warning');
+        } else {
+          renderTaskLog(m.runId, m.log);
+        }
+        return;
+      }
+      if (m.type === 'taskCancelResult') {
+        if (m.ok) showToast('Cancel signal sent', 'info', 2500);
+        else showToast('Cancel failed: ' + (m.reason || 'unknown'), 'warning');
+        vscode.postMessage({ type: 'loadTasks' });
+        return;
+      }
+      if (m.type === 'sandboxesData') {
+        renderSandboxes(m.sandboxes || [], m.error);
+        return;
+      }
+      if (m.type === 'sandboxesCleanup') {
+        if (m.error) {
+          showToast('Cleanup failed: ' + m.error, 'warning');
+        } else {
+          var msg = 'Terminated ' + (m.succeeded || 0) + '/' + (m.attempted || 0) + ' sandboxes';
+          if (m.failed && m.failed.length) msg += ', ' + m.failed.length + ' failed';
+          showToast(msg, m.failed && m.failed.length ? 'warning' : 'info');
+        }
+        return;
+      }
+      if (m.type === 'importCandidates') {
+        renderImportCandidates(m.source, m.candidates || [], m.error);
+        return;
+      }
+      if (m.type === 'importDone') {
+        if (m.error) {
+          importBody.innerHTML = '<div class="check-row"><span class="check-detail" style="color:var(--vscode-inputValidation-errorForeground,#f44)">Import failed: ' + m.error + '</span></div>';
+          showToast('Import failed: ' + m.error, 'warning');
+        } else {
+          importOverlay.classList.add('hidden');
+          showToast('Imported session — continuing the conversation', 'info');
+        }
+        return;
+      }
+      if (m.type === 'walletQrData') {
+        if (m.error) {
+          if (walletQrSvg) walletQrSvg.innerHTML = '';
+          if (walletQrHost) walletQrHost.classList.remove('open');
+          if (walletQrCaption) walletQrCaption.textContent = m.error;
+        } else {
+          if (walletQrSvg && m.svg) walletQrSvg.innerHTML = m.svg;
+          if (walletQrHost) walletQrHost.classList.add('open');
+          if (walletPopAddr && m.address) walletPopAddr.textContent = m.address;
+          if (walletPopChain && m.chain) walletPopChain.textContent = m.chain;
+          if (walletPopBalance) {
+            var live = computeLiveBalance();
+            walletPopBalance.textContent = live || '—';
+          }
+          if (walletQrCaption) {
+            walletQrCaption.textContent = m.chain === 'solana'
+              ? 'Scan with Phantom / Solflare to send USDC SPL.'
+              : 'Scan with MetaMask / Coinbase to send USDC on Base.';
+          }
+          walletQrLoaded = true;
+        }
+        return;
+      }
       if (m.type === 'loadHistory') {
         resetChatLog();
         showChat(m.title || 'History');
@@ -3559,11 +5086,21 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         var ls2 = document.getElementById('loading-step');
         if (ls2) ls2.style.display = 'none';
         renderWelcome(m.info, null, m.hasWorkspace !== false);
+        // Initial tasks check so the active-task badge renders if there
+        // are leftover detached jobs from a prior session.
+        vscode.postMessage({ type: 'loadTasks' });
+        // Same for sandboxes — though tracker is in-memory and resets
+        // on extension reload, so this is mostly a no-op until the
+        // current agent session creates one.
+        vscode.postMessage({ type: 'loadSandboxes' });
         return;
       }
       if (m.type === 'status' && m.partial) {
         if (m.partial.balance) syncBaseBalance(m.partial.balance);
         if (m.partial.chain) updateChainPill(m.partial.chain);
+        // Wallet QR is chain-dependent — invalidate cache so the next
+        // popover open re-fetches the right payload.
+        if (m.partial.chain || m.partial.walletAddress) walletQrLoaded = false;
         applyStatus(m.partial);
         return;
       }
@@ -3572,8 +5109,8 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         setChainToggleActive(m.current.chain);
         populateModelSelect(settingsImgSel, m.imageModels, m.current['default-image-model']);
         populateModelSelect(settingsVidSel, m.videoModels, m.current['default-video-model']);
-        if (settingsSpendCap) {
-          settingsSpendCap.value = m.current['max-turn-spend-usd'] || '';
+        if (settingsBatchConcurrency) {
+          settingsBatchConcurrency.value = m.current['batch-concurrency'] || '';
         }
         return;
       }
@@ -3689,8 +5226,15 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           break;
         case 'capability_done':
           activityMode = 'waiting';
-          var doneResult = ev.result ? String(ev.result).slice(0, 80) : '';
-          finishToolStepWf(ev.id || toolNameStr, !ev.error, doneResult);
+          // ev.result is a CapabilityResult OBJECT — { output, isError, ... }.
+          // Stringifying the object yields "[object Object]"; we want the
+          // .output text. Fall back to a status word if the field is missing.
+          var doneOutput = ev.result && typeof ev.result === 'object'
+            ? (typeof ev.result.output === 'string' ? ev.result.output : '')
+            : (typeof ev.result === 'string' ? ev.result : '');
+          var doneResult = doneOutput.slice(0, 120);
+          var doneIsError = !!(ev.error || (ev.result && ev.result.isError));
+          finishToolStepWf(ev.id || toolNameStr, !doneIsError, doneResult);
           updateActivityRow();
           break;
         case 'prefetch_start':
@@ -3712,7 +5256,20 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
           updateActivityRow();
           if (ev.reason === 'aborted') {
             appendLine('meta', '\\u2014 Stopped.');
+          } else if (ev.reason === 'error' && ev.error) {
+            // Rate-limit / 429: show friendly toast instead of red error inline.
+            // Other errors fall through to existing handling below.
+            if (maybeShowRateLimitToast(ev.error)) {
+              // Suppress the verbose stack-trace meta line — toast covers it.
+              status.textContent = '';
+              break;
+            }
           }
+          // Periodic refresh of task + sandbox badges — completed agent
+          // turns are a natural moment to recheck for newly-spawned
+          // background tasks AND newly-created Modal sandboxes.
+          vscode.postMessage({ type: 'loadTasks' });
+          vscode.postMessage({ type: 'loadSandboxes' });
           status.textContent = '';
           break;
         case 'status_update':
@@ -3813,6 +5370,8 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         input.value = cmd + ' ';
       }
       closeSlashMenu();
+      // Resize after programmatic value set (textarea won't auto-fire 'input').
+      try { autoGrowInput(); } catch(e) {}
       try { input.focus(); } catch(e) {}
     }
     function handleSlashInput() {
@@ -3833,6 +5392,7 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         btn.addEventListener('click', function() {
           var p = btn.getAttribute('data-prompt') || '';
           input.value = p;
+          try { autoGrowInput(); } catch(e) {}
           try { input.focus(); } catch(e) {}
         });
       }
@@ -3894,6 +5454,8 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       updateActivityRow();
       vscode.postMessage({ type: 'send', text: t });
       input.value = '';
+      // Snap height back to single-row baseline after clearing.
+      input.style.height = '';
     }
 
     document.getElementById('send').addEventListener('click', send);
@@ -3901,8 +5463,31 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       if (!agentBusy) return;
       vscode.postMessage({ type: 'stop' });
     });
+    // Auto-grow textarea: every keystroke / paste re-measures scrollHeight
+    // and snaps the visible height to it (capped by CSS max-height; once
+    // we hit the cap, native overflow-y:auto kicks in and scrolls).
+    function autoGrowInput() {
+      // Resetting to 'auto' first lets shrinking work — otherwise the
+      // textarea would only ever grow.
+      input.style.height = 'auto';
+      input.style.height = input.scrollHeight + 'px';
+    }
+    input.addEventListener('input', autoGrowInput);
+    // Initial sizing in case the field is pre-populated by a slash command
+    // or a programmatic value-set.
+    setTimeout(autoGrowInput, 0);
+
     input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !slashMenu.classList.contains('open')) send();
+      // Shift+Enter inserts a literal newline (default textarea behavior).
+      // Plain Enter sends, unless the slash menu is open (handled above
+      // in capture phase), the user is composing IME (isComposing), or
+      // a modifier other than Shift is held (Cmd/Ctrl/Alt+Enter all
+      // pass through as newline-ish — VS Code-y).
+      if (e.key !== 'Enter') return;
+      if (slashMenu.classList.contains('open')) return;
+      if (e.shiftKey || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+      e.preventDefault();
+      send();
     });
     document.addEventListener(
       'keydown',

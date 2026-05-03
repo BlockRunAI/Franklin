@@ -29,6 +29,7 @@ import { postToXCapability } from './posttox.js';
 import { moaCapability } from './moa.js';
 import { webhookPostCapability } from './webhook.js';
 import { walletCapability } from './wallet.js';
+import { modalCapabilities } from './modal.js';
 import { createTradingCapabilities } from './trading-execute.js';
 import { Portfolio } from '../trading/portfolio.js';
 import { RiskEngine } from '../trading/risk.js';
@@ -160,6 +161,11 @@ export const allCapabilities: CapabilityHandler[] = [
   moaCapability,
   webhookPostCapability,
   walletCapability,
+  // Modal GPU sandbox tools — registered but hidden by default (not in
+  // CORE_TOOL_NAMES). Agent must `ActivateTool({names:["ModalCreate",...]})`
+  // before they appear in its tool inventory. High-cost ($0.40/H100 create)
+  // operations should not be in the default surface.
+  ...modalCapabilities, // ModalCreate, ModalExec, ModalStatus, ModalTerminate
 ];
 
 export {

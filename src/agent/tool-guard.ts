@@ -199,9 +199,25 @@ export class SessionToolGuard {
     invocation: CapabilityInvocation,
     scope: ExecutionScope
   ): Promise<CapabilityResult | null> {
-    // Hard-block tools that have failed too many times this session
+    // Hard-block tools that have failed too many times this session.
+    // Media-generation tools are exempt: their failures are typically
+    // transient (gateway hiccup, rate limit, prompt rejection) and the
+    // user often wants to retry the exact same call. Auto-disabling
+    // ImageGen / VideoGen mid-session forces a full session reset to
+    // recover, which is much worse than a noisy retry loop.
+    // Modal lifecycle tools especially MUST never auto-disable: orphan
+    // sandboxes keep billing GPU time, and ModalTerminate is the only
+    // way to recover from agent-side. Same logic for media gen.
+    const FAILURE_EXEMPT = new Set([
+      'ImageGen',
+      'VideoGen',
+      'ModalCreate',
+      'ModalExec',
+      'ModalStatus',
+      'ModalTerminate',
+    ]);
     const errorCount = this.toolErrorCounts.get(invocation.name) ?? 0;
-    if (errorCount >= 3) {
+    if (errorCount >= 3 && !FAILURE_EXEMPT.has(invocation.name)) {
       return {
         output: `${invocation.name} has failed ${errorCount} times this session and is now disabled. ` +
           'Tell the user what went wrong and suggest alternatives.',

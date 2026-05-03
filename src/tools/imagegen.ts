@@ -23,6 +23,8 @@ import { ModelClient } from '../agent/llm.js';
 import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
 import { recordUsage } from '../stats/tracker.js';
 import { findModel, estimateCostUsd } from '../gateway-models.js';
+import { walletReservation } from '../wallet/reservation.js';
+import { loadConfig } from '../commands/config.js';
 
 interface ImageGenInput {
   prompt: string;
@@ -178,7 +180,28 @@ function buildExecute(deps: ImageGenDeps) {
       };
     }
 
-    let imageModel = model || (referenceImage ? 'openai/gpt-image-2' : 'openai/gpt-image-1');
+    // User-configured default image model — set via VS Code settings popover
+    // or `franklin config set default-image-model <id>`. When set, this is
+    // treated like an explicit model arg from the LLM: the per-prompt media
+    // router (cheaper / premium proposal flow) is skipped, and we go straight
+    // to generation. Reference-image mode falls back to its own edit-capable
+    // default if the user's pick isn't on the edit allow-list.
+    let userDefaultModel: string | undefined;
+    try {
+      const cfg = loadConfig();
+      const v = cfg['default-image-model'];
+      if (v && v !== '__unset__') userDefaultModel = v;
+    } catch { /* ignore — config read is best-effort */ }
+    if (referenceImage && userDefaultModel && !EDIT_SUPPORTED_MODELS.has(userDefaultModel)) {
+      // User's default isn't edit-capable; fall back to the edit default
+      // rather than failing — they probably set the default for t2i.
+      userDefaultModel = undefined;
+    }
+
+    let imageModel =
+      model ||
+      userDefaultModel ||
+      (referenceImage ? 'openai/gpt-image-2' : 'openai/gpt-image-1');
     let imageSize = size || '1024x1024';
     let chosenPrompt = prompt;
 
@@ -187,7 +210,12 @@ function buildExecute(deps: ImageGenDeps) {
     // would frequently be unusable (text-only models). Default to gpt-image-1
     // for now; a future router upgrade can pick between the four edit-capable
     // models based on the prompt.
-    const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
+    // Also skip when the user set a default-image-model — that's the whole
+    // point of the setting: stop asking, just use my pick.
+    const autoApprove =
+      process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1' ||
+      ctx.skipAskUser === true ||
+      !!userDefaultModel;
     if (!model && !autoApprove && ctx.onAskUser && !referenceImage) {
       try {
         const chain = loadChain();
@@ -232,12 +260,12 @@ function buildExecute(deps: ImageGenDeps) {
       }
     }
 
-    // gpt-image-2 reliably serves 1024x1024 only — other sizes time out at
-    // the gateway. Force the supported size regardless of caller / router
-    // input so we never burn USDC on a request that's going to abort.
-    if (imageModel === 'openai/gpt-image-2' && imageSize !== '1024x1024') {
-      imageSize = '1024x1024';
-    }
+    // (Was: forced override to 1024x1024 for gpt-image-2 — see v3.9.5 commit
+    // 43c58b7. The pin was added when the gateway routing reliably timed out
+    // on non-square sizes AFTER x402 settlement, burning user USDC. Removed
+    // experimentally on user request to test whether the gateway issue still
+    // reproduces. If you see "Image generation timed out" hits at vertical /
+    // landscape sizes on gpt-image-2, restore the override.)
 
     if (contentId && deps.library) {
       const decision = checkImageBudget(deps.library, contentId, imageModel, imageSize);
@@ -262,11 +290,31 @@ function buildExecute(deps: ImageGenDeps) {
     ? `${apiUrl}/v1/images/image2image`
     : `${apiUrl}/v1/images/generations`;
 
-  // Default output path
+  // Default output path. Random suffix prevents collisions when several
+  // ImageGen tools run in parallel (`concurrent: 'batch'`) and would
+  // otherwise hit the same Date.now() ms — the second writer would
+  // overwrite the first.
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const outPath = output_path
     ? (path.isAbsolute(output_path) ? output_path : path.resolve(ctx.workingDir, output_path))
-    : path.resolve(ctx.workingDir, `generated-${Date.now()}.png`);
+    : path.resolve(ctx.workingDir, `generated-${uniqueSuffix}.png`);
 
+  // OpenAI's gpt-image-1 / gpt-image-2 family removed the `response_format`
+  // parameter — they always return base64 by default, and including the
+  // param makes the gateway reject the call with an empty data array
+  // (which surfaces as "No image data returned from API"). Strip it for
+  // those models; keep it for DALL-E 3 / cogview / grok-imagine etc. that
+  // still honor it.
+  const isGptImageFamily = imageModel.startsWith('openai/gpt-image-');
+  const t2iBody: Record<string, unknown> = {
+    model: imageModel,
+    prompt: chosenPrompt,
+    n: 1,
+    size: imageSize,
+  };
+  if (!isGptImageFamily) {
+    t2iBody['response_format'] = 'b64_json';
+  }
   const body = JSON.stringify(
     referenceImage
       ? {
@@ -276,13 +324,7 @@ function buildExecute(deps: ImageGenDeps) {
           size: imageSize,
           n: 1,
         }
-      : {
-          model: imageModel,
-          prompt: chosenPrompt,
-          n: 1,
-          size: imageSize,
-          response_format: 'b64_json',
-        },
+      : t2iBody,
   );
 
   const headers: Record<string, string> = {
@@ -290,14 +332,35 @@ function buildExecute(deps: ImageGenDeps) {
     'User-Agent': `franklin/${VERSION}`,
   };
 
+  // Wallet reservation: hold the estimated cost in a local accounting layer
+  // so concurrent ImageGens can't all see the same balance and overspend.
+  // Released in finally — whether the payment succeeds, fails, or aborts.
+  let reservationToken: import('../wallet/reservation.js').ReservationToken | null = null;
+  try {
+    const m = await findModel(imageModel);
+    const estCost = m ? estimateCostUsd(m, { quantity: 1 }) : 0;
+    reservationToken = await walletReservation.hold(estCost);
+    if (!reservationToken) {
+      return {
+        output:
+          `Insufficient USDC for ${imageModel} (~$${estCost.toFixed(2)}). ` +
+          `Other in-flight image / video generations may be holding your balance — ` +
+          `wait for them to finish or fund the wallet.`,
+        isError: true,
+      };
+    }
+  } catch {
+    // Reservation lookup failed (e.g. RPC down) — continue without holding;
+    // x402 will surface the real funds error if it actually fails.
+  }
+
   const controller = new AbortController();
-  // Reference-image mode (gpt-image-2 edits) is meaningfully slower than
-  // pure text-to-image: the model is reasoning-driven and the request
-  // body carries a few MB of base64. The shared 60s budget has to cover
-  // both x402 retry attempts plus the actual generation, which made
-  // image-to-image effectively always time out. Image-to-image gets 3
-  // minutes; text-to-image keeps the original 60s.
-  const timeoutMs = referenceImage ? 180_000 : 60_000;
+  // Overall budget covers: initial POST + 402 sign retry + (if async) poll
+  // loop. Slow models like openai/gpt-image-2 hit the 30s gateway inline
+  // window and degrade to async (returns { id, poll_url } instead of
+  // image data); we then have to poll until terminal status. 5 minute
+  // ceiling is enough for the slowest current model.
+  const timeoutMs = referenceImage ? 300_000 : 180_000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -309,17 +372,20 @@ function buildExecute(deps: ImageGenDeps) {
       body,
     });
 
-    // Handle x402 payment
+    // Handle x402 payment. Capture the signed headers because they may be
+    // needed again for poll-loop GETs (gateway re-validates auth on each
+    // poll call to settle on first completed response).
+    let signedPaymentHeaders: Record<string, string> | null = null;
     if (response.status === 402) {
-      const paymentHeaders = await signPayment(response, chain, endpoint);
-      if (!paymentHeaders) {
+      signedPaymentHeaders = await signPayment(response, chain, endpoint);
+      if (!signedPaymentHeaders) {
         return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };
       }
 
       response = await fetch(endpoint, {
         method: 'POST',
         signal: controller.signal,
-        headers: { ...headers, ...paymentHeaders },
+        headers: { ...headers, ...signedPaymentHeaders },
         body,
       });
     }
@@ -329,13 +395,96 @@ function buildExecute(deps: ImageGenDeps) {
       return { output: `Image generation failed (${response.status}): ${errText.slice(0, 200)}`, isError: true };
     }
 
-    const result = await response.json() as {
+    // Read body as text first so we can include the actual gateway response
+    // in error messages — "No image data returned" with no further detail
+    // makes it impossible to distinguish "model not enabled for this
+    // account" from "wrong response shape" from "empty data array".
+    const rawBody = await response.text().catch(() => '');
+    let result: {
       data?: { b64_json?: string; url?: string; revised_prompt?: string }[];
-    };
+      error?: unknown;
+      // Async path fields: when generation exceeds the 30s inline window,
+      // the gateway returns these instead of `data[]` and expects the
+      // client to poll the poll_url with the same x-payment header.
+      id?: string;
+      job_id?: string;
+      poll_url?: string;
+      status?: string;
+      [k: string]: unknown;
+    } = {};
+    try {
+      result = JSON.parse(rawBody);
+    } catch {
+      return {
+        output: `Image generation: gateway returned non-JSON body (${response.status}): ${rawBody.slice(0, 300)}`,
+        isError: true,
+      };
+    }
+
+    // ── Async path: gateway returned a job_id + poll_url because the model
+    // ── exceeded the 30s inline window. Poll until terminal state, then
+    // ── treat the resolved body as the normal sync response.
+    const ASYNC_STATUSES = new Set(['queued', 'pending', 'in_progress', 'processing']);
+    const pollUrl = (result.poll_url || '') as string;
+    const isAsync =
+      response.status === 202 ||
+      (!result.data && (pollUrl.length > 0 || (typeof result.status === 'string' && ASYNC_STATUSES.has(result.status))));
+
+    if (isAsync) {
+      if (!pollUrl) {
+        return {
+          output:
+            `Image generation entered async mode (status=${result.status ?? '?'}) ` +
+            `but the gateway did not return a poll_url. ` +
+            `Raw response: ${rawBody.slice(0, 300)}`,
+          isError: true,
+        };
+      }
+      const origin = new URL(apiUrl).origin;
+      const fullPollUrl = pollUrl.startsWith('http') ? pollUrl : `${origin}${pollUrl}`;
+      const pollHeaders = { ...headers, ...(signedPaymentHeaders || {}) };
+      const pollOutcome = await pollImageJob(fullPollUrl, pollHeaders, controller.signal);
+      if (pollOutcome.kind === 'failed') {
+        return {
+          output: `Image generation failed during async polling: ${pollOutcome.error || 'unknown error'}`,
+          isError: true,
+        };
+      }
+      if (pollOutcome.kind === 'timed_out') {
+        return {
+          output:
+            `Image generation timed out during async polling (~${Math.round(timeoutMs / 1000)}s budget). ` +
+            `The job may still complete on the gateway side — try a faster model ` +
+            `(openai/gpt-image-1, xai/grok-imagine-image, zai/cogview-4) for next attempt.`,
+          isError: true,
+        };
+      }
+      // Replace `result` with the resolved poll body so the rest of the
+      // function (image-data extract → save → recordUsage) works unchanged.
+      result = pollOutcome.body as typeof result;
+    }
 
     const imageData = result.data?.[0];
     if (!imageData) {
-      return { output: 'No image data returned from API', isError: true };
+      // Surface the actual response so users / agents can act on it.
+      // Common causes: account doesn't have access to the model, the
+      // gateway routed to a backend that returned a different shape,
+      // or a soft error nested inside a 200 OK.
+      const errField = result.error
+        ? (typeof result.error === 'string' ? result.error : JSON.stringify(result.error))
+        : '';
+      const preview = rawBody.length > 400 ? rawBody.slice(0, 400) + '…' : rawBody;
+      return {
+        output:
+          `Image generation returned no image data for ${imageModel}.\n` +
+          (errField ? `Gateway error field: ${errField}\n` : '') +
+          `Raw response (first 400 chars): ${preview}\n\n` +
+          `Common causes: account not granted access to this model, ` +
+          `gateway backend returned a non-OpenAI response shape, or a ` +
+          `transient backend issue. Try a different image model ` +
+          `(openai/gpt-image-1 / xai/grok-imagine-image / zai/cogview-4).`,
+        isError: true,
+      };
     }
 
     // Save image. The /v1/images/image2image endpoint returns Gemini results
@@ -421,16 +570,88 @@ function buildExecute(deps: ImageGenDeps) {
     if (msg.includes('abort')) {
       return {
         output: referenceImage
-          ? 'Image-to-image timed out (180s limit). The reference image may be too large or the model under load — try a smaller image or simpler prompt.'
-          : 'Image generation timed out (60s limit). Try a simpler prompt.',
+          ? 'Image-to-image timed out (300s budget). The reference image may be too large or the model under load — try a smaller image or simpler prompt.'
+          : 'Image generation timed out (180s budget). Try a faster model (openai/gpt-image-1, xai/grok-imagine-image, zai/cogview-4) or simpler prompt.',
         isError: true,
       };
     }
     return { output: `Error: ${msg}`, isError: true };
   } finally {
     clearTimeout(timeout);
+    walletReservation.release(reservationToken);
   }
   };
+}
+
+// ─── Async image polling ────────────────────────────────────────────────
+// Mirrors videogen's pollUntilReady but tuned for images: shorter intervals
+// (images finish faster than videos once async), tighter terminal-state
+// detection (image responses don't have status='completed' fields, they
+// just gain a populated `data` array on completion).
+
+const IMAGE_POLL_INTERVAL_MS = 3_000;
+
+interface ImagePollBody {
+  data?: { b64_json?: string; url?: string; revised_prompt?: string }[];
+  status?: string;
+  error?: string;
+  [k: string]: unknown;
+}
+
+type ImagePollOutcome =
+  | { kind: 'completed'; body: ImagePollBody }
+  | { kind: 'failed'; error?: string }
+  | { kind: 'timed_out' };
+
+async function pollImageJob(
+  pollUrl: string,
+  headers: Record<string, string>,
+  abortSignal: AbortSignal,
+): Promise<ImagePollOutcome> {
+  while (true) {
+    if (abortSignal.aborted) return { kind: 'timed_out' };
+
+    const resp = await fetch(pollUrl, { method: 'GET', headers, signal: abortSignal });
+
+    if (resp.status === 202 || resp.status === 200) {
+      const body = (await resp.json().catch(() => ({}))) as ImagePollBody;
+      // Terminal: image data populated.
+      if (body.data && body.data.length > 0 && (body.data[0].b64_json || body.data[0].url)) {
+        return { kind: 'completed', body };
+      }
+      // Terminal: explicit failed status.
+      if (body.status === 'failed' || (typeof body.error === 'string' && body.error.length > 0)) {
+        return { kind: 'failed', error: body.error || 'failed' };
+      }
+      // Otherwise still pending — sleep and try again.
+    } else if (resp.status === 429 || resp.status >= 500) {
+      // Transient — back off briefly. Fall through to sleep.
+    } else {
+      const text = await resp.text().catch(() => '');
+      return { kind: 'failed', error: `Poll HTTP ${resp.status}: ${text.slice(0, 200)}` };
+    }
+
+    try {
+      await imageSleep(IMAGE_POLL_INTERVAL_MS, abortSignal);
+    } catch {
+      return { kind: 'timed_out' };
+    }
+  }
+}
+
+function imageSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error('aborted'));
+    const t = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new Error('aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 // ─── Payment ───────────────────────────────────────────────────────────────
@@ -531,7 +752,7 @@ export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHan
         properties: {
           prompt: { type: 'string', description: 'Text description of the image to generate' },
           output_path: { type: 'string', description: 'Where to save the image. Default: generated-<timestamp>.png in working directory' },
-          size: { type: 'string', description: 'Image size: 1024x1024, 1792x1024, or 1024x1792. Default: 1024x1024. Note: openai/gpt-image-2 is forced to 1024x1024 (other sizes time out at the gateway).' },
+          size: { type: 'string', description: 'Image size: 1024x1024 (square), 1792x1024 (landscape), 1024x1792 (vertical). Default: 1024x1024. For vertical / landscape, prefer openai/gpt-image-1 — gpt-image-2 historically only served 1024x1024 reliably through the gateway.' },
           model: { type: 'string', description: 'Image model to use. Default: openai/gpt-image-1' },
           image_url: { type: 'string', description: 'Optional reference image (image-to-image / style transfer). Accepts an http(s) URL, a data URI, or a local file path. Only works with edit-capable models.' },
           contentId: { type: 'string', description: 'Optional Content id to attach this generation to. Pre-flight budget check + auto-record on success.' },
@@ -540,7 +761,11 @@ export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHan
       },
     },
     execute: buildExecute(deps),
-    concurrent: false,
+    // 'batch' = paid + needs askUser, but multiple ImageGen invocations are
+    // safe to run in parallel (random output paths, random x402 nonces,
+    // executor-serialized askUser). Lets `/image cat × 6` run as 4-up
+    // pool instead of 6-up serial.
+    concurrent: 'batch',
   };
 }
 
