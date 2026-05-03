@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.15.1 — Don't kill WebFetch on agent-input errors
+
+Bug fix: the per-tool kill-switch in `SessionToolGuard` counted any
+`isError: true` toward the disable threshold, including HTTP 4xx
+responses. So three guessed URLs (e.g. 3× HTTP 404 on a hallucinated
+ToS path) would permanently disable WebFetch for the rest of the
+session — even though the tool worked correctly each time.
+
+Switched to circuit-breaker semantics:
+- Only tool-class failures (network, timeout, parse) count toward
+  the disable threshold.
+- HTTP 4xx/5xx, invalid URLs, and user aborts are agent-input
+  errors and no longer trip the breaker.
+- A successful call resets the counter.
+
+Tests cover the 4xx path, the network-failure regression, and
+reset-on-success.
+
 ## 3.15.0 — Base0xGaslessSwap (user pays NO ETH for gas)
 
 New tool: **\`Base0xGaslessSwap\`** — Base swaps where the user signs only
