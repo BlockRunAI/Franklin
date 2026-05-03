@@ -70,9 +70,36 @@ Flag as tool-use refusal:
 
 VERDICT: GROUNDED | PARTIAL | UNGROUNDED
 
-If not GROUNDED, list each issue on its own line starting with "- " and the tool that should have been called, like:
-- Claim: "<the ungrounded part, quoted briefly>" → missing tool: <TradingMarket | ExaAnswer | ExaSearch | WebSearch | ...>
-- Refusal: "<the refusal phrase, quoted briefly>" → should have called: <tool name>
+If not GROUNDED, list each issue on its own line starting with "- " and the tool that should have been called.
+
+## Picking the right tool — strict domain rules
+
+**Default for any factual claim:** WebSearch or ExaSearch. These are the
+right answer for the OVERWHELMING majority of "the model said a number it
+didn't look up" cases — current events, statistics, prices for non-crypto
+goods (real estate, retail, salaries), people, companies, news, etc.
+
+**Use specialized tools ONLY when the claim's domain matches:**
+- TradingMarket / TradingSignal — ONLY for cryptocurrency tickers (BTC, ETH, SOL, etc). Never for stocks, real estate, currencies, commodities outside crypto.
+- DefiLlamaProtocol / DefiLlamaYields / DefiLlamaPrice — ONLY for DeFi protocols, TVL, yields, on-chain token prices.
+- SearchX — ONLY for X.com / Twitter posts and accounts.
+- ExaAnswer — research questions where you want a synthesized answer with citations.
+- WebFetch — claims that quote a SPECIFIC URL the model already named.
+
+**Anti-patterns to never produce:**
+- Real-estate price → TradingMarket (TradingMarket is crypto-only — wrong domain)
+- Stock ticker → TradingMarket (also crypto-only — use WebSearch instead)
+- Generic news / statistics → TradingMarket (use WebSearch)
+- Person's biography → TradingMarket (use WebSearch)
+
+When unsure: name **WebSearch**. It's the safe default for factual grounding.
+
+## Format examples
+
+- Claim: "<the ungrounded part, quoted briefly>" → missing tool: WebSearch
+- Claim: "BTC at $67k" → missing tool: TradingMarket
+- Claim: "Westlake $/sqft is $719" → missing tool: WebSearch
+- Refusal: "<the refusal phrase, quoted briefly>" → should have called: WebSearch
 
 Empty line between verdict and list. No other text. No preamble. No apology. Be terse.`;
 

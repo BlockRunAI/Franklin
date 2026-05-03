@@ -143,6 +143,29 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     };
   }
 
+  // Reasoning / thinking-mode format errors — NOT transient.
+  // DeepSeek V4 family and similar thinking-enabled models reject requests
+  // when the message history's reasoning_content fields don't match the
+  // upstream's expected shape (typically: tool-call assistant messages must
+  // carry reasoning_content; non-tool-call ones must not, or vice versa).
+  // The fix is to drop the polluting history, not to swap models — every
+  // thinking-enabled model has the same constraint just with different
+  // specifics. /clear forces a fresh context that won't have the bad shape.
+  // Classified BEFORE the generic schema branch below so we surface the
+  // right suggestion.
+  if (includesAny(err, [
+    'reasoning_content',
+    'reasoning content',
+    'thinking mode must',
+    'message format incompatible',
+    'reasoning_format_error',
+  ])) {
+    return {
+      category: 'schema', label: 'Schema', isTransient: false, maxRetries: 0,
+      suggestion: 'Thinking-mode history is incompatible with this model. Use /clear to reset and retry, or /model to switch to a non-thinking model.',
+    };
+  }
+
   // Schema / tool-definition errors — NOT transient, retrying won't help.
   // These can be wrapped in 5xx responses (e.g. '503: 400 Invalid schema'),
   // so classify them BEFORE the generic server-error branch below.

@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.15.9 — Grounding-retry tool domain validation; reasoning_content classifier
+
+User report: a real-estate "can I lowball 20%" turn was correctly
+flagged as ungrounded (it cited specific $/sqft figures), but the
+grounding evaluator's tool suggestion came back as `TradingMarket` (a
+crypto-only tool). Franklin then announced "forcing tool use
+(TradingMarket) and retrying..." — useless on a housing question.
+Cause: the cheap evaluator model defaults to the first tool listed in
+the prompt; TradingMarket was first.
+
+- `evaluator`: rewrote the tool-picking section. WebSearch is now the
+  named default for any factual claim; specialized tools (Trading*,
+  DefiLlama*, SearchX, ExaAnswer) get explicit "ONLY when domain
+  matches" rules and concrete anti-pattern examples (real-estate →
+  WebSearch, NOT TradingMarket; stock ticker → WebSearch, NOT
+  TradingMarket; etc).
+- `loop`: domain validation gate before pinning a forced tool. The
+  retry path now only pins a specialized tool when the user prompt
+  contains domain keywords (BTC/ETH/swap for trading tools, @handle/
+  twitter for SearchX, image/video/music for gen tools); otherwise
+  falls back to "any" tool and lets the smart generator pick from
+  available tool descriptions.
+- `error-classifier`: new bucket for `reasoning_content` /
+  `thinking mode must` / `message format incompatible` errors from
+  the BlockRun gateway. These are NOT transient — they signal that
+  the conversation history's thinking-block shape is incompatible
+  with the current model. Suggestion now points users at /clear (the
+  actual fix: drop polluted history) instead of /model. Pairs with
+  the gateway's classifyAnthropicError fix that started returning
+  proper 400s for this class of error.
+
 ## 3.15.8 — WebFetch: short-circuit known anti-bot domains
 
 Reported: a "what's the Austin housing market doing" turn climbed to

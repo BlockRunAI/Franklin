@@ -292,6 +292,40 @@ export function looksLikeGatewayErrorAsText(parts: ContentPart[]): { match: bool
 }
 
 /**
+ * Domain check for the grounding-retry force-tool path. A specialized tool
+ * (TradingMarket, DefiLlama*, jupiter*, base0x*, SearchX) should only be
+ * pinned by tool_choice when the user prompt actually references that
+ * tool's domain — otherwise we let the smart generator pick from any tool.
+ *
+ * The motivating bug: a real-estate question ("可以还价 20% 吗") had its
+ * answer flagged as ungrounded for citing $/sqft figures. The cheap
+ * evaluator model picked TradingMarket as the missing tool because it
+ * was the first example in the evaluator prompt. Forcing TradingMarket
+ * (a crypto-only tool) on a housing question made the retry useless.
+ *
+ * This function returns false for specialized tools when the prompt has
+ * no matching domain keywords; the caller falls back to "any" tool.
+ * General-purpose tools (WebSearch, ExaSearch, ExaAnswer, WebFetch,
+ * ExaReadUrls) always pass — they're domain-agnostic.
+ */
+function isToolRelevantToPrompt(toolName: string, promptLower: string): boolean {
+  // Crypto trading tools — need a ticker, "crypto", "coin", "swap", etc.
+  if (/^(Trading|DefiLlama|Jupiter|Base0x|Base0xGasless)/i.test(toolName)) {
+    return /\b(btc|eth|sol|xrp|doge|usdc|usdt|crypto|coin|token|defi|tvl|yield|swap|jupiter|uniswap|pump\.fun|solana|base chain|polygon|ethereum|币|代币|链上|做空|做多)\b/i.test(promptLower);
+  }
+  // X.com search — need an @handle, "twitter", "tweet", "X.com"
+  if (/^SearchX$/i.test(toolName) || /^PostToX$/i.test(toolName)) {
+    return /(@\w+|twitter|x\.com|tweet|推特)/i.test(promptLower);
+  }
+  // Image / video / music gen — need a creative-content request
+  if (/^(ImageGen|VideoGen|MusicGen)$/i.test(toolName)) {
+    return /\b(image|picture|photo|video|clip|music|song|generate|create|render|draw|画|图|视频|音乐|歌)\b/i.test(promptLower);
+  }
+  // General-purpose / file / shell tools — always relevant.
+  return true;
+}
+
+/**
  * Calculate backoff delay with jitter to avoid thundering herd.
  * Base: exponential (2^attempt * 1000ms), jitter: ±25%.
  */
@@ -1489,11 +1523,23 @@ export async function interactiveSession(
               // Hard enforcement: set tool_choice so the model can't fabricate
               // citations in lieu of running tools (the round-2 failure mode
               // from the Tampa→Miami log). If the evaluator named exactly one
-              // available tool, pin to it; otherwise force "any" tool use.
+              // available tool AND that tool's domain matches the user's
+              // prompt, pin to it; otherwise force "any" tool use and let
+              // the generator pick the right one.
+              //
+              // Domain validation guards against the cheap evaluator model
+              // hallucinating a wrong specialized tool (e.g., suggesting
+              // TradingMarket for a real-estate question because the prompt
+              // listed it as the first example tool). Specialized tools —
+              // crypto trading, DeFi, swap quotes, X.com search — only get
+              // pinned when their domain keywords appear in the user prompt;
+              // otherwise we drop down to "any tool" and let the smart
+              // generator model decide based on tool descriptions.
               const namedTools = extractMissingToolNames(gResult);
               const availableNames = new Set(buildCallToolDefs().map(t => t.name));
               const matched = namedTools.filter(n => availableNames.has(n));
-              if (matched.length === 1) {
+              const promptForDomainCheck = (lastUserInput || '').toLowerCase();
+              if (matched.length === 1 && isToolRelevantToPrompt(matched[0], promptForDomainCheck)) {
                 forceToolChoiceNextRound = { type: 'tool', name: matched[0] };
               } else if (availableNames.size > 0) {
                 forceToolChoiceNextRound = { type: 'any' };
