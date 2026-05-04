@@ -526,7 +526,19 @@ export function createProxy(options: ProxyOptions): http.Server {
           body = result.bodyUsed;
           usedFallback = result.fallbackUsed;
 
-          if (usedFallback && !isTestFixtureModel(finalModel)) {
+          // Skip the success log when the request originated from a test
+          // fixture, even if the fallback ended on a real model. Verified
+          // on a real machine: 5 spurious "↺ Fallback successful: using
+          // deepseek/deepseek-chat" entries appeared in
+          // franklin-debug.log because the proxy timeout test uses
+          // `slow/model` (filtered) as the source but ends up on
+          // `deepseek/deepseek-chat` (not filtered). Check the
+          // failedModels array — any fixture in there means the call
+          // chain started in a test.
+          const fallbackTouchedFixture =
+            result.failedModels.some(isTestFixtureModel) ||
+            isTestFixtureModel(finalModel);
+          if (usedFallback && !fallbackTouchedFixture) {
             logger.info(`[franklin] ↺ Fallback successful: using ${finalModel}`);
           }
         } else {

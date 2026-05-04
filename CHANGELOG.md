@@ -1,6 +1,34 @@
 # Changelog
 
-## 3.15.25 — \`FRANKLIN_NO_AUDIT=1\` env-var to stop test pollution at file scope
+## 3.15.26 — Proxy success-after-fallback log checks the original model too
+
+Reading the log post-3.15.25 surfaced a small but real leak:
+\`franklin-debug.log\` had 10 entries reading
+\`↺ Fallback successful: using deepseek/deepseek-chat\` with no
+matching failure log preceding them. Cause: 3.15.24's proxy fixture
+gate filtered the failure log when \`failedModel\` was a fixture
+(\`slow/model\`), but the success log only checked \`finalModel\` —
+the model that finally succeeded was \`deepseek/deepseek-chat\`,
+not a fixture, so it logged. The chain started in a test fixture but
+ended on a real model name, slipping past the gate.
+
+Fix:
+
+- \`proxy/server\`: the \`usedFallback\` success log now checks the
+  full \`result.failedModels\` array. If any failed model in the
+  chain is a fixture, the entire fallback was test-driven; skip
+  the success log.
+
+Brief detour worth recording: tried extending \`FRANKLIN_NO_AUDIT\`
+to also gate session storage (sessions had 19 test fixtures of 22
+metas — \`zai/glm-5.1\` and \`nvidia/qwen3-coder-480b\` model
+names slipping past the model-fixture gate). Reverted: 10+ tests
+needed env overrides and session pollution is already bounded by
+\`MAX_SESSIONS=20\` LRU eviction. Audit/stats has higher ROI for
+env-var gating because retention is 10k entries, much wider window
+to pollute.
+
+
 
 Reading the audit log surfaced what 3.15.17 had already broken:
 when in-process resume tests were renamed from \`local/test-model\`
