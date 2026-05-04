@@ -555,7 +555,14 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
         properties: {
           prompt: { type: 'string', description: 'Text description of the video to generate' },
           output_path: { type: 'string', description: 'Where to save the MP4. Default: generated-<timestamp>.mp4 in working directory' },
-          model: { type: 'string', description: 'Video model. Default: xai/grok-imagine-video' },
+          model: {
+            type: 'string',
+            description:
+              'Video model. Default: xai/grok-imagine-video. Known-valid models on the BlockRun gateway as of 2026-05: ' +
+              'xai/grok-imagine-video, bytedance/seedance-1.5-pro, bytedance/seedance-2.0, bytedance/seedance-2.0-fast. ' +
+              'Pick from this list; the gateway rejects unknown names with HTTP 400 (no money charged on rejection). ' +
+              'Speak "Seedance Pro" → bytedance/seedance-2.0; speak "Seedance fast" → bytedance/seedance-2.0-fast.',
+          },
           image_url: { type: 'string', description: 'Optional seed image (image-to-video). Accepts http(s) URL, data: URI, or local file path — local paths get inlined as base64 data URIs automatically.' },
           duration_seconds: { type: 'number', description: 'Duration billed for. Default depends on model (8s for grok-imagine-video).' },
           contentId: { type: 'string', description: 'Optional Content id to attach and budget against.' },

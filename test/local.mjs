@@ -2300,6 +2300,23 @@ test('streamCompletion: retries without tool_choice when upstream rejects it', a
 // invalid_format url path: image_url`. ImageGen already handled this
 // via resolveReferenceImage — VideoGen now reuses the same helper.
 
+test('videogen: tool spec advertises the known-valid model list (so agents do not guess)', async () => {
+  // Verified 2026-05-04 in a live session: agent invented
+  // "seedance/2.0-pro" (a name that doesn't exist), gateway 400'd
+  // with the actual list. Pre-advertising the known-good names
+  // saves the failed paid request.
+  const { videoGenCapability } = await import('../dist/tools/videogen.js');
+  const desc = videoGenCapability.spec.input_schema.properties.model.description;
+  for (const m of [
+    'xai/grok-imagine-video',
+    'bytedance/seedance-1.5-pro',
+    'bytedance/seedance-2.0',
+    'bytedance/seedance-2.0-fast',
+  ]) {
+    assert.ok(desc.includes(m), `model description must list ${m}; got: ${desc}`);
+  }
+});
+
 test('videogen: local image path is inlined as data URI before POST', async () => {
   const os = await import('node:os');
   const path = await import('node:path');

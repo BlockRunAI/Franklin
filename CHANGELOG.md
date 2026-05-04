@@ -1,5 +1,54 @@
 # Changelog
 
+## 3.15.53 — VideoGen tool-spec lists known-valid model names (agent stops guessing)
+
+Verified 2026-05-04 in a live session: agent referenced
+\"Seedance Pro\" from the user's chat, then called VideoGen with
+\`model: "seedance/2.0-pro"\` — a name that doesn't exist on the
+gateway. Result:
+
+\`\`\`
+Video submit failed (400):
+  Unknown video model: seedance/2.0-pro.
+  Available models: xai/grok-imagine-video, bytedance/seedance-1.5-pro,
+                    bytedance/seedance-2.0-fast, bytedance/seedance-2.0
+\`\`\`
+
+The agent then guessed \`bytedance/seedance-2.0\` (right name)
+on the second try. Cost: one wasted submit round-trip plus
+the user-visible failure. The gateway already includes the
+canonical list in the 400 body — Franklin can just pre-advertise
+it in the tool spec so the agent never has to fail-then-discover.
+
+Source: \`src/tools/videogen.ts:558\` had only
+\`description: 'Video model. Default: xai/grok-imagine-video'\`.
+Nothing about which other names the gateway accepts. Agents that
+heard a model name in plain English (\"Seedance Pro\", \"Grok
+Imagine\") had no way to map it to the canonical id.
+
+Fix:
+
+- Tool description for \`model\` now enumerates the four known
+  names with a phonetic-mapping hint:
+  > Pick from this list; the gateway rejects unknown names with
+  > HTTP 400 (no money charged on rejection). Speak \"Seedance
+  > Pro\" → bytedance/seedance-2.0; speak \"Seedance fast\" →
+  > bytedance/seedance-2.0-fast.
+- Marked \"as of 2026-05\" so the next ship round can
+  re-evaluate. The list won't go stale silently — if the gateway
+  changes, the live 400 still surfaces the truth.
+- New regression test asserts all four names are in the
+  description string. Future edits can't silently drop one.
+
+Why hardcode rather than \`getModelsByCategory('video')\` at boot:
+the tool spec is built once, statically, before the agent starts
+its first turn. A network fetch there couples cold-start to
+gateway availability; a stale-by-a-week static list is a far
+better tradeoff than \"no description because gateway timed out
+during init\".
+
+Tests: 323/323 pass (was 322 before, 1 new spec-coverage case).
+
 ## 3.15.52 — VideoGen accepts local file paths for \`image_url\` (auto-inlines as data URI)
 
 Verified 2026-05-04 in a live session: the agent generated a
