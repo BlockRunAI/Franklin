@@ -1,5 +1,42 @@
 # Changelog
 
+## 3.15.27 — Permission dialog UX: docked, prominent, audible, can't be missed
+
+A real screenshot from 2026-05-04 showed the failure mode plainly:
+the user had a multi-step Franklin session running, the agent paused
+to ask for Bash approval, and the dialog rendered as a small yellow
+box high in the scrollback. Right below it: completed-tool checkmarks,
+agent's response text, and the input box still cheerfully spinning
+with placeholder "Working...". The user thought Franklin was busy and
+walked away — Franklin was actually waiting on them.
+
+Five changes:
+
+- \`ui/app\`: dialog renders are no longer competing for attention.
+  When a permission or AskUser dialog is up, the active-tools list,
+  thinking spinner, waiting spinner, and stream-text preview all hide.
+  The dialog is the only live element above the input box, so the
+  user's eye can't slide past it.
+- \`ui/app\`: dialogs now lead with a bright header
+  (\`━━━━━━━━━━ ⚠  ACTION REQUIRED  ⚠ ━━━━━━━━━━\` red for
+  permission, \`ANSWER REQUIRED\` magenta for AskUser) so they don't
+  visually rhyme with the yellow tool-block borders that surround
+  them.
+- \`ui/app\` InputBox: when a dialog is up, the placeholder swaps
+  from \`Working...\` to \`⚠  Approval needed — press [y]/[a]/[n] in
+  the prompt above\` (or \`Question above — type your answer\` for
+  AskUser), the spinner becomes a static \`⚠\` glyph, and the box
+  border goes bright yellow. No way to read the input field as
+  "agent is busy" while it's waiting on you.
+- \`ui/app\`: terminal bell (\`\\x07\`) rings exactly once on dialog
+  appearance — opt out with \`FRANKLIN_NO_BELL=1\` if your terminal
+  is in a quiet space. Catches the case where Franklin is in a
+  background tab.
+- All previous behavior is preserved when no dialog is active —
+  the regular spinner, streaming text, response preview, and tool
+  blocks render normally. The change is strictly additive on the
+  attention-grabbing path.
+
 ## 3.15.26 — Proxy success-after-fallback log checks the original model too
 
 Reading the log post-3.15.25 surfaced a small but real leak:

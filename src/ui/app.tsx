@@ -66,7 +66,7 @@ function useTerminalSize() {
   return size;
 }
 
-function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail, sessionCost, queued, queuedCount, focused, busy, contextPct, vimMode, onVimModeChange }: {
+function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail, sessionCost, queued, queuedCount, focused, busy, awaitingApproval, awaitingAnswer, contextPct, vimMode, onVimModeChange }: {
   input: string;
   setInput: (v: string) => void;
   onSubmit: (v: string) => void;
@@ -81,6 +81,12 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
   queuedCount?: number;
   focused?: boolean;
   busy?: boolean;
+  /** True when a Permission required dialog is up — input box swaps its
+   *  spinner+placeholder for an unmissable "approve above" pointer so users
+   *  in another window don't see "Working..." and assume the agent is busy. */
+  awaitingApproval?: boolean;
+  /** True when an AskUser dialog is up. Same idea, different wording. */
+  awaitingAnswer?: boolean;
   contextPct?: number;
   vimMode?: boolean;
   onVimModeChange?: (mode: VimMode) => void;
@@ -91,16 +97,34 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
   // borders behind on re-render after errors / status changes.
   const boxWidth = Math.max(20, cols - 2);
 
-  const placeholder = busy
+  // Awaiting-input states beat "Working..." — the agent isn't busy, it's
+  // blocked on the user. Saying "Working..." here while a permission dialog
+  // sits in the scrollback above is exactly how users miss it (verified
+  // 2026-05-04 from a real screenshot — "Working..." spinner kept turning
+  // while the agent waited on a Bash approval).
+  const placeholder = awaitingApproval
+    ? '⚠  Approval needed — press [y]/[a]/[n] in the prompt above'
+    : awaitingAnswer
+    ? '⚠  Question above — type your answer'
+    : busy
     ? (queued
         ? `⏎ ${queuedCount ?? 1} queued: ${queued.slice(0, 40)}`
         : 'Working...')
     : 'Type a message...';
 
+  // Color the input-box border to match the urgency. Awaiting-user states
+  // get a bright yellow border so the focal point physically moves down to
+  // the input field, even peripheral vision picks it up.
+  const borderColor = awaitingApproval || awaitingAnswer ? 'yellow' : undefined;
+  const showSpinner = busy && !input && !awaitingApproval && !awaitingAnswer;
+  const leadingGlyph = (awaitingApproval || awaitingAnswer)
+    ? <Text color="yellow" bold>⚠ </Text>
+    : (showSpinner ? <Text color="yellow"><Spinner type="dots" /> </Text> : null);
+
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Box borderStyle="round" borderDimColor paddingX={1} width={boxWidth}>
-        {busy && !input ? <Text color="yellow"><Spinner type="dots" /> </Text> : null}
+      <Box borderStyle="round" borderColor={borderColor} borderDimColor={!borderColor} paddingX={1} width={boxWidth}>
+        {leadingGlyph}
         <Box flexGrow={1}>
           {vimMode ? (
             <VimInput
@@ -275,6 +299,24 @@ function RunCodeApp({
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [askUserRequest, setAskUserRequest] = useState<AskUserRequest | null>(null);
   const [askUserInput, setAskUserInput] = useState('');
+
+  // Ring the terminal bell exactly once when a permission/askUser dialog
+  // first appears. Helpful when the user has Franklin in a background
+  // tab and the agent stops to ask for approval — verified 2026-05-04
+  // from a real screenshot where the user missed the dialog because the
+  // input box still read "Working...". Opt-out via FRANKLIN_NO_BELL=1.
+  const bellPlayedRef = useRef(false);
+  useEffect(() => {
+    const dialogActive = !!permissionRequest || !!askUserRequest;
+    if (dialogActive && !bellPlayedRef.current) {
+      bellPlayedRef.current = true;
+      if (process.env.FRANKLIN_NO_BELL !== '1') {
+        try { process.stderr.write('\x07'); } catch { /* swallow — never break the UI on a TTY without bell */ }
+      }
+    } else if (!dialogActive) {
+      bellPlayedRef.current = false;
+    }
+  }, [permissionRequest, askUserRequest]);
   // Messages queued while agent is busy — auto-submitted FIFO when turns complete.
   const [queuedInputs, setQueuedInputs] = useState<string[]>([]);
   const turnDoneCallbackRef = useRef<(() => void) | null>(null);
@@ -1079,9 +1121,17 @@ function RunCodeApp({
         }}
       </Static>
 
-      {/* Permission dialog — rendered inline, captured via useInput above */}
+      {/* Permission dialog — rendered inline, captured via useInput above.
+          Visual prominence is critical here. The pre-3.15.27 yellow box was
+          easy to miss in a busy scrollback (verified from a real screenshot
+          where the user didn't notice the prompt and the bottom spinner
+          kept reading "Working..."). Now: red ACTION REQUIRED header, the
+          input box below changes its placeholder to match (see InputBox),
+          and we hide the waiting spinner / stream / response preview while
+          this is up so the dialog sits alone right above the input field. */}
       {permissionRequest && (
         <Box flexDirection="column" marginTop={1} marginLeft={2}>
+          <Text color="red" bold>━━━━━━━━━━ ⚠  ACTION REQUIRED  ⚠ ━━━━━━━━━━</Text>
           <Text color="yellow">╭─ Permission required ─────────────────</Text>
           <Text color="yellow">│ <Text bold>{permissionRequest.toolName}</Text></Text>
           {permissionRequest.description.split('\n').map((line, i) => (
@@ -1101,9 +1151,11 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* AskUser dialog — text input for agent questions */}
+      {/* AskUser dialog — text input for agent questions. Same urgency
+          treatment as permission: bright header, hidden noise around it. */}
       {askUserRequest && (
         <Box flexDirection="column" marginTop={1} marginLeft={2}>
+          <Text color="magenta" bold>━━━━━━━━━━ ⚠  ANSWER REQUIRED  ⚠ ━━━━━━━━━━</Text>
           <Text color="cyan">╭─ Question ─────────────────────────────</Text>
           <Text color="cyan">│ <Text bold>{askUserRequest.question}</Text></Text>
           {askUserRequest.options && askUserRequest.options.length > 0 && (
@@ -1183,8 +1235,11 @@ function RunCodeApp({
         );
       })()}
 
-      {/* Active (in-progress) tools — bordered box with multi-line streaming output */}
-      {Array.from(tools.entries()).map(([id, tool]) => {
+      {/* Active (in-progress) tools — bordered box with multi-line streaming output.
+          Hidden during permission/askUser dialogs so the dialog can sit alone
+          right above the input field — the user's focal point shouldn't be
+          divided while we're waiting on them. */}
+      {!permissionRequest && !askUserRequest && Array.from(tools.entries()).map(([id, tool]) => {
         const elapsed = Math.round((Date.now() - tool.startTime) / 1000);
         const elapsedStr = elapsed > 0 ? ` ${elapsed}s` : '';
         return (
@@ -1209,7 +1264,7 @@ function RunCodeApp({
       {/* Thinking — compact by default (just spinner). Preview shown only when
           FRANKLIN_SHOW_THINKING=1 is set, so terminal stays clean for reasoning
           models like o3 that emit long chains of thought. */}
-      {thinking && (
+      {thinking && !permissionRequest && !askUserRequest && (
         <Box flexDirection="column" marginLeft={2}>
           <Text color="magenta">
             <Spinner type="dots" />{' '}
@@ -1230,7 +1285,7 @@ function RunCodeApp({
       )}
 
       {/* Waiting — model name and step counter */}
-      {waiting && !thinking && tools.size === 0 && (
+      {waiting && !thinking && tools.size === 0 && !permissionRequest && !askUserRequest && (
         <Box marginLeft={2}>
           <Text color="yellow">
             <Spinner type="dots" />{' '}
@@ -1250,7 +1305,7 @@ function RunCodeApp({
           word. Capping here is purely to keep Ink's dynamic region under the
           terminal height — when it exceeds rows, Ink fires clearTerminal
           which wipes the user's entire scrollback buffer. */}
-      {streamText && (() => {
+      {streamText && !permissionRequest && !askUserRequest && (() => {
         const maxLines = Math.max(8, termRows - 12);
         const lines = streamText.split('\n');
         const truncated = lines.length > maxLines;
@@ -1385,6 +1440,8 @@ function RunCodeApp({
           queuedCount={queuedInputs.length}
           focused={!permissionRequest && !askUserRequest}
           busy={!askUserRequest && (waiting || thinking || tools.size > 0)}
+          awaitingApproval={!!permissionRequest}
+          awaitingAnswer={!!askUserRequest}
           contextPct={contextPct}
           vimMode={vimEnabled}
           onVimModeChange={setCurrentVimMode}
