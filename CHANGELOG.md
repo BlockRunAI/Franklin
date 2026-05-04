@@ -1,5 +1,49 @@
 # Changelog
 
+## 3.15.39 — Bash tool actually runs bash (not the user's \`\$SHELL\`)
+
+Real session 2026-05-04: agent ran \`rm -f
+data/etl_out/shard-*.ndjson\` and got:
+
+\`\`\`
+zsh:1: no matches found: data/etl_out/shard-*.ndjson
+\`\`\`
+
+The user's \`\$SHELL\` is \`/bin/zsh\` (macOS default since 2019),
+and the Bash tool was using \`process.env.SHELL || '/bin/bash'\` —
+so the agent's bash-shaped commands ran in zsh. zsh's default
+\`NOMATCH\` mode treats unmatched globs as fatal errors (a deliberate
+typo-protection feature), while bash silently passes the pattern
+through. The agent had learned bash semantics from training; the tool
+silently routed to a different shell.
+
+Other zsh-vs-bash divergences that would silently bite agents:
+
+- Process substitution syntax (\`<(cmd)\` works in both but escaping rules differ)
+- \`[[ \$var ]]\` empty-string check edge cases
+- Parameter expansion (\`\${var:offset:length}\` with negative offsets)
+- Array indexing (zsh is 1-based, bash is 0-based)
+- \`echo -e\` flag handling
+
+Each is a latent foot-gun. Agents that "know bash" hit them
+unpredictably depending on which user's machine the tool runs on.
+
+Fix:
+
+- \`tools/bash.ts\`: \`const shell = fs.existsSync('/bin/bash') ?
+  '/bin/bash' : (process.env.SHELL || '/bin/sh');\` — force the
+  POSIX-standard bash, fall through to user shell only if bash is
+  missing (NixOS-style stores, exotic Docker).
+- The tool's name and documented contract finally match runtime.
+- Tradeoff: any zsh-only aliases / functions in
+  \`~/.zshrc\` are no longer available to agent commands. Almost
+  always overlapping with bash equivalents in practice; add explicit
+  \`source\` calls if you need them.
+
+Independent of which login shell the user prefers — \`franklin\`'s
+own status bar, history, and completions still use \`\$SHELL\`. Only
+agent tool execution is pinned.
+
 ## 3.15.38 — \`--resume\` preserves running cost / token totals (don't lose history)
 
 Real session 2026-05-04 caught this. Reading the latest log entries
