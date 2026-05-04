@@ -6050,3 +6050,65 @@ test('pickFreeFallback: returns undefined when every candidate failed', async ()
   assert.equal(pick, undefined);
 });
 
+// ── TradingSignal data sufficiency ────────────────────────────────────────
+// Reported 2026-05-03: a BTC question came back with "MACD signal/histogram
+// can't be computed due to insufficient data" because default lookback was
+// 30 closes; MACD needs slow EMA (26) + signal EMA (9) = 35 minimum. The
+// agent then translated the partial signal into "持有观望", which user
+// flagged as a wishy-washy default. The fixes below: bump default to 90,
+// surface "insufficient data" explicitly, never count NaN as a 'neutral'
+// vote in the verdict tally.
+
+test('macd: 30-close history leaves signal/histogram undefined (regression)', async () => {
+  const { macd } = await import('../dist/trading/metrics.js');
+  const closes = Array.from({ length: 30 }, (_, i) => 100 + i * 0.5);
+  const result = macd(closes);
+  assert.ok(Number.isNaN(result.signal),
+    `30 closes should leave signal NaN (need ≥35), got ${result.signal}`);
+  assert.ok(Number.isNaN(result.histogram),
+    `30 closes should leave histogram NaN, got ${result.histogram}`);
+});
+
+test('macd: 60-close history yields finite signal + histogram', async () => {
+  const { macd } = await import('../dist/trading/metrics.js');
+  const closes = Array.from({ length: 60 }, (_, i) =>
+    100 + Math.sin(i / 5) * 5 + i * 0.1);
+  const result = macd(closes);
+  assert.ok(Number.isFinite(result.macd), 'macd line should be finite');
+  assert.ok(Number.isFinite(result.signal), 'signal should be finite');
+  assert.ok(Number.isFinite(result.histogram), 'histogram should be finite');
+});
+
+test('TradingSignal spec advertises 90d default and warns about MACD threshold', async () => {
+  const { tradingSignalCapability } = await import('../dist/tools/trading.js');
+  const spec = tradingSignalCapability.spec;
+  assert.equal(spec.name, 'TradingSignal');
+  // Description must steer agents toward echoing the verdict instead of
+  // falling back to "wait and see" when MACD is short on data.
+  assert.match(spec.description, /Verdict/i, 'description should mention Verdict section');
+  assert.match(spec.description, /insufficient data/i, 'description should warn about insufficient-data path');
+  assert.match(spec.description, /NOT default to "wait and see"/i, 'description should explicitly forbid wait-and-see default');
+  // Input schema should document the new default + threshold.
+  const daysProp = spec.input_schema.properties.days;
+  assert.ok(daysProp);
+  assert.match(daysProp.description, /90/, 'days description should advertise 90d default');
+  assert.match(daysProp.description, /35/, 'days description should mention the 35-close MACD threshold');
+});
+
+test('agent context.ts forbids wishy-washy "wait and see" default for trading verdicts', async () => {
+  // Read the system context the agent receives. The Trading verdicts
+  // section should explicitly forbid the "持有观望" / "wait and see"
+  // default unless both bull/bear lists are genuinely empty.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const ctxPath = path.join(here, '..', 'src', 'agent', 'context.ts');
+  const src = fs.readFileSync(ctxPath, 'utf8');
+  assert.match(src, /Trading verdicts/i, 'context should have a Trading verdicts section');
+  assert.ok(src.includes('持有观望') || /wait and see/i.test(src),
+    'context should mention the forbidden wishy-washy phrase');
+  assert.match(src, /Forbidden default/i, 'context should label it as a forbidden default');
+});
+
+

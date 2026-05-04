@@ -1,5 +1,41 @@
 # Changelog
 
+## 3.15.13 — TradingSignal: 90d default, real verdict, no more "持有观望"
+
+Same BTC report from 2026-05-03 had a second-order bug. After the
+agent landed on a model that could read the tool output, TradingSignal
+returned `MACD: 1822.73 / Signal: NaN / Histogram: NaN — neutral`
+because default lookback was 30 closes — MACD needs slow EMA (26) +
+signal EMA (9) = 35 minimum. Agent translated the partial signal into
+"持有观望" / "wait and see", the exact wishy-washy default the user
+had flagged before. Three fixes, one report:
+
+- `tools/trading`: \`TradingSignal\` default \`days\` 30 → 90. Added a
+  **Verdict** section to the output (\`Direction\` + \`Bull signals\`
+  + \`Bear signals\`) so the agent can echo a real call instead of
+  re-deriving one from raw indicators. NaN indicators no longer
+  contribute to the bull/bear tally — confidence is now \`max(bulls,
+  bears) / votingIndicators\` so a single broken indicator can't dilute
+  the call. MACD line says "insufficient data" explicitly when below
+  threshold; tool description warns models to surface that path
+  rather than translating it to "neutral". When closes < 35, output
+  includes a **Data Notes** section with the exact gap and a
+  re-run hint.
+- `agent/context`: new "Trading verdicts" rule alongside the
+  forbidden-phrases section. Forbids "持有观望" / "wait and see" /
+  "hold for clearer signals" as a default — only acceptable when the
+  Verdict is genuinely \`neutral\` AND both bull/bear signal lists are
+  empty (or 1-of-each tie). Otherwise the agent must commit to the
+  direction the tool already gave it.
+- `test/local`: +4 tests — MACD-30 leaves signal NaN (regression
+  guard), MACD-60 produces finite signal/histogram, TradingSignal
+  spec advertises new default + threshold, context.ts contains the
+  Trading verdicts section.
+
+Note: the VS Code extension renders tool output in a separate repo;
+the truncated `### Technical` heading in the user's screenshot was
+likely a panel-side collapse, not a CLI bug. Not addressed here.
+
 ## 3.15.12 — Category-aware free fallback (no more coder model on a BTC question)
 
 User asked Franklin "What is BTC looking like today" on Auto. Routed to

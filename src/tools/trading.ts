@@ -33,8 +33,21 @@ interface SignalInput {
   days?: number;
 }
 
+// MACD needs slow EMA (26) + signal EMA (9) = 35 closes minimum for the
+// signal/histogram to be defined. Default was 30, which left signal=NaN
+// and trend stuck at 'neutral' on every call — see the 2026-05-03 BTC
+// report where the agent had to write "MACD signal can't be computed
+// due to insufficient data". 90d gives stable MACD plus enough room for
+// reasonable Bollinger bandwidth and annualized volatility readings.
+const DEFAULT_LOOKBACK_DAYS = 90;
+const MIN_DAYS_FOR_MACD = 35;
+
+function fmtNumber(n: number, digits: number): string {
+  return Number.isFinite(n) ? n.toFixed(digits) : 'n/a';
+}
+
 async function executeSignal(input: Record<string, unknown>, _ctx: ExecutionScope): Promise<CapabilityResult> {
-  const { ticker, days = 30 } = input as unknown as SignalInput;
+  const { ticker, days = DEFAULT_LOOKBACK_DAYS } = input as unknown as SignalInput;
 
   if (!ticker) {
     return { output: 'Error: ticker is required', isError: true };
@@ -59,19 +72,44 @@ async function executeSignal(input: Record<string, unknown>, _ctx: ExecutionScop
   const bbResult = bollingerBands(closes);
   const volResult = volatility(closes);
 
-  // Determine overall direction from indicators
+  // Per-indicator validity. Each has its own minimum sample requirement
+  // and we surface the gap rather than silently defaulting to 'neutral'.
+  const macdValid = Number.isFinite(macdResult.signal) && Number.isFinite(macdResult.histogram);
+  const dataNotes: string[] = [];
+  if (!macdValid) {
+    dataNotes.push(
+      `MACD signal/histogram unavailable — need ≥${MIN_DAYS_FOR_MACD} closes, got ${closes.length}. ` +
+      `Re-run with days=${MIN_DAYS_FOR_MACD} or higher for full trend detection.`
+    );
+  }
+
+  // Direction count — only valid indicators contribute. A NaN MACD must
+  // not be counted as a 'neutral' vote, otherwise the agent reads weak
+  // data as a reason to recommend "wait and see".
   let bullish = 0;
   let bearish = 0;
-  if (rsiResult.interpretation === 'oversold') bullish++;
-  if (rsiResult.interpretation === 'overbought') bearish++;
-  if (macdResult.trend === 'bullish') bullish++;
-  if (macdResult.trend === 'bearish') bearish++;
-  if (bbResult.position === 'below') bullish++;
-  if (bbResult.position === 'above') bearish++;
+  let votingIndicators = 0;
+  if (Number.isFinite(rsiResult.value)) {
+    votingIndicators++;
+    if (rsiResult.interpretation === 'oversold') bullish++;
+    if (rsiResult.interpretation === 'overbought') bearish++;
+  }
+  if (macdValid) {
+    votingIndicators++;
+    if (macdResult.trend === 'bullish') bullish++;
+    if (macdResult.trend === 'bearish') bearish++;
+  }
+  if (Number.isFinite(bbResult.middle)) {
+    votingIndicators++;
+    if (bbResult.position === 'below') bullish++;
+    if (bbResult.position === 'above') bearish++;
+  }
 
   const direction: 'bullish' | 'bearish' | 'neutral' =
     bullish > bearish ? 'bullish' : bearish > bullish ? 'bearish' : 'neutral';
-  const confidence = Math.max(bullish, bearish) / 3;
+  const confidence = votingIndicators > 0
+    ? Math.max(bullish, bearish) / votingIndicators
+    : 0;
 
   bus.emit(makeEvent<SignalDetectedEvent>({
     type: 'signal.detected',
@@ -92,6 +130,24 @@ async function executeSignal(input: Record<string, unknown>, _ctx: ExecutionScop
   const { price, change24h, marketCap, volume24h } = priceResult;
   const last5 = closes.slice(-5).map(c => c.toFixed(2)).join(', ');
 
+  // MACD line: when signal/histogram are NaN, say so explicitly instead
+  // of rendering "1822.7300 / Signal: NaN / Histogram: NaN — neutral",
+  // which read as a real signal to translation models.
+  const macdLine = macdValid
+    ? `- **MACD:** ${fmtNumber(macdResult.macd, 4)} / Signal: ${fmtNumber(macdResult.signal, 4)} / Histogram: ${fmtNumber(macdResult.histogram, 4)} — ${macdResult.trend}`
+    : `- **MACD:** ${fmtNumber(macdResult.macd, 4)} / Signal: insufficient data / Histogram: insufficient data — *not enough closes for trend*`;
+
+  // Bull / bear breakdown so the agent can echo a real verdict instead
+  // of falling back to "wait and see".
+  const bullSignals: string[] = [];
+  const bearSignals: string[] = [];
+  if (rsiResult.interpretation === 'oversold') bullSignals.push('RSI oversold');
+  if (rsiResult.interpretation === 'overbought') bearSignals.push('RSI overbought');
+  if (macdValid && macdResult.trend === 'bullish') bullSignals.push('MACD trending up');
+  if (macdValid && macdResult.trend === 'bearish') bearSignals.push('MACD trending down');
+  if (Number.isFinite(bbResult.middle) && bbResult.position === 'below') bullSignals.push('price below lower Bollinger');
+  if (Number.isFinite(bbResult.middle) && bbResult.position === 'above') bearSignals.push('price above upper Bollinger');
+
   const output = [
     `## ${upper} Signal Report`,
     '',
@@ -99,11 +155,17 @@ async function executeSignal(input: Record<string, unknown>, _ctx: ExecutionScop
     `**Market Cap:** ${formatUsd(marketCap)}`,
     `**24h Volume:** ${formatUsd(volume24h)}`,
     '',
-    `### Technical Indicators (${days}d lookback)`,
-    `- **RSI(14):** ${rsiResult.value.toFixed(1)} — ${rsiResult.interpretation}`,
-    `- **MACD:** ${macdResult.macd.toFixed(4)} / Signal: ${macdResult.signal.toFixed(4)} / Histogram: ${macdResult.histogram.toFixed(4)} — ${macdResult.trend}`,
-    `- **Bollinger:** Upper ${bbResult.upper.toFixed(2)} / Middle ${bbResult.middle.toFixed(2)} / Lower ${bbResult.lower.toFixed(2)} — Price ${bbResult.position}`,
-    `- **Volatility:** ${(volResult.annualized * 100).toFixed(1)}% annualized — ${volResult.interpretation}`,
+    `### Technical Indicators (${days}d lookback, ${closes.length} closes)`,
+    `- **RSI(14):** ${fmtNumber(rsiResult.value, 1)} — ${rsiResult.interpretation}`,
+    macdLine,
+    `- **Bollinger:** Upper ${fmtNumber(bbResult.upper, 2)} / Middle ${fmtNumber(bbResult.middle, 2)} / Lower ${fmtNumber(bbResult.lower, 2)} — Price ${bbResult.position}`,
+    `- **Volatility:** ${fmtNumber(volResult.annualized * 100, 1)}% annualized — ${volResult.interpretation}`,
+    '',
+    `### Verdict`,
+    `**Direction:** ${direction} (${votingIndicators} indicator${votingIndicators === 1 ? '' : 's'} voting, confidence ${(confidence * 100).toFixed(0)}%)`,
+    bullSignals.length > 0 ? `**Bull signals:** ${bullSignals.join(', ')}` : '**Bull signals:** none',
+    bearSignals.length > 0 ? `**Bear signals:** ${bearSignals.join(', ')}` : '**Bear signals:** none',
+    ...(dataNotes.length > 0 ? ['', `### Data Notes`, ...dataNotes.map(n => `- ${n}`)] : []),
     '',
     `### Raw Data`,
     `Closes (last 5): ${last5}`,
@@ -116,12 +178,12 @@ export const tradingSignalCapability: CapabilityHandler = {
   spec: {
     name: 'TradingSignal',
     description:
-      'Get current price, technical indicators (RSI, MACD, Bollinger Bands, volatility), and a signal summary for a cryptocurrency. Returns raw data for the agent to analyze and interpret.',
+      'Get current price, technical indicators (RSI, MACD, Bollinger Bands, volatility), and a verdict (bullish / bearish / neutral with confidence) for a cryptocurrency. Always returns a Verdict section with bull/bear signal lists — echo it directly. When MACD signal/histogram report "insufficient data", say so explicitly; do NOT default to "wait and see".',
     input_schema: {
       type: 'object' as const,
       properties: {
         ticker: { type: 'string', description: 'Cryptocurrency ticker, e.g. "BTC", "ETH"' },
-        days: { type: 'number', description: 'Lookback period for indicators. Default: 30' },
+        days: { type: 'number', description: 'Lookback period in days. Default 90 (recommended). Below 35 will leave MACD signal/histogram undefined.' },
       },
       required: ['ticker'],
     },
