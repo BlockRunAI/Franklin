@@ -6095,6 +6095,68 @@ test('TradingSignal spec advertises 90d default and warns about MACD threshold',
   assert.match(daysProp.description, /35/, 'days description should mention the 35-close MACD threshold');
 });
 
+// ── PredictionMarket (Polymarket / Kalshi / cross-platform / smart money) ──
+// Surfaces BlockRun gateway's Predexon-backed prediction-market endpoints
+// to the agent. Tests cover the spec contract + registration; live calls
+// require a funded wallet and aren't run in unit tests.
+
+test('PredictionMarket spec exposes the four x402-paid actions', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  const spec = predictionMarketCapability.spec;
+  assert.equal(spec.name, 'PredictionMarket');
+  const actions = spec.input_schema.properties.action.enum;
+  assert.deepEqual(
+    [...actions].sort(),
+    ['crossPlatform', 'searchKalshi', 'searchPolymarket', 'smartMoney'],
+    'enum should expose exactly the four supported actions',
+  );
+  // Description must steer agents away from training-data odds answers.
+  assert.match(spec.description, /Polymarket/);
+  assert.match(spec.description, /Kalshi/);
+  assert.match(spec.description, /\$0\.001/);
+  assert.match(spec.description, /\$0\.005/);
+});
+
+test('PredictionMarket rejects unknown action without making a network call', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  const result = await predictionMarketCapability.execute(
+    { action: 'searchEverything' },
+    { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.output, /unknown action/i);
+});
+
+test('PredictionMarket smartMoney without conditionId fails fast', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  const result = await predictionMarketCapability.execute(
+    { action: 'smartMoney' },
+    { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.output, /conditionId/);
+});
+
+test('PredictionMarket missing action fails with usage hint', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  const result = await predictionMarketCapability.execute(
+    {},
+    { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.output, /action is required/);
+});
+
+test('PredictionMarket is registered in allCapabilities and CORE_TOOL_NAMES', async () => {
+  const { allCapabilities } = await import('../dist/tools/index.js');
+  const { CORE_TOOL_NAMES } = await import('../dist/tools/tool-categories.js');
+  const names = allCapabilities.map(c => c.spec.name);
+  assert.ok(names.includes('PredictionMarket'),
+    `PredictionMarket missing from allCapabilities (got ${names.length} tools)`);
+  assert.ok(CORE_TOOL_NAMES.has('PredictionMarket'),
+    'PredictionMarket should be in CORE_TOOL_NAMES — it is hero surface');
+});
+
 test('agent context.ts forbids wishy-washy "wait and see" default for trading verdicts', async () => {
   // Read the system context the agent receives. The Trading verdicts
   // section should explicitly forbid the "持有观望" / "wait and see"

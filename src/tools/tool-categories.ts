@@ -45,6 +45,11 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   // training-data guessing.
   'TradingMarket',
   'TradingSignal',
+  // Prediction market data — Polymarket, Kalshi, cross-platform matching,
+  // smart money. The "what are the odds of X" / "Polymarket on Y"
+  // category. Cross-platform pair lookup is unique to the gateway and
+  // is the kind of data a non-wallet agent fundamentally cannot reach.
+  'PredictionMarket',
   // Research — synthesized answers with real citations, semantic web
   // search, and clean URL fetching. Any factual current-events question
   // ("why did X drop?") should route here rather than the model's prior.

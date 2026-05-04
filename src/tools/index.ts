@@ -39,6 +39,7 @@ import {
   defiLlamaYieldsCapability,
   defiLlamaPriceCapability,
 } from './defillama.js';
+import { predictionMarketCapability } from './prediction.js';
 import { modalCapabilities } from './modal.js';
 import { createTradingCapabilities } from './trading-execute.js';
 import { Portfolio } from '../trading/portfolio.js';
@@ -181,6 +182,7 @@ export const allCapabilities: CapabilityHandler[] = [
   defiLlamaChainsCapability,
   defiLlamaYieldsCapability,
   defiLlamaPriceCapability,
+  predictionMarketCapability, // Polymarket / Kalshi / matching / smart money via Predexon
   // Modal GPU sandbox tools — registered but hidden by default (not in
   // CORE_TOOL_NAMES). Agent must `ActivateTool({names:["ModalCreate",...]})`
   // before they appear in its tool inventory. High-cost ($0.40/H100 create)

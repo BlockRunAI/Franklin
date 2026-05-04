@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.15.14 — PredictionMarket tool: Polymarket + Kalshi + cross-platform + smart money
+
+BlockRun gateway shipped a Predexon-backed prediction-market surface
+(\`/api/v1/pm/*\`) covering Polymarket, Kalshi, dFlow, Binance, Limitless,
+Opinion, and Predict.Fun. Franklin's agent saw it only as an undocumented
+"passthrough" line in the system prompt — useless without a tool. This
+release adds the tool.
+
+- new \`tools/prediction\`: \`PredictionMarket\` capability with four
+  actions, dispatched off an \`action\` parameter (same shape as
+  \`TradingMarket\`):
+  - \`searchPolymarket\` (\$0.001) — keyword search Polymarket markets,
+    surfaces YES/NO implied probabilities, volume, liquidity, end date,
+    and the \`condition_id\` so the agent can drill into smartMoney later.
+  - \`searchKalshi\` (\$0.001) — keyword search Kalshi markets with the
+    yes-side bid/ask in cents, volume, OI, close time, and ticker.
+  - \`crossPlatform\` (\$0.005) — pre-matched market pairs across
+    Polymarket and Kalshi for arbitrage / divergence signals. Unique to
+    the BlockRun gateway; not reachable via either platform's own API.
+  - \`smartMoney\` (\$0.005) — top wallet flow on a Polymarket
+    \`condition_id\`, with net YES/NO size and the top 5 buyers/sellers.
+- output is filtered + capped at 20 rows by default (50 hard cap) so a
+  single call never blows the context window. Each row fits one
+  markdown line; cost is footer-stamped on every result.
+- \`tools/index\`: registered alongside the existing trading + DefiLlama
+  hero surface.
+- \`tool-categories\`: added to \`CORE_TOOL_NAMES\` — election / odds
+  questions are exactly the kind of "the agent with a wallet can answer
+  this, and a stateless coding agent fundamentally cannot" use case
+  Franklin's positioning is built on.
+- \`agent/context\`: new "Prediction markets" section — when to call
+  which action, the parallel-search-then-compare pattern for
+  cross-venue divergence, and an explicit ban on answering odds
+  questions from training-data memory.
+- \`test/local\`: +5 unit tests covering the spec contract (action enum,
+  pricing in description), no-network early failures (unknown action,
+  missing action, missing conditionId for smartMoney), and registration
+  in both \`allCapabilities\` and \`CORE_TOOL_NAMES\`.
+
 ## 3.15.13 — TradingSignal: 90d default, real verdict, no more "持有观望"
 
 Same BTC report from 2026-05-03 had a second-order bug. After the
