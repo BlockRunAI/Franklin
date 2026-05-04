@@ -513,7 +513,21 @@ export async function interactiveSession(
     persistSessionMeta();
   };
   pruneOldSessions(sessionId); // Cleanup old sessions on start, protect current
-  runDataHygiene(); // Trim ~/.blockrun/data + cost_log + remove legacy files
+  // Trim ~/.blockrun/data + cost_log + remove legacy files + sweep
+  // orphan tool-results dirs. Logs a summary if anything was actually
+  // touched — pre-3.15.31 hygiene was completely silent and the only
+  // way to verify it was running was poking disk yourself.
+  const hygieneReport = runDataHygiene();
+  const totalCleaned =
+    hygieneReport.legacyFilesRemoved +
+    hygieneReport.dataFilesTrimmed +
+    hygieneReport.costLogRowsTrimmed +
+    hygieneReport.orphanToolResultsRemoved;
+  if (totalCleaned > 0) {
+    logger.info(
+      `[franklin] Data hygiene: ${hygieneReport.legacyFilesRemoved} legacy, ${hygieneReport.dataFilesTrimmed} data files, ${hygieneReport.costLogRowsTrimmed} cost_log rows, ${hygieneReport.orphanToolResultsRemoved} orphan tool-results dirs cleaned`
+    );
+  }
   persistSessionMeta();
 
   // Flush session meta on SIGINT/SIGTERM so mid-stream Ctrl+C doesn't

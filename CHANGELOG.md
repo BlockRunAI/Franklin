@@ -1,5 +1,28 @@
 # Changelog
 
+## 3.15.31 — Data hygiene reports what it cleaned (no more silent runs)
+
+Verified 2026-05-04 reading franklin-debug.log mid-session: hygiene
+was running at every session start (since 3.15.15) but never wrote
+anything to the log. The only way to verify it was alive — and what
+it had cleaned — was to manually \`ls\` directories before/after.
+That's the kind of thing the unified logger exists to fix.
+
+- \`storage/hygiene\`: \`runDataHygiene()\` now returns a
+  \`HygieneReport\` (\`{ legacyFilesRemoved, dataFilesTrimmed,
+  costLogRowsTrimmed, orphanToolResultsRemoved }\`) instead of void.
+  Each subroutine returns its own count; the report adds them up.
+- \`agent/loop\`: at session start, after hygiene runs, log one
+  \`[INFO]\` line if any total is non-zero:
+  \`Data hygiene: 4 legacy, 12 data files, 273 cost_log rows, 5
+  orphan tool-results dirs cleaned\`. Skip the log when nothing was
+  touched (most healthy sessions) so the line stays meaningful.
+- \`+1 test\` pinning the report contract — \`legacyFilesRemoved=1\`
+  when one legacy file is seeded, zero on the other counts.
+
+Tested: 310 passing (up from 309). The gap between hygiene running
+and being verifiable is now closed.
+
 ## 3.15.30 — Loop detector now matches input signatures, not just call counts (don't kill exploration)
 
 Reading the same Opus session minutes after shipping 3.15.28's

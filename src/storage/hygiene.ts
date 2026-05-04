@@ -49,22 +49,47 @@ const LEGACY_FILENAMES = [
 ];
 
 /**
- * Top-level entry. Call once at agent session start. Catches its own
- * errors so a bad disk never blocks startup.
+ * Summary of what hygiene removed/trimmed in one pass. Returned so the
+ * caller (agent loop) can log it — silent hygiene is hard to verify
+ * without poking at disk yourself, which is exactly the kind of thing
+ * users shouldn't have to do.
  */
-export function runDataHygiene(): void {
-  try { trimDataDir(); } catch { /* best effort */ }
-  try { trimCostLog(); } catch { /* best effort */ }
-  try { removeLegacyFiles(); } catch { /* best effort */ }
-  try { sweepOrphanToolResults(); } catch { /* best effort */ }
+export interface HygieneReport {
+  legacyFilesRemoved: number;
+  dataFilesTrimmed: number;
+  costLogRowsTrimmed: number;
+  orphanToolResultsRemoved: number;
 }
 
-function trimDataDir(): void {
+const ZERO_REPORT: HygieneReport = {
+  legacyFilesRemoved: 0,
+  dataFilesTrimmed: 0,
+  costLogRowsTrimmed: 0,
+  orphanToolResultsRemoved: 0,
+};
+
+/**
+ * Top-level entry. Call once at agent session start. Catches its own
+ * errors so a bad disk never blocks startup. Returns counts so callers
+ * can log a one-line summary — verified 2026-05-04 from a real session
+ * where hygiene was running silently for hours and there was no way to
+ * tell from the log whether anything was being cleaned.
+ */
+export function runDataHygiene(): HygieneReport {
+  const report: HygieneReport = { ...ZERO_REPORT };
+  try { report.dataFilesTrimmed = trimDataDir(); } catch { /* best effort */ }
+  try { report.costLogRowsTrimmed = trimCostLog(); } catch { /* best effort */ }
+  try { report.legacyFilesRemoved = removeLegacyFiles(); } catch { /* best effort */ }
+  try { report.orphanToolResultsRemoved = sweepOrphanToolResults(); } catch { /* best effort */ }
+  return report;
+}
+
+function trimDataDir(): number {
   const dir = path.join(BLOCKRUN_DIR, 'data');
-  if (!fs.existsSync(dir)) return;
+  if (!fs.existsSync(dir)) return 0;
 
   const entries = fs.readdirSync(dir);
-  if (entries.length === 0) return;
+  if (entries.length === 0) return 0;
 
   const cutoff = Date.now() - DATA_DIR_MAX_AGE_MS;
   type Entry = { name: string; mtime: number };
@@ -79,10 +104,11 @@ function trimDataDir(): void {
     }
   }
 
+  let removed = 0;
   // Pass 1: age-based delete.
   for (const e of stats) {
     if (e.mtime < cutoff) {
-      try { fs.unlinkSync(path.join(dir, e.name)); } catch { /* ok */ }
+      try { fs.unlinkSync(path.join(dir, e.name)); removed++; } catch { /* ok */ }
     }
   }
 
@@ -95,32 +121,37 @@ function trimDataDir(): void {
   const excess = survivors.length - DATA_DIR_MAX_FILES;
   if (excess > 0) {
     for (let i = 0; i < excess; i++) {
-      try { fs.unlinkSync(path.join(dir, survivors[i].name)); } catch { /* ok */ }
+      try { fs.unlinkSync(path.join(dir, survivors[i].name)); removed++; } catch { /* ok */ }
     }
   }
+  return removed;
 }
 
-function trimCostLog(): void {
+function trimCostLog(): number {
   const file = path.join(BLOCKRUN_DIR, 'cost_log.jsonl');
-  if (!fs.existsSync(file)) return;
+  if (!fs.existsSync(file)) return 0;
 
   // Cheap probe — skip the full read+rewrite when the file is small.
   const stat = fs.statSync(file);
-  if (stat.size < COST_LOG_PROBE_BYTES) return;
+  if (stat.size < COST_LOG_PROBE_BYTES) return 0;
 
   const lines = fs.readFileSync(file, 'utf-8').split('\n').filter(Boolean);
-  if (lines.length <= COST_LOG_MAX_ENTRIES) return;
+  if (lines.length <= COST_LOG_MAX_ENTRIES) return 0;
 
+  const dropped = lines.length - COST_LOG_MAX_ENTRIES;
   const kept = lines.slice(lines.length - COST_LOG_MAX_ENTRIES);
   fs.writeFileSync(file, kept.join('\n') + '\n');
+  return dropped;
 }
 
-function removeLegacyFiles(): void {
+function removeLegacyFiles(): number {
+  let removed = 0;
   for (const name of LEGACY_FILENAMES) {
     const p = path.join(BLOCKRUN_DIR, name);
     if (!fs.existsSync(p)) continue;
-    try { fs.unlinkSync(p); } catch { /* ok */ }
+    try { fs.unlinkSync(p); removed++; } catch { /* ok */ }
   }
+  return removed;
 }
 
 /**
@@ -134,10 +165,10 @@ function removeLegacyFiles(): void {
  * has no `<sessionId>.meta.json` partner in the sessions/ dir. The active
  * session is implicitly protected because its meta exists.
  */
-function sweepOrphanToolResults(): void {
+function sweepOrphanToolResults(): number {
   const toolResultsDir = path.join(BLOCKRUN_DIR, 'tool-results');
   const sessionsDir = path.join(BLOCKRUN_DIR, 'sessions');
-  if (!fs.existsSync(toolResultsDir)) return;
+  if (!fs.existsSync(toolResultsDir)) return 0;
 
   const knownSessionIds = new Set<string>();
   if (fs.existsSync(sessionsDir)) {
@@ -151,7 +182,7 @@ function sweepOrphanToolResults(): void {
       // Best-effort — if we can't read sessions/, skip the sweep so
       // we never delete tool-results that might still belong to a
       // live session.
-      return;
+      return 0;
     }
   }
 
@@ -159,9 +190,10 @@ function sweepOrphanToolResults(): void {
   try {
     entries = fs.readdirSync(toolResultsDir);
   } catch {
-    return;
+    return 0;
   }
 
+  let removed = 0;
   for (const name of entries) {
     if (knownSessionIds.has(name)) continue;
     const dir = path.join(toolResultsDir, name);
@@ -169,8 +201,10 @@ function sweepOrphanToolResults(): void {
       const stat = fs.statSync(dir);
       if (!stat.isDirectory()) continue;
       fs.rmSync(dir, { recursive: true, force: true });
+      removed++;
     } catch {
       // Skip — best-effort cleanup.
     }
   }
+  return removed;
 }

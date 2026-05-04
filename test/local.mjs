@@ -322,7 +322,6 @@ test('proxy server handles OPTIONS and local model switching without backend cal
 
 test('proxy server falls back when the paid BlockRun request times out', async () => {
   const originalHome = process.env.HOME;
-  const originalTimeout = process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS;
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-proxy-timeout-home-'));
   const proxyUrl = new URL('../dist/proxy/server.js', import.meta.url);
   const attempts = [];
@@ -380,7 +379,6 @@ test('proxy server falls back when the paid BlockRun request times out', async (
   let proxy;
   try {
     process.env.HOME = fakeHome;
-    process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS = '40';
     const backendPort = await listenOnRandomPort(backend);
     const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
     proxy = createProxy({
@@ -389,6 +387,7 @@ test('proxy server falls back when the paid BlockRun request times out', async (
       chain: 'base',
       modelOverride: 'slow/model',
       fallbackEnabled: true,
+      requestTimeoutMs: 40, // forces slow/model to time out, exercising fallback
     });
     const proxyPort = await listenOnRandomPort(proxy);
 
@@ -418,8 +417,6 @@ test('proxy server falls back when the paid BlockRun request times out', async (
     await new Promise((resolve) => backend.close(() => resolve()));
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
-    if (originalTimeout === undefined) delete process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS;
-    else process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS = originalTimeout;
     rmSync(fakeHome, { recursive: true, force: true });
   }
 });
@@ -5251,6 +5248,40 @@ test('lost-detection: running task with dead pid → marked lost', async () => {
   }
 });
 
+test('lost-detection: stale queued task without pid → reaped after timeout', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+  const { reconcileLostTasks } = await import('../dist/tasks/lost-detection.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const now = Date.now();
+    // Old queued task with no pid — runner died during import.
+    writeTaskMeta({
+      runId: 'stale-queued', runtime: 'detached-bash', label: 'x', command: 'x',
+      workingDir: '/tmp', status: 'queued', createdAt: now - 6 * 60 * 1000, // 6 min old
+    });
+    // Recently queued task without pid — runner may still be importing.
+    writeTaskMeta({
+      runId: 'fresh-queued', runtime: 'detached-bash', label: 'y', command: 'y',
+      workingDir: '/tmp', status: 'queued', createdAt: now - 30 * 1000, // 30s old
+    });
+
+    reconcileLostTasks(now);
+
+    assert.equal(readTaskMeta('stale-queued').status, 'lost');
+    assert.equal(readTaskMeta('fresh-queued').status, 'queued');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('runner: executes command, writes log, finalizes status=succeeded', async () => {
   const os = await import('node:os');
   const path = await import('node:path');
@@ -5337,7 +5368,9 @@ test('startDetachedTask: returns runId immediately, child completes async', asyn
 
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
   const orig = process.env.FRANKLIN_HOME;
+  const origCli = process.env.FRANKLIN_CLI_PATH;
   process.env.FRANKLIN_HOME = fakeHome;
+  process.env.FRANKLIN_CLI_PATH = path.join(process.cwd(), 'dist', 'index.js');
   try {
     const t0 = Date.now();
     const runId = startDetachedTask({
@@ -5361,6 +5394,8 @@ test('startDetachedTask: returns runId immediately, child completes async', asyn
   } finally {
     if (orig === undefined) delete process.env.FRANKLIN_HOME;
     else process.env.FRANKLIN_HOME = orig;
+    if (origCli === undefined) delete process.env.FRANKLIN_CLI_PATH;
+    else process.env.FRANKLIN_CLI_PATH = origCli;
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
@@ -5448,7 +5483,9 @@ test('cli: franklin task cancel <runId> kills running task', async () => {
 
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
   const orig = process.env.FRANKLIN_HOME;
+  const origCli = process.env.FRANKLIN_CLI_PATH;
   process.env.FRANKLIN_HOME = fakeHome;
+  process.env.FRANKLIN_CLI_PATH = path.join(process.cwd(), 'dist', 'index.js');
   try {
     const runId = startDetachedTask({
       label: 'sleep-long', command: 'sleep 30', workingDir: fakeHome,
@@ -5469,6 +5506,8 @@ test('cli: franklin task cancel <runId> kills running task', async () => {
   } finally {
     if (orig === undefined) delete process.env.FRANKLIN_HOME;
     else process.env.FRANKLIN_HOME = orig;
+    if (origCli === undefined) delete process.env.FRANKLIN_CLI_PATH;
+    else process.env.FRANKLIN_CLI_PATH = origCli;
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
@@ -5482,7 +5521,9 @@ test('cli: franklin task wait <runId> blocks until terminal', async () => {
 
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
   const orig = process.env.FRANKLIN_HOME;
+  const origCli = process.env.FRANKLIN_CLI_PATH;
   process.env.FRANKLIN_HOME = fakeHome;
+  process.env.FRANKLIN_CLI_PATH = path.join(process.cwd(), 'dist', 'index.js');
   try {
     const runId = startDetachedTask({
       label: 'short', command: 'sleep 0.5; echo done',
@@ -5501,6 +5542,8 @@ test('cli: franklin task wait <runId> blocks until terminal', async () => {
   } finally {
     if (orig === undefined) delete process.env.FRANKLIN_HOME;
     else process.env.FRANKLIN_HOME = orig;
+    if (origCli === undefined) delete process.env.FRANKLIN_CLI_PATH;
+    else process.env.FRANKLIN_CLI_PATH = origCli;
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
@@ -6311,6 +6354,47 @@ test('PredictionMarket missing action fails with usage hint', async () => {
 // partners that pruneOldSessions never touched, plus three legacy files
 // from older product names sitting forever. Tests below run hygiene
 // against an isolated fake HOME so user data is never touched.
+
+test('runDataHygiene: returns counts of what was cleaned (3.15.31 contract)', async () => {
+  // Pre-3.15.31 returned void — silent. New contract returns
+  // HygieneReport so the agent loop can log a one-line summary.
+  // Without this, hygiene was running but you couldn't tell what (if
+  // anything) it actually did from franklin-debug.log.
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-report-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  // Seed: one legacy file (1 to remove). Should report
+  // legacyFilesRemoved=1 and zero on the other counts.
+  writeFileSync(join(blockrunDir, 'brcc-debug.log'), 'leftover');
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    const report = h.runDataHygiene();
+    process.stdout.write(JSON.stringify(report));
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve(stdout) : reject(new Error(`hygiene subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+    const report = JSON.parse(result);
+    assert.equal(report.legacyFilesRemoved, 1, 'should report 1 legacy file removed');
+    assert.equal(report.dataFilesTrimmed, 0);
+    assert.equal(report.costLogRowsTrimmed, 0);
+    assert.equal(report.orphanToolResultsRemoved, 0);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
 
 test('runDataHygiene: removes legacy files (brcc-debug.log etc.) from BLOCKRUN_DIR', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-legacy-'));
