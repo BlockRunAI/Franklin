@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.15.32 — Slow-tool + thrown-error logging in streaming executor
+
+A real session 2026-05-04 13:13 surfaced this gap: user's screenshot
+showed \`✗ Bash 337.6s\` with a "Error while reading table" message
+in the UI tool block. Five-and-a-half minutes of Bash that errored,
+zero entries in \`franklin-debug.log\`. Post-hoc you can't ask
+"what was that long Bash that failed yesterday" — the only forensic
+trail was the session jsonl, which is per-session and not
+greppable across history.
+
+Two new log lines from \`agent/streaming-executor\`:
+
+- \`[INFO] Slow tool: ${name} ${status} after Xs — ${preview}\` when
+  a tool execution crosses 30s, regardless of outcome. Threshold is
+  conservative — \`Read\` / \`Glob\` / \`Grep\` finish in <1s; only
+  network calls (gsutil/bq, WebFetch on slow servers) and shell
+  builds cross. Includes the input preview (Bash command, file path,
+  search pattern) so the trail is actionable.
+- \`[WARN] Tool error: ${name} threw "${msg}" — ${preview}\` when a
+  tool throws an exception (caught at the executor layer). Pre-3.15.32
+  these only went to \`failures.jsonl\`, which most users never look
+  at. Tool errors now sit alongside everything else
+  \`franklin logs\` shows.
+
+Both leverage the existing \`inputPreview()\` helper on the
+\`StreamingExecutor\` class — no extra serialization cost. Fast,
+successful tools still leave the log silent (the contract since
+3.15.11).
+
 ## 3.15.31 — Data hygiene reports what it cleaned (no more silent runs)
 
 Verified 2026-05-04 reading franklin-debug.log mid-session: hygiene
