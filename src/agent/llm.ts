@@ -565,11 +565,76 @@ export class ModelClient {
       if (!response.ok) {
         const errorBody = await response.text().catch(() => 'unknown error');
         const message = extractApiErrorMessage(errorBody);
-        yield {
-          kind: 'error',
-          payload: { status: response.status, message },
-        };
-        return;
+
+        // Runtime tool_choice retry. The static allowlist at line ~35
+        // catches the case where the request goes directly to a model
+        // whose name contains `deepseek-reasoner` / `openai/o1` /
+        // `openai/o3`. But the gateway sometimes ALIASES a different
+        // model name to a reasoner backend — verified 2026-05-04 in a
+        // live session: a request for `deepseek/deepseek-v4-pro`
+        // returned `400 Invalid request: 400 deepseek-reasoner does not
+        // support this tool_choice`, because the gateway routed v4-pro
+        // to a deepseek-reasoner upstream. The static allowlist can't
+        // know that. Catch the error, drop tool_choice, re-fire once.
+        // No payment re-sign needed — original 402 already settled, and
+        // the gateway treats this as the same logical request.
+        const lc = message.toLowerCase();
+        const looksLikeToolChoiceReject =
+          response.status === 400 &&
+          lc.includes('tool_choice') &&
+          (lc.includes('not support') || lc.includes('unsupported') || lc.includes('does not support'));
+
+        if (looksLikeToolChoiceReject && requestPayload['tool_choice'] !== undefined) {
+          delete requestPayload['tool_choice'];
+          const retryBody = JSON.stringify(requestPayload);
+          if (this.debug) {
+            console.error(`[franklin] tool_choice rejected by upstream; retrying without it (model=${request.model})`);
+          }
+          response = await withAbortableTimeout(
+            () => fetch(endpoint, {
+              method: 'POST',
+              headers,
+              body: retryBody,
+              signal: requestController.signal,
+            }),
+            requestController,
+            createModelTimeoutError('request', request.model, requestTimeoutMs),
+            requestTimeoutMs,
+          );
+          if (response.status === 402) {
+            const paymentHeader = await this.signPayment(response);
+            if (!paymentHeader) {
+              yield { kind: 'error', payload: { message: 'Payment signing failed' } };
+              return;
+            }
+            response = await withAbortableTimeout(
+              () => fetch(endpoint, {
+                method: 'POST',
+                headers: { ...headers, ...paymentHeader },
+                body: retryBody,
+                signal: requestController.signal,
+              }),
+              requestController,
+              createModelTimeoutError('request', request.model, requestTimeoutMs),
+              requestTimeoutMs,
+            );
+          }
+          if (!response.ok) {
+            const retryBodyText = await response.text().catch(() => 'unknown error');
+            yield {
+              kind: 'error',
+              payload: { status: response.status, message: extractApiErrorMessage(retryBodyText) },
+            };
+            return;
+          }
+          // Successful retry — fall through to SSE parsing below.
+        } else {
+          yield {
+            kind: 'error',
+            payload: { status: response.status, message },
+          };
+          return;
+        }
       }
 
       // Parse SSE stream

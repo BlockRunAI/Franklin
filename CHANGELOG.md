@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.15.51 — Runtime retry for \`tool_choice\` rejection by gateway-aliased reasoner backends
+
+3.15.36 added a static allowlist (\`MODELS_WITHOUT_TOOL_CHOICE_SUBSTR\`)
+that strips \`tool_choice\` preemptively for models whose names
+contain \`deepseek-reasoner\`, \`openai/o1\`, or \`openai/o3\` —
+these models reject the field outright. That fixed the case
+where the agent loop targets a known restricted model directly.
+
+It missed the case where the BlockRun gateway internally aliases
+a different model name to a reasoner backend. Verified 2026-05-04
+in a live session: a request for \`deepseek/deepseek-v4-pro\`
+returned:
+
+\`\`\`
+HTTP 400: Invalid request: 400 deepseek-reasoner does not support this tool_choice
+\`\`\`
+
+The gateway routed v4-pro to a deepseek-reasoner upstream;
+Franklin's allowlist couldn't have known that since it checks
+\`request.model\` literally. The static-name approach is
+fundamentally limited — the gateway is free to re-alias any
+model at any time without telling the client.
+
+Effect: the grounding-retry path forces \`tool_choice: { type: 'any' }\`
+to make the model call WebSearch instead of fabricating
+citations. When the gateway then routes that retry to a
+reasoner upstream, the whole turn fails with the 400 above and
+the user sees the unhelpful tip \"Try /model to switch.\" Pure
+client-side limitation; nothing the user can do.
+
+Fix: runtime retry inside \`ModelClient.streamCompletion\`. When
+the response is HTTP 400 and the error body contains both
+\`tool_choice\` and one of \`not support\` / \`unsupported\` /
+\`does not support\`, AND the request payload had \`tool_choice\`
+set, the client deletes \`tool_choice\` from the payload and
+re-fires once. Re-handles 402 if the gateway demands payment
+again on the retry. Static allowlist still runs first as a
+preemptive optimization (no wasted round-trip when we know the
+model is restricted).
+
+Two new tests in \`test/local.mjs\` use global-fetch interception
+to verify:
+
+1. **Positive:** request with \`tool_choice: { type: 'any' }\`
+   gets the tool_choice 400, retries with no \`tool_choice\` in
+   the second body.
+2. **Negative:** request without \`tool_choice\` that hits a
+   different 400 doesn't retry — only one fetch call, no
+   infinite loop on unrelated errors.
+
+Tests: 321/321 pass (was 319 before, 2 new streamCompletion
+retry cases).
+
 ## 3.15.50 — Typing \"1\" to a numbered AskUser dialog no longer silently cancels
 
 Live session 2026-05-04:

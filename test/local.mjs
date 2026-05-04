@@ -2243,6 +2243,80 @@ test('streamCompletion payload: non-Anthropic model must not include thinking fi
   assert.equal(body.thinking, undefined, 'non-Anthropic must not get thinking flag');
 });
 
+// ─── Runtime tool_choice retry: gateway-aliased reasoner backends ─────
+//
+// Verified 2026-05-04 in a live session: a request for
+// `deepseek/deepseek-v4-pro` returned `400 Invalid request: 400
+// deepseek-reasoner does not support this tool_choice`. The gateway had
+// aliased v4-pro to a deepseek-reasoner upstream, but the static
+// allowlist in llm.ts only checks `request.model` literally — v4-pro
+// doesn't match "deepseek-reasoner" so the preemptive strip didn't
+// fire. Runtime retry catches this: drop tool_choice, re-fire once.
+
+test('streamCompletion: retries without tool_choice when upstream rejects it', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ tool_choice: body.tool_choice });
+    if (calls.length === 1) {
+      // First call: gateway-aliased reasoner rejects tool_choice.
+      return new Response(
+        JSON.stringify({
+          error: { message: '400 deepseek-reasoner does not support this tool_choice' },
+        }),
+        { status: 400, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    // Retry: short-circuit with another error so we don't have to
+    // simulate a full SSE stream — we only care about WHAT got sent.
+    return new Response('retry-shape-ok', { status: 500 });
+  };
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    const gen = client.streamCompletion({
+      model: 'deepseek/deepseek-v4-pro',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1024,
+      tools: [{ name: 'WebSearch', description: 'x', input_schema: { type: 'object' } }],
+      tool_choice: { type: 'any' },
+    });
+    // Drain until the second yield — first one should be the retried
+    // error since the second fetch returned 500.
+    for await (const _evt of gen) { /* drain */ }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls.length, 2, 'must have retried once after the tool_choice 400');
+  assert.deepEqual(calls[0].tool_choice, { type: 'any' }, 'first attempt carried tool_choice');
+  assert.equal(calls[1].tool_choice, undefined, 'retry must have stripped tool_choice');
+});
+
+test('streamCompletion: does not retry when tool_choice was already absent', async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = async (_url, _init) => {
+    callCount++;
+    return new Response(
+      JSON.stringify({ error: { message: '400 something else broke' } }),
+      { status: 400, headers: { 'content-type': 'application/json' } },
+    );
+  };
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    const gen = client.streamCompletion({
+      model: 'zai/glm-5.1',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1024,
+      // no tool_choice → retry path must not engage even on a 400
+    });
+    for await (const _evt of gen) { /* drain */ }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(callCount, 1, 'no retry when tool_choice was never set');
+});
+
 test('ModelClient: stream idle timeout surfaces a real timeout error instead of hanging forever', async () => {
   const originalTimeout = process.env.FRANKLIN_MODEL_IDLE_TIMEOUT_MS;
   const server = createServer((_req, res) => {
