@@ -6496,6 +6496,24 @@ test('isTestFixtureModel: local/test* matches; local/llamafile and real models d
   assert.equal(isTestFixtureModel(undefined), false);
 });
 
+test('isTestFixtureModel: extended prefixes (slow/, mock/, test/) and exact "test"', async () => {
+  // Verified on a real machine — the proxy timeout test using
+  // model="slow/model" leaked entries into the user's franklin-debug.log
+  // through the proxy fallback hooks before this prefix was added.
+  const { isTestFixtureModel } = await import('../dist/stats/test-fixture.js');
+  assert.equal(isTestFixtureModel('slow/model'), true);
+  assert.equal(isTestFixtureModel('slow/anything'), true);
+  assert.equal(isTestFixtureModel('mock/server'), true);
+  assert.equal(isTestFixtureModel('test/model'), true);
+  assert.equal(isTestFixtureModel('test'), true, 'exact-match "test" must filter');
+  // Real models with similar prefixes must still pass — no real gateway
+  // model uses these names but the test pins the contract.
+  assert.equal(isTestFixtureModel('testify/something'), false,
+    'prefix is "test/" not "test" — testify/* should pass through');
+  assert.equal(isTestFixtureModel('mockingbird/x'), false,
+    'prefix is "mock/" not "mock" — mockingbird/* should pass through');
+});
+
 test('appendAudit: drops local/test-model entries, keeps real models', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-audit-fixture-'));
   const auditFile = join(fakeHome, '.blockrun', 'franklin-audit.jsonl');

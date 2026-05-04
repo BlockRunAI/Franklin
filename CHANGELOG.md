@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.15.24 — Reading the new logs surfaced two real bugs
+
+\`tail ~/.blockrun/franklin-debug.log\` post-3.15.23 showed:
+
+1. **Tool call cap fires once per call past the cap.** One turn
+   produced 76 sequential \`Tool call cap hit: N calls this turn\`
+   warnings (25→100). The cap was warning + injecting a stop-signal
+   tool_result, but neither was tracked as already-fired, so the
+   model context filled with redundant nags AND the warning spammed
+   the log. Worse: nothing actually broke the loop, so a runaway
+   model could keep billing tools indefinitely.
+2. **\`slow/model\` polluting the user's log.** The proxy timeout
+   test (test/local.mjs:380) uses \`modelOverride: 'slow/model'\` —
+   a fixture name not caught by 3.15.16's \`isTestFixtureModel\`,
+   which only matched \`local/test*\`. Each \`npm test\` run
+   appended 3 entries to the user's real log.
+
+Fixes:
+
+- \`agent/loop\`: the cap warning + system tool_result inject are
+  now gated on a per-turn \`toolCapWarned\` boolean — fire once.
+  Hard cap added at \`MAX_TOOL_CALLS_PER_TURN * 2\` (50): if the
+  model ignores the soft stop and keeps calling tools, the loop
+  emits a \`turn_done\` with new reason \`'cap_exceeded'\` and breaks.
+  The user sees a one-line ⚠️ message; runaway billing stops.
+- \`stats/test-fixture\`: extended prefix list to \`slow/\`,
+  \`mock/\`, \`test/\`, plus exact-match \`test\`. Each pattern was
+  observed in test/local.mjs as a fixture model name.
+- \`proxy/server\`: three model-aware log calls now check
+  \`isTestFixtureModel\` first — the fallback-on-failure callback
+  (\`failedModel\`/\`nextModel\`), the success-after-fallback info
+  line (\`finalModel\`), and the network-error warning in
+  \`fetchWithFallback\` (\`model\`). Real production failures still
+  log; test-fixture noise gets dropped at the source.
+- \`agent/types\`: \`StreamTurnDone.reason\` extended with
+  \`'cap_exceeded'\`.
+- +1 test pins the new fixture-prefix contract; existing 307 tests
+  unchanged.
+
 ## 3.15.23 — Last \`console.error\` holdouts migrated to unified logger (paid tools + MCP)
 
 The 3.15.21 sweep got proxy + fallback but missed 7 more

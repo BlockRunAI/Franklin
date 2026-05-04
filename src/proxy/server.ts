@@ -47,6 +47,7 @@ export interface ProxyOptions {
 // pattern!), and timestamp format — bug fixes never propagated. They
 // were the last holdouts after the agent loop was migrated.
 import { logger, setDebugMode } from '../logger.js';
+import { isTestFixtureModel } from '../stats/test-fixture.js';
 
 const DEFAULT_MAX_TOKENS = 4096;
 // 180s budget for *time-to-headers* — reasoning-class models (zai/glm-*,
@@ -509,6 +510,10 @@ export function createProxy(options: ProxyOptions): http.Server {
               timeoutMs: requestTimeoutMs,
             },
             (failedModel, status, nextModel) => {
+              // Skip test-fixture model names (slow/, mock/, test/, local/test*)
+              // — these come from in-process proxy tests with mock servers and
+              // would otherwise pollute the user's real franklin-debug.log.
+              if (isTestFixtureModel(failedModel) || isTestFixtureModel(nextModel)) return;
               logger.warn(
                 `[franklin] ⚠️  ${failedModel} returned ${status}, falling back to ${nextModel}`
               );
@@ -521,7 +526,7 @@ export function createProxy(options: ProxyOptions): http.Server {
           body = result.bodyUsed;
           usedFallback = result.fallbackUsed;
 
-          if (usedFallback) {
+          if (usedFallback && !isTestFixtureModel(finalModel)) {
             logger.info(`[franklin] ↺ Fallback successful: using ${finalModel}`);
           }
         } else {
@@ -836,11 +841,13 @@ async function fetchWithPaymentFallback(
       if (nextModel && onFallback) {
         onFallback(model, 0, nextModel);
       }
-      logger.warn(
-        `[franklin] [fallback] ${model} request error: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
+      if (!isTestFixtureModel(model)) {
+        logger.warn(
+          `[franklin] [fallback] ${model} request error: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
 
       if (i < config.chain.length - 1) {
         await sleep(config.retryDelayMs);

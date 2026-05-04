@@ -671,6 +671,14 @@ export async function interactiveSession(
     const turnToolCounts = new Map<string, number>();    // Per-tool-name counts this turn
     const readFileCache = new Set<string>();             // Files already read (dedup)
     const MAX_TOOL_CALLS_PER_TURN = 25;                 // Hard cap per user turn
+    // Hard break threshold for runaways. The cap above is soft — we
+    // inject a "limit reached" tool_result once and let the model
+    // close out. If it ignores that signal and keeps calling tools,
+    // we force end the turn to prevent unbounded billing. Verified
+    // on a real user log: one turn went 25 → 100 tool calls before
+    // the loop ended via maxTurns (much later, much more expensive).
+    const HARD_TOOL_CAP = MAX_TOOL_CALLS_PER_TURN * 2;
+    let toolCapWarned = false;                          // Log + inject only once per turn
     const SAME_TOOL_WARN_THRESHOLD = 3;                 // Warn after N calls to same tool (lowered from 5 — search loops were wasting turns)
 
     // ── No-progress guardrail: kill infinite tiny-response loops ──
@@ -1686,8 +1694,10 @@ export async function interactiveSession(
         }
       }
 
-      // Hard cap: stop the turn if too many tool calls
-      if (turnToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
+      // Hard cap: nudge the model to stop. Inject once per turn —
+      // re-injecting on every iteration past the cap is just noise
+      // and clutters the model's context with repeated stop signals.
+      if (turnToolCalls >= MAX_TOOL_CALLS_PER_TURN && !toolCapWarned) {
         outcomeContent.push({
           type: 'tool_result' as const,
           tool_use_id: 'guardrail-cap',
@@ -1732,11 +1742,22 @@ export async function interactiveSession(
         }
       }
 
-      // Hard stop: if cap exceeded, force end this agent loop iteration
-      if (turnToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
-        logger.warn(`[franklin] Tool call cap hit: ${turnToolCalls} calls this turn`);
-        // Don't break — let the model respond one more time to summarize,
-        // but inject the stop signal above so it knows to finish up.
+      // Cap signaling: warn once per turn (was firing every iteration
+      // past the cap — verified on a real user log, one turn produced
+      // 76 sequential warnings 25→100). Hard break at 2× cap stops a
+      // runaway model that ignores the soft stop signal above.
+      if (turnToolCalls >= MAX_TOOL_CALLS_PER_TURN && !toolCapWarned) {
+        toolCapWarned = true;
+        logger.warn(`[franklin] Tool call cap hit: ${turnToolCalls} calls this turn (soft cap ${MAX_TOOL_CALLS_PER_TURN}, hard cap ${HARD_TOOL_CAP})`);
+      }
+      if (turnToolCalls >= HARD_TOOL_CAP) {
+        logger.error(`[franklin] Hard tool cap exceeded (${turnToolCalls}) — ending turn to prevent runaway`);
+        onEvent({
+          kind: 'text_delta',
+          text: `\n\n⚠️ Tool call limit exceeded (${turnToolCalls}/${HARD_TOOL_CAP}). Ending turn to prevent runaway loop. Try rephrasing or use \`/model\` to switch.\n`,
+        });
+        onEvent({ kind: 'turn_done', reason: 'cap_exceeded' });
+        break;
       }
     }
 

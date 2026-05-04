@@ -18,12 +18,26 @@
  * `local/test` prefix.
  */
 
+// Prefixes test files use to mark "this isn't a real model name". The
+// list grew by inspection of real franklin-debug.log pollution after
+// 3.15.16 — each new convention surfaced as a writes-to-user-home leak:
+//   `local/test*`  — agent loop in-process tests (test/local.mjs:567 etc.)
+//   `slow/`        — proxy timeout test (test/local.mjs:380)
+//   `mock/`        — generic mock-server fixtures (defensive)
+//   `test/`        — e.g. `test/model` used in some test paths
 const TEST_FIXTURE_PREFIXES = [
   'local/test',
+  'slow/',
+  'mock/',
+  'test/',
 ];
+
+// Exact-match fixtures (model is literally "test" without a slash).
+const TEST_FIXTURE_EXACT = new Set(['test']);
 
 export function isTestFixtureModel(model: string | undefined | null): boolean {
   if (!model) return false;
+  if (TEST_FIXTURE_EXACT.has(model)) return true;
   for (const prefix of TEST_FIXTURE_PREFIXES) {
     if (model.startsWith(prefix)) return true;
   }
