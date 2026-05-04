@@ -1,5 +1,59 @@
 # Changelog
 
+## 3.15.28 — Same-tool-warn warn-once + hard stop (Opus search-loop survivor)
+
+Real session 2026-05-04 caught this: user restarted Franklin on Opus-4.7
+to retry an analytics task that had hit the runaway hard cap on
+zai/glm-5.1. Opus did the same thing, just more politely.
+
+Reading the session jsonl:
+
+\`\`\`
+[SYSTEM] You have called Bash 3 times this turn. Stop and present...
+[assistant] [text: "two issues..."] [tool_use: Bash(gsutil ls...)]
+[SYSTEM] STOP. You have now called Bash 4 times — more searching...
+[assistant] [tool_use: Bash(gsutil ls.../2026/...)]
+[SYSTEM] STOP. You have now called Bash 5 times — more searching...
+[assistant] [tool_use: Bash(...)]
+\`\`\`
+
+Two bugs in one. The same shape as 3.15.24's tool-cap-spam fix, just
+in a sibling guardrail:
+
+- **Same-tool warn fires every call past threshold.** \`if (count >=
+  SAME_TOOL_WARN_THRESHOLD) inject\` — every Bash call past 3 pushed
+  another \`[SYSTEM] STOP\` tool_result into the model's context. Same
+  redundancy that 3.15.24 fixed for the total-call cap.
+- **No hard stop.** The soft \`[SYSTEM] STOP\` is just text the model
+  can ignore. Strong models (Opus, GPT-5.5) read it, briefly
+  acknowledge, and call the same tool again. Nothing actually
+  constrained behavior.
+
+Fixes:
+
+- \`agent/loop\`: track \`sameToolWarned: Set<string>\` per turn. Inject
+  the warn exactly once when count first reaches the threshold.
+- New \`SAME_TOOL_HARD_STOP = SAME_TOOL_WARN_THRESHOLD * 2\` (= 6
+  calls of the same tool in one turn). When hit: \`logger.error\`,
+  emit \`turn_done\` with reason \`cap_exceeded\`, break the turn.
+  Mirrors what \`HARD_TOOL_CAP\` already does for total tool calls.
+- User-facing message names the tool: \`"Bash called 6× in one turn —
+  that's a search loop. Ending turn so you don't burn through
+  credits."\`
+
+This is the third runaway-prevention layer:
+
+| Layer | Trigger | Behavior |
+|-------|---------|----------|
+| Soft warn (3.15.x) | Same tool ≥ 3 in a turn | Inject \`[SYSTEM]\` once |
+| Cap warn (3.15.24) | Total tools ≥ 25 in a turn | Inject + log warn once |
+| Same-tool hard stop (3.15.28) | One tool ≥ 6 in a turn | Break turn |
+| Total hard cap (3.15.24) | Total tools ≥ 50 in a turn | Break turn |
+
+Search loops now die at 6 calls of one tool, regardless of model.
+The previous Opus session would have ended at the 6th Bash call
+instead of running until the 50-call total hard cap fired.
+
 ## 3.15.27 — Permission dialog UX: docked, prominent, audible, can't be missed
 
 A real screenshot from 2026-05-04 showed the failure mode plainly:

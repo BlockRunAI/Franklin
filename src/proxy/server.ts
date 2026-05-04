@@ -38,6 +38,14 @@ export interface ProxyOptions {
   modelOverride?: string;
   debug?: boolean;
   fallbackEnabled?: boolean;
+  // Override the per-request timeout. Tests pass this directly instead of
+  // mutating process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS — an interrupted
+  // test run was leaving the env var set to '40' in the parent shell, which
+  // then poisoned subsequent franklin invocations with a 40ms timeout
+  // (verified in franklin-debug.log: real models like deepseek/deepseek-chat
+  // were timing out at 40ms long after the test process exited).
+  requestTimeoutMs?: number;
+  streamTimeoutMs?: number;
 }
 
 // Logging here goes through the unified logger introduced in 3.15.11
@@ -272,6 +280,11 @@ export function createProxy(options: ProxyOptions): http.Server {
   const chain = options.chain || 'base';
   let currentModel: string | null = options.modelOverride || DEFAULT_MODEL;
   const fallbackEnabled = options.fallbackEnabled !== false; // Default true
+  // Resolve timeouts once at construction. The option wins over the env var
+  // so callers (esp. tests) can configure a single proxy without polluting
+  // process.env for the rest of the process — and for any sibling proxy.
+  const effectiveRequestTimeoutMs = options.requestTimeoutMs ?? getProxyRequestTimeoutMs();
+  const effectiveStreamTimeoutMs = options.streamTimeoutMs ?? getProxyStreamTimeoutMs();
 
   let baseWallet: { privateKey: string; address: string } | null = null;
   let solanaWallet: { privateKey: string; address: string } | null = null;
@@ -487,7 +500,7 @@ export function createProxy(options: ProxyOptions): http.Server {
 
         let response: Response;
         let finalModel = requestModel;
-        const requestTimeoutMs = getProxyRequestTimeoutMs();
+        const requestTimeoutMs = effectiveRequestTimeoutMs;
 
         // Use fallback chain if enabled
         if (fallbackEnabled && body && requestPath.includes('messages')) {
@@ -605,7 +618,7 @@ export function createProxy(options: ProxyOptions): http.Server {
           let fullResponse = '';
           const STREAM_CAP = 5_000_000; // 5MB cap on accumulated stream
 
-          const STREAM_TIMEOUT_MS = getProxyStreamTimeoutMs();
+          const STREAM_TIMEOUT_MS = effectiveStreamTimeoutMs;
           const streamDeadline = Date.now() + STREAM_TIMEOUT_MS;
 
           const pump = async () => {

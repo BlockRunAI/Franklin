@@ -680,6 +680,19 @@ export async function interactiveSession(
     const HARD_TOOL_CAP = MAX_TOOL_CALLS_PER_TURN * 2;
     let toolCapWarned = false;                          // Log + inject only once per turn
     const SAME_TOOL_WARN_THRESHOLD = 3;                 // Warn after N calls to same tool (lowered from 5 — search loops were wasting turns)
+    // Hard stop at 2× the warn threshold. The previous loop injected
+    // "[SYSTEM] STOP" on every call past 3 (verified 2026-05-04 in a real
+    // Opus-4.7 session: Opus saw 4 STOP messages, made 4 more Bash calls
+    // anyway). Strong models read the system tool_result, briefly
+    // acknowledge, then call the same tool again — the soft injection
+    // doesn't actually constrain behavior. Hard stop matches what
+    // HARD_TOOL_CAP already does for total tool count.
+    const SAME_TOOL_HARD_STOP = SAME_TOOL_WARN_THRESHOLD * 2;
+    // Tracks which tool names have already had a warn injected this turn.
+    // Without it, every call past threshold pushes another [SYSTEM] STOP
+    // tool_result into the model's context — same shape bug as the cap
+    // spam fixed in 3.15.24, just in a sibling guardrail.
+    const sameToolWarned = new Set<string>();
 
     // ── No-progress guardrail: kill infinite tiny-response loops ──
     let consecutiveTinyResponses = 0;                    // Count of consecutive calls with <10 output tokens
@@ -1679,16 +1692,24 @@ export async function interactiveSession(
       );
 
       // ── Guardrail injections ──
-      // Warn about same-tool repetition — escalate on every call past threshold
+      // Warn about same-tool repetition — fire once per tool name per turn.
+      // Re-injecting on every subsequent call (the pre-3.15.28 behavior)
+      // just spammed the model's context: Opus-4.7 verified to ignore 4
+      // sequential "STOP" messages and keep calling Bash. Cleaner contract:
+      // one nudge at the threshold, then if the model ignores it past
+      // SAME_TOOL_HARD_STOP, break the turn.
+      let sameToolHardStopHit: string | null = null;
       for (const [name, count] of turnToolCounts) {
-        if (count >= SAME_TOOL_WARN_THRESHOLD) {
-          const escalation = count === SAME_TOOL_WARN_THRESHOLD
-            ? `[SYSTEM] You have called ${name} ${count} times this turn. Stop and present your results now. Do not make more ${name} calls.`
-            : `[SYSTEM] STOP. You have now called ${name} ${count} times — more searching is not producing new information. Answer the user with what you already have. If the answer truly requires a different approach, use a DIFFERENT tool or ask the user.`;
+        if (count >= SAME_TOOL_HARD_STOP) {
+          sameToolHardStopHit = name;
+          continue;
+        }
+        if (count === SAME_TOOL_WARN_THRESHOLD && !sameToolWarned.has(name)) {
+          sameToolWarned.add(name);
           outcomeContent.push({
             type: 'tool_result' as const,
-            tool_use_id: `guardrail-warn-${name}-${count}`,
-            content: escalation,
+            tool_use_id: `guardrail-warn-${name}`,
+            content: `[SYSTEM] You have called ${name} ${count} times this turn. Stop and present your results now. Do not make more ${name} calls — if you need different data, switch tools or ask the user.`,
             is_error: true,
           });
         }
@@ -1755,6 +1776,23 @@ export async function interactiveSession(
         onEvent({
           kind: 'text_delta',
           text: `\n\n⚠️ Tool call limit exceeded (${turnToolCalls}/${HARD_TOOL_CAP}). Ending turn to prevent runaway loop. Try rephrasing or use \`/model\` to switch.\n`,
+        });
+        onEvent({ kind: 'turn_done', reason: 'cap_exceeded' });
+        break;
+      }
+      // Same-tool hard stop. Strong models (Opus, GPT-5.5) sometimes
+      // read the warn injection, briefly acknowledge it, and call the
+      // same tool again — the soft signal is ineffective. Break the
+      // turn here when one tool name crosses the hard threshold to
+      // stop the search loop. Verified 2026-05-04: Opus-4.7 made 4
+      // Bash calls past 3 nags before this break would have triggered
+      // (at 6).
+      if (sameToolHardStopHit) {
+        const count = turnToolCounts.get(sameToolHardStopHit) ?? 0;
+        logger.error(`[franklin] Same-tool hard stop: ${sameToolHardStopHit} called ${count} times this turn — model ignoring soft warn, ending turn`);
+        onEvent({
+          kind: 'text_delta',
+          text: `\n\n⚠️ ${sameToolHardStopHit} called ${count}× in one turn — that's a search loop. Ending turn so you don't burn through credits. Rephrase what you actually need, or try a different model with \`/model\`.\n`,
         });
         onEvent({ kind: 'turn_done', reason: 'cap_exceeded' });
         break;
