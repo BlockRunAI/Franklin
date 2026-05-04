@@ -1,5 +1,63 @@
 # Changelog
 
+## 3.15.40 — \`npm run test:e2e\` no longer pollutes the user's audit log
+
+Verified 2026-05-04 on a real developer machine: \`grep -c
+"private/var/folders" ~/.blockrun/franklin-audit.jsonl\` returned
+**409 entries** spanning 13 days, totalling **\$0.258** in
+test-fixture costs that quietly mixed into the user's lifetime
+spend stats. Three orphan session-meta files (\`zai/glm-5.1\`,
+\`nvidia/qwen3-coder-480b\`) had also leaked into
+\`~/.blockrun/sessions/\` from the most recent run.
+
+Root cause: \`isTestFixtureModel()\` filters by name prefix
+(\`local/test\`, \`slow/\`, \`mock/\`, \`test/\`). E2E tests deliberately
+spawn the real CLI with **real** model names — \`zai/glm-5.1\` (the
+default), \`nvidia/qwen3-coder-480b\` (a coverage case), so the
+prefix gate doesn't fire and every audit/stats/session write
+lands in the developer's home dir.
+
+There was already a \`FRANKLIN_NO_AUDIT=1\` env-var escape hatch
+(audit.ts:62, tracker.ts:214) for exactly this — added in 3.15.16
+when 3.15.17's fixture-rename made test fixtures look real. But
+two pieces were missing:
+
+1. \`src/session/storage.ts\` had no equivalent guard — so
+   \`appendToSession\` and \`updateSessionMeta\` kept writing
+   \`.jsonl\` + \`.meta.json\` files to the user's prod sessions dir
+   even when tests had explicitly opted out of side effects.
+2. \`test/e2e.mjs\` never set any opt-out env var, so neither
+   audit/stats nor session writes were skipped during
+   \`npm run test:e2e\`.
+
+Fix:
+
+- \`src/session/storage.ts\`: \`isSessionPersistenceDisabled()\`
+  now returns \`persistenceDisabled || process.env.FRANKLIN_NO_PERSIST === '1'\`,
+  and \`appendToSession\` / \`updateSessionMeta\` switched from
+  the bare flag to the function. Closes the home-dir leak even
+  when child code doesn't call \`setSessionPersistenceDisabled()\`.
+- \`test/e2e.mjs\`: \`process.env.FRANKLIN_NO_AUDIT = '1'\` and
+  \`process.env.FRANKLIN_NO_PERSIST = '1'\` set at the top of the
+  module, before any imports / spawns. Inherited by spawned
+  children via the existing \`env: { ...process.env }\` passthrough
+  on line ~37.
+
+Why a separate env var instead of extending \`FRANKLIN_NO_AUDIT\`:
+\`test/local.mjs\` sets \`FRANKLIN_NO_AUDIT=1\` at file level
+expecting session writes to keep working so resume tests can
+verify \`.jsonl\` contents on disk — that contract is load-bearing
+for ten test cases that were verified to break under the broader
+semantic. Two vars, two concerns: \`FRANKLIN_NO_AUDIT\` blocks
+audit + stats; \`FRANKLIN_NO_PERSIST\` blocks session writes.
+Tests that want both set both. Tests that want only audit-off
+set only that.
+
+Existing 409 audit entries are left in place. Append-only audit
+logs are forensic records; the \$0.258 of test cost is small
+enough to disclose as "this was test traffic before the leak was
+plugged" rather than risk deleting interleaved real entries.
+
 ## 3.15.39 — Bash tool actually runs bash (not the user's \`\$SHELL\`)
 
 Real session 2026-05-04: agent ran \`rm -f

@@ -9,6 +9,20 @@
  * and asserts the output contains expected content.
  */
 
+// Disable side-effect writes to the developer's ~/.blockrun/ — the e2e
+// suite spawns franklin with real model names (zai/glm-5.1 etc.), which
+// look like production traffic to isTestFixtureModel(). Verified
+// 2026-05-04: prior runs left 409 audit entries ($0.258 cost) and 3
+// orphan session metas in the user's home dir. Both env vars are set
+// before any franklin import / child spawn so the spawned children (which
+// inherit env on line ~37) skip audit/stats AND session writes. The two
+// vars are intentionally separate: test/local.mjs sets only
+// FRANKLIN_NO_AUDIT=1 because it depends on session writes still landing
+// on disk (resume tests verify the .jsonl contents). See
+// src/stats/audit.ts, src/stats/tracker.ts, src/session/storage.ts.
+process.env.FRANKLIN_NO_AUDIT = '1';
+process.env.FRANKLIN_NO_PERSIST = '1';
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';

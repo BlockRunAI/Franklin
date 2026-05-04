@@ -27,7 +27,17 @@ export function setSessionPersistenceDisabled(disabled: boolean): void {
 }
 
 export function isSessionPersistenceDisabled(): boolean {
-  return persistenceDisabled;
+  // Also honor FRANKLIN_NO_PERSIST — a separate env var, deliberately
+  // NOT piggybacking on FRANKLIN_NO_AUDIT. test/local.mjs sets
+  // FRANKLIN_NO_AUDIT=1 at file level expecting session writes to
+  // keep working so resume tests can verify state on disk; that
+  // contract has to stay intact. FRANKLIN_NO_PERSIST is used by
+  // test/e2e.mjs to block home-dir writes from spawned franklin
+  // children. Verified 2026-05-04: prior e2e runs left 3 ghost
+  // session metas in the user's ~/.blockrun/sessions/ because real
+  // model names (zai/glm-5.1, nvidia/qwen3-coder-480b) escaped
+  // isTestFixtureModel()'s name-prefix gate.
+  return persistenceDisabled || process.env.FRANKLIN_NO_PERSIST === '1';
 }
 
 export interface SessionMeta {
@@ -142,7 +152,7 @@ export function appendToSession(
   sessionId: string,
   message: Dialogue
 ): void {
-  if (persistenceDisabled) return;
+  if (isSessionPersistenceDisabled()) return;
   const line = JSON.stringify(message) + '\n';
   withWritableSessionDir(() => {
     fs.appendFileSync(sessionPath(sessionId), line);
@@ -156,7 +166,7 @@ export function updateSessionMeta(
   sessionId: string,
   meta: Partial<SessionMeta>
 ): void {
-  if (persistenceDisabled) return;
+  if (isSessionPersistenceDisabled()) return;
   withWritableSessionDir(() => {
     const existing = loadSessionMeta(sessionId);
     const updated: SessionMeta = {
