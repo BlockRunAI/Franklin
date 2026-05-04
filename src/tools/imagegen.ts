@@ -310,9 +310,13 @@ function buildExecute(deps: ImageGenDeps) {
       body,
     });
 
-    // Handle x402 payment
+    // Handle x402 payment. Lifted out of the inner block so the polling
+    // path below can reuse the signed headers — every poll request
+    // re-presents the same authorization (the gateway settles on the
+    // first completed poll, same contract as videogen.ts:251).
+    let paymentHeaders: Record<string, string> | null = null;
     if (response.status === 402) {
-      const paymentHeaders = await signPayment(response, chain, endpoint);
+      paymentHeaders = await signPayment(response, chain, endpoint);
       if (!paymentHeaders) {
         return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };
       }
@@ -330,11 +334,71 @@ function buildExecute(deps: ImageGenDeps) {
       return { output: `Image generation failed (${response.status}): ${errText.slice(0, 200)}`, isError: true };
     }
 
-    const result = await response.json() as {
+    let result = await response.json() as {
       data?: { b64_json?: string; url?: string; revised_prompt?: string }[];
       error?: unknown;
       message?: unknown;
+      poll_url?: string;
+      id?: string;
+      status?: string;
     };
+
+    // Async path: gateway returns HTTP 202 (Accepted, queued) + a poll_url
+    // when the upstream image model takes longer than the inline budget
+    // (gpt-image-1/-2 routinely exceed 30s). Verified 2026-05-04 from
+    // Cloud Run logs — five back-to-back ImageGen calls that the agent
+    // saw as "No image data returned from API" had all returned 202 +
+    // queued status; payment was settled but the result was still
+    // generating async. Without polling here, the agent burns retries
+    // (each charged) and the image silently completes elsewhere with
+    // no way for Franklin to retrieve it. Mirror videogen.ts's
+    // pollUntilReady contract: same x-payment header on each poll.
+    if (response.status === 202 && result.poll_url) {
+      const origin = new URL(apiUrl).origin;
+      const pollEndpoint = result.poll_url.startsWith('http')
+        ? result.poll_url
+        : `${origin}${result.poll_url}`;
+      const pollHeaders = paymentHeaders ? { ...headers, ...paymentHeaders } : headers;
+      // Replace the POST timeout with a longer poll deadline. Image
+      // generation routinely completes within 1–3 min once queued; the
+      // 5 min ceiling matches videogen's POLL_MAX_WAIT_MS scale.
+      clearTimeout(timeout);
+      const pollDeadline = Date.now() + 5 * 60 * 1000;
+      let polled: typeof result | null = null;
+      while (Date.now() < pollDeadline) {
+        if (controller.signal.aborted) throw new Error('aborted');
+        await new Promise(r => setTimeout(r, 3_000));
+        const pollResp = await fetch(pollEndpoint, {
+          method: 'GET',
+          headers: pollHeaders,
+          signal: controller.signal,
+        });
+        if (pollResp.status === 202) continue; // still queued
+        if (pollResp.status === 429 || pollResp.status >= 500) continue; // transient
+        if (pollResp.ok) {
+          polled = await pollResp.json().catch(() => null);
+          if (polled && (polled.status === 'completed' || polled.data?.[0])) break;
+          if (polled && polled.status === 'failed') {
+            return {
+              output: `Image generation failed upstream: ${JSON.stringify(polled.error ?? polled).slice(0, 240)}`,
+              isError: true,
+            };
+          }
+          continue;
+        }
+        const text = await pollResp.text().catch(() => '');
+        return { output: `Image poll failed (${pollResp.status}): ${text.slice(0, 200)}`, isError: true };
+      }
+      if (!polled || !polled.data?.[0]) {
+        return {
+          output:
+            `Image generation queued but did not complete within 5 minutes. Payment was settled when the gateway accepted the job (HTTP 202). ` +
+            `If this keeps happening, the upstream image model is overloaded — try a smaller / faster model or retry later.`,
+          isError: true,
+        };
+      }
+      result = polled;
+    }
 
     const imageData = result.data?.[0];
     if (!imageData) {

@@ -1,5 +1,62 @@
 # Changelog
 
+## 3.15.48 — ImageGen handles HTTP 202 (queued) — was burning paid retries on async jobs
+
+Real diagnostic from gateway-side Cloud Run logs (verified
+2026-05-04 by direct gateway probe): five back-to-back ImageGen
+calls that Franklin reported as \"No image data returned from API\"
+were actually **HTTP 202 (Accepted, queued)** responses. The
+gateway settled payment when accepting each job and started the
+upstream model asynchronously, because gpt-image-1 / gpt-image-2
+routinely exceed the inline 30s budget for large images.
+
+Effect: the user paid USDC for every "failed" attempt while the
+images were still being generated server-side, and the agent —
+seeing only "No image data returned" — tried again and again
+with the same prompt, until \`signature-loop\` hard-stopped.
+Whatever the gateway eventually produced was unreachable from
+Franklin.
+
+Source: \`src/tools/imagegen.ts\` was strictly inline. After the
+402-payment retry it called \`response.json()\` and read
+\`result.data?.[0]\`. For a 202 response, body shape is
+\`{ poll_url, id, status: 'queued' }\` — no \`data\` field — so
+the code emitted the misleading "No image data" string. Meanwhile
+\`videogen.ts\` had full async polling support since v3 (line
+399's \`pollUntilReady\`) — image-side just never grew the same
+contract.
+
+Fix:
+
+- \`src/tools/imagegen.ts\`: lifted \`paymentHeaders\` out of the
+  402 block so the polling path can re-present the same signed
+  authorization on each poll (gateway settles on first completed
+  poll — same contract as videogen).
+- New 202 branch detects \`response.status === 202 && result.poll_url\`,
+  resolves the poll URL (relative or absolute), and polls every
+  3 s for up to 5 min. Replaces the original POST controller
+  timeout because the inline 60s no longer applies once we're
+  in async mode.
+- Treats poll responses the same shape the gateway already uses
+  for video (\`status: 'queued' | 'completed' | 'failed'\`,
+  \`data: [...]\`, \`error: ...\`). On completion, falls through
+  to the existing inline path that decodes b64_json / data: URI
+  / remote URL — no duplicated save logic.
+- On 5-min timeout: clear message that payment was settled when
+  the gateway accepted (HTTP 202), so the user knows they paid
+  even though no file landed locally. Recommends a smaller /
+  faster model.
+- Inline (200 + data) path is unchanged — the vast majority of
+  text-to-image requests still complete within 30s and skip
+  the polling branch entirely.
+
+This also benefits 3.15.45's diagnostic-string fix: previously
+the no-imageData branch surfaced \`error\` / \`message\` from the
+body to help diagnose why a generation failed; now most of those
+"failures" are actually completed jobs the agent can collect.
+
+Tests: 310/310 pass.
+
 ## 3.15.47 — \`franklin task tail\` stops printing the same log twice (squashed)
 
 Verified 2026-05-04 on a real failed ETL task: \`franklin task
