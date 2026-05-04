@@ -2292,6 +2292,57 @@ test('streamCompletion: retries without tool_choice when upstream rejects it', a
   assert.equal(calls[1].tool_choice, undefined, 'retry must have stripped tool_choice');
 });
 
+// ─── VideoGen image_url: local paths are inlined as data URIs ──────
+//
+// Verified 2026-05-04 in a live session: the agent passed a local
+// keyframe path (`/Users/.../franklin-claude-handoff-keyframe.png`)
+// as VideoGen's image_url; gateway returned `400 Invalid request body:
+// invalid_format url path: image_url`. ImageGen already handled this
+// via resolveReferenceImage — VideoGen now reuses the same helper.
+
+test('videogen: local image path is inlined as data URI before POST', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { videoGenCapability } = await import('../dist/tools/videogen.js');
+
+  // 1x1 PNG used by other resolveReferenceImage tests.
+  const pngBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vg-img-'));
+  const imgPath = path.join(tmp, 'keyframe.png');
+  fs.writeFileSync(imgPath, pngBytes);
+
+  const originalFetch = globalThis.fetch;
+  let captured = null;
+  globalThis.fetch = async (_url, init) => {
+    captured = JSON.parse(init.body);
+    // Short-circuit before payment / poll machinery — we only care about
+    // what got serialized into the request body.
+    throw new Error('captured');
+  };
+  try {
+    await videoGenCapability.execute(
+      {
+        prompt: 'test clip',
+        image_url: imgPath,
+        model: 'xai/grok-imagine-video', // skip the AskUser proposal flow
+      },
+      { workingDir: tmp, abortSignal: new AbortController().signal },
+    );
+  } catch { /* fetch threw 'captured' on purpose */ }
+  finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  assert.ok(captured, 'fetch must have been called');
+  assert.ok(captured.image_url, 'image_url must be on the body');
+  assert.match(captured.image_url, /^data:image\/png;base64,/,
+    'local path should round-trip into a data: URI before POST');
+});
+
 test('streamCompletion: does not retry when tool_choice was already absent', async () => {
   const originalFetch = globalThis.fetch;
   let callCount = 0;

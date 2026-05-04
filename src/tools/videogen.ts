@@ -35,6 +35,7 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
+import { resolveReferenceImage } from './imagegen.js';
 import { ModelClient } from '../agent/llm.js';
 import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -78,6 +79,28 @@ function buildExecute(deps: VideoGenDeps) {
     const { output_path, model, image_url, duration_seconds, contentId } = rawInput;
 
     if (!rawInput.prompt) return { output: 'Error: prompt is required', isError: true };
+
+    // Resolve image_url before sending. The gateway requires a URL (http(s)
+    // or data: URI), but agents naturally pass a local file path —
+    // verified 2026-05-04 in a live session: agent passed
+    // `/Users/.../keyframe.png` and the gateway returned
+    // `400 Invalid request body: invalid_format url path: image_url`.
+    // ImageGen already had `resolveReferenceImage` for the same problem;
+    // sharing the helper keeps the contract consistent across both tools
+    // (local path → base64 data URI; http(s) URL → fetched + inlined;
+    // data: URI → passes through). On any resolution failure, surface
+    // the message instead of letting the gateway 400 bubble back.
+    let resolvedImageUrl: string | undefined;
+    if (image_url) {
+      try {
+        resolvedImageUrl = await resolveReferenceImage(image_url, ctx.workingDir);
+      } catch (err) {
+        return {
+          output: `Could not resolve image_url ${JSON.stringify(image_url)}: ${(err as Error).message}`,
+          isError: true,
+        };
+      }
+    }
 
     // One-shot refinement opt-out: leading `///` tells Franklin "don't
     // refine this prompt." Strip the prefix and pass skipRefine through.
@@ -169,7 +192,7 @@ function buildExecute(deps: VideoGenDeps) {
     const body = JSON.stringify({
       model: videoModel,
       prompt: chosenPrompt,
-      ...(image_url ? { image_url } : {}),
+      ...(resolvedImageUrl ? { image_url: resolvedImageUrl } : {}),
       ...(duration_seconds ? { duration_seconds } : {}),
     });
 
@@ -533,7 +556,7 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
           prompt: { type: 'string', description: 'Text description of the video to generate' },
           output_path: { type: 'string', description: 'Where to save the MP4. Default: generated-<timestamp>.mp4 in working directory' },
           model: { type: 'string', description: 'Video model. Default: xai/grok-imagine-video' },
-          image_url: { type: 'string', description: 'Optional seed image URL (image-to-video)' },
+          image_url: { type: 'string', description: 'Optional seed image (image-to-video). Accepts http(s) URL, data: URI, or local file path — local paths get inlined as base64 data URIs automatically.' },
           duration_seconds: { type: 'number', description: 'Duration billed for. Default depends on model (8s for grok-imagine-video).' },
           contentId: { type: 'string', description: 'Optional Content id to attach and budget against.' },
         },

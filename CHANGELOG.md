@@ -1,5 +1,48 @@
 # Changelog
 
+## 3.15.52 — VideoGen accepts local file paths for \`image_url\` (auto-inlines as data URI)
+
+Verified 2026-05-04 in a live session: the agent generated a
+keyframe with ImageGen, saved it locally, then called VideoGen
+with \`image_url: "/Users/.../franklin-claude-handoff-keyframe.png"\`.
+Gateway returned:
+
+\`\`\`
+400 Invalid request body
+{"code":"invalid_format","format":"url","path":["image_url"],"message":"Invalid URL"}
+\`\`\`
+
+The agent figured it out — *"Reference image needs to be a URL,
+not a local path. Trying with prompt only"* — and burned a
+follow-up generation that lost the keyframe entirely. The whole
+chain (generate keyframe → use as seed for video) collapsed
+because the two tools have different conventions: ImageGen's
+\`image_url\` parameter goes through \`resolveReferenceImage\`
+(local path → base64 data URI; http(s) → fetched + inlined;
+data: URI → pass-through), but VideoGen passed the value
+straight through to the gateway.
+
+Fix:
+
+- \`src/tools/videogen.ts\`: imports \`resolveReferenceImage\`
+  from \`./imagegen.js\` and runs it on \`image_url\` before
+  serializing the body. Same contract across both tools — local
+  paths just work.
+- Tool-spec description for \`image_url\` updated to advertise
+  the supported formats explicitly: http(s) URL, \`data:\` URI,
+  or local file path.
+- On resolution failure (oversized file, bad MIME, missing
+  path) the error is surfaced clearly *before* the gateway
+  call, so the user/agent doesn't lose a paid retry to a
+  resolvable client-side mistake.
+- Added test in \`test/local.mjs\`: writes a 1×1 PNG to tmp,
+  invokes \`videoGenCapability.execute\` with the local path as
+  \`image_url\`, intercepts \`fetch\`, asserts the request body
+  carries a \`data:image/png;base64,...\` URI rather than the
+  raw filesystem path.
+
+Tests: 322/322 pass (was 321 before, 1 new videogen case).
+
 ## 3.15.51 — Runtime retry for \`tool_choice\` rejection by gateway-aliased reasoner backends
 
 3.15.36 added a static allowlist (\`MODELS_WITHOUT_TOOL_CHOICE_SUBSTR\`)
