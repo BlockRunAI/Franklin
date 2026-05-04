@@ -1,5 +1,42 @@
 # Changelog
 
+## 3.15.33 — Fix Detach child crash with MODULE_NOT_FOUND on dev-mode Franklin
+
+Real session 2026-05-04 14:35 caught this. User running Franklin in
+dev mode (\`node dist/index.js\` from the brcc source tree) used the
+\`Detach\` tool to start an ETL job with \`workingDir=blockrun-analytics\`.
+The detached runner failed immediately:
+
+\`\`\`
+node:internal/modules/cjs/loader:1228
+  throw err;
+  ^
+Error: Cannot find module '/Users/vickyfu/Documents/blockrun-analytics/dist/index.js'
+\`\`\`
+
+Cause in \`src/tasks/spawn.ts\`: \`resolveCliPath()\` returned
+\`process.argv[1]\` verbatim. In dev mode that's the relative path
+\`dist/index.js\`. The child \`spawn(node, [cliPath, '_task-runner',
+runId], { cwd: input.workingDir })\` then tried to load
+\`<workingDir>/dist/index.js\` — wrong directory, fails. npm global
+installs are unaffected because their entry script is an absolute
+symlink path; only \`node dist/index.js\` triggers it.
+
+Fix:
+
+- \`src/tasks/spawn.ts\`: capture \`STARTUP_CLI_PATH = path.resolve(
+  process.argv[1])\` at module load. Use that in \`resolveCliPath()\`.
+  Resolving at module load (not call time) is intentional — by the
+  time \`startDetachedTask\` runs, we may be many seconds in and
+  any code path could have called \`process.chdir()\` (none does
+  today, but the absolute path is the safer default).
+- \`FRANKLIN_CLI_PATH\` env override is still preferred when set —
+  matches the existing test escape hatch.
+
+Existing global-install users see no behavioral change. Dev users
+(and anyone hitting the same MODULE_NOT_FOUND) get a working
+Detach.
+
 ## 3.15.32 — Slow-tool + thrown-error logging in streaming executor
 
 A real session 2026-05-04 13:13 surfaced this gap: user's screenshot

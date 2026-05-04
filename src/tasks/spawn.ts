@@ -16,7 +16,13 @@
  *
  * CLI path resolution (in priority order):
  *   1. process.env.FRANKLIN_CLI_PATH — escape hatch for tests / dev.
- *   2. <cwd>/dist/index.js — the published bundle's entry point.
+ *   2. STARTUP_CLI_PATH (captured at module load) — absolute path of
+ *      the script Node is currently executing. Captured early so it
+ *      survives any later chdir; resolved to absolute so it survives
+ *      the spawn's `cwd:` override (the bug it fixes — verified
+ *      2026-05-04 from a real session: dev-mode `node dist/index.js`
+ *      run, then Detach with workingDir=other-repo, child fails with
+ *      MODULE_NOT_FOUND on `<other-repo>/dist/index.js`).
  */
 
 import { spawn } from 'node:child_process';
@@ -27,6 +33,21 @@ import { writeTaskMeta } from './store.js';
 import { taskLogPath, ensureTaskDir } from './paths.js';
 import type { TaskRecord } from './types.js';
 
+// Captured at module load so it survives later chdir / argv mutation.
+// `process.argv[1]` may be relative (`dist/index.js` in dev mode); we
+// resolve against process.cwd() at startup which is when the user's
+// shell exec'd the bundle. Doing this at call time would be wrong if
+// any code chdir'd between startup and the Detach call.
+const STARTUP_CLI_PATH: string | undefined = (() => {
+  const argv1 = process.argv[1];
+  if (!argv1) return undefined;
+  try {
+    return path.resolve(argv1);
+  } catch {
+    return argv1;
+  }
+})();
+
 export interface StartDetachedTaskInput {
   label: string;
   command: string;
@@ -36,7 +57,12 @@ export interface StartDetachedTaskInput {
 function resolveCliPath(): string {
   const fromEnv = process.env.FRANKLIN_CLI_PATH;
   if (fromEnv && fromEnv.length > 0) return fromEnv;
-  return path.resolve(process.cwd(), 'dist', 'index.js');
+  // STARTUP_CLI_PATH is the absolute path resolved at module load —
+  // safe to use after `cwd: input.workingDir` redirects the child.
+  // npm global installs already give an absolute path; this only
+  // matters in dev mode where `node dist/index.js` puts a relative
+  // path into argv[1].
+  return STARTUP_CLI_PATH || process.argv[1];
 }
 
 function generateRunId(): string {
