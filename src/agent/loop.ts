@@ -680,19 +680,23 @@ export async function interactiveSession(
     const HARD_TOOL_CAP = MAX_TOOL_CALLS_PER_TURN * 2;
     let toolCapWarned = false;                          // Log + inject only once per turn
     const SAME_TOOL_WARN_THRESHOLD = 3;                 // Warn after N calls to same tool (lowered from 5 — search loops were wasting turns)
-    // Hard stop at 2× the warn threshold. The previous loop injected
-    // "[SYSTEM] STOP" on every call past 3 (verified 2026-05-04 in a real
-    // Opus-4.7 session: Opus saw 4 STOP messages, made 4 more Bash calls
-    // anyway). Strong models read the system tool_result, briefly
-    // acknowledge, then call the same tool again — the soft injection
-    // doesn't actually constrain behavior. Hard stop matches what
-    // HARD_TOOL_CAP already does for total tool count.
-    const SAME_TOOL_HARD_STOP = SAME_TOOL_WARN_THRESHOLD * 2;
+    // Repetition-based hard stop. 3.15.28 used a count-based threshold
+    // (Bash called 6× → break) which incorrectly killed legitimate
+    // exploratory data work — verified 2026-05-04 in a real Opus session
+    // running data-engineering on GCS logs: 15 distinct gsutil/bq calls,
+    // each producing new insights, would have been cut off at call 6.
+    // 3.15.30 detects ACTUAL loops by tracking the (tool, input)
+    // signature: only break when the model calls the SAME signature 3
+    // times in one turn. Different inputs → exploration, allowed.
+    const SAME_SIGNATURE_HARD_STOP = 3;
     // Tracks which tool names have already had a warn injected this turn.
     // Without it, every call past threshold pushes another [SYSTEM] STOP
     // tool_result into the model's context — same shape bug as the cap
     // spam fixed in 3.15.24, just in a sibling guardrail.
     const sameToolWarned = new Set<string>();
+    // Tracks how many times each (tool, input)-signature has been called
+    // this turn. Different inputs → different signatures → exploration.
+    const turnSignatureCounts = new Map<string, number>();
 
     // ── No-progress guardrail: kill infinite tiny-response loops ──
     let consecutiveTinyResponses = 0;                    // Count of consecutive calls with <10 output tokens
@@ -1643,6 +1647,10 @@ export async function interactiveSession(
       for (const [inv] of results) {
         const name = inv.name;
         turnToolCounts.set(name, (turnToolCounts.get(name) || 0) + 1);
+        // Track (tool, input)-signature for the loop detector below.
+        // Identical signatures → real loop. Different inputs → exploration.
+        const sig = toolCallSignature(name, inv.input);
+        turnSignatureCounts.set(sig, (turnSignatureCounts.get(sig) || 0) + 1);
         // Session-scope aggregate (drives telemetry opt-in export).
         sessionToolCounts.set(name, (sessionToolCounts.get(name) || 0) + 1);
 
@@ -1713,14 +1721,12 @@ export async function interactiveSession(
       // Re-injecting on every subsequent call (the pre-3.15.28 behavior)
       // just spammed the model's context: Opus-4.7 verified to ignore 4
       // sequential "STOP" messages and keep calling Bash. Cleaner contract:
-      // one nudge at the threshold, then if the model ignores it past
-      // SAME_TOOL_HARD_STOP, break the turn.
-      let sameToolHardStopHit: string | null = null;
+      // one nudge at the threshold, and the loop detector below catches
+      // genuine stuck loops via input-signature repetition (3.15.30
+      // replaced 3.15.28's count-based hard stop — that broke legitimate
+      // exploratory data work where 15 distinct gsutil/bq calls were
+      // each producing new insights).
       for (const [name, count] of turnToolCounts) {
-        if (count >= SAME_TOOL_HARD_STOP) {
-          sameToolHardStopHit = name;
-          continue;
-        }
         if (count === SAME_TOOL_WARN_THRESHOLD && !sameToolWarned.has(name)) {
           sameToolWarned.add(name);
           outcomeContent.push({
@@ -1729,6 +1735,18 @@ export async function interactiveSession(
             content: `[SYSTEM] You have called ${name} ${count} times this turn. Stop and present your results now. Do not make more ${name} calls — if you need different data, switch tools or ask the user.`,
             is_error: true,
           });
+        }
+      }
+
+      // True loop detector: same (tool, input) signature repeated.
+      // Catches the actual failure mode (model retrying the exact same
+      // call hoping for a different result) without misfiring on
+      // legitimate exploration where each call has different input.
+      let stuckSignature: { sig: string; count: number } | null = null;
+      for (const [sig, count] of turnSignatureCounts) {
+        if (count >= SAME_SIGNATURE_HARD_STOP) {
+          stuckSignature = { sig, count };
+          break;
         }
       }
 
@@ -1797,19 +1815,20 @@ export async function interactiveSession(
         onEvent({ kind: 'turn_done', reason: 'cap_exceeded' });
         break;
       }
-      // Same-tool hard stop. Strong models (Opus, GPT-5.5) sometimes
-      // read the warn injection, briefly acknowledge it, and call the
-      // same tool again — the soft signal is ineffective. Break the
-      // turn here when one tool name crosses the hard threshold to
-      // stop the search loop. Verified 2026-05-04: Opus-4.7 made 4
-      // Bash calls past 3 nags before this break would have triggered
-      // (at 6).
-      if (sameToolHardStopHit) {
-        const count = turnToolCounts.get(sameToolHardStopHit) ?? 0;
-        logger.error(`[franklin] Same-tool hard stop: ${sameToolHardStopHit} called ${count} times this turn — model ignoring soft warn, ending turn`);
+      // Signature-based hard stop (3.15.30). The original 3.15.28 fired
+      // on count alone (Bash 6× → break), which incorrectly killed
+      // legitimate data-engineering work — the same Opus-4.7 session
+      // verified at 2026-05-04 13:36 was making 15 distinct gsutil/bq
+      // calls, each producing new insights. Now we only break when the
+      // SAME (tool, input) signature has been called 3× — the actual
+      // failure mode of "model retrying the exact same call hoping
+      // something changes". Different inputs = exploration, allowed.
+      if (stuckSignature) {
+        const toolName = stuckSignature.sig.split('::')[0];
+        logger.error(`[franklin] Signature-loop hard stop: \`${toolName}\` called with identical input ${stuckSignature.count} times this turn — ending turn`);
         onEvent({
           kind: 'text_delta',
-          text: `\n\n⚠️ ${sameToolHardStopHit} called ${count}× in one turn — that's a search loop. Ending turn so you don't burn through credits. Rephrase what you actually need, or try a different model with \`/model\`.\n`,
+          text: `\n\n⚠️ ${toolName} called ${stuckSignature.count}× with the same input this turn — that's a real loop, not exploration. Ending turn. Rephrase what you actually need, or try \`/model\` to switch.\n`,
         });
         onEvent({ kind: 'turn_done', reason: 'cap_exceeded' });
         break;

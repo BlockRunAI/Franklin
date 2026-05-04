@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.15.30 — Loop detector now matches input signatures, not just call counts (don't kill exploration)
+
+Reading the same Opus session minutes after shipping 3.15.28's
+count-based hard stop revealed an over-correction. The session was at
+\`Bash\` call **#15**, making distinct \`gsutil\` / \`bq\` queries
+against the BlockRun GCS log bucket — each call producing genuinely
+new information ("2 月文件是 pretty-printed JSON 不是 NDJSON",
+"BQ NDJSON parser 不能直接读"...). 3.15.28 would have killed it at
+call 6, mistaking legitimate exploration for a search loop.
+
+The actual failure mode 3.15.28 was meant to catch is the model
+retrying the **exact same call** hoping for a different result.
+3.15.30 detects that directly:
+
+- \`agent/loop\`: track \`turnSignatureCounts: Map<sig, count>\` per
+  turn, where \`sig = toolCallSignature(name, input)\` (already
+  exported by \`planner.ts\`). Increment on each tool invocation.
+- New \`SAME_SIGNATURE_HARD_STOP = 3\`: when ONE \`(tool, input)\`
+  pair fires 3× in one turn, log a \`[ERROR]\`, emit
+  \`turn_done reason=cap_exceeded\`, break. The user sees:
+  "\`Bash\` called 3× with the same input this turn — that's a
+  real loop, not exploration. Ending turn."
+- Removed 3.15.28's \`SAME_TOOL_HARD_STOP\` count-based break — too
+  blunt. The total hard cap (50 calls) remains as a safety net for
+  truly runaway turns.
+
+Five-layer runaway protection now:
+
+| Layer | Trigger | Behavior |
+|-------|---------|----------|
+| Soft warn | Same tool ≥ 3 in turn (any input) | Inject \`[SYSTEM]\` once |
+| Cap warn | Total tools ≥ 25 in turn | Inject + log warn once |
+| **Signature loop stop** | **Same (tool, input) ≥ 3 in turn** | **Break turn** |
+| Total hard cap | Total tools ≥ 50 in turn | Break turn |
+| (Existing) No-progress | 2 consecutive empty responses | Break turn |
+
+This preserves the protection from 3.15.28 against actual loops
+while letting Opus / GPT-5.5 do legitimate complex multi-step work.
+
 ## 3.15.29 — Populate audit \`toolCalls\` (interface had it since 3.15.11, code never did)
 
 Reading franklin-audit.jsonl mid-session showed every recent Opus row
