@@ -1351,6 +1351,22 @@ export async function interactiveSession(
         consecutiveTinyResponses = 0;
       }
       recordSessionUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, routingTier);
+      // Capture tool names invoked in this assistant turn. The AuditEntry
+      // interface has had a `toolCalls?: string[]` slot since 3.15.11, but
+      // nothing populated it — verified 2026-05-04 in a real Opus session
+      // where 14 audit rows showed `tools=[]` despite Bash being called
+      // every turn (the session jsonl had the tool_use blocks; the audit
+      // just lost them). Now we pull names off responseParts so post-hoc
+      // analytics can answer "what tools fired most often last week" from
+      // ~/.blockrun/franklin-audit.jsonl alone.
+      const turnToolNames: string[] = [];
+      for (const p of responseParts) {
+        if (p.type === 'tool_use') {
+          const name = (p as { name?: string }).name;
+          if (typeof name === 'string') turnToolNames.push(name);
+        }
+      }
+
       appendAudit({
         ts: Date.now(),
         sessionId,
@@ -1366,6 +1382,7 @@ export async function interactiveSession(
         source: 'agent',
         workDir,
         prompt: extractLastUserPrompt(history),
+        toolCalls: turnToolNames.length > 0 ? turnToolNames : undefined,
         routingTier,
       });
 

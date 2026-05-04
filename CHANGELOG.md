@@ -1,5 +1,28 @@
 # Changelog
 
+## 3.15.29 — Populate audit \`toolCalls\` (interface had it since 3.15.11, code never did)
+
+Reading franklin-audit.jsonl mid-session showed every recent Opus row
+with \`toolCalls\` either missing or empty. Cross-checked the session
+jsonl: tool_use blocks were definitely there (Bash, Read calls
+firing). The audit just wasn't recording the names.
+
+\`AuditEntry.toolCalls?: string[]\` has been in the interface since
+3.15.11; the \`appendAudit({ ... })\` call site at \`agent/loop.ts:1354\`
+never populated it. Loss of forensic data — "what tools fired most
+across last week" wasn't answerable from \`~/.blockrun/franklin-audit.jsonl\`
+even though the field was reserved for exactly that.
+
+- \`agent/loop\`: walk \`responseParts\`, pull tool names off
+  \`tool_use\` blocks, pass them as \`toolCalls\` to \`appendAudit\`.
+  Set \`undefined\` when the turn had no tools so the audit row
+  doesn't grow with empty arrays.
+
+Going forward, \`franklin insights\` and any external tooling that
+reads the audit can answer tool-usage questions correctly. Existing
+rows stay as-is (no migration); the field gradually fills as new
+calls happen.
+
 ## 3.15.28 — Same-tool-warn warn-once + hard stop (Opus search-loop survivor)
 
 Real session 2026-05-04 caught this: user restarted Franklin on Opus-4.7
