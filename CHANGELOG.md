@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.15.12 — Category-aware free fallback (no more coder model on a BTC question)
+
+User asked Franklin "What is BTC looking like today" on Auto. Routed to
+claude-sonnet-4.6, which 402'd, and the agent then auto-switched to
+`nvidia/qwen3-coder-480b` — a coder model — to do technical analysis.
+Cause: both the payment-failure and rate-limit branches in `agent/loop`
+hardcoded `['nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick',
+'nvidia/glm-4.7']` with the coder first, regardless of question domain.
+
+- `router`: new `pickFreeFallback(category, alreadyFailed)` exported from
+  `src/router/index.ts`. Picks from per-category free chains —
+  `coding` keeps qwen3-coder first, but `trading` / `research` /
+  `chat` / `reasoning` / `creative` lead with `glm-4.7` or
+  `llama-4-maverick` (general-purpose free models). Returns `undefined`
+  when the candidate set is exhausted so callers can surface a real
+  error instead of looping.
+- `agent/loop`: replaced both hardcoded `FREE_MODELS` arrays (payment
+  402 branch + rate-limit branch) with calls to `pickFreeFallback`
+  threaded through `lastRoutedCategory`, which is already tracked for
+  local-Elo recording.
+- `getFallbackChain(tier, 'free')` now returns the general free chain
+  instead of a single-element `[qwen3-coder]` — the old behavior just
+  re-tried the same model forever after a failure.
+- `test/local`: +6 tests covering coding-prefers-coder, trading-skips-
+  coder, alreadyFailed exclusion, unknown-category default, exhaustion;
+  existing free-routing-profile test relaxed from exact-list match to
+  membership in the free-gateway set.
+
 ## 3.15.11 — Logging system: persistent diagnostics + bounded audit log
 
 `franklin logs` was effectively empty for normal users. Eleven critical

@@ -565,9 +565,51 @@ export function getFallbackChain(
   tier: Tier,
   profile: RoutingProfile = 'auto'
 ): string[] {
-  if (profile === 'free') return ['nvidia/qwen3-coder-480b'];
+  if (profile === 'free') return FREE_MODELS_BY_CATEGORY.chat;
   const config = AUTO_TIERS[tier];
   return [config.primary, ...config.fallback];
+}
+
+// ─── Free-tier fallback (used when paid models 402 / rate-limit) ───
+
+// Free fallback chains by question category. Used when a paid model fails
+// mid-turn (402 payment, rate-limit) and we need a zero-cost replacement
+// to keep the user moving without waiting for funding.
+//
+// The lists are ordered: best-fit free model first, then degraded fallbacks.
+// Coding goes to qwen3-coder; everything else (chat / trading / research /
+// reasoning / creative) prefers general-purpose free models that aren't
+// coder-tuned. Without this split, a BTC question that exhausted paid
+// models was being handed to qwen3-coder-480b — a coder model trying to
+// do technical analysis. Reported 2026-05-03 with a markets question
+// routed to a coder model on Sonnet failure.
+const FREE_MODELS_BY_CATEGORY: Record<Category, string[]> = {
+  coding:    ['nvidia/qwen3-coder-480b', 'nvidia/glm-4.7', 'nvidia/llama-4-maverick'],
+  trading:   ['nvidia/glm-4.7', 'nvidia/llama-4-maverick', 'nvidia/qwen3-coder-480b'],
+  research:  ['nvidia/glm-4.7', 'nvidia/llama-4-maverick', 'nvidia/qwen3-coder-480b'],
+  reasoning: ['nvidia/glm-4.7', 'nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick'],
+  chat:      ['nvidia/llama-4-maverick', 'nvidia/glm-4.7', 'nvidia/qwen3-coder-480b'],
+  creative:  ['nvidia/llama-4-maverick', 'nvidia/glm-4.7', 'nvidia/qwen3-coder-480b'],
+};
+
+const DEFAULT_FREE_CHAIN: string[] = [
+  'nvidia/glm-4.7',
+  'nvidia/llama-4-maverick',
+  'nvidia/qwen3-coder-480b',
+];
+
+/**
+ * Pick the next free model to try given the question category and which
+ * free models have already failed this turn. Returns undefined when every
+ * candidate has been exhausted (caller should surface an error to user).
+ */
+export function pickFreeFallback(
+  category: string,
+  alreadyFailed: Set<string>
+): string | undefined {
+  const chain = (FREE_MODELS_BY_CATEGORY as Record<string, string[]>)[category]
+    ?? DEFAULT_FREE_CHAIN;
+  return chain.find(m => !alreadyFailed.has(m));
 }
 
 /**

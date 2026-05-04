@@ -26,7 +26,7 @@ import { logger, setDebugMode } from '../logger.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
-import { routeRequest, routeRequestAsync, resolveTierToModel, parseRoutingProfile, getFallbackChain } from '../router/index.js';
+import { routeRequest, routeRequestAsync, resolveTierToModel, parseRoutingProfile, getFallbackChain, pickFreeFallback } from '../router/index.js';
 import type { Tier, RoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
@@ -1216,8 +1216,7 @@ export async function interactiveSession(
           if (lastRoutedCategory) {
             recordOutcome(lastRoutedCategory, config.model, 'payment');
           }
-          const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick', 'nvidia/glm-4.7'];
-          const nextFree = FREE_MODELS.find(m => !turnFailedModels.has(m));
+          const nextFree = pickFreeFallback(lastRoutedCategory, turnFailedModels);
           if (nextFree) {
             const oldModel = config.model;
             config.model = nextFree;
@@ -1239,8 +1238,7 @@ export async function interactiveSession(
           if (lastRoutedCategory) {
             recordOutcome(lastRoutedCategory, config.model, 'rate_limit');
           }
-          const FREE_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick', 'nvidia/glm-4.7'];
-          const nextFree = FREE_MODELS.find(m => !turnFailedModels.has(m));
+          const nextFree = pickFreeFallback(lastRoutedCategory, turnFailedModels);
           if (nextFree) {
             const oldModel = config.model;
             config.model = nextFree;

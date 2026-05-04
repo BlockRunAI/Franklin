@@ -4396,10 +4396,28 @@ test('free routing profile stays free across router entry points', async () => {
   assert.equal(asyncRouted.model, 'nvidia/qwen3-coder-480b');
   assert.deepEqual(asyncRouted.signals, ['free-profile']);
 
+  // Free chain expanded 2026-05-03: was a single-element chain that just
+  // re-tried qwen3-coder forever; now returns the general-purpose free
+  // chain (llama/glm/qwen-coder) so a 402'd or rate-limited free user
+  // gets a real switch instead of thrashing on the same model. Assertion
+  // is intentionally membership-based — the exact ordering is tuned in
+  // FREE_MODELS_BY_CATEGORY and shouldn't break this test on every tweak.
+  const FREE_GATEWAY_MODELS = new Set([
+    'nvidia/qwen3-coder-480b',
+    'nvidia/glm-4.7',
+    'nvidia/llama-4-maverick',
+    'nvidia/deepseek-v4-flash',
+    'nvidia/nemotron-3-super-120b',
+    'nvidia/mistral-large-3-675b',
+  ]);
   for (const tier of ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING']) {
     const resolved = resolveTierToModel(tier, 'free');
     assert.equal(resolved.model, 'nvidia/qwen3-coder-480b', `resolveTierToModel free drifted for ${tier}`);
-    assert.deepEqual(getFallbackChain(tier, 'free'), ['nvidia/qwen3-coder-480b'], `free fallback chain drifted for ${tier}`);
+    const chain = getFallbackChain(tier, 'free');
+    assert.ok(Array.isArray(chain) && chain.length > 0, `free fallback chain empty for ${tier}`);
+    for (const m of chain) {
+      assert.ok(FREE_GATEWAY_MODELS.has(m), `free fallback drifted to non-free model ${m} for ${tier}`);
+    }
   }
 });
 
@@ -5973,5 +5991,62 @@ test('enforceRetention is a no-op when audit log is small', async () => {
   } finally {
     rmSync(fakeHome, { recursive: true, force: true });
   }
+});
+
+// ── Free-tier fallback by category ─────────────────────────────────────────
+// Regression guard: before this, a paid model failure on a markets question
+// would hand the turn to nvidia/qwen3-coder-480b (a coder model) — wrong
+// category. pickFreeFallback selects from per-category chains so trading /
+// research / chat get general-purpose free models first.
+
+test('pickFreeFallback: coding category prefers qwen3-coder first', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  const pick = pickFreeFallback('coding', new Set());
+  assert.equal(pick, 'nvidia/qwen3-coder-480b');
+});
+
+test('pickFreeFallback: trading category skips coder, picks glm-4.7', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  const pick = pickFreeFallback('trading', new Set());
+  assert.equal(pick, 'nvidia/glm-4.7', 'trading should not start with a coder model');
+  assert.notEqual(pick, 'nvidia/qwen3-coder-480b');
+});
+
+test('pickFreeFallback: research / chat / creative also skip coder first', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  for (const cat of ['research', 'chat', 'creative', 'reasoning']) {
+    const pick = pickFreeFallback(cat, new Set());
+    assert.notEqual(pick, 'nvidia/qwen3-coder-480b',
+      `${cat} should not start with a coder model, got ${pick}`);
+  }
+});
+
+test('pickFreeFallback: respects alreadyFailed set', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  // Coding starts with qwen3-coder. After it fails, next should not be qwen3-coder.
+  const failed = new Set(['nvidia/qwen3-coder-480b']);
+  const pick = pickFreeFallback('coding', failed);
+  assert.notEqual(pick, 'nvidia/qwen3-coder-480b');
+  assert.ok(['nvidia/glm-4.7', 'nvidia/llama-4-maverick'].includes(pick),
+    `expected glm-4.7 or llama-4-maverick, got ${pick}`);
+});
+
+test('pickFreeFallback: unknown category uses default chain (general model first)', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  const pick = pickFreeFallback('', new Set());
+  // Default chain leads with a general-purpose model, not qwen3-coder.
+  assert.notEqual(pick, 'nvidia/qwen3-coder-480b');
+  assert.ok(typeof pick === 'string' && pick.length > 0);
+});
+
+test('pickFreeFallback: returns undefined when every candidate failed', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  const failed = new Set([
+    'nvidia/qwen3-coder-480b',
+    'nvidia/glm-4.7',
+    'nvidia/llama-4-maverick',
+  ]);
+  const pick = pickFreeFallback('trading', failed);
+  assert.equal(pick, undefined);
 });
 
