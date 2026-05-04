@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.15.22 — Fix PredictionMarket double-/api 404; cap brain observations + relations
+
+Self-audit caught a real production bug in 3.15.14:
+
+**\`PredictionMarket\` was 404'ing on every call.** The tool used paths
+like \`/api/v1/pm/polymarket/markets\` but \`API_URLS.base\` already
+ends in \`/api\` (\`https://blockrun.ai/api\`) — so the assembled URL
+was \`https://blockrun.ai/api/api/v1/pm/...\` and every endpoint
+returned 404. The bug went unnoticed for a week because the unit
+tests only exercised the spec contract and error-paths; no test made
+an actual network request.
+
+- \`tools/prediction\`: replaced all 4 \`/api/v1/pm/...\` paths with
+  \`/v1/pm/...\` to match the existing pattern in \`tools/defillama\`
+  and \`tools/exa\`.
+- \`test/local\`: regression guard reads the compiled
+  \`dist/tools/prediction.js\` and asserts no path string starts with
+  \`/api/v1/pm/\`. The check would have caught the original bug at
+  build time if I'd written it earlier.
+
+Plus a defensive growth bound on the brain subsystem:
+
+- \`brain/store\`: caps \`MAX_OBSERVATIONS=2000\` and
+  \`MAX_RELATIONS=500\`. \`addObservation\` evicts oldest entries when
+  the cap is hit (younger observations tend to be more relevant and
+  more confident); \`upsertRelation\` evicts by lowest count + oldest
+  last_seen so often-reinforced relations stick around.
+- \`extract.ts\` runs at every session end (commands/start.ts:515)
+  so without this the files grew linearly forever — 200+ obs/month
+  at typical use, GB-scale within a few years.
+
 ## 3.15.21 — Migrate proxy + fallback to the unified logger (last duplicates removed)
 
 The original 3.15.11 logger audit flagged "three independent logging

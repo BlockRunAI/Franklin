@@ -243,7 +243,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   try {
     switch (action) {
       case 'searchPolymarket': {
-        const raw = await getWithPayment<unknown>('/api/v1/pm/polymarket/markets', {
+        const raw = await getWithPayment<unknown>('/v1/pm/polymarket/markets', {
           search,
           status: status ?? 'active',
           sort: sort ?? 'volume',
@@ -276,7 +276,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       }
 
       case 'searchKalshi': {
-        const raw = await getWithPayment<unknown>('/api/v1/pm/kalshi/markets', {
+        const raw = await getWithPayment<unknown>('/v1/pm/kalshi/markets', {
           search,
           status: status ?? 'open',
           sort: sort ?? 'volume',
@@ -309,7 +309,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       }
 
       case 'crossPlatform': {
-        const raw = await getWithPayment<unknown>('/api/v1/pm/matching-markets/pairs', {
+        const raw = await getWithPayment<unknown>('/v1/pm/matching-markets/pairs', {
           limit: cappedLimit,
         }, ctx);
         const pairs = unwrapList<MatchedPair>(raw);
@@ -338,7 +338,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
         if (!conditionId) {
           return { output: 'Error: conditionId is required for smartMoney (Polymarket condition_id from a prior searchPolymarket call)', isError: true };
         }
-        const path = `/api/v1/pm/polymarket/market/${encodeURIComponent(conditionId)}/smart-money`;
+        const path = `/v1/pm/polymarket/market/${encodeURIComponent(conditionId)}/smart-money`;
         const data = await getWithPayment<SmartMoneyResp>(path, {}, ctx);
         const buyers = (data.buyers ?? []).slice(0, 5);
         const sellers = (data.sellers ?? []).slice(0, 5);

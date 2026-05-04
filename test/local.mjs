@@ -6185,6 +6185,65 @@ test('TradingSignal spec advertises 90d default and warns about MACD threshold',
 // to the agent. Tests cover the spec contract + registration; live calls
 // require a funded wallet and aren't run in unit tests.
 
+test('PredictionMarket: paths must NOT include the /api prefix (regression: 3.15.14 doubled it)', async () => {
+  // 3.15.14 shipped this tool with paths like '/api/v1/pm/...' but
+  // API_URLS.base is 'https://blockrun.ai/api' — the prefix is already
+  // there, so the full URL became .../api/api/v1/pm/... and 404'd on
+  // every call. Bug went undetected for a week because no test exercised
+  // the network path. Read the dist source and assert the path
+  // construction is correct relative to the gateway base.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const src = fs.readFileSync(path.join(here, '..', 'dist', 'tools', 'prediction.js'), 'utf8');
+  // No path should start with '/api/' — that's the doubled-prefix bug.
+  const offending = src.match(/['"`]\/api\/v1\/pm\//g);
+  assert.equal(offending, null,
+    `PredictionMarket paths must not start with /api/ (API_URLS already includes it). Got: ${JSON.stringify(offending)}`);
+  // Sanity: at least one /v1/pm/ path is present (i.e., we didn't accidentally remove all paths).
+  assert.ok(src.includes('/v1/pm/'), 'expected at least one /v1/pm/ path in compiled prediction tool');
+});
+
+test('brain caps observations at MAX_OBSERVATIONS, evicting oldest', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-brain-cap-'));
+  const brainHref = new URL('../dist/brain/store.js', import.meta.url).href;
+  const script = `
+    const b = await import(${JSON.stringify(brainHref)} + '?t=' + Date.now());
+    // addObservation doesn't enforce a foreign key — a stub entity id
+    // is fine for exercising the cap. Distinct contents so the dedup
+    // path doesn't drop them.
+    const stubEntityId = 'test-entity-id';
+    for (let i = 0; i < 2050; i++) {
+      b.addObservation(stubEntityId, 'fact-' + i, 'test', 0.8, ['fact']);
+    }
+    const obs = b.loadObservations();
+    process.stdout.write(JSON.stringify({ count: obs.length, hasOldest: obs.some(o => o.content === 'fact-0'), hasNewest: obs.some(o => o.content === 'fact-2049') }));
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve(stdout) : reject(new Error(`brain subprocess failed (${code}): ${stderr}`)));
+      proc.on('error', reject);
+    });
+    const out = JSON.parse(result);
+    assert.equal(out.count, 2000, `expected 2000 retained observations, got ${out.count}`);
+    assert.equal(out.hasOldest, false, 'oldest observation (fact-0) should have been evicted');
+    assert.equal(out.hasNewest, true, 'newest observation (fact-2049) must be kept');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('PredictionMarket spec exposes the four x402-paid actions', async () => {
   const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
   const spec = predictionMarketCapability.spec;

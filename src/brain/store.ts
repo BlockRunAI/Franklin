@@ -14,6 +14,16 @@ const ENTITIES_FILE = path.join(BRAIN_DIR, 'entities.jsonl');
 const OBSERVATIONS_FILE = path.join(BRAIN_DIR, 'observations.jsonl');
 const RELATIONS_FILE = path.join(BRAIN_DIR, 'relations.jsonl');
 const MAX_ENTITIES = 200;
+// Observations and relations were previously unbounded — `extract.ts`
+// runs at every session end (commands/start.ts:515) so they grew
+// linearly forever. Caps below give comfortable headroom for a year+
+// of normal use without making per-entity scans pathological:
+//  - 2000 obs / 200 entities = ~10 observations per entity on average
+//  - 500 relations covers heavy cross-references between the entity set
+// On cap breach we drop the oldest entries — younger observations are
+// usually more relevant and more confident than an aging one.
+const MAX_OBSERVATIONS = 2000;
+const MAX_RELATIONS = 500;
 
 function uid(): string { return crypto.randomBytes(8).toString('hex'); }
 
@@ -140,7 +150,7 @@ export function addObservation(
     return;
   }
 
-  appendJsonl(OBSERVATIONS_FILE, {
+  const next: Observation = {
     id: uid(),
     entity_id: entityId,
     content,
@@ -148,7 +158,20 @@ export function addObservation(
     confidence,
     tags,
     created_at: Date.now(),
-  } satisfies Observation);
+  };
+
+  // Cap reached — rewrite the file with the trimmed set instead of
+  // appending. saveJsonl is atomic (tmp + rename) so a crash mid-write
+  // can't corrupt observations.
+  if (existing.length >= MAX_OBSERVATIONS) {
+    existing.sort((a, b) => b.created_at - a.created_at);
+    existing.length = MAX_OBSERVATIONS - 1;
+    existing.unshift(next);
+    saveJsonl(OBSERVATIONS_FILE, existing);
+    return;
+  }
+
+  appendJsonl(OBSERVATIONS_FILE, next);
 }
 
 // ─── Relations ────────────────────────────────────────────────────────────
@@ -174,7 +197,7 @@ export function upsertRelation(fromId: string, toId: string, type: string, confi
     existing.confidence = Math.min(existing.confidence + 0.05, 1.0);
     saveJsonl(RELATIONS_FILE, relations);
   } else {
-    appendJsonl(RELATIONS_FILE, {
+    const next: Relation = {
       id: uid(),
       from_id: fromId,
       to_id: toId,
@@ -182,7 +205,23 @@ export function upsertRelation(fromId: string, toId: string, type: string, confi
       confidence,
       count: 1,
       last_seen: Date.now(),
-    } satisfies Relation);
+    };
+    // Same cap pattern as observations. When the relation set is at
+    // its ceiling we drop the lowest-count, oldest-seen entries to
+    // make room — count + recency together approximate "this
+    // relation is still being seen", so eviction targets entries the
+    // brain extractor hasn't reinforced in a while.
+    if (relations.length >= MAX_RELATIONS) {
+      relations.sort((a, b) => {
+        if (b.count !== a.count) return b.count - a.count;
+        return b.last_seen - a.last_seen;
+      });
+      relations.length = MAX_RELATIONS - 1;
+      relations.unshift(next);
+      saveJsonl(RELATIONS_FILE, relations);
+    } else {
+      appendJsonl(RELATIONS_FILE, next);
+    }
   }
 }
 
