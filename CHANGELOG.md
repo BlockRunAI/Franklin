@@ -1,5 +1,39 @@
 # Changelog
 
+## 3.15.20 — Logger self-rotates non-destructively; \`franklin logs\` reads across the rotation
+
+\`franklin-debug.log\` had two related bugs that the 3.15.11 logger
+didn't address:
+
+- **No self-rotation.** The logger appended forever; the only rotation
+  lived inside the \`franklin logs\` command and only fired when the
+  user actually opened the log. A user who never ran \`franklin logs\`
+  would accumulate gigabytes silently.
+- **Destructive rotation.** When \`franklin logs\` did rotate, it
+  read the file, sliced off the first half, and overwrote the
+  original. Half the history vanished forever. No archive.
+
+Fixes:
+
+- \`logger\`: every \`writeFile()\` increments a probe counter; every
+  1000 writes (~80 KB worth — entries average ~80 bytes) the logger
+  stats the file and, if it crosses 10 MB, renames it to
+  \`franklin-debug.log.1\` (overwriting any previous archive) and
+  starts the live log fresh. One full archive of the most recent 10
+  MB is always retained, so post-rotation history isn't lost.
+  Best-effort: rename failures fall through to a delete-and-retry
+  on Windows-style EEXIST, then give up rather than leaving the live
+  log in a half-rotated state. Probe is amortized so the per-write
+  overhead is a counter increment.
+- \`commands/logs\`: the destructive in-place "slice off the first
+  half" rotation is gone — self-rotation in the logger makes it
+  redundant. \`printLastLines\` now stitches the archive + live log
+  on read so \`franklin logs --lines N\` correctly spans the
+  rotation boundary. \`--clear\` deletes both files.
+- +1 test seeds an 11 MB pre-rotation file, fires 1001 writes to
+  cross the probe boundary, and asserts the archive holds the bulk
+  + the live log holds the post-rotation entries.
+
 ## 3.15.19 — Plug two leaky in-process tests; CHANGELOG re-aligned
 
 3.15.18 shipped \`sweepOrphanToolResults()\` but the published npm

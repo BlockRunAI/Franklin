@@ -5900,6 +5900,59 @@ test('logger mirrors to stderr when debug mode is on', async () => {
   }
 });
 
+test('logger self-rotates franklin-debug.log to .log.1 when over 10MB', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-logger-rotate-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const liveFile = join(blockrunDir, 'franklin-debug.log');
+  const archiveFile = join(blockrunDir, 'franklin-debug.log.1');
+
+  // Pre-seed the live log with > 10 MB of content so the next write
+  // triggers rotation. 11 MB of zeros is enough; the logger doesn't
+  // care about content shape, only file size.
+  writeFileSync(liveFile, 'x'.repeat(11 * 1024 * 1024));
+
+  const loggerHref = new URL('../dist/logger.js', import.meta.url).href;
+  // The logger probes every 1000 writes — fire enough writes so we
+  // cross the probe boundary. Use info() to avoid stderr noise.
+  const script = `
+    const { logger, setDebugMode } = await import(${JSON.stringify(loggerHref)} + '?t=' + Date.now());
+    setDebugMode(false);
+    for (let i = 0; i < 1001; i++) logger.info('post-rotation entry ' + i);
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`logger subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    // Archive should now exist and contain the pre-rotation content.
+    assert.ok(existsSync(archiveFile), 'rotation should produce franklin-debug.log.1');
+    const fs = await import('node:fs');
+    const archiveSize = fs.statSync(archiveFile).size;
+    assert.ok(archiveSize > 10 * 1024 * 1024,
+      `archive should hold the >10MB pre-rotation content, got ${archiveSize}`);
+
+    // Live log should now be much smaller — only the post-rotation writes.
+    assert.ok(existsSync(liveFile), 'live log should be re-created after rotation');
+    const liveContent = readFileSync(liveFile, 'utf8');
+    assert.ok(!liveContent.includes('xxxxxxxxxxxx'),
+      'live log should not retain pre-rotation filler content');
+    assert.ok(liveContent.includes('post-rotation entry'),
+      'live log should contain post-rotation entries');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('logger strips ANSI escapes before writing', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-logger-ansi-'));
   const loggerHref = new URL('../dist/logger.js', import.meta.url).href;

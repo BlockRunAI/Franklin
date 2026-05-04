@@ -4,8 +4,8 @@ import chalk from 'chalk';
 import { BLOCKRUN_DIR } from '../config.js';
 
 const LOG_FILE = path.join(BLOCKRUN_DIR, 'franklin-debug.log');
+const ARCHIVE_LOG_FILE = path.join(BLOCKRUN_DIR, 'franklin-debug.log.1');
 const LEGACY_LOG_FILE = path.join(BLOCKRUN_DIR, 'runcode-debug.log');
-const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB auto-rotate threshold
 
 export function logsCommand(options: {
   follow?: boolean;
@@ -13,12 +13,11 @@ export function logsCommand(options: {
   clear?: boolean;
 }) {
   if (options.clear) {
-    try {
-      fs.unlinkSync(LOG_FILE);
-      console.log(chalk.green('Logs cleared.'));
-    } catch {
-      console.log(chalk.dim('No log file to clear.'));
-    }
+    let cleared = false;
+    try { fs.unlinkSync(LOG_FILE); cleared = true; } catch { /* may not exist */ }
+    try { fs.unlinkSync(ARCHIVE_LOG_FILE); cleared = true; } catch { /* may not exist */ }
+    if (cleared) console.log(chalk.green('Logs cleared.'));
+    else console.log(chalk.dim('No log file to clear.'));
     return;
   }
 
@@ -27,23 +26,18 @@ export function logsCommand(options: {
     try { fs.renameSync(LEGACY_LOG_FILE, LOG_FILE); } catch { /* best effort */ }
   }
 
-  if (!fs.existsSync(LOG_FILE)) {
+  // Logger now self-rotates on write (in src/logger.ts). The previous
+  // in-place "slice off the first half" rotation here was destructive
+  // — every invocation that crossed 10 MB silently dropped half the
+  // history. With self-rotation in place this command no longer needs
+  // to mutate the file at all; it just stitches the archive + live
+  // log for display.
+
+  if (!fs.existsSync(LOG_FILE) && !fs.existsSync(ARCHIVE_LOG_FILE)) {
     console.log(chalk.dim('No logs yet. Start franklin with --debug to enable logging:'));
     console.log(chalk.bold('  franklin start --debug'));
     return;
   }
-
-  // Auto-rotate: if file is over threshold, keep only last half
-  try {
-    const stat = fs.statSync(LOG_FILE);
-    if (stat.size > MAX_LOG_SIZE) {
-      const content = fs.readFileSync(LOG_FILE, 'utf-8');
-      const lines = content.split('\n');
-      const half = lines.slice(Math.floor(lines.length / 2));
-      fs.writeFileSync(LOG_FILE, half.join('\n'));
-      console.log(chalk.dim(`(Rotated log — was ${(stat.size / 1024 / 1024).toFixed(1)}MB)`));
-    }
-  } catch { /* ignore rotation errors */ }
 
   const parsed = parseInt(options.lines || '50', 10);
   const tailLines = isNaN(parsed) ? 50 : Math.max(1, Math.min(10000, parsed));
@@ -84,8 +78,15 @@ export function logsCommand(options: {
 
 function printLastLines(n: number) {
   try {
-    const content = fs.readFileSync(LOG_FILE, 'utf-8');
-    const lines = content.split('\n').filter(Boolean);
+    // Logger self-rotates to franklin-debug.log.1 when the live log
+    // crosses 10MB. Stitch the archive on first so requests for "last N"
+    // can span the rotation boundary — without this, immediately after
+    // a rotation `franklin logs --lines 1000` would show only whatever
+    // lines have been written since rotation, even though the archive
+    // is sitting right next to it.
+    const archive = fs.existsSync(ARCHIVE_LOG_FILE) ? fs.readFileSync(ARCHIVE_LOG_FILE, 'utf-8') : '';
+    const live = fs.existsSync(LOG_FILE) ? fs.readFileSync(LOG_FILE, 'utf-8') : '';
+    const lines = (archive + live).split('\n').filter(Boolean);
     const start = Math.max(0, lines.length - n);
     const slice = lines.slice(start);
 
