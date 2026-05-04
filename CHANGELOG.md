@@ -1,5 +1,57 @@
 # Changelog
 
+## 3.15.44 — Brain stops extracting tool patterns / URIs / task IDs as "entities"
+
+Verified 2026-05-04 on a real machine: \`~/.blockrun/brain/entities.jsonl\`
+contained 7 of 44 entries (16%) that were obvious junk:
+
+- \`Bash(git commit:*)\` — a tool-permission shape, type=concept
+- \`gs://blockrun-prod-2026-logs/logs/2026/02/**\` — GCS URI + glob
+- \`gs://blockrun-prod-2026-logs/logs/2026/05/**\` — same
+- \`t_morkaf83_f03a0b10\` — Franklin task runId, tagged as type=project
+- \`r/LangChain\`, \`r/LocalLLaMA\`, \`r/AI_Agents\` — Reddit subreddit
+  names with vacuous observations like "Has 50-60k members"
+
+Each accumulated 1–3 vacuous observations like \"This is a task ID for an
+ETL process.\" or \"Used to save the state of a process.\" — tautological
+restatements rather than facts a future session could act on. Worse, the
+brain re-loads them as context on the next session, so the noise
+compounds across days.
+
+Source: \`src/brain/extract.ts\` only filtered by name length and a
+4-element \`VALID_TYPES\` set. The model emits whatever string was
+syntactically prominent in the transcript; the prompt's "do NOT extract
+generic concepts" guidance wasn't load-bearing without a code-side
+backstop.
+
+Fix:
+
+- \`src/brain/store.ts\`: new \`isJunkEntityName(name)\` predicate +
+  \`pruneJunkBrainEntries()\` cleanup. Patterns flag the cases observed
+  in the wild: tool-permission shape (\`Bash(...)\`, \`Edit(...)\`),
+  object URIs (\`gs://\`, \`s3://\`, \`file://\`, \`http(s)://\`), glob
+  paths, Franklin task runIds (\`t_<...>_<hex>\`), session ids, and
+  bare hex hashes ≥16 chars. Conservative — anything that looks
+  programmatic rather than nameable.
+- \`src/brain/extract.ts\`: \`parseExtraction()\` filter now drops
+  entities whose names match the junk patterns. Tightened the
+  \`BRAIN_PROMPT\` with explicit "do NOT extract … tool permission
+  patterns, object URIs, glob patterns, task IDs, session IDs, or
+  hashes/UUIDs" + an explicit anti-tautology rule on observations.
+- \`src/storage/hygiene.ts\`: \`runDataHygiene()\` now also calls
+  \`pruneJunkBrainEntries()\` once per session start, so any junk that
+  predates the filter (or escapes the regex through new model behavior)
+  gets cleared. Drops the entities + their observations + their
+  relations atomically.
+- \`HygieneReport\` gains \`brainJunkEntitiesRemoved\` so the cleanup
+  surfaces in agent-startup logs instead of silently churning disk.
+
+Subreddits like \`r/LangChain\` are NOT filtered — they're real entities
+the user might want to remember (e.g. as audience targets for a
+marketing wedge). The patterns target programmatic strings only.
+
+Tests: 310/310 pass.
+
 ## 3.15.43 — Fallback stats no longer report 0% across all real requests
 
 Verified 2026-05-04 on a real dev machine after 5150 lifetime

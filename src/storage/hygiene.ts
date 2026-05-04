@@ -25,6 +25,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BLOCKRUN_DIR } from '../config.js';
+import { pruneJunkBrainEntries } from '../brain/store.js';
 
 // Retention knobs. Tuned conservatively — a power user with 50+ calls/day
 // for 30 days still fits in DATA_DIR_MAX_FILES, and 5000 cost-log entries
@@ -59,6 +60,7 @@ export interface HygieneReport {
   dataFilesTrimmed: number;
   costLogRowsTrimmed: number;
   orphanToolResultsRemoved: number;
+  brainJunkEntitiesRemoved: number;
 }
 
 const ZERO_REPORT: HygieneReport = {
@@ -66,6 +68,7 @@ const ZERO_REPORT: HygieneReport = {
   dataFilesTrimmed: 0,
   costLogRowsTrimmed: 0,
   orphanToolResultsRemoved: 0,
+  brainJunkEntitiesRemoved: 0,
 };
 
 /**
@@ -81,6 +84,7 @@ export function runDataHygiene(): HygieneReport {
   try { report.costLogRowsTrimmed = trimCostLog(); } catch { /* best effort */ }
   try { report.legacyFilesRemoved = removeLegacyFiles(); } catch { /* best effort */ }
   try { report.orphanToolResultsRemoved = sweepOrphanToolResults(); } catch { /* best effort */ }
+  try { report.brainJunkEntitiesRemoved = pruneJunkBrainEntries().entitiesRemoved; } catch { /* best effort */ }
   return report;
 }
 

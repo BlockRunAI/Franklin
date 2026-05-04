@@ -31,6 +31,82 @@ function ensureDir(): void {
   fs.mkdirSync(BRAIN_DIR, { recursive: true });
 }
 
+// Names the extractor model emits but that aren't real entities — they're
+// programmatic strings that happened to be in the transcript. Verified
+// 2026-05-04 on a real machine: 7 of 44 entities (16%) were junk by these
+// patterns — `Bash(git commit:*)` (tool permission), `gs://bucket/path/**`
+// (object URI + glob), `t_morkaf83_f03a0b10` (Franklin task runId tagged
+// as "project"). The vacuous observations they then accumulated ("This is
+// a task ID for an ETL process") leaked back into context on every later
+// session. Keep the patterns conservative — anything that looks
+// programmatic rather than nameable.
+const JUNK_ENTITY_NAME_PATTERNS: RegExp[] = [
+  /^[A-Z][a-zA-Z]*\(.*\)$/,        // Tool-permission shape, e.g. Bash(...), Edit(...)
+  /^(?:gs|s3|file|https?):\/\//i,  // URIs
+  /\*\*?(?:\/|$)/,                 // Glob patterns
+  /^t_[a-z0-9]+_[a-z0-9]{6,}$/i,   // Franklin task runIds
+  /^run_[a-z0-9_-]+$/i,            // Generic run/job ids
+  /^session-\d{4}-/,               // Session ids
+  /^[0-9a-f]{16,}$/,               // Hex hashes / commit shas / uuids without dashes
+];
+
+export function isJunkEntityName(name: string): boolean {
+  const trimmed = name.trim();
+  if (trimmed.length < 2) return true;
+  return JUNK_ENTITY_NAME_PATTERNS.some(rx => rx.test(trimmed));
+}
+
+/**
+ * Remove existing junk entities (and their observations + relations)
+ * from disk. Called once per session start by runDataHygiene to clear
+ * accumulated low-quality extractions from earlier brain runs that
+ * predate the post-extraction filter.
+ *
+ * Returns counts so the hygiene report can surface the cleanup —
+ * silent purges are hard to verify.
+ */
+export function pruneJunkBrainEntries(): {
+  entitiesRemoved: number;
+  observationsRemoved: number;
+  relationsRemoved: number;
+} {
+  const result = { entitiesRemoved: 0, observationsRemoved: 0, relationsRemoved: 0 };
+  let entities: Entity[];
+  try {
+    entities = loadEntities();
+  } catch { return result; }
+  if (entities.length === 0) return result;
+
+  const junkIds = new Set<string>();
+  const surviving: Entity[] = [];
+  for (const e of entities) {
+    if (isJunkEntityName(e.name)) {
+      junkIds.add(e.id);
+      result.entitiesRemoved++;
+    } else {
+      surviving.push(e);
+    }
+  }
+  if (junkIds.size === 0) return result;
+
+  // Drop observations + relations referencing the junk entities.
+  const obs = loadJsonl<Observation>(OBSERVATIONS_FILE);
+  const survivingObs = obs.filter(o => !junkIds.has(o.entity_id));
+  result.observationsRemoved = obs.length - survivingObs.length;
+
+  const rels = loadJsonl<Relation>(RELATIONS_FILE);
+  const survivingRels = rels.filter(r => !junkIds.has(r.from_id) && !junkIds.has(r.to_id));
+  result.relationsRemoved = rels.length - survivingRels.length;
+
+  // Atomic rewrites — saveJsonl uses tmp + rename so a crash mid-purge
+  // leaves the prior state intact.
+  saveEntities(surviving);
+  saveJsonl(OBSERVATIONS_FILE, survivingObs);
+  saveJsonl(RELATIONS_FILE, survivingRels);
+
+  return result;
+}
+
 // ─── Generic JSONL helpers ────────────────────────────────────────────────
 
 function loadJsonl<T>(file: string): T[] {

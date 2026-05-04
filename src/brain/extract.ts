@@ -8,7 +8,7 @@ import type { Dialogue } from '../agent/types.js';
 import type { Entity, BrainExtraction, EntityType } from './types.js';
 import {
   loadEntities, saveEntities, upsertEntity,
-  addObservation, upsertRelation,
+  addObservation, upsertRelation, isJunkEntityName,
 } from './store.js';
 
 const EXTRACTION_MODELS = [
@@ -18,6 +18,7 @@ const EXTRACTION_MODELS = [
 ];
 
 const VALID_TYPES = new Set<EntityType>(['person', 'project', 'company', 'product', 'concept']);
+
 
 const BRAIN_PROMPT = `You are analyzing a conversation between a user and an AI agent. Extract entities (people, projects, companies, products, concepts) mentioned in the conversation.
 
@@ -35,8 +36,9 @@ Also extract relationships between entities:
 Rules:
 - Only extract entities with CLEAR evidence in the conversation.
 - Do NOT extract the AI agent itself or generic concepts ("TypeScript", "JavaScript").
+- Do NOT extract programmatic strings that happen to appear in the transcript: tool permission patterns like "Bash(git commit:*)", object URIs (gs://, s3://, file://), glob patterns (paths with **), task IDs (t_xxx_xxx), session IDs, or hashes/UUIDs.
 - DO extract specific people, specific projects, specific companies, specific products.
-- Observations should be concrete facts, not vague descriptions.
+- Observations must be concrete facts about the entity that would be useful in a future conversation. Do NOT include tautologies that restate the entity name ("This is a task ID for an ETL process") or generic statements that apply to any instance of the type.
 - If no entities are found, return empty arrays.
 
 Respond with ONLY a JSON object (no markdown fences):
@@ -79,7 +81,8 @@ function parseExtraction(raw: string): BrainExtraction {
     const entities = (parsed.entities || [])
       .filter((e: Record<string, unknown>) =>
         typeof e.name === 'string' && e.name.length > 1 &&
-        typeof e.type === 'string' && VALID_TYPES.has(e.type as EntityType)
+        typeof e.type === 'string' && VALID_TYPES.has(e.type as EntityType) &&
+        !isJunkEntityName(e.name as string)
       )
       .map((e: Record<string, unknown>) => ({
         name: (e.name as string).slice(0, 100),
