@@ -6421,6 +6421,60 @@ test('recordUsage: drops local/test* entries, keeps real models in stats history
   }
 });
 
+test('runDataHygiene: sweeps orphan tool-results dirs (no meta partner)', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-tool-orphan-'));
+  const sessionsDir = join(fakeHome, '.blockrun', 'sessions');
+  const toolResultsDir = join(fakeHome, '.blockrun', 'tool-results');
+  mkdirSync(sessionsDir, { recursive: true });
+  mkdirSync(toolResultsDir, { recursive: true });
+
+  // 1 paired session (meta + tool-results), 2 orphan tool-results dirs.
+  const liveId = 'session-keep';
+  const orphanIds = ['session-orphan-april', 'session-orphan-march'];
+
+  writeFileSync(join(sessionsDir, `${liveId}.meta.json`),
+    JSON.stringify({ id: liveId, model: 'zai/glm-5.1', workDir: '/tmp', createdAt: Date.now(), updatedAt: Date.now(), turnCount: 1, messageCount: 1 }));
+  // Pretend the live session has a persisted tool result.
+  mkdirSync(join(toolResultsDir, liveId));
+  writeFileSync(join(toolResultsDir, liveId, 'tool_use_1.txt'), 'live result');
+  // And the orphans.
+  for (const id of orphanIds) {
+    mkdirSync(join(toolResultsDir, id));
+    writeFileSync(join(toolResultsDir, id, 'tool_use_old.txt'), 'orphan');
+  }
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    h.runDataHygiene();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`hygiene subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    assert.ok(existsSync(join(toolResultsDir, liveId)),
+      'live session tool-results dir must survive');
+    assert.ok(existsSync(join(toolResultsDir, liveId, 'tool_use_1.txt')),
+      'live session tool-results contents must survive');
+    for (const id of orphanIds) {
+      assert.ok(!existsSync(join(toolResultsDir, id)),
+        `orphan tool-results dir ${id} should be removed`);
+    }
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('session storage: setSessionPersistenceDisabled(true) blocks all writes', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-session-gate-'));
   const sessionsDir = join(fakeHome, '.blockrun', 'sessions');

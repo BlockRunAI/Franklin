@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.15.18 — Sweep orphan tool-results directories
+
+Round-3 audit, after sweeping orphan session jsonl + legacy files in
+3.15.15 and gating session writes in 3.15.17: \`~/.blockrun/tool-results/\`
+also accumulates per-session subdirs that nothing ever cleans. The
+\`streaming-executor\` writes large tool outputs to
+\`tool-results/<sessionId>/<toolUseId>.txt\` for replay; when
+\`pruneOldSessions\` removes the meta + jsonl, the tool-results dir is
+left dangling. Verified: 5 dirs on a real machine, oldest from
+2026-04-14 — 3 weeks past the MAX_SESSIONS=20 LRU cutoff.
+
+- \`storage/hygiene\`: \`sweepOrphanToolResults()\` runs as part of
+  \`runDataHygiene()\`. Lists \`tool-results/\`, intersects with the
+  \`.meta.json\` set in \`sessions/\`, and recursively removes the
+  difference. Active session is implicitly protected because its meta
+  exists by the time the agent loop fires hygiene. Best-effort: every
+  per-dir failure is swallowed so a single permission glitch can't
+  abort the sweep, and an unreadable \`sessions/\` dir bails out
+  entirely (we never delete based on a partial knownSessionIds set).
+- +1 test covering the live-survives, orphan-dies invariant.
+
 ## 3.15.17 — Session storage stops persisting test fixtures; recordOutcome defensive gate
 
 Round-2 audit of the same user's \`~/.blockrun/\` after 3.15.16

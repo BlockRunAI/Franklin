@@ -56,6 +56,7 @@ export function runDataHygiene(): void {
   try { trimDataDir(); } catch { /* best effort */ }
   try { trimCostLog(); } catch { /* best effort */ }
   try { removeLegacyFiles(); } catch { /* best effort */ }
+  try { sweepOrphanToolResults(); } catch { /* best effort */ }
 }
 
 function trimDataDir(): void {
@@ -119,5 +120,57 @@ function removeLegacyFiles(): void {
     const p = path.join(BLOCKRUN_DIR, name);
     if (!fs.existsSync(p)) continue;
     try { fs.unlinkSync(p); } catch { /* ok */ }
+  }
+}
+
+/**
+ * `streaming-executor` writes large tool outputs to
+ * `~/.blockrun/tool-results/<sessionId>/<toolUseId>.txt`. When a session is
+ * pruned by `pruneOldSessions`, the meta + jsonl are deleted but the
+ * tool-results dir is left dangling. Verified on a real machine: 5 dirs,
+ * oldest from 4/14 (3 weeks past MAX_SESSIONS=20 retention).
+ *
+ * A tool-results dir is considered orphan when its name (the session id)
+ * has no `<sessionId>.meta.json` partner in the sessions/ dir. The active
+ * session is implicitly protected because its meta exists.
+ */
+function sweepOrphanToolResults(): void {
+  const toolResultsDir = path.join(BLOCKRUN_DIR, 'tool-results');
+  const sessionsDir = path.join(BLOCKRUN_DIR, 'sessions');
+  if (!fs.existsSync(toolResultsDir)) return;
+
+  const knownSessionIds = new Set<string>();
+  if (fs.existsSync(sessionsDir)) {
+    try {
+      for (const f of fs.readdirSync(sessionsDir)) {
+        if (f.endsWith('.meta.json')) {
+          knownSessionIds.add(f.slice(0, -'.meta.json'.length));
+        }
+      }
+    } catch {
+      // Best-effort — if we can't read sessions/, skip the sweep so
+      // we never delete tool-results that might still belong to a
+      // live session.
+      return;
+    }
+  }
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(toolResultsDir);
+  } catch {
+    return;
+  }
+
+  for (const name of entries) {
+    if (knownSessionIds.has(name)) continue;
+    const dir = path.join(toolResultsDir, name);
+    try {
+      const stat = fs.statSync(dir);
+      if (!stat.isDirectory()) continue;
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Skip — best-effort cleanup.
+    }
   }
 }
