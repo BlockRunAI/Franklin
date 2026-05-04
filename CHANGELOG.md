@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.15.34 — Low-balance warning in the status bar (don't make users guess)
+
+Real session 2026-05-04 14:50: user looked at the status bar
+showing \`$0.08 USDC\` (dim text alongside model name) and asked
+"is that I really don't have money? or i need switch to base
+chain". On-chain check: actually \$0.0775 left after a \$2.92
+Opus session. Real out-of-funds, but the UI gave them no signal
+that it was urgent.
+
+- \`ui/app\`: status bar now color-codes the balance:
+  - **Red bold + ⚠ "low — fund wallet or /model free"** when
+    balance < \$0.50 (≈ 3–5 Opus calls left at typical \$0.10/turn).
+  - **Yellow** when balance < \$1.00 (≈ 10 calls left).
+  - Plain dim otherwise — current behavior.
+- The hint names both options the user actually has (top up the
+  wallet or switch to a free model with \`/model free\`), so they
+  don't need to ask.
+- Existing live-balance computation unchanged — this is purely a
+  rendering tweak to the same number.
+
+The Base wallet shown in the screenshot was on the right chain;
+the user just genuinely needed to fund it. The new rendering would
+have made that obvious without a roundtrip to the assistant.
+
 ## 3.15.33 — Fix Detach child crash with MODULE_NOT_FOUND on dev-mode Franklin
 
 Real session 2026-05-04 14:35 caught this. User running Franklin in

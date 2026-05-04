@@ -150,7 +150,24 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
       <Box marginLeft={2}>
         <Text dimColor>
           {busy ? <Text color="yellow"><Spinner type="dots" /></Text> : null}
-          {busy ? ' ' : ''}{shortModelName(model)}  ·  {balance}
+          {busy ? ' ' : ''}{shortModelName(model)}  ·  {(() => {
+            // Color the balance by funding state. Real session 2026-05-04
+            // had a user staring at "$0.08 USDC" in dim text wondering
+            // whether it meant "out of money" or "wrong chain". Make
+            // low/critical balances unmistakable. Thresholds match the
+            // ~$0.10 / ~$0.50 ranges where a typical Opus turn ($0.08–
+            // $0.15) tips over: <$0.50 = red bold + low hint;
+            // <$1.00 = yellow; otherwise plain dim.
+            const m = balance.match(/\$([\d.]+)/);
+            const num = m ? parseFloat(m[1]) : null;
+            if (num !== null && num < 0.50) {
+              return <><Text color="red" bold>{balance}</Text><Text color="red"> ⚠ low — fund wallet or /model free</Text></>;
+            }
+            if (num !== null && num < 1.00) {
+              return <Text color="yellow">{balance}</Text>;
+            }
+            return balance;
+          })()}
           {chain ? <Text>  ·  <Text color="magenta">{chain}</Text>{walletTail ? <Text dimColor>:{walletTail}</Text> : ''}</Text> : ''}
           {sessionCost > 0.00001 ? <Text color="yellow">  -${sessionCost.toFixed(4)}</Text> : ''}
           {contextPct !== undefined && contextPct > 0 ? (() => {
