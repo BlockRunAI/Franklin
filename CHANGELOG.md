@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.15.23 — Last \`console.error\` holdouts migrated to unified logger (paid tools + MCP)
+
+The 3.15.21 sweep got proxy + fallback but missed 7 more
+\`console.error\` call sites that should persist to
+\`franklin-debug.log\` and don't:
+
+- Six paid tools (\`modal\`, \`defillama\`, \`exa\`, \`videogen\`,
+  \`musicgen\`, \`imagegen\`) had \`console.error('[franklin] X
+  payment error: ...')\` inside the x402 catch block. Payment
+  failures are exactly the kind of forensic event \`franklin logs\`
+  is for; they were going to stderr only and getting swallowed by
+  the Ink UI on most invocations.
+- One transient surface in \`zerox-gasless\` (\`gasless status poll
+  error\`) had the same problem.
+- \`mcp/client\` still gated diagnostics on \`if (debug)
+  console.error(...)\` — the original 3.15.11 audit pattern that
+  agent/loop already moved off. Server connection failures now go
+  to \`logger.warn\` so they survive the session; the one
+  user-facing line at boot stays as \`console.error\` so the user
+  sees it before the agent takes over the terminal.
+
+Net: every diagnostic event in the codebase that should reach
+\`franklin-debug.log\` now does. UI rendering paths
+(\`ui/terminal\`, \`ui/model-picker\`, \`ui/session-picker\`,
+\`tools/askuser\`) intentionally remain on \`console.error\` —
+those are interactive UI output, not log entries.
+
 ## 3.15.22 — Fix PredictionMarket double-/api 404; cap brain observations + relations
 
 Self-audit caught a real production bug in 3.15.14:

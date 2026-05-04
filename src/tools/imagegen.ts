@@ -23,6 +23,7 @@ import { ModelClient } from '../agent/llm.js';
 import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
 import { recordUsage } from '../stats/tracker.js';
 import { findModel, estimateCostUsd } from '../gateway-models.js';
+import { logger } from '../logger.js';
 
 interface ImageGenInput {
   prompt: string;
@@ -486,7 +487,7 @@ async function signPayment(
       return { 'PAYMENT-SIGNATURE': payload };
     }
   } catch (err) {
-    console.error(`[franklin] Image payment error: ${(err as Error).message}`);
+    logger.warn(`[franklin] Image payment error: ${(err as Error).message}`);
     return null;
   }
 }

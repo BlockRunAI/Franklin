@@ -28,6 +28,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
+import { logger } from '../logger.js';
 
 const TIMEOUT_MS = 30_000;
 
@@ -126,7 +127,7 @@ async function signPayment(
     );
     return { 'PAYMENT-SIGNATURE': payload };
   } catch (err) {
-    console.error(`[franklin] DefiLlama payment error: ${(err as Error).message}`);
+    logger.warn(`[franklin] DefiLlama payment error: ${(err as Error).message}`);
     return null;
   }
 }

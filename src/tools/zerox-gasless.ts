@@ -32,6 +32,7 @@ import { getOrCreateWallet } from '@blockrun/llm';
 
 import { loadConfig } from '../commands/config.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
+import { logger } from '../logger.js';
 import type { CapabilityHandler, ExecutionScope } from '../agent/types.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -321,7 +322,7 @@ async function pollUntilDone(
       );
     } catch (err) {
       // Surface a transient failure but keep polling — relayer might be backlogged.
-      console.error(
+      logger.warn(
         `[franklin] gasless status poll error: ${(err as Error).message}`,
       );
     }

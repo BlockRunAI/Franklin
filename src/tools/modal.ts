@@ -40,6 +40,7 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import { walletReservation, type ReservationToken } from '../wallet/reservation.js';
 import { recordUsage } from '../stats/tracker.js';
+import { logger } from '../logger.js';
 
 // ─── Pricing table (probed from /.well-known/x402 + 402 responses) ─────────
 const CREATE_PRICE_USD: Record<string, number> = {
@@ -150,7 +151,7 @@ async function signPayment(
       return { 'PAYMENT-SIGNATURE': payload };
     }
   } catch (err) {
-    console.error(`[franklin] Modal payment error: ${(err as Error).message}`);
+    logger.warn(`[franklin] Modal payment error: ${(err as Error).message}`);
     return null;
   }
 }

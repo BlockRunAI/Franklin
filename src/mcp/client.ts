@@ -7,6 +7,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
+import { logger } from '../logger.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -224,14 +225,10 @@ export async function connectMcpServers(
     if (serverConfig.disabled) continue;
 
     try {
-      if (debug) {
-        console.error(`[franklin] Connecting to MCP server: ${name}...`);
-      }
+      logger.debug(`[franklin] Connecting to MCP server: ${name}...`);
 
       if (serverConfig.transport !== 'stdio') {
-        if (debug) {
-          console.error(`[franklin] MCP HTTP transport not yet supported for ${name}`);
-        }
+        logger.debug(`[franklin] MCP HTTP transport not yet supported for ${name}`);
         continue;
       }
 
@@ -243,13 +240,17 @@ export async function connectMcpServers(
       const connected = await Promise.race([connectPromise, timeoutPromise]);
       allTools.push(...connected.tools);
 
-      if (debug) {
-        console.error(`[franklin] MCP ${name}: ${connected.tools.length} tools discovered`);
-      }
+      logger.info(`[franklin] MCP ${name}: ${connected.tools.length} tools discovered`);
     } catch (err) {
       // Graceful degradation — one-line warning, continue without this server.
-      // Always visible (not debug-only) so the user knows why tools are missing.
+      // Always written to franklin-debug.log so the user can post-mortem
+      // why tools went missing; ALSO printed to stderr at session boot
+      // so the user sees it in real time before the agent eats the
+      // terminal. Two separate writes (logger + stderr) is fine here —
+      // the user-visible "tool missing" notice has different timing
+      // requirements than the persistent log entry.
       const shortMsg = (err as Error).message?.split('\n')[0]?.slice(0, 100) || 'unknown error';
+      logger.warn(`[franklin] MCP ${name}: ${shortMsg}`);
       console.error(`  ${name}: ${shortMsg} ${debug ? '' : '(--debug for details)'}`);
     }
   }
