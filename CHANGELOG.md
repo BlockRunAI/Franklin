@@ -1,11 +1,13 @@
 # Changelog
 
-## 3.15.18 — Sweep orphan tool-results directories
+## 3.15.18 — Sweep orphan tool-results directories + plug two leaky in-process tests
 
 Round-3 audit, after sweeping orphan session jsonl + legacy files in
-3.15.15 and gating session writes in 3.15.17: \`~/.blockrun/tool-results/\`
-also accumulates per-session subdirs that nothing ever cleans. The
-\`streaming-executor\` writes large tool outputs to
+3.15.15 and gating session writes in 3.15.17: two more pollution paths
+left to address.
+
+**(a) \`~/.blockrun/tool-results/\` accumulates per-session subdirs.**
+The \`streaming-executor\` writes large tool outputs to
 \`tool-results/<sessionId>/<toolUseId>.txt\` for replay; when
 \`pruneOldSessions\` removes the meta + jsonl, the tool-results dir is
 left dangling. Verified: 5 dirs on a real machine, oldest from
@@ -19,7 +21,29 @@ left dangling. Verified: 5 dirs on a real machine, oldest from
   per-dir failure is swallowed so a single permission glitch can't
   abort the sweep, and an unreadable \`sessions/\` dir bails out
   entirely (we never delete based on a partial knownSessionIds set).
-- +1 test covering the live-survives, orphan-dies invariant.
+
+**(b) Two in-process tests were leaking session files into the user's
+real \`~/.blockrun/sessions/\` on every \`npm test\` run.** Verified
+on a real machine: 16 test-pollution metas in the most recent test
+session. The 3.15.17 fixture-model gate caught \`local/test*\` writes
+but I'd already renamed those tests to \`zai/glm-5.1\` to keep the
+persistence-for-resume tests verifying the write path — sidestepping
+my own gate.
+
+- \`test/local\`: the dynamic-tool-visibility test (3615) and the
+  intent-prefetch test (4141) both run \`interactiveSession()\`
+  in-process and pre-3.15.18 left their \`<sessionId>.jsonl\` +
+  \`.meta.json\` in the user's home. Snapshot \`listSessions()\` at
+  test start, in \`finally\` delete any new session that wasn't
+  there before — same pattern the resume tests at 489/609 already
+  use.
+- +1 hygiene test covers the live-survives / orphan-dies invariant
+  for tool-results.
+
+\`runCli\`-based banner / CLI-flow tests still create empty sessions
+(\`tc=0\` \`mc=0\`) but those are caught by \`pruneOldSessions\`'s
+existing ghost-cleanup (\`messageCount === 0\` + \`createdAt > 5min\`),
+so they don't need an explicit cleanup pass.
 
 ## 3.15.17 — Session storage stops persisting test fixtures; recordOutcome defensive gate
 

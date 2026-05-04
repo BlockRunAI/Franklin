@@ -3620,6 +3620,15 @@ test('dynamic tool visibility: hidden tools cannot execute before activation', {
   const prevNoPrefetch = process.env.FRANKLIN_NO_PREFETCH;
   process.env.FRANKLIN_NO_PREFETCH = '1';
 
+  // Snapshot current sessions so we can delete just the one this test
+  // creates — without this the in-process interactiveSession leaves a
+  // real .meta.json + .jsonl in the user's ~/.blockrun/sessions/ on
+  // every `npm test` run. Mirrors the cleanup pattern in the 489/609
+  // resume tests.
+  const { listSessions: listSessionsForCleanup, getSessionFilePath: getSessionFilePathForCleanup } =
+    await import('../dist/session/storage.js');
+  const beforeSessionIdsForCleanup = new Set(listSessionsForCleanup().map((s) => s.id));
+
   let requestCount = 0;
   let hiddenToolCalls = 0;
 
@@ -3716,6 +3725,12 @@ test('dynamic tool visibility: hidden tools cannot execute before activation', {
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     if (prevNoPrefetch === undefined) delete process.env.FRANKLIN_NO_PREFETCH;
     else process.env.FRANKLIN_NO_PREFETCH = prevNoPrefetch;
+    for (const s of listSessionsForCleanup()) {
+      if (beforeSessionIdsForCleanup.has(s.id)) continue;
+      const f = getSessionFilePathForCleanup(s.id);
+      rmSync(f, { force: true });
+      rmSync(f.replace(/\.jsonl$/, '.meta.json'), { force: true });
+    }
   }
 });
 
@@ -4146,6 +4161,13 @@ test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', {
   const { clearAnalyzerCache } = await import('../dist/agent/turn-analyzer.js');
   clearAnalyzerCache();
 
+  // Same cleanup pattern as the dynamic-tool-visibility test — without
+  // this the in-process interactiveSession run below leaks a session
+  // file into the user's ~/.blockrun/sessions/ on every test run.
+  const { listSessions: listSessionsForCleanup, getSessionFilePath: getSessionFilePathForCleanup } =
+    await import('../dist/session/storage.js');
+  const beforeSessionIdsForCleanup = new Set(listSessionsForCleanup().map((s) => s.id));
+
   let requestCount = 0;
   let sawPrefetchContext = false;
 
@@ -4261,6 +4283,12 @@ test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', {
     else process.env.FRANKLIN_NO_ANALYZER = prevNoAnalyzer;
     clearAnalyzerCache();
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    for (const s of listSessionsForCleanup()) {
+      if (beforeSessionIdsForCleanup.has(s.id)) continue;
+      const f = getSessionFilePathForCleanup(s.id);
+      rmSync(f, { force: true });
+      rmSync(f.replace(/\.jsonl$/, '.meta.json'), { force: true });
+    }
   }
 });
 
