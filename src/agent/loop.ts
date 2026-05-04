@@ -22,6 +22,7 @@ import { recordUsage } from '../stats/tracker.js';
 import { loadConfig } from '../commands/config.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
+import { logger, setDebugMode } from '../logger.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
@@ -379,6 +380,10 @@ export async function interactiveSession(
   // fool Edit/Write into skipping the read-before-edit check or serve cached
   // webfetch content fetched under the previous session's intent.
   resetToolSessionState();
+
+  // Wire stderr-mirroring of log lines to the same flag the agent already
+  // uses to gate verbose console output. File writes happen regardless.
+  setDebugMode(!!config.debug);
 
   const client = new ModelClient({
     apiUrl: config.apiUrl,
@@ -793,15 +798,11 @@ export async function interactiveSession(
               kind: 'text_delta',
               text: `\n*🗜 Auto-compacted: ~${(beforeTokens / 1000).toFixed(0)}K → ~${(afterTokens / 1000).toFixed(0)}K tokens (saved ${pct}%)*\n\n`,
             });
-            if (config.debug) {
-              console.error(`[franklin] History compacted: ~${afterTokens} tokens`);
-            }
+            logger.info(`[franklin] History compacted: ~${afterTokens} tokens`);
           }
         } catch (compactErr) {
           compactFailures++;
-          if (config.debug) {
-            console.error(`[franklin] Compaction failed (${compactFailures}/3): ${(compactErr as Error).message}`);
-          }
+          logger.warn(`[franklin] Compaction failed (${compactFailures}/3): ${(compactErr as Error).message}`);
         }
       }
 
@@ -1037,9 +1038,7 @@ export async function interactiveSession(
             const oldModel = config.model;
             config.model = nextModel;
             config.onModelChange?.(nextModel, 'system');
-            if (config.debug) {
-              console.error(`[franklin] ${oldModel} returned empty — switching to ${nextModel}`);
-            }
+            logger.warn(`[franklin] ${oldModel} returned empty — switching to ${nextModel}`);
             onEvent({ kind: 'text_delta', text: `\n*${oldModel} returned empty — switching to ${nextModel}*\n` });
             continue;
           }
@@ -1072,9 +1071,7 @@ export async function interactiveSession(
         // ── Media size error recovery (strip images/PDFs + retry) ──
         if (isMediaSizeError(errMsg) && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
           recoveryAttempts++;
-          if (config.debug) {
-            console.error(`[franklin] Media too large — stripping and retrying (attempt ${recoveryAttempts})`);
-          }
+          logger.warn(`[franklin] Media too large — stripping and retrying (attempt ${recoveryAttempts})`);
           const { history: stripped, stripped: didStrip } = stripMediaFromHistory(history);
           if (didStrip) {
             replaceHistory(history, stripped);
@@ -1089,9 +1086,7 @@ export async function interactiveSession(
         // the prompt is too long, so we must compact regardless of our threshold estimate.
         if (classified.category === 'context_limit' && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
           recoveryAttempts++;
-          if (config.debug) {
-            console.error(`[franklin] Prompt too long — force compacting (attempt ${recoveryAttempts})`);
-          }
+          logger.warn(`[franklin] Prompt too long — force compacting (attempt ${recoveryAttempts})`);
           onEvent({ kind: 'text_delta', text: '\n*Context limit hit — compacting conversation...*\n' });
           const { history: compactedAgain } =
             await forceCompact(history, config.model, client, config.debug);
@@ -1121,11 +1116,9 @@ export async function interactiveSession(
               const continuationPrompt = buildContinuationPrompt();
               history.push(continuationPrompt);
               persistSessionMessage(continuationPrompt);
-              if (config.debug) {
-                console.error(
-                  `[franklin] Stream timeout on ${resolvedModel} — auto-continuing with chunked-task prompt`
-                );
-              }
+              logger.warn(
+                `[franklin] Stream timeout on ${resolvedModel} — auto-continuing with chunked-task prompt`
+              );
               onEvent({
                 kind: 'text_delta',
                 text: '\n*Task too big for one streaming turn — auto-continuing with a smaller chunk...*\n',
@@ -1138,12 +1131,10 @@ export async function interactiveSession(
             const costText = retryDecision.estimatedReplayCostUsd > 0
               ? ` and at least $${retryDecision.estimatedReplayCostUsd.toFixed(4)} in input charges`
               : '';
-            if (config.debug) {
-              console.error(
-                `[franklin] Timeout retry skipped for ${resolvedModel}: ` +
-                `~${tokenText} input tokens, replayCost=$${retryDecision.estimatedReplayCostUsd.toFixed(4)}`
-              );
-            }
+            logger.warn(
+              `[franklin] Timeout retry skipped for ${resolvedModel}: ` +
+              `~${tokenText} input tokens, replayCost=$${retryDecision.estimatedReplayCostUsd.toFixed(4)}`
+            );
             onEvent({
               kind: 'turn_done',
               reason: 'error',
@@ -1194,11 +1185,9 @@ export async function interactiveSession(
 
           recoveryAttempts++;
           const backoffMs = getBackoffDelay(recoveryAttempts);
-          if (config.debug) {
-            console.error(
-              `[franklin] ${classified.label} error — retrying in ${(backoffMs / 1000).toFixed(1)}s (attempt ${recoveryAttempts}/${effectiveMaxRetries}): ${errMsg.slice(0, 100)}`
-            );
-          }
+          logger.warn(
+            `[franklin] ${classified.label} error — retrying in ${(backoffMs / 1000).toFixed(1)}s (attempt ${recoveryAttempts}/${effectiveMaxRetries}): ${errMsg.slice(0, 100)}`
+          );
           // Surface the actual error + model so the user can see which model
           // is failing and what the upstream said. Old "Retrying after Server
           // error" was uninformative — users couldn't tell whether to wait,
@@ -1376,9 +1365,7 @@ export async function interactiveSession(
         if (maxTokensOverride === undefined) {
           // First hit: escalate to 64K
           maxTokensOverride = ESCALATED_MAX_TOKENS;
-          if (config.debug) {
-            console.error(`[franklin] Max tokens hit — escalating to ${maxTokensOverride}`);
-          }
+          logger.warn(`[franklin] Max tokens hit — escalating to ${maxTokensOverride}`);
         }
         // Append what we got + a continuation prompt with last-line anchor
         const partialAssistant = { role: 'assistant' as const, content: responseParts };
@@ -1423,11 +1410,9 @@ export async function interactiveSession(
       // the existing recovery flow handle it.
       const gatewayErr = looksLikeGatewayErrorAsText(responseParts);
       if (gatewayErr.match) {
-        if (config.debug) {
-          console.error(
-            `[franklin] Gateway returned an error text in lieu of an answer (${resolvedModel}): ${gatewayErr.message}`
-          );
-        }
+        logger.error(
+          `[franklin] Gateway returned an error text in lieu of an answer (${resolvedModel}): ${gatewayErr.message}`
+        );
         throw new Error(gatewayErr.message);
       }
 
@@ -1733,9 +1718,7 @@ export async function interactiveSession(
 
       // Hard stop: if cap exceeded, force end this agent loop iteration
       if (turnToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
-        if (config.debug) {
-          console.error(`[franklin] Tool call cap hit: ${turnToolCalls} calls this turn`);
-        }
+        logger.warn(`[franklin] Tool call cap hit: ${turnToolCalls} calls this turn`);
         // Don't break — let the model respond one more time to summarize,
         // but inject the stop signal above so it knows to finish up.
       }

@@ -16,6 +16,19 @@ import { BLOCKRUN_DIR } from '../config.js';
 const AUDIT_FILE = path.join(BLOCKRUN_DIR, 'franklin-audit.jsonl');
 const PROMPT_PREVIEW_CHARS = 240;
 
+// Cap the audit log at the most recent N entries. Without this the file
+// grew unbounded — verified ~3.6k lines on a single dev machine after a
+// few weeks of light use, so a months-old install would be in the GB
+// range and slow `franklin insights` to a crawl.
+const MAX_AUDIT_ENTRIES = 10_000;
+// Each entry is roughly 300–800 bytes. We only re-read the file when it
+// looks plausibly over the cap, so we don't pay an O(n) scan on every
+// append. 200 bytes/entry is a conservative lower bound.
+const TRIM_PROBE_BYTES = MAX_AUDIT_ENTRIES * 200;
+// Probe size every N appends — amortizes the stat() call.
+const TRIM_CHECK_INTERVAL = 200;
+let appendsSinceCheck = 0;
+
 export interface AuditEntry {
   ts: number;
   sessionId?: string;
@@ -40,8 +53,36 @@ export function appendAudit(entry: AuditEntry): void {
       prompt: entry.prompt ? truncate(entry.prompt, PROMPT_PREVIEW_CHARS) : undefined,
     };
     fs.appendFileSync(AUDIT_FILE, JSON.stringify(safe) + '\n');
+
+    appendsSinceCheck++;
+    if (appendsSinceCheck >= TRIM_CHECK_INTERVAL) {
+      appendsSinceCheck = 0;
+      enforceRetention();
+    }
   } catch {
     /* best-effort — never break the agent loop on audit-write failure */
+  }
+}
+
+/**
+ * Trim the audit log to the last MAX_AUDIT_ENTRIES lines if it has grown
+ * past the cap. Exported so admin/debug tooling (and tests) can force a
+ * compaction without waiting for the next interval probe.
+ */
+export function enforceRetention(): void {
+  try {
+    if (!fs.existsSync(AUDIT_FILE)) return;
+    const stat = fs.statSync(AUDIT_FILE);
+    if (stat.size < TRIM_PROBE_BYTES) return;
+
+    const content = fs.readFileSync(AUDIT_FILE, 'utf-8');
+    const lines = content.split('\n').filter(Boolean);
+    if (lines.length <= MAX_AUDIT_ENTRIES) return;
+
+    const kept = lines.slice(lines.length - MAX_AUDIT_ENTRIES);
+    fs.writeFileSync(AUDIT_FILE, kept.join('\n') + '\n');
+  } catch {
+    /* best-effort */
   }
 }
 

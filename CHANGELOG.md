@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.15.11 — Logging system: persistent diagnostics + bounded audit log
+
+`franklin logs` was effectively empty for normal users. Eleven critical
+agent events (auto-compaction, model fallback, media-stripping, prompt-
+too-long recovery, server-error retries, max-tokens escalation, tool-call
+cap, gateway error responses, etc.) were emitted via
+`if (config.debug) console.error(...)` — so they hit stderr only when
+`--debug` was set, and never reached the log file at all. Combined with a
+`franklin-audit.jsonl` that grew without bound (verified: 3.6k entries on
+a single dev machine after light use, GB-scale on a months-old install),
+the post-incident "what happened?" answer was usually "nothing on disk".
+
+- `logger`: new `src/logger.ts` module with `debug` / `info` / `warn` /
+  `error` levels. Every level always persists to
+  `~/.blockrun/franklin-debug.log` with an ISO timestamp and `[LEVEL]`
+  tag (so you can `grep '\[ERROR\]'`). Stderr mirroring stays gated on
+  debug mode, preserving the quiet UI behavior. ANSI escapes and `\r`
+  are stripped before writing. Write failures are swallowed — the agent
+  loop must never die because the disk is full or `~` is read-only.
+- `agent/loop`: replaced all 11 `if (config.debug) console.error(...)`
+  blocks with `logger.warn` / `logger.info` / `logger.error`. Wired
+  `setDebugMode(config.debug)` once at session start. Diagnostics now
+  show up in `franklin logs` regardless of debug flag.
+- `stats/audit`: added 10k-entry retention to `franklin-audit.jsonl`.
+  Trim is amortized — checked every 200 appends, gated on a cheap
+  size probe (skip rescan when file < 2 MB) before re-reading. Exported
+  `enforceRetention()` so admin tooling and tests can force a
+  compaction. Pattern matches the existing 500-record cap on
+  `failures.jsonl` and 1000-history cap on `franklin-stats.json`.
+
 ## 3.15.10 — Detect and stash secrets pasted into chat
 
 User pasted a real GitHub PAT (`ghp_…`) into chat as a way to give

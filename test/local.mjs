@@ -5772,3 +5772,206 @@ test("formatRedactionWarning: lists what was caught and points at env var", asyn
   delete process.env.GITHUB_TOKEN;
 });
 
+// ── Logger ────────────────────────────────────────────────────────────────
+// The unified logger persists every level to ~/.blockrun/franklin-debug.log.
+// Run tests in a subprocess with HOME pointed at a tmp dir so the user's
+// real log file isn't touched.
+
+test('logger writes every level to franklin-debug.log even with debug off', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-logger-'));
+  const loggerHref = new URL('../dist/logger.js', import.meta.url).href;
+  const script = `
+    const { logger, setDebugMode, getLogFilePath } = await import(${JSON.stringify(loggerHref)} + '?t=' + Date.now());
+    setDebugMode(false);
+    logger.debug('debug-line');
+    logger.info('info-line');
+    logger.warn('warn-line');
+    logger.error('error-line');
+    console.log(getLogFilePath());
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (d) => { stdout += d.toString(); });
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stdout, stderr });
+        else reject(new Error(`logger subprocess failed (${code})\n${stderr}`));
+      });
+      proc.on('error', reject);
+    });
+
+    const logPath = result.stdout.trim();
+    assert.ok(logPath.startsWith(fakeHome), `Expected log path under fake HOME, got ${logPath}`);
+    const content = readFileSync(logPath, 'utf8');
+    assert.ok(content.includes('[DEBUG] debug-line'), 'debug entry missing');
+    assert.ok(content.includes('[INFO] info-line'), 'info entry missing');
+    assert.ok(content.includes('[WARN] warn-line'), 'warn entry missing');
+    assert.ok(content.includes('[ERROR] error-line'), 'error entry missing');
+    // Stderr stays quiet when debug mode is off.
+    assert.equal(result.stderr, '', `Expected empty stderr, got: ${result.stderr}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('logger mirrors to stderr when debug mode is on', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-logger-stderr-'));
+  const loggerHref = new URL('../dist/logger.js', import.meta.url).href;
+  const script = `
+    const { logger, setDebugMode } = await import(${JSON.stringify(loggerHref)} + '?t=' + Date.now());
+    setDebugMode(true);
+    logger.warn('mirrored-warn');
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stderr });
+        else reject(new Error(`logger subprocess failed (${code})`));
+      });
+      proc.on('error', reject);
+    });
+    assert.ok(result.stderr.includes('mirrored-warn'), `Expected stderr mirror, got: ${result.stderr}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('logger strips ANSI escapes before writing', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-logger-ansi-'));
+  const loggerHref = new URL('../dist/logger.js', import.meta.url).href;
+  const script = `
+    const { logger, setDebugMode, getLogFilePath } = await import(${JSON.stringify(loggerHref)} + '?t=' + Date.now());
+    setDebugMode(false);
+    logger.info('\\u001b[31mred-text\\u001b[0m');
+    console.log(getLogFilePath());
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      proc.stdout.on('data', (d) => { stdout += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stdout });
+        else reject(new Error(`logger subprocess failed (${code})`));
+      });
+      proc.on('error', reject);
+    });
+    const content = readFileSync(result.stdout.trim(), 'utf8');
+    assert.ok(content.includes('red-text'), 'expected stripped text in log');
+    assert.ok(!content.includes('['), 'expected ANSI escapes to be stripped');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+// ── Audit retention ───────────────────────────────────────────────────────
+
+test('enforceRetention trims audit log to most recent 10k entries', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-audit-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const auditFile = join(blockrunDir, 'franklin-audit.jsonl');
+
+  // Pre-seed 12k entries — bigger than MAX_AUDIT_ENTRIES (10k) and large
+  // enough to trip the size probe (200 bytes/entry × 10k = 2MB).
+  const writer = [];
+  for (let i = 0; i < 12_000; i++) {
+    // Pad to ensure file size exceeds the probe threshold.
+    writer.push(JSON.stringify({
+      ts: i,
+      model: 'test/model',
+      inputTokens: 100,
+      outputTokens: 100,
+      costUsd: 0.001,
+      source: 'agent',
+      prompt: 'x'.repeat(180),
+    }));
+  }
+  writeFileSync(auditFile, writer.join('\n') + '\n');
+
+  const auditHref = new URL('../dist/stats/audit.js', import.meta.url).href;
+  const script = `
+    const audit = await import(${JSON.stringify(auditHref)} + '?t=' + Date.now());
+    audit.enforceRetention();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`audit subprocess failed (${code})\n${stderr}`));
+      });
+      proc.on('error', reject);
+    });
+
+    const trimmed = readFileSync(auditFile, 'utf8').split('\n').filter(Boolean);
+    assert.equal(trimmed.length, 10_000, `expected 10k retained entries, got ${trimmed.length}`);
+    // Oldest 2k dropped — first remaining entry should be ts=2000.
+    const first = JSON.parse(trimmed[0]);
+    assert.equal(first.ts, 2_000, `expected first ts=2000 (oldest kept), got ${first.ts}`);
+    const last = JSON.parse(trimmed[trimmed.length - 1]);
+    assert.equal(last.ts, 11_999, `expected last ts=11999, got ${last.ts}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('enforceRetention is a no-op when audit log is small', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-audit-small-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const auditFile = join(blockrunDir, 'franklin-audit.jsonl');
+
+  const seed = [];
+  for (let i = 0; i < 50; i++) {
+    seed.push(JSON.stringify({ ts: i, model: 'test', inputTokens: 1, outputTokens: 1, costUsd: 0, source: 'agent' }));
+  }
+  writeFileSync(auditFile, seed.join('\n') + '\n');
+  const before = readFileSync(auditFile, 'utf8');
+
+  const auditHref = new URL('../dist/stats/audit.js', import.meta.url).href;
+  const script = `
+    const audit = await import(${JSON.stringify(auditHref)} + '?t=' + Date.now());
+    audit.enforceRetention();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`audit subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+    const after = readFileSync(auditFile, 'utf8');
+    assert.equal(after, before, 'small audit file should be untouched');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
