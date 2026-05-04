@@ -1,5 +1,55 @@
 # Changelog
 
+## 3.15.46 — \`franklin task list\` shows running tasks' real elapsed time, not \"0s\"
+
+Verified 2026-05-04 on a real machine: \`franklin task list\` for
+a running ETL job that had been chewing through 685k GCS files
+for 13 minutes displayed:
+
+\`\`\`
+t_morrbsvn_667517d7  running        0s  ETL v3 - no capture_output
+\`\`\`
+
+\"0s\" was useless signal — the user couldn't tell whether the
+task had just spawned or had been grinding for hours. Worse, it
+made \"running\" look indistinguishable from \"already
+finished, just confirmed\".
+
+Source: \`src/commands/task.ts:41\` computed age as
+\`now - (t.lastEventAt ?? t.createdAt)\`, but the runner emits a
+heartbeat every 5s (\`tasks/runner.ts:86\`) that just refreshes
+\`lastEventAt\` so observers see \"still going\". For a running
+task that means \`lastEventAt ≈ now\` always, so age ≈ 0.
+
+Two distinct semantics had been collapsed into one column:
+
+- For a **running** task, \"age\" means \"how long has this been
+  going\" → should reference \`startedAt\`.
+- For a **terminal** task, \"age\" means \"how recently did this
+  end\" → should reference \`endedAt\` (or \`lastEventAt\`, which
+  finalize() sets to endedAt).
+
+Fix:
+
+- \`src/commands/task.ts\` \`list\` action now branches on
+  \`isTerminalTaskStatus(t.status)\` to pick the right reference
+  timestamp. Running → \`startedAt ?? createdAt\`. Terminal →
+  \`endedAt ?? lastEventAt ?? createdAt\`. Same single \"age\"
+  column, but each row now answers the question the column
+  actually means for that row.
+
+After the fix the same machine shows:
+
+\`\`\`
+t_morrbsvn_667517d7  running       14m  ETL v3 - no capture_output
+t_morr21tl_6aa34dc3  failed        15m  ETL v2 - 500文件/批
+\`\`\`
+
+Running task age now matches the user's intuition. Terminal
+rows are unchanged.
+
+Tests: 310/310 pass.
+
 ## 3.15.45 — ImageGen / VideoGen surface the actual reason a generation failed
 
 Verified 2026-05-04 in a live session: the user asked the agent

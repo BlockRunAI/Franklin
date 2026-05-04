@@ -38,7 +38,18 @@ export function buildTaskCommand(): Command {
       }
       const now = Date.now();
       for (const t of tasks) {
-        const age = fmtAge(now - (t.lastEventAt ?? t.createdAt));
+        // For a running task, "age" should mean "how long has this been
+        // going" — use startedAt (or createdAt). For a terminal task,
+        // "age" should mean "how recently did this end" — use endedAt
+        // (or lastEventAt). Verified 2026-05-04 on a real machine: a
+        // running ETL that had been chewing through 685k files for
+        // 13 minutes was displayed as "0s" because the runner's 5s
+        // heartbeat keeps lastEventAt fresh — useless signal.
+        const isTerminal = isTerminalTaskStatus(t.status);
+        const ageRefMs = isTerminal
+          ? (t.endedAt ?? t.lastEventAt ?? t.createdAt)
+          : (t.startedAt ?? t.createdAt);
+        const age = fmtAge(now - ageRefMs);
         console.log(`${t.runId}  ${t.status.padEnd(10)}  ${age.padStart(5)}  ${t.label}`);
       }
     });
