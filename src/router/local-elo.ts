@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BLOCKRUN_DIR } from '../config.js';
+import { isTestFixtureModel } from '../stats/test-fixture.js';
 
 export type Outcome = 'continued' | 'switched' | 'retried' | 'error' | 'max_turns' | 'payment' | 'rate_limit';
 
@@ -28,6 +29,13 @@ const K_FACTOR = 32; // Elo K-factor — how much each outcome shifts the rating
  * Record a model outcome for local learning.
  */
 export function recordOutcome(category: string, model: string, outcome: Outcome, toolCalls?: number): void {
+  // Defensive: same fixture-model gate as appendAudit / recordUsage.
+  // router-history.jsonl is currently clean (test runs typically have
+  // an empty `lastRoutedCategory` and the agent loop already guards
+  // against that), but a future change to category detection would
+  // immediately leak. Belt-and-braces.
+  if (isTestFixtureModel(model)) return;
+
   try {
     fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
     const record: HistoryRecord = { ts: Date.now(), category, model, outcome, toolCalls };

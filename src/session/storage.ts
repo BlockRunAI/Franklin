@@ -13,6 +13,23 @@ import type { Dialogue } from '../agent/types.js';
 const MAX_SESSIONS = 20; // Keep last 20 sessions
 let resolvedSessionsDir: string | null = null;
 
+// When in-process tests run interactiveSession() with model="local/test*",
+// session writes were creating real .jsonl + .meta.json files in the
+// user's ~/.blockrun/sessions/ — verified 19 of 33 metas (57.6%) on a
+// real machine. Toggled at session start by the agent loop based on the
+// model name; defaults to enabled so production never accidentally goes
+// silent. No-op writes when disabled — reads still work so resume tests
+// can pre-seed state with their own writes if they want to.
+let persistenceDisabled = false;
+
+export function setSessionPersistenceDisabled(disabled: boolean): void {
+  persistenceDisabled = disabled;
+}
+
+export function isSessionPersistenceDisabled(): boolean {
+  return persistenceDisabled;
+}
+
 export interface SessionMeta {
   id: string;
   model: string;
@@ -113,6 +130,7 @@ export function appendToSession(
   sessionId: string,
   message: Dialogue
 ): void {
+  if (persistenceDisabled) return;
   const line = JSON.stringify(message) + '\n';
   withWritableSessionDir(() => {
     fs.appendFileSync(sessionPath(sessionId), line);
@@ -126,6 +144,7 @@ export function updateSessionMeta(
   sessionId: string,
   meta: Partial<SessionMeta>
 ): void {
+  if (persistenceDisabled) return;
   withWritableSessionDir(() => {
     const existing = loadSessionMeta(sessionId);
     const updated: SessionMeta = {

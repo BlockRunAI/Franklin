@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.15.17 — Session storage stops persisting test fixtures; recordOutcome defensive gate
+
+Round-2 audit of the same user's \`~/.blockrun/\` after 3.15.16
+shipped found a third pollution path that the audit/stats gate didn't
+cover: \`~/.blockrun/sessions/\`. 19 of 33 \`.meta.json\` files
+(57.6%) belonged to \`local/test-model\` — the same in-process
+tests that were polluting audit, but writing through a different
+persister (\`appendToSession\` + \`updateSessionMeta\`).
+
+This is smaller-impact than audit because \`MAX_SESSIONS=20\` already
+bounds it and the 3.15.15 orphan sweeper cleans up dangling jsonl,
+but the active session writes were still evicting real user sessions
+from the LRU faster than they should.
+
+- \`session/storage\`: new \`setSessionPersistenceDisabled(bool)\` /
+  \`isSessionPersistenceDisabled()\` API. \`appendToSession\` and
+  \`updateSessionMeta\` early-return when disabled. Reads are still
+  allowed so tests can pre-seed and inspect.
+- \`agent/loop\`: at session start, \`setSessionPersistenceDisabled(
+  isTestFixtureModel(config.model))\` — same fixture detector as the
+  audit/stats gates.
+- \`router/local-elo\`: \`recordOutcome\` also gated on
+  \`isTestFixtureModel(model)\`. router-history is currently clean
+  (\`lastRoutedCategory\` is empty for tests so the call site already
+  no-ops), but a future change to category detection would
+  immediately leak. Belt-and-braces.
+- \`test/local\`: 4 in-process tests that exercise session
+  persistence-for-resume were using \`local/test-model\` as a label
+  and got correctly silenced by the new gate. Switched to
+  \`zai/glm-5.1\` (no actual API call — mock server backs them) so
+  they continue to verify the write path. +2 new tests cover the
+  setSessionPersistenceDisabled toggle and recordOutcome short-circuit.
+
 ## 3.15.16 — Test fixtures stop polluting telemetry; fallback flag actually recorded
 
 Audit of a real \`~/.blockrun/franklin-audit.jsonl\` turned up two

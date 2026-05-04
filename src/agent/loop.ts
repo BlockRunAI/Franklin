@@ -24,6 +24,8 @@ import { recordSessionUsage } from '../stats/session-tracker.js';
 import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
 import { logger, setDebugMode } from '../logger.js';
 import { runDataHygiene } from '../storage/hygiene.js';
+import { isTestFixtureModel } from '../stats/test-fixture.js';
+import { setSessionPersistenceDisabled } from '../session/storage.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
@@ -385,6 +387,15 @@ export async function interactiveSession(
   // Wire stderr-mirroring of log lines to the same flag the agent already
   // uses to gate verbose console output. File writes happen regardless.
   setDebugMode(!!config.debug);
+
+  // In-process tests run interactiveSession() with model="local/test*"
+  // and were creating real session files on the user's machine —
+  // verified 19 of 33 metas (57.6%) were polluted on a real install.
+  // Gate session persistence at the entry point so the rest of the
+  // loop doesn't have to thread the flag through. Tests that genuinely
+  // exercise the persistence path use a non-fixture model name like
+  // `zai/glm-5.1` (mock-server-backed) so they keep writing.
+  setSessionPersistenceDisabled(isTestFixtureModel(config.model));
 
   const client = new ModelClient({
     apiUrl: config.apiUrl,

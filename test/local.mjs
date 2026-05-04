@@ -566,7 +566,7 @@ test('interactive session persists tool exchanges for resume', { timeout: 20_000
     let calls = 0;
     await interactiveSession(
       {
-        model: 'local/test-model',
+        model: 'zai/glm-5.1',
         apiUrl,
         chain: 'base',
         systemInstructions: ['You are a test harness.'],
@@ -670,7 +670,7 @@ test('resume: second interactiveSession with resumeSessionId continues prior tra
     const { interactiveSession } = await import('../dist/agent/loop.js');
 
     const baseConfig = {
-      model: 'local/test-model',
+      model: 'zai/glm-5.1',
       apiUrl,
       chain: 'base',
       systemInstructions: ['You are a test harness.'],
@@ -739,7 +739,7 @@ test('pruneOldSessions removes stale ghost sessions even when visible session co
     const oldTs = Date.now() - (10 * 60 * 1000);
     writeFileSync(staleGhostMeta, JSON.stringify({
       id: staleGhostId,
-      model: 'local/test-model',
+      model: 'zai/glm-5.1',
       workDir: fakeHome,
       createdAt: oldTs,
       updatedAt: oldTs,
@@ -754,7 +754,7 @@ test('pruneOldSessions removes stale ghost sessions even when visible session co
     const freshTs = Date.now();
     writeFileSync(visibleSessionMeta, JSON.stringify({
       id: visibleSessionId,
-      model: 'local/test-model',
+      model: 'zai/glm-5.1',
       workDir: fakeHome,
       createdAt: freshTs,
       updatedAt: freshTs,
@@ -2245,7 +2245,7 @@ test('ModelClient: stream idle timeout surfaces a real timeout error instead of 
     const client = new ModelClient({ apiUrl: `http://127.0.0.1:${port}`, chain: 'base' });
     await assert.rejects(
       () => client.complete({
-        model: 'local/test-model',
+        model: 'zai/glm-5.1',
         messages: [{ role: 'user', content: 'hello' }],
         max_tokens: 128,
         stream: true,
@@ -2274,7 +2274,7 @@ test('ModelClient: request timeout surfaces before waiting on a hung response fo
     const client = new ModelClient({ apiUrl: `http://127.0.0.1:${port}`, chain: 'base' });
     await assert.rejects(
       () => client.complete({
-        model: 'local/test-model',
+        model: 'zai/glm-5.1',
         messages: [{ role: 'user', content: 'hello' }],
         max_tokens: 128,
         stream: true,
@@ -3697,7 +3697,7 @@ test('dynamic tool visibility: hidden tools cannot execute before activation', {
     let calls = 0;
     const history = await interactiveSession(
       {
-        model: 'local/test-model',
+        model: 'zai/glm-5.1',
         apiUrl,
         chain: 'base',
         systemInstructions: ['You are a test harness.'],
@@ -4231,7 +4231,7 @@ test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', {
 
     const history = await interactiveSession(
       {
-        model: 'local/test-model',
+        model: 'zai/glm-5.1',
         apiUrl,
         chain: 'base',
         systemInstructions: ['You are a test harness.'],
@@ -6416,6 +6416,84 @@ test('recordUsage: drops local/test* entries, keeps real models in stats history
     const summary = JSON.parse(result);
     assert.equal(summary.stats.totalRequests, 1,
       `expected only the real-model call to count, got ${summary.stats?.totalRequests}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('session storage: setSessionPersistenceDisabled(true) blocks all writes', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-session-gate-'));
+  const sessionsDir = join(fakeHome, '.blockrun', 'sessions');
+  const storageHref = new URL('../dist/session/storage.js', import.meta.url).href;
+  const script = `
+    const s = await import(${JSON.stringify(storageHref)} + '?t=' + Date.now());
+    s.setSessionPersistenceDisabled(true);
+    s.appendToSession('session-test-blocked', { role: 'user', content: 'should not persist' });
+    s.updateSessionMeta('session-test-blocked', {
+      model: 'zai/glm-5.1', workDir: '/tmp', turnCount: 1, messageCount: 1,
+    });
+    // Toggle back on to prove the gate works both ways.
+    s.setSessionPersistenceDisabled(false);
+    s.appendToSession('session-real', { role: 'user', content: 'should persist' });
+    s.updateSessionMeta('session-real', {
+      model: 'zai/glm-5.1', workDir: '/tmp', turnCount: 1, messageCount: 1,
+    });
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`storage subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    // Blocked session should leave no files behind.
+    assert.ok(!existsSync(join(sessionsDir, 'session-test-blocked.jsonl')),
+      'disabled appendToSession should not write jsonl');
+    assert.ok(!existsSync(join(sessionsDir, 'session-test-blocked.meta.json')),
+      'disabled updateSessionMeta should not write meta');
+    // Real session should be written normally.
+    assert.ok(existsSync(join(sessionsDir, 'session-real.jsonl')),
+      'enabled appendToSession should write jsonl');
+    assert.ok(existsSync(join(sessionsDir, 'session-real.meta.json')),
+      'enabled updateSessionMeta should write meta');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('recordOutcome: drops local/test* models from router-history', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-elo-fixture-'));
+  const historyFile = join(fakeHome, '.blockrun', 'router-history.jsonl');
+  const eloHref = new URL('../dist/router/local-elo.js', import.meta.url).href;
+  const script = `
+    const e = await import(${JSON.stringify(eloHref)} + '?t=' + Date.now());
+    e.recordOutcome('chat', 'local/test-model', 'switched');
+    e.recordOutcome('chat', 'local/test', 'payment');
+    e.recordOutcome('coding', 'anthropic/claude-sonnet-4.6', 'continued');
+    e.recordOutcome('coding', 'local/llamafile', 'continued');
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`elo subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+    const lines = readFileSync(historyFile, 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+    const models = lines.map(l => l.model).sort();
+    assert.deepEqual(models, ['anthropic/claude-sonnet-4.6', 'local/llamafile'],
+      `expected only real-model entries, got ${JSON.stringify(models)}`);
   } finally {
     rmSync(fakeHome, { recursive: true, force: true });
   }
