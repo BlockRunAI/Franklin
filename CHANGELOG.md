@@ -1,5 +1,50 @@
 # Changelog
 
+## 3.15.38 — \`--resume\` preserves running cost / token totals (don't lose history)
+
+Real session 2026-05-04 caught this. Reading the latest log entries
+turned up two new \`[INFO] Slow tool: Bash error after 200s\` rows
+from my 3.15.32 fix firing — good. While checking session metas for
+context I noticed:
+
+\`\`\`
+session efd5e412
+  costUsd: 0
+  inputTokens: 0
+  outputTokens: 0
+  toolCallCounts: { Bash: 36, Read: 5, Write: 7, Edit: 4, Detach: 1 }
+\`\`\`
+
+That session had run \$2.65 + 350K input tokens an hour earlier — I
+saw the meta with the right numbers myself. Now zero. Tool counts
+preserved, monetary state lost.
+
+Cause: \`agent/loop.ts\` initialized \`sessionInputTokens\`,
+\`sessionOutputTokens\`, \`sessionCostUsd\`, \`sessionSavedVsOpus\` to
+\`0\` at the start of every \`interactiveSession\` invocation, including
+when resuming. Each turn accumulated, but the seed was always 0. Then
+\`updateSessionMeta\` wrote those (smaller) numbers back, overwriting
+the historical values. Effectively: every resume reset the visible
+session cost.
+
+Tool counts survived because they live in a separate
+\`sessionToolCounts\` map that updates with \`Object.fromEntries(...)\`
+and gets merged via the \`toolCallCounts !== undefined\` guard in
+\`updateSessionMeta\`.
+
+- \`agent/loop\`: on resume, capture \`meta.inputTokens / outputTokens /
+  costUsd / savedVsOpusUsd\` and use them as the initial values for
+  the running counters. Subsequent turns accumulate on top — true
+  session total across every restart.
+- No interface change; no test changes needed.
+
+\`franklin insights\`, the status bar's session-cost annotation
+(\`-\$X.XXXX\`), and any external scripts reading
+\`~/.blockrun/sessions/\*.meta.json\` now report cumulative state
+correctly. Pre-3.15.38 sessions where the values were already
+zeroed stay zeroed (no migration); future activity adds on top of
+whatever's there now.
+
 ## 3.15.37 — Detach: stop telling agents to use \`--follow\` from Bash (it always times out)
 
 Real session 2026-05-04 14:52: agent ran a Detach for an ETL job

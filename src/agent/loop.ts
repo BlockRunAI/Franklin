@@ -468,6 +468,12 @@ export async function interactiveSession(
 
   // Resume: hydrate history from the saved JSONL transcript.
   // Sanitize to drop any orphaned tool_use / tool_result pairs from a crash.
+  // Carry over running totals from prior runs so resume preserves them — see
+  // the `let sessionInputTokens` comment below.
+  let resumedInputTokens = 0;
+  let resumedOutputTokens = 0;
+  let resumedCostUsd = 0;
+  let resumedSavedVsOpusUsd = 0;
   if (config.resumeSessionId) {
     const prior = loadSessionHistory(config.resumeSessionId);
     if (prior.length > 0) {
@@ -476,6 +482,17 @@ export async function interactiveSession(
       const meta = loadSessionMeta(config.resumeSessionId);
       if (meta) {
         turnCount = meta.turnCount ?? 0;
+        // Pre-3.15.38 these fell on the floor — every resume reset the
+        // running cost/token totals to zero, then `updateSessionMeta`
+        // wrote the new (smaller) numbers back over the historical
+        // values. Verified 2026-05-04 from a real session: efd5e412
+        // had $2.65 + 200K input tokens accumulated, then a resume
+        // rewrote the meta to {costUsd: 0, inputTokens: 0, ...}
+        // before the user ran their next turn.
+        resumedInputTokens = meta.inputTokens ?? 0;
+        resumedOutputTokens = meta.outputTokens ?? 0;
+        resumedCostUsd = meta.costUsd ?? 0;
+        resumedSavedVsOpusUsd = meta.savedVsOpusUsd ?? 0;
       }
     }
   }
@@ -483,10 +500,14 @@ export async function interactiveSession(
   let lastSessionActivity = Date.now();
   let lastRoutedModel = '';   // last model chosen by router (for local elo)
   let lastRoutedCategory = ''; // last category detected (for local elo)
-  let sessionInputTokens = 0;
-  let sessionOutputTokens = 0;
-  let sessionCostUsd = 0;
-  let sessionSavedVsOpus = 0;
+  // Session-cumulative counters. Seeded from prior session meta on resume so
+  // `franklin insights` and the status bar show the *true* session total
+  // across every restart, not just what happened since the latest process
+  // boot.
+  let sessionInputTokens = resumedInputTokens;
+  let sessionOutputTokens = resumedOutputTokens;
+  let sessionCostUsd = resumedCostUsd;
+  let sessionSavedVsOpus = resumedSavedVsOpusUsd;
   // Per-tool call counts aggregated across every turn. Session-scope, not
   // per-turn. Counts the *name* of each tool invocation only — no inputs,
   // outputs, or paths. Fed into opt-in telemetry at session end.
