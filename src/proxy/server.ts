@@ -1,7 +1,4 @@
 import http from 'node:http';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import {
   getOrCreateWallet,
   getOrCreateSolanaWallet,
@@ -43,34 +40,13 @@ export interface ProxyOptions {
   fallbackEnabled?: boolean;
 }
 
-const LOG_FILE = path.join(os.homedir(), '.blockrun', 'franklin-debug.log');
-
-// Strip ANSI escape codes so log file doesn't distort terminal on replay
-function stripAnsi(str: string): string {
-  // eslint-disable-next-line no-control-regex
-  return str.replace(/\x1B\[[0-9;]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B[()][A-B]|\r/g, '');
-}
-
-function debug(options: ProxyOptions, ...args: unknown[]) {
-  if (!options.debug) return;
-  const msg = `[${new Date().toISOString()}] ${stripAnsi(args.map(String).join(' '))}\n`;
-  try {
-    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
-    fs.appendFileSync(LOG_FILE, msg);
-  } catch {
-    /* ignore */
-  }
-}
-
-function log(...args: unknown[]) {
-  const msg = `[franklin] ${args.map(String).join(' ')}`;
-  // Do NOT print to stdout — the terminal is owned by the parent process (stdio: inherit).
-  // Use `franklin logs` to read runtime messages.
-  try {
-    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${stripAnsi(msg)}\n`);
-  } catch { /* ignore */ }
-}
+// Logging here goes through the unified logger introduced in 3.15.11
+// (timestamp + [LEVEL] tag, self-rotating at 10 MB, optional stderr
+// mirror in debug mode). The previous per-module debug()/log() helpers
+// duplicated the file path, ANSI strip regex (with a slightly different
+// pattern!), and timestamp format — bug fixes never propagated. They
+// were the last holdouts after the agent loop was migrated.
+import { logger, setDebugMode } from '../logger.js';
 
 const DEFAULT_MAX_TOKENS = 4096;
 // 180s budget for *time-to-headers* — reasoning-class models (zai/glm-*,
@@ -287,6 +263,11 @@ function withinRateLimit(): boolean {
 }
 
 export function createProxy(options: ProxyOptions): http.Server {
+  // Wire stderr-mirroring of unified logger output to the proxy's debug
+  // flag — same pattern as interactiveSession in agent/loop. File writes
+  // happen regardless; only the live stderr mirror is gated.
+  setDebugMode(!!options.debug);
+
   const chain = options.chain || 'base';
   let currentModel: string | null = options.modelOverride || DEFAULT_MODEL;
   const fallbackEnabled = options.fallbackEnabled !== false; // Default true
@@ -355,10 +336,7 @@ export function createProxy(options: ProxyOptions): http.Server {
       let usedFallback = false;
 
       try {
-        debug(
-          options,
-          `request: ${req.method} ${req.url} currentModel=${currentModel || 'none'}`
-        );
+        if (options.debug) logger.debug(`[franklin] request: ${req.method} ${req.url} currentModel=${currentModel || 'none'}`);
         if (body) {
           try {
             const parsed = JSON.parse(body);
@@ -366,15 +344,12 @@ export function createProxy(options: ProxyOptions): http.Server {
             // Intercept "use <model>" commands for in-session model switching
             if (parsed.messages) {
               const last = parsed.messages[parsed.messages.length - 1];
-              debug(
-                options,
-                `last msg role=${last?.role} content-type=${typeof last?.content} content=${JSON.stringify(last?.content).slice(0, 200)}`
-              );
+              if (options.debug) logger.debug(`[franklin] last msg role=${last?.role} content-type=${typeof last?.content} content=${JSON.stringify(last?.content).slice(0, 200)}`);
             }
             const switchCmd = detectModelSwitch(parsed);
             if (switchCmd) {
               currentModel = switchCmd;
-              debug(options, `model switched to: ${currentModel}`);
+              if (options.debug) logger.debug(`[franklin] model switched to: ${currentModel}`);
               const fakeResponse = {
                 id: `msg_franklin_${Date.now()}`,
                 type: 'message',
@@ -433,8 +408,8 @@ export function createProxy(options: ProxyOptions): http.Server {
               parsed.model = routing.model;
               requestModel = routing.model;
 
-              log(
-                `🧠 Smart routing: ${routingProfile} → ${routing.tier} → ${routing.model} ` +
+              logger.info(
+                `[franklin] 🧠 Smart routing: ${routingProfile} → ${routing.tier} → ${routing.model} ` +
                 `(${(routing.savings * 100).toFixed(0)}% savings) [${routing.signals.join(', ')}]`
               );
             }
@@ -458,11 +433,8 @@ export function createProxy(options: ProxyOptions): http.Server {
                   : DEFAULT_MAX_TOKENS;
               parsed.max_tokens = Math.min(adaptive, modelCap);
 
-              if (original !== parsed.max_tokens) {
-                debug(
-                  options,
-                  `max_tokens: ${original || 'unset'} → ${parsed.max_tokens} (last output: ${lastOut || 'none'})`
-                );
+              if (original !== parsed.max_tokens && options.debug) {
+                logger.debug(`[franklin] max_tokens: ${original || 'unset'} → ${parsed.max_tokens} (last output: ${lastOut || 'none'})`);
               }
             }
             body = JSON.stringify(parsed);
@@ -501,7 +473,7 @@ export function createProxy(options: ProxyOptions): http.Server {
               parsed.model = requestModel;
               body = JSON.stringify(parsed);
             } catch { /* body not JSON, skip */ }
-            log(`⚠️  Safety net: resolved unrouted ${virtualName} → ${requestModel}`);
+            logger.warn(`[franklin] ⚠️  Safety net: resolved unrouted ${virtualName} → ${requestModel}`);
           }
         }
 
@@ -537,8 +509,8 @@ export function createProxy(options: ProxyOptions): http.Server {
               timeoutMs: requestTimeoutMs,
             },
             (failedModel, status, nextModel) => {
-              log(
-                `⚠️  ${failedModel} returned ${status}, falling back to ${nextModel}`
+              logger.warn(
+                `[franklin] ⚠️  ${failedModel} returned ${status}, falling back to ${nextModel}`
               );
             }
           );
@@ -550,7 +522,7 @@ export function createProxy(options: ProxyOptions): http.Server {
           usedFallback = result.fallbackUsed;
 
           if (usedFallback) {
-            log(`↺ Fallback successful: using ${finalModel}`);
+            logger.info(`[franklin] ↺ Fallback successful: using ${finalModel}`);
           }
         } else {
           response = await fetchModelAttempt(targetUrl, requestInit, body, requestModel, {
@@ -601,7 +573,7 @@ export function createProxy(options: ProxyOptions): http.Server {
           }
           res.writeHead(response.status, { 'Content-Type': 'application/json' });
           res.end(errorBody);
-          log(`⚠️  ${response.status} from backend for ${finalModel}`);
+          logger.warn(`[franklin] ⚠️  ${response.status} from backend for ${finalModel}`);
           return;
         }
 
@@ -622,7 +594,7 @@ export function createProxy(options: ProxyOptions): http.Server {
           const pump = async () => {
             while (true) {
               if (Date.now() > streamDeadline) {
-                log('⚠️  Stream timeout after 5 minutes');
+                logger.warn('[franklin] ⚠️  Stream timeout after 5 minutes');
                 try { reader.cancel(); } catch { /* ignore */ }
                 break;
               }
@@ -671,10 +643,7 @@ export function createProxy(options: ProxyOptions): http.Server {
                       fallback: usedFallback,
                       source: 'proxy',
                     });
-                    debug(
-                      options,
-                      `recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
-                    );
+                    if (options.debug) logger.debug(`[franklin] recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`);
                   }
                 }
                 res.end();
@@ -688,7 +657,7 @@ export function createProxy(options: ProxyOptions): http.Server {
             }
           };
           pump().catch((err) => {
-            log(`❌ Stream error: ${err instanceof Error ? err.message : String(err)}`);
+            logger.error(`[franklin] ❌ Stream error: ${err instanceof Error ? err.message : String(err)}`);
             res.end();
           });
         } else {
@@ -724,10 +693,7 @@ export function createProxy(options: ProxyOptions): http.Server {
                 fallback: usedFallback,
                 source: 'proxy',
               });
-              debug(
-                options,
-                `recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
-              );
+              if (options.debug) logger.debug(`[franklin] recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`);
             }
           } catch {
             /* not JSON */
@@ -736,7 +702,7 @@ export function createProxy(options: ProxyOptions): http.Server {
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Proxy error';
-        log(`❌ Error: ${msg}`);
+        logger.error(`[franklin] ❌ Error: ${msg}`);
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -870,8 +836,8 @@ async function fetchWithPaymentFallback(
       if (nextModel && onFallback) {
         onFallback(model, 0, nextModel);
       }
-      log(
-        `[fallback] ${model} request error: ${
+      logger.warn(
+        `[franklin] [fallback] ${model} request error: ${
           err instanceof Error ? err.message : String(err)
         }`
       );

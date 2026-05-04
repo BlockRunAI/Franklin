@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.15.21 — Migrate proxy + fallback to the unified logger (last duplicates removed)
+
+The original 3.15.11 logger audit flagged "three independent logging
+implementations" — agent/loop migrated then, but \`proxy/server.ts\`
+and \`proxy/fallback.ts\` kept their own \`debug()\` / \`log()\` /
+\`appendLog()\` helpers, with subtly-different ANSI-strip regexes and
+no \`[LEVEL]\` tag on writes. This release retires the duplicates so
+every Franklin log line goes through one writer with one format.
+
+- \`proxy/server\`: deleted the local \`debug()\` / \`log()\` /
+  \`stripAnsi()\` / \`LOG_FILE\` definitions. 16 call sites moved to
+  \`logger.debug\` / \`logger.info\` / \`logger.warn\` / \`logger.error\`
+  based on severity (⚠️ → warn, ❌ → error, ↺ success → info).
+  \`createProxy\` now calls \`setDebugMode(!!options.debug)\` once at
+  start so stderr mirroring matches the proxy's debug flag.
+- \`proxy/fallback\`: deleted \`appendLog()\`, the duplicate
+  \`LOG_FILE\` const, and the bespoke \`ANSI_RE\` (which was missing
+  the \`\\r\` carve the agent loop's regex covered — a real
+  cross-implementation drift). Migrated to \`logger.warn\`.
+- \`proxy/server\` imports cleaned up (\`fs\` / \`path\` / \`os\` now
+  unused; logger handles all that internally).
+
+Side effects users will notice:
+
+- Proxy log entries now carry \`[INFO]\` / \`[WARN]\` / \`[ERROR]\`
+  tags so \`grep '\\[ERROR\\]' ~/.blockrun/franklin-debug.log\`
+  catches proxy errors too.
+- The 10 MB self-rotation shipped in 3.15.20 now applies to proxy
+  output as well — every writer is the same writer.
+- Debug-mode stderr mirroring extends to proxy as a free side
+  benefit; previously the local \`debug()\` only ever wrote to file,
+  even with \`--debug\`.
+
 ## 3.15.20 — Logger self-rotates non-destructively; \`franklin logs\` reads across the rotation
 
 \`franklin-debug.log\` had two related bugs that the 3.15.11 logger
