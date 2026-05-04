@@ -6147,6 +6147,189 @@ test('PredictionMarket missing action fails with usage hint', async () => {
   assert.match(result.output, /action is required/);
 });
 
+// ── Data hygiene ──────────────────────────────────────────────────────────
+// Reported 2026-05-04 from a real user machine: ~/.blockrun/data was
+// 5.7 MB across 2 months (no SDK retention), cost_log.jsonl 38 KB
+// uncapped, 100 orphan session jsonl files (1.2 MB) without meta
+// partners that pruneOldSessions never touched, plus three legacy files
+// from older product names sitting forever. Tests below run hygiene
+// against an isolated fake HOME so user data is never touched.
+
+test('runDataHygiene: removes legacy files (brcc-debug.log etc.) from BLOCKRUN_DIR', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-legacy-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const legacy = ['brcc-debug.log', 'brcc-stats.json', '0xcode-stats.json', 'runcode-debug.log'];
+  for (const f of legacy) writeFileSync(join(blockrunDir, f), 'leftover');
+  // Also create franklin-debug.log to make sure we don't nuke it.
+  writeFileSync(join(blockrunDir, 'franklin-debug.log'), 'keep me');
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    h.runDataHygiene();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`hygiene subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    for (const f of legacy) {
+      assert.ok(!existsSync(join(blockrunDir, f)),
+        `expected legacy file ${f} to be removed`);
+    }
+    assert.ok(existsSync(join(blockrunDir, 'franklin-debug.log')),
+      'franklin-debug.log must NOT be removed');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('runDataHygiene: trims ~/.blockrun/data older than 30 days', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-data-'));
+  const dataDir = join(fakeHome, '.blockrun', 'data');
+  mkdirSync(dataDir, { recursive: true });
+
+  // Mix of fresh + ancient files. Use utimes to backdate the ancient set.
+  const fresh = ['fresh1.json', 'fresh2.json'];
+  const ancient = ['old1.json', 'old2.json', 'old3.json'];
+  for (const f of fresh) writeFileSync(join(dataDir, f), '{}');
+  for (const f of ancient) writeFileSync(join(dataDir, f), '{}');
+  const sixtyDaysAgo = (Date.now() - 60 * 24 * 60 * 60 * 1000) / 1000;
+  const fs = await import('node:fs');
+  for (const f of ancient) {
+    fs.utimesSync(join(dataDir, f), sixtyDaysAgo, sixtyDaysAgo);
+  }
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    h.runDataHygiene();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`hygiene subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+
+    for (const f of fresh) {
+      assert.ok(existsSync(join(dataDir, f)), `fresh file ${f} should survive`);
+    }
+    for (const f of ancient) {
+      assert.ok(!existsSync(join(dataDir, f)), `ancient file ${f} should be trimmed`);
+    }
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('runDataHygiene: caps cost_log.jsonl at 5000 entries', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-costlog-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const costLog = join(blockrunDir, 'cost_log.jsonl');
+
+  // Seed > probe threshold (~500 KB) so trim runs. 6000 lines × ~80 bytes.
+  const seed = [];
+  for (let i = 0; i < 6000; i++) {
+    seed.push(JSON.stringify({ ts: i, endpoint: '/v1/chat/completions', cost_usd: 0.001 }));
+  }
+  writeFileSync(costLog, seed.join('\n') + '\n');
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    h.runDataHygiene();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`hygiene subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+
+    const after = readFileSync(costLog, 'utf8').split('\n').filter(Boolean);
+    assert.equal(after.length, 5000,
+      `expected 5000 entries after trim, got ${after.length}`);
+    // Oldest 1000 dropped — first remaining ts should be 1000.
+    const first = JSON.parse(after[0]);
+    assert.equal(first.ts, 1000);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('pruneOldSessions: removes orphan jsonl files without meta partners', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-orphan-'));
+  const sessionsDir = join(fakeHome, '.blockrun', 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+
+  // 2 paired sessions (jsonl + meta) + 3 orphans (jsonl only).
+  const paired = ['session-keep-1', 'session-keep-2'];
+  const orphans = ['session-orphan-1', 'session-orphan-2', 'session-orphan-3'];
+  for (const id of paired) {
+    writeFileSync(join(sessionsDir, `${id}.jsonl`), '{"role":"user","content":"hi"}\n');
+    writeFileSync(join(sessionsDir, `${id}.meta.json`),
+      JSON.stringify({ id, model: 'test', workDir: '/tmp', createdAt: Date.now(), updatedAt: Date.now(), turnCount: 1, messageCount: 1 }));
+  }
+  for (const id of orphans) {
+    writeFileSync(join(sessionsDir, `${id}.jsonl`), '{"role":"user","content":"orphaned"}\n');
+  }
+
+  const storageHref = new URL('../dist/session/storage.js', import.meta.url).href;
+  const script = `
+    const s = await import(${JSON.stringify(storageHref)} + '?t=' + Date.now());
+    s.pruneOldSessions();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`prune subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    for (const id of paired) {
+      assert.ok(existsSync(join(sessionsDir, `${id}.jsonl`)),
+        `paired session ${id} jsonl should survive`);
+      assert.ok(existsSync(join(sessionsDir, `${id}.meta.json`)),
+        `paired session ${id} meta should survive`);
+    }
+    for (const id of orphans) {
+      assert.ok(!existsSync(join(sessionsDir, `${id}.jsonl`)),
+        `orphan ${id}.jsonl should be removed`);
+    }
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('PredictionMarket is registered in allCapabilities and CORE_TOOL_NAMES', async () => {
   const { allCapabilities } = await import('../dist/tools/index.js');
   const { CORE_TOOL_NAMES } = await import('../dist/tools/tool-categories.js');

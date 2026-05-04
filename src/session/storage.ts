@@ -267,4 +267,37 @@ export function pruneOldSessions(activeSessionId?: string): void {
       try { fs.unlinkSync(metaPath(s.id)); } catch { /* ok */ }
     }
   }
+
+  // Sweep orphan jsonl files (left over from a session-id format change in
+  // earlier releases — meta deleted, jsonl stranded). The pre-3.x naming
+  // didn't include the random suffix, so the meta-driven prune above has
+  // no record of them and they accumulate forever. Verified on a real
+  // user machine: 21 metas, 121 jsonl, 100 orphans = ~1 MB stranded.
+  pruneOrphanJsonlFiles(activeSessionId);
+}
+
+function pruneOrphanJsonlFiles(activeSessionId?: string): void {
+  const dir = getSessionsDir();
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return; // Sessions dir doesn't exist yet — nothing to prune.
+  }
+
+  const knownIds = new Set<string>();
+  for (const f of entries) {
+    if (f.endsWith('.meta.json')) {
+      knownIds.add(f.slice(0, -'.meta.json'.length));
+    }
+  }
+
+  for (const f of entries) {
+    if (!f.endsWith('.jsonl')) continue;
+    const id = f.slice(0, -'.jsonl'.length);
+    if (id === activeSessionId) continue;
+    if (knownIds.has(id)) continue;
+    // No meta partner — orphan. Delete the jsonl.
+    try { fs.unlinkSync(path.join(dir, f)); } catch { /* ok */ }
+  }
 }

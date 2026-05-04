@@ -1,5 +1,48 @@
 # Changelog
 
+## 3.15.15 — Data hygiene: orphan sessions, ~/.blockrun/data trim, cost_log cap, legacy file removal
+
+Audit of a real user's \`~/.blockrun/\` directory turned up four
+unbounded-growth paths that no version of Franklin had pruned:
+
+- **121 session jsonl files but only 21 metas** — 100 orphans (~1 MB)
+  from a session-id format change in earlier releases. \`pruneOldSessions\`
+  enumerated \`.meta.json\` files only, so orphan jsonl never got deleted.
+- **\`~/.blockrun/data/\` at 5.7 MB** with files dating back 2 months. The
+  \`@blockrun/llm\` SDK writes a JSON blob for every paid call here as a
+  forensic archive but ships no retention. Linear growth → ~30 MB by
+  year-end on light use, slows \`franklin insights\` pulls.
+- **\`~/.blockrun/cost_log.jsonl\` at 38 KB / 474 entries** — same SDK,
+  also append-only with no cap.
+- **Legacy files** \`brcc-debug.log\`, \`brcc-stats.json\`,
+  \`0xcode-stats.json\`, \`runcode-debug.log\` lingering from older product
+  names. Not written by any current code path.
+
+Fixes:
+
+- \`session/storage\`: \`pruneOldSessions\` now also sweeps orphan jsonl
+  files (no \`.meta.json\` partner) on every session start. Active
+  session is always protected. Verified on the affected machine: 100
+  orphan files cleaned, ~1 MB recovered.
+- new \`storage/hygiene\`: \`runDataHygiene()\` runs alongside session
+  prune at agent boot. Three jobs:
+  - **data dir**: 30-day age cutoff + 2000-file hard cap (oldest-first
+    eviction). Trim is best-effort; per-entry stat() failures are
+    skipped so a single permission glitch can't take down boot.
+  - **cost log**: 5000-entry cap with a cheap size probe (40 bytes/entry)
+    so a small file doesn't trigger the read+rewrite. Pattern matches
+    the existing audit-log retention shipped in 3.15.11.
+  - **legacy files**: unconditional unlink for the four known leftover
+    names. Only Franklin writes to BLOCKRUN_DIR so this is safe.
+- \`agent/loop\`: \`runDataHygiene()\` wired in next to
+  \`pruneOldSessions(sessionId)\` at session start. Self-throwing —
+  startup never blocks on disk.
+
+These are local-disk fixes only; the SDK's write-side will be patched
+in a separate \`@blockrun/llm\` release. Until then Franklin handles
+retention itself, which is the right place for it anyway since
+Franklin owns the directory.
+
 ## 3.15.14 — PredictionMarket tool: Polymarket + Kalshi + cross-platform + smart money
 
 BlockRun gateway shipped a Predexon-backed prediction-market surface

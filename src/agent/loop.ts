@@ -23,6 +23,7 @@ import { loadConfig } from '../commands/config.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
 import { logger, setDebugMode } from '../logger.js';
+import { runDataHygiene } from '../storage/hygiene.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
@@ -501,6 +502,7 @@ export async function interactiveSession(
     persistSessionMeta();
   };
   pruneOldSessions(sessionId); // Cleanup old sessions on start, protect current
+  runDataHygiene(); // Trim ~/.blockrun/data + cost_log + remove legacy files
   persistSessionMeta();
 
   // Flush session meta on SIGINT/SIGTERM so mid-stream Ctrl+C doesn't
