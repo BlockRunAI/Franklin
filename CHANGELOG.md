@@ -1,5 +1,51 @@
 # Changelog
 
+## 3.15.49 — Pin the 3.15.48 async-poll contract with real tests + correct 3.15.48's framing
+
+3.15.48 added HTTP 202 polling to \`imagegen.ts\` based on
+gateway-side Cloud Run logs that showed five \"failed\"
+ImageGen calls had actually returned 202 queued. Gateway-side
+follow-up by the operator the same evening corrected the
+framing:
+
+| Job       | Model       | GCS state                        | Duration |
+|-----------|-------------|----------------------------------|----------|
+| 3f16562e  | gpt-image-2 | ✅ completed (~2 MB image)       | 53 s     |
+| b465733d  | gpt-image-1 | ✅ completed (~2 MB image)       | 41 s     |
+| f872d2fb  | gpt-image-2 | ❌ Request timed out (180 s)     | 180 s    |
+| 805e2a13  | gpt-image-1 | ✅ completed (~2 MB image)       | 56 s     |
+| 18fc77f0  | gpt-image-1 | ✅ completed (~2 MB image)       | 43 s     |
+
+So **4 of 5** jobs actually completed gateway-side; their image
+files were sitting in GCS the whole time. Franklin's "5 fails"
+report was a client-side misread of HTTP 202 — the gateway
+itself was healthy. Only the gpt-image-2 high-res run hit a
+real (upstream OpenAI 180 s) timeout.
+
+The error string \`No image data returned from API\` is also
+purely Franklin-side (\`src/tools/imagegen.ts:339\`); the
+gateway has its own — \`No image data returned from OpenAI\` in
+\`ai-providers.ts\` and \`No image URL in response\` in the
+MCP wrapper. Earlier round mistakenly attributed the string to
+gateway output.
+
+3.15.49 doesn't change the 3.15.48 fix logic — it formalizes it:
+
+- **Extracted helper:** \`pollImageJob(pollEndpoint, headers, signal, options?)\`
+  exported from \`src/tools/imagegen.ts\`. The 202 branch in
+  the main \`execute\` flow now delegates to this helper instead
+  of an inline loop. Same contract — sleep + retry on 202 / 429 /
+  5xx, surface \`failed\` upstream errors, return \`timed_out\`
+  on deadline, return \`poll_http_error\` for non-transient 4xx.
+- **5 new tests** in \`test/local.mjs\` that spin up a real
+  \`http\` server and exercise: completes-after-queued, upstream
+  fail, deadline timeout, transient 5xx recovery, non-transient
+  4xx error surfacing. Critical async path now has zero-network
+  unit coverage so future regressions get caught before they
+  silently start dropping image jobs.
+
+Tests: 315/315 pass (was 310 before, 5 new pollImageJob cases).
+
 ## 3.15.48 — ImageGen handles HTTP 202 (queued) — was burning paid retries on async jobs
 
 Real diagnostic from gateway-side Cloud Run logs (verified

@@ -6848,4 +6848,122 @@ test('agent context.ts forbids wishy-washy "wait and see" default for trading ve
   assert.match(src, /Forbidden default/i, 'context should label it as a forbidden default');
 });
 
+// ─── pollImageJob: 202-queued async path ─────────────────────────────────────
+//
+// Verified 2026-05-04 by gateway-side Cloud Run logs: 4 of 5 ImageGen calls
+// in a real session returned HTTP 202 + queued, completed in 41–56s, and
+// stored 2MB images in GCS — but Franklin treated the 202 as failure
+// because the inline path expected `data[0]` immediately. 3.15.48 added
+// async polling; these tests pin the contract so it can't silently regress.
+
+test('pollImageJob: completes when gateway returns status=completed', async () => {
+  const { pollImageJob } = await import('../dist/tools/imagegen.js');
+  let polls = 0;
+  const server = createServer((_req, res) => {
+    polls++;
+    if (polls < 2) {
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'queued' }));
+    } else {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'completed', data: [{ url: 'gs://bucket/img.png' }] }));
+    }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const ctrl = new AbortController();
+    const outcome = await pollImageJob(`http://127.0.0.1:${port}/poll`, {}, ctrl.signal,
+      { intervalMs: 10, maxWaitMs: 5_000 });
+    assert.equal(outcome.kind, 'completed');
+    assert.equal(outcome.body.data[0].url, 'gs://bucket/img.png');
+    assert.ok(polls >= 2, 'should have polled at least once past the queued state');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('pollImageJob: surfaces upstream failure on status=failed', async () => {
+  const { pollImageJob } = await import('../dist/tools/imagegen.js');
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'failed', error: { code: 'upstream_timeout', message: 'OpenAI 180s timeout' } }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const ctrl = new AbortController();
+    const outcome = await pollImageJob(`http://127.0.0.1:${port}/poll`, {}, ctrl.signal,
+      { intervalMs: 10, maxWaitMs: 1_000 });
+    assert.equal(outcome.kind, 'failed');
+    assert.equal(outcome.error.code, 'upstream_timeout');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('pollImageJob: times out when gateway never completes', async () => {
+  const { pollImageJob } = await import('../dist/tools/imagegen.js');
+  const server = createServer((_req, res) => {
+    // Always 202 — never completes.
+    res.writeHead(202, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'queued' }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const ctrl = new AbortController();
+    const outcome = await pollImageJob(`http://127.0.0.1:${port}/poll`, {}, ctrl.signal,
+      { intervalMs: 10, maxWaitMs: 50 });
+    assert.equal(outcome.kind, 'timed_out');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('pollImageJob: retries through 5xx transients and then completes', async () => {
+  const { pollImageJob } = await import('../dist/tools/imagegen.js');
+  let polls = 0;
+  const server = createServer((_req, res) => {
+    polls++;
+    if (polls === 1) {
+      res.writeHead(503, { 'Content-Type': 'text/plain' });
+      res.end('overloaded');
+    } else {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'completed', data: [{ b64_json: 'aGVsbG8=' }] }));
+    }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const ctrl = new AbortController();
+    const outcome = await pollImageJob(`http://127.0.0.1:${port}/poll`, {}, ctrl.signal,
+      { intervalMs: 10, maxWaitMs: 5_000 });
+    assert.equal(outcome.kind, 'completed');
+    assert.equal(outcome.body.data[0].b64_json, 'aGVsbG8=');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('pollImageJob: surfaces non-transient HTTP error with body preview', async () => {
+  const { pollImageJob } = await import('../dist/tools/imagegen.js');
+  const server = createServer((_req, res) => {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('payment auth expired');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const ctrl = new AbortController();
+    const outcome = await pollImageJob(`http://127.0.0.1:${port}/poll`, {}, ctrl.signal,
+      { intervalMs: 10, maxWaitMs: 1_000 });
+    assert.equal(outcome.kind, 'poll_http_error');
+    assert.equal(outcome.status, 403);
+    assert.match(outcome.bodyPreview, /payment auth expired/);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
 

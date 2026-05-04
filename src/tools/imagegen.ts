@@ -347,11 +347,9 @@ function buildExecute(deps: ImageGenDeps) {
     // when the upstream image model takes longer than the inline budget
     // (gpt-image-1/-2 routinely exceed 30s). Verified 2026-05-04 from
     // Cloud Run logs — five back-to-back ImageGen calls that the agent
-    // saw as "No image data returned from API" had all returned 202 +
-    // queued status; payment was settled but the result was still
-    // generating async. Without polling here, the agent burns retries
-    // (each charged) and the image silently completes elsewhere with
-    // no way for Franklin to retrieve it. Mirror videogen.ts's
+    // saw as "No image data returned from API" had all returned 202;
+    // 4 of 5 actually completed in GCS within 41–56s and would have
+    // been retrievable if Franklin had polled. Mirror videogen.ts's
     // pollUntilReady contract: same x-payment header on each poll.
     if (response.status === 202 && result.poll_url) {
       const origin = new URL(apiUrl).origin;
@@ -363,33 +361,17 @@ function buildExecute(deps: ImageGenDeps) {
       // generation routinely completes within 1–3 min once queued; the
       // 5 min ceiling matches videogen's POLL_MAX_WAIT_MS scale.
       clearTimeout(timeout);
-      const pollDeadline = Date.now() + 5 * 60 * 1000;
-      let polled: typeof result | null = null;
-      while (Date.now() < pollDeadline) {
-        if (controller.signal.aborted) throw new Error('aborted');
-        await new Promise(r => setTimeout(r, 3_000));
-        const pollResp = await fetch(pollEndpoint, {
-          method: 'GET',
-          headers: pollHeaders,
-          signal: controller.signal,
-        });
-        if (pollResp.status === 202) continue; // still queued
-        if (pollResp.status === 429 || pollResp.status >= 500) continue; // transient
-        if (pollResp.ok) {
-          polled = await pollResp.json().catch(() => null);
-          if (polled && (polled.status === 'completed' || polled.data?.[0])) break;
-          if (polled && polled.status === 'failed') {
-            return {
-              output: `Image generation failed upstream: ${JSON.stringify(polled.error ?? polled).slice(0, 240)}`,
-              isError: true,
-            };
-          }
-          continue;
-        }
-        const text = await pollResp.text().catch(() => '');
-        return { output: `Image poll failed (${pollResp.status}): ${text.slice(0, 200)}`, isError: true };
+      const outcome = await pollImageJob(pollEndpoint, pollHeaders, controller.signal);
+      if (outcome.kind === 'failed') {
+        return {
+          output: `Image generation failed upstream: ${JSON.stringify(outcome.error ?? '').slice(0, 240)}`,
+          isError: true,
+        };
       }
-      if (!polled || !polled.data?.[0]) {
+      if (outcome.kind === 'poll_http_error') {
+        return { output: `Image poll failed (${outcome.status}): ${outcome.bodyPreview}`, isError: true };
+      }
+      if (outcome.kind === 'timed_out') {
         return {
           output:
             `Image generation queued but did not complete within 5 minutes. Payment was settled when the gateway accepted the job (HTTP 202). ` +
@@ -397,7 +379,7 @@ function buildExecute(deps: ImageGenDeps) {
           isError: true,
         };
       }
-      result = polled;
+      result = outcome.body;
     }
 
     const imageData = result.data?.[0];
@@ -634,3 +616,84 @@ export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHan
 
 /** Back-compat static capability for callers that don't want the Content bridge. */
 export const imageGenCapability: CapabilityHandler = createImageGenCapability();
+
+// ─── Async-completion polling ────────────────────────────────────────────────
+//
+// Extracted so the 202-queued path can be unit-tested without spinning up the
+// full x402 + wallet machinery. Mirrors videogen.ts:pollUntilReady contract:
+//   - Same `x-payment` header on every poll (gateway settles on the first
+//     completed poll).
+//   - 202 → still queued; sleep + retry.
+//   - 429 / 5xx → transient; sleep + retry.
+//   - 200 with `status: 'completed'` or non-empty `data` → done.
+//   - 200 with `status: 'failed'` → upstream-model failure.
+//   - Other 4xx → surface body for diagnosis (e.g. moderation, expired auth).
+
+export interface ImagePollBody {
+  data?: { b64_json?: string; url?: string; revised_prompt?: string }[];
+  error?: unknown;
+  status?: string;
+}
+
+export type ImagePollOutcome =
+  | { kind: 'completed'; body: ImagePollBody }
+  | { kind: 'failed'; error?: unknown }
+  | { kind: 'timed_out' }
+  | { kind: 'poll_http_error'; status: number; bodyPreview: string };
+
+export interface PollImageJobOptions {
+  /** Total wall-clock ceiling. Defaults to 5 min (matches videogen scale). */
+  maxWaitMs?: number;
+  /** Sleep between polls. Defaults to 3 s. */
+  intervalMs?: number;
+}
+
+export async function pollImageJob(
+  pollEndpoint: string,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+  options: PollImageJobOptions = {},
+): Promise<ImagePollOutcome> {
+  const maxWaitMs = options.maxWaitMs ?? 5 * 60 * 1000;
+  const intervalMs = options.intervalMs ?? 3_000;
+  const deadline = Date.now() + maxWaitMs;
+
+  while (Date.now() < deadline) {
+    if (signal.aborted) throw new Error('aborted');
+    await sleep(intervalMs, signal);
+
+    const resp = await fetch(pollEndpoint, { method: 'GET', headers, signal });
+    if (resp.status === 202) continue;            // still queued
+    if (resp.status === 429 || resp.status >= 500) continue; // transient
+
+    if (resp.ok) {
+      const body = (await resp.json().catch(() => null)) as ImagePollBody | null;
+      if (!body) continue;
+      if (body.status === 'failed') return { kind: 'failed', error: body.error };
+      if (body.status === 'completed' || (body.data && body.data[0])) {
+        return { kind: 'completed', body };
+      }
+      // Non-terminal but ok shape (e.g. status: 'in_progress') — wait.
+      continue;
+    }
+
+    const text = await resp.text().catch(() => '');
+    return { kind: 'poll_http_error', status: resp.status, bodyPreview: text.slice(0, 200) };
+  }
+  return { kind: 'timed_out' };
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error('aborted'));
+    const t = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new Error('aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
