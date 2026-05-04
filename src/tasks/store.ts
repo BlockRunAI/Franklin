@@ -23,6 +23,7 @@ import {
   taskMetaPath,
   taskEventsPath,
   getTasksDir,
+  getLegacyTasksDir,
 } from './paths.js';
 
 export function writeTaskMeta(record: TaskRecord): void {
@@ -102,18 +103,31 @@ export function applyEvent(runId: string, event: TaskEventRecord): TaskRecord {
 }
 
 export function listTasks(): TaskRecord[] {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(getTasksDir(), { withFileTypes: true });
-  } catch {
-    return [];
-  }
+  // Walk both the primary tasks dir and the legacy ~/.franklin/tasks/
+  // location so `franklin task list` keeps showing legacy tasks until
+  // their dirs are cleaned up. Dedupe by runId (first-wins, primary
+  // ordered first) — protects against the unlikely case of the same
+  // runId existing in both locations.
+  const dirs = [getTasksDir()];
+  if (process.env.FRANKLIN_HOME === undefined) dirs.push(getLegacyTasksDir());
+
+  const seen = new Set<string>();
   const out: TaskRecord[] = [];
-  for (const ent of entries) {
-    // Skip junk like .DS_Store — only real per-task subdirectories are valid.
-    if (!ent.isDirectory()) continue;
-    const meta = readTaskMeta(ent.name);
-    if (meta) out.push(meta);
+  for (const dir of dirs) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      // Skip junk like .DS_Store — only real per-task subdirectories are valid.
+      if (!ent.isDirectory()) continue;
+      if (seen.has(ent.name)) continue;
+      seen.add(ent.name);
+      const meta = readTaskMeta(ent.name);
+      if (meta) out.push(meta);
+    }
   }
   out.sort((a, b) => b.createdAt - a.createdAt);
   return out;

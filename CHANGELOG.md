@@ -1,5 +1,62 @@
 # Changelog
 
+## 3.15.42 — Tasks subsystem now stores under \`~/.blockrun/\` (with legacy fallback)
+
+Verified 2026-05-04 on a real machine running an active ETL task:
+\`du -sh ~/.blockrun ~/.franklin\` returned \`309M\` and \`72K\` —
+two parallel home dirs on the user's machine, with everything
+EXCEPT the tasks subsystem under \`~/.blockrun/\`. The split is
+real:
+
+\`\`\`
+~/.blockrun/    sessions, audit, stats, brain, cache, skills, ...
+~/.franklin/    only tasks/<runId>/{meta.json,events.jsonl,log.txt}
+\`\`\`
+
+Source: \`src/tasks/paths.ts\`'s \`franklinHome()\` defaulted to
+\`os.homedir() + '/.franklin'\` while every other persistent
+state (\`config.ts:BLOCKRUN_DIR\`) used \`~/.blockrun\`. Functionally
+both paths worked, but it meant \`rm -rf ~/.blockrun\` left task
+state stranded, \`du -sh ~/.blockrun\` under-reported Franklin's
+real footprint, and the inconsistency violated the
+"everything-under-BLOCKRUN_DIR" convention everywhere else in the
+codebase.
+
+Fix:
+
+- \`src/tasks/paths.ts\`: \`franklinHome()\` now defaults to
+  \`BLOCKRUN_DIR\`. The \`FRANKLIN_HOME\` env var keeps working as
+  an explicit override (test/local.mjs:5014 relies on this for
+  isolated task-path tests). Added \`getLegacyTasksDir()\`
+  exporting the old \`~/.franklin/tasks/\` location.
+- \`getTaskDir(runId)\`: lazy fallback. Returns the primary
+  location if it exists; otherwise (only when \`FRANKLIN_HOME\` is
+  unset, so tests stay deterministic) checks the legacy dir;
+  otherwise returns primary so \`ensureTaskDir()\` creates it
+  there for new tasks. Reads find the right location; writes go
+  wherever the task already lives.
+- \`src/tasks/store.ts\`: \`listTasks()\` walks both primary +
+  legacy dirs with first-wins dedupe. Verified locally on a
+  machine with all 6 tasks in legacy: \`listTasks()\` returns
+  all 6 including the live runner at PID 59095.
+
+Why a lazy fallback instead of a startup migration: a long-running
+task runner (\`franklin _task-runner <runId>\`) captures its task
+dir path in memory at spawn and continues writing to it for the
+duration. Verified 2026-05-04: an in-flight ETL task at PID 59095
+had been writing to \`~/.franklin/tasks/\` for 4 minutes, with
+hours of progress remaining. Renaming or moving the directory
+mid-flight would orphan its writes; a lazy read-fallback lets new
+CLI commands keep reading legacy state without disturbing the
+live runner. New tasks land in \`~/.blockrun/tasks/\`. Once all
+legacy task dirs are in terminal status, the user can
+\`rm -rf ~/.franklin/\` manually — no migration script needed.
+
+Tests: 310/310 pass. The existing
+\`task paths: getTasksDir + ensureTaskDir + per-task paths\` test
+sets \`FRANKLIN_HOME\` explicitly so the contract there is
+unchanged.
+
 ## 3.15.41 — \`npm test\` (local suite) also stops leaving ghost session metas
 
 3.15.40 plugged the e2e leak; verifying it on a real machine
