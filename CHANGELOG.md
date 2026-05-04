@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.15.19 — Plug two leaky in-process tests; CHANGELOG re-aligned
+
+3.15.18 shipped \`sweepOrphanToolResults()\` but the published npm
+artifact didn't include the test-cleanup follow-up — version bump
+puts the published version back in sync with what the CHANGELOG
+section below describes.
+
 ## 3.15.18 — Sweep orphan tool-results directories + plug two leaky in-process tests
 
 Round-3 audit, after sweeping orphan session jsonl + legacy files in
