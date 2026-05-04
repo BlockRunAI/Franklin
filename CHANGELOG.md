@@ -1,5 +1,43 @@
 # Changelog
 
+## 3.15.37 — Detach: stop telling agents to use \`--follow\` from Bash (it always times out)
+
+Real session 2026-05-04 14:52: agent ran a Detach for an ETL job
+(\`t_morkaf83_f03a0b10\`), then to check on it copied the output's
+recommendation verbatim:
+
+\`\`\`
+Bash({
+  command: "franklin task tail t_morkaf83_f03a0b10 --follow 2>&1 | head -30",
+  timeout: 10000
+})
+→ "command killed — timeout after 10s"
+\`\`\`
+
+\`--follow\` blocks until the task reaches a terminal state — for an
+ETL on 200K+ files, hours. The Bash tool's default 2-minute timeout
+(or whatever the model passes) will always kill it first. The agent
+just copy-pasted what we told it to.
+
+The Detach output's \`Inspect with:\` block said
+\`franklin task tail X --follow\`, and the tool description echoed
+the same line. Both fixed:
+
+- \`tools/detach\` output: leads with the **non-blocking** snapshot
+  command (\`franklin task tail X\`) as the safe default. The next
+  line is \`franklin task wait X --timeout-s 600\` for "block until
+  done" with explicit timeout. A WARNING block underneath spells out
+  why \`--follow\` from Bash is wrong.
+- \`tools/detach\` description: same precedence — non-blocking tail
+  recommended; explicit warning that \`--follow\` from Bash will
+  trip the timeout. Long-blocking belongs in \`task wait\` with
+  matching Bash \`timeout\` param.
+
+Existing \`franklin task tail --follow\` from a real terminal still
+works fine — the change is purely about what we suggest to the
+model. The fix kicks in next turn after the agent reads the new
+description.
+
 ## 3.15.36 — Strip \`tool_choice\` for reasoning models that reject it (deepseek-reasoner, o1, o3)
 
 Real session 2026-05-04 14:58: user's screenshot showed a fatal

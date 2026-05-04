@@ -33,9 +33,15 @@ async function execute(
       `label: ${label}\n` +
       `command: ${command}\n\n` +
       `Inspect with:\n` +
-      `  franklin task tail ${runId} --follow\n` +
-      `  franklin task wait ${runId}\n` +
-      `  franklin task cancel ${runId}\n`,
+      `  franklin task tail ${runId}              # non-blocking status snapshot — safe inside Bash\n` +
+      `  franklin task wait ${runId} --timeout-s 600   # block up to 10min; pair with Bash timeout >= same\n` +
+      `  franklin task cancel ${runId}\n` +
+      `\n` +
+      `WARNING: do NOT call \`franklin task tail ${runId} --follow\` from a Bash tool — \`--follow\`\n` +
+      `blocks until the task reaches a terminal state, which routinely outlasts the Bash tool's\n` +
+      `default 2-minute timeout and gives you "command killed". Use \`franklin task tail <runId>\`\n` +
+      `(no flag) for non-blocking status, or \`franklin task wait\` with explicit \`--timeout-s\` plus\n` +
+      `a matching Bash \`timeout\`.\n`,
   };
 }
 
@@ -51,9 +57,12 @@ export const detachCapability: CapabilityHandler = {
       "complete), or anything you'd otherwise loop on turn-by-turn (which " +
       "would burn turns and trip timeouts). The agent's job is to design and " +
       "orchestrate, not to be the for-loop. Pair with a script that writes a " +
-      "checkpoint file so progress survives restarts. Tail logs with " +
-      "`franklin task tail <runId> --follow` and check completion with " +
-      "`franklin task wait <runId>`. ALWAYS prefer Detach over a single " +
+      "checkpoint file so progress survives restarts. Inspect with " +
+      "`franklin task tail <runId>` (NON-blocking snapshot — safe inside " +
+      "Bash) — DO NOT use `--follow` from a Bash tool, it blocks until the " +
+      "task is done and will trip the Bash timeout. Block-until-done belongs " +
+      "in `franklin task wait <runId> --timeout-s N` paired with a matching " +
+      "Bash `timeout` parameter. ALWAYS prefer Detach over a single " +
       "foreground Bash call with `sleep` inside a for/while/until loop — that " +
       "antipattern blocks the agent for the full duration and looks frozen.",
     input_schema: {
