@@ -1,5 +1,54 @@
 # Changelog
 
+## 3.15.45 — ImageGen / VideoGen surface the actual reason a generation failed
+
+Verified 2026-05-04 in a live session: the user asked the agent
+to generate a video, the agent kicked off ImageGen for the
+storyboard frame, and got back a single sentence:
+
+\`\`\`
+No image data returned from API
+\`\`\`
+
+The agent then guessed: *"gpt-image-2 is forced to 1024x1024
+per the tool docs. Retrying with that size."* — and burned a
+retry on a size hypothesis that wasn't the real cause. The
+gateway response body almost certainly contained an \`error\` or
+\`message\` field (gateways return 200 with such fields for
+moderation, quota, or upstream-model failures rather than an
+HTTP error code), but \`tools/imagegen.ts\` was throwing the
+body away and emitting a hardcoded string.
+
+Effect: every ImageGen / VideoGen failure mode looked the
+same to the agent, so it would either retry blindly or give
+up. Each retry costs USDC. \`No image data returned\` told the
+user / agent nothing about whether to lower resolution, reword
+the prompt, or top up the wallet.
+
+Fix:
+
+- \`src/tools/imagegen.ts:337\` — \`result.data?.[0]\` falsy
+  branch now extracts \`error\`, \`message\`, and an empty-data
+  hint into the error string. Caps each at 240 chars to keep
+  the agent's tool result readable.
+- \`src/tools/videogen.ts:239\` — same pattern for the
+  \`poll_url\`-missing branch (extends the inline submitResult
+  type with \`error?: unknown; message?: unknown\`).
+- \`src/tools/videogen.ts:269\` — same pattern for the
+  \`videoUrl\`-missing branch on the poll-completion path.
+
+Now a moderation reject reads like:
+
+\`\`\`
+No image data returned from API — error={"code":"content_policy_violation","message":"..."}
+\`\`\`
+
+instead of the original blank "API returned nothing." The agent
+can act on that string directly: stop retrying, surface the
+upstream message to the user, or rewrite the prompt.
+
+Tests: 310/310 pass.
+
 ## 3.15.44 — Brain stops extracting tool patterns / URIs / task IDs as "entities"
 
 Verified 2026-05-04 on a real machine: \`~/.blockrun/brain/entities.jsonl\`

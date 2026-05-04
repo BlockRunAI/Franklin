@@ -190,7 +190,7 @@ function buildExecute(deps: VideoGenDeps) {
     ctx.abortSignal.addEventListener('abort', submitAbort, { once: true });
 
     let paymentHeaders: Record<string, string> | null = null;
-    let submitResult: { id?: string; poll_url?: string };
+    let submitResult: { id?: string; poll_url?: string; error?: unknown; message?: unknown };
 
     try {
       let response = await fetch(endpoint, {
@@ -237,7 +237,15 @@ function buildExecute(deps: VideoGenDeps) {
     }
 
     if (!submitResult.poll_url || !paymentHeaders) {
-      return { output: 'API did not return a poll_url for the video job', isError: true };
+      // Surface any diagnostic the body contained — same rationale as
+      // imagegen.ts: "missing field" tells the agent nothing about
+      // whether it was moderation, quota, or upstream model failure.
+      const bits: string[] = [];
+      if (!paymentHeaders) bits.push('payment headers missing');
+      if (submitResult?.error !== undefined) bits.push(`error=${JSON.stringify(submitResult.error).slice(0, 240)}`);
+      if (submitResult?.message !== undefined) bits.push(`message=${String(submitResult.message).slice(0, 240)}`);
+      const detail = bits.length > 0 ? ` — ${bits.join('; ')}` : '';
+      return { output: `API did not return a poll_url for the video job${detail}`, isError: true };
     }
 
     // Phase 2: poll GET /v1/videos/generations/{id} with the SAME signed
@@ -266,7 +274,14 @@ function buildExecute(deps: VideoGenDeps) {
     const videoData = outcome.data;
     const videoUrl = videoData.url;
     if (!videoUrl) {
-      return { output: 'No video URL returned from API', isError: true };
+      // Same diagnostic pattern as the submit-side path above.
+      const d = videoData as Record<string, unknown>;
+      const bits: string[] = [];
+      if (d.error !== undefined) bits.push(`error=${JSON.stringify(d.error).slice(0, 240)}`);
+      if (d.message !== undefined) bits.push(`message=${String(d.message).slice(0, 240)}`);
+      if (d.status !== undefined) bits.push(`status=${String(d.status).slice(0, 80)}`);
+      const detail = bits.length > 0 ? ` — ${bits.join('; ')}` : '';
+      return { output: `No video URL returned from API${detail}`, isError: true };
     }
 
     try {

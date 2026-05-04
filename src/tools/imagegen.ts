@@ -332,11 +332,34 @@ function buildExecute(deps: ImageGenDeps) {
 
     const result = await response.json() as {
       data?: { b64_json?: string; url?: string; revised_prompt?: string }[];
+      error?: unknown;
+      message?: unknown;
     };
 
     const imageData = result.data?.[0];
     if (!imageData) {
-      return { output: 'No image data returned from API', isError: true };
+      // Some gateways return 200 with an `error` / `message` field for
+      // moderation, quota, or upstream-model failures instead of using
+      // HTTP error codes. Without surfacing those, the agent sees only
+      // "No image data returned from API" and starts guessing — verified
+      // 2026-05-04: agent guessed "gpt-image-2 is forced to 1024x1024
+      // per the tool docs" and burned a retry on a size param that
+      // wasn't the actual cause. Surface the diagnostic so the agent
+      // (or user) can react.
+      const bits: string[] = [];
+      if (result.error !== undefined) {
+        bits.push(`error=${JSON.stringify(result.error).slice(0, 240)}`);
+      }
+      if (result.message !== undefined) {
+        bits.push(`message=${String(result.message).slice(0, 240)}`);
+      }
+      if (Array.isArray(result.data) && result.data.length === 0) {
+        bits.push('data=[] (empty array — likely content moderation)');
+      } else if (result.data === undefined) {
+        bits.push('data field missing');
+      }
+      const detail = bits.length > 0 ? ` — ${bits.join('; ')}` : '';
+      return { output: `No image data returned from API${detail}`, isError: true };
     }
 
     // Save image. The /v1/images/image2image endpoint returns Gemini results
