@@ -1,5 +1,45 @@
 # Changelog
 
+## 3.15.16 — Test fixtures stop polluting telemetry; fallback flag actually recorded
+
+Audit of a real \`~/.blockrun/franklin-audit.jsonl\` turned up two
+observability bugs that had been silently corrupting the data Franklin
+uses to learn from:
+
+- **58.6% of audit entries were test fixtures.** 2326 of 3969 audit
+  rows had \`model="local/test-model"\` or \`local/test\`. Tests in
+  \`test/local.mjs\` run \`interactiveSession()\` in-process; the agent
+  loop persisted every successful turn to the user's real audit log,
+  stats history, and (until now) router-history. Stats were 8.4%
+  polluted (84 of 1000 rows) for the same reason.
+- **Fallback flag was 0% across 4k entries.** \`AuditEntry\` defines
+  \`fallback?: boolean\` but the agent loop never set it — the field
+  was wired into the type but not into the call site at \`loop.ts:1322\`.
+  Made it impossible to answer "how often is the routing chain
+  thrashing through fallbacks?" from telemetry.
+
+Fixes:
+
+- new \`stats/test-fixture\`: \`isTestFixtureModel(model)\` returns true
+  for \`local/test*\` only — real local-LLM users (\`local/llamafile\`,
+  \`local/ollama\`, \`local/lmstudio\`) are deliberately untouched.
+- \`stats/audit\` + \`stats/tracker\`: short-circuit before any disk
+  write when the entry's model is a test fixture. Same pattern as the
+  existing 10k-entry retention guard.
+- \`agent/loop\`: \`appendAudit\` now passes \`fallback:
+  turnFailedModels.size > 0\`. Any payment / rate-limit / empty-response
+  / server-streak swap during the turn means the model that finally
+  answered was a fallback; future audit rows surface that.
+- \`test/local\`: pre-existing \`stats tracker falls back to temp dir\`
+  test was using \`local/test\` and got correctly silenced by the new
+  guard; switched it to \`zai/glm-5.1\` so it still exercises the
+  disk-write + tempdir path it was meant to verify. +3 new tests
+  cover the matcher, audit short-circuit, and tracker short-circuit.
+
+Existing pollution will gradually wash out via the 10k audit retention
+and 1000-entry stats history cap (both shipped earlier this week);
+no manual cleanup needed.
+
 ## 3.15.15 — Data hygiene: orphan sessions, ~/.blockrun/data trim, cost_log cap, legacy file removal
 
 Audit of a real user's \`~/.blockrun/\` directory turned up four

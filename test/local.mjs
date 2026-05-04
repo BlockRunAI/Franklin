@@ -1362,9 +1362,13 @@ test('stats tracker falls back to temp dir when HOME is not writable', async () 
     mkdirSync(fakeHome, { recursive: true });
     chmodSync(fakeHome, 0o500);
     const trackerUrl = new URL('../dist/stats/tracker.js', import.meta.url).href;
+    // recordUsage now drops local/test* models (avoids polluting real
+    // user stats when test fixtures run in-process). Use a real-model
+    // name here since this test specifically wants to exercise the
+    // disk write + tempdir fallback path.
     const script = `
       const tracker = await import(${JSON.stringify(trackerUrl)});
-      tracker.recordUsage('local/test', 10, 5, 0.01, 123);
+      tracker.recordUsage('zai/glm-5.1', 10, 5, 0.01, 123);
       tracker.flushStats();
       console.log(tracker.getStatsFilePath());
     `;
@@ -6325,6 +6329,93 @@ test('pruneOldSessions: removes orphan jsonl files without meta partners', async
       assert.ok(!existsSync(join(sessionsDir, `${id}.jsonl`)),
         `orphan ${id}.jsonl should be removed`);
     }
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+// ── Test-fixture pollution guard ──────────────────────────────────────────
+// Tests run interactiveSession() in-process with model="local/test-model"
+// and were polluting the user's real ~/.blockrun/franklin-audit.jsonl
+// (58.6%) and franklin-stats.json history (8.4%). These tests verify the
+// short-circuit is in place so the rest of the test suite stops leaking.
+
+test('isTestFixtureModel: local/test* matches; local/llamafile and real models do not', async () => {
+  const { isTestFixtureModel } = await import('../dist/stats/test-fixture.js');
+  assert.equal(isTestFixtureModel('local/test'), true);
+  assert.equal(isTestFixtureModel('local/test-model'), true);
+  assert.equal(isTestFixtureModel('local/test-anything-else'), true);
+  // Real local-LLM users must NOT be filtered out.
+  assert.equal(isTestFixtureModel('local/llamafile'), false);
+  assert.equal(isTestFixtureModel('local/ollama'), false);
+  assert.equal(isTestFixtureModel('local/lmstudio'), false);
+  // Real gateway models pass through.
+  assert.equal(isTestFixtureModel('anthropic/claude-sonnet-4.6'), false);
+  assert.equal(isTestFixtureModel('zai/glm-5.1'), false);
+  assert.equal(isTestFixtureModel(''), false);
+  assert.equal(isTestFixtureModel(undefined), false);
+});
+
+test('appendAudit: drops local/test-model entries, keeps real models', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-audit-fixture-'));
+  const auditFile = join(fakeHome, '.blockrun', 'franklin-audit.jsonl');
+  const auditHref = new URL('../dist/stats/audit.js', import.meta.url).href;
+  const script = `
+    const audit = await import(${JSON.stringify(auditHref)} + '?t=' + Date.now());
+    audit.appendAudit({ ts: 1, model: 'local/test-model', inputTokens: 1, outputTokens: 1, costUsd: 0, source: 'agent' });
+    audit.appendAudit({ ts: 2, model: 'local/test', inputTokens: 1, outputTokens: 1, costUsd: 0, source: 'agent' });
+    audit.appendAudit({ ts: 3, model: 'anthropic/claude-sonnet-4.6', inputTokens: 1, outputTokens: 1, costUsd: 0, source: 'agent' });
+    audit.appendAudit({ ts: 4, model: 'local/llamafile', inputTokens: 1, outputTokens: 1, costUsd: 0, source: 'agent' });
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`audit subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+
+    const content = readFileSync(auditFile, 'utf8');
+    const lines = content.split('\n').filter(Boolean).map(JSON.parse);
+    const tsList = lines.map(l => l.ts).sort();
+    assert.deepEqual(tsList, [3, 4],
+      `expected only real-model entries (ts=3 sonnet + ts=4 llamafile), got ${JSON.stringify(tsList)}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('recordUsage: drops local/test* entries, keeps real models in stats history', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-tracker-fixture-'));
+  const trackerHref = new URL('../dist/stats/tracker.js', import.meta.url).href;
+  const script = `
+    const t = await import(${JSON.stringify(trackerHref)} + '?t=' + Date.now());
+    t.recordUsage('local/test-model', 100, 10, 0.001, 50);
+    t.recordUsage('anthropic/claude-sonnet-4.6', 100, 10, 0.001, 50);
+    t.flushStats();
+    const summary = t.getStatsSummary();
+    process.stdout.write(JSON.stringify(summary));
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve(stdout) : reject(new Error(`tracker subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+    const summary = JSON.parse(result);
+    assert.equal(summary.stats.totalRequests, 1,
+      `expected only the real-model call to count, got ${summary.stats?.totalRequests}`);
   } finally {
     rmSync(fakeHome, { recursive: true, force: true });
   }

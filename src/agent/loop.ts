@@ -1326,6 +1326,11 @@ export async function interactiveSession(
         inputTokens,
         outputTokens: usage.outputTokens,
         costUsd: costEstimate,
+        // Any failed model this turn means the model that finally
+        // succeeded was a fallback. Without this, audit log read 0%
+        // fallbacks across 4k entries — useless for diagnosing whether
+        // the routing chain is healthy or hot.
+        fallback: turnFailedModels.size > 0,
         source: 'agent',
         workDir,
         prompt: extractLastUserPrompt(history),

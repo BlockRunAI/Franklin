@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BLOCKRUN_DIR } from '../config.js';
+import { isTestFixtureModel } from './test-fixture.js';
 
 const AUDIT_FILE = path.join(BLOCKRUN_DIR, 'franklin-audit.jsonl');
 const PROMPT_PREVIEW_CHARS = 240;
@@ -46,6 +47,12 @@ export interface AuditEntry {
 }
 
 export function appendAudit(entry: AuditEntry): void {
+  // Tests run interactiveSession() in-process with model="local/test*"
+  // and would otherwise pollute the user's real audit log. Drop the
+  // entry before any disk write rather than relying on every test to
+  // remember to redirect HOME.
+  if (isTestFixtureModel(entry.model)) return;
+
   try {
     fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
     const safe: AuditEntry = {

@@ -8,6 +8,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { OPUS_PRICING } from '../pricing.js';
 import { BLOCKRUN_DIR } from '../config.js';
+import { isTestFixtureModel } from './test-fixture.js';
 
 let resolvedStatsFile: string | null = null;
 
@@ -201,6 +202,12 @@ export function recordUsage(
   latencyMs: number,
   fallback: boolean = false
 ): void {
+  // Same rationale as appendAudit — tests run in-process with
+  // local/test* models and would otherwise mix into franklin-stats.json
+  // history (verified: 8.4% of a real user's 1000-entry history was
+  // test fixtures before this gate).
+  if (isTestFixtureModel(model)) return;
+
   const stats = getCachedStats();
   const now = Date.now();
 
