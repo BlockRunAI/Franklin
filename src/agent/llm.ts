@@ -27,6 +27,22 @@ import type {
 import { ThinkTagStripper } from './think-tag-stripper.js';
 import { isNemotronProseModel, stripNemotronProse } from './nemotron-prose-stripper.js';
 
+// Reasoning-tier models the gateway routes to that reject `tool_choice`
+// outright. Pattern: OpenAI o1/o3 family + DeepSeek's reasoner variant.
+// Add new entries as their 400 errors appear in real sessions; this is
+// a known-bad allowlist, not a guess. Wildcard substring match keeps it
+// resilient to model-revision suffixes (`o1-mini`, `o3-2026-04`, etc.).
+const MODELS_WITHOUT_TOOL_CHOICE_SUBSTR = [
+  'deepseek-reasoner',
+  'openai/o1',
+  'openai/o3',
+];
+
+function modelDoesNotSupportToolChoice(model: string): boolean {
+  if (!model) return false;
+  return MODELS_WITHOUT_TOOL_CHOICE_SUBSTR.some(s => model.includes(s));
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 /**
@@ -417,6 +433,18 @@ export class ModelClient {
       requestPayload['tool_choice'] !== undefined &&
       (!Array.isArray(requestPayload['tools']) || (requestPayload['tools'] as unknown[]).length === 0)
     ) {
+      delete requestPayload['tool_choice'];
+    }
+
+    // Models that don't support `tool_choice` (reasoning-only families).
+    // Verified 2026-05-04 from a real session: grounding-retry forced
+    // tool_choice on a request that ended up on deepseek-reasoner, which
+    // returned `400 Invalid request: deepseek-reasoner does not support
+    // this tool_choice`. Same shape applies to OpenAI o1 / o3 and
+    // similar restricted reasoning models. Strip silently — the agent
+    // loop's grounding-retry contract already tolerates the field
+    // disappearing (it'll re-evaluate next turn).
+    if (requestPayload['tool_choice'] !== undefined && modelDoesNotSupportToolChoice(request.model)) {
       delete requestPayload['tool_choice'];
     }
 

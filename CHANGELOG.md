@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.15.36 — Strip \`tool_choice\` for reasoning models that reject it (deepseek-reasoner, o1, o3)
+
+Real session 2026-05-04 14:58: user's screenshot showed a fatal
+schema error mid-turn:
+
+\`\`\`
+Request failed
+• Type: Schema
+• Message: HTTP 400: Invalid request: 400 deepseek-reasoner does not support this tool_choice
+\`\`\`
+
+The grounding evaluator had detected ungrounded claims and pinned a
+\`tool_choice\` for the next round (forcing the model to call a
+specific tool). The next request landed on
+\`deepseek/deepseek-reasoner\` — a reasoning-only model that rejects
+\`tool_choice\` outright. \`agent/llm.ts\` already strips
+\`tool_choice\` when \`tools\` is empty (3.x) but had no notion of
+"this model doesn't support the field at all".
+
+Fix:
+
+- \`agent/llm.ts\`: new \`MODELS_WITHOUT_TOOL_CHOICE_SUBSTR\` allowlist
+  + \`modelDoesNotSupportToolChoice(model)\` helper. Substring match
+  keeps it resilient to model-version suffixes (\`o1-mini\`,
+  \`o3-2026-04\`, etc.). Initial entries: \`deepseek-reasoner\`,
+  \`openai/o1\`, \`openai/o3\`.
+- Same strip site as the existing tools[]-empty guard: silently drop
+  \`tool_choice\` before the request goes out. The grounding-retry
+  contract already tolerates it disappearing (the agent re-evaluates
+  on the next turn). No user-visible change beyond not seeing the
+  400 anymore.
+
+Allowlist not guess-list: only add models whose 400 errors are
+verified in real session logs.
+
 ## 3.15.35 — \`franklin --resume\` restores the session's chain (no more silent chain swap)
 
 User filed this from a real flow on 2026-05-04: started a session
