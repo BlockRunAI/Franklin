@@ -6947,6 +6947,52 @@ test('pollImageJob: retries through 5xx transients and then completes', async ()
   }
 });
 
+// ─── resolveAskUserAnswer: fix silent default-cancel on numeric replies ─────
+//
+// The TUI renders option labels as "1. X / 2. Y / 3. Z" so users naturally
+// type the digit. Tool-side onAskUser callers (videogen.ts, modal.ts,
+// jupiter.ts, zerox-base.ts, zerox-gasless.ts) do exact-label match, so a
+// bare "1" silently falls through to default-cancel. Verified 2026-05-04
+// in a live session: VideoGen returned "Video generation cancelled (No
+// USDC was spent)" twice even though wallet had $94.72 and budget had $2
+// untouched — the user typed "1" both times. Helper translates digit
+// answers into the matching label.
+
+test('resolveAskUserAnswer: digit answer maps to the matching option label', async () => {
+  const { resolveAskUserAnswer } = await import('../dist/ui/ask-user-answer.js');
+  const opts = ['Use recommended', 'Cheaper', 'Premium', 'Cancel'];
+  assert.equal(resolveAskUserAnswer('1', opts), 'Use recommended');
+  assert.equal(resolveAskUserAnswer('2', opts), 'Cheaper');
+  assert.equal(resolveAskUserAnswer('4', opts), 'Cancel');
+  // With surrounding whitespace.
+  assert.equal(resolveAskUserAnswer('  3  ', opts), 'Premium');
+});
+
+test('resolveAskUserAnswer: out-of-range digit returns the literal input', async () => {
+  const { resolveAskUserAnswer } = await import('../dist/ui/ask-user-answer.js');
+  const opts = ['Confirm', 'Cancel'];
+  // 0 and 3+ aren't valid 1-indexed selections — pass through verbatim so
+  // the caller's exact-label match decides what to do.
+  assert.equal(resolveAskUserAnswer('0', opts), '0');
+  assert.equal(resolveAskUserAnswer('3', opts), '3');
+});
+
+test('resolveAskUserAnswer: empty input returns the legacy "(no response)"', async () => {
+  const { resolveAskUserAnswer } = await import('../dist/ui/ask-user-answer.js');
+  assert.equal(resolveAskUserAnswer('', ['A', 'B']), '(no response)');
+  assert.equal(resolveAskUserAnswer('   ', ['A', 'B']), '(no response)');
+});
+
+test('resolveAskUserAnswer: free-form text passes through (questions without options)', async () => {
+  const { resolveAskUserAnswer } = await import('../dist/ui/ask-user-answer.js');
+  assert.equal(resolveAskUserAnswer('Use recommended', ['Use recommended', 'Cancel']),
+    'Use recommended', 'literal label round-trip');
+  assert.equal(resolveAskUserAnswer('hello world', undefined),
+    'hello world', 'no options means no translation');
+  assert.equal(resolveAskUserAnswer('hello world', []),
+    'hello world', 'empty options array also means no translation');
+});
+
 test('pollImageJob: surfaces non-transient HTTP error with body preview', async () => {
   const { pollImageJob } = await import('../dist/tools/imagegen.js');
   const server = createServer((_req, res) => {

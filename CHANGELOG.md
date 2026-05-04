@@ -1,5 +1,65 @@
 # Changelog
 
+## 3.15.50 — Typing \"1\" to a numbered AskUser dialog no longer silently cancels
+
+Live session 2026-05-04:
+
+\`\`\`
+你是想：
+1. 用我的 VideoGen 工具直接生成（约 \$0.42，8 秒），还是
+2. 自己拿这张图去 Seedance Pro 上生成？
+❯ 1
+…视频生成被取消了（没有扣费）。
+❯ 1
+…视频生成又被取消了。
+\`\`\`
+
+Wallet had **\$94.72**. Content budget had **\$2.00 untouched**.
+User clearly picked option 1 twice. Both VideoGen invocations
+returned "Video generation cancelled. No USDC was spent" anyway.
+
+Source: a contract mismatch between the two halves of the
+AskUser flow.
+
+- **TUI** (\`src/ui/app.tsx\`) renders option labels as a numbered
+  list — \`{i + 1}. {opt}\` — which invites users to type the
+  number.
+- **Tool-side callers** (\`src/tools/videogen.ts:113\`,
+  \`modal.ts:371\`, \`jupiter.ts:368\`, \`zerox-base.ts:453\`,
+  \`zerox-gasless.ts:446\`) all do an exact-string match against
+  the full label (e.g. \`options.find(o => o.label === answer)\`).
+- \`"1"\` never matches \`"Use recommended (xai/grok-imagine-video, \$0.42)"\`,
+  so the find returns undefined, the optional-chain
+  \`?? { id: 'cancel' }\` fires, and the call returns the cancel
+  branch — silently. No error, no warning, no "answer not
+  recognized." Just a charge-free nop that looks identical to
+  a deliberate user cancellation.
+
+Five tools all hit this; videogen was the loudest because
+video gen is the most expensive thing the agent ever asks
+about.
+
+Fix:
+
+- **New helper** \`src/ui/ask-user-answer.ts\` exporting
+  \`resolveAskUserAnswer(raw, options)\`. If the user types a
+  bare digit \`N\` and \`1 ≤ N ≤ options.length\`, returns
+  \`options[N-1]\` (the full label). Otherwise returns the trimmed
+  input, preserving the existing \`"(no response)"\` empty-input
+  fallback.
+- **\`src/ui/app.tsx\`** AskUser \`onSubmit\` now delegates to the
+  helper instead of passing the raw input through. All five
+  tool-side onAskUser callers benefit transparently — no
+  per-tool change needed.
+- **4 new tests** in \`test/local.mjs\`: digit→label translation,
+  out-of-range pass-through, empty-input fallback, free-form
+  text and undefined/empty options pass-through. Pin the
+  contract so a future TUI rewrite can't silently re-introduce
+  the bug.
+
+Tests: 319/319 pass (was 315 before, 4 new resolveAskUserAnswer
+cases).
+
 ## 3.15.49 — Pin the 3.15.48 async-poll contract with real tests + correct 3.15.48's framing
 
 3.15.48 added HTTP 202 polling to \`imagegen.ts\` based on

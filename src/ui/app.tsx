@@ -19,6 +19,7 @@ import {
 import { estimateCost } from '../pricing.js';
 import { formatTokens, shortModelName } from '../stats/format.js';
 import { mouse, forceDisableMouseTracking, type MouseEvent as TermMouseEvent } from './mouse.js';
+import { resolveAskUserAnswer } from './ask-user-answer.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
@@ -1187,7 +1188,12 @@ function RunCodeApp({
               value={askUserInput}
               onChange={setAskUserInput}
               onSubmit={(val) => {
-                const answer = val.trim() || '(no response)';
+                // resolveAskUserAnswer translates "1" / "2" / ... into the
+                // matching label string when the dialog showed a numbered
+                // option list. Without it, every onAskUser caller's
+                // exact-label match fails for digit answers and silently
+                // falls through to the default branch (typically cancel).
+                const answer = resolveAskUserAnswer(val, askUserRequest.options);
                 const r = askUserRequest.resolve;
                 setAskUserRequest(null);
                 setAskUserInput('');
