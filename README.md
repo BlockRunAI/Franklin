@@ -170,7 +170,11 @@ Generates images via DALL-E / GPT Image directly from the CLI. Paid from your wa
 
 ### 📱 Remote control via Telegram
 
-Run `franklin telegram` on an always-on machine (set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_OWNER_ID`) and drive Franklin from your phone. Owner-locked, session-resumable across restarts, slash commands (`/new`, `/balance`, `/status`). Trading, content, dev work — all reachable from a Telegram chat.
+Run `franklin telegram` on an always-on machine (set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_OWNER_ID` by [@userinfobot](https://t.me/userinfobot)  ) and drive Franklin from your phone. Owner-locked, session-resumable across restarts, slash commands (`/new`, `/balance`, `/status`). Trading, content, dev work — all reachable from a Telegram chat.
+
+```text
+TELEGRAM_BOT_TOKEN="your_bot_token_here" TELEGRAM_OWNER_ID="your_telegram_user_id" franklin telegram
+```
 
 ### 🔎 Research, code, anything with a budget
 
