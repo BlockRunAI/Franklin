@@ -1364,9 +1364,16 @@ export async function interactiveSession(
         contextPct: Math.round(contextUsagePct),
       });
 
-      // Record usage for stats tracking (franklin stats command)
+      // Record usage for stats tracking (franklin stats command).
+      // Pass the fallback flag so franklin-stats.json's totalFallbacks +
+      // per-model fallbackCount stay in sync with the audit log a few
+      // lines below — same `turnFailedModels.size > 0` predicate, same
+      // turn. Without this, stats showed 0 fallbacks across 5150 real
+      // requests on a machine that visibly hit fallback paths in
+      // franklin-debug.log; `franklin insights` was therefore useless
+      // for spotting a hot routing chain.
       const costEstimate = estimateCost(resolvedModel, inputTokens, usage.outputTokens, 1);
-      recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, 0);
+      recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, 0, turnFailedModels.size > 0);
 
       // ── Circuit breakers: prevent infinite-loop wallet drain ──
       // Per-turn $-cap was removed in v3.11.0 — runaway loops are caught by

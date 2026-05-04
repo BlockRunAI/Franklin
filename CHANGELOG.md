@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.15.43 — Fallback stats no longer report 0% across all real requests
+
+Verified 2026-05-04 on a real dev machine after 5150 lifetime
+requests: \`franklin-stats.json\` showed
+\`totalFallbacks: 0\` and every per-model \`fallbackCount: 0\` —
+even though \`franklin-debug.log\` clearly recorded multiple
+successful fallbacks (\`↺ Fallback successful: using
+deepseek/deepseek-chat\` etc.). The audit log
+(\`franklin-audit.jsonl\`) also showed only 1 entry with
+\`fallback:true\` across the same period.
+
+Source: agent loop's \`recordUsage(...)\` call at
+\`src/agent/loop.ts:1369\` was a 5-arg invocation —
+\`(model, in, out, cost, latencyMs=0)\` — with no \`fallback\`
+argument. Defaulting to \`false\` meant stats never registered an
+agent-path fallback, even when the audit-log call right below at
+line 1425 correctly set \`fallback: turnFailedModels.size > 0\`
+for the SAME turn. Two writers, one variable, one was always
+silent.
+
+Effect on the user: \`franklin insights\` and \`franklin stats\`
+under-counted fallback frequency to \"never happens\". On a
+machine where the routing chain is occasionally hot, that's the
+exact signal you'd want to see — and it was masked.
+
+Fix:
+
+- \`src/agent/loop.ts:1369\` now passes
+  \`turnFailedModels.size > 0\` as the 6th arg to \`recordUsage\`,
+  mirroring the audit-log predicate three lines down.
+  Single-source-of-truth for fallback detection within the turn.
+
+Note: the proxy-path \`recordUsage\` calls at
+\`src/proxy/server.ts:658\` and \`:708\` were already correct —
+they pass \`usedFallback\` from the fallback-chain runner. Only
+the agent-loop call site was missing the flag.
+
+Tests: 310/310 pass.
+
 ## 3.15.42 — Tasks subsystem now stores under \`~/.blockrun/\` (with legacy fallback)
 
 Verified 2026-05-04 on a real machine running an active ETL task:
