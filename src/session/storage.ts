@@ -38,6 +38,18 @@ export interface SessionMeta {
   updatedAt: number;
   turnCount: number;
   messageCount: number;
+  /**
+   * Chain (`base` | `solana`) the session was started on. Captured at
+   * session creation so `franklin --resume` can restore the same chain
+   * even if the user later changed their default via
+   * `franklin solana` / `franklin base`. Verified 2026-05-04: a debug
+   * invocation flipped `~/.blockrun/.chain` to `solana`; the next
+   * `--resume` silently moved the user from their funded Base wallet
+   * to an underfunded Solana wallet. Sessions are wallet-bound by
+   * conversation context — switching chains mid-resume is a bug.
+   * Optional for back-compat with pre-3.15.35 sessions.
+   */
+  chain?: 'base' | 'solana';
   // Token & cost tracking (added for per-session insights)
   inputTokens?: number;
   outputTokens?: number;
@@ -161,6 +173,12 @@ export function updateSessionMeta(
       savedVsOpusUsd: meta.savedVsOpusUsd ?? existing?.savedVsOpusUsd ?? 0,
       ...(meta.channel !== undefined || existing?.channel !== undefined
         ? { channel: meta.channel ?? existing?.channel }
+        : {}),
+      // Chain (base / solana) is sticky once set. We never let a later
+      // update overwrite an existing value with undefined — that would
+      // silently drop the bind-to-original-chain guarantee.
+      ...(meta.chain !== undefined || existing?.chain !== undefined
+        ? { chain: existing?.chain ?? meta.chain }
         : {}),
       ...(meta.toolCallCounts !== undefined || existing?.toolCallCounts !== undefined
         ? { toolCallCounts: meta.toolCallCounts ?? existing?.toolCallCounts }

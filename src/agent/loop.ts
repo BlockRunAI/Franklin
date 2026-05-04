@@ -496,6 +496,11 @@ export async function interactiveSession(
     updateSessionMeta(sessionId, {
       model: config.model,
       workDir,
+      // Pin the session's chain so `franklin --resume` can restore it
+      // even after `franklin <chain>` shortcuts mutate the persisted
+      // default. updateSessionMeta treats this field as sticky once
+      // recorded — see storage.ts.
+      chain: config.chain,
       turnCount,
       messageCount: history.length,
       inputTokens: sessionInputTokens,

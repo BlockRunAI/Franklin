@@ -1,5 +1,41 @@
 # Changelog
 
+## 3.15.35 — \`franklin --resume\` restores the session's chain (no more silent chain swap)
+
+User filed this from a real flow on 2026-05-04: started a session
+on Base, ran a debug command (\`franklin solana wallet\` — chain
+shortcut that persists to \`~/.blockrun/.chain\`), then
+\`franklin --resume <id>\`. Wallet quietly switched from
+\`0xCC8c…5EF8\` (Base, funded) to \`Fg57kHX9…AKaH\` (Solana,
+\$0.01). Conversation, audit, and tool results all belong to Base
+— resuming on Solana means the agent is talking to a different
+wallet entirely.
+
+Root cause: \`SessionMeta\` had no chain field, so
+\`commands/start.ts\` always called \`loadChain()\` (which reads
+the \`.chain\` file). Any \`franklin <chain>\` invocation between
+sessions overrode it. Sessions are wallet-bound by conversation
+context — they should restore their original chain.
+
+Fixes:
+
+- \`session/storage\` \`SessionMeta\`: new \`chain?: 'base' | 'solana'\`
+  field. \`updateSessionMeta\` treats it as **sticky** — once a
+  session has a chain recorded, no later update can clear it back
+  to undefined. New sessions persist the field on every meta write.
+- \`agent/loop\`: \`persistSessionMeta\` passes \`chain: config.chain\`
+  on every update. Captured at session start and on every turn.
+- \`commands/start\`: when \`--resume <id>\` (or \`--continue\`)
+  resolves to a session with a recorded chain, use that chain
+  instead of the persisted default. Logs a \`Restoring session's
+  chain: X\` line when they differ so the user sees the
+  precedence. Pre-3.15.35 sessions without the field fall back to
+  the persisted default (same as pre-3.15.35 behavior).
+
+\`franklin <chain>\` shortcut behavior is unchanged for new
+sessions — it still persists \`.chain\` for invocations without
+\`--resume\`. The fix is specifically for the resume path.
+
 ## 3.15.34 — Low-balance warning in the status bar (don't make users guess)
 
 Real session 2026-05-04 14:50: user looked at the status bar

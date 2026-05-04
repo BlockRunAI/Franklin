@@ -69,7 +69,28 @@ export async function startCommand(options: StartOptions) {
     continueResolvedId = findLatestSessionForDir(process.cwd())?.id;
   }
 
-  const chain = loadChain();
+  // Sessions are wallet-bound: the conversation, audit trail, and tool
+  // results live on whichever chain the session was started on. If
+  // we're resuming, prefer the session's recorded chain over the
+  // persisted default — `franklin solana` / `franklin base` shortcuts
+  // mutate that default, and a debug invocation between restarts
+  // shouldn't be able to silently move the user to a different wallet.
+  // Only sessions created in 3.15.35+ have the field; older sessions
+  // fall back to the persisted default (matches pre-3.15.35 behavior).
+  let chain = loadChain();
+  const resumeIdEarly =
+    (typeof options.resume === 'string' && options.resume !== 'picker') ? options.resume
+    : continueResolvedId;
+  if (resumeIdEarly) {
+    const { loadSessionMeta } = await import('../session/storage.js');
+    const sessMeta = loadSessionMeta(resumeIdEarly);
+    if (sessMeta?.chain && sessMeta.chain !== chain) {
+      console.log(chalk.dim(`  Restoring session's chain: ${sessMeta.chain} (default was ${chain}; session is wallet-bound to ${sessMeta.chain})`));
+      chain = sessMeta.chain;
+    } else if (sessMeta?.chain) {
+      chain = sessMeta.chain;
+    }
+  }
   const apiUrl = API_URLS[chain];
   const config = loadConfig();
 
