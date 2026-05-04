@@ -1,5 +1,62 @@
 # Changelog
 
+## 3.15.47 — \`franklin task tail\` stops printing the same log twice (squashed)
+
+Verified 2026-05-04 on a real failed ETL task: \`franklin task
+tail t_morq82l7_0c9184a1\` printed the full log nicely (multiple
+indented lines), then a status header \`--- failed ---\`, then
+**the same log content all over again as one squashed line**:
+
+\`\`\`
+[17:43:40] resume state: ...
+[17:43:40] manifest cached: ...
+...
+[17:59:57]   2026-02 batch 2 ...
+
+--- failed ---
+[17:43:40] resume state: ... [17:43:40] manifest cached: ... [17:43:40] 2026-02: 685349 files [17:51:36] 2026-02 batch 1 ...
+\`\`\`
+
+Source: \`src/tasks/runner.ts:42\` collapses the log tail with
+\`replace(/\\s+/g, ' ')\` and stores it as the task's
+\`terminalSummary\`. Then \`src/commands/task.ts:91\` printed
+\`terminalSummary\` after the log — redundant content,
+whitespace-collapsed, in a worse format than the log we just
+showed.
+
+The collapse-to-one-line is the right shape for the HTML panel
+(\`src/panel/html.ts:1386\` renders it inside a single \`<span>\`,
+where browsers collapse whitespace anyway). It's the wrong shape
+for the CLI, which has just printed the full log directly above.
+
+Fix:
+
+- \`src/commands/task.ts\` \`tail\` action no longer prints
+  \`terminalSummary\` after the log + status header. The log was
+  already shown via \`printNew()\`. Print \`exitCode\` instead —
+  the only useful field that the log doesn't record explicitly.
+- HTML panel still uses \`terminalSummary\` exactly as before.
+- \`task wait\` still uses \`terminalSummary\` (one-line outcome
+  blurb is the right shape there since it's the only output).
+- Updated the cli-tail test: it had been asserting the duplicate
+  print as expected output. Now asserts the new contract
+  (\`assert.doesNotMatch(out, /all good/)\`).
+
+After the fix the same task shows:
+
+\`\`\`
+[17:43:40] resume state: ...
+[17:43:40] manifest cached: ...
+[17:43:40] 2026-02: 685349 files
+[17:51:36]   2026-02 batch 1 ...
+[17:59:57]   2026-02 batch 2 ...
+
+--- failed ---
+exitCode: 128
+\`\`\`
+
+Tests: 310/310 pass.
+
 ## 3.15.46 — \`franklin task list\` shows running tasks' real elapsed time, not \"0s\"
 
 Verified 2026-05-04 on a real machine: \`franklin task list\` for

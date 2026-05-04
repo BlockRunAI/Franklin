@@ -5471,7 +5471,11 @@ test('cli: franklin task tail <runId> prints log + status', async () => {
     assert.match(out, /line1/);
     assert.match(out, /line2/);
     assert.match(out, /succeeded/);
-    assert.match(out, /all good/);
+    // 3.15.47: tail no longer reprints terminalSummary because in real
+    // usage the runner stores log tail there (whitespace-collapsed),
+    // and printNew() above already emitted the full multi-line log.
+    // The HTML panel still surfaces terminalSummary.
+    assert.doesNotMatch(out, /all good/);
   } finally {
     if (orig === undefined) delete process.env.FRANKLIN_HOME;
     else process.env.FRANKLIN_HOME = orig;

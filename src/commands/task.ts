@@ -88,7 +88,16 @@ export function buildTaskCommand(): Command {
       const meta = readTaskMeta(runId);
       if (meta) {
         console.log(`\n--- ${meta.status} ---`);
-        if (meta.terminalSummary) console.log(meta.terminalSummary);
+        // Don't reprint terminalSummary: it's a whitespace-collapsed
+        // copy of the last ~800 bytes of the log, and we just printed
+        // the FULL log via printNew(). Verified 2026-05-04 on a real
+        // failed task: the user saw the same lines twice, the second
+        // copy as one squashed line, e.g.
+        //   [17:43:40] resume state: ... [17:43:40] manifest cached: ...
+        // which is harder to read than the multi-line original.
+        // exitCode is the only useful extra here (the log doesn't
+        // record it explicitly).
+        if (meta.exitCode !== undefined) console.log(`exitCode: ${meta.exitCode}`);
       }
     });
 
