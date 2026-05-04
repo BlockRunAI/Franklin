@@ -207,6 +207,11 @@ export function recordUsage(
   // history (verified: 8.4% of a real user's 1000-entry history was
   // test fixtures before this gate).
   if (isTestFixtureModel(model)) return;
+  // Test fixtures using real model names (`zai/glm-5.1` after 3.15.17's
+  // rename) escape the prefix gate. Env-var override lets tests opt
+  // out at file level. Mirrors the audit.ts guard; same env var so
+  // tests flip a single switch.
+  if (process.env.FRANKLIN_NO_AUDIT === '1') return;
 
   const stats = getCachedStats();
   const now = Date.now();

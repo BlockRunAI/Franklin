@@ -52,6 +52,14 @@ export function appendAudit(entry: AuditEntry): void {
   // entry before any disk write rather than relying on every test to
   // remember to redirect HOME.
   if (isTestFixtureModel(entry.model)) return;
+  // Belt-and-braces: when 3.15.17 renamed several test fixtures from
+  // local/test-model to zai/glm-5.1 (a real-looking model, so
+  // persistence tests can verify the write path), the model-name gate
+  // stopped catching them. Verified on a real machine: 310 of 370
+  // recent zai/glm-5.1 audit entries had output_tokens < 10 — clearly
+  // mock responses. The env-var lets tests opt out at file level
+  // without renaming fixtures back.
+  if (process.env.FRANKLIN_NO_AUDIT === '1') return;
 
   try {
     fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });

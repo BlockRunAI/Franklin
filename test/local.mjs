@@ -12,6 +12,16 @@
 process.env.FRANKLIN_NO_PREFETCH = '1';
 process.env.FRANKLIN_NO_EVAL = '1';
 process.env.FRANKLIN_NO_ANALYZER = '1';
+// 3.15.17 renamed several in-process test fixtures from `local/test-model`
+// to `zai/glm-5.1` so persistence tests could verify the write path. That
+// rename sidestepped 3.15.16's model-name fixture gate, and audit/stats
+// writes started leaking into the user's real ~/.blockrun on every npm
+// test run — verified 310 of 370 recent zai/glm-5.1 audit entries were
+// mock responses (output_tokens < 10). FRANKLIN_NO_AUDIT short-circuits
+// audit + stats persistence at file scope; session persistence is
+// controlled separately via setSessionPersistenceDisabled and stays on
+// for the resume tests at 489/609.
+process.env.FRANKLIN_NO_AUDIT = '1';
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1375,7 +1385,10 @@ test('stats tracker falls back to temp dir when HOME is not writable', async () 
 
     const result = await new Promise((resolve, reject) => {
       const proc = spawn('node', ['--input-type=module', '-e', script], {
-        env: { ...process.env, HOME: fakeHome },
+        // This test specifically exercises the tracker disk-write path,
+        // so override the file-level FRANKLIN_NO_AUDIT=1 (which would
+        // otherwise short-circuit the very write the test checks).
+        env: { ...process.env, HOME: fakeHome, FRANKLIN_NO_AUDIT: '' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -6529,7 +6542,9 @@ test('appendAudit: drops local/test-model entries, keeps real models', async () 
     await new Promise((resolve, reject) => {
       const proc = spawn('node', ['-e', script], {
         cwd: process.cwd(),
-        env: { ...process.env, HOME: fakeHome },
+        // Test exercises appendAudit's disk-write path; override the
+        // file-level FRANKLIN_NO_AUDIT=1 so the writes actually happen.
+        env: { ...process.env, HOME: fakeHome, FRANKLIN_NO_AUDIT: '' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       proc.on('close', (code) =>
@@ -6562,7 +6577,9 @@ test('recordUsage: drops local/test* entries, keeps real models in stats history
     const result = await new Promise((resolve, reject) => {
       const proc = spawn('node', ['-e', script], {
         cwd: process.cwd(),
-        env: { ...process.env, HOME: fakeHome },
+        // Test exercises tracker.recordUsage's disk-write path; override
+        // the file-level FRANKLIN_NO_AUDIT=1 so writes happen.
+        env: { ...process.env, HOME: fakeHome, FRANKLIN_NO_AUDIT: '' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       let stdout = '';

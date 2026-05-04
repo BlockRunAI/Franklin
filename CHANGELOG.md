@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.15.25 — \`FRANKLIN_NO_AUDIT=1\` env-var to stop test pollution at file scope
+
+Reading the audit log surfaced what 3.15.17 had already broken:
+when in-process resume tests were renamed from \`local/test-model\`
+to \`zai/glm-5.1\` to keep verifying session persistence,
+\`isTestFixtureModel\` (which only matches \`local/test*\`) lost
+the ability to filter their audit + stats writes. Verified on a
+real machine: **310 of 370 recent \`zai/glm-5.1\` audit entries
+had \`output_tokens < 10\`** — clearly mock-server responses
+mascarading as the real \`zai\` model. 62% of the user's recent
+audit window was test fixtures.
+
+The model-name gate is whack-a-mole; every fixture rename breaks
+it again. Replacing it with an env-var control:
+
+- \`stats/audit\`: \`appendAudit\` short-circuits when
+  \`process.env.FRANKLIN_NO_AUDIT === '1'\`, alongside the existing
+  fixture-model check.
+- \`stats/tracker\`: \`recordUsage\` mirrors the same gate so
+  \`franklin-stats.json\` stops accumulating mock responses.
+- \`test/local\`: sets \`FRANKLIN_NO_AUDIT=1\` once at file scope,
+  next to the existing \`FRANKLIN_NO_PREFETCH\` / \`FRANKLIN_NO_EVAL\`
+  / \`FRANKLIN_NO_ANALYZER\` toggles. The three tests that
+  specifically exercise the audit + tracker disk-write paths
+  override it back to empty in their subprocess env so they still
+  verify the write contract.
+
+Existing pollution (310 mock entries in audit, ~84 in stats
+history) will wash out via the 10k-audit + 1000-stats retention
+caps shipped in 3.15.11 and 3.15.16. No manual cleanup needed.
+
 ## 3.15.24 — Reading the new logs surfaced two real bugs
 
 \`tail ~/.blockrun/franklin-debug.log\` post-3.15.23 showed:
