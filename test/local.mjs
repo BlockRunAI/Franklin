@@ -37,7 +37,13 @@ function runCli(prompt = '', { cwd, timeoutMs = 15_000, args, env } = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn('node', args ?? [DIST, '--model', 'zai/glm-5.1', '--trust'], {
       cwd: cwd ?? tmpdir(),
-      env: { ...process.env, ...env },
+      // FRANKLIN_NO_PERSIST=1 blocks the spawned child from writing
+      // session jsonl/meta into the real ~/.blockrun/sessions/. Verified
+      // 2026-05-04: a single `npm test` left 3 ghost metas behind because
+      // runCli uses `zai/glm-5.1` (real model name → not caught by
+      // isTestFixtureModel) and inherits HOME from the test process. A
+      // caller can still override by passing `env: { FRANKLIN_NO_PERSIST: '' }`.
+      env: { FRANKLIN_NO_PERSIST: '1', ...process.env, ...env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

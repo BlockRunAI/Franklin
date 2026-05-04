@@ -1,5 +1,48 @@
 # Changelog
 
+## 3.15.41 — \`npm test\` (local suite) also stops leaving ghost session metas
+
+3.15.40 plugged the e2e leak; verifying it on a real machine
+surfaced a sibling leak in \`test/local.mjs\`. Running plain
+\`npm test\` (no e2e) was leaving 3 ghost \`.meta.json\` files in
+\`~/.blockrun/sessions/\` on every invocation — confirmed twice
+during the 3.15.40 ship cycle (timestamps 21:23:01-03 and
+21:26:51-53), six total ghosts from two test runs.
+
+Source: the \`runCli()\` helper at \`test/local.mjs:36\` spawns
+the real franklin binary with \`--model zai/glm-5.1\` (a real
+gateway model, not a fixture name) and inherits the parent's
+\`HOME\`. The file-level \`process.env.FRANKLIN_NO_AUDIT = '1'\`
+on line 24 keeps audit + stats clean — exactly as
+\`test/local.mjs\` expects, since its resume tests need session
+writes to keep working — but session writes still landed in
+the user's prod \`~/.blockrun/sessions/\` because there was no
+\`FRANKLIN_NO_PERSIST\` set anywhere. The CLI tests in question
+(banner, \`--prompt\`, \`--exit\`, etc.) don't care about session
+state at all, they just care about stdout / exit code, so
+disabling persistence inside \`runCli\` is harmless to them.
+
+Tests in the same file that DO need session writes (resume,
+findLatestSessionForDir, /session-search) call
+\`interactiveSession()\` in-process or use their own
+subprocess spawns with explicit \`HOME: fakeHome\` overrides —
+those paths bypass \`runCli\` and remain unaffected.
+
+Fix:
+
+- \`test/local.mjs\` \`runCli()\`: prepend
+  \`FRANKLIN_NO_PERSIST: '1'\` into the spawned env, behind the
+  \`...process.env\` spread so an explicit \`env: { FRANKLIN_NO_PERSIST: '' }\`
+  argument can still override per-test (the same escape-hatch
+  pattern the rest of the file uses for \`FRANKLIN_NO_AUDIT\`).
+- Re-ran \`npm test\` and verified zero new ghost metas land in
+  \`~/.blockrun/sessions/\` after 310 tests pass.
+
+This finishes the cleanup. Both \`npm test\` and
+\`npm run test:e2e\` now run without leaving session
+artefacts behind. Real user sessions written during the
+test window are unaffected.
+
 ## 3.15.40 — \`npm run test:e2e\` no longer pollutes the user's audit log
 
 Verified 2026-05-04 on a real developer machine: \`grep -c
