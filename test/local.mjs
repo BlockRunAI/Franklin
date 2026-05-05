@@ -6245,6 +6245,38 @@ test('cli: franklin task tail <runId> prints log + status', async () => {
   }
 });
 
+test('cli: franklin task tail reconciles stale queued tasks before printing status', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'tail-stale-queued';
+    writeTaskMeta({
+      runId, runtime: 'detached-bash', label: 'stale', command: 'true',
+      workingDir: '/tmp', status: 'queued',
+      createdAt: Date.now() - 6 * 60 * 1000,
+    });
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, 'task', 'tail', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+    });
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.match(result.stdout.toString(), /lost/);
+    assert.equal(readTaskMeta(runId).status, 'lost');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('cli: franklin task cancel <runId> kills running task', async () => {
   const os = await import('node:os');
   const path = await import('node:path');
@@ -6316,6 +6348,41 @@ test('cli: franklin task wait <runId> blocks until terminal', async () => {
     else process.env.FRANKLIN_HOME = orig;
     if (origCli === undefined) delete process.env.FRANKLIN_CLI_PATH;
     else process.env.FRANKLIN_CLI_PATH = origCli;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('cli: franklin task wait reconciles stale queued tasks before blocking', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'wait-stale-queued';
+    writeTaskMeta({
+      runId, runtime: 'detached-bash', label: 'stale', command: 'true',
+      workingDir: '/tmp', status: 'queued',
+      createdAt: Date.now() - 6 * 60 * 1000,
+    });
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const t0 = Date.now();
+    const result = spawnSync(process.execPath, [cli, 'task', 'wait', runId, '--timeout', '10000'], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+    });
+    const elapsed = Date.now() - t0;
+    assert.equal(result.status, 1, result.stderr.toString());
+    assert.ok(elapsed < 2000, `wait should reconcile immediately, not block (${elapsed}ms)`);
+    assert.match(result.stdout.toString(), /lost/);
+    assert.equal(readTaskMeta(runId).status, 'lost');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
@@ -7163,6 +7230,7 @@ test('runDataHygiene: returns counts of what was cleaned (3.15.31 contract)', as
     assert.equal(report.dataFilesTrimmed, 0);
     assert.equal(report.costLogRowsTrimmed, 0);
     assert.equal(report.orphanToolResultsRemoved, 0);
+    assert.equal(report.oldTasksRemoved, 0);
   } finally {
     rmSync(fakeHome, { recursive: true, force: true });
   }
@@ -7287,6 +7355,75 @@ test('runDataHygiene: caps cost_log.jsonl at 5000 entries', async () => {
     // Oldest 1000 dropped — first remaining ts should be 1000.
     const first = JSON.parse(after[0]);
     assert.equal(first.ts, 1000);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('runDataHygiene: prunes old terminal task dirs but preserves recent history and live tasks', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-tasks-'));
+  const tasksDir = join(fakeHome, '.blockrun', 'tasks');
+  mkdirSync(tasksDir, { recursive: true });
+  const fs = await import('node:fs');
+  const now = Date.now();
+
+  const writeTask = (runId, status, ageDays, ordinal = 0) => {
+    const dir = join(tasksDir, runId);
+    mkdirSync(dir, { recursive: true });
+    const at = now - ageDays * 24 * 60 * 60 * 1000 + ordinal;
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify({
+      runId,
+      runtime: 'detached-bash',
+      label: runId,
+      command: 'true',
+      workingDir: '/tmp',
+      status,
+      createdAt: at - 1000,
+      ...(status === 'running' || status === 'queued' ? {} : { endedAt: at }),
+    }));
+    writeFileSync(join(dir, 'log.txt'), 'log\n');
+    const seconds = at / 1000;
+    fs.utimesSync(dir, seconds, seconds);
+  };
+
+  // Seven old terminal tasks: retention keeps the five most recent and
+  // deletes only the two oldest. A very old running task must survive.
+  for (let i = 0; i < 7; i++) writeTask(`old-terminal-${i}`, 'succeeded', 9, i);
+  writeTask('old-running', 'running', 30);
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    process.stdout.write(JSON.stringify(h.runDataHygiene()));
+  `;
+  try {
+    const env = { ...process.env, HOME: fakeHome };
+    delete env.FRANKLIN_HOME;
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve(stdout) : reject(new Error(`hygiene subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    const report = JSON.parse(result);
+    assert.equal(report.oldTasksRemoved, 2);
+    assert.equal(existsSync(join(tasksDir, 'old-terminal-0')), false);
+    assert.equal(existsSync(join(tasksDir, 'old-terminal-1')), false);
+    for (let i = 2; i < 7; i++) {
+      assert.equal(existsSync(join(tasksDir, `old-terminal-${i}`)), true,
+        `old-terminal-${i} should be retained by minimum-history policy`);
+    }
+    assert.equal(existsSync(join(tasksDir, 'old-running')), true,
+      'running tasks must never be pruned');
   } finally {
     rmSync(fakeHome, { recursive: true, force: true });
   }

@@ -26,6 +26,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BLOCKRUN_DIR } from '../config.js';
 import { pruneJunkBrainEntries } from '../brain/store.js';
+import { getTasksDir, getLegacyTasksDir } from '../tasks/paths.js';
+import { isTerminalTaskStatus, type TaskStatus } from '../tasks/types.js';
 
 // Retention knobs. Tuned conservatively — a power user with 50+ calls/day
 // for 30 days still fits in DATA_DIR_MAX_FILES, and 5000 cost-log entries
@@ -33,6 +35,14 @@ import { pruneJunkBrainEntries } from '../brain/store.js';
 const DATA_DIR_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const DATA_DIR_MAX_FILES = 2000;
 const COST_LOG_MAX_ENTRIES = 5000;
+// Task records (meta + events + log per task dir). Verified 2026-05-05:
+// 10 tasks across ~/.franklin/tasks/, oldest "lost" status from 53 hours
+// ago, none ever cleaned up. Each task's log.txt can run 1+ MB for ETL
+// jobs. Without retention, disk fills slowly. 7 days lets a user inspect
+// the previous week's runs but archives anything older. Running tasks
+// are NEVER touched (status check + heartbeat freshness).
+const TASK_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const TASK_MIN_RETAIN = 5; // always keep the 5 most-recent records regardless of age
 // Cost log entries are tiny (~60 bytes — ts, endpoint, cost only). 40 bytes
 // per entry keeps the probe under the real average so a slightly-overlong
 // file always triggers the rescan rather than silently growing past cap.
@@ -61,6 +71,7 @@ export interface HygieneReport {
   costLogRowsTrimmed: number;
   orphanToolResultsRemoved: number;
   brainJunkEntitiesRemoved: number;
+  oldTasksRemoved: number;
 }
 
 const ZERO_REPORT: HygieneReport = {
@@ -69,6 +80,7 @@ const ZERO_REPORT: HygieneReport = {
   costLogRowsTrimmed: 0,
   orphanToolResultsRemoved: 0,
   brainJunkEntitiesRemoved: 0,
+  oldTasksRemoved: 0,
 };
 
 /**
@@ -85,7 +97,59 @@ export function runDataHygiene(): HygieneReport {
   try { report.legacyFilesRemoved = removeLegacyFiles(); } catch { /* best effort */ }
   try { report.orphanToolResultsRemoved = sweepOrphanToolResults(); } catch { /* best effort */ }
   try { report.brainJunkEntitiesRemoved = pruneJunkBrainEntries().entitiesRemoved; } catch { /* best effort */ }
+  try { report.oldTasksRemoved = pruneOldTaskRecords(); } catch { /* best effort */ }
   return report;
+}
+
+/**
+ * Remove terminal-state task directories older than TASK_MAX_AGE_MS.
+ * Scans both the canonical (~/.blockrun/tasks/) and legacy
+ * (~/.franklin/tasks/) locations, since 3.15.42 leaves both readable.
+ *
+ * Safety:
+ *   - Running / queued tasks are NEVER removed (status check).
+ *   - Always keep the most-recent TASK_MIN_RETAIN records regardless of
+ *     age, so users can see recent history after a long pause.
+ *   - Best-effort: corrupt meta or unreadable dirs are skipped silently.
+ */
+function pruneOldTaskRecords(): number {
+  const cutoff = Date.now() - TASK_MAX_AGE_MS;
+  let removed = 0;
+  const dirs = [getTasksDir()];
+  if (process.env.FRANKLIN_HOME === undefined) dirs.push(getLegacyTasksDir());
+  for (const dir of dirs) {
+    let entries: string[];
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    // Build a list of (runId, mtimeMs, terminal?) so we can sort and
+    // protect the N most-recent regardless of age.
+    type Cand = { runId: string; mtime: number; terminal: boolean; metaPath: string };
+    const cands: Cand[] = [];
+    for (const name of entries) {
+      const taskDir = path.join(dir, name);
+      const metaPath = path.join(taskDir, 'meta.json');
+      try {
+        const stat = fs.statSync(taskDir);
+        if (!stat.isDirectory()) continue;
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { status?: TaskStatus };
+        const terminal = typeof meta.status === 'string' && isTerminalTaskStatus(meta.status);
+        cands.push({ runId: name, mtime: stat.mtimeMs, terminal, metaPath });
+      } catch {
+        // Unreadable meta or stat — skip silently. We never delete a dir
+        // we can't confirm is terminal, to avoid killing a running task
+        // whose meta we just couldn't read.
+      }
+    }
+    // Sort newest-first so the slice for retention is at index 0..N-1.
+    cands.sort((a, b) => b.mtime - a.mtime);
+    const protectedIds = new Set(cands.slice(0, TASK_MIN_RETAIN).map(c => c.runId));
+    for (const c of cands) {
+      if (protectedIds.has(c.runId)) continue;
+      if (!c.terminal) continue;            // never touch running/queued
+      if (c.mtime >= cutoff) continue;      // young enough to keep
+      try { fs.rmSync(path.join(dir, c.runId), { recursive: true, force: true }); removed++; } catch { /* ok */ }
+    }
+  }
+  return removed;
 }
 
 function trimDataDir(): number {

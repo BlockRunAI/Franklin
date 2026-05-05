@@ -1,5 +1,71 @@
 # Changelog
 
+## 3.15.66 — Hygiene now prunes terminal task records older than 7 days
+
+Verified 2026-05-05 on a real machine: \`~/.franklin/tasks/\`
+held 10 task directories, the oldest \`status: lost\` from
+**53 hours ago** (2.2 days). Nothing in the hygiene path ever
+removed them — \`pruneOldSessions\` covers \`~/.blockrun/sessions/\`,
+but the tasks subsystem (added in v3.10) shipped without
+retention.
+
+Each task directory carries:
+
+\`\`\`
+meta.json       — small (~500 B)
+events.jsonl    — small unless dense progress events
+log.txt         — child process stdout/stderr; verified one
+                  ETL job's log was 1.1 MB
+\`\`\`
+
+For a power user running daily detached jobs (the user
+shipping this fix has done 10+ ETL passes in the last 24h),
+disk fills slowly forever. Worse, \`franklin task list\`
+output keeps growing — the screen-of-shame factor.
+
+Fix: new \`pruneOldTaskRecords()\` helper in
+\`src/storage/hygiene.ts\`, wired into the existing
+\`runDataHygiene()\` pass that runs once at agent session start.
+
+Retention rules (deliberately conservative):
+
+- **Age cutoff: 7 days.** Keeps the previous week's history
+  (covers most "what did I run last weekend?" lookups).
+- **Status filter: terminal only.** \`running\` / \`queued\`
+  are NEVER touched, regardless of age — a long ETL job that's
+  been running for 8 days stays untouched. Same protection
+  shape \`pruneOldSessions\` uses for the active session.
+- **Floor: keep 5 most-recent.** Even if all 5 are 30 days
+  old, they survive — users coming back from a long pause
+  shouldn't find their history wiped.
+- Walks both \`~/.blockrun/tasks/\` (canonical, post-3.15.42)
+  and \`~/.franklin/tasks/\` (legacy fallback). Skips the
+  legacy walk when \`FRANKLIN_HOME\` is set so test isolation
+  stays clean.
+- Best-effort: corrupt \`meta.json\` or unreadable dirs are
+  skipped silently. Never deletes a dir we can't confirm is
+  terminal.
+
+\`HygieneReport\` gains \`oldTasksRemoved\` so the cleanup
+surfaces in agent-startup logs (same shape as
+\`brainJunkEntitiesRemoved\` in 3.15.44).
+
+One regression test builds 8 fixture task dirs covering every
+case — recent (5 different statuses including \`running\` and
+\`lost\`), ancient running, ancient terminal, ancient lost —
+runs hygiene against a fake \`FRANKLIN_HOME\`, asserts exactly
+2 are pruned (the two ancient terminals outside the top-5)
+and the other 6 survive (5 recent + ancient running).
+
+Tests: 349/349 pass (was 345 before, +4 between this session
+and the in-progress test additions).
+
+Existing tasks on installed machines: hygiene runs at next
+\`franklin\` start, so the cleanup happens automatically.
+Power users can verify with \`franklin task list\` — entries
+with terminal status older than 7 days will disappear after
+the next start.
+
 ## 3.15.65 — Chat-completions example list uses real models (no fictional \`gpt-5.1\` / \`grok-5\`)
 
 Verified 2026-05-05 by cross-checking the agent system prompt
