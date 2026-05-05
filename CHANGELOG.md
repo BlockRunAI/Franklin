@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.15.65 — Chat-completions example list uses real models (no fictional \`gpt-5.1\` / \`grok-5\`)
+
+Verified 2026-05-05 by cross-checking the agent system prompt
+against \`franklin-stats.json byModel\` (every model the user
+has ever called):
+
+\`\`\`
+Prompt cited:           openai/gpt-5.1     xai/grok-5     anthropic/claude-sonnet-4.6
+On the gateway today:   ❌ doesn't exist   ❌ doesn't exist   ✓ real
+\`\`\`
+
+If the agent reads "e.g. \`openai/gpt-5.1\`" and copies the name
+verbatim into a \`/v1/chat/completions\` request, the gateway
+returns 400. Same shape as the bug 3.15.53 fixed for VideoGen
+(invented \`seedance/2.0-pro\`) — illustrative examples become
+self-fulfilling tool calls.
+
+Fix:
+
+- \`src/agent/context.ts:207\` — replaced the fictional examples
+  with frontier names that actually appear on the gateway:
+  \`anthropic/claude-sonnet-4.6\`, \`anthropic/claude-opus-4.7\`,
+  \`deepseek/deepseek-v4-pro\`, \`zai/glm-5.1\`,
+  \`nvidia/qwen3-coder-480b\`, \`openai/gpt-5-nano\`. Marked "as
+  of 2026-05" so the next ship round can re-evaluate.
+- Added an explicit "Do NOT invent versions like
+  \`openai/gpt-5.1\` or \`xai/grok-5\`" warning so the names
+  surface as anti-patterns the agent should recognize and avoid
+  if it sees them anywhere in the conversation history.
+- Reinforces the existing "fetch \`GET /v1/models\` first when
+  in doubt" instruction.
+
+One regression test asserts the chat-completions paragraph (a)
+contains all six real frontier names AND (b) contains the two
+fictional names exactly once each (only in the "Do NOT invent"
+warning, never as a positive example).
+
+Tests: 345/345 pass (was 344 before, 1 new).
+
 ## 3.15.64 — Agent context reports the SDK-canonical Solana wallet (not a legacy ghost)
 
 ⚠ **Critical correctness fix**: pre-3.15.64, the agent's

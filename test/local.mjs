@@ -2505,6 +2505,50 @@ test('classifier: Payment verification failed → payment_rejected with chain/cl
 // surface "this model is slow" or "fallback was faster". 3.15.61 wraps
 // the model call with Date.now() and passes the delta to recordUsage.
 
+test('agent context: chat-completions example uses real model names (no fictional gpt-5.1 / grok-5)', async () => {
+  // Verified 2026-05-05: the BlockRun API doc block in the agent
+  // system prompt cited `openai/gpt-5.1` and `xai/grok-5` as
+  // example model names. Neither exists on the gateway. If the
+  // agent copies the example verbatim into a /v1/chat/completions
+  // call it 400s. Real frontier examples must be names that
+  // appear in `franklin-stats.json byModel` on a real machine.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'agent', 'context.js'),
+    'utf-8',
+  );
+  // Real names that should appear as illustrative examples.
+  for (const real of [
+    'anthropic/claude-sonnet-4.6',
+    'anthropic/claude-opus-4.7',
+    'deepseek/deepseek-v4-pro',
+    'zai/glm-5.1',
+  ]) {
+    assert.ok(src.includes(real), `chat-completions example list must include real model "${real}"`);
+  }
+  // Fictional names that must NOT survive as illustrative examples.
+  // (They may appear in a "do NOT invent" warning — match must require
+  // them in an `e.g.` context, not a "do not use" context. Look in the
+  // chat-completions paragraph specifically.)
+  const para = src.match(/POST \/v1\/chat\/completions[\s\S]{0,800}/);
+  assert.ok(para, 'must contain the chat-completions API paragraph');
+  // Real model `openai/gpt-5-nano` IS valid — only the fictional ones
+  // need to be confined to the warning context.
+  const fakeModelGpt = /openai\/gpt-5\.1/g;
+  const fakeModelGrok = /xai\/grok-5\b/g;
+  // Each fictional name should appear at most once (in the "Do NOT
+  // invent" warning) and must NOT appear standalone as a recommended
+  // example. The warning prefix "Do NOT invent versions like" is the
+  // single allowed mention.
+  const gptMatches = para[0].match(fakeModelGpt) ?? [];
+  const grokMatches = para[0].match(fakeModelGrok) ?? [];
+  assert.equal(gptMatches.length, 1, 'openai/gpt-5.1 must appear exactly once (in the warning)');
+  assert.equal(grokMatches.length, 1, 'xai/grok-5 must appear exactly once (in the warning)');
+  assert.match(para[0], /Do NOT invent.*gpt-5\.1.*grok-5/i,
+    'must explicitly warn against inventing those names');
+});
+
 test('agent context: wallet-storage block names the real files (no stale paths)', async () => {
   // Verified 2026-05-05: the system-prompt wallet block claimed Solana
   // keys lived at `~/.blockrun/solana-wallet.json` (didn't exist on the

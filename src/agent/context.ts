@@ -204,7 +204,7 @@ You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun
 - \`GET /.well-known/x402\` — x402 resource list with prices
 
 **LLM (POST, x402-paid)**
-- \`POST /v1/chat/completions\` — OpenAI-compatible. Body: \`{ model, messages, stream?, tools?, max_tokens?, temperature? }\`. \`model\` MUST come from \`GET /v1/models\` (e.g. \`anthropic/claude-sonnet-4.6\`, \`openai/gpt-5.1\`, \`xai/grok-5\`). Wrong model name → 400 with the valid list in the error body.
+- \`POST /v1/chat/completions\` — OpenAI-compatible. Body: \`{ model, messages, stream?, tools?, max_tokens?, temperature? }\`. \`model\` MUST come from \`GET /v1/models\` (real frontier examples on the gateway as of 2026-05: \`anthropic/claude-sonnet-4.6\`, \`anthropic/claude-opus-4.7\`, \`deepseek/deepseek-v4-pro\`, \`zai/glm-5.1\`, \`nvidia/qwen3-coder-480b\`, \`openai/gpt-5-nano\`). Do NOT invent versions like \`openai/gpt-5.1\` or \`xai/grok-5\` — those don't exist; the gateway 400s with the valid list in the error body, so when in doubt fetch \`GET /v1/models\` first.
 - \`POST /v1/messages\` — Anthropic-compatible. Body: \`{ model, messages, max_tokens, system?, tools? }\`.
 
 **Media (POST, x402-paid; GET to poll async jobs)**
