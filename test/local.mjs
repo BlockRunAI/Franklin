@@ -2505,6 +2505,33 @@ test('classifier: Payment verification failed → payment_rejected with chain/cl
 // surface "this model is slow" or "fallback was faster". 3.15.61 wraps
 // the model call with Date.now() and passes the delta to recordUsage.
 
+test('media + modal tools: measure latency and pass it to recordUsage (no more 0)', async () => {
+  // 3.15.61 fixed agent loop's hardcoded latencyMs=0; 3.15.62 closes
+  // the remaining 5 callsites (imagegen, videogen, 4× modal). No
+  // recordUsage call in the production tree should pass a literal 0
+  // for latency — they should all read from a captured Date.now().
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+
+  for (const rel of [
+    'dist/tools/imagegen.js',
+    'dist/tools/videogen.js',
+    'dist/tools/modal.js',
+  ]) {
+    const src = fs.readFileSync(path.join(process.cwd(), rel), 'utf-8');
+    // Each file must capture a wall-clock start before its paid call.
+    assert.match(src, /callStartedAt = Date\.now\(\)/,
+      `${rel} must capture callStartedAt`);
+    // Each file must compute the latency delta.
+    assert.match(src, /latencyMs = Date\.now\(\) - callStartedAt/,
+      `${rel} must compute latencyMs`);
+    // No recordUsage with literal-0 last arg. The shape must be `, latencyMs)`
+    // or `, latencyMs);` with optional whitespace and an optional `}` after.
+    assert.doesNotMatch(src, /recordUsage\([^)]*,\s*0\s*\)/,
+      `${rel} recordUsage must not pass literal 0 for latencyMs`);
+  }
+});
+
 test('agent loop: measures LLM latency and passes it to recordUsage', async () => {
   const fs = await import('node:fs');
   const path = await import('node:path');
@@ -2525,6 +2552,49 @@ test('agent loop: measures LLM latency and passes it to recordUsage', async () =
   // matching unrelated comments mentioning '0' in the file.
   assert.doesNotMatch(src, /recordUsage\(resolvedModel, [^,]+, [^,]+, [^,]+, 0,/,
     'agent-loop recordUsage call must no longer pass literal 0 for latencyMs');
+});
+
+test('paid media and Modal tools pass measured latency to recordUsage', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const readDist = (file) => fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'tools', file),
+    'utf-8',
+  );
+
+  const imagegen = readDist('imagegen.js');
+  assert.match(imagegen, /callStartedAt = Date\.now\(\)/,
+    'imagegen must capture the paid-call start time');
+  assert.match(imagegen, /latencyMs = Date\.now\(\) - callStartedAt/,
+    'imagegen must compute latency from the paid-call start time');
+  assert.match(imagegen, /recordUsage\(imageModel, 0, 0, estCost, latencyMs\)/,
+    'imagegen recordUsage must receive latencyMs');
+  assert.doesNotMatch(imagegen, /recordUsage\(imageModel, 0, 0, estCost, 0\)/,
+    'imagegen must not hardcode zero latency');
+
+  const videogen = readDist('videogen.js');
+  assert.match(videogen, /callStartedAt = Date\.now\(\)/,
+    'videogen must capture the paid-call start time');
+  assert.match(videogen, /latencyMs = Date\.now\(\) - callStartedAt/,
+    'videogen must compute latency from the paid-call start time');
+  assert.match(videogen, /recordUsage\(videoModel, 0, 0, estCost, latencyMs\)/,
+    'videogen recordUsage must receive latencyMs');
+  assert.doesNotMatch(videogen, /recordUsage\(videoModel, 0, 0, estCost, 0\)/,
+    'videogen must not hardcode zero latency');
+
+  const modal = readDist('modal.js');
+  assert.equal((modal.match(/callStartedAt = Date\.now\(\)/g) ?? []).length, 4,
+    'all four Modal paid calls must capture start time');
+  assert.equal((modal.match(/latencyMs = Date\.now\(\) - callStartedAt/g) ?? []).length, 4,
+    'all four Modal paid calls must compute latency');
+  assert.match(modal, /recordUsage\(`modal\/\$\{tier\}`, 0, 0, price, latencyMs\)/,
+    'ModalCreate recordUsage must receive latencyMs');
+  assert.match(modal, /recordUsage\('modal\/exec', 0, 0, EXEC_PRICE_USD, latencyMs\)/,
+    'ModalExec recordUsage must receive latencyMs');
+  assert.match(modal, /recordUsage\('modal\/status', 0, 0, STATUS_PRICE_USD, latencyMs\)/,
+    'ModalStatus recordUsage must receive latencyMs');
+  assert.match(modal, /recordUsage\('modal\/terminate', 0, 0, TERMINATE_PRICE_USD, latencyMs\)/,
+    'ModalTerminate recordUsage must receive latencyMs');
 });
 
 // ─── stripLargeImageData: prevent multi-MB session jsonl files ─────
@@ -7602,4 +7672,3 @@ test('pollImageJob: surfaces non-transient HTTP error with body preview', async 
     await new Promise(resolve => server.close(resolve));
   }
 });
-

@@ -1,5 +1,61 @@
 # Changelog
 
+## 3.15.62 — Image / Video / Modal tools also measure latency (the other 5 callsites)
+
+3.15.61 fixed the agent-loop \`recordUsage\` callsite. Sweeping
+the rest of the codebase turned up **five more** callsites still
+hardcoding \`latencyMs = 0\`:
+
+\`\`\`
+src/tools/imagegen.ts:453   recordUsage(imageModel, 0, 0, estCost, 0);
+src/tools/videogen.ts:352   recordUsage(videoModel, 0, 0, estCost, 0);
+src/tools/modal.ts:446      recordUsage(\`modal/\${tier}\`, 0, 0, price, 0);
+src/tools/modal.ts:590      recordUsage('modal/exec', 0, 0, EXEC_PRICE_USD, 0);
+src/tools/modal.ts:648      recordUsage('modal/status', 0, 0, STATUS_PRICE_USD, 0);
+src/tools/modal.ts:708      recordUsage('modal/terminate', 0, 0, TERMINATE_PRICE_USD, 0);
+\`\`\`
+
+These are the high-variance paths where latency tracking matters
+most:
+
+- VideoGen calls have ranged **40 s to 420 s** in real sessions
+  (10× spread). \`avgLat\` would tell the agent / user which
+  models are consistently fast vs. slow.
+- ImageGen calls range **30 s to 170 s** (Cloud-Run-side queueing).
+- Modal sandbox-create can hit a \`90 s\` cold-start vs. \`5 s\`
+  warm hit. Without latency, you can't tell.
+
+Fix: same wall-clock pattern as 3.15.61. Each callsite captures
+\`callStartedAt = Date.now()\` immediately before its paid HTTP
+call, computes \`latencyMs = Date.now() - callStartedAt\` after
+the response settles, passes the delta to \`recordUsage\`. For
+modal's \`postWithPayment\` helper, the timing wraps the helper
+call itself (it's the only network point per action).
+
+After this ship, **every \`recordUsage\` callsite in the
+production tree carries real measured latency**:
+
+| File | Site | Status |
+|------|------|--------|
+| agent/loop.ts:1518 | LLM call | ✓ 3.15.61 |
+| proxy/server.ts:658, :708 | Proxy mode | ✓ since v3 |
+| tools/imagegen.ts | Image gen | ✓ 3.15.62 |
+| tools/videogen.ts | Video gen | ✓ 3.15.62 |
+| tools/modal.ts (×4) | Sandbox lifecycle | ✓ 3.15.62 |
+
+One new regression test asserts the three rebuilt files contain
+\`callStartedAt = Date.now()\` + \`latencyMs = Date.now() - callStartedAt\`
+AND no \`recordUsage(... , 0)\` shape remains. Future PRs that
+reintroduce a literal 0 get caught.
+
+Tests: 341/341 pass (was 340 before, 1 new sweep-style test).
+
+Pre-fix entries in \`stats.byModel.totalLatencyMs\` are \`0\` and
+stay \`0\`. After upgrade + a few new requests, \`avgLatencyMs\`
+will start reflecting the running mean (running mean recovers
+slowly from a long tail of zeros — power users may want to
+\`/clear-stats\` to wipe and rebuild from clean data).
+
 ## 3.15.61 — Agent-loop LLM calls now measure latency (\`avgLat=0.0s\` was lying)
 
 Verified 2026-05-05 on a real machine: \`franklin-stats.json\`

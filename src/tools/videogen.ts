@@ -208,6 +208,13 @@ function buildExecute(deps: VideoGenDeps) {
       'User-Agent': `franklin/${VERSION}`,
     };
 
+    // Wall-clock start of the paid call (submit + poll + download). Fed
+    // to recordUsage below so franklin-stats.json populates avgLatencyMs
+    // for video models. Same fix as 3.15.61 (agent loop) — five
+    // recordUsage callsites in this codebase, three of them were
+    // hardcoding 0.
+    const callStartedAt = Date.now();
+
     const onAbort = (ctrl: AbortController) => () => ctrl.abort();
 
     // Phase 1: submit the job. First POST triggers a 402; we sign and retry.
@@ -345,11 +352,12 @@ function buildExecute(deps: VideoGenDeps) {
       // Prefer the live gateway price when the model is in the catalog;
       // fall back to the legacy $0.05/s estimate otherwise. Fire-and-
       // forget — stats write must not fail a user-visible generation.
+      const latencyMs = Date.now() - callStartedAt;
       void (async () => {
         try {
           const m = await findModel(videoModel);
           const estCost = m ? estimateCostUsd(m, { duration_seconds: dur }) : estimateVideoCostUsd(dur);
-          recordUsage(videoModel, 0, 0, estCost, 0);
+          recordUsage(videoModel, 0, 0, estCost, latencyMs);
         } catch { /* ignore stats errors */ }
       })();
 

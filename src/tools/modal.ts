@@ -399,6 +399,7 @@ export const modalCreateCapability: CapabilityHandler = {
       if (typeof cpuCoerced === 'number') body.cpu = cpuCoerced;
       if (typeof memoryCoerced === 'number') body.memory = memoryCoerced;
 
+      const callStartedAt = Date.now();
       const res = await postWithPayment(
         modalEndpoint('create'),
         body,
@@ -406,6 +407,7 @@ export const modalCreateCapability: CapabilityHandler = {
         ctx.abortSignal,
         90_000, // 90s — sandbox cold-start can be slow on fresh GPU pulls
       );
+      const latencyMs = Date.now() - callStartedAt;
 
       if (!res.ok) {
         const err = res.body.error ? String(res.body.error) : res.raw.slice(0, 300);
@@ -443,7 +445,7 @@ export const modalCreateCapability: CapabilityHandler = {
 
       // Stats — surface Modal usage in `franklin insights` like other paid tools.
       try {
-        recordUsage(`modal/${tier}`, 0, 0, price, 0);
+        recordUsage(`modal/${tier}`, 0, 0, price, latencyMs);
       } catch { /* ignore */ }
 
       return {
@@ -546,6 +548,7 @@ export const modalExecCapability: CapabilityHandler = {
       };
       if (coercedTimeout !== undefined) body.timeout = coercedTimeout;
 
+      const callStartedAt = Date.now();
       const res = await postWithPayment(
         modalEndpoint('exec'),
         body,
@@ -553,6 +556,7 @@ export const modalExecCapability: CapabilityHandler = {
         ctx.abortSignal,
         Math.max(30_000, ((coercedTimeout ?? 300) + 30) * 1000),
       );
+      const latencyMs = Date.now() - callStartedAt;
 
       if (!res.ok) {
         // 400 here usually means the agent built the wrong shape (bad
@@ -587,7 +591,7 @@ export const modalExecCapability: CapabilityHandler = {
       const hasAnyOutput = stdout.length > 0 || stderr.length > 0;
       const exitCode = rawExit !== null ? rawExit : (hasAnyOutput ? 0 : -1);
 
-      try { recordUsage('modal/exec', 0, 0, EXEC_PRICE_USD, 0); } catch { /* ignore */ }
+      try { recordUsage('modal/exec', 0, 0, EXEC_PRICE_USD, latencyMs); } catch { /* ignore */ }
 
       const summary = `exit ${exitCode}` + (rawExit === null ? ' (inferred — no exit_code field in response)' : '');
       const sections = [
@@ -632,6 +636,7 @@ export const modalStatusCapability: CapabilityHandler = {
     try { reservation = await walletReservation.hold(STATUS_PRICE_USD); } catch { /* ignore */ }
 
     try {
+      const callStartedAt = Date.now();
       const res = await postWithPayment(
         modalEndpoint('status'),
         { sandbox_id },
@@ -639,13 +644,14 @@ export const modalStatusCapability: CapabilityHandler = {
         ctx.abortSignal,
         30_000,
       );
+      const latencyMs = Date.now() - callStartedAt;
 
       if (!res.ok) {
         const err = res.body.error ? String(res.body.error) : res.raw.slice(0, 300);
         return { output: `ModalStatus failed (${res.status}): ${err}`, isError: true };
       }
 
-      try { recordUsage('modal/status', 0, 0, STATUS_PRICE_USD, 0); } catch { /* ignore */ }
+      try { recordUsage('modal/status', 0, 0, STATUS_PRICE_USD, latencyMs); } catch { /* ignore */ }
 
       const status = (res.body.status as string) || 'unknown';
       const extra = JSON.stringify(res.body, null, 2);
@@ -684,6 +690,7 @@ export const modalTerminateCapability: CapabilityHandler = {
     try { reservation = await walletReservation.hold(TERMINATE_PRICE_USD); } catch { /* ignore */ }
 
     try {
+      const callStartedAt = Date.now();
       const res = await postWithPayment(
         modalEndpoint('terminate'),
         { sandbox_id },
@@ -691,6 +698,7 @@ export const modalTerminateCapability: CapabilityHandler = {
         ctx.abortSignal,
         30_000,
       );
+      const latencyMs = Date.now() - callStartedAt;
 
       // Always remove from tracker — even on failure, retrying is wasteful.
       sessionSandboxTracker.remove(sandbox_id);
@@ -705,7 +713,7 @@ export const modalTerminateCapability: CapabilityHandler = {
         };
       }
 
-      try { recordUsage('modal/terminate', 0, 0, TERMINATE_PRICE_USD, 0); } catch { /* ignore */ }
+      try { recordUsage('modal/terminate', 0, 0, TERMINATE_PRICE_USD, latencyMs); } catch { /* ignore */ }
 
       return { output: `Sandbox \`${sandbox_id}\` terminated.` };
     } finally {

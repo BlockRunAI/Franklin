@@ -301,6 +301,13 @@ function buildExecute(deps: ImageGenDeps) {
   const timeoutMs = referenceImage ? 180_000 : 60_000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
+  // Wall-clock start of the paid call, including 402 retry + (optional)
+  // 202 polling. Used by recordUsage below so franklin-stats.json
+  // populates avgLatencyMs for image models. Mirrors the agent-loop fix
+  // in 3.15.61 — same pattern, same reason: insights couldn't surface
+  // "Seedance is slower than grok" while every media call recorded 0.
+  const callStartedAt = Date.now();
+
   try {
     // First request — will get 402
     let response = await fetch(endpoint, {
@@ -446,11 +453,12 @@ function buildExecute(deps: ImageGenDeps) {
     // insights panel under-reported total spend and never surfaced
     // image-generation models in its "top models" list. Fire-and-forget —
     // stats write must not fail a user-visible generation.
+    const latencyMs = Date.now() - callStartedAt;
     void (async () => {
       try {
         const m = await findModel(imageModel);
         const estCost = m ? estimateCostUsd(m, { quantity: 1 }) : 0;
-        recordUsage(imageModel, 0, 0, estCost, 0);
+        recordUsage(imageModel, 0, 0, estCost, latencyMs);
       } catch { /* ignore stats errors */ }
     })();
 
