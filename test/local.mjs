@@ -2505,6 +2505,42 @@ test('classifier: Payment verification failed → payment_rejected with chain/cl
 // surface "this model is slow" or "fallback was faster". 3.15.61 wraps
 // the model call with Date.now() and passes the delta to recordUsage.
 
+test('agent context: wallet-storage block names the real files (no stale paths)', async () => {
+  // Verified 2026-05-05: the system-prompt wallet block claimed Solana
+  // keys lived at `~/.blockrun/solana-wallet.json` (didn't exist on the
+  // user's machine — the real file is `~/.blockrun/.solana-session`)
+  // and named `~/.blockrun/spending.json` as the spend tracker (last
+  // touched 2026-01-19, totally stale; the live trackers are
+  // `franklin-stats.json` + `franklin-audit.jsonl` + `cost_log.jsonl`).
+  // When the agent answers "where is my Solana wallet" or "how much
+  // have I spent", it was citing files that didn't exist or were 4
+  // months out of date.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'agent', 'context.js'),
+    'utf-8',
+  );
+  // Real Solana wallet path appears (in the prompt text + the read code).
+  assert.match(src, /\.solana-session/, 'must name the canonical .solana-session file');
+  // The PROMPT TEXT (the human-readable wallet block) must not name
+  // solana-wallet.json as a private key file. The legacy path may
+  // appear as a fallback in the read code, but the wallet-storage
+  // doc block must NOT cite it. Verified by checking the prompt
+  // header context.
+  const walletBlockMatch = src.match(/Wallet Storage[\s\S]{0,2000}/);
+  assert.ok(walletBlockMatch, 'must contain the Wallet Storage prompt block');
+  assert.doesNotMatch(walletBlockMatch[0], /solana-wallet\.json/,
+    'wallet-storage prompt block must not document the legacy solana-wallet.json');
+  assert.doesNotMatch(walletBlockMatch[0], /Spending tracker.*spending\.json/i,
+    'wallet-storage prompt block must not name spending.json as the spend tracker');
+  // Real spend trackers cited.
+  assert.match(src, /franklin-stats\.json/, 'must reference franklin-stats.json as the rolling tracker');
+  assert.match(src, /cost_log\.jsonl/, 'must reference cost_log.jsonl as the per-call ledger');
+  // Chain canonical path.
+  assert.match(src, /payment-chain/, 'wallet block must name payment-chain as the canonical chain file');
+});
+
 test('agent context: chain reader prefers payment-chain, falls back to legacy .chain', async () => {
   // Verified 2026-05-05: ~/.blockrun/.chain hadn't been updated since
   // 2026-03-14 ("base") while ~/.blockrun/payment-chain (the canonical

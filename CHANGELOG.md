@@ -1,5 +1,68 @@
 # Changelog
 
+## 3.15.64 — Agent context reports the SDK-canonical Solana wallet (not a legacy ghost)
+
+⚠ **Critical correctness fix**: pre-3.15.64, the agent's
+runtime-wallet block was reporting the **wrong Solana address**
+on machines that had both the canonical SDK file and a legacy
+migration artifact.
+
+Verified 2026-05-05 on the developer's machine:
+
+\`\`\`
+SDK getOrCreateSolanaWallet().address:   Fg57kHX9XzWG6WfisWdQ4zir4i1tJeW3Yo6KjE5AKaH   ← real wallet (.solana-session)
+Legacy solana-wallet.json reports:        4DqmoTtvY2GvFRpaMeeEkQ3gt5b1er49R5KkbdwBFzJT   ← derived from .solana-session-key2
+\`\`\`
+
+The pre-fix \`readRuntimeWallet\` in \`src/agent/context.ts:690\`
+parsed \`~/.blockrun/solana-wallet.json\` (a legacy SDK migration
+artifact left over from an old version) and reported its
+\`address\` field. But the SDK actually loads
+\`~/.blockrun/.solana-session\` for every paid call. The two files
+hold **different keys** on machines that went through the
+migration mid-session (or that had the panel write a new key
+without cleaning the old JSON).
+
+Real consequence: when the user asked the agent
+"what's my Solana wallet address" or "where do I send funds",
+the agent confidently quoted \`4Dqm…\` (legacy) while the SDK
+was signing payments with \`Fg57k…\` (canonical). Funding the
+quoted address would have left the x402 path unable to see the
+USDC.
+
+Fix:
+
+- \`src/agent/context.ts:readRuntimeWallet\` now reads
+  \`~/.blockrun/.solana-session\` first (the SDK-canonical raw
+  base58 secret key, mode 600), derives the public address with
+  \`Keypair.fromSecretKey(bs58.decode(key))\` — same primitives
+  \`tools/jupiter.ts:229\` uses for transaction signing — and
+  returns that address. Only falls back to the legacy
+  \`solana-wallet.json\` if the canonical file is missing
+  (unmigrated installs).
+- The prompt-text block (3.15.63's other fix) was already
+  updated to name \`.solana-session\` as the private-key file;
+  the read path now matches the prompt's claim.
+- \`Keypair\` and \`bs58\` already shipped via
+  \`@solana/web3.js\` and \`bs58\` deps; static-imported at the
+  top of \`context.ts\`.
+
+One regression test (added in 3.15.63's session) already pinned
+the prompt text. New behavior verified by running
+\`getOrCreateSolanaWallet()\` from a Node REPL against the
+user's real \`.blockrun\` and confirming the derived address
+matches.
+
+Tests: 344/344 pass (was 343, +1 from the wallet-storage
+regression test now passing the tighter assertion).
+
+If you've previously funded a Solana wallet address that the
+agent quoted, run \`franklin balance\` and compare to
+\`getOrCreateSolanaWallet().address\` — the SDK-active address
+is the one to fund. Legacy \`solana-wallet.json\` can be safely
+moved to backup once you confirm the SDK is using
+\`.solana-session\`.
+
 ## 3.15.63 — Chain reader prefers \`payment-chain\` (was reading legacy \`.chain\`)
 
 Verified 2026-05-05 on a real machine: two chain files coexist

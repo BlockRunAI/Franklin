@@ -7,6 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { getWalletAddress as getBaseWalletAddress } from '@blockrun/llm';
+import { Keypair } from '@solana/web3.js';
+import bs58 from 'bs58';
 import { loadLearnings, decayLearnings, saveLearnings, formatForPrompt, loadSkills, matchSkills, formatSkillsForPrompt } from '../learnings/store.js';
 
 // ─── System Instructions Assembly ──────────────────────────────────────────
@@ -175,10 +177,16 @@ Franklin stores wallet keys in ~/.blockrun/. When the user asks about wallet loc
   Format: 66-char hex string starting with 0x (file name intentionally looks like a session token for obscurity)
   Address: derivable from the key; also available via getWalletAddress() from @blockrun/llm
 - Solana wallet:
-  File: ~/.blockrun/solana-wallet.json (JSON with address + private_key)
-- Chain selection: ~/.blockrun/.chain ("base" or "solana")
-- Spending tracker: ~/.blockrun/spending.json
-- Programmatic access: import { getWalletAddress, getOrCreateWallet } from '@blockrun/llm'
+  Private key file: ~/.blockrun/.solana-session
+  Format: bare base58 secret key (file name mirrors the Base wallet's obscurity convention; mode 600)
+  Address: derivable; available via getOrCreateSolanaWallet() from @blockrun/llm
+- Chain selection: ~/.blockrun/payment-chain ("base" or "solana"). Legacy file ~/.blockrun/.chain may also exist on installs that haven't migrated; canonical is payment-chain.
+- Spending data:
+  - ~/.blockrun/franklin-stats.json — rolling totals + per-model breakdown (what \`franklin stats\` reads).
+  - ~/.blockrun/franklin-audit.jsonl — append-only forensic ledger of every LLM call.
+  - ~/.blockrun/cost_log.jsonl — append-only ledger of every settled x402 payment (written by @blockrun/llm SDK).
+  - Use \`franklin stats\` / \`franklin content list\` instead of parsing files when the user asks "how much did I spend".
+- Programmatic access: import { getWalletAddress, getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm'
 
 When the user asks about "my wallet" without qualifier, default to Base (it's the primary chain shown at launch). Only mention Solana if the chain file says solana or the user explicitly asks.`;
 }
@@ -639,7 +647,7 @@ function buildEnvironmentSection(workingDir: string): string {
     lines.push('# Franklin Runtime Wallet');
     if (wallet.chain) lines.push(`- Active chain: ${wallet.chain}`);
     if (wallet.base) lines.push(`- Base wallet address: ${wallet.base} (private key at ~/.blockrun/.session)`);
-    if (wallet.solana) lines.push(`- Solana wallet address: ${wallet.solana} (private key at ~/.blockrun/solana-wallet.json)`);
+    if (wallet.solana) lines.push(`- Solana wallet address: ${wallet.solana} (private key at ~/.blockrun/.solana-session)`);
   }
 
   return lines.join('\n');
@@ -679,13 +687,40 @@ function readRuntimeWallet(): { chain?: string; base?: string; solana?: string }
     if (addr && typeof addr === 'string') out.base = addr;
   } catch { /* SDK may not be available in all contexts — skip silently */ }
 
-  // Solana address: read from JSON
+  // Solana address: prefer the canonical SDK file `.solana-session`
+  // (raw base58 secret key, mode 600 — what the SDK actually writes
+  // and reads via getOrCreateSolanaWallet). Fall back to the legacy
+  // `solana-wallet.json` shape (JSON with {address, privateKey}) for
+  // unmigrated installs. Verified 2026-05-05: user's machine had
+  // both files present — `.solana-session` (88 bytes) was canonical
+  // and `solana-wallet.json` (123 bytes) was a leftover from an
+  // earlier SDK version. The pre-fix code only read the legacy file,
+  // so once a user `rm`s it after migration, the runtime-wallet
+  // section silently stops showing the Solana address.
   try {
-    const solPath = path.join(blockrunDir, 'solana-wallet.json');
-    if (fs.existsSync(solPath)) {
-      const data = JSON.parse(fs.readFileSync(solPath, 'utf-8'));
-      const addr = data.address || data.publicKey;
-      if (addr && typeof addr === 'string') out.solana = addr;
+    const canonical = path.join(blockrunDir, '.solana-session');
+    if (fs.existsSync(canonical)) {
+      const key = fs.readFileSync(canonical, 'utf-8').trim();
+      if (key) {
+        // Derive the public address from the secret key. Same primitives
+        // jupiter.ts:229 uses for transaction signing — keeps this
+        // sync-with-SDK without depending on async `getOrCreateSolanaWallet`
+        // (which would create a wallet on first read, an unwanted side
+        // effect for a context-builder).
+        try {
+          const bytes = bs58.decode(key);
+          const kp = Keypair.fromSecretKey(bytes);
+          out.solana = kp.publicKey.toBase58();
+        } catch { /* derivation failed — fall through to legacy probe */ }
+      }
+    }
+    if (!out.solana) {
+      const legacy = path.join(blockrunDir, 'solana-wallet.json');
+      if (fs.existsSync(legacy)) {
+        const data = JSON.parse(fs.readFileSync(legacy, 'utf-8'));
+        const addr = data.address || data.publicKey;
+        if (addr && typeof addr === 'string') out.solana = addr;
+      }
     }
   } catch { /* ignore */ }
 
