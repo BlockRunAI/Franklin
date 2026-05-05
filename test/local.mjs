@@ -1595,7 +1595,12 @@ test('error classifier maps common failure modes', async () => {
   assert.equal(network.category, 'network');
   assert.equal(network.maxRetries, 1);
   assert.deepEqual(classifyAgentError('429 rate limit exceeded').category, 'rate_limit');
-  assert.deepEqual(classifyAgentError('verification failed: insufficient balance').category, 'payment');
+  // "Insufficient balance" alone — no signature attempted yet — stays as
+  // payment_required (the legacy 'payment' category).
+  assert.deepEqual(classifyAgentError('insufficient balance').category, 'payment');
+  // "Payment verification failed" — gateway rejected a SIGNED payment.
+  // Distinct remedy from payment_required: see classifier suggestion.
+  assert.deepEqual(classifyAgentError('Payment verification failed').category, 'payment_rejected');
   assert.deepEqual(classifyAgentError('prompt is too long').category, 'context_limit');
   assert.deepEqual(classifyAgentError('500 internal server error').category, 'server');
 
@@ -2299,6 +2304,32 @@ test('streamCompletion: retries without tool_choice when upstream rejects it', a
 // as VideoGen's image_url; gateway returned `400 Invalid request body:
 // invalid_format url path: image_url`. ImageGen already handled this
 // via resolveReferenceImage — VideoGen now reuses the same helper.
+
+// ─── payment_rejected category: signed payment verified-and-rejected ──
+//
+// Verified 2026-05-04 in a screenshot: ExaSearch failed with
+// `(402): {"error":"Payment verification failed","details":"Ver…}`. Same
+// HTTP status as a "payment required" challenge but a different remedy:
+// the user's signed payment was rejected, not absent. Same retry won't
+// help — must fix clock skew / chain / nonce.
+
+test('classifier: Payment verification failed → payment_rejected with chain/clock-skew tip', async () => {
+  const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
+
+  // Gateway-shape body, exact match for the live failure.
+  const live = classifyAgentError('Exa /v1/exa/search failed (402): {"error":"Payment verification failed","details":"Ver..."}');
+  assert.equal(live.category, 'payment_rejected');
+  assert.equal(live.label, 'PaymentRejected');
+  assert.equal(live.maxRetries, 0, 'must not auto-retry — same signature stays rejected');
+  assert.match(live.suggestion ?? '', /clock skew/i, 'suggestion should mention clock skew');
+  assert.match(live.suggestion ?? '', /chain/i, 'suggestion should mention chain');
+  assert.match(live.suggestion ?? '', /\/model free/i, 'suggestion should offer free-model escape');
+
+  // Other variant phrasings the gateway might use.
+  for (const msg of ['signature mismatch', 'invalid x-payment header', 'nonce reuse detected']) {
+    assert.equal(classifyAgentError(msg).category, 'payment_rejected', `should classify "${msg}" as payment_rejected`);
+  }
+});
 
 // ─── formatModelSwitch: surface resolved model + reason in switch messages ─
 //

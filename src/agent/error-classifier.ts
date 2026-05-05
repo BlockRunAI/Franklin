@@ -10,6 +10,7 @@
 export type AgentErrorCategory =
   | 'rate_limit'
   | 'payment'
+  | 'payment_rejected'
   | 'network'
   | 'timeout'
   | 'context_limit'
@@ -21,7 +22,7 @@ export type AgentErrorCategory =
 
 export interface AgentErrorInfo {
   category: AgentErrorCategory;
-  label: 'RateLimit' | 'Payment' | 'Network' | 'Timeout' | 'Context' | 'Overloaded' | 'Server' | 'Auth' | 'Schema' | 'Unknown';
+  label: 'RateLimit' | 'Payment' | 'PaymentRejected' | 'Network' | 'Timeout' | 'Context' | 'Overloaded' | 'Server' | 'Auth' | 'Schema' | 'Unknown';
   isTransient: boolean;
   /** Max retries for this error type (overrides default). undefined = use default. */
   maxRetries?: number;
@@ -36,10 +37,32 @@ function includesAny(text: string, patterns: string[]): boolean {
 export function classifyAgentError(message: string): AgentErrorInfo {
   const err = message.toLowerCase();
 
+  // payment_rejected — the gateway received a SIGNED payment header and
+  // rejected it during verification (signature mismatch, replay-nonce
+  // reuse, clock skew, wrong-chain wallet). Different remedy from
+  // payment_required: re-presenting the same signature won't help.
+  // Verified 2026-05-04 in a live session: ExaSearch returned
+  // `Exa /v1/exa/search failed (402): {"error":"Payment verification failed",...}`.
+  // Classify BEFORE the generic 'payment' branch below since the body
+  // contains both 'payment' and 'verification failed'.
+  if (includesAny(err, [
+    'verification failed',
+    'payment verification',
+    'signature mismatch',
+    'invalid payment signature',
+    'invalid x-payment',
+    'nonce reuse',
+    'replay protection',
+  ])) {
+    return {
+      category: 'payment_rejected', label: 'PaymentRejected', isTransient: false, maxRetries: 0,
+      suggestion: 'The gateway rejected your signed payment. Run `franklin balance` to confirm funds + chain. Common causes: clock skew (resync system clock), wrong chain selected (use `/chain` to switch), or stale nonce (the same retry will fail). Switch to a free model with `/model free` to keep working.',
+    };
+  }
+
   if (includesAny(err, [
     'insufficient',
     'payment',
-    'verification failed',
     'balance',
     '402',
     'free tier',

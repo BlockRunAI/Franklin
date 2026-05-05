@@ -1,5 +1,71 @@
 # Changelog
 
+## 3.15.56 — Distinguish \`Payment verification failed\` from \`payment required\`
+
+Verified 2026-05-04 in a screenshot: ExaSearch returned
+
+\`\`\`
+(402): {"error":"Payment verification failed","details":"Ver…
+\`\`\`
+
+Same HTTP status as a routine 402 challenge ("please sign and
+retry") but the remedy is opposite. The user's signed payment
+was already accepted by the gateway socket — and then rejected
+during cryptographic verification. Re-presenting the same
+signature won't help. Common causes: clock skew (signature
+timestamp out of acceptable window), wrong chain (signature on
+Base for a Solana endpoint or vice versa), replay-nonce reuse,
+or wallet/signature mismatch.
+
+Pre-fix the classifier (\`src/agent/error-classifier.ts:39-50\`)
+matched both phrases (\`payment\`, \`verification failed\`) into
+the same \`'payment'\` category with a generic
+"check funds + try /model free" suggestion. The agent had no
+way to tell the user the actual remedy.
+
+Fix:
+
+- New category \`payment_rejected\` (label \`PaymentRejected\`)
+  in \`AgentErrorCategory\`. Classified BEFORE the generic
+  \`payment\` branch since the body usually contains both
+  phrases.
+- Trigger phrases: \`verification failed\`, \`payment verification\`,
+  \`signature mismatch\`, \`invalid payment signature\`,
+  \`invalid x-payment\`, \`nonce reuse\`, \`replay protection\`.
+- Suggestion calls out the three actual fixes — clock skew,
+  chain selection, stale nonce — and offers \`/model free\` as
+  the escape hatch.
+- \`maxRetries: 0\`. The whole point: a stale signature stays
+  stale; auto-retrying the same x-payment header burns more
+  rejections.
+- \`src/agent/loop.ts:1305\` payment-fallback branch now
+  triggers on either \`payment\` OR \`payment_rejected\`. Same
+  free-model fallback flow; the user-facing suggestion text
+  guides them to the right fix.
+
+This composes with 3.15.55: the model-switch message now
+reads:
+
+\`\`\`
+*blockrun/auto (anthropic/claude-sonnet-4.6) failed [PaymentRejected] — switching to nvidia/qwen3-coder-480b*
+\`\`\`
+
+— so the user sees the concrete model, the rejection reason,
+and the next model in one line.
+
+Two new tests + one updated:
+
+- Updated existing classifier test to disambiguate
+  \`'insufficient balance'\` (payment_required) from
+  \`'Payment verification failed'\` (payment_rejected).
+- New test pins the gateway-shape body → \`payment_rejected\`,
+  \`maxRetries: 0\`, suggestion mentions clock skew + chain +
+  /model free.
+- New test covers four variant phrasings (signature mismatch,
+  invalid x-payment, nonce reuse).
+
+Tests: 328/328 pass (was 327 before, 1 net new).
+
 ## 3.15.55 — Model-switch messages now show the resolved model + reason
 
 Verified 2026-05-04 from a screenshot:

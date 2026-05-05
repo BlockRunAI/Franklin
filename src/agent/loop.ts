@@ -1301,8 +1301,12 @@ export async function interactiveSession(
 
         // ── Payment failure: auto-fallback to free models ──
         // Track payment-failed models for the entire session — unlike transient errors,
-        // 402s will keep failing until the user adds funds.
-        if (classified.category === 'payment') {
+        // 402s will keep failing until the user adds funds. Also handles
+        // payment_rejected (signature verified-and-rejected by gateway):
+        // same fallback path, but the suggestion text in classifier guides
+        // the user toward clock-skew / chain-mismatch fixes rather than
+        // "add funds."
+        if (classified.category === 'payment' || classified.category === 'payment_rejected') {
           turnFailedModels.add(config.model);
           paymentFailedModels.set(config.model, Date.now());
           // Bound the Map so long sessions don't leak. LRU-evict oldest by timestamp.
