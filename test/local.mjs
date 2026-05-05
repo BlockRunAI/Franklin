@@ -2599,6 +2599,46 @@ test('coingecko resolveProviderIdAsync: /search failure falls back to lowercase 
   }
 });
 
+test('videogen: aspect_ratio passes through to the gateway request body', async () => {
+  // Verified 2026-05-04: agent generated a video, X.com rejected with
+  // "aspect ratio too small", user had to manually ffmpeg re-encode to
+  // 1280x720. VideoGen now exposes aspect_ratio and the tool description
+  // advises the agent to set "16:9" + plan an ffmpeg follow-up for X.
+  const { videoGenCapability } = await import('../dist/tools/videogen.js');
+  const originalFetch = globalThis.fetch;
+  let captured = null;
+  globalThis.fetch = async (_url, init) => {
+    captured = JSON.parse(init.body);
+    throw new Error('captured');
+  };
+  try {
+    await videoGenCapability.execute(
+      {
+        prompt: 'test',
+        model: 'xai/grok-imagine-video',
+        aspect_ratio: '16:9',
+        duration_seconds: 8,
+      },
+      { workingDir: '/tmp', abortSignal: new AbortController().signal },
+    );
+  } catch { /* fetch threw 'captured' on purpose */ }
+  finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.ok(captured, 'fetch must have been called');
+  assert.equal(captured.aspect_ratio, '16:9', 'aspect_ratio must round-trip into the body');
+});
+
+test('videogen: tool spec mentions X.com / TikTok / Instagram aspect ratios', async () => {
+  const { videoGenCapability } = await import('../dist/tools/videogen.js');
+  const desc = videoGenCapability.spec.description;
+  assert.match(desc, /16:9/, 'must mention 16:9 for landscape platforms');
+  assert.match(desc, /9:16/, 'must mention 9:16 for vertical platforms');
+  assert.match(desc, /X.*Twitter|Twitter|X /, 'must call out X / Twitter');
+  assert.match(desc, /InputImageSensitiveContentDetected|seedance-.*refuses|moderation/i,
+    'must warn about Seedance moderation on photorealistic faces');
+});
+
 test('videogen: tool spec advertises the known-valid model list (so agents do not guess)', async () => {
   // Verified 2026-05-04 in a live session: agent invented
   // "seedance/2.0-pro" (a name that doesn't exist), gateway 400'd

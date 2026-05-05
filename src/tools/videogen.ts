@@ -48,6 +48,7 @@ interface VideoGenInput {
   image_url?: string;
   duration_seconds?: number;
   contentId?: string;
+  aspect_ratio?: string;
 }
 
 export interface VideoGenDeps {
@@ -76,7 +77,7 @@ function buildExecute(deps: VideoGenDeps) {
     ctx: ExecutionScope,
   ): Promise<CapabilityResult> {
     const rawInput = input as unknown as VideoGenInput;
-    const { output_path, model, image_url, duration_seconds, contentId } = rawInput;
+    const { output_path, model, image_url, duration_seconds, contentId, aspect_ratio } = rawInput;
 
     if (!rawInput.prompt) return { output: 'Error: prompt is required', isError: true };
 
@@ -194,6 +195,12 @@ function buildExecute(deps: VideoGenDeps) {
       prompt: chosenPrompt,
       ...(resolvedImageUrl ? { image_url: resolvedImageUrl } : {}),
       ...(duration_seconds ? { duration_seconds } : {}),
+      // aspect_ratio passes through to the gateway. Models that support it
+      // (newer Seedance / grok variants) honor it; models that ignore it
+      // produce their default size. If the gateway rejects an unknown
+      // value, the 400 body surfaces via 3.15.45 diagnostic so the agent
+      // can drop the param and retry.
+      ...(aspect_ratio ? { aspect_ratio } : {}),
     });
 
     const headers: Record<string, string> = {
@@ -549,7 +556,15 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
         "xai/grok-imagine-video bills $0.05/s (8s default ≈ $0.42). Generation " +
         "takes ~20–60s. ALWAYS confirm with the user before calling — videos " +
         "are expensive and slow. Pass contentId to attach to a Content piece " +
-        "(budget is checked before paying; asset is recorded on success).",
+        "(budget is checked before paying; asset is recorded on success). " +
+        "PLATFORM TARGETING: when the user says they'll post to X / Twitter, " +
+        "set aspect_ratio: '16:9' AND plan a follow-up `ffmpeg -vf scale=1280:720` " +
+        "step — X rejects videos under 720p with 'aspect ratio too small'. " +
+        "TikTok / Reels / Shorts: aspect_ratio '9:16'. Instagram Square: '1:1'. " +
+        "MODERATION: bytedance/seedance-* refuses photorealistic human faces " +
+        "(`InputImageSensitiveContentDetected.PrivacyInformation`); when the " +
+        "seed image has a real-looking person, use xai/grok-imagine-video " +
+        "instead, or regenerate the keyframe in a more stylized style first.",
       input_schema: {
         type: 'object',
         properties: {
@@ -565,6 +580,16 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
           },
           image_url: { type: 'string', description: 'Optional seed image (image-to-video). Accepts http(s) URL, data: URI, or local file path — local paths get inlined as base64 data URIs automatically.' },
           duration_seconds: { type: 'number', description: 'Duration billed for. Default depends on model (8s for grok-imagine-video).' },
+          aspect_ratio: {
+            type: 'string',
+            description:
+              'Optional aspect ratio hint passed to the model. Common values: ' +
+              '"16:9" (landscape — X/Twitter, YouTube, TikTok-landscape), ' +
+              '"9:16" (vertical — TikTok, Reels, Shorts), ' +
+              '"1:1" (square — Instagram feed). Models that don\'t support the ' +
+              'param ignore it; if the gateway 400s on an unknown value, the ' +
+              'error body surfaces — drop the param and retry.',
+          },
           contentId: { type: 'string', description: 'Optional Content id to attach and budget against.' },
         },
         required: ['prompt'],

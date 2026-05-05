@@ -1,5 +1,61 @@
 # Changelog
 
+## 3.15.59 — VideoGen aspect_ratio + platform / moderation hints
+
+Verified 2026-05-04 in a live session two friction points:
+
+1. User: *"i cannot update to x.com because The aspect ratio of
+   the video you tried to upload was too small"* — agent had to
+   manually \`ffmpeg -vf scale=1280:720 …\` post-process. VideoGen
+   had no aspect-ratio handle of any kind.
+2. Earlier the same session, \`bytedance/seedance-2.0\` rejected
+   the keyframe with \`InputImageSensitiveContentDetected.PrivacyInformation\`
+   ("the input image may contain real person"), forcing a switch
+   to \`xai/grok-imagine-video\`. Agent didn't know upfront which
+   models have stricter moderation — discovered it by burning a
+   submit round-trip.
+
+Both are about the agent lacking advance knowledge to make the
+right call the first time.
+
+Fix:
+
+- New optional \`aspect_ratio\` parameter on VideoGen. Passes
+  through to the gateway body (models that don't support it
+  ignore it; gateway 400 on unknown values surfaces via 3.15.45
+  diagnostic).
+- Tool description gains a **PLATFORM TARGETING** section:
+  > when the user says they'll post to X / Twitter, set
+  > aspect_ratio: '16:9' AND plan a follow-up
+  > \`ffmpeg -vf scale=1280:720\` step — X rejects videos under
+  > 720p with 'aspect ratio too small'. TikTok / Reels / Shorts:
+  > '9:16'. Instagram Square: '1:1'.
+- Tool description gains a **MODERATION** note:
+  > bytedance/seedance-* refuses photorealistic human faces
+  > (InputImageSensitiveContentDetected.PrivacyInformation);
+  > when the seed image has a real-looking person, use
+  > xai/grok-imagine-video instead, or regenerate the keyframe
+  > in a more stylized style first.
+- Per-parameter description for \`aspect_ratio\` lists common
+  values + their target platforms.
+
+Two new tests:
+
+1. **Passthrough**: invoking \`videoGenCapability.execute\` with
+   \`aspect_ratio: '16:9'\` and intercepting fetch asserts the
+   request body's \`aspect_ratio\` field round-trips.
+2. **Description content**: tool spec carries 16:9, 9:16, X /
+   Twitter mention, and the seedance-moderation warning.
+
+Tests: 336/336 pass (was 334 before, 2 new).
+
+Note this is documentation-driven. The agent already does the
+right things end-to-end (it figured out ffmpeg by itself, it
+switched to grok after Seedance refused). The fix lets it skip
+the discovery cost — get to the working answer on the first
+attempt instead of the third, saving ~$0.42 + 60s per skipped
+retry.
+
 ## 3.15.58 — \`franklin content list / show\` — agent stops estimating spend from memory
 
 Verified 2026-05-04 in a live session: user asked "我花了多少钱做这个"
