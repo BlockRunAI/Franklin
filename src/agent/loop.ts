@@ -1177,6 +1177,15 @@ export async function interactiveSession(
       const callToolChoice = forceToolChoiceNextRound;
       forceToolChoiceNextRound = null;
 
+      // Wall-clock start of the model call. Used by the recordUsage call
+      // a few hundred lines below so franklin-stats.json captures real
+      // latency. Verified 2026-05-05: `franklin stats` reported
+      // `avgLat=0.0s` for every model across 5300+ requests because the
+      // agent-loop callsite always passed 0 for latencyMs (proxy path
+      // already measured correctly). `franklin insights` couldn't surface
+      // "this model is consistently slow" or "fallback was faster" until
+      // this was fixed.
+      const llmCallStartedAt = Date.now();
       try {
         const result = await client.complete(
           {
@@ -1505,7 +1514,8 @@ export async function interactiveSession(
       // franklin-debug.log; `franklin insights` was therefore useless
       // for spotting a hot routing chain.
       const costEstimate = estimateCost(resolvedModel, inputTokens, usage.outputTokens, 1);
-      recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, 0, turnFailedModels.size > 0);
+      const llmLatencyMs = Date.now() - llmCallStartedAt;
+      recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, llmLatencyMs, turnFailedModels.size > 0);
 
       // ── Circuit breakers: prevent infinite-loop wallet drain ──
       // Per-turn $-cap was removed in v3.11.0 — runaway loops are caught by

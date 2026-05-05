@@ -2495,6 +2495,38 @@ test('classifier: Payment verification failed → payment_rejected with chain/cl
   }
 });
 
+// ─── agent loop measures LLM latency for franklin-stats ──────────────
+//
+// Verified 2026-05-05: `franklin stats` showed `avgLat=0.0s` for every
+// model across 5300+ requests because the agent-loop's recordUsage
+// callsite was hardcoded with `latencyMs=0` (the proxy-path callsite
+// in src/proxy/server.ts:651 measured correctly; only the agent-loop
+// path was broken). Without latency, `franklin insights` couldn't
+// surface "this model is slow" or "fallback was faster". 3.15.61 wraps
+// the model call with Date.now() and passes the delta to recordUsage.
+
+test('agent loop: measures LLM latency and passes it to recordUsage', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'agent', 'loop.js'),
+    'utf-8',
+  );
+  // Latency is captured at the start of the model call.
+  assert.match(src, /llmCallStartedAt = Date\.now\(\)/,
+    'must capture wall-clock start of model call');
+  // Delta is computed and passed to recordUsage (NOT a literal 0).
+  assert.match(src, /llmLatencyMs = Date\.now\(\) - llmCallStartedAt/,
+    'must compute the latency delta');
+  assert.match(src, /recordUsage\([^)]*llmLatencyMs/,
+    'recordUsage must receive llmLatencyMs (not a hardcoded 0)');
+  // Defensive: the legacy `recordUsage(... , 0, ...)` shape from
+  // pre-3.15.61 must not still be present. Line-anchored to avoid
+  // matching unrelated comments mentioning '0' in the file.
+  assert.doesNotMatch(src, /recordUsage\(resolvedModel, [^,]+, [^,]+, [^,]+, 0,/,
+    'agent-loop recordUsage call must no longer pass literal 0 for latencyMs');
+});
+
 // ─── stripLargeImageData: prevent multi-MB session jsonl files ─────
 //
 // Verified 2026-05-05: a 5-turn session with .png reads grew to 12 MB

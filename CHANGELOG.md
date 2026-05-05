@@ -1,5 +1,61 @@
 # Changelog
 
+## 3.15.61 — Agent-loop LLM calls now measure latency (\`avgLat=0.0s\` was lying)
+
+Verified 2026-05-05 on a real machine: \`franklin-stats.json\`
+\`byModel\` showed \`avgLat=0.0s\` for every model across **5,300+
+requests**:
+
+\`\`\`
+anthropic/claude-sonnet-4.6   reqs= 285  $12.04  avgLat=0.0s  fb=0
+anthropic/claude-opus-4.7     reqs=  68  $ 3.00  avgLat=0.0s  fb=0
+zai/glm-5.1                   reqs=2743  $ 2.74  avgLat=0.0s  fb=0
+zai/glm-5                     reqs= 213  $ 1.54  avgLat=0.0s  fb=0
+\`\`\`
+
+Same shape as the 3.15.43 fallback-flag bug: the agent-loop's
+\`recordUsage\` callsite hardcoded the latency arg to 0, while
+the proxy-path's \`recordUsage\` (\`src/proxy/server.ts:651\`)
+already measured correctly. Two writers, only one passing the
+real value.
+
+\`\`\`ts
+// agent/loop.ts (before)
+recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, 0, ...);
+//                                                                       ^ latencyMs=0
+\`\`\`
+
+The 0 went into \`stats.byModel[m].totalLatencyMs\`,
+\`avgLatencyMs = totalLatencyMs / requests\` collapsed to 0
+across every model. \`franklin insights\` couldn't surface
+"this model is consistently slow", "fallback was faster", or
+"timeouts are clustering on a specific provider" — the load-
+bearing signal for routing decisions was always zero.
+
+Fix:
+
+- \`src/agent/loop.ts\`: capture \`llmCallStartedAt = Date.now()\`
+  immediately before \`client.complete(...)\`, compute
+  \`llmLatencyMs = Date.now() - llmCallStartedAt\` after the
+  response returns, pass to \`recordUsage\`. Same wall-clock
+  shape the proxy path already uses.
+- The literal-0 callsite is gone. Future regressions get caught
+  by the new test (next bullet).
+
+One new test asserts the \`dist/agent/loop.js\` source contains
+\`llmCallStartedAt = Date.now()\`, computes the delta, passes it
+to \`recordUsage\`, AND that the legacy
+\`recordUsage(... , 0, ...)\` shape is NOT present anymore.
+
+Tests: 340/340 pass (was 339 before, 1 new).
+
+This composes with 3.15.43 (fallback flag also previously
+dropped at the same callsite) — both signals now reach
+\`franklin-stats.json\` correctly. Pre-fix request counts in
+\`stats.history\` are unchanged (latency=0 entries stay), but
+new requests after upgrade will start populating real averages
+within a few sessions.
+
 ## 3.15.60 — Strip inline base64 image bytes from session jsonl (12 MB → small)
 
 Verified 2026-05-05 on a real machine: \`du -h ~/.blockrun/sessions/\`
