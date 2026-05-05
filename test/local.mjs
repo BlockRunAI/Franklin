@@ -2505,6 +2505,28 @@ test('classifier: Payment verification failed → payment_rejected with chain/cl
 // surface "this model is slow" or "fallback was faster". 3.15.61 wraps
 // the model call with Date.now() and passes the delta to recordUsage.
 
+test('agent context: chain reader prefers payment-chain, falls back to legacy .chain', async () => {
+  // Verified 2026-05-05: ~/.blockrun/.chain hadn't been updated since
+  // 2026-03-14 ("base") while ~/.blockrun/payment-chain (the canonical
+  // CHAIN_FILE) was being written 2026-05-04. Same value on this
+  // machine, but the two paths can diverge any time the user runs
+  // `franklin solana` (writes payment-chain only). The chain reader
+  // in agent/context.ts:readRuntimeWallet was hardcoded to .chain and
+  // would silently report stale state.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'agent', 'context.js'),
+    'utf-8',
+  );
+  assert.match(src, /'payment-chain'/, 'must reference the canonical payment-chain file');
+  assert.match(src, /'\.chain'/, 'must keep the legacy .chain fallback for unmigrated installs');
+  const newIdx = src.indexOf("'payment-chain'");
+  const legacyIdx = src.indexOf("'.chain'");
+  assert.ok(newIdx !== -1 && legacyIdx !== -1, 'both paths must appear in dist');
+  assert.ok(newIdx < legacyIdx, 'payment-chain check must appear before legacy .chain check');
+});
+
 test('media + modal tools: measure latency and pass it to recordUsage (no more 0)', async () => {
   // 3.15.61 fixed agent loop's hardcoded latencyMs=0; 3.15.62 closes
   // the remaining 5 callsites (imagegen, videogen, 4× modal). No

@@ -651,12 +651,26 @@ function readRuntimeWallet(): { chain?: string; base?: string; solana?: string }
   const blockrunDir = path.join(home, '.blockrun');
   const out: { chain?: string; base?: string; solana?: string } = {};
 
+  // Chain selection: prefer the canonical `payment-chain` (matches
+  // src/config.ts:CHAIN_FILE which the rest of the codebase writes).
+  // Fall back to the legacy `.chain` for installs that haven't migrated.
+  // Verified 2026-05-05: .chain on this machine read "base" (last
+  // updated 2026-03-14), payment-chain read "base" (last updated
+  // 2026-05-04) — same value here, but the two paths can diverge any
+  // time the user's panel UI or `franklin <chain>` writes the new one
+  // while the old file stays frozen. Reading both, preferring the new,
+  // closes the gap silently.
   try {
-    const chainFile = path.join(blockrunDir, '.chain');
-    if (fs.existsSync(chainFile)) {
-      const chain = fs.readFileSync(chainFile, 'utf-8').trim();
-      if (chain) out.chain = chain;
+    const newChainFile = path.join(blockrunDir, 'payment-chain');
+    const legacyChainFile = path.join(blockrunDir, '.chain');
+    let chain = '';
+    if (fs.existsSync(newChainFile)) {
+      chain = fs.readFileSync(newChainFile, 'utf-8').trim();
     }
+    if (!chain && fs.existsSync(legacyChainFile)) {
+      chain = fs.readFileSync(legacyChainFile, 'utf-8').trim();
+    }
+    if (chain) out.chain = chain;
   } catch { /* ignore */ }
 
   // Base address: derive via @blockrun/llm (handles the private key in .session)

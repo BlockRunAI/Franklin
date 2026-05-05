@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.15.63 — Chain reader prefers \`payment-chain\` (was reading legacy \`.chain\`)
+
+Verified 2026-05-05 on a real machine: two chain files coexist
+in \`~/.blockrun/\`:
+
+\`\`\`
+-rw-r--r--  5 Mar 14 20:00  .chain          ← legacy, last touched 2 months ago
+-rw-------  5 May  4 17:41  payment-chain   ← canonical, current
+\`\`\`
+
+\`src/config.ts:CHAIN_FILE\` writes \`payment-chain\` (the
+canonical path; everything else in the codebase reads from
+this). But \`src/agent/context.ts:655 readRuntimeWallet()\` was
+hardcoded to read the LEGACY \`.chain\`. Same value on this
+machine ("base" in both), so the bug was silent — but the two
+diverge any time the user runs \`franklin solana\` or flips
+chains via the panel UI, both of which write only the
+canonical file.
+
+Effect when divergent: agent prompt context reports stale chain
+("you're on Base") while the rest of Franklin (proxy,
+wallet ops, payment signing) operates on the new chain. The
+agent's mental model and the wallet's behavior contradict each
+other, leading to confused user-facing messages.
+
+Fix: \`readRuntimeWallet\` now reads \`payment-chain\` first;
+falls back to legacy \`.chain\` only if the canonical file is
+absent. Both kept readable so users with either file (mid-
+migration or fresh install) see consistent behavior.
+
+One regression test asserts the dist source contains both
+references AND that \`payment-chain\` is checked before \`.chain\`
+in the function body (string-index ordering check on the
+compiled file). Future PRs that flip the precedence get
+caught.
+
+Tests: 343/343 pass (was 341 before, +2 between this and the
+restored-from-HEAD state of test/local.mjs).
+
 ## 3.15.62 — Image / Video / Modal tools also measure latency (the other 5 callsites)
 
 3.15.61 fixed the agent-loop \`recordUsage\` callsite. Sweeping
