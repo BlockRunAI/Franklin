@@ -651,10 +651,12 @@ export async function interactiveSession(
     hygieneReport.legacyFilesRemoved +
     hygieneReport.dataFilesTrimmed +
     hygieneReport.costLogRowsTrimmed +
-    hygieneReport.orphanToolResultsRemoved;
+    hygieneReport.orphanToolResultsRemoved +
+    hygieneReport.brainJunkEntitiesRemoved +
+    hygieneReport.oldTasksRemoved;
   if (totalCleaned > 0) {
     logger.info(
-      `[franklin] Data hygiene: ${hygieneReport.legacyFilesRemoved} legacy, ${hygieneReport.dataFilesTrimmed} data files, ${hygieneReport.costLogRowsTrimmed} cost_log rows, ${hygieneReport.orphanToolResultsRemoved} orphan tool-results dirs cleaned`
+      `[franklin] Data hygiene: ${hygieneReport.legacyFilesRemoved} legacy, ${hygieneReport.dataFilesTrimmed} data files, ${hygieneReport.costLogRowsTrimmed} cost_log rows, ${hygieneReport.orphanToolResultsRemoved} orphan tool-results dirs, ${hygieneReport.brainJunkEntitiesRemoved} junk brain entities, ${hygieneReport.oldTasksRemoved} expired tasks cleaned`
     );
   }
   persistSessionMeta();

@@ -1,5 +1,68 @@
 # Changelog
 
+## 3.15.67 — Two follow-ups: \`task list\` header + hygiene log surfaces all counters
+
+Two consistency tweaks discovered in the same scan that found
+3.15.66's task-retention hole:
+
+**1. \`franklin task list\` had no header row.** Verified
+2026-05-05 — output looked like:
+
+\`\`\`
+t_mors8mba_f37c6c06  succeeded   14h19m  ETL SDK v2
+t_mors6idr_57ff10f5  succeeded   14h21m  ETL SDK v1 - ADC auth
+\`\`\`
+
+vs \`franklin content list\` (shipped 3.15.58) which has:
+
+\`\`\`
+id        type      status      spent/cap      assets  title
+…
+\`\`\`
+
+Same product, two list commands, different conventions. The
+3.15.46 fix to "age" semantics (running = elapsed-since-start;
+terminal = since-end) was real but **invisible without column
+labels** — \`14h19m\` could mean either.
+
+Fix: \`src/commands/task.ts\` \`list\` action prepends a header
+row \`runId  status  age  label\`. Width auto-fits the longest
+runId in the result set.
+
+After the fix:
+
+\`\`\`
+runId                status        age  label
+t_mors8mba_f37c6c06  succeeded   14h20m  ETL SDK v2
+t_mors6idr_57ff10f5  succeeded   14h21m  ETL SDK v1 - ADC auth
+\`\`\`
+
+**2. Hygiene-startup log was missing the new counters.** When
+3.15.44 added \`brainJunkEntitiesRemoved\` and 3.15.66 added
+\`oldTasksRemoved\`, the \`logger.info\` line in
+\`src/agent/loop.ts:657\` was never updated. Result: when
+hygiene cleared 3 junk brain entities + 5 old tasks at startup,
+the log printed:
+
+\`\`\`
+Data hygiene: 0 legacy, 0 data files, 0 cost_log rows, 0 orphan tool-results dirs cleaned
+\`\`\`
+
+— total of 0 even though 8 things were actually cleaned. The
+\`totalCleaned > 0\` guard meant the line might not even fire.
+Worse, even when it did fire, brain + task counters were
+invisible.
+
+Fix: \`totalCleaned\` now sums all six counters; the log line
+includes all six fields:
+
+\`\`\`
+Data hygiene: 0 legacy, 0 data files, 0 cost_log rows, 0 orphan tool-results dirs, 3 junk brain entities, 5 expired tasks cleaned
+\`\`\`
+
+Tests: 348/348 pass — existing CLI tests for \`task list\` still
+match (they assert content, not exact line layout).
+
 ## 3.15.66 — Hygiene now prunes terminal task records older than 7 days
 
 Verified 2026-05-05 on a real machine: \`~/.franklin/tasks/\`
