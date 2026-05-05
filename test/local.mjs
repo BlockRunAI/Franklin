@@ -2300,6 +2300,81 @@ test('streamCompletion: retries without tool_choice when upstream rejects it', a
 // invalid_format url path: image_url`. ImageGen already handled this
 // via resolveReferenceImage — VideoGen now reuses the same helper.
 
+// ─── CoinGecko ticker resolution: TON and the dynamic /search fallback ──
+//
+// Verified 2026-05-04 in a live session: agent asked for TON price,
+// TradingMarket returned "No CoinGecko data for TON" because TON wasn't
+// in TICKER_TO_ID and the lowercase fallback "ton" doesn't match
+// CoinGecko's id ("the-open-network"). 3.15.54 expanded the static map
+// AND added a /search-based dynamic resolver for unknown tickers. These
+// tests pin both layers.
+
+test('coingecko resolveProviderId: TON is in the static map (no /search needed)', async () => {
+  const { resolveProviderId } = await import('../dist/trading/providers/coingecko/client.js');
+  assert.equal(resolveProviderId('TON'), 'the-open-network');
+  assert.equal(resolveProviderId('HYPE'), 'hyperliquid');
+  assert.equal(resolveProviderId('TRX'), 'tron');
+  assert.equal(resolveProviderId('USDT'), 'tether'); // also handles "USDT" suffix-strip edge
+});
+
+test('coingecko resolveProviderIdAsync: unknown ticker uses /search and caches the result', async () => {
+  const { resolveProviderIdAsync, clearIdResolutionCache, resolveProviderId } =
+    await import('../dist/trading/providers/coingecko/client.js');
+  clearIdResolutionCache();
+
+  const originalFetch = globalThis.fetch;
+  let searchCalls = 0;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/search?query=')) {
+      searchCalls++;
+      // Mimic CoinGecko search response shape — `coins[]` with `id`,
+      // `symbol`, `market_cap_rank`. Exact symbol match wins.
+      return new Response(JSON.stringify({
+        coins: [
+          { id: 'made-up-noise', symbol: 'OTHER', market_cap_rank: 999 },
+          { id: 'fake-token-canonical', symbol: 'FAKETOKEN', market_cap_rank: 42 },
+        ],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200 });
+  };
+  try {
+    const id1 = await resolveProviderIdAsync('FAKETOKEN');
+    assert.equal(id1, 'fake-token-canonical', 'first call should hit /search and resolve to canonical id');
+    assert.equal(searchCalls, 1);
+
+    // Second call: cache hit, no new /search request.
+    const id2 = await resolveProviderIdAsync('FAKETOKEN');
+    assert.equal(id2, 'fake-token-canonical');
+    assert.equal(searchCalls, 1, 'second call must hit cache, not /search');
+
+    // Sync resolveProviderId reads the same cache.
+    assert.equal(resolveProviderId('FAKETOKEN'), 'fake-token-canonical',
+      'sync resolveProviderId must read the dynamic cache');
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearIdResolutionCache();
+  }
+});
+
+test('coingecko resolveProviderIdAsync: /search failure falls back to lowercase guess', async () => {
+  const { resolveProviderIdAsync, clearIdResolutionCache } =
+    await import('../dist/trading/providers/coingecko/client.js');
+  clearIdResolutionCache();
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('upstream broken', { status: 500 });
+  try {
+    const id = await resolveProviderIdAsync('NEVERHEARDOFIT');
+    assert.equal(id, 'neverheardofit',
+      '/search failure should not block the request — fall back to lowercase');
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearIdResolutionCache();
+  }
+});
+
 test('videogen: tool spec advertises the known-valid model list (so agents do not guess)', async () => {
   // Verified 2026-05-04 in a live session: agent invented
   // "seedance/2.0-pro" (a name that doesn't exist), gateway 400'd

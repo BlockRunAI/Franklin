@@ -9,7 +9,7 @@
 
 import type { Fetcher } from '../fetcher.js';
 import type { PriceData, PriceQueryParams, ProviderError } from '../standard-models.js';
-import { cached, coingeckoGet, resolveProviderId, TTL } from './client.js';
+import { cached, coingeckoGet, resolveProviderId, resolveProviderIdAsync, TTL } from './client.js';
 
 export const coingeckoPriceFetcher: Fetcher<PriceQueryParams, PriceData> = {
   providerName: 'coingecko',
@@ -23,7 +23,10 @@ export const coingeckoPriceFetcher: Fetcher<PriceQueryParams, PriceData> = {
   },
 
   async fetchData(query) {
-    const id = resolveProviderId(query.ticker);
+    // resolveProviderIdAsync warms the dynamic id cache via /search when the
+    // ticker isn't in the static map (e.g. TON → the-open-network).
+    // transformData below reads back from the same cache synchronously.
+    const id = await resolveProviderIdAsync(query.ticker);
     return cached(`price:${id}`, TTL.price, async () => {
       return coingeckoGet(
         `/simple/price?ids=${id}` +

@@ -1,5 +1,59 @@
 # Changelog
 
+## 3.15.54 — TradingMarket finds TON (and any other unknown ticker via CoinGecko /search)
+
+Verified 2026-05-04 in a live side-panel session: user asked
+"帮我分析 TON 代币", TradingMarket returned:
+
+\`\`\`
+Error: No CoinGecko data for TON
+\`\`\`
+
+Root cause: \`src/trading/providers/coingecko/client.ts:19-27\`
+declared a static \`TICKER_TO_ID\` map of ~30 tokens. TON was
+missing, so \`resolveProviderId('TON')\` fell through to
+\`'ton'\` — but CoinGecko's actual id is \`the-open-network\`.
+\`/simple/price?ids=ton\` returned \`{}\`, \`transformData\` saw
+no entry for the resolved id, and emitted "No CoinGecko data
+for TON". Same hole exists for HYPE, TRX, TAO, WLD, ENA, BERA,
+JUP, FET, ONDO, USDT, USDC, and dozens more whose symbol differs
+from their slug.
+
+Two-layer fix:
+
+- **Static expansion** of \`TICKER_TO_ID\` with the top ~30
+  currently-missing tokens (TON, HYPE, TRX, TAO, WLD, ENA, BERA,
+  JUP, FET, ONDO, RNDR, USDT, USDC, DAI, BCH, ETC, XLM, XMR,
+  IMX, GRT, SAND, MANA, AXS, KAS, ICP, HBAR, VET, ALGO, FTM,
+  EGLD, CRV, LDO, SHIB, BONK, POPCAT, FLOKI, PNUT). Cheap,
+  immediate.
+- **Dynamic resolver** \`resolveProviderIdAsync\`: on a static-map
+  miss, hits CoinGecko's \`/search?query=TICKER\` to find the
+  canonical id, prefers an exact symbol match, falls back to
+  the highest market-cap-ranked result. Caches resolved ids for
+  7 days in a Map; sync \`resolveProviderId\` reads the same
+  cache so \`transformData\` stays synchronous. \`/search\`
+  failure falls through to the lowercase guess (no
+  hard-failure).
+- \`price.ts\` and \`ohlcv.ts\` \`fetchData\` now \`await
+  resolveProviderIdAsync(ticker)\` to warm the cache before
+  \`transformData\` does its sync read. Future tokens
+  self-resolve without code edits.
+
+Three new tests:
+
+1. **Static path**: TON / HYPE / TRX / USDT resolve correctly
+   from the static map alone.
+2. **Dynamic path with cache**: unknown ticker triggers
+   \`/search\`, picks exact symbol match, caches; second call
+   hits cache (no second \`/search\` network request); sync
+   \`resolveProviderId\` reads the cached id.
+3. **Network-failure resilience**: \`/search\` returns 500 →
+   resolver falls through to lowercase, doesn't block the
+   request.
+
+Tests: 326/326 pass (was 323 before, 3 new).
+
 ## 3.15.53 — VideoGen tool-spec lists known-valid model names (agent stops guessing)
 
 Verified 2026-05-04 in a live session: agent referenced
