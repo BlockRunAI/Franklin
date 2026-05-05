@@ -1,5 +1,81 @@
 # Changelog
 
+## 3.15.58 — \`franklin content list / show\` — agent stops estimating spend from memory
+
+Verified 2026-05-04 in a live session: user asked "我花了多少钱做这个"
+after a creative-content burst (3 keyframes + 3 videos through
+ImageGen + VideoGen). The agent's response:
+
+\`\`\`
+TU[Bash({"command": "franklin content list 2>/dev/null || echo \"no content subcommand\""})]
+TR(err=False, "no content subcommand\n")
+\`\`\`
+
+Then the agent reconstructed the spend from memory:
+
+> 两次工程：v1 $0.46 + v2 $0.92 = $1.38 / $2.00 budget
+
+The exact data was already on disk at \`~/.blockrun/content.json\`,
+written by the \`ContentCreate\` and \`ContentAddAsset\` capabilities
+during the session. The agent just had no CLI to query it without
+parsing JSON by hand.
+
+Fix: new \`src/commands/content.ts\` exposing two read-only
+subcommands.
+
+\`\`\`
+$ franklin content list
+id        type      status      spent/cap      assets  title
+a83d382b  video     outline     $1.38/$2.00    6       Franklin & Claude Robot Scene
+0575abb7  video     outline     $0.00/$2.00    1       Franklin-Claude Handoff (Pixar-Style Sh…
+8baaf1b0  video     outline     $0.40/$3.00    1       ClawRouter 30s Promo
+
+Total: $1.78 spent across 3 contents (cap $7.00).
+\`\`\`
+
+\`\`\`
+$ franklin content show a83d382b
+# Franklin & Claude Robot Scene
+id:        a83d382b-17ee-42cc-a4a9-3302569fedd1
+type:      video
+status:    outline
+spent:     $1.38 / $2.00 cap
+created:   2026-05-04T23:45:44.776Z
+
+## Assets (6)
+- image    $0.04  openai/gpt-image-2
+    /Users/vickyfu/Documents/blockrun-analytics/franklin-claude-keyframe.png
+- video    $0.42  xai/grok-imagine-video
+    /Users/vickyfu/Documents/blockrun-analytics/franklin-claude-video.mp4
+…
+\`\`\`
+
+\`show\` accepts a full id, an id prefix (≥4 chars), or a
+case-insensitive title substring. Ambiguous matches list the
+candidates so the user can disambiguate without rerunning blind.
+\`list\` prints a footer with the rolled-up total spend across all
+records.
+
+Implementation:
+
+- \`src/commands/content.ts\` — new file. Imports \`loadLibrary\`
+  from \`src/content/store.ts\`, walks \`lib.list()\`. Pure read,
+  no mutation, no network. Reads from \`~/.blockrun/content.json\`
+  (the path \`tools/index.ts\` already uses).
+- \`src/index.ts\` — registers \`buildContentCommand()\` next to
+  \`buildTaskCommand()\`.
+- 2 new tests use \`spawnSync\` against \`dist/index.js\` with a
+  fixture \`content.json\` in a temp \`HOME\`. \`list\` test
+  asserts the summary row + total footer; \`show\` test asserts
+  that an 8-char prefix resolves cleanly and the assets +
+  distribution sections render.
+
+Now when the agent sees a "how much did I spend" question, it
+can shell out to the authoritative answer instead of summarizing
+from conversation memory.
+
+Tests: 334/334 pass (was 332 before, 2 new).
+
 ## 3.15.57 — Honor upstream \`Retry-After\` on 429 + actionable Tip when free fallback exhausted
 
 Last of the four screenshot-driven fixes. Verified 2026-05-04

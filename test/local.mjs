@@ -2305,6 +2305,108 @@ test('streamCompletion: retries without tool_choice when upstream rejects it', a
 // invalid_format url path: image_url`. ImageGen already handled this
 // via resolveReferenceImage — VideoGen now reuses the same helper.
 
+// ─── franklin content list / show: CLI read access to Content library ──
+//
+// Verified 2026-05-04 in a live session: user asked
+// "我花了多少钱做这个", agent ran `franklin content list 2>/dev/null
+// || echo "no content subcommand"` and got "no content subcommand" —
+// fell back to estimating spend from memory. Data was sitting in
+// ~/.blockrun/content.json the whole time. New CLI exposes it.
+
+test('cli: franklin content list shows summary table for stored content', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-content-'));
+  const blockrunDir = path.join(fakeHome, '.blockrun');
+  fs.mkdirSync(blockrunDir, { recursive: true });
+  fs.writeFileSync(path.join(blockrunDir, 'content.json'), JSON.stringify({
+    version: 1,
+    contents: [
+      {
+        id: 'aaaaaaaa-1111-2222-3333-444444444444',
+        type: 'video',
+        title: 'Test Pixar Short',
+        status: 'outline',
+        drafts: [],
+        assets: [
+          { kind: 'image', source: 'openai/gpt-image-2', costUsd: 0.04, data: '/x.png', createdAt: 100 },
+          { kind: 'video', source: 'xai/grok-imagine-video', costUsd: 0.42, data: '/x.mp4', createdAt: 200 },
+        ],
+        spentUsd: 0.46,
+        budgetUsd: 2,
+        createdAt: 50,
+        distribution: [],
+      },
+    ],
+  }));
+
+  const cli = path.join(process.cwd(), 'dist', 'index.js');
+  const result = spawnSync(process.execPath, [cli, 'content', 'list'], {
+    env: { ...process.env, HOME: fakeHome }, timeout: 5_000,
+  });
+  try {
+    assert.equal(result.status, 0, result.stderr.toString());
+    const out = result.stdout.toString();
+    assert.match(out, /Test Pixar Short/, 'title row must appear');
+    assert.match(out, /\$0\.46\/\$2\.00/, 'spent/cap must be on the row');
+    assert.match(out, /Total: \$0\.46 spent across 1 content/, 'footer rolls up the total');
+  } finally {
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('cli: franklin content show resolves prefix + lists assets', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-content-show-'));
+  const blockrunDir = path.join(fakeHome, '.blockrun');
+  fs.mkdirSync(blockrunDir, { recursive: true });
+  fs.writeFileSync(path.join(blockrunDir, 'content.json'), JSON.stringify({
+    version: 1,
+    contents: [
+      {
+        id: 'cafe1234-1111-2222-3333-444444444444',
+        type: 'video',
+        title: 'Cafe Demo',
+        status: 'published',
+        drafts: [],
+        assets: [
+          { kind: 'image', source: 'openai/gpt-image-2', costUsd: 0.04, data: '/a.png', createdAt: 100 },
+        ],
+        spentUsd: 0.04,
+        budgetUsd: 1,
+        createdAt: 50,
+        publishedAt: 99,
+        distribution: [{ channel: 'x', url: 'https://x.com/abc', at: 99 }],
+      },
+    ],
+  }));
+
+  const cli = path.join(process.cwd(), 'dist', 'index.js');
+  // Use 8-char prefix instead of full uuid.
+  const result = spawnSync(process.execPath, [cli, 'content', 'show', 'cafe1234'], {
+    env: { ...process.env, HOME: fakeHome }, timeout: 5_000,
+  });
+  try {
+    assert.equal(result.status, 0, result.stderr.toString());
+    const out = result.stdout.toString();
+    assert.match(out, /# Cafe Demo/);
+    assert.match(out, /status:\s+published/);
+    assert.match(out, /## Assets \(1\)/);
+    assert.match(out, /\/a\.png/);
+    assert.match(out, /## Distribution \(1\)/);
+    assert.match(out, /https:\/\/x\.com\/abc/);
+  } finally {
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 // ─── 429 Retry-After: honor upstream wait window ─────────────────────
 //
 // Verified 2026-05-04 in a screenshot: a 429 with Retry-After=30s was
