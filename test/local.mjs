@@ -2495,6 +2495,83 @@ test('classifier: Payment verification failed → payment_rejected with chain/cl
   }
 });
 
+// ─── stripLargeImageData: prevent multi-MB session jsonl files ─────
+//
+// Verified 2026-05-05: a 5-turn session with .png reads grew to 12 MB
+// because every Read of a >50KB image inlined ~600 KB of base64 into
+// the session jsonl (loop.ts wraps tool_result with image blocks for
+// vision models). The model already saw the bytes during the live turn;
+// disk only needs the path reference for resume.
+
+test('stripLargeImageData: replaces large base64 image blocks with placeholder', async () => {
+  const { stripLargeImageData } = await import('../dist/agent/loop.js');
+  // Build a 200 KB base64 string — comfortably above the 50 KB threshold.
+  const bigB64 = 'A'.repeat(200_000);
+  const msg = {
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: 'call_1',
+        content: [
+          { type: 'text', text: 'Image file: /tmp/foo.png (.png, 200KB).' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: bigB64 } },
+        ],
+        is_error: false,
+      },
+    ],
+  };
+  const out = stripLargeImageData(msg);
+  // Must not mutate the original (turn's in-memory history keeps full bytes).
+  assert.notEqual(out, msg, 'must return a new object reference');
+  assert.equal(msg.content[0].content[1].source.data.length, 200_000,
+    'original image data must remain intact for in-memory history');
+  // Stripped clone has the placeholder.
+  const cleanedInner = out.content[0].content;
+  assert.equal(cleanedInner.length, 2);
+  assert.equal(cleanedInner[0].type, 'text', 'text block preserved');
+  assert.equal(cleanedInner[1].type, 'text', 'image block replaced with text placeholder');
+  assert.match(cleanedInner[1].text, /image stripped from session log/);
+  assert.match(cleanedInner[1].text, /195\.3 KB/, 'placeholder reports the original size');
+});
+
+test('stripLargeImageData: leaves small images untouched (favicon-sized)', async () => {
+  const { stripLargeImageData } = await import('../dist/agent/loop.js');
+  const tinyB64 = 'A'.repeat(3000); // ~3KB — below threshold
+  const msg = {
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: 'call_1',
+        content: [
+          { type: 'text', text: 'Tiny icon.' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: tinyB64 } },
+        ],
+        is_error: false,
+      },
+    ],
+  };
+  const out = stripLargeImageData(msg);
+  // No mutation — small images round-trip.
+  assert.equal(out, msg, 'small images should pass through unchanged');
+  assert.equal(out.content[0].content[1].source.data.length, 3000);
+});
+
+test('stripLargeImageData: passes through messages without tool_result image blocks', async () => {
+  const { stripLargeImageData } = await import('../dist/agent/loop.js');
+  // Plain user text.
+  const userText = { role: 'user', content: 'hello' };
+  assert.equal(stripLargeImageData(userText), userText);
+
+  // Tool_result with only text (no image) — common case.
+  const toolText = {
+    role: 'user',
+    content: [{ type: 'tool_result', tool_use_id: 'x', content: 'plain string', is_error: false }],
+  };
+  assert.equal(stripLargeImageData(toolText), toolText);
+});
+
 // ─── formatModelSwitch: surface resolved model + reason in switch messages ─
 //
 // Verified 2026-05-04 in a live screenshot: a payment fail surfaced as

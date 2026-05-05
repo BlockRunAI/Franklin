@@ -1,5 +1,77 @@
 # Changelog
 
+## 3.15.60 — Strip inline base64 image bytes from session jsonl (12 MB → small)
+
+Verified 2026-05-05 on a real machine: \`du -h ~/.blockrun/sessions/\`
+showed a single session jsonl at **12 MB**. Inspecting line 165
+(\`851 KB\` for one message) revealed the cause:
+
+\`\`\`
+{"role":"user","content":[{"type":"tool_result","tool_use_id":"...",
+ "content":[
+   {"type":"text","text":"Image file: /tmp/mamba_hd_p9.png (.png, 622.9KB)..."},
+   {"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo…"}}  // 830 KB
+ ]
+}]
+\`\`\`
+
+The agent loop wraps Read-of-PNG results in
+\`tool_result.content = [text, image]\` so vision-capable models can
+actually see the image during the live turn (loop.ts:1788). That's
+correct for the model-side experience.
+
+The bug: \`streaming-executor.ts:PERSIST_THRESHOLD\` (50 KB) only
+checks \`result.output.length\`, never \`result.images\`. A 600 KB
+PNG read produces:
+
+- \`result.output\` ≈ 100 chars ("Image file: ... Rendered below…")
+  → below threshold → not persisted
+- \`result.images[0]\` ≈ 830 KB base64 → bypasses persist entirely
+  → flows into \`tool_result.content\` via \`loop.ts:1787\` → lands
+  in session jsonl
+
+A 5-turn session with multiple PNG reads grew to 12 MB. \`/resume\`
+on such a session reloads the entire jsonl, blowing context budget
+and burning input tokens on bytes the model already processed.
+
+Fix:
+
+- New helper \`stripLargeImageData(message)\` in \`src/agent/loop.ts\`,
+  exported for testability. Walks a Dialogue, finds
+  \`tool_result.content\` blocks containing base64 images larger than
+  \`SESSION_IMAGE_STRIP_THRESHOLD\` (50 KB, mirrors PERSIST_THRESHOLD),
+  replaces each with a small text placeholder noting the original
+  size and pointing the model at the source path.
+- \`persistSessionMessage\` (loop.ts:556) now passes the message
+  through \`stripLargeImageData\` before \`appendToSession\`.
+  Critical: returns a CLONE — the in-memory \`history\` array still
+  contains the full image bytes, so the model sees them during the
+  rest of the current turn. Only the on-disk jsonl gets the
+  placeholder.
+- Threshold tuned to 50 KB so favicon-sized icons (~3 KB base64)
+  round-trip intact through resume; only screenshots / generated
+  artwork (typically 200+ KB base64) get path-stubbed.
+- On resume, the placeholder is in the jsonl. If the model needs
+  to see the image again it can re-Read from the source path
+  (which is preserved in the accompanying text block).
+
+3 new tests:
+
+1. **Strip path**: 200 KB base64 image → out is a clone, original
+   intact, output's image block replaced with a sized text
+   placeholder.
+2. **Threshold**: 3 KB image (favicon-sized) passes through
+   unchanged.
+3. **No-op shapes**: plain-string user message and tool_result
+   without images both round-trip identically (same reference).
+
+Tests: 339/339 pass (was 336 before, 3 new).
+
+Effective immediately: new sessions stay slim. The existing 12 MB
+session is unchanged — pre-fix data on disk doesn't retroactively
+strip. Users who care can manually \`rm\` old session jsonls;
+\`pruneOldSessions\` will clean the rest under its 20-session cap.
+
 ## 3.15.59 — VideoGen aspect_ratio + platform / moderation hints
 
 Verified 2026-05-04 in a live session two friction points:

@@ -341,6 +341,81 @@ function getBackoffDelay(attempt: number, maxDelayMs = 32_000): number {
 }
 
 /**
+ * Threshold for stripping inline base64 image data on session-disk
+ * writes. Mirrors `streaming-executor.ts:PERSIST_THRESHOLD` so a Read of
+ * a small icon (favicon-sized PNG, ~3 KB base64) round-trips through
+ * resume intact, while a Read of a screenshot or generated artwork
+ * (typically 200 KB+ base64) gets path-stubbed.
+ */
+const SESSION_IMAGE_STRIP_THRESHOLD = 50_000;
+
+interface ToolResultImageBlock {
+  type: 'image';
+  source: { type: 'base64'; media_type: string; data: string };
+}
+
+interface ToolResultTextBlock {
+  type: 'text';
+  text: string;
+}
+
+type ToolResultContentBlock = ToolResultTextBlock | ToolResultImageBlock | { type: string; [k: string]: unknown };
+
+/**
+ * Walk a Dialogue and replace large `image.source.data` (base64) blocks
+ * inside `tool_result.content` arrays with a tiny placeholder. The
+ * accompanying text block already names the file path so the model on
+ * resume can re-Read it if it needs to see the image again. Returns a
+ * shallow clone so the in-memory history (used for the rest of the
+ * current turn) keeps the full image data.
+ */
+export function stripLargeImageData(message: Dialogue): Dialogue {
+  if (!Array.isArray(message.content)) return message;
+  let mutated = false;
+  // Cast through `unknown` because Dialogue's content union doesn't expose
+  // the tool_result shape with image blocks at the type level — they flow
+  // in via the loop's outcome-building path. Runtime structure is what
+  // matters here; we only mutate when we positively identify the shape.
+  const newContent = (message.content as unknown[]).map((part) => {
+    if (
+      typeof part === 'object' &&
+      part !== null &&
+      (part as { type?: string }).type === 'tool_result' &&
+      Array.isArray((part as { content?: unknown }).content)
+    ) {
+      const tr = part as { type: 'tool_result'; content: ToolResultContentBlock[]; [k: string]: unknown };
+      let inner = tr.content;
+      let innerMutated = false;
+      const cleaned = inner.map((block) => {
+        if (
+          block &&
+          typeof block === 'object' &&
+          block.type === 'image' &&
+          (block as ToolResultImageBlock).source?.type === 'base64' &&
+          ((block as ToolResultImageBlock).source.data?.length ?? 0) > SESSION_IMAGE_STRIP_THRESHOLD
+        ) {
+          innerMutated = true;
+          const sz = ((block as ToolResultImageBlock).source.data ?? '').length;
+          return {
+            type: 'text',
+            text: `<image stripped from session log: ${(sz / 1024).toFixed(1)} KB base64. ` +
+                  `See accompanying text block for the source path; re-Read to inline again.>`,
+          } as ToolResultTextBlock;
+        }
+        return block;
+      });
+      if (innerMutated) {
+        mutated = true;
+        inner = cleaned;
+        return { ...tr, content: inner };
+      }
+    }
+    return part;
+  });
+  return mutated ? { ...message, content: newContent as Dialogue['content'] } : message;
+}
+
+/**
  * Format the user-facing "switching model" line. Includes the resolved
  * concrete model in parentheses when the user-facing alias (e.g.
  * `blockrun/auto`) differs from what was actually being called (e.g.
@@ -554,7 +629,16 @@ export async function interactiveSession(
     });
   };
   const persistSessionMessage = (message: Dialogue) => {
-    appendToSession(sessionId, message);
+    // Strip large base64 image bytes before writing to session jsonl. The
+    // tool_result wrap at line ~1788 inlines image data so vision models
+    // can see it during the live turn — but PNG bytes can be ~600 KB
+    // each, and the inline content bypasses persistLargeResult (which
+    // only checks `result.output.length`). Verified 2026-05-05: a single
+    // Read of `/tmp/mamba_hd_p9.png` produced an 850 KB session jsonl
+    // line; a 5-turn session with multiple .png reads grew to 12 MB.
+    // The model already saw the bytes in this turn's in-memory history,
+    // so disk only needs the path reference for resume.
+    appendToSession(sessionId, stripLargeImageData(message));
     persistSessionMeta();
   };
   pruneOldSessions(sessionId); // Cleanup old sessions on start, protect current
