@@ -1,5 +1,66 @@
 # Changelog
 
+## 3.15.68 — Reap pid-less queued tasks (5 min cutoff) + package-lock sync
+
+**Two leftovers from the long fix loop, finally shipped.**
+
+### Lost-detection: pid-less queued tasks
+
+\`src/tasks/lost-detection.ts\` had this fix sitting uncommitted
+across the entire 3.15.40 → 3.15.67 loop. Verified now: the
+fix is correct and the test (\`lost-detection: stale queued
+task without pid → reaped after timeout\`) was passing all
+along.
+
+The bug it covers: \`startDetachedTask\` creates a task with
+\`status: queued\` and no \`pid\` field. The runner subprocess
+is supposed to write its own pid on entry. If the runner
+crashes during module import (wrong \`cliPath\`, syntax error
+in \`dist\`, missing dependency on a corrupted node_modules),
+the pid never gets written.
+
+Pre-fix outcome: the task lives forever in
+\`status: queued / pid: undefined\`. \`reconcileLostTasks\`
+short-circuited on \`typeof t.pid !== 'number' continue\` —
+nothing to ping, nothing to reap. Hygiene also didn't touch it
+(not terminal). \`franklin task list\` showed permanent ghost
+entries.
+
+Fix: when a task is \`status: queued\` AND has no pid AND was
+created \`> QUEUED_NO_PID_TIMEOUT_MS\` (5 min) ago, treat it as
+runner-crashed-on-import and reap. 5 minutes leaves generous
+headroom for slow networks / cold node_modules cache (legit
+startup can take 30+ seconds).
+
+### package-lock sync
+
+\`package-lock.json\` still carried \`version: 3.15.39\`
+(11 ships ago — it never gets re-synced when only
+\`package.json\` is bumped). \`npm install --package-lock-only\`
+reconciles to current.
+
+Tests: 348/348 pass — the lost-detection fix already had test
+coverage in \`test/local.mjs\` from when it was first written.
+
+### Why this matters NOW
+
+The user reported "there are a lot of system changes please
+check" while running locally-installed
+\`@blockrun/franklin@3.15.60\` — **7 versions behind npm
+latest**. None of the consistency fixes from 3.15.61 onward
+(latency tracking, payment-chain, real Solana wallet,
+sane model names, task retention) are active on their
+machine yet. They need:
+
+\`\`\`
+npm i -g @blockrun/franklin@latest
+\`\`\`
+
+… and a restart of any running franklin process. After that
+the new task-list header, the brain hygiene, the wallet path
+fixes, and this lost-detection improvement all kick in
+together.
+
 ## 3.15.67 — Two follow-ups: \`task list\` header + hygiene log surfaces all counters
 
 Two consistency tweaks discovered in the same scan that found
