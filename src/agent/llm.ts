@@ -930,6 +930,34 @@ export class ModelClient {
       }
     }
 
+    // Fallback: some non-Anthropic providers behind the gateway (e.g. zai/glm-5.1)
+    // emit `message_start` with `output_tokens: 1` as a placeholder and never
+    // send a final `message_delta` carrying the real count. The audit log
+    // then records `outputTokens: 1` for every call in the session even
+    // though the model produced rich tool_use/text content. Verified
+    // 2026-05-05 in a real session: 50 audit rows, 17 distinct multi-line
+    // bash commands, total `output_tokens` summed to 1,154 — most rows
+    // showed 1. We estimate from the collected payload byte length when
+    // the reported count is implausibly low for the actual content.
+    if (usage.outputTokens <= 1 && collected.length > 0) {
+      let bytes = 0;
+      for (const part of collected) {
+        if (part.type === 'text') {
+          bytes += (part as { text?: string }).text?.length ?? 0;
+        } else if (part.type === 'tool_use') {
+          const tu = part as { name?: string; input?: unknown };
+          bytes += (tu.name?.length ?? 0) + JSON.stringify(tu.input ?? {}).length;
+        } else if (part.type === 'thinking') {
+          bytes += (part as { thinking?: string }).thinking?.length ?? 0;
+        }
+      }
+      // ~4 chars/token is a rough but standard tokenizer-agnostic rule.
+      // Only override when the estimate is noticeably larger — otherwise
+      // trust the wire value (a genuinely tiny response should stay tiny).
+      const estimated = Math.ceil(bytes / 4);
+      if (estimated > usage.outputTokens + 5) usage.outputTokens = estimated;
+    }
+
     return { content: collected, usage, stopReason };
   }
 

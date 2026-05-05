@@ -78,6 +78,15 @@ export interface SessionMeta {
    * add any tool inputs or outputs here, just the count per tool name.
    */
   toolCallCounts?: Record<string, number>;
+  /**
+   * Sessions imported from another agent (`franklin migrate`). Imports often
+   * exceed MAX_SESSIONS by an order of magnitude (a Claude Code user can
+   * easily have 200+ historical sessions); without this flag, the very
+   * next `franklin` launch would prune all but the 20 most recent and
+   * silently destroy the user's history. pruneOldSessions() skips any
+   * meta with imported=true.
+   */
+  imported?: true;
 }
 
 function getSessionsDir(): string {
@@ -193,6 +202,11 @@ export function updateSessionMeta(
       ...(meta.toolCallCounts !== undefined || existing?.toolCallCounts !== undefined
         ? { toolCallCounts: meta.toolCallCounts ?? existing?.toolCallCounts }
         : {}),
+      // `imported` is sticky like `chain`: once set by `franklin migrate`
+      // it must survive every subsequent update so pruneOldSessions keeps
+      // shielding the session from auto-deletion. Without preservation, the
+      // first turn added via `--resume` would silently drop the flag.
+      ...(meta.imported || existing?.imported ? { imported: true as const } : {}),
     };
     // Atomic write: tmp file + rename. Prevents corruption when parent
     // and sub-agent update the same session meta concurrently.
@@ -292,11 +306,13 @@ export function findLatestSessionByChannel(channel: string): SessionMeta | undef
  * Accepts optional activeSessionId to protect from deletion.
  */
 export function pruneOldSessions(activeSessionId?: string): void {
-  const sessions = readSessionMetas(false);
-  const allSessions = readSessionMetas(true);
+  // Only count native sessions toward the MAX_SESSIONS budget. Imported
+  // sessions (from `franklin migrate`) are user-owned history and must
+  // never be auto-deleted just because the user ran the agent again.
+  const native = readSessionMetas(false).filter(s => !s.imported);
 
-  if (sessions.length > MAX_SESSIONS) {
-    const toDelete = sessions
+  if (native.length > MAX_SESSIONS) {
+    const toDelete = native
       .slice(MAX_SESSIONS)
       .filter(s => s.id !== activeSessionId); // Never delete active session
     for (const s of toDelete) {
@@ -305,10 +321,14 @@ export function pruneOldSessions(activeSessionId?: string): void {
     }
   }
 
-  // Also clean up ghost sessions (0 messages, older than 5 minutes)
+  // Also clean up ghost sessions (0 messages, older than 5 minutes).
+  // Skip imported sessions — they may legitimately have messageCount=0
+  // if the source file had only attachments/system lines.
   const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+  const allSessions = readSessionMetas(true);
   for (const s of allSessions) {
     if (s.id === activeSessionId) continue;
+    if (s.imported) continue;
     if (s.messageCount === 0 && s.createdAt < fiveMinAgo) {
       try { fs.unlinkSync(sessionPath(s.id)); } catch { /* ok */ }
       try { fs.unlinkSync(metaPath(s.id)); } catch { /* ok */ }

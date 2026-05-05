@@ -1,5 +1,150 @@
 # Changelog
 
+## 3.15.69 — Claude Code import + cost-control gaps from audit-log forensics
+
+**Two batches surfaced from one debugging session: a broken import path
+on fresh installs, and five cost-control gaps confirmed against a real
+audit log.**
+
+### `franklin migrate` — Claude Code current layout
+
+`migrate.ts` was looking at the legacy paths `~/.claude/mcp.json`
+and `~/.claude/history.jsonl` — files that haven't existed on a fresh
+Claude Code install in years. New users running `franklin migrate`
+saw zero items detected. Existing users with stale legacy files
+(seeded by older agent CLIs) silently went down a different code
+path that imported less than what's actually on disk.
+
+Real Claude Code 2026 layout:
+- MCP config: `~/.claude.json` (top-level, ~263KB on a typical
+  machine), field `mcpServers`. Field is `type` not `transport`.
+- Sessions: `~/.claude/projects/<encoded-cwd>/<session-uuid>.jsonl`
+  — one file per conversation. 241 main sessions on the dev machine
+  used to verify; 1,591 if you count subagent fragments (those are
+  correctly excluded; only the depth-2 main session JSONLs import).
+
+Fix:
+- Detect `~/.claude.json` first; fall back to legacy `~/.claude/mcp.json`.
+- Walk `~/.claude/projects/<slug>/<uuid>.jsonl`; fall back to legacy
+  `~/.claude/history.jsonl`.
+- Convert Claude Code line shape (`{type, message:{role,content},
+  timestamp, sessionId, cwd}`) into Franklin's `Dialogue` (`{role,
+  content}`). Preserves session boundaries instead of mashing every
+  message into a daily blob.
+- `migrateMcp` accepts both `type` (Claude Code) and `transport`
+  (older agents) fields.
+
+### Imports survive the next agent launch
+
+`pruneOldSessions()` runs every time `franklin` starts and keeps
+only the 20 newest sessions. Without protection, importing 200+
+historical sessions would have 180+ silently deleted on the very
+next launch. Verified path: agent loop → `pruneOldSessions(sessionId)`
+at line 644.
+
+Fix: new `imported?: true` flag on `SessionMeta`. The cap-prune and
+the ghost-session sweep both skip imports. `updateSessionMeta`
+preserves the flag like it preserves `chain` — once imported, always
+imported, so resuming an imported session can't drop the flag on
+its first turn.
+
+### Audit-log output token undercount (model-agnostic estimator)
+
+Real audit log forensics on `franklin-audit.jsonl`:
+
+| Model | Calls | Tiny outputs (≤2 tokens) |
+|---|---|---|
+| `zai/glm-5.1` | 1,686 | ~89% |
+| `nvidia/qwen3-coder-480b` | 176 | 57% |
+| `google/gemini-2.5-flash` | 28 | 32% |
+| `anthropic/claude-sonnet-4.6` | 302 | 1% |
+| `deepseek/deepseek-v4-pro` | 297 | 0.3% |
+
+Three model families behind the gateway send `message_start` with
+the placeholder `output_tokens: 1` and never finalize via
+`message_delta`. Audit logged 1 even when the model produced
+17 distinct multi-line bash commands worth of `tool_use` content.
+Anthropic and DeepSeek were already correct.
+
+Fix in `src/agent/llm.ts`: at end of stream, if `usage.outputTokens
+<= 1` but `collected[]` has real content, estimate from byte length
+(~4 chars/token). Model-agnostic — only fires when the wire value is
+implausibly small for the actual payload, so genuinely-tiny responses
+stay tiny. Cost forensics work again.
+
+### Cap-exceeded messages report real spend
+
+The user-facing message used to say *"Bash called 3× with the same
+input"* — but in the verified failure case, 47 other bash calls
+preceded it. The user reasonably reads the message and thinks the
+guard fired at call #3 when it actually fired at call #50.
+
+Fix: cap-exceeded messages now show `N tool calls, $X spent this turn`.
+New `turnCostUsd` accumulator next to the existing `turnToolCalls`,
+bumped at the same site as `sessionCostUsd`. Both the HARD_TOOL_CAP
+message and the signature-loop message use it.
+
+### Failed-external-call hard stop (catches "thrashing against a wall")
+
+The signature-based loop guard only catches exact-input repeats. It
+misses the case where a model tries 17 structurally-distinct ways
+to hit a dead endpoint — different headers, methods, auth schemes,
+query params — and every one returns 4xx/5xx/WAF. Verified on a
+real session: glm-5.1 burned 50 calls / $0.05 cycling auth variants
+against Cloudflare-blocked `api.querit.ai` before the signature
+guard finally fired on the first exact repeat.
+
+New guard: 5 consecutive `Bash` or `WebFetch` calls whose output
+matches `/(401|403|429|5xx|unauthorized|forbidden|WAF|cloudflare|fault filter|blocked|invalid (auth|api|token|key|bearer))/i`
+→ break. Resets on any non-failed external call so legitimate
+retry-then-succeed paths aren't punished.
+
+### Research-bloat compaction
+
+The window-based auto-compact only fires near 172K tokens for a
+200K-context model. Research sessions burn money long before that.
+Top-spend session in the audit log: $6.67 on `google/gemini-2.5-flash`
+in 121 calls — never approached its 1M-token compaction threshold.
+Same shape on glm-5.1: $0.18 / 177 calls / 3.17M cumulative input,
+average per-call input grew to 17.9K because every tool result kept
+replaying.
+
+New trigger: when `turnToolCalls > 30` AND `turnCostUsd > 0.05` AND
+not yet compacted this session, force-compact even though we're
+nowhere near the context window. Surfaces a `🗜 Research-bloat compact:
+N calls / $X this turn` line so the user sees why it fired. Fire-once
+per session — avoids flapping once thresholds stay crossed; users can
+still re-engage via `/compact`.
+
+### System-prompt nudge for comparison questions
+
+Added one line under "Tool Selection Patterns" in `context.ts`: for
+"X vs Y, which is better" comparisons, prefer
+WebSearch/ExaSearch/WebFetch on each vendor's docs+pricing pages
+before curling the live API. Catches the same Querit-vs-Exa failure
+mode at the planning stage instead of waiting for the loop guard
+to break it.
+
+### Plugin SDK doc reconciliation
+
+`docs/plugin-sdk.md` and `CLAUDE.md` referenced `src/plugins-bundled/`
+as if it shipped with the repo. The directory was retired in v3.2.0
+when `social` became a native subsystem; nothing has shipped there
+since. Updated:
+- `CLAUDE.md` project tree replaces the dead `plugins-bundled/` row
+  with the actually-present `trading/` and `content/`.
+- `docs/plugin-sdk.md` removes the fake `plugins-bundled/social/`
+  example tree, adds a note that no bundled plugins ship today and
+  the inline example is canonical.
+- `src/plugins/registry.ts` comments now describe the lookup path as
+  forward-compat rather than as built from a non-existent source.
+
+No runtime behavior changed by these doc fixes. The plugin
+discovery path order, the `Workflow` SDK exports, and the `WorkflowStepContext.callModel`
+signature are all stable. Hackathon participants importing from
+`@blockrun/franklin/plugin-sdk` get the same SDK they had yesterday,
+just with docs that match what's on disk.
+
 ## 3.15.68 — Reap pid-less queued tasks (5 min cutoff) + package-lock sync
 
 **Two leftovers from the long fix loop, finally shipped.**

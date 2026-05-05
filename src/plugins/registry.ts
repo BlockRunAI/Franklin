@@ -2,10 +2,12 @@
  * Plugin Registry — discovers, loads, and manages plugins.
  *
  * Core stays plugin-agnostic: it knows about the *interface*, not specific plugins.
- * Plugins are discovered from:
- *   1. Bundled: <franklin>/plugins-bundled/* (ships with Franklin)
+ * Plugins are discovered from (highest priority first):
+ *   1. Local dev: $FRANKLIN_PLUGINS_DIR/* (or legacy $RUNCODE_PLUGINS_DIR/*)
  *   2. User: ~/.blockrun/plugins/*
- *   3. Local dev: $FRANKLIN_PLUGINS_DIR/* (or legacy $RUNCODE_PLUGINS_DIR/*)
+ *   3. Bundled: <franklin>/dist/plugins-bundled/* (reserved for plugins
+ *      shipped inside the npm tarball — none today; social/trading/content
+ *      are native subsystems, not plugins)
  */
 
 import fs from 'node:fs';
@@ -19,8 +21,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // ─── Plugin Discovery Paths ───────────────────────────────────────────────
 
 export function getBundledPluginsDir(): string {
-  // From dist/plugins/registry.js, plugins-bundled is at ../plugins-bundled
-  // (built from src/plugins-bundled by tsc + copy-plugin-assets)
+  // From dist/plugins/registry.js, look at sibling dist/plugins-bundled/.
+  // Empty today — the build's copy-plugin-assets script populates it from
+  // src/plugins-bundled/ if/when bundled plugins are reintroduced.
   return path.resolve(__dirname, '..', 'plugins-bundled');
 }
 

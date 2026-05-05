@@ -78,6 +78,22 @@ function replaceHistory(target: Dialogue[], replacement: Dialogue[]): void {
   target.splice(0, target.length, ...replacement);
 }
 
+const EXTERNAL_WALL_FAILURE_PATTERN =
+  /\b(?:401|403|429|5\d{2})\b|\bunauthor|\bforbid|\bWAF\b|\bcloudflare\b|\bfault filter\b|\bblocked\b|\binvalid (?:auth|api|token|key|bearer)\b/i;
+
+export function isExternalWallFailure(toolName: string, output: string, isError?: boolean): boolean {
+  if (toolName === 'WebFetch') {
+    return isError === true || EXTERNAL_WALL_FAILURE_PATTERN.test(output);
+  }
+  if (toolName === 'Bash') {
+    // Bash is a general-purpose local tool. Non-zero exits from tests,
+    // builds, git, etc. are useful debugging signal, not proof that the
+    // model is thrashing against an external auth/firewall wall.
+    return output.length > 0 && EXTERNAL_WALL_FAILURE_PATTERN.test(output);
+  }
+  return false;
+}
+
 // ─── Pushback detection ───────────────────────────────────────────────────
 // Formerly a pair of regex lists (PUSHBACK_STRONG / PUSHBACK_WEAK) plus a
 // claim-on-prior-turn check — ~70 lines of keyword heuristics. Replaced by
@@ -783,6 +799,10 @@ export async function interactiveSession(
     const serverErrorsByModel = new Map<string, number>();
     const SERVER_ERROR_STREAK_BEFORE_SWITCH = 2;
     let compactFailures = 0;
+    // Research-bloat compaction is fire-once per turn. A later turn can hit
+    // the trigger organically after the first compact, but firing twice from
+    // the same threshold would flap on every iteration once crossed.
+    let bloatCompactedThisTurn = false;
     let maxTokensOverride: number | undefined;
     const turnIdleReference = lastSessionActivity;
     lastSessionActivity = Date.now();
@@ -846,6 +866,27 @@ export async function interactiveSession(
     // ── No-progress guardrail: kill infinite tiny-response loops ──
     let consecutiveTinyResponses = 0;                    // Count of consecutive calls with <10 output tokens
     const MAX_TINY_RESPONSES = 2;                        // Break after N tiny responses — if 2 calls return near-empty, something is wrong
+
+    // ── Turn cost accumulator ──
+    // Surfaced in cap-exceeded messages so the user sees what the wasted
+    // turn actually cost ("$0.05 spent before this turn was killed") instead
+    // of just "tool limit exceeded". sessionCostUsd is too coarse — it
+    // includes earlier productive turns the user got real value from.
+    let turnCostUsd = 0;
+
+    // ── Failed-external-call guardrail ──
+    // The signature loop guard only catches exact-input repeats. It misses
+    // "thrashing exploration": model calls Bash 17 different ways trying to
+    // fix a 401 against the same dead endpoint. Verified 2026-05-05 in a
+    // real session: glm-5.1 burned 50 calls / $0.05 trying every auth
+    // variation against api.querit.ai (Cloudflare WAF blocked them all)
+    // before the signature guard finally fired on the first exact repeat.
+    // We count consecutive Bash/WebFetch calls whose output looks like a
+    // network/auth failure; reset on any non-failed external call. Five
+    // failures in a row is a wall, not exploration.
+    let consecutiveFailedExternal = 0;
+    const MAX_CONSECUTIVE_FAILED_EXTERNAL = 5;
+    const EXTERNAL_TOOL_NAMES = new Set(['Bash', 'WebFetch']);
 
     // ── Turn analysis (one classifier call, drives routing + prefetch) ──
     // Single LLM pass that answers every routing-adjacent question the
@@ -986,6 +1027,48 @@ export async function interactiveSession(
         } catch (compactErr) {
           compactFailures++;
           logger.warn(`[franklin] Compaction failed (${compactFailures}/3): ${(compactErr as Error).message}`);
+        }
+      }
+
+      // ── Research-bloat compaction (fires before context-window) ──
+      // The window-based trigger above only fires near 172K tokens for a
+      // 200K-context model. Research sessions burn money long before that:
+      // verified 2026-05-05 in a real audit, a glm-5.1 session hit
+      // $0.18 / 177 calls / 3.17M cumulative input — average per-call input
+      // grew to 17.9K because every tool result kept replaying. Top-spend
+      // session in the same log: $6.67 on gemini-2.5-flash in 121 calls,
+      // never approached its 1M-token compaction threshold. Compact here
+      // when the turn has accumulated lots of tool calls AND real spend,
+      // even though the context window isn't close to full.
+      if (
+        !bloatCompactedThisTurn &&
+        compactFailures < 3 &&
+        turnToolCalls > 30 &&
+        turnCostUsd > 0.05
+      ) {
+        try {
+          const beforeTokens = estimateHistoryTokens(history);
+          const { history: compacted, compacted: didCompact } =
+            await forceCompact(history, config.model, client, config.debug);
+          if (didCompact) {
+            replaceHistory(history, compacted);
+            resetTokenAnchor();
+            bloatCompactedThisTurn = true;
+            const afterTokens = estimateHistoryTokens(history);
+            const pct = beforeTokens > 0
+              ? Math.round((1 - afterTokens / beforeTokens) * 100)
+              : 0;
+            onEvent({
+              kind: 'text_delta',
+              text: `\n*🗜 Research-bloat compact: ${turnToolCalls} tool calls / $${turnCostUsd.toFixed(4)} this turn — summarizing ~${(beforeTokens / 1000).toFixed(0)}K → ~${(afterTokens / 1000).toFixed(0)}K tokens (saved ${pct}%)*\n\n`,
+            });
+            logger.info(`[franklin] Research-bloat compacted at ${turnToolCalls} calls / $${turnCostUsd.toFixed(4)}: ~${afterTokens} tokens`);
+          }
+        } catch (compactErr) {
+          // Don't increment compactFailures — that gate is for the
+          // window-based path. A failed bloat compact just means we keep
+          // going at the higher per-call cost; not catastrophic.
+          logger.warn(`[franklin] Bloat compaction failed: ${(compactErr as Error).message}`);
         }
       }
 
@@ -1585,6 +1668,7 @@ export async function interactiveSession(
       sessionInputTokens += inputTokens;
       sessionOutputTokens += usage.outputTokens;
       sessionCostUsd += costEstimate;
+      turnCostUsd += costEstimate;
       const opusCost = (inputTokens / 1_000_000) * OPUS_PRICING.input
         + (usage.outputTokens / 1_000_000) * OPUS_PRICING.output;
       sessionSavedVsOpus += Math.max(0, opusCost - costEstimate);
@@ -1835,7 +1919,7 @@ export async function interactiveSession(
 
       // ── Tool call guardrails ──
       turnToolCalls += results.length;
-      for (const [inv] of results) {
+      for (const [inv, result] of results) {
         const name = inv.name;
         turnToolCounts.set(name, (turnToolCounts.get(name) || 0) + 1);
         // Track (tool, input)-signature for the loop detector below.
@@ -1848,6 +1932,19 @@ export async function interactiveSession(
         // Read file dedup: track paths already read
         if (name === 'Read' && inv.input.file_path) {
           readFileCache.add(inv.input.file_path as string);
+        }
+
+        // Failed-external-call streak: count consecutive Bash/WebFetch calls
+        // whose output indicates a network/auth wall. Reset on any non-failed
+        // external call so legitimate retry-then-succeed paths aren't punished.
+        if (EXTERNAL_TOOL_NAMES.has(name)) {
+          const looksFailed = isExternalWallFailure(
+            name,
+            typeof result.output === 'string' ? result.output : '',
+            result.isError,
+          );
+          if (looksFailed) consecutiveFailedExternal++;
+          else consecutiveFailedExternal = 0;
         }
       }
 
@@ -1997,11 +2094,18 @@ export async function interactiveSession(
         toolCapWarned = true;
         logger.warn(`[franklin] Tool call cap hit: ${turnToolCalls} calls this turn (soft cap ${MAX_TOOL_CALLS_PER_TURN}, hard cap ${HARD_TOOL_CAP})`);
       }
+      // Format spend-so-far for cap messages — surfacing the dollar amount
+      // tells the user the real impact ("$0.05 wasted") instead of just
+      // "tool limit exceeded" which doesn't convey severity.
+      const spendNote = turnCostUsd > 0
+        ? `${turnToolCalls} tool calls, $${turnCostUsd.toFixed(4)} spent this turn`
+        : `${turnToolCalls} tool calls this turn`;
+
       if (turnToolCalls >= HARD_TOOL_CAP) {
         logger.error(`[franklin] Hard tool cap exceeded (${turnToolCalls}) — ending turn to prevent runaway`);
         onEvent({
           kind: 'text_delta',
-          text: `\n\n⚠️ Tool call limit exceeded (${turnToolCalls}/${HARD_TOOL_CAP}). Ending turn to prevent runaway loop. Try rephrasing or use \`/model\` to switch.\n`,
+          text: `\n\n⚠️ Runaway loop stopped: ${spendNote}, hit hard cap of ${HARD_TOOL_CAP}. Try rephrasing or use \`/model\` to switch.\n`,
         });
         onEvent({ kind: 'turn_done', reason: 'cap_exceeded' });
         break;
@@ -2019,7 +2123,22 @@ export async function interactiveSession(
         logger.error(`[franklin] Signature-loop hard stop: \`${toolName}\` called with identical input ${stuckSignature.count} times this turn — ending turn`);
         onEvent({
           kind: 'text_delta',
-          text: `\n\n⚠️ ${toolName} called ${stuckSignature.count}× with the same input this turn — that's a real loop, not exploration. Ending turn. Rephrase what you actually need, or try \`/model\` to switch.\n`,
+          text: `\n\n⚠️ Loop stopped: ${spendNote} before \`${toolName}\` repeated the same input ${stuckSignature.count}×. Rephrase what you need, or try \`/model\` to switch.\n`,
+        });
+        onEvent({ kind: 'turn_done', reason: 'cap_exceeded' });
+        break;
+      }
+      // Thrashing-against-a-wall hard stop (3.15.69). Catches the case
+      // where each call is structurally distinct (different headers, methods,
+      // auth schemes, query params) but every one returns 4xx/5xx/WAF.
+      // Verified 2026-05-05: glm-5.1 burned 50 calls / $0.05 cycling through
+      // ~17 curl variants against Cloudflare-blocked api.querit.ai — every
+      // input distinct so the signature guard above couldn't help.
+      if (consecutiveFailedExternal >= MAX_CONSECUTIVE_FAILED_EXTERNAL) {
+        logger.error(`[franklin] Failed-external-call streak: ${consecutiveFailedExternal} consecutive Bash/WebFetch calls returned auth/network errors — ending turn`);
+        onEvent({
+          kind: 'text_delta',
+          text: `\n\n⚠️ Hitting a wall: ${consecutiveFailedExternal} consecutive external calls returned auth/firewall errors (${spendNote}). The endpoint or credentials likely don't work. Try a different approach, or use \`/model\` to switch.\n`,
         });
         onEvent({ kind: 'turn_done', reason: 'cap_exceeded' });
         break;

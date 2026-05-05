@@ -20,15 +20,16 @@ src/
 │   ├── registry.ts       # Discover and load plugins
 │   └── runner.ts         # Execute any Workflow
 │
-├── plugins-bundled/      # Plugins shipped with Franklin
-│   └── social/
-│       ├── plugin.json   # Manifest
-│       ├── index.ts      # Plugin entry
-│       └── ...
-│
 └── commands/
     └── plugin.ts         # Generic CLI dispatcher (works for any plugin)
 ```
+
+> Note: Franklin currently ships **no bundled plugins** — `social`, `trading`,
+> and `content` are first-class native subsystems (retired from the plugin
+> path in v3.2.0 in favour of tighter agent-loop integration). The plugin
+> runtime is fully live and intended for **third-party** plugins. The complete
+> example below is the canonical reference; install via `$FRANKLIN_PLUGINS_DIR`
+> or `~/.blockrun/plugins/`.
 
 ## Plugin Discovery
 
@@ -36,7 +37,7 @@ Plugins are discovered from three locations (highest priority first):
 
 1. **Dev**: `$FRANKLIN_PLUGINS_DIR/*` — for local development (`$RUNCODE_PLUGINS_DIR` is still honored as a legacy alias)
 2. **User**: `~/.blockrun/plugins/*`
-3. **Bundled**: `<franklin>/dist/plugins-bundled/*` — ships with Franklin
+3. **Bundled**: `<franklin>/dist/plugins-bundled/*` — reserved for plugins shipped inside the npm tarball (none today)
 
 A plugin is any directory containing a `plugin.json` manifest.
 

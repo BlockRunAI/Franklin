@@ -815,6 +815,33 @@ test('pruneOldSessions removes stale ghost sessions even when visible session co
   }
 });
 
+test('session meta imported flag can be set and survives later updates', async () => {
+  const { updateSessionMeta, loadSessionMeta, getSessionFilePath } = await import('../dist/session/storage.js');
+  const id = `session-imported-sticky-${Date.now()}`;
+  const sf = getSessionFilePath(id);
+  try {
+    updateSessionMeta(id, {
+      model: 'imported',
+      workDir: process.cwd(),
+      turnCount: 1,
+      messageCount: 2,
+      imported: true,
+    });
+    assert.equal(loadSessionMeta(id)?.imported, true);
+
+    updateSessionMeta(id, {
+      model: 'zai/glm-5.1',
+      workDir: process.cwd(),
+      turnCount: 2,
+      messageCount: 4,
+    });
+    assert.equal(loadSessionMeta(id)?.imported, true);
+  } finally {
+    rmSync(sf, { force: true });
+    rmSync(join(dirname(sf), `${id}.meta.json`), { force: true });
+  }
+});
+
 test('resume: --resume with unknown id fails fast with non-zero exit (no wallet/banner)', { timeout: 10_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), 'franklin-e2e-fastfail-'));
   try {
@@ -2774,6 +2801,14 @@ test('stripLargeImageData: passes through messages without tool_result image blo
     content: [{ type: 'tool_result', tool_use_id: 'x', content: 'plain string', is_error: false }],
   };
   assert.equal(stripLargeImageData(toolText), toolText);
+});
+
+test('isExternalWallFailure: generic Bash failures do not trip auth-wall guard', async () => {
+  const { isExternalWallFailure } = await import('../dist/agent/loop.js');
+  assert.equal(isExternalWallFailure('Bash', 'npm test failed with exit code 1', true), false);
+  assert.equal(isExternalWallFailure('Bash', 'HTTP 403 Forbidden from Cloudflare', false), true);
+  assert.equal(isExternalWallFailure('WebFetch', 'socket closed', true), true);
+  assert.equal(isExternalWallFailure('Read', '403 appears in a file', true), false);
 });
 
 // ─── formatModelSwitch: surface resolved model + reason in switch messages ─
