@@ -1,5 +1,63 @@
 # Changelog
 
+## 3.15.55 — Model-switch messages now show the resolved model + reason
+
+Verified 2026-05-04 from a screenshot:
+
+\`\`\`
+*Auto → anthropic/claude-sonnet-4.6*
+…
+*blockrun/auto failed — switching to nvidia/qwen3-coder-480b*
+\`\`\`
+
+The first line correctly resolved \`Auto\` → claude-sonnet-4.6.
+Two messages later, the agent reported \`blockrun/auto failed\`
+with no hint of which concrete model actually failed and no
+hint of why (was it a payment rejection? a 5xx storm? a 429
+quota cap?). The user couldn't form a mental model of what
+went wrong; the agent itself lost the signal needed to choose
+its next action.
+
+Source: \`src/agent/loop.ts:1119, :1302, :1328\` built the
+switching message as \`\${oldModel} <reason> — switching to \${nextModel}\`,
+where \`oldModel = config.model\`. \`config.model\` is the
+user-facing alias (\`blockrun/auto\`), not the concrete resolved
+model (\`anthropic/claude-sonnet-4.6\`). Line 1254 already used
+\`resolvedModel\` correctly; the other three sites didn't.
+Reason labels were also free-form and inconsistent — "failed"
+vs "rate-limited" vs "returned empty" — with no classifier
+label attached.
+
+Fix:
+
+- New helper \`formatModelSwitch(alias, resolved, reason, newModel)\`
+  in \`src/agent/loop.ts\`. When \`alias !== resolved\`, returns
+  \`alias (resolved) reason — switching to newModel\`. When
+  they match, returns the simple form. Single source of truth
+  for the message shape; future call sites get consistency for
+  free.
+- All three sites that lacked the resolved model now route
+  through the helper:
+  - **Empty-response path** (\`*X returned empty*\`): now shows
+    \`blockrun/auto (claude-sonnet-4.6) returned empty — switching to ...\`.
+  - **Payment-failure path** (\`*X failed*\`): adds the classifier
+    label, e.g. \`failed [payment_required]\` or
+    \`failed [payment_rejected]\` — pairs nicely with the bug-2
+    classifier extension shipping next.
+  - **Rate-limit path** (\`*X rate-limited*\`): same enrichment.
+- Line 1254 (5xx-streak path) was already correct (used
+  \`resolvedModel\` directly); left unchanged.
+
+After the fix the screenshot's second line reads:
+
+\`\`\`
+*blockrun/auto (anthropic/claude-sonnet-4.6) failed [payment_required] — switching to nvidia/qwen3-coder-480b*
+\`\`\`
+
+Tests: 327/327 pass (was 326 before, 1 new shape-check case
+that asserts the helper definition + reason labels appear in
+\`dist/agent/loop.js\`).
+
 ## 3.15.54 — TradingMarket finds TON (and any other unknown ticker via CoinGecko /search)
 
 Verified 2026-05-04 in a live side-panel session: user asked

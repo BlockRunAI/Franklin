@@ -341,6 +341,25 @@ function getBackoffDelay(attempt: number, maxDelayMs = 32_000): number {
 }
 
 /**
+ * Format the user-facing "switching model" line. Includes the resolved
+ * concrete model in parentheses when the user-facing alias (e.g.
+ * `blockrun/auto`) differs from what was actually being called (e.g.
+ * `anthropic/claude-sonnet-4.6`). Verified 2026-05-04 in a live session:
+ * a payment fail surfaced as `*blockrun/auto failed — switching to
+ * nvidia/qwen3-coder-480b*` with no hint of which concrete model
+ * actually failed, and no hint of why. The reason label closes that gap.
+ */
+function formatModelSwitch(
+  alias: string,
+  resolved: string,
+  reason: string,
+  newModel: string,
+): string {
+  const oldDisplay = alias === resolved ? alias : `${alias} (${resolved})`;
+  return `${oldDisplay} ${reason} — switching to ${newModel}`;
+}
+
+/**
  * Identify models known to hallucinate tool calls (invented names, literal
  * `[TOOLCALL]` / `<tool_call>` text in answers) — they need the explicit
  * "Available tools" inventory appended to the system prompt. Strong frontier
@@ -1116,8 +1135,9 @@ export async function interactiveSession(
             const oldModel = config.model;
             config.model = nextModel;
             config.onModelChange?.(nextModel, 'system');
-            logger.warn(`[franklin] ${oldModel} returned empty — switching to ${nextModel}`);
-            onEvent({ kind: 'text_delta', text: `\n*${oldModel} returned empty — switching to ${nextModel}*\n` });
+            const switchLine = formatModelSwitch(oldModel, resolvedModel, 'returned empty', nextModel);
+            logger.warn(`[franklin] ${switchLine}`);
+            onEvent({ kind: 'text_delta', text: `\n*${switchLine}*\n` });
             continue;
           }
           // No fallback available OR already tried 2 models — give up, tell the user.
@@ -1299,7 +1319,11 @@ export async function interactiveSession(
             const oldModel = config.model;
             config.model = nextFree;
             config.onModelChange?.(nextFree, 'system');
-            onEvent({ kind: 'text_delta', text: `\n*${oldModel} failed — switching to ${nextFree}*\n` });
+            const reason = `failed [${classified.label}]`;
+            onEvent({
+              kind: 'text_delta',
+              text: `\n*${formatModelSwitch(oldModel, resolvedModel, reason, nextFree)}*\n`,
+            });
             continue; // Retry with next model
           }
         }
@@ -1325,7 +1349,7 @@ export async function interactiveSession(
             recoveryAttempts = 0;
             onEvent({
               kind: 'text_delta',
-              text: `\n*${oldModel} rate-limited — switching to ${nextFree}*\n`,
+              text: `\n*${formatModelSwitch(oldModel, resolvedModel, 'rate-limited', nextFree)}*\n`,
             });
             continue;
           }

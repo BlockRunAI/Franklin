@@ -2300,6 +2300,35 @@ test('streamCompletion: retries without tool_choice when upstream rejects it', a
 // invalid_format url path: image_url`. ImageGen already handled this
 // via resolveReferenceImage — VideoGen now reuses the same helper.
 
+// ─── formatModelSwitch: surface resolved model + reason in switch messages ─
+//
+// Verified 2026-05-04 in a live screenshot: a payment fail surfaced as
+// `*blockrun/auto failed — switching to nvidia/qwen3-coder-480b*`. No hint
+// of which concrete model actually failed, no hint of why. After the fix
+// the same situation reads:
+// `*blockrun/auto (anthropic/claude-sonnet-4.6) failed [payment_required] — switching to nvidia/qwen3-coder-480b*`
+//
+// The helper isn't exported from loop.ts (it's an internal). Test by
+// asserting the formatted text appears in the dist source — same trick
+// the agent-context test uses.
+test('formatModelSwitch: shows resolved model in parens when alias differs', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'agent', 'loop.js'),
+    'utf-8',
+  );
+  // Helper definition is present in dist.
+  assert.match(src, /formatModelSwitch\b/, 'helper must be defined and used');
+  // The "alias === resolved" branch.
+  assert.match(src, /alias === resolved \? alias :/, 'aliasing branch present');
+  // Reason label is interpolated into payment + rate-limit + empty paths.
+  assert.match(src, /'rate-limited'/);
+  assert.match(src, /'returned empty'/);
+  // Payment path uses classified.label so the reason isn't hardcoded.
+  assert.match(src, /failed \[\$\{classified\.label\}\]/);
+});
+
 // ─── CoinGecko ticker resolution: TON and the dynamic /search fallback ──
 //
 // Verified 2026-05-04 in a live session: agent asked for TON price,
