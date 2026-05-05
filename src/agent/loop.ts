@@ -1282,9 +1282,18 @@ export async function interactiveSession(
           }
 
           recoveryAttempts++;
-          const backoffMs = getBackoffDelay(recoveryAttempts);
+          // Honor an upstream Retry-After (parsed from the response by
+          // llm.ts when 429+ Retry-After is present) over our own
+          // exponential backoff. Verified 2026-05-04: a 429 with
+          // Retry-After=30s was retried after ~1.5s exponential backoff
+          // → got 429 again → burned the rate_limit retry budget. Cap at
+          // 30s so the agent never feels "frozen" — anything longer
+          // falls back to a different model instead.
+          const upstreamWaitMs = classified.retryAfterMs;
+          const honorUpstream = typeof upstreamWaitMs === 'number' && upstreamWaitMs <= 30_000;
+          const backoffMs = honorUpstream ? upstreamWaitMs : getBackoffDelay(recoveryAttempts);
           logger.warn(
-            `[franklin] ${classified.label} error — retrying in ${(backoffMs / 1000).toFixed(1)}s (attempt ${recoveryAttempts}/${effectiveMaxRetries}): ${errMsg.slice(0, 100)}`
+            `[franklin] ${classified.label} error — retrying in ${(backoffMs / 1000).toFixed(1)}s (attempt ${recoveryAttempts}/${effectiveMaxRetries})${honorUpstream ? ' (upstream Retry-After)' : ''}: ${errMsg.slice(0, 100)}`
           );
           // Surface the actual error + model so the user can see which model
           // is failing and what the upstream said. Old "Retrying after Server
@@ -1360,7 +1369,18 @@ export async function interactiveSession(
         }
 
         // ── Unrecoverable: show error with suggestion from classifier ──
-        const suggestion = classified.suggestion ? `\nTip: ${classified.suggestion}` : '';
+        // For rate_limit specifically, augment the classifier's generic
+        // suggestion with an explicit "all free models exhausted — switch
+        // to a paid model" hint when we got here because pickFreeFallback
+        // returned null. Verified 2026-05-04: the screenshot's session
+        // ended with a bare "[RateLimit] API error: 429" because every
+        // free model had already been ruled out earlier in the turn —
+        // the user had a funded wallet but no signal that paid models
+        // were the way out.
+        let suggestion = classified.suggestion ? `\nTip: ${classified.suggestion}` : '';
+        if (classified.category === 'rate_limit' && turnFailedModels.size > 0) {
+          suggestion = `\nTip: All free models tried this turn are rate-limited. Switch to a paid model with /model anthropic/claude-sonnet-4.6 (or any other paid model) and retry — your wallet handles it. Or wait ~60s and /retry the same turn.`;
+        }
         onEvent({
           kind: 'turn_done',
           reason: 'error',

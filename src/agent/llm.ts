@@ -564,7 +564,26 @@ export class ModelClient {
 
       if (!response.ok) {
         const errorBody = await response.text().catch(() => 'unknown error');
-        const message = extractApiErrorMessage(errorBody);
+        let message = extractApiErrorMessage(errorBody);
+
+        // 429 with Retry-After header: tag the error message so the
+        // classifier can extract and the loop can honor it. Verified
+        // 2026-05-04 in a live session: a 429 fired with the loop's
+        // exponential backoff (~1-2s) but the upstream's actual
+        // Retry-After window was ~30s — the agent retried prematurely
+        // and burned its rate_limit retry budget. Anthropic + most
+        // gateways send Retry-After as either seconds (integer) or an
+        // HTTP-date; we only honor the seconds form (the date form is
+        // rare in practice and harder to validate against clock skew).
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('retry-after');
+          if (retryAfter) {
+            const seconds = parseInt(retryAfter, 10);
+            if (Number.isFinite(seconds) && seconds > 0 && seconds <= 600) {
+              message = `${message} [retry-after-ms=${seconds * 1000}]`;
+            }
+          }
+        }
 
         // Runtime tool_choice retry. The static allowlist at line ~35
         // catches the case where the request goes directly to a model

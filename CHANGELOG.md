@@ -1,5 +1,92 @@
 # Changelog
 
+## 3.15.57 — Honor upstream \`Retry-After\` on 429 + actionable Tip when free fallback exhausted
+
+Last of the four screenshot-driven fixes. Verified 2026-05-04
+session ended with:
+
+\`\`\`
+[Error: API error: 429 {"status":429,"title":"Too Many Requests"}]
+Session ended. Reopen the side bar to start again.
+\`\`\`
+
+Two distinct issues compounded:
+
+**Issue A — Retry-After ignored.** When a 429 fired, the loop's
+exponential backoff (~1.5 s for the first retry) was used even
+when the upstream sent a \`Retry-After: 30\` header explicitly
+asking for a longer wait. The retry hit 429 again, burned the
+\`maxRetries: 1\` budget, and fell into the rate-limit-fallback
+branch. The window the upstream actually gave us was wasted.
+
+**Issue B — Unrecoverable Tip wasn't actionable.** When
+\`pickFreeFallback\` returned null (every free model in
+\`turnFailedModels\`), the unrecoverable error read just
+\`[RateLimit] API error: 429 ...\` with the classifier's generic
+"Try /model to switch" suggestion. The user had a funded wallet
+($94.72 in the live session) and could absolutely afford a
+paid model — but no signal pointed there.
+
+Fix:
+
+- \`src/agent/llm.ts:565\` — when \`response.status === 429\`,
+  read the \`Retry-After\` header. If a positive integer ≤ 600 s,
+  append \`[retry-after-ms=\${seconds * 1000}]\` to the error
+  message string. (HTTP-date format is intentionally not
+  honored — clock-skew between gateway and client makes it
+  unreliable; integer-seconds Retry-After is what 99% of
+  gateways send.)
+- \`src/agent/error-classifier.ts\` —
+  - \`AgentErrorInfo\` gains \`retryAfterMs?: number\`.
+  - Classifier extracts the \`[retry-after-ms=N]\` tag with a
+    regex; clamps to \`(0, 600000]\`; surfaces on rate_limit
+    results.
+- \`src/agent/loop.ts\` transient-retry block (line ~1284):
+  when \`classified.retryAfterMs ≤ 30 s\`, use it as the
+  backoff in place of \`getBackoffDelay()\`. Anything > 30 s
+  falls through to the existing free-model fallback (the
+  agent shouldn't feel frozen, and a long Retry-After is the
+  upstream's way of saying "try someone else"). Log line
+  appends \`(upstream Retry-After)\` so it's visible in
+  \`franklin-debug.log\` why the wait was longer than usual.
+- \`src/agent/loop.ts\` unrecoverable branch (line ~1372):
+  when \`category === 'rate_limit'\` AND \`turnFailedModels\`
+  is non-empty (we got here because we tried free models and
+  exhausted them), the Tip is rewritten:
+
+  > Tip: All free models tried this turn are rate-limited.
+  > Switch to a paid model with /model anthropic/claude-sonnet-4.6
+  > (or any other paid model) and retry — your wallet handles
+  > it. Or wait ~60s and /retry the same turn.
+
+  Concrete, actionable. Names a specific paid model + the slash
+  command. Tells the user the wallet is the way out, not a dead
+  end.
+
+Note: the "Session ended. Reopen the side bar" message in the
+screenshot is from the host UI (Claude Desktop side panel), not
+Franklin. Out of scope. The Franklin-side fix here is to NOT
+bubble up an unrecoverable error in the first place — most 429s
+on Anthropic clear within 30s, and the new path waits them out.
+
+Four new tests:
+
+1. Classifier extracts \`retry-after-ms\` tag from rate_limit
+   messages.
+2. Classifier ignores absurd values (\`>10 min\` clamp test).
+3. Rate-limit without the tag has \`retryAfterMs: undefined\`
+   (regression guard for the legacy path).
+4. \`streamCompletion\`: a 429 response with
+   \`Retry-After: 12\` header round-trips the tag in the error
+   payload (full integration through llm.ts).
+
+Tests: 332/332 pass (was 328 before, 4 net new).
+
+This closes the four-bug arc opened by the 2026-05-04 20:14
+screenshot. Bug 1 (TON) → 3.15.54. Bug 4 (switch message) →
+3.15.55. Bug 2 (payment_rejected) → 3.15.56. Bug 3 (429 +
+actionable Tip) → 3.15.57.
+
 ## 3.15.56 — Distinguish \`Payment verification failed\` from \`payment required\`
 
 Verified 2026-05-04 in a screenshot: ExaSearch returned

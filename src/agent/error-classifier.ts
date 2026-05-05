@@ -28,6 +28,15 @@ export interface AgentErrorInfo {
   maxRetries?: number;
   /** User-facing suggestion for how to recover. Appended to error message in UI. */
   suggestion?: string;
+  /**
+   * Upstream-recommended wait time before retrying. Parsed from a
+   * `[retry-after-ms=...]` tag the streaming client appends to the error
+   * message when the response carries a `Retry-After` header (typically
+   * 429 / 503). The agent loop should honor this in place of its
+   * default exponential backoff. Capped at 10 minutes upstream so a
+   * malicious or buggy server can't pin the agent indefinitely.
+   */
+  retryAfterMs?: number;
 }
 
 function includesAny(text: string, patterns: string[]): boolean {
@@ -36,6 +45,17 @@ function includesAny(text: string, patterns: string[]): boolean {
 
 export function classifyAgentError(message: string): AgentErrorInfo {
   const err = message.toLowerCase();
+
+  // Extract Retry-After hint that streaming-client appended (see llm.ts
+  // 429 path). Surfaces on the AgentErrorInfo so the loop can honor the
+  // upstream's recommended wait instead of guessing with exponential
+  // backoff.
+  let retryAfterMs: number | undefined;
+  const retryAfterTag = /\[retry-after-ms=(\d+)\]/i.exec(message);
+  if (retryAfterTag) {
+    const n = parseInt(retryAfterTag[1], 10);
+    if (Number.isFinite(n) && n > 0 && n <= 600_000) retryAfterMs = n;
+  }
 
   // payment_rejected — the gateway received a SIGNED payment header and
   // rejected it during verification (signature mismatch, replay-nonce
@@ -105,6 +125,7 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     return {
       category: 'rate_limit', label: 'RateLimit', isTransient: true, maxRetries: 1,
       suggestion: 'Try /model to switch to a different model, or wait a moment and /retry.',
+      retryAfterMs,
     };
   }
 

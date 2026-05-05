@@ -2305,6 +2305,68 @@ test('streamCompletion: retries without tool_choice when upstream rejects it', a
 // invalid_format url path: image_url`. ImageGen already handled this
 // via resolveReferenceImage — VideoGen now reuses the same helper.
 
+// ─── 429 Retry-After: honor upstream wait window ─────────────────────
+//
+// Verified 2026-05-04 in a screenshot: a 429 with Retry-After=30s was
+// retried after ~1.5s exponential backoff, got 429 again, burned the
+// rate_limit retry budget, fell to "all free models exhausted" without
+// trying the right wait window. 3.15.57 has llm.ts tag the error with
+// `[retry-after-ms=N]`; classifier extracts; loop honors when ≤30s.
+
+test('classifier: extracts retry-after-ms tag from rate_limit message', async () => {
+  const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
+  const info = classifyAgentError('429 Too Many Requests [retry-after-ms=15000]');
+  assert.equal(info.category, 'rate_limit');
+  assert.equal(info.retryAfterMs, 15000);
+});
+
+test('classifier: ignores absurd retry-after values (>10 min)', async () => {
+  const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
+  // Server-side cap: don't honor a malicious or buggy 12-hour window.
+  const info = classifyAgentError('429 [retry-after-ms=43200000]');
+  assert.equal(info.retryAfterMs, undefined);
+});
+
+test('classifier: rate_limit without retry-after has retryAfterMs undefined', async () => {
+  const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
+  const info = classifyAgentError('429 rate limit exceeded');
+  assert.equal(info.category, 'rate_limit');
+  assert.equal(info.retryAfterMs, undefined);
+});
+
+test('streamCompletion: 429 response with Retry-After header tags the error message', async () => {
+  const { ModelClient } = await import('../dist/agent/llm.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ error: { message: 'Too Many Requests' } }),
+    {
+      status: 429,
+      headers: {
+        'content-type': 'application/json',
+        'retry-after': '12',
+      },
+    },
+  );
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    const gen = client.streamCompletion({
+      model: 'zai/glm-5.1',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 128,
+    });
+    let captured = null;
+    for await (const evt of gen) {
+      if (evt.kind === 'error') { captured = evt.payload; break; }
+    }
+    assert.ok(captured, 'must yield an error event');
+    assert.equal(captured.status, 429);
+    assert.match(captured.message ?? '', /\[retry-after-ms=12000\]/,
+      'message must carry the parseable retry-after tag');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // ─── payment_rejected category: signed payment verified-and-rejected ──
 //
 // Verified 2026-05-04 in a screenshot: ExaSearch failed with
