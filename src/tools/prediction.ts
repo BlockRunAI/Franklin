@@ -120,7 +120,7 @@ async function getWithPayment<T>(path: string, query: Record<string, string | nu
       const errText = await response.text().catch(() => '');
       // Surface failed paid calls in the Markets-tab health summary.
       recordFetch({ provider: 'blockrun', endpoint: path, ok: false, latencyMs: Date.now() - startedAt });
-      throw new Error(`PredictionMarket ${path} failed (${response.status}): ${errText.slice(0, 200)}`);
+      throw new Error(`PredictionMarket ${path} failed (${response.status}): ${errText.slice(0, 600)}`);
     }
 
     recordFetch({
@@ -316,10 +316,12 @@ interface PredictionInput {
   conditionId?: string;
   /** Wallet address — used by walletProfile (single or comma-list), walletPnl, walletPositions. */
   wallets?: string;
+  /** Time bucket for walletPnl time series — day | week | month | year | all. Default day. */
+  granularity?: string;
 }
 
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
-  const { action, search, status, sort, limit, conditionId, wallets } = input as unknown as PredictionInput;
+  const { action, search, status, sort, limit, conditionId, wallets, granularity } = input as unknown as PredictionInput;
   const cappedLimit = Math.min(Math.max(1, limit ?? DEFAULT_LIMIT), MAX_LIMIT);
 
   if (!action) {
@@ -335,8 +337,12 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
         // One $0.005 call across 5 platforms — Polymarket, Kalshi, Limitless,
         // Opinion, Predict.Fun. The right entry point for "is there a market
         // on X anywhere?" — beats firing per-platform searches in parallel.
+        // Predexon expects `q` for the search term — verified 2026-05-06 from
+        // a live 422: {"detail":[{"type":"missing","loc":["query","q"]}]}.
+        // Public input field stays `search` for ergonomic consistency with
+        // searchPolymarket / searchKalshi; rename on the wire.
         const raw = await getWithPayment<unknown>('/v1/pm/markets/search', {
-          search,
+          q: search,
           status,
           sort,
           limit: cappedLimit,
@@ -517,9 +523,12 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           };
         }
         const wallet = parsedWallets[0];
+        // Predexon requires `granularity` from the enum {day, week, month,
+        // year, all} — verified 2026-05-06 in two live 422 turns. Default
+        // `day`; agent can override via input field for longer aggregations.
         const raw = await getWithPayment<unknown>(
           `/v1/pm/polymarket/wallet/pnl/${encodeURIComponent(wallet)}`,
-          {},
+          { granularity: granularity ?? 'day' },
           ctx,
         );
         if (!raw || typeof raw !== 'object') {
@@ -851,6 +860,11 @@ export const predictionMarketCapability: CapabilityHandler = {
         conditionId: {
           type: 'string',
           description: 'For smartMoney: Polymarket condition_id from searchPolymarket or smartActivity.',
+        },
+        granularity: {
+          type: 'string',
+          enum: ['day', 'week', 'month', 'year', 'all'],
+          description: 'For walletPnl: time bucket for the P&L series. Default day.',
         },
       },
       required: ['action'],

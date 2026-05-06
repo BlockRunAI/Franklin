@@ -458,6 +458,101 @@ test('VideoGen tool: generates an MP4 via BlockRun /v1/videos/generations',
   },
 );
 
+// ─── PredictionMarket (Predexon) live wire-format tests ───────────────────
+// These invoke the capability directly with the real wallet — bypassing the
+// agent loop so failures pinpoint to wire format (param names, response
+// shape, payment headers) without LLM-routing variance. Added 2026-05-06
+// after the 3.15.70→3.15.72 walletProfile 422 chain — that bug would have
+// been caught instantly by a paid e2e test calling the live endpoint.
+//
+// Test wallet `0xdfe3...c4` is a real, currently-active Polymarket wallet
+// confirmed via the bash-curl fallback in a real user session. Same user
+// reproducibly returns positions + P&L; if Polymarket rotates this wallet
+// out, swap to any other live one.
+const PM_TEST_WALLET = '0xdfe3fedc5c7679be42c3d393e99d4b55247b73c4';
+
+test('PredictionMarket walletProfile (single): live /wallet/{addr} returns profile data',
+  { timeout: 60_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.005 USDC per run)' : false },
+  async () => {
+    const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+    const result = await predictionMarketCapability.execute(
+      { action: 'walletProfile', wallets: PM_TEST_WALLET },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.notEqual(result.isError, true, `walletProfile errored: ${result.output}`);
+    assert.ok(/Polymarket wallet profile/i.test(result.output),
+      `Expected profile header.\n${result.output}`);
+    assert.ok(!/422|Bad Request|missing/i.test(result.output),
+      `Output looks like the old 3.15.70-era 422 mode.\n${result.output}`);
+    assert.ok(/\$0\.005 paid/.test(result.output),
+      `Cost footer missing.\n${result.output}`);
+  },
+);
+
+test('PredictionMarket walletPnl: live /wallet/pnl/{addr} returns P&L data',
+  { timeout: 60_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.005 USDC per run)' : false },
+  async () => {
+    const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+    const result = await predictionMarketCapability.execute(
+      { action: 'walletPnl', wallets: PM_TEST_WALLET },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.notEqual(result.isError, true, `walletPnl errored: ${result.output}`);
+    assert.ok(/Polymarket wallet P&L/i.test(result.output),
+      `Expected P&L header.\n${result.output}`);
+    assert.ok(!/422|Bad Request|missing/i.test(result.output),
+      `Output looks like a wire-format error.\n${result.output}`);
+  },
+);
+
+test('PredictionMarket walletPositions: live /wallet/positions/{addr} returns positions',
+  { timeout: 60_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.005 USDC per run)' : false },
+  async () => {
+    const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+    const result = await predictionMarketCapability.execute(
+      { action: 'walletPositions', wallets: PM_TEST_WALLET, limit: 5 },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.notEqual(result.isError, true, `walletPositions errored: ${result.output}`);
+    assert.ok(/Polymarket positions/i.test(result.output),
+      `Expected positions header.\n${result.output}`);
+    assert.ok(!/422|Bad Request|missing/i.test(result.output),
+      `Output looks like a wire-format error.\n${result.output}`);
+  },
+);
+
+test('PredictionMarket leaderboard: live /polymarket/leaderboard returns top wallets',
+  { timeout: 60_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.001 USDC per run)' : false },
+  async () => {
+    const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+    const result = await predictionMarketCapability.execute(
+      { action: 'leaderboard', limit: 3 },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.notEqual(result.isError, true, `leaderboard errored: ${result.output}`);
+    assert.ok(/leaderboard/i.test(result.output),
+      `Expected leaderboard header.\n${result.output}`);
+    assert.ok(!/422|Bad Request|missing/i.test(result.output),
+      `Output looks like a wire-format error.\n${result.output}`);
+  },
+);
+
+test('PredictionMarket searchAll: live /markets/search returns multi-platform results',
+  { timeout: 60_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs $0.005 USDC per run)' : false },
+  async () => {
+    const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+    const result = await predictionMarketCapability.execute(
+      { action: 'searchAll', search: 'election', limit: 3 },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.notEqual(result.isError, true, `searchAll errored: ${result.output}`);
+    assert.ok(/Cross-platform market search/i.test(result.output),
+      `Expected cross-platform header.\n${result.output}`);
+    assert.ok(!/422|Bad Request|missing/i.test(result.output),
+      `Output looks like a wire-format error.\n${result.output}`);
+  },
+);
+
 test('session cost: estimateCost returns non-negative value for known model', { timeout: 5_000 }, async () => {
   const { estimateCost } = await import('../dist/pricing.js');
 

@@ -1,5 +1,59 @@
 # Changelog
 
+## 3.15.74 — Live e2e validates 5 PredictionMarket endpoints; two more wire-format bugs squashed
+
+**Added paid e2e coverage for the new prediction-market actions and ran
+them against the real Predexon gateway. Caught two more bugs that local
+tests can't see.**
+
+### \`searchAll\` query param: \`search\` → \`q\`
+
+Same param-name guess pattern as the 3.15.70 walletProfile bug. The
+\`/v1/pm/markets/search\` endpoint expects \`q\`, not \`search\`. Verified
+2026-05-06 from a live 422:
+\`{"detail":[{"type":"missing","loc":["query","q"]}]}\`. Fixed: rename on
+the wire, public input field stays \`search\` for ergonomic consistency
+with \`searchPolymarket\` / \`searchKalshi\`.
+
+### \`walletPnl\` requires \`granularity\` from a fixed enum
+
+The 3.15.73 ship sent no \`granularity\` param at all. Predexon rejects
+the call:
+\`{"detail":[{"type":"missing","loc":["query","granularity"]}]}\`. Default
+\`day\`, not \`daily\` — the enum is singular: \`day | week | month | year |
+all\` (a second 422 surfaced the valid set:
+\`"Input should be 'day', 'week', 'month', 'year' or 'all'"\`).
+
+Added a top-level \`granularity\` field to the tool input schema with
+the enum so models can override (\`granularity="week"\` for a weekly
+P&L series).
+
+### Error truncation bumped 200 → 600 chars
+
+The PredictionMarket error wrapper used to slice gateway errors at 200
+chars — that cut off the enum-options hint right where it would have
+been most useful. Lifted to 600. Future param-shape mismatches surface
+the valid input set in the agent's tool result, so the model can
+self-correct on the next call without us having to ship a fix.
+
+### New paid e2e coverage (5 tests, ~\$0.025 per run)
+
+All gated behind \`RUN_PAID_E2E=1\`:
+
+- \`walletProfile (single): live /wallet/{addr} returns profile data\`
+- \`walletPnl: live /wallet/pnl/{addr} returns P&L data\`
+- \`walletPositions: live /wallet/positions/{addr} returns positions\`
+- \`leaderboard: live /polymarket/leaderboard returns top wallets\`
+- \`searchAll: live /markets/search returns multi-platform results\`
+
+Each test calls the capability directly (skipping the agent loop) so
+failures pinpoint to wire format. The 3.15.70→3.15.74 bug chain
+(walletProfile 422, then searchAll 422, then walletPnl 422 twice in
+sequence on different params) would have been caught instantly by these
+tests if they had existed before. Now they do.
+
+353/353 local + 14/14 free e2e + 5/5 paid e2e pass.
+
 ## 3.15.73 — Wallet-analysis triplet (walletProfile + walletPnl + walletPositions)
 
 **Fix continued from 3.15.72. Single-wallet "analyze this trader"
