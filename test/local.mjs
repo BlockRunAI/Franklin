@@ -7159,6 +7159,9 @@ test('PredictionMarket: paths must NOT include the /api prefix (regression: 3.15
   // Sanity: at least one /v1/pm/ path is present (i.e., we didn't accidentally remove all paths).
   assert.ok(src.includes('/v1/pm/'), 'expected at least one /v1/pm/ path in compiled prediction tool');
   assert.match(src, /smart-money\$/, 'smartMoney price telemetry must not fall through to the generic $0.001 Predexon GET price');
+  assert.match(src, /addresses: list/, 'walletProfile batch calls must use Predexon query param `addresses`, not public input name `wallets`');
+  assert.match(src, /wallet\/pnl\/\$\{encodeURIComponent\(wallet\)\}/, 'walletPnl must route to the live wallet/pnl/:wallet endpoint');
+  assert.match(src, /wallet\/positions\/\$\{encodeURIComponent\(wallet\)\}/, 'walletPositions must route to the live wallet/positions/:wallet endpoint');
 });
 
 test('brain caps observations at MAX_OBSERVATIONS, evicting oldest', async () => {
@@ -7200,13 +7203,17 @@ test('brain caps observations at MAX_OBSERVATIONS, evicting oldest', async () =>
   }
 });
 
-test('PredictionMarket spec exposes the eight x402-paid actions (3.15.70)', async () => {
+test('PredictionMarket spec exposes the ten x402-paid actions (3.15.73)', async () => {
   const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
   const spec = predictionMarketCapability.spec;
   assert.equal(spec.name, 'PredictionMarket');
   const actions = spec.input_schema.properties.action.enum;
-  // 3.15.70 adds searchAll / leaderboard / walletProfile / smartActivity
-  // while preserving smartMoney as the per-market condition_id drill-down.
+  // 3.15.73 splits wallet analysis into three single-wallet endpoints:
+  // walletProfile (full profile, smart-dispatch single vs batch),
+  // walletPnl (P&L + time series), walletPositions (positions detail).
+  // Verified against gateway: single-wallet questions need /wallet/{addr},
+  // not the batch /wallets/profiles which the 3.15.70 ship was hitting
+  // and getting 422 from.
   assert.deepEqual(
     [...actions].sort(),
     [
@@ -7217,17 +7224,21 @@ test('PredictionMarket spec exposes the eight x402-paid actions (3.15.70)', asyn
       'searchPolymarket',
       'smartActivity',
       'smartMoney',
+      'walletPnl',
+      'walletPositions',
       'walletProfile',
     ],
-    'enum should expose exactly the eight supported actions',
+    'enum should expose exactly the ten supported actions',
   );
   // Description must steer agents away from training-data odds answers and
-  // surface the new wallet/leaderboard intents.
+  // surface wallet/leaderboard/wallet-analysis-triplet intents.
   assert.match(spec.description, /Polymarket/);
   assert.match(spec.description, /Kalshi/);
   assert.match(spec.description, /Limitless/);
   assert.match(spec.description, /leaderboard/);
   assert.match(spec.description, /walletProfile/);
+  assert.match(spec.description, /walletPnl/);
+  assert.match(spec.description, /walletPositions/);
   assert.match(spec.description, /\$0\.001/);
   assert.match(spec.description, /\$0\.005/);
 });
@@ -7250,6 +7261,25 @@ test('PredictionMarket walletProfile without wallets fails fast (3.15.70)', asyn
   );
   assert.equal(result.isError, true);
   assert.match(result.output, /wallets/);
+});
+
+test('PredictionMarket walletPnl + walletPositions reject empty or ambiguous wallet input (3.15.73)', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  for (const action of ['walletPnl', 'walletPositions']) {
+    const result = await predictionMarketCapability.execute(
+      { action },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.equal(result.isError, true, `${action} should error without wallets`);
+    assert.match(result.output, /wallets/, `${action} error must mention 'wallets'`);
+
+    const multi = await predictionMarketCapability.execute(
+      { action, wallets: '0xabc,0xdef' },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.equal(multi.isError, true, `${action} should reject comma-separated wallets`);
+    assert.match(multi.output, /exactly one wallet/i, `${action} error must explain the single-wallet contract`);
+  }
 });
 
 test('PredictionMarket smartMoney without conditionId fails fast (3.15.70)', async () => {

@@ -17,8 +17,12 @@
  *   crossPlatform      $0.005  matching market pairs across Polymarket+Kalshi
  *                              (the arbitrage / consensus signal)
  *   leaderboard        $0.001  global Polymarket leaderboard — top wallets by P&L
- *   walletProfile      $0.005  batch profile lookup for one or more Polymarket
- *                              wallets — P&L, positions, identity
+ *   walletProfile      $0.005  full Polymarket wallet profile (single wallet)
+ *                              or batch profiles (comma-separated wallets)
+ *   walletPnl          $0.005  P&L summary + realized P&L time series for one
+ *                              Polymarket wallet
+ *   walletPositions    $0.005  open + historical positions for one Polymarket
+ *                              wallet
  *   smartActivity      $0.005  discover markets where high-performing wallets
  *                              are active right now
  *   smartMoney         $0.005  smart-money positioning on one Polymarket
@@ -219,10 +223,17 @@ function formatUsd(value: unknown): string {
   return `$${n.toFixed(2)}`;
 }
 
+function formatQuantity(value: unknown): string {
+  const n = asNumber(value);
+  if (n == null) return String(value ?? 'n/a');
+  return Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
 function formatPct(value: unknown, digits = 1): string {
   const n = asNumber(value);
   if (n == null) return 'n/a';
-  return `${(n * 100).toFixed(digits)}%`;
+  const pct = Math.abs(n) > 1 ? n : n * 100;
+  return `${pct.toFixed(digits)}%`;
 }
 
 // Both gateways return slightly different shapes; we intentionally use
@@ -272,8 +283,16 @@ function unwrapList<T>(raw: unknown): T[] {
     if (Array.isArray(obj.markets)) return obj.markets as T[];
     if (Array.isArray(obj.pairs)) return obj.pairs as T[];
     if (Array.isArray(obj.results)) return obj.results as T[];
+    if (Array.isArray(obj.positions)) return obj.positions as T[];
   }
   return [];
+}
+
+function parseWalletsInput(value: string): string[] {
+  return value
+    .split(',')
+    .map(w => w.trim())
+    .filter(Boolean);
 }
 
 // ─── PredictionMarket capability ──────────────────────────────────────────
@@ -286,6 +305,8 @@ interface PredictionInput {
     | 'crossPlatform'
     | 'leaderboard'
     | 'walletProfile'
+    | 'walletPnl'
+    | 'walletPositions'
     | 'smartActivity'
     | 'smartMoney';
   search?: string;
@@ -293,7 +314,7 @@ interface PredictionInput {
   sort?: string;
   limit?: number;
   conditionId?: string;
-  /** Comma-separated wallet addresses or a single address — used by walletProfile. */
+  /** Wallet address — used by walletProfile (single or comma-list), walletPnl, walletPositions. */
   wallets?: string;
 }
 
@@ -303,7 +324,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   if (!action) {
     return {
-      output: 'Error: action is required (searchAll | searchPolymarket | searchKalshi | crossPlatform | leaderboard | walletProfile | smartActivity | smartMoney)',
+      output: 'Error: action is required (searchAll | searchPolymarket | searchKalshi | crossPlatform | leaderboard | walletProfile | walletPnl | walletPositions | smartActivity | smartMoney)',
       isError: true,
     };
   }
@@ -417,17 +438,37 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
             isError: true,
           };
         }
-        // Predexon's batch endpoint expects the query param `addresses`,
-        // NOT `wallets` — verified 2026-05-06 from a live 422 in a real
-        // user session: `{"detail":[{"type":"missing","loc":["query",
-        // "addresses"]}]}`. The 3.15.70 ship guessed the param name from
-        // the openapi description ("Batch retrieve wallet profiles") and
-        // got it wrong. Public field stays `wallets` for ergonomics —
-        // we just rename on the wire.
-        const raw = await getWithPayment<unknown>('/v1/pm/polymarket/wallets/profiles', {
-          addresses: wallets.trim(),
-        }, ctx);
-        const profiles = unwrapList<Record<string, unknown>>(raw);
+        // Smart dispatch: a single wallet → /wallet/{addr} (full profile,
+        // labels, scores, stats); a comma-list → /wallets/profiles (batch).
+        // The 3.15.70 ship hit the BATCH endpoint for everything and got 422
+        // for the single-wallet case; the gateway team confirmed 2026-05-06
+        // the right surface for "analyze this trader" is the path-parameter
+        // single-wallet endpoint, not the batch query-param one.
+        const parsedWallets = parseWalletsInput(wallets);
+        if (parsedWallets.length === 0) {
+          return {
+            output: 'Error: `wallets` must include at least one Polymarket wallet address',
+            isError: true,
+          };
+        }
+        const list = parsedWallets.join(',');
+        const isBatch = parsedWallets.length > 1;
+        const raw = isBatch
+          ? await getWithPayment<unknown>('/v1/pm/polymarket/wallets/profiles', {
+              addresses: list,
+            }, ctx)
+          : await getWithPayment<unknown>(
+              `/v1/pm/polymarket/wallet/${encodeURIComponent(list)}`,
+              {},
+              ctx,
+            );
+        // Single-wallet path returns a single profile object; batch returns
+        // an array (or {data:[]}). unwrapList handles the batch shape but
+        // returns [] for a bare object — wrap explicitly so the formatter
+        // below sees the single profile.
+        const profiles = isBatch
+          ? unwrapList<Record<string, unknown>>(raw)
+          : (raw && typeof raw === 'object' ? [raw as Record<string, unknown>] : []);
         if (profiles.length === 0) {
           return { output: `No profile data returned for: ${wallets}` };
         }
@@ -459,11 +500,121 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
         return { output: lines.join('\n') };
       }
 
+      case 'walletPnl': {
+        // Single-wallet P&L summary + time series.
+        // Predexon path: /v1/pm/polymarket/wallet/pnl/{wallet} — Tier 2 ($0.005).
+        if (!wallets || !wallets.trim()) {
+          return {
+            output: 'Error: `wallets` is required for walletPnl (single Polymarket wallet address)',
+            isError: true,
+          };
+        }
+        const parsedWallets = parseWalletsInput(wallets);
+        if (parsedWallets.length !== 1) {
+          return {
+            output: 'Error: walletPnl accepts exactly one wallet address. For multiple wallets, call walletPnl once per address in parallel.',
+            isError: true,
+          };
+        }
+        const wallet = parsedWallets[0];
+        const raw = await getWithPayment<unknown>(
+          `/v1/pm/polymarket/wallet/pnl/${encodeURIComponent(wallet)}`,
+          {},
+          ctx,
+        );
+        if (!raw || typeof raw !== 'object') {
+          return { output: `No P&L data returned for ${wallet}` };
+        }
+        const data = raw as Record<string, unknown>;
+        const realized = data.realized_pnl ?? data.realizedPnl ?? data.total_pnl ?? data.pnl;
+        const unrealized = data.unrealized_pnl ?? data.unrealizedPnl;
+        const total = data.total_value ?? data.totalValue ?? data.equity;
+        const volume = data.volume ?? data.total_volume;
+        const winRate = data.win_rate ?? data.winRate;
+        const w = wallet.length > 12 ? `${wallet.slice(0, 8)}…${wallet.slice(-4)}` : wallet;
+        const lines: string[] = [`## Polymarket wallet P&L — \`${w}\``, ''];
+        const summary: string[] = [];
+        if (realized != null) summary.push(`realized ${formatUsd(realized as number)}`);
+        if (unrealized != null) summary.push(`unrealized ${formatUsd(unrealized as number)}`);
+        if (total != null) summary.push(`equity ${formatUsd(total as number)}`);
+        if (volume != null) summary.push(`vol ${formatUsd(volume as number)}`);
+        if (winRate != null) summary.push(`win ${formatPct(winRate as number, 0)}`);
+        if (summary.length > 0) lines.push(summary.join(' · '));
+        // Optional time series — show recent points compactly if present.
+        const series = (data.series ?? data.history ?? data.daily) as Array<Record<string, unknown>> | undefined;
+        if (Array.isArray(series) && series.length > 0) {
+          lines.push('', `**Recent points** (latest ${Math.min(7, series.length)}):`);
+          series.slice(-7).forEach(pt => {
+            const t = (pt.date ?? pt.ts ?? pt.timestamp) as string | number | undefined;
+            const v = (pt.pnl ?? pt.value ?? pt.cumulative_pnl) as number | undefined;
+            if (t != null && v != null) {
+              const tStr = typeof t === 'number' ? new Date(t).toISOString().slice(0, 10) : String(t).slice(0, 10);
+              lines.push(`- ${tStr} · ${formatUsd(v)}`);
+            }
+          });
+        }
+        lines.push('', `_$0.005 paid via x402._`);
+        return { output: lines.join('\n') };
+      }
+
+      case 'walletPositions': {
+        // Single-wallet positions (open + historical).
+        // Predexon path: /v1/pm/polymarket/wallet/positions/{wallet} — Tier 2 ($0.005).
+        if (!wallets || !wallets.trim()) {
+          return {
+            output: 'Error: `wallets` is required for walletPositions (single Polymarket wallet address)',
+            isError: true,
+          };
+        }
+        const parsedWallets = parseWalletsInput(wallets);
+        if (parsedWallets.length !== 1) {
+          return {
+            output: 'Error: walletPositions accepts exactly one wallet address. For multiple wallets, call walletPositions once per address in parallel.',
+            isError: true,
+          };
+        }
+        const wallet = parsedWallets[0];
+        const raw = await getWithPayment<unknown>(
+          `/v1/pm/polymarket/wallet/positions/${encodeURIComponent(wallet)}`,
+          { limit: cappedLimit },
+          ctx,
+        );
+        const positions = unwrapList<Record<string, unknown>>(raw);
+        if (positions.length === 0) {
+          return { output: `No positions returned for ${wallet}` };
+        }
+        const w = wallet.length > 12 ? `${wallet.slice(0, 8)}…${wallet.slice(-4)}` : wallet;
+        const lines: string[] = [
+          `## Polymarket positions — \`${w}\` — ${positions.length} position${positions.length === 1 ? '' : 's'}`,
+          '',
+        ];
+        positions.slice(0, cappedLimit).forEach((p, i) => {
+          const title = (p.title || p.market || p.question || p.market_slug || 'untitled') as string;
+          const outcome = (p.outcome || p.side) as string | undefined;
+          const size = p.size ?? p.shares ?? p.quantity;
+          const avgPrice = p.avg_price ?? p.avgPrice ?? p.average_price;
+          const currentValue = p.current_value ?? p.currentValue ?? p.value;
+          const pnl = p.pnl ?? p.unrealized_pnl ?? p.realized_pnl;
+          const pnlPct = p.pnl_pct ?? p.pnlPct ?? p.percent_pnl;
+          const parts: string[] = [];
+          if (outcome) parts.push(outcome);
+          if (size != null) parts.push(`size ${formatQuantity(size)}`);
+          if (avgPrice != null) parts.push(`avg ${formatPct(avgPrice as number)}`);
+          if (currentValue != null) parts.push(`now ${formatUsd(currentValue as number)}`);
+          if (pnl != null) {
+            const pctStr = pnlPct != null ? ` (${formatPct(pnlPct as number, 1)})` : '';
+            parts.push(`P&L ${formatUsd(pnl as number)}${pctStr}`);
+          }
+          lines.push(`${i + 1}. **${title}** — ${parts.join(' · ')}`);
+        });
+        lines.push('', `_$0.005 paid via x402._`);
+        return { output: lines.join('\n') };
+      }
+
       case 'smartActivity': {
         // "Discover markets where high-performing wallets are active right now."
-        // Replaces the old `smartMoney` action (which hit a non-existent path
-        // /v1/pm/polymarket/market/<id>/smart-money — silently 404'd from
-        // launch). Verified 2026-05-05 against blockrun.ai/openapi.json.
+        // Complements `smartMoney`: this discovers interesting markets across
+        // the venue; smartMoney drills into one condition_id.
         const raw = await getWithPayment<unknown>('/v1/pm/polymarket/markets/smart-activity', {
           limit: cappedLimit,
           search,
@@ -626,7 +777,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
       default:
         return {
-          output: `Error: unknown action "${action}". Use: searchAll, searchPolymarket, searchKalshi, crossPlatform, leaderboard, walletProfile, smartActivity, smartMoney`,
+          output: `Error: unknown action "${action}". Use: searchAll, searchPolymarket, searchKalshi, crossPlatform, leaderboard, walletProfile, walletPnl, walletPositions, smartActivity, smartMoney`,
           isError: true,
         };
     }
@@ -646,13 +797,15 @@ export const predictionMarketCapability: CapabilityHandler = {
       '`searchKalshi` (Kalshi only, supports sort+status — $0.001), ' +
       '`crossPlatform` (matched market pairs across Polymarket+Kalshi for arbitrage / consensus — $0.005), ' +
       '`leaderboard` (global top wallets by P&L on Polymarket — $0.001), ' +
-      '`walletProfile` (P&L + positions for one or more Polymarket wallets — $0.005), ' +
+      '`walletProfile` (full Polymarket wallet profile — labels, scores, stats. Single address → /wallet/{addr}; comma-list → batch /wallets/profiles — $0.005), ' +
+      '`walletPnl` (single Polymarket wallet P&L summary + time series — $0.005), ' +
+      '`walletPositions` (single Polymarket wallet positions — open + historical with P&L per position — $0.005), ' +
       '`smartActivity` (markets where high-P&L wallets are positioning right now — $0.005), ' +
       '`smartMoney` (smart-money positioning on one Polymarket condition_id — $0.005). ' +
       'Default routing: ' +
       '"is there a market on X anywhere" → searchAll. ' +
       '"top wallets / who is profitable / who should I follow on Polymarket" → leaderboard. ' +
-      '"how is wallet 0xabc doing / show me their P&L" → walletProfile with that address. ' +
+      '"analyze this wallet / can I copy this trader / 复制交易 / show me their P&L AND positions" → run walletProfile + walletPnl + walletPositions IN PARALLEL with the same address — three $0.005 calls give the full picture for $0.015. Do not Bash-curl Polymarket directly; the agent has paid tools for this. ' +
       '"what are smart traders betting on right now" → smartActivity. ' +
       '"show smart money on this specific Polymarket market" → smartMoney with conditionId. ' +
       '"should I bet on X" → run searchPolymarket + searchKalshi in parallel and compare implied probabilities — divergence is the signal.',
@@ -668,6 +821,8 @@ export const predictionMarketCapability: CapabilityHandler = {
             'crossPlatform',
             'leaderboard',
             'walletProfile',
+            'walletPnl',
+            'walletPositions',
             'smartActivity',
             'smartMoney',
           ],
@@ -675,7 +830,7 @@ export const predictionMarketCapability: CapabilityHandler = {
         },
         search: {
           type: 'string',
-          description: 'Search query. Used by searchAll / searchPolymarket / searchKalshi / smartActivity. Optional for crossPlatform/leaderboard/walletProfile/smartMoney.',
+          description: 'Search query. Used by searchAll / searchPolymarket / searchKalshi / smartActivity. Optional for crossPlatform/leaderboard/walletProfile/walletPnl/walletPositions/smartMoney.',
         },
         status: {
           type: 'string',

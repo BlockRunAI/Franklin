@@ -1,5 +1,78 @@
 # Changelog
 
+## 3.15.73 — Wallet-analysis triplet (walletProfile + walletPnl + walletPositions)
+
+**Fix continued from 3.15.72. Single-wallet "analyze this trader"
+questions now hit the right Predexon endpoints instead of the
+batch one.**
+
+### What was still wrong after 3.15.72
+
+3.15.72 fixed the batch endpoint's param name (\`wallets\` →
+\`addresses\`) so it stopped 422'ing. But the gateway team
+clarified 2026-05-06 that "analyze this wallet / can I copy
+this trader" questions don't want the batch endpoint at all —
+they want one of three single-wallet endpoints (path-parameter,
+not query-parameter):
+
+| Intent | Endpoint |
+|---|---|
+| Full profile (labels, scores, stats) | \`GET /v1/pm/polymarket/wallet/{wallet}\` |
+| P&L summary + time series | \`GET /v1/pm/polymarket/wallet/pnl/{wallet}\` |
+| Positions (open + historical) | \`GET /v1/pm/polymarket/wallet/positions/{wallet}\` |
+
+Verified 2026-05-06 in a real session: opus-4.7 picked
+\`walletProfile\` correctly for "analyze 0xdfe3fedc... 复制交易"
+but only got the batch endpoint, which (a) wasn't the right
+data shape for the question and (b) returned 422 because of the
+param-name bug. Even after the param fix, the agent would still
+have to bash-curl \`data-api.polymarket.com\` directly to get
+P&L and positions detail — bypassing the paid-tool path Franklin
+exists to provide.
+
+### Three actions now, smart dispatch
+
+- **\`walletProfile\`** (\$0.005) — full profile.
+  - Single address (\`wallets="0xabc"\`) → \`/wallet/{addr}\`
+  - Comma-list (\`wallets="0xabc,0xdef"\`) → batch
+    \`/wallets/profiles?addresses=...\`
+- **\`walletPnl\`** (\$0.005) — single-wallet P&L summary +
+  realized-P&L time series. Path:
+  \`/wallet/pnl/{wallet}\`. Multi-wallet input takes the first.
+- **\`walletPositions\`** (\$0.005) — single-wallet positions
+  (open + historical) with per-position P&L breakdown. Path:
+  \`/wallet/positions/{wallet}\`.
+
+### Routing nudge for the trader-analysis pattern
+
+\`context.ts\` system prompt and the tool description both now
+direct: *"analyze this wallet / can I copy this trader / 复制交易
+/ show me their P&L AND positions"* → run \`walletProfile\` +
+\`walletPnl\` + \`walletPositions\` **in parallel** with the same
+address. Three \$0.005 calls = full picture for \$0.015. Explicitly
+forbids \`Bash\`-curling \`data-api.polymarket.com\` — that's
+bypassing the paid-tool architecture.
+
+### Tool inventory still tight
+
+PredictionMarket now has 10 actions. Comment at
+\`prediction.ts:9\` warns about hallucinated tool names from
+weak models with bloated inventories. Three new actions vs three
+new tools: same surface area cost, distinct semantics. The
+existing single-action dispatch keeps the model's view simple.
+
+### Observed user behavior the fix is responding to
+
+Real session 2026-05-06: opus-4.7 attempted walletProfile, got
+422, then burned 6 Bash retries / \$0.32 against
+\`data-api.polymarket.com\`. The user reported the agent
+"doesn't go to predexon data on its own" — the diagnosis was
+right; the model **did** route to the right tool, the tool was
+returning errors and the model fell back to non-paid paths.
+Both issues now closed.
+
+353/353 tests pass.
+
 ## 3.15.72 — walletProfile param name fix (was 422'ing every call)
 
 **Real shipped bug from 3.15.70's walletProfile addition.**
