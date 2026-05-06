@@ -1,5 +1,74 @@
 # Changelog
 
+## 3.15.78 — End-of-turn marker for question turns + dual-listing notice for tokenized equities
+
+**Two UX-level fixes for issues that bit a real user session twice in one
+hour today.**
+
+### End-of-turn marker — silence after a question is no longer "death"
+
+Real failure pattern: agent finishes a turn with *"要我查一下 X 吗?"*,
+the terminal goes quiet, the user reads the silence as "Franklin died"
+and pings to check the log. Twice in one hour today on the same
+session. The Ink input box is already on screen but easy to miss after
+a long output scroll.
+
+Fix: when the model's last emitted text segment ends with a question
+mark (ASCII \`?\` or fullwidth \`？\`), the agent loop appends a single
+italic line before \`turn_done\`:
+
+\`\`\`
+*▸ awaiting your reply (or type a new message)*
+\`\`\`
+
+Trims trailing whitespace + closing punctuation (\`)\`, \`'\`, \`*\`, etc.)
+before the question-mark check so questions wrapped in italics or
+parentheses still match. Only fires on natural completion
+(\`reason: 'completed'\`) — \`cap_exceeded\` / \`no_progress\` /
+\`aborted\` paths already have their own user-facing copy explaining
+what happened.
+
+\`endedWithQuestion(parts)\` helper added next to the existing media-
+size / wall-failure detectors in \`loop.ts\`.
+
+### Dual-listing notice for tokenized equities (CRCL et al.)
+
+The 2026-05-06 CRCL session: agent called \`TradingSignal\` for
+\`CRCL\`, got back the tokenized/crypto leg ($0 price, $43K market cap),
+correctly recovered ("ignore TradingSignal — pull live Pyth instead")
+but burned a paid call + an extra confused turn before recovery.
+
+The user's correction was important: the tokenized leg IS meaningful
+data — it shows on-chain demand, DEX liquidity, basis to spot. The
+fix isn't "prefer stock over crypto" — it's **return the crypto leg
+with a clear label** so the agent knows it's the tokenized variant
+and can also fetch the spot equity to compute the basis spread.
+
+\`KNOWN_DUAL_LISTED_EQUITIES\` set in \`tools/trading.ts\` now flags 16
+high-liquidity US equities with active tokenized listings:
+\`CRCL, COIN, MSTR, PLTR, TSLA, AAPL, NVDA, MSFT, AMZN, GOOGL, META,
+JPM, BRK, HOOD, SQ, PYPL\`. When TradingSignal is called with one of
+these, the output prepends:
+
+> ⚠ \`CRCL\` is also a US-listed equity. The data below is the
+> **crypto / tokenized leg** (CoinGecko). For the spot equity
+> (NYSE / NASDAQ) call \`TradingMarket\` with
+> \`action: stockPrice, market: "us"\`. Run both in parallel to compute
+> the basis spread (premium/discount of tokenized vs spot — that
+> spread is the signal).
+
+The TradingSignal tool description in the spec is updated accordingly,
+so the model picks the dual-call pattern on its own without needing
+the runtime warning.
+
+Adding stock OHLCV to TradingSignal directly was scoped out — the
+gateway has \`/v1/usstock/history/{symbol}\` but no provider/fetcher
+plumbing on Franklin's side yet, ~1 day of work. The notice path
+delivers most of the value (correct labeling + agent routing nudge)
+in 30 LOC.
+
+355/355 tests pass.
+
 ## 3.15.77 — Stream sanitizer: U+2502 / U+2500 → ASCII (broken tables fixed at the wire)
 
 **3.15.76 added a system-prompt nudge asking models to use plain \`|\`

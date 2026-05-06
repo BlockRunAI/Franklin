@@ -227,6 +227,30 @@ function sanitizeHistory(history: Dialogue[]): Dialogue[] {
  * Detect media-related errors (image too large, too many images, PDF too large).
  * These can be recovered by stripping media blocks and retrying.
  */
+/**
+ * True when the assistant's last emitted text segment ends with a question
+ * mark (ASCII `?` or fullwidth `？`). Used to render an end-of-turn marker
+ * so users don't read the post-question silence as "Franklin died." Trim
+ * trailing whitespace + closing punctuation that doesn't change intent
+ * (newlines, single closing quote/paren) before checking.
+ */
+function endedWithQuestion(parts: ContentPart[] | undefined): boolean {
+  if (!parts || parts.length === 0) return false;
+  // Walk back to the last text segment. Skip thinking/tool_use parts.
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    if (p.type !== 'text') continue;
+    const text = (p as { text?: string }).text;
+    if (typeof text !== 'string') return false;
+    // Strip trailing whitespace + the ~3 closing chars that commonly
+    // follow a question without changing it (")", "'", "\"", "*", ")",
+    // "*", whitespace).
+    const trimmed = text.replace(/[\s)\]'"*`)]+$/u, '');
+    return /[?？]$/.test(trimmed);
+  }
+  return false;
+}
+
 function isMediaSizeError(msg: string): boolean {
   return (
     (msg.includes('image exceeds') && msg.includes('maximum')) ||
@@ -1915,6 +1939,17 @@ export async function interactiveSession(
         // Record success for local Elo learning (include tool call count for efficiency)
         if (lastRoutedCategory && lastRoutedModel) {
           recordOutcome(lastRoutedCategory, lastRoutedModel, 'continued', turnToolCalls);
+        }
+        // End-of-turn marker for question-shaped responses. Real-world UX
+        // problem 2026-05-06: agent finishes a turn with "要我查一下 X 吗?"
+        // and stops; the user reads the silence as "Franklin died" twice in
+        // one hour. The Ink input box is already on screen but it's easy to
+        // miss after a long output scroll. A single trailing italic line
+        // makes the wait state explicit. Only fires when the model's last
+        // emitted text ends with `?` or `？` so non-question turns don't
+        // get a noisy hint.
+        if (endedWithQuestion(responseParts)) {
+          onEvent({ kind: 'text_delta', text: '\n*▸ awaiting your reply (or type a new message)*\n' });
         }
         onEvent({ kind: 'turn_done', reason: 'completed' });
         break;
