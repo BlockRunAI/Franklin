@@ -38,7 +38,9 @@ exists to provide.
     \`/wallets/profiles?addresses=...\`
 - **\`walletPnl\`** (\$0.005) — single-wallet P&L summary +
   realized-P&L time series. Path:
-  \`/wallet/pnl/{wallet}\`. Multi-wallet input takes the first.
+  \`/wallet/pnl/{wallet}\`. Multi-wallet input is rejected so agents
+  run one paid call per wallet in parallel instead of silently dropping
+  addresses.
 - **\`walletPositions\`** (\$0.005) — single-wallet positions
   (open + historical) with per-position P&L breakdown. Path:
   \`/wallet/positions/{wallet}\`.
