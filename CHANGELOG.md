@@ -1,5 +1,108 @@
 # Changelog
 
+## 3.15.79 — \`franklin stats\` reads the SDK ledger (cost_log.jsonl) and surfaces the recorded-vs-wallet gap
+
+**A user reported a session where Franklin showed \$0.0095 spent but the
+wallet drained \$3.28 — ~345× discrepancy. Stage 1 of the fix:
+\`franklin stats\` now reads the canonical SDK settlement ledger
+(\`~/.blockrun/cost_log.jsonl\`) and shows it alongside Franklin's
+recorded total, with a clear gap warning. Stage 2 (instrumenting the
+13 helper LLM callsites that bypass \`recordUsage\`) ships next.**
+
+### What was wrong
+
+Three "agreeing" sources weren't actually independent:
+
+| Source | Reality |
+|---|---|
+| \`franklin stats --json\` | reads \`~/.blockrun/franklin-stats.json\` |
+| \`franklin insights\` | reads the same file |
+| \`~/.blockrun/cost_log.jsonl\` | written by the \`@blockrun/llm\` SDK on every x402 settlement; **Franklin never read it** |
+
+The first two are one source viewed twice. The third is the wire-truth
+ledger of every paid call — but Franklin had zero code paths that read
+it. So when helper LLM calls (analyzeTurn, prefetchForIntent,
+compactHistory, checkGrounding, runVerification, MoA references,
+subagent loops, learning extraction, brain extraction, etc.) settled
+x402 payments through the SDK, those payments landed in
+\`cost_log.jsonl\` but never bumped \`franklin-stats.json\`. The user's
+recorded total drifted from wallet truth by ~345× in a session that
+exercised heavy helper traffic.
+
+### What 3.15.79 does
+
+New module \`src/stats/cost-log.ts\` exports:
+- \`loadSdkSettlements({path?, sinceMs?, untilMs?})\` — reads the
+  SDK ledger, normalizes the SDK's snake_case keys (\`cost_usd\`,
+  \`ts\` in unix seconds with subsecond precision, Python convention)
+  to Franklin's camelCase + ms convention, skips malformed lines
+  silently
+- \`summarizeSdkSettlements({path?, sinceMs?, untilMs?})\` — totals +
+  per-endpoint breakdown sorted by cost descending
+
+\`franklin stats\` (both pretty and \`--json\` output) now shows three
+numbers:
+
+\`\`\`
+Recorded Cost:  $0.0095   (franklin-stats.json — main loop + proxy + tools)
+SDK Ledger:     $3.2800   (cost_log.jsonl — actual x402 settlements, 478 rows)
+⚠ Gap:          $3.2705 (99.7%) ↑ — helper LLM calls (analyzeTurn /
+   compaction / evaluator / verification / subagent / MoA / etc.)
+   settled on-chain but bypassed recordUsage. SDK ledger is the wire truth.
+\`\`\`
+
+The arrow direction tells you which side is off:
+- **↑** (SDK > recorded) — helper paths bypassing instrumentation. The
+  ledger is wire truth; the recorded total is incomplete.
+- **↓** (recorded > SDK) — \`cost_log.jsonl\` got rotated or truncated.
+  The recorded total is more complete than the ledger here.
+
+\`franklin stats --json\` output gains a \`reconciliation\` block with
+\`{recordedUsd, sdkLedgerUsd, gapUsd, gapPct, significantGap}\` and an
+\`sdkLedger\` block with the path, entry count, total, and top-10
+endpoint breakdown — so dashboards / external tools can act on the
+gap data.
+
+A new "SDK Ledger (top endpoints)" section in pretty output surfaces
+non-LLM endpoint spend (Modal, PM, x.com, exa, etc.) that flow through
+tools and may not show up in the per-model breakdown.
+
+### What's coming in 3.15.80 (Stage 2)
+
+Instrument the 13 callsites where \`client.complete()\` fires a paid
+LLM call but \`recordUsage()\` never runs. Add a shared
+\`recordHelperCall({source, model, usage, costUsd})\` wrapper. The
+biggest impact sites first:
+- \`subagent.ts\` — recursive nested loop, currently completely
+  unaudited
+- \`compact.ts\` — \$0.01–0.05 per fire
+- \`turn-analyzer.ts\`, \`intent-prefetch.ts\` — fire every user turn
+- \`evaluator.ts\` (checkGrounding), \`verification.ts\` (runVerification)
+- \`moa.ts\` — 5 references + 1 aggregator per invocation
+
+After Stage 2, the gap should shrink to near-zero (only true SDK-
+internal probes / retries remain unrecorded).
+
+### Test coverage
+
+- \`cost-log.jsonl reader handles SDK shape + windows + missing file\` —
+  pins the snake-to-camel normalization, ts seconds-to-ms conversion,
+  malformed-line skip, time-window filter, and missing-file empty
+  return
+- \`cost-log.jsonl reader returns empty when file missing\` — explicit
+  cover for the no-ledger-yet case (first-paid-call hasn't happened)
+
+357/357 tests pass.
+
+### Why ship Stage 1 alone
+
+The user's primary pain is *"my reported spend doesn't match my
+wallet."* That's solved as soon as \`franklin stats\` shows the SDK
+ledger total — the user can see their actual spend without waiting
+for instrumentation of every helper. Stage 2 closes the per-source
+breakdown so users can answer "which helper is the biggest spender"
+— but that's analytics, not bookkeeping. Bookkeeping ships first.
+
 ## 3.15.78 — End-of-turn marker for question turns + dual-listing notice for tokenized equities
 
 **Two UX-level fixes for issues that bit a real user session twice in one

@@ -8082,6 +8082,72 @@ test('sanitizeTableUnicode normalizes box-drawing chars to ASCII (3.15.77)', asy
   assert.equal(sanitizeTableUnicode('plain text no boxes'), 'plain text no boxes');
 });
 
+test('cost-log.jsonl reader handles SDK shape + windows + missing file (3.15.79)', async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { loadSdkSettlements, summarizeSdkSettlements } = await import('../dist/stats/cost-log.js');
+
+  const dir = mkdtempSync(join(tmpdir(), 'fl-cost-log-'));
+  const file = join(dir, 'cost_log.jsonl');
+
+  // Real SDK shape: snake_case keys, ts as unix SECONDS (Python-style with
+  // subsecond precision). Pre-3.15.79 Franklin passed over this file
+  // entirely — the reader normalizes ts → unix ms so callers can compare
+  // against Date.now().
+  const lines = [
+    '{"ts": 1773424791.431276, "endpoint": "/v1/x/search", "cost_usd": 0.032}',
+    '{"ts": 1773432178.8608398, "endpoint": "/v1/chat/completions", "cost_usd": 0.279038}',
+    '{"ts": 1773432200.5,      "endpoint": "/v1/chat/completions", "cost_usd": 0.001}',
+    'malformed line — should be skipped silently',
+    '{"ts": 1773440000,        "endpoint": "/v1/modal/sandbox/exec", "cost_usd": 0.05}',
+  ];
+  writeFileSync(file, lines.join('\n') + '\n');
+
+  try {
+    const all = loadSdkSettlements({ path: file });
+    assert.equal(all.length, 4, 'malformed line should be skipped, valid 4 rows kept');
+    // Timestamps normalized to ms.
+    for (const r of all) {
+      assert.ok(r.ts > 1e12, `ts=${r.ts} should be in ms range, not seconds`);
+    }
+
+    const summary = summarizeSdkSettlements({ path: file });
+    assert.equal(summary.count, 4);
+    assert.ok(Math.abs(summary.totalUsd - 0.362038) < 1e-6, `totalUsd=${summary.totalUsd}`);
+
+    // Endpoint breakdown sorted by cost desc.
+    assert.equal(summary.byEndpoint[0].endpoint, '/v1/chat/completions');
+    assert.equal(summary.byEndpoint[0].count, 2);
+
+    // Window filter: only the last entry (after ts ~1773440000s = ~1773440000000ms).
+    const recent = loadSdkSettlements({ path: file, sinceMs: 1773440000 * 1000 });
+    assert.equal(recent.length, 1);
+    assert.equal(recent[0].endpoint, '/v1/modal/sandbox/exec');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('cost-log.jsonl reader returns empty when file missing (3.15.79)', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { loadSdkSettlements, summarizeSdkSettlements } = await import('../dist/stats/cost-log.js');
+
+  const dir = mkdtempSync(join(tmpdir(), 'fl-cost-log-empty-'));
+  const missingFile = join(dir, 'does-not-exist.jsonl');
+  try {
+    assert.deepEqual(loadSdkSettlements({ path: missingFile }), []);
+    const s = summarizeSdkSettlements({ path: missingFile });
+    assert.equal(s.count, 0);
+    assert.equal(s.totalUsd, 0);
+    assert.equal(s.firstTs, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('extractLastUserPrompt strips TRAILING synthetic labels (3.15.76)', async () => {
   const { extractLastUserPrompt } = await import('../dist/stats/audit.js');
   // Real audit pollution observed 2026-05-06: post-response evaluator
