@@ -7158,6 +7158,7 @@ test('PredictionMarket: paths must NOT include the /api prefix (regression: 3.15
     `PredictionMarket paths must not start with /api/ (API_URLS already includes it). Got: ${JSON.stringify(offending)}`);
   // Sanity: at least one /v1/pm/ path is present (i.e., we didn't accidentally remove all paths).
   assert.ok(src.includes('/v1/pm/'), 'expected at least one /v1/pm/ path in compiled prediction tool');
+  assert.match(src, /smart-money\$/, 'smartMoney price telemetry must not fall through to the generic $0.001 Predexon GET price');
 });
 
 test('brain caps observations at MAX_OBSERVATIONS, evicting oldest', async () => {
@@ -7199,14 +7200,13 @@ test('brain caps observations at MAX_OBSERVATIONS, evicting oldest', async () =>
   }
 });
 
-test('PredictionMarket spec exposes the seven x402-paid actions (3.15.70)', async () => {
+test('PredictionMarket spec exposes the eight x402-paid actions (3.15.70)', async () => {
   const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
   const spec = predictionMarketCapability.spec;
   assert.equal(spec.name, 'PredictionMarket');
   const actions = spec.input_schema.properties.action.enum;
-  // 3.15.70 dropped `smartMoney` (it called a path that never existed on the
-  // gateway — silent 404 from launch) and added searchAll / leaderboard /
-  // walletProfile / smartActivity backed by real Predexon endpoints.
+  // 3.15.70 adds searchAll / leaderboard / walletProfile / smartActivity
+  // while preserving smartMoney as the per-market condition_id drill-down.
   assert.deepEqual(
     [...actions].sort(),
     [
@@ -7216,11 +7216,11 @@ test('PredictionMarket spec exposes the seven x402-paid actions (3.15.70)', asyn
       'searchKalshi',
       'searchPolymarket',
       'smartActivity',
+      'smartMoney',
       'walletProfile',
     ],
-    'enum should expose exactly the seven supported actions',
+    'enum should expose exactly the eight supported actions',
   );
-  assert.ok(!actions.includes('smartMoney'), 'broken smartMoney action must be removed');
   // Description must steer agents away from training-data odds answers and
   // surface the new wallet/leaderboard intents.
   assert.match(spec.description, /Polymarket/);
@@ -7252,17 +7252,14 @@ test('PredictionMarket walletProfile without wallets fails fast (3.15.70)', asyn
   assert.match(result.output, /wallets/);
 });
 
-test('PredictionMarket smartMoney action no longer accepted (3.15.70 drop)', async () => {
+test('PredictionMarket smartMoney without conditionId fails fast (3.15.70)', async () => {
   const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
-  // Old action surface — must reject as unknown so a stale agent transcript
-  // gets a clear error instead of silently 404'ing on a dead endpoint.
   const result = await predictionMarketCapability.execute(
-    { action: 'smartMoney', conditionId: '0xabcdef' },
+    { action: 'smartMoney' },
     { workingDir: process.cwd(), abortSignal: new AbortController().signal },
   );
   assert.equal(result.isError, true);
-  assert.match(result.output, /unknown action/i);
-  assert.match(result.output, /smartActivity/, 'error should point at the replacement action');
+  assert.match(result.output, /conditionId/);
 });
 
 test('PredictionMarket missing action fails with usage hint', async () => {
@@ -7999,4 +7996,37 @@ test('pollImageJob: surfaces non-transient HTTP error with body preview', async 
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
+});
+
+test('extractLastUserPrompt skips harness-injected synthetic prompts (3.15.71)', async () => {
+  const { extractLastUserPrompt } = await import('../dist/stats/audit.js');
+  // Simulate a real Franklin history: user asks a question, harness injects
+  // prefetch context as a role:"user" message, agent runs tools, optional
+  // grounding-retry injection, then we need to record what the user actually
+  // asked. Pre-3.15.71 the audit logged the most recent role:"user" message
+  // verbatim — so 421/4983 rows in a real machine logged synthetic preambles
+  // instead of the actual question.
+  const history = [
+    { role: 'user', content: '你看看 querit和exa 哪个好啊' },
+    { role: 'assistant', content: 'looking…' },
+    { role: 'user', content: '[FRANKLIN HARNESS PREFETCH] CRCL price $114.12 …' },
+    { role: 'assistant', content: 'thinking' },
+    { role: 'user', content: '[GROUNDING CHECK FAILED] retry with sourced numbers' },
+  ];
+  assert.equal(extractLastUserPrompt(history), '你看看 querit和exa 哪个好啊');
+  // Empty history → undefined
+  assert.equal(extractLastUserPrompt([]), undefined);
+  // History with only synthetic prompts → undefined (don't fabricate)
+  const onlySynthetic = [
+    { role: 'user', content: '[FRANKLIN HARNESS PREFETCH] foo' },
+    { role: 'user', content: '[ESCALATION] retry' },
+  ];
+  assert.equal(extractLastUserPrompt(onlySynthetic), undefined);
+  // Mixed Anthropic content blocks: text part should be recovered when
+  // genuine, skipped when synthetic.
+  const blocks = [
+    { role: 'user', content: [{ type: 'text', text: 'real question' }] },
+    { role: 'user', content: [{ type: 'text', text: '[FRANKLIN HARNESS PREFETCH] noise' }] },
+  ];
+  assert.equal(extractLastUserPrompt(blocks), 'real question');
 });

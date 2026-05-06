@@ -127,7 +127,17 @@ export function extractLastUserPrompt(history: Array<{ role: string; content: un
     if (msg.role !== 'user') continue;
     const text = flattenContent(msg.content);
     if (!text) continue;
-    return text.replace(/\s+/g, ' ').trim();
+    const cleaned = text.replace(/\s+/g, ' ').trim();
+    // Anthropic's message format puts harness-injected context, guardrail
+    // warnings, and grounding-retry feedback under role:"user" too. Walking
+    // back blindly returns those synthetic strings instead of the real user
+    // intent — verified 2026-05-06 in the audit log: 403 entries showed
+    // "[FRANKLIN HARNESS PREFETCH] CRCL price..." and 18 showed
+    // "[GROUNDING CHECK FAILED] ..." instead of the user's actual question.
+    // Skip any message whose first non-whitespace block is a SCREAMING-CASE
+    // bracketed label and keep walking back to the real user turn.
+    if (/^\[[A-Z][A-Z _-]+\]/.test(cleaned)) continue;
+    return cleaned;
   }
   return undefined;
 }

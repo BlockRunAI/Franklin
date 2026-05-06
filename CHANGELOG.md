@@ -1,33 +1,87 @@
 # Changelog
 
-## 3.15.70 — Predexon: 7 actions across 5 venues, wallet/leaderboard surfaces, panel telemetry
+## 3.15.71 — Tighter bloat-compaction trigger + audit prompts skip harness-injected text
+
+**Two fixes from a fresh audit-log forensic pass.**
+
+### Bloat-compaction threshold tightened (15 calls + \$0.03)
+
+3.15.69 added a research-bloat compaction trigger at
+\`turnToolCalls > 30 && turnCostUsd > 0.05\`. Verified 2026-05-06
+against a real franklin-shorts edit session: 16 deepseek-v4-pro
+calls cost \$0.055 and ended naturally before the trigger could
+fire — even though by call #4 the per-call input was already
+13K tokens. The session was paying input-replay tax on every
+call but never crossed the threshold.
+
+Tightened to \`turnToolCalls > 15 && turnCostUsd > 0.03\`.
+Catches sessions where input-replay has clearly started biting.
+Worst-case downside is one extra summary call (~\$0.005) for a
+session that would have ended at exactly the boundary; the
+fire-once-per-turn flag still bounds it.
+
+### Audit \`prompt\` field stops capturing harness-injected text
+
+\`extractLastUserPrompt\` walks the dialogue history backward
+looking for the last message with \`role: "user"\`. Anthropic's
+message format uses \`role: "user"\` for harness-injected context
+too, so the audit was logging synthetic strings instead of the
+real user prompt:
+
+- 403 audit rows began with \`[FRANKLIN HARNESS PREFETCH]\`
+  (the pre-turn live-data injection from \`intent-prefetch.ts\`).
+- 18 rows began with \`[GROUNDING CHECK FAILED]\` (the
+  grounding-retry feedback from the post-response evaluator).
+
+421 of 4,983 audit entries (~8.5%) were unusable for cost
+attribution because the prompt field showed harness chatter
+instead of the user's question.
+
+Fix: \`extractLastUserPrompt\` now skips messages whose first
+non-whitespace content is a SCREAMING-CASE bracketed label
+(\`[FRANKLIN HARNESS PREFETCH]\`, \`[GROUNDING CHECK FAILED]\`,
+\`[ESCALATION]\`, \`[CONTEXT COMPACTION]\`, \`[SYSTEM]\`, etc.)
+and walks back to the real user turn. If the history contains
+only synthetic injections, returns \`undefined\` rather than
+fabricating a prompt.
+
+### Verified non-bugs from the same audit pass
+
+- **NVIDIA models charging unexpected amounts** — actually
+  aggregation artifact. Sessions like \`b12f3b0c\` showed
+  qwen3-coder-480b "costing" \$3.64; turns out the session
+  contained 5 sonnet-4.6 calls plus the qwen calls (which were
+  free as expected). Per-(session, model) breakdown clears it.
+- **Fallback flag rarely set** — 1/952 entries with explicit
+  fallback. Genuinely low rate; not a measurement bug. The one
+  \`fallback: true\` row in session \`efd5e412\` matches the
+  surrounding fallback chain correctly.
+- **\`routingTier\` missing on 80% of entries** — by design.
+  Direct-selected models (zai/glm-5.1, etc.) bypass auto-routing.
+
+352/352 tests pass.
+
+## 3.15.70 — Predexon: 8 actions across 5 venues, wallet/leaderboard surfaces, panel telemetry
 
 **Franklin's `PredictionMarket` tool went from 4 actions over 2 venues
-(Polymarket + Kalshi) to 7 actions over 5 venues, plus wallet-tracking and
-leaderboard surfaces — and one of the original 4 was silently broken.**
+(Polymarket + Kalshi) to 8 actions over 5 venues, plus wallet-tracking,
+leaderboard, and smart-money discovery surfaces.**
 
-### `smartMoney` action was a silent 404 from launch — replaced
+### `smartMoney` is the per-market drill-down; `smartActivity` is discovery
 
-The old `smartMoney` action called
-`/v1/pm/polymarket/market/<conditionId>/smart-money`, a path that
-**does not exist on the BlockRun gateway**. Verified 2026-05-05
-against `blockrun.ai/openapi.json`: Polymarket has no per-market
-path-parameter endpoints. The action 404'd from the day it shipped;
-agents using it got error-shaped output instead of smart-money data.
+The live BlockRun Predexon registry exposes both smart-money surfaces:
 
-The right endpoint for the same intent lives at
-`/v1/pm/polymarket/markets/smart-activity` ("Discover markets where
-high-performing wallets are active") and at
-`/v1/pm/polymarket/leaderboard` ("Global leaderboard of smart wallets").
+- `/v1/pm/polymarket/market/<conditionId>/smart-money` — per-market
+  smart-money positioning.
+- `/v1/pm/polymarket/markets/smart-activity` — discover markets where
+  high-performing wallets are active.
 
 Action surface change:
-- **DROPPED:** `smartMoney` — never worked, no migration path that
-  preserves intent. Stale transcripts now get
-  `Error: unknown action "smartMoney" — Use: searchAll, ...,
-  smartActivity` so the model is steered to the replacement.
 - **ADDED:** `smartActivity` — \$0.005 — markets where smart wallets
   are positioning right now.
 - **ADDED:** `leaderboard` — \$0.001 — global top wallets by P&L.
+- **KEPT:** `smartMoney` — \$0.005 — smart-money flow on a specific
+  Polymarket `conditionId`.
 
 ### Three more actions for things Franklin couldn't do before
 
@@ -52,6 +106,7 @@ It now routes:
   → `leaderboard`
 - "how is wallet 0xabc doing / show this trader's P&L" → `walletProfile`
 - "what are smart traders betting on right now" → `smartActivity`
+- "show smart money for this condition_id" → `smartMoney`
 
 Without these routing hints, even with the new actions wired, the
 model wouldn't reach for them.
@@ -85,13 +140,12 @@ success and failure paths record latency + ok-flag for the panel's
 
 ### Test coverage
 
-- `PredictionMarket spec exposes the seven x402-paid actions (3.15.70)`
-  — pins the new enum and forbids `smartMoney` from sneaking back in.
+- `PredictionMarket spec exposes the eight x402-paid actions (3.15.70)`
+  — pins the enum including `smartMoney` and the newer discovery surfaces.
 - `PredictionMarket walletProfile without wallets fails fast (3.15.70)`
   — fast input validation (no network call, no wallet sign).
-- `PredictionMarket smartMoney action no longer accepted (3.15.70 drop)`
-  — ensures stale transcripts get a clear error pointing at
-  `smartActivity`.
+- `PredictionMarket smartMoney without conditionId fails fast (3.15.70)`
+  — preserves per-market drill-down while avoiding accidental paid calls.
 
 351/351 tests pass.
 

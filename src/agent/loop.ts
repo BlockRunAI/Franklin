@@ -1040,11 +1040,21 @@ export async function interactiveSession(
       // never approached its 1M-token compaction threshold. Compact here
       // when the turn has accumulated lots of tool calls AND real spend,
       // even though the context window isn't close to full.
+      //
+      // Thresholds tightened in 3.15.71. Original 3.15.69 used
+      // (>30 calls AND >$0.05) — verified too loose against a real
+      // franklin-shorts edit session: 16 deepseek-v4-pro calls for
+      // $0.055 ended naturally before the trigger fired, even though
+      // by call #4 the per-call input was already 13K tokens (worth
+      // compacting). Lowering to (>15 AND >$0.03) catches sessions
+      // where input-replay tax has clearly started biting; the
+      // fire-once-per-turn flag still bounds the worst case at one
+      // extra summary call (~$0.005).
       if (
         !bloatCompactedThisTurn &&
         compactFailures < 3 &&
-        turnToolCalls > 30 &&
-        turnCostUsd > 0.05
+        turnToolCalls > 15 &&
+        turnCostUsd > 0.03
       ) {
         try {
           const beforeTokens = estimateHistoryTokens(history);
