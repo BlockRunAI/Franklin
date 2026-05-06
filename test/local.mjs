@@ -8061,6 +8061,27 @@ test('extractLastUserPrompt skips harness-injected synthetic prompts (3.15.71)',
   assert.equal(extractLastUserPrompt(blocks), 'real question');
 });
 
+test('sanitizeTableUnicode normalizes box-drawing chars to ASCII (3.15.77)', async () => {
+  const { sanitizeTableUnicode } = await import('../dist/agent/llm.js');
+  // Real bug: opus-4.7 emitted a CRCL fundamentals table with `│` data rows
+  // and `|` separator on 2026-05-06. No markdown renderer parses the mix.
+  const broken =
+    '│ Metric │ 2025A │ 2026E │\n' +
+    '|---|---|---|\n' +
+    '│ EBITDA │ $582M │ $634M │';
+  const fixed = sanitizeTableUnicode(broken);
+  assert.ok(!fixed.includes('│'), 'U+2502 must be normalized to |');
+  assert.ok(fixed.includes('| Metric |'), 'data rows now use ASCII pipe');
+  // Horizontal box-drawing also normalized (sometimes models use ─ for the
+  // separator instead of ---).
+  assert.equal(sanitizeTableUnicode('a─b'), 'a-b');
+  // ASCII input passes through unchanged.
+  assert.equal(sanitizeTableUnicode('| a | b |\n|---|---|'), '| a | b |\n|---|---|');
+  // Edge cases.
+  assert.equal(sanitizeTableUnicode(''), '');
+  assert.equal(sanitizeTableUnicode('plain text no boxes'), 'plain text no boxes');
+});
+
 test('extractLastUserPrompt strips TRAILING synthetic labels (3.15.76)', async () => {
   const { extractLastUserPrompt } = await import('../dist/stats/audit.js');
   // Real audit pollution observed 2026-05-06: post-response evaluator

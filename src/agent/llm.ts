@@ -99,6 +99,27 @@ function parseTimeoutEnv(name: string): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+/**
+ * Replace Unicode box-drawing characters with their ASCII equivalents.
+ *
+ * Models occasionally emit U+2502 (`│`) and U+2500 (`─`) in markdown tables
+ * — sometimes mixed with ASCII `|` / `-` in the same table. No markdown
+ * renderer parses the mix, and the "table" displays as run-on text. Verified
+ * 2026-05-06 in a real session: opus-4.7 emitted a CRCL fundamentals table
+ * with `│` data rows and `|` separator, ignoring the system-prompt nudge
+ * added in 3.15.76. The unconditional swap fixes the rendering at the
+ * streaming boundary so every downstream surface (user terminal, conversation
+ * history, audit log) gets the corrected version.
+ *
+ * Trade: the rare case where a user genuinely wants box-drawing in output
+ * (e.g. asking what U+2502 looks like) loses fidelity. Acceptable — that
+ * case has no real-world frequency, the broken-tables case has weekly.
+ */
+export function sanitizeTableUnicode(s: string): string {
+  if (!s) return s;
+  return s.replace(/│/g, '|').replace(/─/g, '-');
+}
+
 function getModelRequestTimeoutMs(): number {
   // 180s budget for *time-to-headers* (the gateway flushes SSE headers only
   // once the upstream model emits its first token). Reasoning-class models
@@ -698,6 +719,16 @@ export class ModelClient {
     let toolCallRoleplayWarned = false;
     const appendText = (text: string) => {
       if (!text) return;
+
+      // Sanitize Unicode box-drawing chars to ASCII pipe/dash. 3.15.76's
+      // system-prompt nudge asked models not to emit U+2502 / U+2500 in
+      // tables — opus-4.7 ignored it 2026-05-06, shipped a CRCL analysis
+      // table where data rows used `│` and the separator used `|`. No
+      // markdown renderer parses that mix; the table displayed as run-on
+      // text. Normalize at the streaming boundary so the user, the model
+      // history (next turn the model sees its own corrected output), and
+      // the audit log all match.
+      text = sanitizeTableUnicode(text);
 
       currentText += text;
       if (textEmission.mode === 'undecided') {

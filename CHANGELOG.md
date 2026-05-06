@@ -1,5 +1,50 @@
 # Changelog
 
+## 3.15.77 — Stream sanitizer: U+2502 / U+2500 → ASCII (broken tables fixed at the wire)
+
+**3.15.76 added a system-prompt nudge asking models to use plain \`|\`
+in markdown tables. opus-4.7 ignored it 2026-05-06 — emitted a CRCL
+fundamentals analysis with \`│\` data rows and \`|\` separator. No
+renderer parses the mix; the "table" displayed as run-on text again.**
+
+Prompt-only fixes are unreliable by definition. This ships the next
+escalation: a streaming-boundary sanitizer that swaps \`│\` (U+2502)
+→ \`|\` and \`─\` (U+2500) → \`-\` on every assistant text delta. Works
+regardless of model, route, or whether the model read the prompt rule.
+
+### Where the swap happens
+
+\`appendText\` in \`src/agent/llm.ts\` is the single chokepoint that all
+streaming text passes through before reaching:
+- the user's terminal (via \`onStreamDelta\`)
+- the conversation history (collected → \`Dialogue.content\`)
+- the audit log + session JSONL
+
+Sanitizing at this entry point means every downstream surface gets the
+corrected version. The model's NEXT turn sees its own corrected output
+in the history, which reinforces the right pattern over time.
+
+### Trade
+
+Unconditional swap. The rare case where a user asks "what does U+2502
+look like" and the model wants to emit a literal \`│\` loses fidelity.
+Acceptable: that case has zero observed real-world frequency, and the
+broken-tables case bites every few days.
+
+If a future case justifies fence-aware sanitizing (preserving box-drawing
+inside \`\`\`code blocks\`\`\`), the helper is exported and the call site is
+one line — easy to upgrade.
+
+### Test coverage
+
+New unit test pins:
+- broken table with \`│\` + ASCII separator → all \`│\` swapped to \`|\`
+- horizontal \`─\` swapped to \`-\`
+- pure-ASCII input unchanged
+- empty / no-boxes input unchanged
+
+355/355 tests pass.
+
 ## 3.15.76 — Audit prompts strip trailing synthetic labels + table-format nudge
 
 ### Trailing \`[SYSTEM NOTE]\` no longer pollutes audit prompts
