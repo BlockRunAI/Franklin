@@ -486,6 +486,8 @@ test('PredictionMarket walletProfile (single): live /wallet/{addr} returns profi
       `Output looks like the old 3.15.70-era 422 mode.\n${result.output}`);
     assert.ok(/\$0\.005 paid/.test(result.output),
       `Cost footer missing.\n${result.output}`);
+    assert.ok(!/\[object Object\]/.test(result.output),
+      `Formatter rendered a nested object as [object Object] — pickString fallback failed.\n${result.output}`);
   },
 );
 
@@ -502,6 +504,8 @@ test('PredictionMarket walletPnl: live /wallet/pnl/{addr} returns P&L data',
       `Expected P&L header.\n${result.output}`);
     assert.ok(!/422|Bad Request|missing/i.test(result.output),
       `Output looks like a wire-format error.\n${result.output}`);
+    assert.ok(!/\[object Object\]/.test(result.output),
+      `Formatter rendered a nested object as [object Object] — pickString fallback failed.\n${result.output}`);
   },
 );
 
@@ -518,6 +522,8 @@ test('PredictionMarket walletPositions: live /wallet/positions/{addr} returns po
       `Expected positions header.\n${result.output}`);
     assert.ok(!/422|Bad Request|missing/i.test(result.output),
       `Output looks like a wire-format error.\n${result.output}`);
+    assert.ok(!/\[object Object\]/.test(result.output),
+      `Formatter rendered a nested object as [object Object] — pickString fallback failed.\n${result.output}`);
   },
 );
 
@@ -534,6 +540,8 @@ test('PredictionMarket leaderboard: live /polymarket/leaderboard returns top wal
       `Expected leaderboard header.\n${result.output}`);
     assert.ok(!/422|Bad Request|missing/i.test(result.output),
       `Output looks like a wire-format error.\n${result.output}`);
+    assert.ok(!/\[object Object\]/.test(result.output),
+      `Formatter rendered a nested object as [object Object] — pickString fallback failed.\n${result.output}`);
   },
 );
 
@@ -550,6 +558,8 @@ test('PredictionMarket searchAll: live /markets/search returns multi-platform re
       `Expected cross-platform header.\n${result.output}`);
     assert.ok(!/422|Bad Request|missing/i.test(result.output),
       `Output looks like a wire-format error.\n${result.output}`);
+    assert.ok(!/\[object Object\]/.test(result.output),
+      `Formatter rendered a nested object as [object Object] — pickString fallback failed.\n${result.output}`);
   },
 );
 

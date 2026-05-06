@@ -1,5 +1,101 @@
 # Changelog
 
+## 3.15.75 — Predexon nested-shape formatters (no more [object Object])
+
+**The 3.15.74 ship "passed" e2e but only validated headers and absence of
+HTTP errors. The actual rendered output was broken — every position row
+read \`[object Object]\` and every P&L number read "n/a". Verified live
+2026-05-06 in a real session: a user asked the agent to analyze a
+Polymarket wallet, the agent successfully called \`walletPositions\`,
+got back valid JSON, and the formatter rendered three rows of
+\`[object Object] — P&L n/a\` instead of the actual market titles + P&L.
+Agent then fell back to bash-curling \`data-api.polymarket.com\` to
+get the real numbers.**
+
+### Root cause: \`as string\` lied on nested objects
+
+Predexon returns a richer, more structured response than the flat shape
+the formatter assumed. Verified shapes (live 2026-05-06):
+
+- **walletPositions** rows: \`{ market: {title, side_label, ...},
+  position: {shares, avg_entry_price, total_cost_usd, ...},
+  current: {price, value_usd},
+  pnl: {unrealized_usd, unrealized_pct, realized_usd} }\`
+- **walletProfile** body: \`{ user, metrics: {one_day, seven_day,
+  thirty_day, all_time} }\` — every stat lives under \`metrics.<window>\`,
+  none at top level.
+- **walletPnl** body: \`{ granularity, start_time, end_time,
+  wallet_address, realized_pnl, unrealized_pnl, total_pnl,
+  fees_paid, fees_refunded, pnl_over_time: [{timestamp,
+  pnl_to_date}] }\` — pre-3.15.75 looked for \`series\`/\`history\`/\`daily\`
+  (don't exist) and \`total_value\`/\`equity\` (don't exist).
+
+Pre-3.15.75 the formatter cast \`p.market\` as string and template-
+interpolated it. JS coerces objects via \`Object.prototype.toString\`
+which yields \`[object Object]\`. Numeric fields like \`p.size\`,
+\`p.avg_price\`, \`p.cashPnl\` resolved to \`undefined\` and rendered
+"P&L n/a" everywhere.
+
+### Fix: \`pickString\` helper + per-action shape-aware formatters
+
+\`pickString(...candidates)\` walks each candidate: returns it if it's
+already a string, otherwise looks for common name-bearing keys
+(\`title\`, \`question\`, \`slug\`, \`name\`, \`label\`, \`market_slug\`,
+\`event_title\`) inside if it's an object. All call sites that used
+\`(p.foo || p.bar) as string\` now go through this helper, so a nested
+title like \`p.market.title\` resolves correctly instead of stringifying
+the whole \`market\` object.
+
+Per-action formatters rewritten to walk the actual nested shape:
+
+- **walletPositions**: walks \`market\`, \`position\`, \`current\`, \`pnl\`
+  sub-objects. Renders title (with \`market.side_label\`),
+  \`position.shares\`, \`position.avg_entry_price\`,
+  \`current.value_usd\`, and \`pnl.unrealized_usd\` / \`pnl.unrealized_pct\`.
+  Falls back to flat fields if the shape ever flattens.
+- **walletProfile**: walks \`metrics.all_time\` for headline stats
+  (total_pnl, realized_pnl, volume, ROI, win_rate, trades,
+  active_positions, wallet_age_days), plus a recent-window line with
+  1d/7d/30d total_pnl and trade counts. Lets the agent judge momentum
+  without a separate walletPnl call.
+- **walletPnl**: uses \`total_pnl\`, \`realized_pnl\`, \`unrealized_pnl\`,
+  \`fees_paid\` from the top level. Time series walks \`pnl_over_time\`
+  (not the imagined \`series\`/\`history\`), filters zero-pnl warmup days,
+  and treats timestamps as **unix seconds** (the pre-3.15.75 code
+  parsed them as ISO strings or millis and rendered \`1970-01-01\`
+  for half the points).
+
+### E2E now asserts \`[object Object]\` is gone
+
+The 3.15.74 e2e tests passed because they only checked for header
+strings and absence of "422". A regression that turned every row to
+\`[object Object]\` would have shipped silently. Added explicit
+\`!/\\[object Object\\]/.test(result.output)\` assertion to all five
+PredictionMarket paid e2e tests. Combined with the existing \`(422|Bad
+Request|missing)\` check, the suite now catches both wire-format and
+formatter regressions.
+
+### Real before/after on the user's session
+
+User asked: *"0xdfe3fedc... 分析这个Polymarket地址，可以复制交易吗？"*
+
+**Before (3.15.74):**
+\`\`\`
+1. **[object Object]** — P&L n/a
+2. **[object Object]** — P&L n/a
+3. **[object Object]** — P&L n/a
+\`\`\`
+→ agent ignored its own tool output and bash-curled Polymarket data-api directly.
+
+**After (3.15.75):**
+\`\`\`
+1. **Zelenskyy out as Ukraine president by end of 2026?** — No · 203,111.96 shares · avg 61.6% · now $174.7K · P&L $49.6K (39.7%)
+2. **Will the US acquire part of Greenland in 2026?** — No · 172,151.62 shares · avg 77.0% · now $149.3K · P&L $16.8K (12.6%)
+3. **Russia x Ukraine ceasefire by end of 2026?** — No · 217,830.13 shares · avg 53.4% · now $148.1K · P&L $31.9K (27.4%)
+\`\`\`
+
+353/353 local + 14/14 free e2e + 5/5 paid e2e pass.
+
 ## 3.15.74 — Live e2e validates 5 PredictionMarket endpoints; two more wire-format bugs squashed
 
 **Added paid e2e coverage for the new prediction-market actions and ran

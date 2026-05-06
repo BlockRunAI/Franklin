@@ -295,6 +295,40 @@ function parseWalletsInput(value: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Pick the first usable string from a list of candidate values.
+ *
+ * Predexon responses sometimes wrap titles/labels inside nested objects
+ * (e.g. `position.market = { slug, question, title }` instead of a flat
+ * `position.title`). Pre-3.15.75 the formatter `as string` cast these
+ * objects and ended up rendering `[object Object]` for every position
+ * row — verified 2026-05-06 in a real session.
+ *
+ * Strategy:
+ *   - string → return as-is (after trim)
+ *   - object → walk a small set of common name-bearing keys
+ *     (title, question, slug, name, label, market_slug) and return the
+ *     first one that yields a string
+ *   - anything else (number / array / null) → skip
+ *   - all candidates exhausted → undefined
+ */
+function pickString(...candidates: unknown[]): string | undefined {
+  const NAME_KEYS = ['title', 'question', 'slug', 'name', 'label', 'market_slug', 'event_title'];
+  for (const c of candidates) {
+    if (typeof c === 'string') {
+      const trimmed = c.trim();
+      if (trimmed) return trimmed;
+    } else if (c && typeof c === 'object' && !Array.isArray(c)) {
+      const obj = c as Record<string, unknown>;
+      for (const k of NAME_KEYS) {
+        const v = obj[k];
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+    }
+  }
+  return undefined;
+}
+
 // ─── PredictionMarket capability ──────────────────────────────────────────
 
 interface PredictionInput {
@@ -366,8 +400,8 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
             const shown = list.slice(0, Math.min(5, remaining));
             lines.push(`### ${p}`);
             shown.forEach((m, i) => {
-              const title = (m.title || m.question || m.market_slug || m.ticker || 'untitled') as string;
-              const id = (m.condition_id || m.ticker || m.id) as string | undefined;
+              const title = pickString(m.title, m.question, m.market, m.event, m.market_slug, m.slug, m.ticker) ?? 'untitled';
+              const id = pickString(m.condition_id, m.ticker, m.id);
               const idTag = id ? ` · \`${String(id).slice(0, 18)}…\`` : '';
               const vol = m.volume != null ? ` · vol ${formatUsd(m.volume as number)}` : '';
               lines.push(`${i + 1}. ${title}${idTag}${vol}`);
@@ -382,8 +416,8 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
               return { output: 'No markets matched across any platform.' };
             }
             flat.slice(0, cappedLimit).forEach((m, i) => {
-              const title = (m.title || m.question || m.market_slug || m.ticker || 'untitled') as string;
-              const platform = (m.platform || m.source || 'unknown') as string;
+              const title = pickString(m.title, m.question, m.market, m.event, m.market_slug, m.slug, m.ticker) ?? 'untitled';
+              const platform = pickString(m.platform, m.source) ?? 'unknown';
               lines.push(`${i + 1}. **[${platform}]** ${title}`);
             });
           }
@@ -418,14 +452,14 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           '',
         ];
         rows.forEach((r, i) => {
-          const wallet = (r.wallet || r.address || r.proxy_wallet || 'unknown') as string;
+          const wallet = pickString(r.wallet, r.address, r.proxy_wallet, r.proxyWallet) ?? 'unknown';
           const w = wallet.length > 12
             ? `${wallet.slice(0, 8)}…${wallet.slice(-4)}`
             : wallet;
           const pnl = r.pnl ?? r.realized_pnl ?? r.total_pnl;
           const volume = r.volume ?? r.total_volume;
           const winRate = r.win_rate ?? r.winRate;
-          const name = (r.name || r.handle || r.username) as string | undefined;
+          const name = pickString(r.name, r.handle, r.username);
           const handle = name ? ` (${name})` : '';
           const parts: string[] = [];
           if (pnl != null) parts.push(`P&L ${formatUsd(pnl as number)}`);
@@ -482,25 +516,67 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           `## Polymarket wallet profile${profiles.length === 1 ? '' : 's'} — ${profiles.length}`,
           '',
         ];
+        // Real Predexon shape (single-wallet, verified 2026-05-06):
+        //   { user, metrics: { one_day, seven_day, thirty_day, all_time } }
+        // Each metric block has: realized_pnl, total_pnl, volume, roi,
+        //   trades, wins, losses, win_rate, profit_factor, positions_closed,
+        //   plus all_time-only: avg_buy_price, avg_sell_price,
+        //   avg_hold_time_seconds, wallet_age_days, total_positions,
+        //   active_positions, max_win_streak, max_loss_streak,
+        //   best_position_realized_pnl, worst_position_realized_pnl
+        // Batch endpoint (multiple wallets) likely returns an array of these
+        // same blocks. We surface all_time as the headline stats and a
+        // compact one_day / seven_day / thirty_day delta line so the agent
+        // can see momentum.
         profiles.forEach((p, i) => {
-          const wallet = (p.wallet || p.address || p.proxy_wallet || 'unknown') as string;
+          const metrics = (p.metrics && typeof p.metrics === 'object' ? p.metrics : {}) as Record<string, unknown>;
+          const allTime = (metrics.all_time && typeof metrics.all_time === 'object' ? metrics.all_time : {}) as Record<string, unknown>;
+          const oneDay = (metrics.one_day && typeof metrics.one_day === 'object' ? metrics.one_day : {}) as Record<string, unknown>;
+          const sevenDay = (metrics.seven_day && typeof metrics.seven_day === 'object' ? metrics.seven_day : {}) as Record<string, unknown>;
+          const thirtyDay = (metrics.thirty_day && typeof metrics.thirty_day === 'object' ? metrics.thirty_day : {}) as Record<string, unknown>;
+
+          const wallet = pickString(p.user, p.wallet, p.address, p.proxy_wallet, p.proxyWallet) ?? 'unknown';
           const w = wallet.length > 12
             ? `${wallet.slice(0, 8)}…${wallet.slice(-4)}`
             : wallet;
-          const name = (p.name || p.handle || p.username) as string | undefined;
-          const pnl = p.pnl ?? p.realized_pnl ?? p.total_pnl;
-          const unrealized = p.unrealized_pnl;
-          const volume = p.volume ?? p.total_volume;
-          const positions = p.positions_count ?? p.open_positions;
-          const winRate = p.win_rate ?? p.winRate;
+          const name = pickString(p.name, p.handle, p.username);
+          // Headline stats from all_time (fall back to flat fields if the
+          // shape is ever flatter than today's nested format).
+          const pnl = allTime.total_pnl ?? allTime.realized_pnl ?? p.pnl ?? p.realized_pnl;
+          const realized = allTime.realized_pnl ?? p.realized_pnl;
+          const volume = allTime.volume ?? p.volume ?? p.total_volume;
+          const trades = allTime.trades ?? p.trades;
+          const winRate = allTime.win_rate ?? p.win_rate ?? p.winRate;
+          const roi = allTime.roi ?? p.roi;
+          const activePositions = allTime.active_positions ?? p.active_positions ?? p.positions_count;
+          const ageDays = allTime.wallet_age_days ?? p.wallet_age_days;
+
           lines.push(`${i + 1}. \`${w}\`` + (name ? ` (${name})` : ''));
           const stats: string[] = [];
-          if (pnl != null) stats.push(`P&L ${formatUsd(pnl as number)}`);
-          if (unrealized != null) stats.push(`unrealized ${formatUsd(unrealized as number)}`);
+          if (pnl != null) stats.push(`total P&L ${formatUsd(pnl as number)}`);
+          if (realized != null && realized !== pnl) stats.push(`realized ${formatUsd(realized as number)}`);
           if (volume != null) stats.push(`vol ${formatUsd(volume as number)}`);
-          if (positions != null) stats.push(`${positions} open`);
+          if (roi != null) stats.push(`ROI ${formatPct(roi as number, 1)}`);
           if (winRate != null) stats.push(`win ${formatPct(winRate as number, 0)}`);
+          if (trades != null) stats.push(`${trades} trades`);
+          if (activePositions != null) stats.push(`${activePositions} open`);
+          if (ageDays != null) stats.push(`${ageDays}d age`);
           if (stats.length > 0) lines.push(`   ${stats.join(' · ')}`);
+
+          // Recent-window deltas help the agent judge momentum without a
+          // separate walletPnl call.
+          const recent: string[] = [];
+          for (const [label, block] of [['1d', oneDay], ['7d', sevenDay], ['30d', thirtyDay]] as Array<[string, Record<string, unknown>]>) {
+            const tp = block.total_pnl;
+            const tr = block.trades;
+            if (tp != null || tr != null) {
+              const parts: string[] = [];
+              if (tp != null) parts.push(formatUsd(tp as number));
+              if (tr != null) parts.push(`${tr} trades`);
+              recent.push(`${label}: ${parts.join(' / ')}`);
+            }
+          }
+          if (recent.length > 0) lines.push(`   ${recent.join(' · ')}`);
         });
         lines.push('', `_$0.005 paid via x402._`);
         return { output: lines.join('\n') };
@@ -534,33 +610,49 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
         if (!raw || typeof raw !== 'object') {
           return { output: `No P&L data returned for ${wallet}` };
         }
+        // Real Predexon shape (verified 2026-05-06):
+        //   { granularity, start_time, end_time, wallet_address,
+        //     realized_pnl, unrealized_pnl, total_pnl,
+        //     fees_paid, fees_refunded,
+        //     pnl_over_time: [{timestamp, pnl_to_date}, ...] }
+        // start_time/end_time and timestamp are unix seconds.
         const data = raw as Record<string, unknown>;
-        const realized = data.realized_pnl ?? data.realizedPnl ?? data.total_pnl ?? data.pnl;
+        const realized = data.realized_pnl ?? data.realizedPnl;
         const unrealized = data.unrealized_pnl ?? data.unrealizedPnl;
-        const total = data.total_value ?? data.totalValue ?? data.equity;
-        const volume = data.volume ?? data.total_volume;
-        const winRate = data.win_rate ?? data.winRate;
+        const total = data.total_pnl ?? data.totalPnl;
+        const fees = data.fees_paid ?? data.feesPaid;
         const w = wallet.length > 12 ? `${wallet.slice(0, 8)}…${wallet.slice(-4)}` : wallet;
-        const lines: string[] = [`## Polymarket wallet P&L — \`${w}\``, ''];
+        const gran = (data.granularity as string | undefined) ?? granularity ?? 'day';
+        const lines: string[] = [`## Polymarket wallet P&L — \`${w}\` · granularity ${gran}`, ''];
         const summary: string[] = [];
+        if (total != null) summary.push(`total ${formatUsd(total as number)}`);
         if (realized != null) summary.push(`realized ${formatUsd(realized as number)}`);
         if (unrealized != null) summary.push(`unrealized ${formatUsd(unrealized as number)}`);
-        if (total != null) summary.push(`equity ${formatUsd(total as number)}`);
-        if (volume != null) summary.push(`vol ${formatUsd(volume as number)}`);
-        if (winRate != null) summary.push(`win ${formatPct(winRate as number, 0)}`);
+        if (fees != null && Number(fees) > 0) summary.push(`fees ${formatUsd(fees as number)}`);
         if (summary.length > 0) lines.push(summary.join(' · '));
-        // Optional time series — show recent points compactly if present.
-        const series = (data.series ?? data.history ?? data.daily) as Array<Record<string, unknown>> | undefined;
+        // Time series: pnl_over_time uses unix seconds. Show last 7 non-zero
+        // checkpoints so the agent sees momentum without paginating through
+        // hundreds of zero-pnl warmup days.
+        const series = (data.pnl_over_time ?? data.pnlOverTime ?? data.series) as Array<Record<string, unknown>> | undefined;
         if (Array.isArray(series) && series.length > 0) {
-          lines.push('', `**Recent points** (latest ${Math.min(7, series.length)}):`);
-          series.slice(-7).forEach(pt => {
-            const t = (pt.date ?? pt.ts ?? pt.timestamp) as string | number | undefined;
-            const v = (pt.pnl ?? pt.value ?? pt.cumulative_pnl) as number | undefined;
-            if (t != null && v != null) {
-              const tStr = typeof t === 'number' ? new Date(t).toISOString().slice(0, 10) : String(t).slice(0, 10);
-              lines.push(`- ${tStr} · ${formatUsd(v)}`);
-            }
+          const meaningful = series.filter(pt => {
+            const v = (pt.pnl_to_date ?? pt.pnlToDate ?? pt.pnl ?? pt.value) as number | undefined;
+            return typeof v === 'number' && v !== 0;
           });
+          const sample = (meaningful.length > 0 ? meaningful : series).slice(-7);
+          if (sample.length > 0) {
+            lines.push('', `**Recent points** (latest ${sample.length} of ${series.length}):`);
+            sample.forEach(pt => {
+              const t = (pt.timestamp ?? pt.ts ?? pt.date) as number | string | undefined;
+              const v = (pt.pnl_to_date ?? pt.pnlToDate ?? pt.pnl ?? pt.value) as number | undefined;
+              if (t != null && v != null) {
+                // Predexon timestamps are unix SECONDS, not millis.
+                const ms = typeof t === 'number' ? t * 1000 : Date.parse(String(t));
+                const tStr = Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : String(t).slice(0, 10);
+                lines.push(`- ${tStr} · ${formatUsd(v)}`);
+              }
+            });
+          }
         }
         lines.push('', `_$0.005 paid via x402._`);
         return { output: lines.join('\n') };
@@ -597,17 +689,32 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           `## Polymarket positions — \`${w}\` — ${positions.length} position${positions.length === 1 ? '' : 's'}`,
           '',
         ];
+        // Predexon returns each position as a nested record:
+        //   { market: {title, side_label, ...},
+        //     position: {shares, avg_entry_price, total_cost_usd, ...},
+        //     current: {price, value_usd},
+        //     pnl: {unrealized_usd, unrealized_pct, realized_usd} }
+        // Verified 2026-05-06 via FRANKLIN_PM_DEBUG=1 dump. Walk the four
+        // sub-objects rather than assuming flat fields. Keep flat-field
+        // fallbacks too in case the response shape changes or the user's
+        // gateway version returns a flatter format.
         positions.slice(0, cappedLimit).forEach((p, i) => {
-          const title = (p.title || p.market || p.question || p.market_slug || 'untitled') as string;
-          const outcome = (p.outcome || p.side) as string | undefined;
-          const size = p.size ?? p.shares ?? p.quantity;
-          const avgPrice = p.avg_price ?? p.avgPrice ?? p.average_price;
-          const currentValue = p.current_value ?? p.currentValue ?? p.value;
-          const pnl = p.pnl ?? p.unrealized_pnl ?? p.realized_pnl;
-          const pnlPct = p.pnl_pct ?? p.pnlPct ?? p.percent_pnl;
+          const market = (p.market && typeof p.market === 'object' ? p.market : {}) as Record<string, unknown>;
+          const position = (p.position && typeof p.position === 'object' ? p.position : {}) as Record<string, unknown>;
+          const current = (p.current && typeof p.current === 'object' ? p.current : {}) as Record<string, unknown>;
+          const pnlObj = (p.pnl && typeof p.pnl === 'object' ? p.pnl : {}) as Record<string, unknown>;
+
+          const title = pickString(market.title, market.question, p.title, p.question, market.market_slug, p.market_slug) ?? 'untitled';
+          const outcome = pickString(market.side_label, market.side, p.outcome, p.side);
+          const shares = position.shares ?? position.total_shares_bought ?? p.size ?? p.shares;
+          const avgPrice = position.avg_entry_price ?? p.avg_price ?? p.avgPrice;
+          const currentValue = current.value_usd ?? p.current_value ?? p.currentValue ?? p.value;
+          const pnl = pnlObj.unrealized_usd ?? pnlObj.realized_usd ?? p.cashPnl ?? p.pnl;
+          const pnlPct = pnlObj.unrealized_pct ?? pnlObj.realized_pct ?? p.percentPnl ?? p.percent_pnl;
+
           const parts: string[] = [];
           if (outcome) parts.push(outcome);
-          if (size != null) parts.push(`size ${formatQuantity(size)}`);
+          if (shares != null) parts.push(`${formatQuantity(shares as number)} shares`);
           if (avgPrice != null) parts.push(`avg ${formatPct(avgPrice as number)}`);
           if (currentValue != null) parts.push(`now ${formatUsd(currentValue as number)}`);
           if (pnl != null) {
@@ -638,8 +745,8 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           '',
         ];
         rows.forEach((r, i) => {
-          const title = (r.question || r.title || r.market_slug || 'untitled') as string;
-          const cid = (r.condition_id || r.id) as string | undefined;
+          const title = pickString(r.question, r.title, r.market, r.event, r.market_slug, r.slug) ?? 'untitled';
+          const cid = pickString(r.condition_id, r.id);
           const cidTag = cid ? ` · \`${String(cid).slice(0, 14)}…\`` : '';
           const smartCount = r.smart_wallets_count ?? r.wallet_count;
           const netFlow = r.net_size ?? r.net_yes_size;
