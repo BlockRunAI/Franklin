@@ -120,6 +120,13 @@ export function readAudit(): AuditEntry[] {
   }
 }
 
+/**
+ * Regex: SCREAMING-CASE bracketed label like `[SYSTEM NOTE]`,
+ * `[FRANKLIN HARNESS PREFETCH]`, `[GROUNDING CHECK FAILED]`. Used to detect
+ * harness-injected text that masks the real user prompt in audit forensics.
+ */
+const SYNTHETIC_LABEL = /\[[A-Z][A-Z _-]+\]/;
+
 /** Pull the last user message from a Dialogue history, flatten, and strip newlines. */
 export function extractLastUserPrompt(history: Array<{ role: string; content: unknown }>): string | undefined {
   for (let i = history.length - 1; i >= 0; i--) {
@@ -135,8 +142,17 @@ export function extractLastUserPrompt(history: Array<{ role: string; content: un
     // "[FRANKLIN HARNESS PREFETCH] CRCL price..." and 18 showed
     // "[GROUNDING CHECK FAILED] ..." instead of the user's actual question.
     // Skip any message whose first non-whitespace block is a SCREAMING-CASE
-    // bracketed label and keep walking back to the real user turn.
-    if (/^\[[A-Z][A-Z _-]+\]/.test(cleaned)) continue;
+    // bracketed label.
+    if (new RegExp('^' + SYNTHETIC_LABEL.source).test(cleaned)) continue;
+    // 3.15.76: also strip TRAILING synthetic labels. Newer post-response
+    // evaluators append `[SYSTEM NOTE] The user is correcting you. Your
+    // previous response was wrong...` to the user's real text within the
+    // SAME message — so the message doesn't start with the bracket but the
+    // audit field still ends up half-real, half-synthetic. The bracket is
+    // preceded by whitespace + at least one real character, so trim from
+    // the first such occurrence.
+    const trailing = cleaned.match(new RegExp('^(.+?)\\s' + SYNTHETIC_LABEL.source));
+    if (trailing && trailing[1].trim()) return trailing[1].trim();
     return cleaned;
   }
   return undefined;

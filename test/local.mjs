@@ -8060,3 +8060,46 @@ test('extractLastUserPrompt skips harness-injected synthetic prompts (3.15.71)',
   ];
   assert.equal(extractLastUserPrompt(blocks), 'real question');
 });
+
+test('extractLastUserPrompt strips TRAILING synthetic labels (3.15.76)', async () => {
+  const { extractLastUserPrompt } = await import('../dist/stats/audit.js');
+  // Real audit pollution observed 2026-05-06: post-response evaluator
+  // appends `[SYSTEM NOTE] The user is correcting you...` to the user's
+  // real text in the SAME message. The 3.15.71 fix only skipped messages
+  // that STARTED with a synthetic bracket — these end up half-real,
+  // half-synthetic and slip through as the prompt field.
+  const trailing = [
+    {
+      role: 'user',
+      content: '这个不是关于prediction maretk的么你再看看 [SYSTEM NOTE] The user is correcting you. Your previous response was wrong, retry.',
+    },
+  ];
+  assert.equal(
+    extractLastUserPrompt(trailing),
+    '这个不是关于prediction maretk的么你再看看',
+    'trailing [SYSTEM NOTE] should be stripped from audit prompt',
+  );
+
+  // Multiple synthetic suffixes — strip from the first one onward.
+  const cascading = [
+    {
+      role: 'user',
+      content: 'analyze this [GROUNDING CHECK FAILED] retry [SYSTEM NOTE] correcting',
+    },
+  ];
+  assert.equal(extractLastUserPrompt(cascading), 'analyze this');
+
+  // Bracket with lowercase content (e.g. a markdown link) must NOT trigger
+  // the strip. Only SCREAMING-CASE labels are synthetic.
+  const linkLike = [
+    { role: 'user', content: 'see [my doc](https://example.com) please' },
+  ];
+  assert.equal(extractLastUserPrompt(linkLike), 'see [my doc](https://example.com) please');
+
+  // Standalone bracket with no preceding real text → fall back to original
+  // start-anchored skip logic (returns undefined for this single message).
+  const onlyBracket = [
+    { role: 'user', content: '[SYSTEM NOTE] standalone' },
+  ];
+  assert.equal(extractLastUserPrompt(onlyBracket), undefined);
+});

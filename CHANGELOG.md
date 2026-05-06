@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.15.76 — Audit prompts strip trailing synthetic labels + table-format nudge
+
+### Trailing \`[SYSTEM NOTE]\` no longer pollutes audit prompts
+
+3.15.71 added skip-logic for harness-injected user messages that
+**start** with a SCREAMING-CASE bracket like \`[FRANKLIN HARNESS
+PREFETCH]\`. Pollution still slipped through: the post-response
+evaluator now appends \`[SYSTEM NOTE] The user is correcting you...\`
+to the user's real text in the SAME role:"user" message. Audit prompt
+ended up half-real, half-synthetic.
+
+Fix: \`extractLastUserPrompt\` also matches a trailing \`\\s\\[A-Z…\\]\`
+pattern and trims everything from there. The whitespace prefix gates
+the match so legitimate input like \`see [my doc](url)\` (lowercase
+inside the brackets) passes through untouched.
+
+### System-prompt: ASCII pipes only in markdown tables
+
+Real session 2026-05-06: the agent emitted a table where data rows
+used the box-drawing character \`│\` (U+2502) but the separator row
+used plain \`|\`. No markdown renderer parses that mixed shape — the
+"table" displays as run-on text. Added a one-liner under the System
+section directing models to use plain \`|\` and \`---\` and to fall
+back to a bullet list rather than emitting a malformed table.
+
+This is prompt-only — works on any model. Won't catch every case (the
+model has to read the line) but it's the cheapest pre-emption for the
+most common rendering bug.
+
+### Test coverage
+
+Four new assertions on \`extractLastUserPrompt\`:
+- trailing \`[SYSTEM NOTE]\` is stripped from a real message
+- cascading suffixes (\`...[GROUNDING] retry [SYSTEM] correcting\`)
+  trim from the first synthetic onward
+- markdown-link-shaped brackets (\`see [my doc](url)\`) pass through
+- standalone-bracket message still returns undefined (start-anchor
+  skip wins)
+
+354/354 tests pass.
+
 ## 3.15.75 — Predexon nested-shape formatters (no more [object Object])
 
 **The 3.15.74 ship "passed" e2e but only validated headers and absence of
