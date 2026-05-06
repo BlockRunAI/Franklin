@@ -21,14 +21,8 @@
  *                              wallets — P&L, positions, identity
  *   smartActivity      $0.005  discover markets where high-performing wallets
  *                              are active right now
- *
- * Replaces the old `smartMoney` action (3.15.69 and earlier) which hit a
- * non-existent path /v1/pm/polymarket/market/<id>/smart-money — that endpoint
- * was never on the gateway, so the action was a silent 404 from day one.
- * Verified 2026-05-05 against blockrun.ai/openapi.json: Polymarket has no
- * per-market path-parameter endpoints; smart-money intelligence lives at
- * /v1/pm/polymarket/markets/smart-activity (cross-market discovery) and
- * /v1/pm/polymarket/leaderboard (top wallets globally).
+ *   smartMoney         $0.005  smart-money positioning on one Polymarket
+ *                              condition_id (per-market drill-down)
  *
  * Output is filtered + truncated on the way back so a single call never
  * dumps 100 markets into the agent's context. Default 20 rows; agents that
@@ -64,6 +58,7 @@ const PATH_PRICES: Array<{ pattern: RegExp; usd: number }> = [
   { pattern: /\/v1\/pm\/matching-markets/, usd: 0.005 },
   { pattern: /\/v1\/pm\/polymarket\/wallets\//, usd: 0.005 },
   { pattern: /\/v1\/pm\/polymarket\/wallet\//, usd: 0.005 },
+  { pattern: /\/v1\/pm\/polymarket\/market\/[^/]+\/smart-money$/, usd: 0.005 },
   { pattern: /\/v1\/pm\/polymarket\/markets\/smart-activity$/, usd: 0.005 },
   { pattern: /\/v1\/pm\/.+/, usd: 0.001 },
 ];
@@ -206,17 +201,28 @@ async function extractPaymentReq(response: Response): Promise<string | null> {
 
 // ─── Formatting helpers ────────────────────────────────────────────────────
 
-function formatUsd(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return 'n/a';
-  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
-  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
-  if (value >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
-  return `$${value.toFixed(2)}`;
+function asNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
 }
 
-function formatPct(value: number | null | undefined, digits = 1): string {
-  if (value == null || !Number.isFinite(value)) return 'n/a';
-  return `${(value * 100).toFixed(digits)}%`;
+function formatUsd(value: unknown): string {
+  const n = asNumber(value);
+  if (n == null) return 'n/a';
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+  return `$${n.toFixed(2)}`;
+}
+
+function formatPct(value: unknown, digits = 1): string {
+  const n = asNumber(value);
+  if (n == null) return 'n/a';
+  return `${(n * 100).toFixed(digits)}%`;
 }
 
 // Both gateways return slightly different shapes; we intentionally use
@@ -250,6 +256,12 @@ type MatchedPair = {
   kalshi_title?: string;
   similarity?: number;
 };
+type SmartMoneyResp = {
+  buyers?: Array<{ wallet?: string; size?: number | string; outcome?: string }>;
+  sellers?: Array<{ wallet?: string; size?: number | string; outcome?: string }>;
+  net_yes_size?: number | string;
+  net_no_size?: number | string;
+};
 // API responses sometimes come wrapped as `{data: [...], pagination: ...}`,
 // other times as a bare array. Normalise to an array.
 function unwrapList<T>(raw: unknown): T[] {
@@ -274,22 +286,24 @@ interface PredictionInput {
     | 'crossPlatform'
     | 'leaderboard'
     | 'walletProfile'
-    | 'smartActivity';
+    | 'smartActivity'
+    | 'smartMoney';
   search?: string;
   status?: string;
   sort?: string;
   limit?: number;
+  conditionId?: string;
   /** Comma-separated wallet addresses or a single address — used by walletProfile. */
   wallets?: string;
 }
 
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
-  const { action, search, status, sort, limit, wallets } = input as unknown as PredictionInput;
+  const { action, search, status, sort, limit, conditionId, wallets } = input as unknown as PredictionInput;
   const cappedLimit = Math.min(Math.max(1, limit ?? DEFAULT_LIMIT), MAX_LIMIT);
 
   if (!action) {
     return {
-      output: 'Error: action is required (searchAll | searchPolymarket | searchKalshi | crossPlatform | leaderboard | walletProfile | smartActivity)',
+      output: 'Error: action is required (searchAll | searchPolymarket | searchKalshi | crossPlatform | leaderboard | walletProfile | smartActivity | smartMoney)',
       isError: true,
     };
   }
@@ -403,10 +417,15 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
             isError: true,
           };
         }
-        // Predexon's batch endpoint accepts multiple wallets; we forward
-        // verbatim. Single wallet works too — caller passes one address.
+        // Predexon's batch endpoint expects the query param `addresses`,
+        // NOT `wallets` — verified 2026-05-06 from a live 422 in a real
+        // user session: `{"detail":[{"type":"missing","loc":["query",
+        // "addresses"]}]}`. The 3.15.70 ship guessed the param name from
+        // the openapi description ("Batch retrieve wallet profiles") and
+        // got it wrong. Public field stays `wallets` for ergonomics —
+        // we just rename on the wire.
         const raw = await getWithPayment<unknown>('/v1/pm/polymarket/wallets/profiles', {
-          wallets: wallets.trim(),
+          addresses: wallets.trim(),
         }, ctx);
         const profiles = unwrapList<Record<string, unknown>>(raw);
         if (profiles.length === 0) {
@@ -469,6 +488,46 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           if (netFlow != null) stats.push(`net ${formatUsd(netFlow as number)}`);
           lines.push(`${i + 1}. **${title}**${cidTag}` + (stats.length > 0 ? `\n   ${stats.join(' · ')}` : ''));
         });
+        lines.push('', `_$0.005 paid via x402._`);
+        return { output: lines.join('\n') };
+      }
+
+      case 'smartMoney': {
+        if (!conditionId) {
+          return {
+            output: 'Error: conditionId is required for smartMoney (Polymarket condition_id from a prior searchPolymarket or smartActivity call)',
+            isError: true,
+          };
+        }
+        // Per-market drill-down. Official live registry:
+        // /api/v1/pm/polymarket/market/:condition_id/smart-money
+        const path = `/v1/pm/polymarket/market/${encodeURIComponent(conditionId)}/smart-money`;
+        const data = await getWithPayment<SmartMoneyResp>(path, {}, ctx);
+        const buyers = (data.buyers ?? []).slice(0, 5);
+        const sellers = (data.sellers ?? []).slice(0, 5);
+        const lines: string[] = [
+          `## Smart money — \`${conditionId.slice(0, 14)}…\``,
+        ];
+        if (data.net_yes_size != null || data.net_no_size != null) {
+          lines.push(`**Net flow:** YES ${formatUsd(data.net_yes_size)} / NO ${formatUsd(data.net_no_size)}`);
+        }
+        if (buyers.length > 0) {
+          lines.push('', '**Top buyers**');
+          buyers.forEach((b, i) => {
+            const w = b.wallet ? `${b.wallet.slice(0, 8)}…${b.wallet.slice(-4)}` : 'unknown';
+            lines.push(`${i + 1}. ${w} — ${formatUsd(b.size)} on ${b.outcome ?? 'unknown side'}`);
+          });
+        }
+        if (sellers.length > 0) {
+          lines.push('', '**Top sellers**');
+          sellers.forEach((s, i) => {
+            const w = s.wallet ? `${s.wallet.slice(0, 8)}…${s.wallet.slice(-4)}` : 'unknown';
+            lines.push(`${i + 1}. ${w} — ${formatUsd(s.size)} on ${s.outcome ?? 'unknown side'}`);
+          });
+        }
+        if (buyers.length === 0 && sellers.length === 0) {
+          lines.push('No smart-money flow recorded for this market yet.');
+        }
         lines.push('', `_$0.005 paid via x402._`);
         return { output: lines.join('\n') };
       }
@@ -567,7 +626,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
       default:
         return {
-          output: `Error: unknown action "${action}". Use: searchAll, searchPolymarket, searchKalshi, crossPlatform, leaderboard, walletProfile, smartActivity`,
+          output: `Error: unknown action "${action}". Use: searchAll, searchPolymarket, searchKalshi, crossPlatform, leaderboard, walletProfile, smartActivity, smartMoney`,
           isError: true,
         };
     }
@@ -588,12 +647,14 @@ export const predictionMarketCapability: CapabilityHandler = {
       '`crossPlatform` (matched market pairs across Polymarket+Kalshi for arbitrage / consensus — $0.005), ' +
       '`leaderboard` (global top wallets by P&L on Polymarket — $0.001), ' +
       '`walletProfile` (P&L + positions for one or more Polymarket wallets — $0.005), ' +
-      '`smartActivity` (markets where high-P&L wallets are positioning right now — $0.005). ' +
+      '`smartActivity` (markets where high-P&L wallets are positioning right now — $0.005), ' +
+      '`smartMoney` (smart-money positioning on one Polymarket condition_id — $0.005). ' +
       'Default routing: ' +
       '"is there a market on X anywhere" → searchAll. ' +
       '"top wallets / who is profitable / who should I follow on Polymarket" → leaderboard. ' +
       '"how is wallet 0xabc doing / show me their P&L" → walletProfile with that address. ' +
       '"what are smart traders betting on right now" → smartActivity. ' +
+      '"show smart money on this specific Polymarket market" → smartMoney with conditionId. ' +
       '"should I bet on X" → run searchPolymarket + searchKalshi in parallel and compare implied probabilities — divergence is the signal.',
     input_schema: {
       type: 'object' as const,
@@ -608,12 +669,13 @@ export const predictionMarketCapability: CapabilityHandler = {
             'leaderboard',
             'walletProfile',
             'smartActivity',
+            'smartMoney',
           ],
           description: 'Which prediction-market query to run. See tool description for cost per action.',
         },
         search: {
           type: 'string',
-          description: 'Search query. Used by searchAll / searchPolymarket / searchKalshi / smartActivity. Optional for crossPlatform/leaderboard/walletProfile.',
+          description: 'Search query. Used by searchAll / searchPolymarket / searchKalshi / smartActivity. Optional for crossPlatform/leaderboard/walletProfile/smartMoney.',
         },
         status: {
           type: 'string',
@@ -630,6 +692,10 @@ export const predictionMarketCapability: CapabilityHandler = {
         wallets: {
           type: 'string',
           description: 'For walletProfile: a single Polymarket wallet address, or a comma-separated list of addresses for batch lookup.',
+        },
+        conditionId: {
+          type: 'string',
+          description: 'For smartMoney: Polymarket condition_id from searchPolymarket or smartActivity.',
         },
       },
       required: ['action'],

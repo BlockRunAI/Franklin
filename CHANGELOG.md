@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.15.72 — walletProfile param name fix (was 422'ing every call)
+
+**Real shipped bug from 3.15.70's walletProfile addition.**
+
+The action sent the query param as \`wallets\` based on the openapi
+description ("Batch retrieve wallet profiles"). Predexon's actual
+endpoint expects \`addresses\`. Result: every \`walletProfile\` call
+returned HTTP 422 with
+\`{"detail":[{"type":"missing","loc":["query","addresses"]}]}\` and
+the agent fell back to direct Bash + curl against the Polymarket
+API — bypassing the entire paid path the action exists to cover.
+
+Verified live 2026-05-06 in a real user session: opus-4.7 received
+the wallet question, called PredictionMarket walletProfile correctly
+(model behavior was right), got a 422, then burned 6 Bash retry calls
+and \$0.32 before the signature loop guard fired. The user's complaint
+"feels like it doesn't go to predexon data on its own" was the
+correct read — the model **did** go there, the tool was broken.
+
+Fix: query param renamed from \`wallets\` → \`addresses\` on the wire.
+Public input field stays \`wallets\` for ergonomics — agents pass
+\`wallets="0xabc"\` exactly as the spec describes.
+
+Other 3.15.70 actions (\`searchAll\`, \`leaderboard\`,
+\`smartActivity\`) pass conventional param names (\`search\`,
+\`limit\`, \`sort\`); no live evidence of similar mismatches yet.
+If they surface, same fix shape: rename on the wire, keep the
+public field stable.
+
+352/352 tests pass.
+
 ## 3.15.71 — Tighter bloat-compaction trigger + audit prompts skip harness-injected text
 
 **Two fixes from a fresh audit-log forensic pass.**
