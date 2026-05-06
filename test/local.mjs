@@ -816,29 +816,54 @@ test('pruneOldSessions removes stale ghost sessions even when visible session co
 });
 
 test('session meta imported flag can be set and survives later updates', async () => {
-  const { updateSessionMeta, loadSessionMeta, getSessionFilePath } = await import('../dist/session/storage.js');
-  const id = `session-imported-sticky-${Date.now()}`;
-  const sf = getSessionFilePath(id);
+  const fakeHome = mkdtempSync(join(tmpdir(), 'franklin-imported-meta-'));
+  const storagePath = new URL('../dist/session/storage.js', import.meta.url).pathname;
   try {
-    updateSessionMeta(id, {
-      model: 'imported',
-      workDir: process.cwd(),
-      turnCount: 1,
-      messageCount: 2,
-      imported: true,
-    });
-    assert.equal(loadSessionMeta(id)?.imported, true);
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', [
+        '--input-type=module',
+        '-e',
+        `
+          const { updateSessionMeta, loadSessionMeta } = await import(${JSON.stringify(`file://${storagePath}`)});
+          const id = 'session-imported-sticky';
+          updateSessionMeta(id, {
+            model: 'imported',
+            workDir: process.cwd(),
+            turnCount: 1,
+            messageCount: 2,
+            imported: true,
+          });
+          const first = loadSessionMeta(id)?.imported;
+          updateSessionMeta(id, {
+            model: 'zai/glm-5.1',
+            workDir: process.cwd(),
+            turnCount: 2,
+            messageCount: 4,
+          });
+          const second = loadSessionMeta(id)?.imported;
+          process.stdout.write(JSON.stringify({ first, second }));
+        `,
+      ], {
+        env: { ...process.env, HOME: fakeHome, BLOCKRUN_DIR: join(fakeHome, '.blockrun') },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
 
-    updateSessionMeta(id, {
-      model: 'zai/glm-5.1',
-      workDir: process.cwd(),
-      turnCount: 2,
-      messageCount: 4,
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+      proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stdout, stderr });
+        else reject(new Error(`imported meta subprocess failed (${code})\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      });
+      proc.on('error', reject);
     });
-    assert.equal(loadSessionMeta(id)?.imported, true);
+
+    const parsed = JSON.parse(result.stdout.trim());
+    assert.equal(parsed.first, true);
+    assert.equal(parsed.second, true);
   } finally {
-    rmSync(sf, { force: true });
-    rmSync(join(dirname(sf), `${id}.meta.json`), { force: true });
+    rmSync(fakeHome, { recursive: true, force: true });
   }
 });
 
@@ -7174,19 +7199,35 @@ test('brain caps observations at MAX_OBSERVATIONS, evicting oldest', async () =>
   }
 });
 
-test('PredictionMarket spec exposes the four x402-paid actions', async () => {
+test('PredictionMarket spec exposes the seven x402-paid actions (3.15.70)', async () => {
   const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
   const spec = predictionMarketCapability.spec;
   assert.equal(spec.name, 'PredictionMarket');
   const actions = spec.input_schema.properties.action.enum;
+  // 3.15.70 dropped `smartMoney` (it called a path that never existed on the
+  // gateway — silent 404 from launch) and added searchAll / leaderboard /
+  // walletProfile / smartActivity backed by real Predexon endpoints.
   assert.deepEqual(
     [...actions].sort(),
-    ['crossPlatform', 'searchKalshi', 'searchPolymarket', 'smartMoney'],
-    'enum should expose exactly the four supported actions',
+    [
+      'crossPlatform',
+      'leaderboard',
+      'searchAll',
+      'searchKalshi',
+      'searchPolymarket',
+      'smartActivity',
+      'walletProfile',
+    ],
+    'enum should expose exactly the seven supported actions',
   );
-  // Description must steer agents away from training-data odds answers.
+  assert.ok(!actions.includes('smartMoney'), 'broken smartMoney action must be removed');
+  // Description must steer agents away from training-data odds answers and
+  // surface the new wallet/leaderboard intents.
   assert.match(spec.description, /Polymarket/);
   assert.match(spec.description, /Kalshi/);
+  assert.match(spec.description, /Limitless/);
+  assert.match(spec.description, /leaderboard/);
+  assert.match(spec.description, /walletProfile/);
   assert.match(spec.description, /\$0\.001/);
   assert.match(spec.description, /\$0\.005/);
 });
@@ -7201,14 +7242,27 @@ test('PredictionMarket rejects unknown action without making a network call', as
   assert.match(result.output, /unknown action/i);
 });
 
-test('PredictionMarket smartMoney without conditionId fails fast', async () => {
+test('PredictionMarket walletProfile without wallets fails fast (3.15.70)', async () => {
   const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
   const result = await predictionMarketCapability.execute(
-    { action: 'smartMoney' },
+    { action: 'walletProfile' },
     { workingDir: process.cwd(), abortSignal: new AbortController().signal },
   );
   assert.equal(result.isError, true);
-  assert.match(result.output, /conditionId/);
+  assert.match(result.output, /wallets/);
+});
+
+test('PredictionMarket smartMoney action no longer accepted (3.15.70 drop)', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  // Old action surface — must reject as unknown so a stale agent transcript
+  // gets a clear error instead of silently 404'ing on a dead endpoint.
+  const result = await predictionMarketCapability.execute(
+    { action: 'smartMoney', conditionId: '0xabcdef' },
+    { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.output, /unknown action/i);
+  assert.match(result.output, /smartActivity/, 'error should point at the replacement action');
 });
 
 test('PredictionMarket missing action fails with usage hint', async () => {

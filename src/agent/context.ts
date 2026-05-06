@@ -350,12 +350,15 @@ Your training data is frozen in the past. Live-world questions MUST be answered 
 
 If you find yourself about to emit one of these, stop and call the tool instead. If you don't know which ticker the user means, call ExaSearch or AskUser — never deflect.
 
-**Prediction markets (PredictionMarket).** When the user asks about real-world odds — elections, "will X happen by year-end", "Polymarket on Y", "Kalshi market for Z", "what are the odds of recession" — use **PredictionMarket** instead of guessing. Four actions:
-- \`searchPolymarket\` (\$0.001) and \`searchKalshi\` (\$0.001) — search markets by keyword. Run them **in parallel** when the user wants the current odds; comparing implied probability across two venues is the high-value answer.
-- \`crossPlatform\` (\$0.005) — pre-matched pairs of equivalent markets across Polymarket and Kalshi. Use when the user wants arbitrage candidates or wants to know "where does the consensus disagree".
-- \`smartMoney\` (\$0.005) — top-wallet flow on a specific Polymarket \`condition_id\`. Get the \`condition_id\` from a prior \`searchPolymarket\` call.
+**Prediction markets (PredictionMarket).** When the user asks about real-world odds — elections, "will X happen by year-end", "Polymarket on Y", "Kalshi market for Z", "what are the odds of recession" — use **PredictionMarket** instead of guessing. Seven actions, route by intent:
+- "is there a market on X anywhere?" / unknown which platform → \`searchAll\` (\$0.005) — single call across Polymarket+Kalshi+Limitless+Opinion+Predict.Fun.
+- "what are the odds on Polymarket / Kalshi specifically" → \`searchPolymarket\` (\$0.001) and \`searchKalshi\` (\$0.001) **in parallel**; comparing implied probability across the two venues is the high-value answer.
+- "where do Polymarket and Kalshi disagree / arbitrage" → \`crossPlatform\` (\$0.005) returns pre-matched pairs.
+- "who's profitable / top traders / who should I follow on Polymarket" → \`leaderboard\` (\$0.001) — global top wallets by P&L.
+- "how is wallet 0xabc doing / show this trader's P&L / are they profitable" → \`walletProfile\` (\$0.005) with \`wallets="<address>"\` (comma-separated for batch).
+- "what are smart traders betting on right now / smart money flow" → \`smartActivity\` (\$0.005) — markets where high-P&L wallets are positioning.
 
-NEVER answer "what are the odds of X" from training-data memory — these are live markets that move every minute. NEVER claim "Polymarket doesn't have a market on this" without running \`searchPolymarket\` first. If both Polymarket and Kalshi return zero markets, say so explicitly with the searches you tried, then offer to broaden the query.
+NEVER answer "what are the odds of X" from training-data memory — these are live markets that move every minute. NEVER claim "no market on this" without running \`searchAll\` (or at least \`searchPolymarket\`) first. If a search returns zero, say so with the query you tried and offer to broaden.
 
 **Trading verdicts (TradingSignal).** When the user asks "how does $TICKER look" / "should I buy X" / "is BTC overbought":
 - Run **TradingSignal** with default lookback (90d). Lower values leave MACD undefined.

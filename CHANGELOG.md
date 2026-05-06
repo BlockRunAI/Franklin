@@ -1,5 +1,100 @@
 # Changelog
 
+## 3.15.70 — Predexon: 7 actions across 5 venues, wallet/leaderboard surfaces, panel telemetry
+
+**Franklin's `PredictionMarket` tool went from 4 actions over 2 venues
+(Polymarket + Kalshi) to 7 actions over 5 venues, plus wallet-tracking and
+leaderboard surfaces — and one of the original 4 was silently broken.**
+
+### `smartMoney` action was a silent 404 from launch — replaced
+
+The old `smartMoney` action called
+`/v1/pm/polymarket/market/<conditionId>/smart-money`, a path that
+**does not exist on the BlockRun gateway**. Verified 2026-05-05
+against `blockrun.ai/openapi.json`: Polymarket has no per-market
+path-parameter endpoints. The action 404'd from the day it shipped;
+agents using it got error-shaped output instead of smart-money data.
+
+The right endpoint for the same intent lives at
+`/v1/pm/polymarket/markets/smart-activity` ("Discover markets where
+high-performing wallets are active") and at
+`/v1/pm/polymarket/leaderboard` ("Global leaderboard of smart wallets").
+
+Action surface change:
+- **DROPPED:** `smartMoney` — never worked, no migration path that
+  preserves intent. Stale transcripts now get
+  `Error: unknown action "smartMoney" — Use: searchAll, ...,
+  smartActivity` so the model is steered to the replacement.
+- **ADDED:** `smartActivity` — \$0.005 — markets where smart wallets
+  are positioning right now.
+- **ADDED:** `leaderboard` — \$0.001 — global top wallets by P&L.
+
+### Three more actions for things Franklin couldn't do before
+
+- **`searchAll`** — \$0.005 — single call across Polymarket+Kalshi+
+  Limitless+Opinion+Predict.Fun. Today the agent only knew to query
+  Polymarket+Kalshi separately and missed three venues entirely.
+  This is the new default for "is there a market on X anywhere?".
+- **`walletProfile`** — \$0.005 — batch P&L + position lookup for one
+  or more Polymarket wallet addresses. Pass \`wallets="0xabc"\` for a
+  single trader or \`wallets="0xabc,0xdef,0xghi"\` for a watchlist.
+  Directly serves Franklin's "agent with a wallet" positioning —
+  natural pairing with "is this trader profitable / should I follow
+  them".
+
+### Routing nudges in `context.ts`
+
+The system prompt mapped only "what are the odds of X" → PredictionMarket.
+It now routes:
+
+- "is there a market on X anywhere?" → `searchAll`
+- "who's profitable / top traders / who to follow on Polymarket"
+  → `leaderboard`
+- "how is wallet 0xabc doing / show this trader's P&L" → `walletProfile`
+- "what are smart traders betting on right now" → `smartActivity`
+
+Without these routing hints, even with the new actions wired, the
+model wouldn't reach for them.
+
+### Panel "Markets" tab now reflects prediction-market spend
+
+Prediction-market calls go through the same BlockRun gateway as the
+trading-data calls, but the path was bypassing the
+`src/trading/providers/telemetry.ts` ring buffer that the Markets tab
+reads from. So users running `/v1/pm/...` calls saw zero of that
+spend in the panel.
+
+`getWithPayment` in `src/tools/prediction.ts` now calls `recordFetch`
+with `provider: 'blockrun'`, the endpoint path, latency, and the
+per-action price (table-driven). Effect: every prediction-market
+call shows up in the Markets tab's "Calls today / Spend today /
+Recent paid calls" alongside trading calls. The endpoint path
+(\`/v1/pm/polymarket/leaderboard\` etc.) is visible in the
+recent-calls feed so users can see exactly which Predexon surface
+the agent hit. The Markets tab tagline is updated:
+*"How Franklin gets trading + prediction-market data — and what it
+costs."*
+
+### Cost-recording timing
+
+`recordFetch` is called once per logical PredictionMarket action,
+not twice. The 402 challenge response is excluded from cost (it's
+free); only the post-payment-signature settlement is charged. Both
+success and failure paths record latency + ok-flag for the panel's
+"blockrun OK" health indicator.
+
+### Test coverage
+
+- `PredictionMarket spec exposes the seven x402-paid actions (3.15.70)`
+  — pins the new enum and forbids `smartMoney` from sneaking back in.
+- `PredictionMarket walletProfile without wallets fails fast (3.15.70)`
+  — fast input validation (no network call, no wallet sign).
+- `PredictionMarket smartMoney action no longer accepted (3.15.70 drop)`
+  — ensures stale transcripts get a clear error pointing at
+  `smartActivity`.
+
+351/351 tests pass.
+
 ## 3.15.69 — Claude Code import + cost-control gaps from audit-log forensics
 
 **Two batches surfaced from one debugging session: a broken import path
