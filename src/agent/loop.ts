@@ -396,12 +396,8 @@ export function looksLikeStalledIntent(text: string): boolean {
     /\b(let me|let's|i'?ll|i will|i need to|first[,\s]+(?:i|let)|now let'?s|now i'?ll|next[,\s]+i'?ll)\b[\s\S]{0,80}\b(check|verify|run|test|inspect|look|examine|confirm|see|try|install|build|create|start|begin)\b/;
   const verifyMarkers =
     /\b(let'?s verify|let me check|let me run|let me inspect|let me test|let me look|let me see|let me try|let me start|i'?m going to|i'?ll start by|i'?ll first|i'?ll now)\b/;
-  // CJK equivalents — Franklin sees plenty of zh sessions.
-  const zhIntent = /(我来|让我|我需要|首先|现在我|下一步|让我们|我会|我将|接下来)/;
-  const zhAction = /(检查|验证|运行|测试|查看|确认|看看|启动|创建|构建|安装|开始)/;
   if (englishIntent.test(tail)) return true;
   if (verifyMarkers.test(tail)) return true;
-  if (zhIntent.test(tail) && zhAction.test(tail)) return true;
   return false;
 }
 

@@ -1747,12 +1747,6 @@ test('looksLikeStalledIntent: detects coder-model intent-without-tool_use stall'
   assert.equal(looksLikeStalledIntent("I'll start by running npm install to set up dependencies."), true);
   assert.equal(looksLikeStalledIntent("Now I'll verify the build configuration before proceeding."), true);
 
-  // CJK stall — Franklin sees plenty of zh sessions.
-  assert.equal(
-    looksLikeStalledIntent('好的,让我先检查一下 Node.js 是否安装好了,然后再启动项目。'),
-    true,
-  );
-
   // Real completed answers — must NOT trigger.
   assert.equal(looksLikeStalledIntent('Done. The build succeeded and tests pass.'), false);
   assert.equal(looksLikeStalledIntent("Here's the analysis you asked for: revenue grew 12%."), false);

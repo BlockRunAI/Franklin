@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.15.81 — stalled-intent detector is English-only
+
+Drops the CJK regex branches added in 3.15.80. Franklin's source-level
+detection logic stays English-only by policy — Chinese / other locales
+should not ship in agent code.
+
 ## 3.15.80 — stalled-intent recovery: switch model when a turn declares an action but emits no tool_use
 
 **A Franklin session on \`nvidia/qwen3-coder-480b\` showed the assistant
@@ -25,10 +31,10 @@ the user got a polished plan and zero actions.
 ### What 3.15.80 does
 
 New helper \`looksLikeStalledIntent(text)\` in \`src/agent/loop.ts\`:
-detects action-intent markers ("Let me check…", "I'll start by…",
-"我来…", "让我先检查…") near the *tail* of a text-only turn. Long enough
-to look like a real plan (≥24 chars), short-tail check (last 400 chars)
-so a normal answer that mentions "check" mid-paragraph doesn't trigger.
+detects action-intent markers ("Let me check…", "I'll start by…")
+near the *tail* of a text-only turn. Long enough to look like a real
+plan (≥24 chars), short-tail check (last 400 chars) so a normal answer
+that mentions "check" mid-paragraph doesn't trigger.
 
 New recovery branch in the agent loop (right after empty-response
 recovery): when \`!hasTools && hasText && looksLikeStalledIntent(text)\`,
@@ -44,9 +50,8 @@ reliably emits \`tool_use\` blocks is the actual fix.
 ### Tests
 
 - \`looksLikeStalledIntent: detects coder-model intent-without-tool_use stall\`
-  exercises the screenshot's exact text, English variants, CJK variants,
-  and confirms real completed answers ("Done.", concrete results) don't
-  trigger recovery.
+  exercises the screenshot's exact text, English variants, and confirms
+  real completed answers ("Done.", concrete results) don't trigger recovery.
 
 ## 3.15.79 — \`franklin stats\` reads the SDK ledger (cost_log.jsonl) and surfaces the recorded-vs-wallet gap
 
