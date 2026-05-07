@@ -124,8 +124,18 @@ export function readAudit(): AuditEntry[] {
  * Regex: SCREAMING-CASE bracketed label like `[SYSTEM NOTE]`,
  * `[FRANKLIN HARNESS PREFETCH]`, `[GROUNDING CHECK FAILED]`. Used to detect
  * harness-injected text that masks the real user prompt in audit forensics.
+ *
+ * Character class includes:
+ *   A-Z 0-9    bare label content
+ *   space      multi-word labels
+ *   _ -        underscore + hyphen
+ *   — – :      em dash, en dash, colon — common in extended labels like
+ *              `[GROUNDING CHECK FAILED — RETRY ROUND]` or
+ *              `[ESCALATION: stronger model]`. Verified 2026-05-07 from a
+ *              real Predexon-side audit slice where the em-dash form
+ *              slipped through the previous `[A-Z _-]` regex.
  */
-const SYNTHETIC_LABEL = /\[[A-Z][A-Z _-]+\]/;
+const SYNTHETIC_LABEL = /\[[A-Z][A-Z0-9 _\-—–:]+\]/;
 
 /** Pull the last user message from a Dialogue history, flatten, and strip newlines. */
 export function extractLastUserPrompt(history: Array<{ role: string; content: unknown }>): string | undefined {

@@ -8337,4 +8337,29 @@ test('extractLastUserPrompt strips TRAILING synthetic labels (3.15.76)', async (
     { role: 'user', content: '[SYSTEM NOTE] standalone' },
   ];
   assert.equal(extractLastUserPrompt(onlyBracket), undefined);
+
+  // 3.15.84: em-dash inside a SCREAMING-CASE label. Real Predexon-side
+  // audit slice 2026-05-07 showed `[GROUNDING CHECK FAILED — RETRY ROUND]`
+  // slipping through the older `[A-Z _-]` regex. Em dash, en dash, and
+  // colon are all common in extended labels; the new char class accepts
+  // all three. Both start-anchored skip and trailing-strip paths must
+  // recognize them.
+  const emDashStart = [
+    { role: 'user', content: '[GROUNDING CHECK FAILED — RETRY ROUND] Your previous answer stated facts...' },
+    { role: 'user', content: 'i want some prediction market insight' },
+  ];
+  // Walk-back finds the real prompt at index 1 (which doesn't start with a
+  // synthetic label) — confirms the em-dash entry at index 0 isn't returned.
+  assert.equal(extractLastUserPrompt(emDashStart), 'i want some prediction market insight');
+
+  const emDashTrailing = [
+    { role: 'user', content: 'real question [GROUNDING CHECK FAILED — RETRY ROUND] retry feedback' },
+  ];
+  assert.equal(extractLastUserPrompt(emDashTrailing), 'real question');
+
+  const colonLabel = [
+    { role: 'user', content: '[ESCALATION: stronger model] retry' },
+    { role: 'user', content: 'analyze this' },
+  ];
+  assert.equal(extractLastUserPrompt(colonLabel), 'analyze this');
 });

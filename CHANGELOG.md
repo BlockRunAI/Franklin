@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.15.84 — Synthetic-label regex now accepts em dashes / colons / digits
+
+Real audit slice 2026-05-07 from a third-party observer (Predexon side):
+\`[GROUNDING CHECK FAILED — RETRY ROUND]\` slipped through the
+3.15.71/76 audit-prompt sanitizer because the previous regex
+\`[A-Z _-]\` didn't accept em dashes inside the bracket. Other common
+extended-label shapes — \`[ESCALATION: stronger model]\`,
+\`[CONTEXT WINDOW 200K]\` — would have leaked the same way.
+
+Char class extended to \`[A-Z0-9 _\\-—–:]\`:
+- A–Z, 0–9, space, underscore, hyphen (existing)
+- em dash (\`—\`, U+2014), en dash (\`–\`, U+2013), colon (existing
+  observed-in-the-wild punctuation)
+
+Both the start-anchored skip path and the trailing-strip path use the
+same regex, so labels like \`[GROUNDING CHECK FAILED — RETRY ROUND]\`
+that *start* the message AND labels appended *after* a real prompt
+both get cleaned.
+
+Three new regression assertions inside the existing
+\`extractLastUserPrompt strips TRAILING synthetic labels (3.15.76)\`
+test cover em-dash-start, em-dash-trailing, and colon-label cases. Test
+count stays at 361 (assertions added inside an existing test).
+
 ## 3.15.83 — PR #44: gateway-error-as-text no longer kills the session
 
 External contribution from \`0xCheetah1\`. Real failure mode:
