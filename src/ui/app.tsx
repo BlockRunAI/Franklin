@@ -519,6 +519,7 @@ interface AppProps {
   workDir: string;
   walletAddress: string;
   walletBalance: string;
+  initialTranscript?: Array<{ role: 'user' | 'assistant'; text: string }>;
   startWithPicker?: boolean;
   chain: string;
   onSubmit: (input: string) => void;
@@ -529,7 +530,7 @@ interface AppProps {
 
 function RunCodeApp({
   initialModel, workDir, walletAddress, walletBalance, chain,
-  startWithPicker, onSubmit, onModelChange, onAbort, onExit,
+  initialTranscript, startWithPicker, onSubmit, onModelChange, onAbort, onExit,
 }: AppProps) {
   const { exit } = useApp();
   // Track terminal rows so we can cap the dynamic-region height. Ink wipes the
@@ -547,7 +548,16 @@ function RunCodeApp({
   // Last completed tool — shown in dynamic area so it can be expanded/collapsed with Tab
   const [expandableTool, setExpandableTool] = useState<(ToolStatus & { key: string }) | null>(null);
   // Full responses committed to Static immediately — goes into terminal scrollback
-  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number; thinkMs?: number; thinkChars?: number; ctxPct?: number }>>([]);
+  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number; thinkMs?: number; thinkChars?: number; ctxPct?: number }>>(() =>
+    (initialTranscript ?? []).map((entry, idx) => ({
+      key: `${entry.role === 'user' ? 'user' : 'resume'}-${idx}`,
+      text: entry.role === 'user'
+        ? chalk.hex('#FFD700').bold('❯ ') + chalk.hex('#FFD700').bold(entry.text)
+        : entry.text,
+      tokens: { input: 0, output: 0, calls: 0 },
+      cost: 0,
+    }))
+  );
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
   const [responsePreview, setResponsePreview] = useState('');
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS_FLAT[0].id);
@@ -1777,6 +1787,7 @@ export function launchInkUI(opts: {
   version: string;
   walletAddress?: string;
   walletBalance?: string;
+  initialTranscript?: Array<{ role: 'user' | 'assistant'; text: string }>;
   chain?: string;
   showPicker?: boolean;
   onModelChange?: (model: string, reason?: 'user' | 'system') => void;
@@ -1805,6 +1816,7 @@ export function launchInkUI(opts: {
       workDir={opts.workDir}
       walletAddress={opts.walletAddress || 'not set — run: franklin setup'}
       walletBalance={opts.walletBalance || 'unknown'}
+      initialTranscript={opts.initialTranscript}
       chain={opts.chain || 'base'}
       startWithPicker={opts.showPicker}
       onSubmit={(value) => {
