@@ -287,7 +287,9 @@ function RunCodeApp({
   const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number; thinkMs?: number; thinkChars?: number; ctxPct?: number }>>(() =>
     (initialTranscript ?? []).map((entry, idx) => ({
       key: `${entry.role === 'user' ? 'user' : 'resume'}-${idx}`,
-      text: entry.role === 'user' ? formatUserPromptForDisplay(entry.text) : entry.text,
+      text: entry.role === 'user'
+        ? chalk.hex('#FFD700').bold('❯ ') + chalk.hex('#FFD700').bold(entry.text)
+        : entry.text,
       tokens: { input: 0, output: 0, calls: 0 },
       cost: 0,
     }))
