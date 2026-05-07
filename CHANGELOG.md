@@ -1,5 +1,53 @@
 # Changelog
 
+## 3.15.80 — stalled-intent recovery: switch model when a turn declares an action but emits no tool_use
+
+**A Franklin session on \`nvidia/qwen3-coder-480b\` showed the assistant
+say "First, I need to check if Node.js and npm are available. Let's
+verify..." then \`end_turn\` without a single Bash call. The agent loop
+treated the declared-but-unexecuted intent as the model's final answer
+and the user saw "agent froze." Coder-tuned models (qwen3-coder-*) and
+NIM-hosted Llama-4-Maverick routinely behave this way — they treat
+declaring the next step as completing the turn.**
+
+### What was wrong
+
+Two existing guardrails missed this case:
+
+- **Empty-response recovery** (line 1341) only fires when the turn has
+  *zero* output — no text, no tools, no thinking. The stall has text.
+- **Tiny-response counter** (line 1649) considers any text >3 chars as
+  progress. The stall has ~200 chars of text.
+
+So a stall slipped through both checks, the loop exited cleanly, and
+the user got a polished plan and zero actions.
+
+### What 3.15.80 does
+
+New helper \`looksLikeStalledIntent(text)\` in \`src/agent/loop.ts\`:
+detects action-intent markers ("Let me check…", "I'll start by…",
+"我来…", "让我先检查…") near the *tail* of a text-only turn. Long enough
+to look like a real plan (≥24 chars), short-tail check (last 400 chars)
+so a normal answer that mentions "check" mid-paragraph doesn't trigger.
+
+New recovery branch in the agent loop (right after empty-response
+recovery): when \`!hasTools && hasText && looksLikeStalledIntent(text)\`,
+switch to a **tool-use-strong** fallback chain
+(\`anthropic/claude-haiku-4.5\` → \`moonshot/kimi-k2\` →
+\`openai/gpt-5\` → \`anthropic/claude-sonnet-4.6\`) and retry the same
+prompt. Capped at 2 recoveries per turn, same as empty-response.
+
+Re-prompting the *same* model is deterministic waste — the stall is a
+training-data trait, not a transient hiccup. Switching to a model that
+reliably emits \`tool_use\` blocks is the actual fix.
+
+### Tests
+
+- \`looksLikeStalledIntent: detects coder-model intent-without-tool_use stall\`
+  exercises the screenshot's exact text, English variants, CJK variants,
+  and confirms real completed answers ("Done.", concrete results) don't
+  trigger recovery.
+
 ## 3.15.79 — \`franklin stats\` reads the SDK ledger (cost_log.jsonl) and surfaces the recorded-vs-wallet gap
 
 **A user reported a session where Franklin showed \$0.0095 spent but the

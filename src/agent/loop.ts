@@ -371,6 +371,41 @@ function isToolRelevantToPrompt(toolName: string, promptLower: string): boolean 
 }
 
 /**
+ * Detect a "stalled at intent" assistant turn: model emitted text-of-intent
+ * (e.g. "Let me check Node.js…", "I'll start by running npm install") but
+ * never bound a tool_use block. Coder-tuned models (qwen3-coder-*) and
+ * NIM-hosted Llama-4-Maverick frequently end_turn after declaring an action,
+ * stranding the agent loop with no progress.
+ *
+ * Returns true when the turn looks like a stall — caller should switch to a
+ * tool-use-strong model and retry the same prompt instead of treating the
+ * declared-but-unexecuted intent as the model's final answer.
+ *
+ * Conservative by design: only fires when the *tail* of the text shows
+ * action-intent + the message is long enough to look like a real plan, so
+ * legitimate short answers ("yes", "looks good") never get re-invoked.
+ */
+export function looksLikeStalledIntent(text: string): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 24) return false;
+  // Look at the last ~400 chars only — intent-to-act lives near the end.
+  const tail = trimmed.slice(-400).toLowerCase();
+  // Strong "I'm about to do something" markers near the tail.
+  const englishIntent =
+    /\b(let me|let's|i'?ll|i will|i need to|first[,\s]+(?:i|let)|now let'?s|now i'?ll|next[,\s]+i'?ll)\b[\s\S]{0,80}\b(check|verify|run|test|inspect|look|examine|confirm|see|try|install|build|create|start|begin)\b/;
+  const verifyMarkers =
+    /\b(let'?s verify|let me check|let me run|let me inspect|let me test|let me look|let me see|let me try|let me start|i'?m going to|i'?ll start by|i'?ll first|i'?ll now)\b/;
+  // CJK equivalents — Franklin sees plenty of zh sessions.
+  const zhIntent = /(我来|让我|我需要|首先|现在我|下一步|让我们|我会|我将|接下来)/;
+  const zhAction = /(检查|验证|运行|测试|查看|确认|看看|启动|创建|构建|安装|开始)/;
+  if (englishIntent.test(tail)) return true;
+  if (verifyMarkers.test(tail)) return true;
+  if (zhIntent.test(tail) && zhAction.test(tail)) return true;
+  return false;
+}
+
+/**
  * Calculate backoff delay with jitter to avoid thundering herd.
  * Base: exponential (2^attempt * 1000ms), jitter: ±25%.
  */
@@ -1359,6 +1394,53 @@ export async function interactiveSession(
           });
           onEvent({ kind: 'turn_done', reason: 'no_progress' });
           break;
+        }
+
+        // ── Stalled-intent recovery ──
+        // The model emitted text declaring an action ("Let me check Node.js…")
+        // but never bound a tool_use block, so the agent loop has nothing to
+        // execute. Verified 2026-05-06 in a Franklin session on
+        // nvidia/qwen3-coder-480b: assistant said "First, I need to check if
+        // Node.js and npm are available" then end_turn'd with no Bash call.
+        // Coder-tuned models routinely treat declaring intent as completing
+        // their turn. Same fix as empty-response: switch to a tool-use-strong
+        // model and retry the same prompt — re-prompting the same model is
+        // deterministic waste because the stall is a model-behavior trait.
+        if (!hasTools && hasText) {
+          const tailText = responseParts
+            .filter(p => p.type === 'text')
+            .map(p => (p as { text?: string }).text ?? '')
+            .join('\n');
+          if (looksLikeStalledIntent(tailText)) {
+            // Tool-use-strong fallbacks. Ordered cheap → premium so a free
+            // tier still gets a Kimi/Haiku attempt before paying for GPT-5.
+            // Excludes nvidia/* and *-coder-* — they're the source population.
+            const TOOL_USE_FALLBACK_MODELS = [
+              'anthropic/claude-haiku-4.5',
+              'moonshot/kimi-k2',
+              'openai/gpt-5',
+              'anthropic/claude-sonnet-4.6',
+            ];
+            const nextModel = TOOL_USE_FALLBACK_MODELS.find(
+              m => m !== config.model && !turnFailedModels.has(m),
+            );
+            if (nextModel && recoveryAttempts < 2) {
+              recoveryAttempts++;
+              turnFailedModels.add(config.model);
+              const oldModel = config.model;
+              config.model = nextModel;
+              config.onModelChange?.(nextModel, 'system');
+              const switchLine = formatModelSwitch(
+                oldModel,
+                resolvedModel,
+                'declared intent without tool_use',
+                nextModel,
+              );
+              logger.warn(`[franklin] ${switchLine}`);
+              onEvent({ kind: 'text_delta', text: `\n*${switchLine}*\n` });
+              continue;
+            }
+          }
         }
       } catch (err) {
         // ── User abort (Esc key) ──

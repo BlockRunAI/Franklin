@@ -1721,6 +1721,50 @@ test('looksLikeGatewayErrorAsText: detects bracketed transport error masqueradin
   assert.equal(mixed.match, false);
 });
 
+test('looksLikeStalledIntent: detects coder-model intent-without-tool_use stall', async () => {
+  // Motivating session (2026-05-06, nvidia/qwen3-coder-480b on Franklin):
+  // assistant emitted "To build the BuildBrief AI MVP web app, I will start
+  // by creating a new React project using Vite... First, I need to check if
+  // I have the necessary tools installed. Let's verify if Node.js and npm
+  // are available." then end_turn'd without a single tool_use. The agent
+  // loop now switches model on this pattern instead of treating the
+  // declared-but-unexecuted intent as the model's final answer.
+  const { looksLikeStalledIntent } = await import('../dist/agent/loop.js')
+    .catch(() => ({ looksLikeStalledIntent: undefined }));
+  if (!looksLikeStalledIntent) return; // helper not built yet
+
+  // Real stall — the screenshot's actual text.
+  const stall = looksLikeStalledIntent(
+    "To build the BuildBrief AI MVP web app, I will start by creating a new React project using Vite. " +
+    "This will be the foundation for our frontend.\n\n" +
+    "First, I need to check if I have the necessary tools installed. " +
+    "Let's verify if Node.js and npm are available.",
+  );
+  assert.equal(stall, true);
+
+  // Variants of the same pattern.
+  assert.equal(looksLikeStalledIntent("Let me check the package.json to see what's installed."), true);
+  assert.equal(looksLikeStalledIntent("I'll start by running npm install to set up dependencies."), true);
+  assert.equal(looksLikeStalledIntent("Now I'll verify the build configuration before proceeding."), true);
+
+  // CJK stall — Franklin sees plenty of zh sessions.
+  assert.equal(
+    looksLikeStalledIntent('好的,让我先检查一下 Node.js 是否安装好了,然后再启动项目。'),
+    true,
+  );
+
+  // Real completed answers — must NOT trigger.
+  assert.equal(looksLikeStalledIntent('Done. The build succeeded and tests pass.'), false);
+  assert.equal(looksLikeStalledIntent("Here's the analysis you asked for: revenue grew 12%."), false);
+  assert.equal(looksLikeStalledIntent('Yes.'), false); // too short
+  assert.equal(looksLikeStalledIntent(''), false);
+  // Plain narration without action verbs.
+  assert.equal(
+    looksLikeStalledIntent('I think the architecture you described looks reasonable for the scale you mentioned.'),
+    false,
+  );
+});
+
 test('timeout retry policy skips expensive full-context replay', async () => {
   const { evaluateTimeoutRetry } = await import('../dist/agent/retry-policy.js');
 
@@ -8145,6 +8189,116 @@ test('cost-log.jsonl reader returns empty when file missing (3.15.79)', async ()
     assert.equal(s.firstTs, null);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stats command reconciles SDK ledger inside the stats window (3.15.80 regression)', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'fl-stats-window-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+
+  const now = Date.now();
+  const oldTs = now - 30 * 24 * 60 * 60 * 1000;
+  const freshTs = now + 1000;
+  writeFileSync(join(blockrunDir, 'franklin-stats.json'), JSON.stringify({
+    version: 1,
+    totalRequests: 1,
+    totalCostUsd: 0.01,
+    totalInputTokens: 100,
+    totalOutputTokens: 10,
+    totalFallbacks: 0,
+    byModel: {
+      'zai/glm-5.1': {
+        requests: 1,
+        costUsd: 0.01,
+        inputTokens: 100,
+        outputTokens: 10,
+        fallbackCount: 0,
+        avgLatencyMs: 123,
+        totalLatencyMs: 123,
+      },
+    },
+    history: [{
+      timestamp: now,
+      model: 'zai/glm-5.1',
+      inputTokens: 100,
+      outputTokens: 10,
+      costUsd: 0.01,
+      latencyMs: 123,
+    }],
+    firstRequest: now,
+    lastRequest: now,
+  }, null, 2));
+  writeFileSync(join(blockrunDir, 'cost_log.jsonl'), [
+    JSON.stringify({ ts: oldTs / 1000, endpoint: '/v1/chat/completions', cost_usd: 3.28 }),
+    JSON.stringify({ ts: freshTs / 1000, endpoint: '/v1/chat/completions', cost_usd: 0.04 }),
+  ].join('\n') + '\n');
+
+  try {
+    const result = await runCli('', {
+      args: [DIST, 'stats', '--json'],
+      env: { HOME: fakeHome, NO_COLOR: '1' },
+    });
+    assert.equal(result.code, 0, `stats --json failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.sdkLedger.entries, 1, 'old SDK ledger row before firstRequest must be excluded');
+    assert.ok(Math.abs(payload.sdkLedger.totalUsd - 0.04) < 1e-9, `sdk total=${payload.sdkLedger.totalUsd}`);
+    assert.ok(Math.abs(payload.reconciliation.gapUsd - 0.03) < 1e-9, `gap=${payload.reconciliation.gapUsd}`);
+    assert.equal(payload.reconciliation.windowStartMs, now);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('stats pretty output surfaces SDK-only spend (3.15.80 regression)', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'fl-stats-sdk-only-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  writeFileSync(join(blockrunDir, 'cost_log.jsonl'),
+    JSON.stringify({ ts: Date.now() / 1000, endpoint: '/v1/chat/completions', cost_usd: 0.42 }) + '\n');
+
+  try {
+    const result = await runCli('', {
+      args: [DIST, 'stats'],
+      env: { HOME: fakeHome, NO_COLOR: '1' },
+    });
+    assert.equal(result.code, 0, `stats failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.doesNotMatch(result.stdout, /No requests recorded yet/,
+      'SDK-only settlements must not be hidden behind the empty recorded-stats message');
+    assert.match(result.stdout, /Recorded Cost:\s+\$0\.0000/);
+    assert.match(result.stdout, /SDK Ledger:\s+\$0\.4200/);
+    assert.match(result.stdout, /Gap:/);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('stats --clear anchors future SDK reconciliation window (3.15.80 regression)', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'fl-stats-clear-window-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  writeFileSync(join(blockrunDir, 'cost_log.jsonl'),
+    JSON.stringify({ ts: (Date.now() - 10_000) / 1000, endpoint: '/v1/chat/completions', cost_usd: 1.23 }) + '\n');
+
+  try {
+    const clear = await runCli('', {
+      args: [DIST, 'stats', '--clear'],
+      env: { HOME: fakeHome, NO_COLOR: '1' },
+    });
+    assert.equal(clear.code, 0, `stats --clear failed\nstdout:\n${clear.stdout}\nstderr:\n${clear.stderr}`);
+
+    const result = await runCli('', {
+      args: [DIST, 'stats', '--json'],
+      env: { HOME: fakeHome, NO_COLOR: '1' },
+    });
+    assert.equal(result.code, 0, `stats --json failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(typeof payload.resetAt, 'number', 'clear should persist a reset marker');
+    assert.equal(payload.sdkLedger.entries, 0, 'pre-clear SDK rows must not reappear after reset');
+    assert.equal(payload.sdkLedger.totalUsd, 0);
+    assert.equal(payload.reconciliation.windowStartMs, payload.resetAt);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
   }
 });
 
