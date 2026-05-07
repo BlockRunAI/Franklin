@@ -1,5 +1,50 @@
 # Changelog
 
+## 3.15.87 — PR #47: terminal returns immediately on exit; learning extraction is opt-in
+
+External contribution from \`0xCheetah1\`. The \`runWithInkUI\` cleanup
+path was awaiting two background tasks before the user's terminal
+returned: \`extractLearnings\` + \`extractBrainEntities\` (up to 15s
+combined) and \`disconnectMcpServers\` (variable). On a typical session,
+exit blocked 5–15 seconds with no visible progress.
+
+The PR fires MCP disconnect with \`.catch(() => {})\` instead of
+awaiting, and gates the learning/brain extraction behind
+\`FRANKLIN_EXTRACT_ON_EXIT=1\`. Default OFF — terminal returns
+immediately.
+
+### Behavior change to flag
+
+Pre-fix: every session exit ran the extraction LLM calls, building
+\`~/.blockrun/learnings.jsonl\` and the brain corpus across all
+sessions automatically. Post-fix: extraction only runs when the user
+explicitly sets \`FRANKLIN_EXTRACT_ON_EXIT=1\`.
+
+Power users can re-enable in their shellrc:
+
+\`\`\`bash
+export FRANKLIN_EXTRACT_ON_EXIT=1
+\`\`\`
+
+Also closes a small unaudited-spend leak: per the open Stage 2 plan,
+\`extractLearnings\` and \`extractBrainEntities\` are 4 of the 13
+helper-call sites that bypass \`recordUsage\` — every session exit was
+silently costing ~\$0.005–0.01 in extraction LLM calls invisible to
+\`franklin stats\`. With the default off, this leak stops by default.
+
+### Follow-up worth considering
+
+A future change could keep extraction running by default but move it
+to a forked detached process — terminal returns immediately AND
+auto-learning resumes. Spec: \`child_process.fork()\` + a tiny
+\`franklin _extract-runner\` subcommand. Out of scope for this PR; the
+env-var kill-switch shipped here would stay as the disable mechanism.
+
+\`runExitBackgroundTasks(sessionHistory, agentConfig)\` is now its own
+named function, so the follow-up is a one-line wrapper around fork().
+
+361/361 tests pass.
+
 ## 3.15.86 — PR #46: \`franklin --resume\` seeds the scrollback with prior context
 
 External contribution from \`0xCheetah1\`. Pre-fix: running
