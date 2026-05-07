@@ -347,6 +347,7 @@ export async function startCommand(options: StartOptions) {
 
   // Resolve resume target, if requested.
   let resumeSessionId: string | undefined;
+  let resumeTranscript: Array<{ role: 'user' | 'assistant'; text: string }> | undefined;
   if (options.resume || options.continue) {
     const { pickSession } = await import('../ui/session-picker.js');
     const { loadSessionMeta, loadSessionHistory } = await import('../session/storage.js');
@@ -375,10 +376,8 @@ export async function startCommand(options: StartOptions) {
       const history = loadSessionHistory(resumeSessionId);
       const when = meta ? new Date(meta.updatedAt).toLocaleString() : 'unknown';
       console.log(chalk.green(`  Resuming session ${resumeSessionId.slice(0, 24)}…`));
-      console.log(chalk.dim(`  ${history.length} messages · last active ${when}`));
-      const preview = formatResumePreview(history);
-      if (preview) console.log(preview);
-      console.log('');
+      console.log(chalk.dim(`  ${history.length} messages · last active ${when}\n`));
+      resumeTranscript = buildResumeTranscript(history);
     }
   }
 
@@ -416,7 +415,7 @@ export async function startCommand(options: StartOptions) {
   if (process.stdin.isTTY) {
     await runWithInkUI(agentConfig, model, workDir, version, walletInfo, (cb) => {
       onBalanceFetched = cb;
-    }, fetchBalance, importedKickoffPrompt);
+    }, fetchBalance, importedKickoffPrompt, resumeTranscript);
   } else {
     await runWithBasicUI(agentConfig, model, workDir, importedKickoffPrompt);
   }
@@ -449,7 +448,7 @@ async function runOneShot(agentConfig: AgentConfig, prompt: string): Promise<num
   return exitCode;
 }
 
-function formatResumePreview(history: Dialogue[]): string {
+function buildResumeTranscript(history: Dialogue[]): Array<{ role: 'user' | 'assistant'; text: string }> {
   const entries = history
     .map((msg) => {
       const text = extractVisibleText(msg).replace(/\s+/g, ' ').trim();
@@ -458,24 +457,15 @@ function formatResumePreview(history: Dialogue[]): string {
     })
     .filter((entry): entry is { role: 'user' | 'assistant'; text: string } => entry !== null);
 
-  if (entries.length === 0) return '';
+  if (entries.length === 0) return [];
 
-  const render = (entry: { role: 'user' | 'assistant'; text: string }) => {
-    const label = entry.role === 'user' ? 'you' : 'assistant';
-    return chalk.dim(`  ${label}: ${entry.text}`);
-  };
-
-  const started = entries.slice(0, 4).map(render);
+  const started = entries.slice(0, 4);
   const recentStart = entries.length > 10 ? -6 : 4;
-  const recent = entries.slice(recentStart).map(render);
+  const recent = entries.slice(recentStart);
 
-  const lines = [chalk.dim('  Context preview:'), ...started];
-  if (recent.length > 0) {
-    if (entries.length > 10) lines.push(chalk.dim('  ...'));
-    lines.push(...recent);
-  }
-
-  return lines.join('\n');
+  return entries.length > 10
+    ? [...started, { role: 'assistant', text: '...' }, ...recent]
+    : [...started, ...recent];
 }
 
 function extractVisibleText(msg: Dialogue): string {
@@ -502,6 +492,7 @@ async function runWithInkUI(
   onBalanceReady?: (cb: (bal: string) => void) => void,
   fetchBalance?: () => Promise<string>,
   initialInput?: string,
+  initialTranscript?: Array<{ role: 'user' | 'assistant'; text: string }>,
 ) {
   const startSnapshot = snapshotStats();
   const ui = launchInkUI({
@@ -510,6 +501,7 @@ async function runWithInkUI(
     version,
     walletAddress: walletInfo?.address,
     walletBalance: walletInfo?.balance,
+    initialTranscript,
     chain: walletInfo?.chain,
     onModelChange: (newModel: string, reason?: 'user' | 'system') => {
       agentConfig.model = newModel;
