@@ -529,25 +529,13 @@ async function runWithInkUI(
     recordLatestSessionIfEnabled(process.cwd(), agentConfig.chain);
   } catch { /* telemetry is best-effort */ }
 
-  // Extract learnings from the session (async, 10s timeout, never blocks exit)
-  if (sessionHistory && sessionHistory.length >= 4) {
-    try {
-      const { extractLearnings } = await import('../learnings/extractor.js');
-      const { extractBrainEntities } = await import('../brain/extract.js');
-      const { ModelClient } = await import('../agent/llm.js');
-      const client = new ModelClient({ apiUrl: agentConfig.apiUrl, chain: agentConfig.chain });
-      const sid = `session-${new Date().toISOString()}`;
-      await Promise.race([
-        Promise.all([
-          extractLearnings(sessionHistory, sid, client),
-          extractBrainEntities(sessionHistory, sid, client),
-        ]),
-        new Promise(resolve => setTimeout(resolve, 15_000)),
-      ]);
-    } catch { /* extraction is best-effort */ }
+  // Optional post-session learning extraction. Disabled by default because any
+  // network-backed background promise can keep Node alive after the UI exits.
+  if (process.env.FRANKLIN_EXTRACT_ON_EXIT === '1') {
+    runExitBackgroundTasks(sessionHistory, agentConfig).catch(() => {});
   }
 
-  await disconnectMcpServers();
+  disconnectMcpServers().catch(() => {});
 
   // Session summary — delta vs. snapshot at session start
   try {
@@ -563,6 +551,23 @@ async function runWithInkUI(
   } catch { /* stats unavailable */ }
 
   console.log(chalk.dim('\nGoodbye.\n'));
+}
+
+async function runExitBackgroundTasks(
+  sessionHistory: Dialogue[] | undefined,
+  agentConfig: AgentConfig,
+): Promise<void> {
+  if (!sessionHistory || sessionHistory.length < 4) return;
+
+  const { extractLearnings } = await import('../learnings/extractor.js');
+  const { extractBrainEntities } = await import('../brain/extract.js');
+  const { ModelClient } = await import('../agent/llm.js');
+  const client = new ModelClient({ apiUrl: agentConfig.apiUrl, chain: agentConfig.chain });
+  const sid = `session-${new Date().toISOString()}`;
+  await Promise.all([
+    extractLearnings(sessionHistory, sid, client),
+    extractBrainEntities(sessionHistory, sid, client),
+  ]);
 }
 
 // ─── Basic readline UI (piped input) ───────────────────────────────────────
