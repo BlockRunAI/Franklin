@@ -23,8 +23,257 @@ import { resolveAskUserAnswer } from './ask-user-answer.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
+const BRACKETED_PASTE_START = '[200~';
+const BRACKETED_PASTE_END = '[201~';
+const ENABLE_BRACKETED_PASTE = '\x1b[?2004h';
+const DISABLE_BRACKETED_PASTE = '\x1b[?2004l';
+const USER_PROMPT_COLOR = '#FFD700';
+const PASTE_BLOCK_START = '\uE000PASTE:';
+const PASTE_BLOCK_END = ':PASTE\uE001';
+
 const DISABLE_AUTO_WRAP = '\x1b[?7l';
 const ENABLE_AUTO_WRAP = '\x1b[?7h';
+
+function stripPasteMarkers(input: string): string {
+  return input
+    .replaceAll(BRACKETED_PASTE_START, '')
+    .replaceAll(BRACKETED_PASTE_END, '');
+}
+
+function normalizeInputNewlines(input: string): string {
+  return input.replace(/\r\n|\r|\n/g, '\n').replace(/\x1b/g, '');
+}
+
+function shouldSummarizeInput(value: string): boolean {
+  return value.includes('\n') || value.length > 240;
+}
+
+interface PasteBlock {
+  start: number;
+  end: number;
+  content: string;
+}
+
+function encodePasteBlock(content: string): string {
+  return `${PASTE_BLOCK_START}${Buffer.from(content, 'utf8').toString('base64')}${PASTE_BLOCK_END}`;
+}
+
+function decodePasteBlock(token: string): string {
+  if (!token.startsWith(PASTE_BLOCK_START) || !token.endsWith(PASTE_BLOCK_END)) return token;
+  const payload = token.slice(PASTE_BLOCK_START.length, -PASTE_BLOCK_END.length);
+  try {
+    return Buffer.from(payload, 'base64').toString('utf8');
+  } catch {
+    return token;
+  }
+}
+
+function findPasteBlocks(value: string): PasteBlock[] {
+  const blocks: PasteBlock[] = [];
+  let searchFrom = 0;
+
+  while (searchFrom < value.length) {
+    const start = value.indexOf(PASTE_BLOCK_START, searchFrom);
+    if (start < 0) break;
+    const endMarker = value.indexOf(PASTE_BLOCK_END, start + PASTE_BLOCK_START.length);
+    if (endMarker < 0) break;
+    const end = endMarker + PASTE_BLOCK_END.length;
+    blocks.push({ start, end, content: decodePasteBlock(value.slice(start, end)) });
+    searchFrom = end;
+  }
+
+  return blocks;
+}
+
+function decodePromptValue(value: string): string {
+  let decoded = '';
+  let cursor = 0;
+
+  for (const block of findPasteBlocks(value)) {
+    decoded += value.slice(cursor, block.start) + block.content;
+    cursor = block.end;
+  }
+
+  return decoded + value.slice(cursor);
+}
+
+function pasteSummary(content: string): string {
+  const lines = content.length === 0 ? 0 : content.split('\n').length;
+  const lineLabel = lines > 1 ? `~${lines} lines` : '~1 line';
+  return `[Pasted ${lineLabel}]`;
+}
+
+function renderInputValue(value: string, cursorOffset: number, focused: boolean): string {
+  const blocks = findPasteBlocks(value);
+  if (blocks.length > 0) {
+    let rendered = '';
+    let cursor = 0;
+
+    for (const block of blocks) {
+      rendered += renderPlainInputSegment(value.slice(cursor, block.start), cursorOffset - cursor, focused && cursorOffset >= cursor && cursorOffset <= block.start);
+      if (focused && cursorOffset === block.start) rendered += chalk.inverse(' ');
+      rendered += chalk.hex(USER_PROMPT_COLOR).bold(pasteSummary(block.content));
+      if (focused && cursorOffset === block.end) rendered += chalk.inverse(' ');
+      cursor = block.end;
+    }
+
+    rendered += renderPlainInputSegment(value.slice(cursor), cursorOffset - cursor, focused && cursorOffset >= cursor);
+    return rendered || (focused ? chalk.inverse(' ') : '');
+  }
+
+  return renderPlainInputSegment(value, cursorOffset, focused);
+}
+
+function renderPlainInputSegment(value: string, cursorOffset: number, focused: boolean): string {
+  const displayValue = value.replace(/\r\n|\r|\n/g, ' ');
+  if (!focused) return displayValue;
+
+  const safeCursor = Math.max(0, Math.min(cursorOffset, displayValue.length));
+  if (displayValue.length === 0) return chalk.inverse(' ');
+
+  const before = displayValue.slice(0, safeCursor);
+  const current = displayValue[safeCursor] ?? ' ';
+  const after = displayValue.slice(safeCursor + (safeCursor < displayValue.length ? 1 : 0));
+  return before + chalk.inverse(current) + after;
+}
+
+function PromptTextInput({ value, onChange, onSubmit, placeholder = '', focus = true }: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: (value: string) => void;
+  placeholder?: string;
+  focus?: boolean;
+}) {
+  const [cursorOffset, setCursorOffset] = useState(value.length);
+  const valueRef = useRef(value);
+  const cursorOffsetRef = useRef(value.length);
+  const pasteActiveRef = useRef(false);
+  const pasteBufferRef = useRef('');
+
+  useEffect(() => {
+    valueRef.current = value;
+    setCursorOffset((offset) => {
+      const nextOffset = Math.min(offset, value.length);
+      cursorOffsetRef.current = nextOffset;
+      return nextOffset;
+    });
+  }, [value]);
+
+  const updateValue = useCallback((nextValue: string, nextCursorOffset: number) => {
+    valueRef.current = nextValue;
+    cursorOffsetRef.current = Math.max(0, Math.min(nextCursorOffset, nextValue.length));
+    onChange(nextValue);
+    setCursorOffset(cursorOffsetRef.current);
+  }, [onChange]);
+
+  useInput((input, key) => {
+    if (!focus) return;
+
+    const currentValue = valueRef.current;
+    const currentCursorOffset = cursorOffsetRef.current;
+    const pasteBlockBeforeCursor = findPasteBlocks(currentValue).find((block) => block.end === currentCursorOffset);
+    const pasteBlockAfterCursor = findPasteBlocks(currentValue).find((block) => block.start === currentCursorOffset);
+
+    const hasPasteStart = input.includes(BRACKETED_PASTE_START);
+    const hasPasteEnd = input.includes(BRACKETED_PASTE_END);
+    const isPasting = pasteActiveRef.current || hasPasteStart;
+
+    if (hasPasteStart && !pasteActiveRef.current) {
+      pasteActiveRef.current = true;
+      pasteBufferRef.current = '';
+    }
+
+    if (key.return && !isPasting) {
+      onSubmit(decodePromptValue(currentValue));
+      return;
+    }
+
+    if (key.home || (key.ctrl && input === 'a')) {
+      cursorOffsetRef.current = 0;
+      setCursorOffset(0);
+      return;
+    }
+
+    if (key.end || (key.ctrl && input === 'e')) {
+      cursorOffsetRef.current = currentValue.length;
+      setCursorOffset(currentValue.length);
+      return;
+    }
+
+    if (key.leftArrow) {
+      const previousBlock = findPasteBlocks(currentValue).find((block) => block.end === currentCursorOffset);
+      const nextOffset = previousBlock ? previousBlock.start : Math.max(0, currentCursorOffset - 1);
+      cursorOffsetRef.current = nextOffset;
+      setCursorOffset(nextOffset);
+      return;
+    }
+
+    if (key.rightArrow) {
+      const nextBlock = findPasteBlocks(currentValue).find((block) => block.start === currentCursorOffset);
+      const nextOffset = nextBlock ? nextBlock.end : Math.min(currentValue.length, currentCursorOffset + 1);
+      cursorOffsetRef.current = nextOffset;
+      setCursorOffset(nextOffset);
+      return;
+    }
+
+    if (key.backspace || key.delete) {
+      if (key.backspace && pasteBlockBeforeCursor) {
+        updateValue(currentValue.slice(0, pasteBlockBeforeCursor.start) + currentValue.slice(pasteBlockBeforeCursor.end), pasteBlockBeforeCursor.start);
+        return;
+      }
+
+      if (key.delete && pasteBlockAfterCursor) {
+        updateValue(currentValue.slice(0, pasteBlockAfterCursor.start) + currentValue.slice(pasteBlockAfterCursor.end), pasteBlockAfterCursor.start);
+        return;
+      }
+
+      if (currentCursorOffset > 0) {
+        updateValue(
+          currentValue.slice(0, currentCursorOffset - 1) + currentValue.slice(currentCursorOffset),
+          currentCursorOffset - 1,
+        );
+      }
+      return;
+    }
+
+    if (key.upArrow || key.downArrow || key.tab || key.ctrl || key.meta) return;
+
+    let text = normalizeInputNewlines(stripPasteMarkers(input));
+    if (key.return && isPasting) text = '\n';
+
+    if (isPasting) {
+      pasteBufferRef.current += text;
+
+      if (!hasPasteEnd) return;
+
+      text = encodePasteBlock(pasteBufferRef.current);
+      pasteBufferRef.current = '';
+      pasteActiveRef.current = false;
+    }
+
+    if (!text) {
+      if (hasPasteEnd) pasteActiveRef.current = false;
+      return;
+    }
+
+    updateValue(
+      currentValue.slice(0, currentCursorOffset) + text + currentValue.slice(currentCursorOffset),
+      currentCursorOffset + text.length,
+    );
+
+    if (hasPasteEnd) pasteActiveRef.current = false;
+  }, { isActive: focus });
+
+  const rendered = value.length > 0
+    ? renderInputValue(value, cursorOffset, focus)
+    : (focus && placeholder ? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1)) : chalk.grey(placeholder));
+
+  return <Text>{rendered}</Text>;
+}
+
+function formatUserPromptForDisplay(value: string): string {
+  return `❯ ${decodePromptValue(value)}`;
+}
 
 function disableTerminalAutoWrap(): (() => void) | undefined {
   if (!process.stdout.isTTY) return undefined;
@@ -37,6 +286,25 @@ function disableTerminalAutoWrap(): (() => void) | undefined {
   };
 
   process.stdout.write(DISABLE_AUTO_WRAP);
+  process.once('exit', restore);
+
+  return () => {
+    process.off('exit', restore);
+    restore();
+  };
+}
+
+function enableBracketedPaste(): (() => void) | undefined {
+  if (!process.stdout.isTTY) return undefined;
+
+  let restored = false;
+  const restore = () => {
+    if (restored || !process.stdout.writable) return;
+    restored = true;
+    process.stdout.write(DISABLE_BRACKETED_PASTE);
+  };
+
+  process.stdout.write(ENABLE_BRACKETED_PASTE);
   process.once('exit', restore);
 
   return () => {
@@ -138,7 +406,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
               onModeChange={onVimModeChange}
             />
           ) : (
-            <TextInput
+            <PromptTextInput
               value={input}
               onChange={setInput}
               onSubmit={onSubmit}
@@ -396,6 +664,7 @@ function RunCodeApp({
   const turnSavingsRef = useRef<number | undefined>(undefined);
   const turnCtxPctRef = useRef<number | undefined>(undefined);
   const queuedInputsRef = useRef<string[]>([]);
+  const lastCtrlCRef = useRef(0);
 
   // Keep refs in sync so memoized event handlers can read current values
   streamTextRef.current = streamText;
@@ -417,6 +686,25 @@ function RunCodeApp({
       setTimeout(() => setStatusMsg(''), durationMs);
     }
   }, []);
+
+  const requestExit = useCallback((abortTurn = false) => {
+    if (abortTurn) onAbort();
+    onExit();
+    exit();
+  }, [onAbort, onExit, exit]);
+
+  useInput((ch, key) => {
+    if (!(key.ctrl && ch === 'c')) return;
+
+    const now = Date.now();
+    if (now - lastCtrlCRef.current < 2000) {
+      requestExit(true);
+      return;
+    }
+
+    lastCtrlCRef.current = now;
+    showStatus('Press Ctrl+C again to exit', 'warning', 2000);
+  });
 
   const commitResponse = useCallback((
     text: string,
@@ -477,7 +765,7 @@ function RunCodeApp({
 
   // Key handler for picker + esc + abort
   const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input) || !ready;
-  useInput((ch, key) => {
+  useInput((_ch, key) => {
     // Escape during generation → abort current turn (skip if permission dialog open)
     if (key.escape && !ready && !permissionRequest) {
       onAbort();
@@ -492,8 +780,7 @@ function RunCodeApp({
     // In Vim mode: Esc goes to normal mode (handled by VimInput), only quit on Esc in normal mode with empty input
     if (key.escape && mode === 'input' && ready && !input) {
       if (vimEnabled && currentVimMode === 'insert') return; // Let VimInput handle Esc → normal
-      onExit();
-      exit();
+      requestExit(false);
       return;
     }
 
@@ -559,9 +846,7 @@ function RunCodeApp({
       lower === 'exit' || lower === 'quit' || lower === 'q' ||
       lower === '/exit' || lower === '/quit';
     if (isExit) {
-      onAbort();
-      onExit();
-      exit();
+      requestExit(true);
       return;
     }
 
@@ -676,9 +961,7 @@ function RunCodeApp({
     // Show user message in scrollback so the conversation is readable
     setCommittedResponses(rs => [...rs, {
       key: `user-${Date.now()}`,
-      // Gold matches the top of the Franklin banner gradient (#FFD700).
-      // Brand-consistent, readable on dark terminals, evokes $100-bill identity.
-      text: chalk.hex('#FFD700').bold('❯ ') + chalk.hex('#FFD700').bold(trimmed),
+      text: formatUserPromptForDisplay(trimmed),
       tokens: { input: 0, output: 0, calls: 0 },
       cost: 0,
     }]);
@@ -709,7 +992,7 @@ function RunCodeApp({
     turnSavingsRef.current = undefined;
     turnCtxPctRef.current = undefined;
     onSubmit(trimmed);
-  }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory, showStatus]);
+  }, [ready, currentModel, totalCost, onSubmit, onModelChange, requestExit, lastPrompt, inputHistory, showStatus]);
 
   // Mouse support — OFF by default because Node stdin is shared: mouse escape
   // sequences leak into Ink's input handler as typed text. Opt in with
@@ -1113,7 +1396,11 @@ function RunCodeApp({
                 </Box>
               )}
               <Box paddingLeft={isUserMsg ? 0 : 2}>
-                <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
+                {isUserMsg ? (
+                  <Text wrap="wrap" color={USER_PROMPT_COLOR} bold>{r.text}</Text>
+                ) : (
+                  <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
+                )}
               </Box>
               {(r.tokens.input > 0 || r.tokens.output > 0) && (
                 <Box marginLeft={2} marginBottom={1}>
@@ -1503,8 +1790,20 @@ export function launchInkUI(opts: {
   let exiting = false;
   let abortCallback: (() => void) | null = null;
   const restoreTerminalAutoWrap = disableTerminalAutoWrap();
+  const restoreBracketedPaste = enableBracketedPaste();
+  let cleanedUp = false;
+  let instance: ReturnType<typeof render> | undefined;
 
-  const instance = render(
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    mouse.disable();
+    restoreBracketedPaste?.();
+    restoreTerminalAutoWrap?.();
+    instance?.unmount();
+  };
+
+  instance = render(
     <RunCodeApp
       initialModel={opts.model}
       workDir={opts.workDir}
@@ -1526,8 +1825,10 @@ export function launchInkUI(opts: {
       onExit={() => {
         exiting = true;
         if (resolveInput) { resolveInput(null); resolveInput = null; }
+        cleanup();
       }}
-    />
+    />,
+    { exitOnCtrlC: false }
   );
 
   return {
@@ -1568,11 +1869,7 @@ export function launchInkUI(opts: {
       return new Promise<string | null>((resolve) => { resolveInput = resolve; });
     },
     onAbort: (cb: () => void) => { abortCallback = cb; },
-    cleanup: () => {
-      mouse.disable();
-      instance.unmount();
-      restoreTerminalAutoWrap?.();
-    },
+    cleanup,
     requestPermission: (toolName: string, description: string) => {
       const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
