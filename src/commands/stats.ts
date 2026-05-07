@@ -29,7 +29,12 @@ export function statsCommand(options: StatsOptions): void {
   // the user sees the wire-level total alongside Franklin's recorded one.
   // The gap between the two = recording instrumentation that's still
   // missing from helper paths (analyzeTurn, compaction, evaluator, etc.).
-  const sdkLedger = summarizeSdkSettlements();
+  const statsWindowStartMs = stats.resetAt ?? stats.firstRequest;
+  const sdkLedger = summarizeSdkSettlements(
+    typeof statsWindowStartMs === 'number'
+      ? { sinceMs: statsWindowStartMs }
+      : undefined
+  );
   const recordedTotal = stats.totalCostUsd;
   const sdkTotal = sdkLedger.totalUsd;
   const gap = sdkTotal - recordedTotal;
@@ -65,6 +70,7 @@ export function statsCommand(options: StatsOptions): void {
             byEndpoint: sdkLedger.byEndpoint.slice(0, 10),
             firstTs: sdkLedger.firstTs,
             lastTs: sdkLedger.lastTs,
+            sinceMs: statsWindowStartMs ?? null,
           },
           reconciliation: {
             recordedUsd: recordedTotal,
@@ -72,6 +78,7 @@ export function statsCommand(options: StatsOptions): void {
             gapUsd: gap,
             gapPct,
             significantGap,
+            windowStartMs: statsWindowStartMs ?? null,
           },
         },
         null,
@@ -85,7 +92,7 @@ export function statsCommand(options: StatsOptions): void {
   console.log(chalk.bold('\n📊 Franklin Usage Statistics\n'));
   console.log('─'.repeat(55));
 
-  if (stats.totalRequests === 0) {
+  if (stats.totalRequests === 0 && sdkTotal === 0) {
     console.log(
       chalk.gray('\n  No requests recorded yet. Start using franklin!\n')
     );

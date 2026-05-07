@@ -44,10 +44,6 @@ function normalizeInputNewlines(input: string): string {
   return input.replace(/\r\n|\r|\n/g, '\n').replace(/\x1b/g, '');
 }
 
-function shouldSummarizeInput(value: string): boolean {
-  return value.includes('\n') || value.length > 240;
-}
-
 interface PasteBlock {
   start: number;
   end: number;

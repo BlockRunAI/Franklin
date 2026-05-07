@@ -1,5 +1,71 @@
 # Changelog
 
+## 3.15.82 — Bracketed-paste UX (PR #43) + stats gap-warning windowing
+
+Bundles three changes that landed together: an external contributor's
+terminal-paste/exit UX overhaul, a follow-up cleanup, and a real fix to
+3.15.79's gap-warning false alarm.
+
+### PR #43 — terminal paste and exit UX (merged from \`0xCheetah1\`)
+
+- **Bracketed-paste protocol** — Franklin now emits the standard
+  \`\\x1b[?2004h\` / \`\\x1b[?2004l\` enable/disable sequences. Large
+  multiline pastes are captured atomically and rendered as a single
+  \`[Pasted ~N lines]\` block instead of the raw N-line scroll that
+  used to corrupt the prompt.
+- **Cursor navigation around paste blocks** — Home/End jump to the
+  prompt edges. Arrow keys treat each paste block as one logical
+  character. Backspace/Delete remove the whole block atomically.
+- **Double-Ctrl+C exit** — first press warns *"Press Ctrl+C again to
+  exit"*; second press within 2 seconds actually exits. Standard
+  Unix shell UX. Passes \`exitOnCtrlC: false\` to Ink's \`render()\`
+  so Ink doesn't intercept the first press.
+- **Idempotent cleanup** — \`cleanedUp\` flag prevents the double-
+  teardown that used to leave terminals in a bad mode after edge-case
+  exit paths.
+- **Resume hint on graceful exit** — when the session has \`messageCount
+  > 0\`, the goodbye footer prints \`franklin --resume <id>\` /
+  \`franklin --continue\` lines. Empty sessions don't get the
+  confusing "resume me" footer.
+
+The session-id capture for the resume footer requires a new
+\`onSessionStart?: (sessionId: string) => void\` field on \`AgentConfig\`
+— wired in \`loop.ts\` once the session id is resolved.
+
+### Follow-up: drop the dead \`shouldSummarizeInput\` helper
+
+PR #43 included a \`shouldSummarizeInput(value)\` helper that was
+defined but never called anywhere in the diff. Likely extracted from
+an earlier draft. Removed in this release; the existing
+\`renderInputValue\` + \`pasteSummary\` path covers the actual
+rendering.
+
+### Stats gap-warning is now scoped to the stats window
+
+3.15.79 added the SDK-ledger reconciliation but compared
+**all-time \`cost_log.jsonl\`** against **all-time \`franklin-stats.json\`**.
+On a real machine where \`cost_log.jsonl\` had been rotated/truncated,
+the all-time-vs-all-time comparison generated a false \"⚠ Gap\"
+warning ("looks rotated or truncated") even when the recent slice
+was perfectly aligned.
+
+Fix: window the SDK ledger query by \`stats.resetAt ?? stats.firstRequest\`
+so we compare ledger and stats over the SAME time window. New
+\`resetAt: number\` field on the \`Stats\` interface, captured in
+\`clearStats()\`. The gap warning now only fires when there's a real
+discrepancy in the post-reset window.
+
+\`stats.json\` and \`stats --json\` outputs gain \`sinceMs\` /
+\`windowStartMs\` fields so callers can see exactly which window
+the reconciliation ran against.
+
+The \"empty stats\" early-return now checks BOTH
+\`stats.totalRequests === 0\` AND \`sdkTotal === 0\` — so a brand-new
+install where Franklin hasn't recorded anything yet but the SDK ledger
+already has rows still surfaces the ledger summary.
+
+361/361 tests pass.
+
 ## 3.15.81 — stalled-intent detector is English-only
 
 Drops the CJK regex branches added in 3.15.80. Franklin's source-level

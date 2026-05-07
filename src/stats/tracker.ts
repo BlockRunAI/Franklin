@@ -97,6 +97,7 @@ export interface Stats {
   totalFallbacks: number;
   byModel: Record<string, ModelStats>;
   history: UsageRecord[]; // Last 1000 records
+  resetAt?: number;
   firstRequest?: number;
   lastRequest?: number;
 }
@@ -159,6 +160,7 @@ export function clearStats(): void {
       /* ignore */
     }
   }
+  saveStats({ ...EMPTY_STATS, resetAt: Date.now() });
 }
 
 // ─── In-memory stats cache with debounced write ─────────────────────────
