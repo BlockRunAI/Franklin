@@ -1,5 +1,41 @@
 # Changelog
 
+## 3.15.85 — PR #45: Gemini Pro reasoning models use non-streaming /v1/messages
+
+External contribution from \`0xCheetah1\`. Real failure mode: Gemini Pro
+reasoning models (\`google/gemini-2.5-pro\`, \`google/gemini-3.1-pro\`) reject
+requests with a missing or zero \`thinking.budget_tokens\`. The gateway's
+streaming SSE path was dropping the \`thinking\` block, so every Gemini-Pro
+request through Franklin was hitting the upstream "Budget 0 is invalid"
+error.
+
+The PR detects those two model IDs and forces the request through the
+non-streaming \`/v1/messages\` endpoint where the gateway preserves the
+\`thinking\` block. Budget defaults to \`min(max_tokens, 8192)\`.
+
+To keep the rest of the agent loop unchanged, the new
+\`parseNonStreamingMessage\` generator converts the JSON response back into
+the same internal \`StreamChunk\` events the streaming parser produces:
+\`message_start\` → per-block \`content_block_start\` / \`_delta\` /
+\`_stop\` → \`message_delta\` (with \`usage\`) → \`message_stop\`. Tool-use
+blocks emit \`input_json_delta\` with the full input as one chunk.
+Thinking blocks emit \`thinking_delta\` + an optional \`signature_delta\`.
+
+Trade-off: Gemini Pro users lose token-by-token streaming display. Get the
+full response at once instead. Acceptable — the request was failing
+entirely before; non-streaming success beats streaming failure.
+
+Gating is tight: the new path only fires when
+\`request.model.startsWith('google/gemini-3.1')\` or equals
+\`'google/gemini-2.5-pro'\`. Zero impact on any other model.
+
+Verified by Cheetah:
+- \`node dist/index.js --model google/gemini-2.5-pro --prompt "say ok"\`
+- \`node dist/index.js --model google/gemini-3.1-pro --prompt "say ok"\`
+- \`--resume\` against an existing session works
+
+361/361 tests pass on integrated main.
+
 ## 3.15.84 — Synthetic-label regex now accepts em dashes / colons / digits
 
 Real audit slice 2026-05-07 from a third-party observer (Predexon side):
