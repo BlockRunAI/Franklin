@@ -484,6 +484,8 @@ async function runWithInkUI(
   agentConfig.onAskUser = (question, options) =>
     ui.requestAskUser(question, options);
   agentConfig.onModelChange = (model) => ui.updateModel(model);
+  let activeSessionId = agentConfig.resumeSessionId;
+  agentConfig.onSessionStart = (sessionId) => { activeSessionId = sessionId; };
 
   // Wire up background balance fetch to UI
   onBalanceReady?.((bal) => ui.updateBalance(bal));
@@ -561,6 +563,21 @@ async function runWithInkUI(
       console.log(chalk.dim('\n  Session: 0 requests · no spend'));
     }
   } catch { /* stats unavailable */ }
+
+  let savedSessionId: string | undefined;
+  if (activeSessionId) {
+    try {
+      const { loadSessionMeta } = await import('../session/storage.js');
+      const meta = loadSessionMeta(activeSessionId);
+      if ((meta?.messageCount ?? 0) > 0) savedSessionId = activeSessionId;
+    } catch { /* session hint is best-effort */ }
+  }
+
+  if (savedSessionId) {
+    console.log(chalk.dim(`\n  Session: ${savedSessionId}`));
+    console.log(chalk.dim(`  Resume:  franklin --resume ${savedSessionId}`));
+    console.log(chalk.dim('  Latest:  franklin --continue'));
+  }
 
   console.log(chalk.dim('\nGoodbye.\n'));
 }

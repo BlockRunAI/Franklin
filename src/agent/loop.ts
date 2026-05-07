@@ -629,6 +629,7 @@ export async function interactiveSession(
 
   // Session persistence — reuse existing session ID when resuming, else create new
   const sessionId = config.resumeSessionId || createSessionId();
+  config.onSessionStart?.(sessionId);
   let turnCount = 0;
 
   // Resume: hydrate history from the saved JSONL transcript.

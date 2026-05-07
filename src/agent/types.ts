@@ -199,6 +199,8 @@ export interface AgentConfig {
   baseModel?: string;
   /** Resume an existing session by ID — loads prior history and keeps appending to the same JSONL */
   resumeSessionId?: string;
+  /** Notify callers of the concrete session ID once created/resolved. */
+  onSessionStart?: (sessionId: string) => void;
   /**
    * Optional channel tag persisted to SessionMeta. Lets non-CLI drivers
    * (Telegram bot, Discord bot, future ingresses) find their own sessions
