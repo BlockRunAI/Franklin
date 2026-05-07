@@ -372,10 +372,13 @@ export async function startCommand(options: StartOptions) {
 
     if (resumeSessionId) {
       const meta = loadSessionMeta(resumeSessionId);
-      const msgs = loadSessionHistory(resumeSessionId).length;
+      const history = loadSessionHistory(resumeSessionId);
       const when = meta ? new Date(meta.updatedAt).toLocaleString() : 'unknown';
       console.log(chalk.green(`  Resuming session ${resumeSessionId.slice(0, 24)}…`));
-      console.log(chalk.dim(`  ${msgs} messages · last active ${when}\n`));
+      console.log(chalk.dim(`  ${history.length} messages · last active ${when}`));
+      const preview = formatResumePreview(history);
+      if (preview) console.log(preview);
+      console.log('');
     }
   }
 
@@ -444,6 +447,48 @@ async function runOneShot(agentConfig: AgentConfig, prompt: string): Promise<num
     }
   });
   return exitCode;
+}
+
+function formatResumePreview(history: Dialogue[]): string {
+  const entries = history
+    .map((msg) => {
+      const text = extractVisibleText(msg).replace(/\s+/g, ' ').trim();
+      if (!text) return null;
+      return { role: msg.role, text: text.length > 180 ? `${text.slice(0, 177)}...` : text };
+    })
+    .filter((entry): entry is { role: 'user' | 'assistant'; text: string } => entry !== null);
+
+  if (entries.length === 0) return '';
+
+  const render = (entry: { role: 'user' | 'assistant'; text: string }) => {
+    const label = entry.role === 'user' ? 'you' : 'assistant';
+    return chalk.dim(`  ${label}: ${entry.text}`);
+  };
+
+  const started = entries.slice(0, 4).map(render);
+  const recentStart = entries.length > 10 ? -6 : 4;
+  const recent = entries.slice(recentStart).map(render);
+
+  const lines = [chalk.dim('  Context preview:'), ...started];
+  if (recent.length > 0) {
+    if (entries.length > 10) lines.push(chalk.dim('  ...'));
+    lines.push(...recent);
+  }
+
+  return lines.join('\n');
+}
+
+function extractVisibleText(msg: Dialogue): string {
+  if (typeof msg.content === 'string') return msg.content;
+  if (!Array.isArray(msg.content)) return '';
+
+  return msg.content
+    .map((part) => {
+      if ('type' in part && part.type === 'text') return part.text;
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
 }
 
 // ─── Ink UI (interactive terminal) ─────────────────────────────────────────
