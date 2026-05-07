@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.15.86 — PR #46: \`franklin --resume\` seeds the scrollback with prior context
+
+External contribution from \`0xCheetah1\`. Pre-fix: running
+\`franklin --resume <id>\` printed *"Resuming session X (N messages)"*
+and dropped the user into a blank prompt — the prior conversation was
+loaded into history (so the model had context) but invisible to the
+user. People had to manually scroll a saved transcript or guess what
+they'd been doing.
+
+The PR seeds the Ink UI's \`committedResponses\` state with a
+preview built from the saved transcript:
+- First 4 messages (the opening context — what was originally asked)
+- Last 6 messages if total > 10 (recent tail)
+- A separator \`...\` between when truncating
+- 180-char per-message cap so a single long paste doesn't dominate
+  the scrollback
+
+User-role lines reuse the gold \`❯\` styling from PR #43, so the
+seeded context blends with live turns instead of looking like a
+different rendering mode.
+
+Implementation:
+- New \`buildResumeTranscript(history)\` in \`src/commands/start.ts\`
+  uses \`extractVisibleText\` to pull only \`text\` parts from each
+  message's content array (skips tool_use / tool_result blocks
+  that wouldn't render usefully).
+- New optional \`initialTranscript\` prop on \`launchInkUI\` and
+  \`RunCodeApp\`. If undefined, behavior is unchanged. Existing
+  non-resume paths see no diff.
+
+Risk surface: minimal. Pure additive prop. CI green; tests still
+361/361 on integrated main.
+
 ## 3.15.85 — PR #45: Gemini Pro reasoning models use non-streaming /v1/messages
 
 External contribution from \`0xCheetah1\`. Real failure mode: Gemini Pro
