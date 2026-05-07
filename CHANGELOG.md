@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.15.83 — PR #44: gateway-error-as-text no longer kills the session
+
+External contribution from \`0xCheetah1\`. Real failure mode:
+some upstream providers swallow rate-limit / quota errors and emit them
+as a single bracketed text block on a 200 OK. Pre-3.15.83, that text-
+shaped error was thrown into the outer error classifier, which often
+mis-classified it as transient and triggered the auto-retry path —
+which immediately hit the same wall, retried again, and eventually
+exhausted \`recoveryAttempts\` after a long stall. Worst case the
+session ended.
+
+The PR converts the \`throw\` in \`looksLikeGatewayErrorAsText\`'s match
+branch into a graceful turn-end:
+
+\`\`\`ts
+lastSessionActivity = Date.now();
+persistSessionMeta();
+onEvent({ kind: 'turn_done', reason: 'error', error: gatewayErr.message });
+break;
+\`\`\`
+
+Same 4-step shape used in 4 other turn-error paths in \`loop.ts\` (timeout
+retry skip, classified non-transient errors, etc.) — Cheetah followed the
+established pattern, didn't invent a new one. The \`turn_done\` event
+shape with \`reason: 'error'\` is already typed
+(\`src/agent/types.ts:143\`) and already rendered by the UI
+(\`src/ui/app.tsx:1190\`).
+
+Effect: the user sees the gateway error message immediately and the
+prompt is back. They can \`/retry\` if they think the upstream cleared,
+\`/model\` to switch, or just rephrase.
+
+Tradeoff acknowledged: rare cases where the gateway-text-error was
+genuinely transient (a 200 OK body whose text content would have cleared
+on auto-retry) lose automatic recovery. Manual \`/retry\` covers it.
+Auto-retry on this specific pattern was almost always wrong.
+
+361/361 tests pass.
+
 ## 3.15.82 — Bracketed-paste UX (PR #43) + stats gap-warning windowing
 
 Bundles three changes that landed together: an external contributor's
