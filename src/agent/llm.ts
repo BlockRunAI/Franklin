@@ -444,6 +444,9 @@ export class ModelClient {
 
     const isAnthropic = request.model.startsWith('anthropic/');
     const isGLM = request.model.startsWith('zai/') || request.model.includes('glm');
+    const isGeminiThinkingRequired =
+      request.model.startsWith('google/gemini-3.1') ||
+      request.model.startsWith('google/gemini-2.5-pro');
 
     // Build the request payload, injecting model-specific optimizations
     let requestPayload: Record<string, unknown> = { ...request, stream: true };
@@ -479,6 +482,30 @@ export class ModelClient {
       // Only enable thinking for models that explicitly ship reasoning mode
       if (request.model.includes('-thinking-')) {
         requestPayload['thinking'] = { type: 'enabled' };
+      }
+    }
+
+    // Gemini Pro reasoning models reject a missing/zero thinking budget. Normalize
+    // the gateway default so fallback routing doesn't fail with "Budget 0 is invalid."
+    if (isGeminiThinkingRequired) {
+      // The gateway's streaming path currently drops Gemini's thinking budget;
+      // non-streaming preserves it. We convert the JSON response back into the
+      // same internal chunks below so callers keep one code path.
+      requestPayload['stream'] = false;
+      const maxOut = request.max_tokens ?? 16_384;
+      const budgetTokens = Math.min(maxOut, 8_192);
+      const thinking = requestPayload['thinking'];
+      if (thinking && typeof thinking === 'object' && !Array.isArray(thinking)) {
+        requestPayload['thinking'] = {
+          ...thinking,
+          type: 'enabled',
+          budget_tokens: budgetTokens,
+        };
+      } else {
+        requestPayload['thinking'] = {
+          type: 'enabled',
+          budget_tokens: budgetTokens,
+        };
       }
     }
 
@@ -677,10 +704,67 @@ export class ModelClient {
         }
       }
 
+      if (requestPayload['stream'] === false) {
+        yield* this.parseNonStreamingMessage(response, request.model);
+        return;
+      }
+
       // Parse SSE stream
       yield* this.parseSSEStream(response, requestController, streamTimeoutMs, request.model);
     } finally {
       unlinkAbort();
+    }
+  }
+
+  private async *parseNonStreamingMessage(
+    response: Response,
+    model: string,
+  ): AsyncGenerator<StreamChunk> {
+    const parsed = await response.json() as Record<string, unknown>;
+    yield { kind: 'message_start', payload: { message: parsed } };
+
+    const content = Array.isArray(parsed['content']) ? parsed['content'] as Record<string, unknown>[] : [];
+    for (let index = 0; index < content.length; index++) {
+      const block = content[index];
+      yield { kind: 'content_block_start', payload: { index, content_block: block } };
+
+      if (block.type === 'text' && typeof block.text === 'string') {
+        yield {
+          kind: 'content_block_delta',
+          payload: { index, delta: { type: 'text_delta', text: block.text } },
+        };
+      } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
+        yield {
+          kind: 'content_block_delta',
+          payload: { index, delta: { type: 'thinking_delta', thinking: block.thinking } },
+        };
+        if (typeof block.signature === 'string') {
+          yield {
+            kind: 'content_block_delta',
+            payload: { index, delta: { type: 'signature_delta', signature: block.signature } },
+          };
+        }
+      } else if (block.type === 'tool_use') {
+        yield {
+          kind: 'content_block_delta',
+          payload: { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input ?? {}) } },
+        };
+      }
+
+      yield { kind: 'content_block_stop', payload: { index } };
+    }
+
+    yield {
+      kind: 'message_delta',
+      payload: {
+        delta: { stop_reason: parsed['stop_reason'] ?? 'end_turn' },
+        usage: parsed['usage'] ?? {},
+      },
+    };
+    yield { kind: 'message_stop', payload: {} };
+
+    if (this.debug) {
+      console.error(`[franklin] Parsed non-streaming response for ${model}`);
     }
   }
 
