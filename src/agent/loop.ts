@@ -1859,7 +1859,14 @@ export async function interactiveSession(
         logger.error(
           `[franklin] Gateway returned an error text in lieu of an answer (${resolvedModel}): ${gatewayErr.message}`
         );
-        throw new Error(gatewayErr.message);
+        lastSessionActivity = Date.now();
+        persistSessionMeta();
+        onEvent({
+          kind: 'turn_done',
+          reason: 'error',
+          error: gatewayErr.message,
+        });
+        break;
       }
 
       // Reset recovery counter on successful completion
