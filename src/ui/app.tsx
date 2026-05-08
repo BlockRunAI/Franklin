@@ -23,8 +23,257 @@ import { resolveAskUserAnswer } from './ask-user-answer.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
+const BRACKETED_PASTE_START = '[200~';
+const BRACKETED_PASTE_END = '[201~';
+const ENABLE_BRACKETED_PASTE = '\x1b[?2004h';
+const DISABLE_BRACKETED_PASTE = '\x1b[?2004l';
+const USER_PROMPT_COLOR = '#FFD700';
+const PASTE_BLOCK_START = '\uE000PASTE:';
+const PASTE_BLOCK_END = ':PASTE\uE001';
+
 const DISABLE_AUTO_WRAP = '\x1b[?7l';
 const ENABLE_AUTO_WRAP = '\x1b[?7h';
+
+function stripPasteMarkers(input: string): string {
+  return input
+    .replaceAll(BRACKETED_PASTE_START, '')
+    .replaceAll(BRACKETED_PASTE_END, '');
+}
+
+function normalizeInputNewlines(input: string): string {
+  return input.replace(/\r\n|\r|\n/g, '\n').replace(/\x1b/g, '');
+}
+
+function shouldSummarizeInput(value: string): boolean {
+  return value.includes('\n') || value.length > 240;
+}
+
+interface PasteBlock {
+  start: number;
+  end: number;
+  content: string;
+}
+
+function encodePasteBlock(content: string): string {
+  return `${PASTE_BLOCK_START}${Buffer.from(content, 'utf8').toString('base64')}${PASTE_BLOCK_END}`;
+}
+
+function decodePasteBlock(token: string): string {
+  if (!token.startsWith(PASTE_BLOCK_START) || !token.endsWith(PASTE_BLOCK_END)) return token;
+  const payload = token.slice(PASTE_BLOCK_START.length, -PASTE_BLOCK_END.length);
+  try {
+    return Buffer.from(payload, 'base64').toString('utf8');
+  } catch {
+    return token;
+  }
+}
+
+function findPasteBlocks(value: string): PasteBlock[] {
+  const blocks: PasteBlock[] = [];
+  let searchFrom = 0;
+
+  while (searchFrom < value.length) {
+    const start = value.indexOf(PASTE_BLOCK_START, searchFrom);
+    if (start < 0) break;
+    const endMarker = value.indexOf(PASTE_BLOCK_END, start + PASTE_BLOCK_START.length);
+    if (endMarker < 0) break;
+    const end = endMarker + PASTE_BLOCK_END.length;
+    blocks.push({ start, end, content: decodePasteBlock(value.slice(start, end)) });
+    searchFrom = end;
+  }
+
+  return blocks;
+}
+
+function decodePromptValue(value: string): string {
+  let decoded = '';
+  let cursor = 0;
+
+  for (const block of findPasteBlocks(value)) {
+    decoded += value.slice(cursor, block.start) + block.content;
+    cursor = block.end;
+  }
+
+  return decoded + value.slice(cursor);
+}
+
+function pasteSummary(content: string): string {
+  const lines = content.length === 0 ? 0 : content.split('\n').length;
+  const lineLabel = lines > 1 ? `~${lines} lines` : '~1 line';
+  return `[Pasted ${lineLabel}]`;
+}
+
+function renderInputValue(value: string, cursorOffset: number, focused: boolean): string {
+  const blocks = findPasteBlocks(value);
+  if (blocks.length > 0) {
+    let rendered = '';
+    let cursor = 0;
+
+    for (const block of blocks) {
+      rendered += renderPlainInputSegment(value.slice(cursor, block.start), cursorOffset - cursor, focused && cursorOffset >= cursor && cursorOffset <= block.start);
+      if (focused && cursorOffset === block.start) rendered += chalk.inverse(' ');
+      rendered += chalk.hex(USER_PROMPT_COLOR).bold(pasteSummary(block.content));
+      if (focused && cursorOffset === block.end) rendered += chalk.inverse(' ');
+      cursor = block.end;
+    }
+
+    rendered += renderPlainInputSegment(value.slice(cursor), cursorOffset - cursor, focused && cursorOffset >= cursor);
+    return rendered || (focused ? chalk.inverse(' ') : '');
+  }
+
+  return renderPlainInputSegment(value, cursorOffset, focused);
+}
+
+function renderPlainInputSegment(value: string, cursorOffset: number, focused: boolean): string {
+  const displayValue = value.replace(/\r\n|\r|\n/g, ' ');
+  if (!focused) return displayValue;
+
+  const safeCursor = Math.max(0, Math.min(cursorOffset, displayValue.length));
+  if (displayValue.length === 0) return chalk.inverse(' ');
+
+  const before = displayValue.slice(0, safeCursor);
+  const current = displayValue[safeCursor] ?? ' ';
+  const after = displayValue.slice(safeCursor + (safeCursor < displayValue.length ? 1 : 0));
+  return before + chalk.inverse(current) + after;
+}
+
+function PromptTextInput({ value, onChange, onSubmit, placeholder = '', focus = true }: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: (value: string) => void;
+  placeholder?: string;
+  focus?: boolean;
+}) {
+  const [cursorOffset, setCursorOffset] = useState(value.length);
+  const valueRef = useRef(value);
+  const cursorOffsetRef = useRef(value.length);
+  const pasteActiveRef = useRef(false);
+  const pasteBufferRef = useRef('');
+
+  useEffect(() => {
+    valueRef.current = value;
+    setCursorOffset((offset) => {
+      const nextOffset = Math.min(offset, value.length);
+      cursorOffsetRef.current = nextOffset;
+      return nextOffset;
+    });
+  }, [value]);
+
+  const updateValue = useCallback((nextValue: string, nextCursorOffset: number) => {
+    valueRef.current = nextValue;
+    cursorOffsetRef.current = Math.max(0, Math.min(nextCursorOffset, nextValue.length));
+    onChange(nextValue);
+    setCursorOffset(cursorOffsetRef.current);
+  }, [onChange]);
+
+  useInput((input, key) => {
+    if (!focus) return;
+
+    const currentValue = valueRef.current;
+    const currentCursorOffset = cursorOffsetRef.current;
+    const pasteBlockBeforeCursor = findPasteBlocks(currentValue).find((block) => block.end === currentCursorOffset);
+    const pasteBlockAfterCursor = findPasteBlocks(currentValue).find((block) => block.start === currentCursorOffset);
+
+    const hasPasteStart = input.includes(BRACKETED_PASTE_START);
+    const hasPasteEnd = input.includes(BRACKETED_PASTE_END);
+    const isPasting = pasteActiveRef.current || hasPasteStart;
+
+    if (hasPasteStart && !pasteActiveRef.current) {
+      pasteActiveRef.current = true;
+      pasteBufferRef.current = '';
+    }
+
+    if (key.return && !isPasting) {
+      onSubmit(decodePromptValue(currentValue));
+      return;
+    }
+
+    if (key.home || (key.ctrl && input === 'a')) {
+      cursorOffsetRef.current = 0;
+      setCursorOffset(0);
+      return;
+    }
+
+    if (key.end || (key.ctrl && input === 'e')) {
+      cursorOffsetRef.current = currentValue.length;
+      setCursorOffset(currentValue.length);
+      return;
+    }
+
+    if (key.leftArrow) {
+      const previousBlock = findPasteBlocks(currentValue).find((block) => block.end === currentCursorOffset);
+      const nextOffset = previousBlock ? previousBlock.start : Math.max(0, currentCursorOffset - 1);
+      cursorOffsetRef.current = nextOffset;
+      setCursorOffset(nextOffset);
+      return;
+    }
+
+    if (key.rightArrow) {
+      const nextBlock = findPasteBlocks(currentValue).find((block) => block.start === currentCursorOffset);
+      const nextOffset = nextBlock ? nextBlock.end : Math.min(currentValue.length, currentCursorOffset + 1);
+      cursorOffsetRef.current = nextOffset;
+      setCursorOffset(nextOffset);
+      return;
+    }
+
+    if (key.backspace || key.delete) {
+      if (key.backspace && pasteBlockBeforeCursor) {
+        updateValue(currentValue.slice(0, pasteBlockBeforeCursor.start) + currentValue.slice(pasteBlockBeforeCursor.end), pasteBlockBeforeCursor.start);
+        return;
+      }
+
+      if (key.delete && pasteBlockAfterCursor) {
+        updateValue(currentValue.slice(0, pasteBlockAfterCursor.start) + currentValue.slice(pasteBlockAfterCursor.end), pasteBlockAfterCursor.start);
+        return;
+      }
+
+      if (currentCursorOffset > 0) {
+        updateValue(
+          currentValue.slice(0, currentCursorOffset - 1) + currentValue.slice(currentCursorOffset),
+          currentCursorOffset - 1,
+        );
+      }
+      return;
+    }
+
+    if (key.upArrow || key.downArrow || key.tab || key.ctrl || key.meta) return;
+
+    let text = normalizeInputNewlines(stripPasteMarkers(input));
+    if (key.return && isPasting) text = '\n';
+
+    if (isPasting) {
+      pasteBufferRef.current += text;
+
+      if (!hasPasteEnd) return;
+
+      text = encodePasteBlock(pasteBufferRef.current);
+      pasteBufferRef.current = '';
+      pasteActiveRef.current = false;
+    }
+
+    if (!text) {
+      if (hasPasteEnd) pasteActiveRef.current = false;
+      return;
+    }
+
+    updateValue(
+      currentValue.slice(0, currentCursorOffset) + text + currentValue.slice(currentCursorOffset),
+      currentCursorOffset + text.length,
+    );
+
+    if (hasPasteEnd) pasteActiveRef.current = false;
+  }, { isActive: focus });
+
+  const rendered = value.length > 0
+    ? renderInputValue(value, cursorOffset, focus)
+    : (focus && placeholder ? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1)) : chalk.grey(placeholder));
+
+  return <Text>{rendered}</Text>;
+}
+
+function formatUserPromptForDisplay(value: string): string {
+  return `❯ ${decodePromptValue(value)}`;
+}
 
 function disableTerminalAutoWrap(): (() => void) | undefined {
   if (!process.stdout.isTTY) return undefined;
@@ -37,6 +286,25 @@ function disableTerminalAutoWrap(): (() => void) | undefined {
   };
 
   process.stdout.write(DISABLE_AUTO_WRAP);
+  process.once('exit', restore);
+
+  return () => {
+    process.off('exit', restore);
+    restore();
+  };
+}
+
+function enableBracketedPaste(): (() => void) | undefined {
+  if (!process.stdout.isTTY) return undefined;
+
+  let restored = false;
+  const restore = () => {
+    if (restored || !process.stdout.writable) return;
+    restored = true;
+    process.stdout.write(DISABLE_BRACKETED_PASTE);
+  };
+
+  process.stdout.write(ENABLE_BRACKETED_PASTE);
   process.once('exit', restore);
 
   return () => {
@@ -138,7 +406,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
               onModeChange={onVimModeChange}
             />
           ) : (
-            <TextInput
+            <PromptTextInput
               value={input}
               onChange={setInput}
               onSubmit={onSubmit}
@@ -248,6 +516,31 @@ interface AskUserRequest {
 
 type StatusTone = 'success' | 'warning' | 'error';
 
+// ── Unified scrollback item ── tools and text share one array for chronology
+type ScrollbackAssistant = {
+  kind: 'assistant';
+  key: string;
+  text: string;
+  tokens: { input: number; output: number; calls: number };
+  cost: number;
+  model?: string;
+  tier?: string;
+  savings?: number;
+  thinkMs?: number;
+  thinkChars?: number;
+  ctxPct?: number;
+};
+type ScrollbackUser = {
+  kind: 'user';
+  key: string;
+  text: string;
+};
+type ScrollbackTool = {
+  kind: 'tool';
+  key: string;
+} & ToolStatus;
+type ScrollbackItem = ScrollbackUser | ScrollbackAssistant | ScrollbackTool;
+
 // ─── Main App ──────────────────────────────────────────────────────────────
 
 interface AppProps {
@@ -255,6 +548,7 @@ interface AppProps {
   workDir: string;
   walletAddress: string;
   walletBalance: string;
+  initialTranscript?: Array<{ role: 'user' | 'assistant'; text: string }>;
   startWithPicker?: boolean;
   chain: string;
   onSubmit: (input: string) => void;
@@ -265,7 +559,7 @@ interface AppProps {
 
 function RunCodeApp({
   initialModel, workDir, walletAddress, walletBalance, chain,
-  startWithPicker, onSubmit, onModelChange, onAbort, onExit,
+  initialTranscript, startWithPicker, onSubmit, onModelChange, onAbort, onExit,
 }: AppProps) {
   const { exit } = useApp();
   // Track terminal rows so we can cap the dynamic-region height. Ink wipes the
@@ -278,12 +572,15 @@ function RunCodeApp({
   const [thinking, setThinking] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const [tools, setTools] = useState<Map<string, ToolStatus>>(new Map());
-  // Completed tool results committed to Static (permanent scrollback — no re-render artifacts)
-  const [completedTools, setCompletedTools] = useState<Array<ToolStatus & { key: string }>>([]);
+  // Unified scrollback — tools and text share one array for chronological order
+  const [scrollback, setScrollback] = useState<ScrollbackItem[]>(() =>
+    (initialTranscript ?? []).map((entry, idx) => entry.role === 'user'
+      ? { kind: 'user' as const, key: `user-${idx}`, text: formatUserPromptForDisplay(entry.text) }
+      : { kind: 'assistant' as const, key: `resume-${idx}`, text: entry.text, tokens: { input: 0, output: 0, calls: 0 }, cost: 0 }
+    )
+  );
   // Last completed tool — shown in dynamic area so it can be expanded/collapsed with Tab
   const [expandableTool, setExpandableTool] = useState<(ToolStatus & { key: string }) | null>(null);
-  // Full responses committed to Static immediately — goes into terminal scrollback
-  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number; thinkMs?: number; thinkChars?: number; ctxPct?: number }>>([]);
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
   const [responsePreview, setResponsePreview] = useState('');
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS_FLAT[0].id);
@@ -396,6 +693,7 @@ function RunCodeApp({
   const turnSavingsRef = useRef<number | undefined>(undefined);
   const turnCtxPctRef = useRef<number | undefined>(undefined);
   const queuedInputsRef = useRef<string[]>([]);
+  const lastCtrlCRef = useRef(0);
 
   // Keep refs in sync so memoized event handlers can read current values
   streamTextRef.current = streamText;
@@ -418,6 +716,25 @@ function RunCodeApp({
     }
   }, []);
 
+  const requestExit = useCallback((abortTurn = false) => {
+    if (abortTurn) onAbort();
+    onExit();
+    exit();
+  }, [onAbort, onExit, exit]);
+
+  useInput((ch, key) => {
+    if (!(key.ctrl && ch === 'c')) return;
+
+    const now = Date.now();
+    if (now - lastCtrlCRef.current < 2000) {
+      requestExit(true);
+      return;
+    }
+
+    lastCtrlCRef.current = now;
+    showStatus('Press Ctrl+C again to exit', 'warning', 2000);
+  });
+
   const commitResponse = useCallback((
     text: string,
     tokens = turnTokensRef.current,
@@ -432,8 +749,9 @@ function RunCodeApp({
       : undefined);
     const thinkChars = thinkCharsRef.current || undefined;
 
-    setCommittedResponses((rs) => {
-      const next = [...rs, {
+    setScrollback((rs) => {
+      const next: ScrollbackItem[] = [...rs, {
+        kind: 'assistant',
         key: String(Date.now() + Math.random()),
         text,
         tokens,
@@ -445,7 +763,6 @@ function RunCodeApp({
         thinkMs,
         thinkChars,
       }];
-      // Cap at 300 items — older items are already in terminal scrollback
       return next.length > 300 ? next.slice(-300) : next;
     });
 
@@ -477,7 +794,7 @@ function RunCodeApp({
 
   // Key handler for picker + esc + abort
   const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input) || !ready;
-  useInput((ch, key) => {
+  useInput((_ch, key) => {
     // Escape during generation → abort current turn (skip if permission dialog open)
     if (key.escape && !ready && !permissionRequest) {
       onAbort();
@@ -492,8 +809,7 @@ function RunCodeApp({
     // In Vim mode: Esc goes to normal mode (handled by VimInput), only quit on Esc in normal mode with empty input
     if (key.escape && mode === 'input' && ready && !input) {
       if (vimEnabled && currentVimMode === 'insert') return; // Let VimInput handle Esc → normal
-      onExit();
-      exit();
+      requestExit(false);
       return;
     }
 
@@ -559,9 +875,7 @@ function RunCodeApp({
       lower === 'exit' || lower === 'quit' || lower === 'q' ||
       lower === '/exit' || lower === '/quit';
     if (isExit) {
-      onAbort();
-      onExit();
-      exit();
+      requestExit(true);
       return;
     }
 
@@ -674,13 +988,10 @@ function RunCodeApp({
 
     // ── Normal prompt ──
     // Show user message in scrollback so the conversation is readable
-    setCommittedResponses(rs => [...rs, {
+    setScrollback(rs => [...rs, {
+      kind: 'user',
       key: `user-${Date.now()}`,
-      // Gold matches the top of the Franklin banner gradient (#FFD700).
-      // Brand-consistent, readable on dark terminals, evokes $100-bill identity.
-      text: chalk.hex('#FFD700').bold('❯ ') + chalk.hex('#FFD700').bold(trimmed),
-      tokens: { input: 0, output: 0, calls: 0 },
-      cost: 0,
+      text: formatUserPromptForDisplay(trimmed),
     }]);
     setResponsePreview('');
     setLastPrompt(trimmed);
@@ -691,12 +1002,11 @@ function RunCodeApp({
     setThinking(false);
     setThinkingText('');
     setTools(new Map());
-    // Flush expandable tool to Static before clearing
+    // Flush expandable tool to scrollback before clearing
     setExpandableTool(prev => {
-      if (prev) setCompletedTools(prev2 => [...prev2, { ...prev, expanded: false }]);
+      if (prev) setScrollback(prev2 => [...prev2, { kind: 'tool', ...prev, expanded: false }]);
       return null;
     });
-    setCompletedTools([]);
     setReady(false);
     setWaiting(true);
     setStatusMsg('');
@@ -709,7 +1019,7 @@ function RunCodeApp({
     turnSavingsRef.current = undefined;
     turnCtxPctRef.current = undefined;
     onSubmit(trimmed);
-  }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory, showStatus]);
+  }, [ready, currentModel, totalCost, onSubmit, onModelChange, requestExit, lastPrompt, inputHistory, showStatus]);
 
   // Mouse support — OFF by default because Node stdin is shared: mouse escape
   // sequences leak into Ink's input handler as typed text. Opt in with
@@ -786,6 +1096,32 @@ function RunCodeApp({
             break;
           case 'capability_start':
             setWaiting(false);
+            // Commit streamed text to scrollback so it appears before the tool.
+            // Only do this for the first tool in a batch (subsequent starts
+            // have no text because streamTextRef was already cleared).
+            const activeBefore = tools.size;
+            if (activeBefore === 0) {
+              if (flushTimerRef.current) {
+                clearTimeout(flushTimerRef.current);
+                flushTimerRef.current = null;
+              }
+              if (pendingTextRef.current) {
+                streamTextRef.current += pendingTextRef.current;
+                pendingTextRef.current = '';
+              }
+              const beforeTool = streamTextRef.current.trim();
+              if (beforeTool) {
+                setScrollback(prev => [...prev, {
+                  kind: 'assistant',
+                  key: `pre-${event.id}`,
+                  text: beforeTool,
+                  tokens: { input: 0, output: 0, calls: 0 },
+                  cost: 0,
+                }]);
+                streamTextRef.current = '';
+                setStreamText('');
+              }
+            }
             setTools(prev => {
               const next = new Map(prev);
               next.set(event.id, {
@@ -837,14 +1173,16 @@ function RunCodeApp({
                   expanded: false,
                   elapsed: Date.now() - t.startTime,
                 };
-                // Move previous expandable tool to Static, set new one as expandable
+                // Move previous expandable tool to scrollback, set new one as expandable
                 setExpandableTool(prevExpTool => {
                   if (prevExpTool) {
-                    setCompletedTools(prev2 => [...prev2, { ...prevExpTool, expanded: false }]);
+                    setScrollback(prev2 => [...prev2, { kind: 'tool', ...prevExpTool, expanded: false }]);
                   }
                   return completed;
                 });
                 next.delete(event.id);
+                // No more running tools — show waiting until next model call starts
+                if (next.size === 0) setWaiting(true);
               }
               return next;
             });
@@ -896,9 +1234,9 @@ function RunCodeApp({
               thinkMsRef.current = Date.now() - thinkStartRef.current;
             }
 
-            // Flush expandable tool to Static before committing response
+            // Flush expandable tool to scrollback before committing response
             setExpandableTool(prev => {
-              if (prev) setCompletedTools(prev2 => [...prev2, { ...prev, expanded: false }]);
+              if (prev) setScrollback(prev2 => [...prev2, { kind: 'tool', ...prev, expanded: false }]);
               return null;
             });
 
@@ -958,7 +1296,7 @@ function RunCodeApp({
 
   // ── Render ──
   // Note: the tree is ALWAYS the same shape across mode changes. Static
-  // components (completedTools, committedResponses) stay mounted so Ink
+  // components (scrollback) stay mounted so Ink
   // doesn't discard already-committed scrollback when the model picker
   // opens/closes. The picker is rendered inline below scrollback, and the
   // InputBox is hidden while it's active.
@@ -966,14 +1304,6 @@ function RunCodeApp({
 
   return (
     <Box flexDirection="column">
-      {/* Status message */}
-      {statusMsg && (
-        <Box marginLeft={2}>
-          <Text color={statusTone === 'error' ? 'red' : statusTone === 'warning' ? 'yellow' : 'green'}>
-            {statusMsg}
-          </Text>
-        </Box>
-      )}
 
       {/* Help panel */}
       {showHelp && (
@@ -1037,71 +1367,63 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Completed tools — rich display with structured diffs for Edit */}
-      <Static items={completedTools}>
-        {(tool) => {
-          const elapsedFmt = tool.elapsed >= 1000
-            ? `${(tool.elapsed / 1000).toFixed(1)}s`
-            : `${tool.elapsed}ms`;
-          return (
-            <Box key={tool.key} flexDirection="column" marginLeft={2}>
-              <Text>
-                {tool.error
-                  ? <Text color="red">✗</Text>
-                  : <Text color="green">✓</Text>
-                }
-                {' '}<Text bold>{tool.name}</Text>
-                {tool.preview ? <Text dimColor>({tool.preview.slice(0, 80)})</Text> : null}
-                <Text dimColor> {elapsedFmt}</Text>
-              </Text>
-              {/* Structured diff for Edit tool — colored red/green lines */}
-              {tool.diff && !tool.error && tool.diff.oldLines.length <= 8 && tool.diff.newLines.length <= 8 && (
-                <Box flexDirection="column" marginLeft={2}>
-                  {tool.diff.oldLines.map((line, i) => (
-                    <Text key={`old-${i}`} color="red" wrap="truncate-end">{'⎿  '}- {line.slice(0, 120)}</Text>
-                  ))}
-                  {tool.diff.newLines.map((line, i) => (
-                    <Text key={`new-${i}`} color="green" wrap="truncate-end">{'⎿  '}+ {line.slice(0, 120)}</Text>
-                  ))}
-                </Box>
-              )}
-              {/* Large diff summary */}
-              {tool.diff && !tool.error && (tool.diff.oldLines.length > 8 || tool.diff.newLines.length > 8) && (
-                <Box marginLeft={2}>
-                  <Text dimColor>{'⎿  '}{tool.diff.oldLines.length} lines → {tool.diff.newLines.length} lines</Text>
-                </Box>
-              )}
-              {/* Error output preview */}
-              {tool.error && tool.fullOutput && (
-                <Box flexDirection="column" marginLeft={2}>
-                  {tool.fullOutput.split('\n').filter(Boolean).slice(0, 3).map((line, i) => (
-                    <Text key={i} color="red" wrap="truncate-end">{'⎿  '}{line.slice(0, 120)}</Text>
-                  ))}
-                </Box>
-              )}
-            </Box>
-          );
-        }}
-      </Static>
+      {/* Scrollback — tools and text in chronological order */}
+      <Static items={scrollback}>
+        {(item) => {
+          if (item.kind === 'tool') {
+            const tool = item;
+            const elapsedFmt = tool.elapsed >= 1000
+              ? `${(tool.elapsed / 1000).toFixed(1)}s`
+              : `${tool.elapsed}ms`;
+            return (
+              <Box key={`tool-${tool.key}`} flexDirection="column" marginLeft={4}>
+                <Text color="grey">
+                  {tool.error
+                    ? <Text color="red">✗</Text>
+                    : <Text color="grey">✓</Text>
+                  }
+                  {' '}{tool.name}
+                  {tool.preview ? ` (${tool.preview.slice(0, 80)})` : ''}
+                  {' '}{elapsedFmt}
+                </Text>
+                {tool.diff && !tool.error && tool.diff.oldLines.length <= 8 && tool.diff.newLines.length <= 8 && (
+                  <Box flexDirection="column" marginLeft={2}>
+                    {tool.diff.oldLines.map((line, i) => (
+                      <Text key={`old-${i}`} color="red" wrap="truncate-end">{'⎿  '}- {line.slice(0, 120)}</Text>
+                    ))}
+                    {tool.diff.newLines.map((line, i) => (
+                      <Text key={`new-${i}`} color="green" wrap="truncate-end">{'⎿  '}+ {line.slice(0, 120)}</Text>
+                    ))}
+                  </Box>
+                )}
+                {tool.diff && !tool.error && (tool.diff.oldLines.length > 8 || tool.diff.newLines.length > 8) && (
+                  <Box marginLeft={2}>
+                    <Text dimColor>{'⎿  '}{tool.diff.oldLines.length} lines → {tool.diff.newLines.length} lines</Text>
+                  </Box>
+                )}
+                {tool.error && tool.fullOutput && (
+                  <Box flexDirection="column" marginLeft={2}>
+                    {tool.fullOutput.split('\n').filter(Boolean).slice(0, 3).map((line, i) => (
+                      <Text key={i} color="red" wrap="truncate-end">{'⎿  '}{line.slice(0, 120)}</Text>
+                    ))}
+                  </Box>
+                )}
+              </Box>
+            );
+          }
 
-      {/* Full responses — committed to Static with turn separators for readability */}
-      <Static items={committedResponses}>
-        {(r) => {
-          const isUserMsg = r.key.startsWith('user-');
+          const r = item.kind === 'user' ? { ...item, tokens: { input: 0, output: 0, calls: 0 }, cost: 0, model: undefined as string | undefined, tier: undefined as string | undefined, savings: undefined as number | undefined, thinkMs: undefined as number | undefined, thinkChars: undefined as number | undefined, ctxPct: undefined as number | undefined } : item;
+          const isUserMsg = item.kind === 'user';
           return (
-            <Box key={r.key} flexDirection="column">
-              {/* Turn separator — thin line before assistant responses */}
+            <Box key={`msg-${r.key}`} flexDirection="column">
               {!isUserMsg && (r.tokens.input > 0 || r.tokens.output > 0) && (
                 <Box marginTop={1}>
                   <Text dimColor>{'─'.repeat(60)}</Text>
                 </Box>
               )}
-              {/* User messages get a left border bar + top margin for visual separation */}
               {isUserMsg && (
                 <Box marginTop={1}/>
               )}
-              {/* Reasoning meter — shown once above the response, only if the
-                  model actually thought. Compact, dim; no spinner. */}
               {!isUserMsg && r.thinkMs !== undefined && r.thinkMs >= 500 && (
                 <Box paddingLeft={2}>
                   <Text color="magenta" dimColor>
@@ -1113,7 +1435,11 @@ function RunCodeApp({
                 </Box>
               )}
               <Box paddingLeft={isUserMsg ? 0 : 2}>
-                <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
+                {isUserMsg ? (
+                  <Text wrap="wrap" color={USER_PROMPT_COLOR} bold>{r.text}</Text>
+                ) : (
+                  <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
+                )}
               </Box>
               {(r.tokens.input > 0 || r.tokens.output > 0) && (
                 <Box marginLeft={2} marginBottom={1}>
@@ -1138,6 +1464,30 @@ function RunCodeApp({
           );
         }}
       </Static>
+
+      {/* Active (in-progress) tools — show above permission/askUser dialogs
+           so the user knows what tool is being requested before approving. */}
+      {Array.from(tools.entries()).map(([id, tool]) => {
+        const elapsed = Math.round((Date.now() - tool.startTime) / 1000);
+        const elapsedStr = elapsed > 0 ? ` ${elapsed}s` : '';
+        return (
+          <Box key={id} flexDirection="column" marginLeft={4}>
+            <Text color="grey">
+              <Text color="cyan"><Spinner type="dots" /></Text>
+              {' '}{tool.name}
+              {tool.preview ? ` (${tool.preview.slice(0, 70)})` : ''}
+              {elapsedStr}
+            </Text>
+            {tool.liveLines.length > 0 && (
+              <Box flexDirection="column" marginLeft={2}>
+                {tool.liveLines.map((line, i) => (
+                  <Text key={i} dimColor wrap="truncate-end">{'⎿  '}{line.slice(0, 120)}</Text>
+                ))}
+              </Box>
+            )}
+          </Box>
+        );
+      })}
 
       {/* Permission dialog — rendered inline, captured via useInput above.
           Visual prominence is critical here. The pre-3.15.27 yellow box was
@@ -1215,10 +1565,10 @@ function RunCodeApp({
         const hasExpandableContent = !!(tool.diff || (tool.fullOutput && tool.fullOutput.split('\n').length > 1));
         return (
           <Box flexDirection="column" marginLeft={2}>
-            <Text>
-              {tool.error ? <Text color="red">✗</Text> : <Text color="green">✓</Text>}
-              {' '}<Text bold>{tool.name}</Text>
-              {tool.preview ? <Text dimColor>({tool.preview.slice(0, 80)})</Text> : null}
+            <Text color="grey">
+              {tool.error ? <Text color="red">✗</Text> : <Text color="grey">✓</Text>}
+              {' '}{tool.name}
+              {tool.preview ? ` (${tool.preview.slice(0, 80)})` : ''}
               <Text dimColor> {elapsedFmt}</Text>
               {hasExpandableContent && (
                 <Text dimColor> {tool.expanded ? '(tab to collapse)' : '(tab to expand)'}</Text>
@@ -1258,41 +1608,16 @@ function RunCodeApp({
         );
       })()}
 
-      {/* Active (in-progress) tools — bordered box with multi-line streaming output.
-          Hidden during permission/askUser dialogs so the dialog can sit alone
-          right above the input field — the user's focal point shouldn't be
-          divided while we're waiting on them. */}
-      {!permissionRequest && !askUserRequest && Array.from(tools.entries()).map(([id, tool]) => {
-        const elapsed = Math.round((Date.now() - tool.startTime) / 1000);
-        const elapsedStr = elapsed > 0 ? ` ${elapsed}s` : '';
-        return (
-          <Box key={id} flexDirection="column" marginLeft={2}>
-            <Text>
-              <Text color="cyan"><Spinner type="dots" /></Text>
-              {' '}<Text bold color="cyan">{tool.name}</Text>
-              {tool.preview ? <Text dimColor>({tool.preview.slice(0, 70)})</Text> : null}
-              <Text dimColor>{elapsedStr}</Text>
-            </Text>
-            {tool.liveLines.length > 0 && (
-              <Box flexDirection="column" marginLeft={2}>
-                {tool.liveLines.map((line, i) => (
-                  <Text key={i} dimColor wrap="truncate-end">{'⎿  '}{line.slice(0, 120)}</Text>
-                ))}
-              </Box>
-            )}
-          </Box>
-        );
-      })}
+
 
       {/* Thinking — compact by default (just spinner). Preview shown only when
           FRANKLIN_SHOW_THINKING=1 is set, so terminal stays clean for reasoning
           models like o3 that emit long chains of thought. */}
-      {thinking && !permissionRequest && !askUserRequest && (
+      {thinking && (
         <Box flexDirection="column" marginLeft={2}>
           <Text color="magenta">
             <Spinner type="dots" />{' '}
             <Text bold>thinking</Text>
-            {completedTools.length > 0 ? <Text dimColor>{' '}· step {completedTools.length + 1}</Text> : null}
           </Text>
           {process.env.FRANKLIN_SHOW_THINKING === '1' && thinkingText && (() => {
             const lines = thinkingText.split('\n').filter(Boolean).slice(-3);
@@ -1308,11 +1633,11 @@ function RunCodeApp({
       )}
 
       {/* Waiting — model name and step counter */}
-      {waiting && !thinking && tools.size === 0 && !permissionRequest && !askUserRequest && (
+      {waiting && !thinking && tools.size === 0 && (
         <Box marginLeft={2}>
           <Text color="yellow">
             <Spinner type="dots" />{' '}
-            <Text dimColor>{shortModelName(currentModel)}{completedTools.length > 0 ? ` · step ${completedTools.length + 1}` : ''}</Text>
+            <Text dimColor>{shortModelName(currentModel)}</Text>
           </Text>
         </Box>
       )}
@@ -1324,11 +1649,11 @@ function RunCodeApp({
           Ink's wrap would then mangle.
 
           Capped to the last ~(rows - 12) lines: the full text is committed to
-          Static at turn end (committedResponses), so scrollback retains every
+           Static at turn end (scrollback), so scrollback retains every
           word. Capping here is purely to keep Ink's dynamic region under the
           terminal height — when it exceeds rows, Ink fires clearTerminal
           which wipes the user's entire scrollback buffer. */}
-      {streamText && !permissionRequest && !askUserRequest && (() => {
+      {streamText && (() => {
         const maxLines = Math.max(8, termRows - 12);
         const lines = streamText.split('\n');
         const truncated = lines.length > maxLines;
@@ -1450,7 +1775,15 @@ function RunCodeApp({
           shows lets the dialog sit at the visual bottom instead of stranding an
           empty input below it. */}
       {!inPicker && !permissionRequest && !askUserRequest && (
-        <InputBox
+        <>
+          {statusMsg && (
+            <Box marginLeft={2} marginBottom={1}>
+              <Text color={statusTone === 'error' ? 'red' : statusTone === 'warning' ? 'yellow' : 'green'}>
+                {statusMsg}
+              </Text>
+            </Box>
+          )}
+          <InputBox
           input={input}
           setInput={setInput}
           onSubmit={handleSubmit}
@@ -1469,6 +1802,7 @@ function RunCodeApp({
           vimMode={vimEnabled}
           onVimModeChange={setCurrentVimMode}
         />
+        </>
       )}
     </Box>
   );
@@ -1494,6 +1828,7 @@ export function launchInkUI(opts: {
   version: string;
   walletAddress?: string;
   walletBalance?: string;
+  initialTranscript?: Array<{ role: 'user' | 'assistant'; text: string }>;
   chain?: string;
   showPicker?: boolean;
   onModelChange?: (model: string, reason?: 'user' | 'system') => void;
@@ -1503,13 +1838,26 @@ export function launchInkUI(opts: {
   let exiting = false;
   let abortCallback: (() => void) | null = null;
   const restoreTerminalAutoWrap = disableTerminalAutoWrap();
+  const restoreBracketedPaste = enableBracketedPaste();
+  let cleanedUp = false;
+  let instance: ReturnType<typeof render> | undefined;
 
-  const instance = render(
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    mouse.disable();
+    restoreBracketedPaste?.();
+    restoreTerminalAutoWrap?.();
+    instance?.unmount();
+  };
+
+  instance = render(
     <RunCodeApp
       initialModel={opts.model}
       workDir={opts.workDir}
       walletAddress={opts.walletAddress || 'not set — run: franklin setup'}
       walletBalance={opts.walletBalance || 'unknown'}
+      initialTranscript={opts.initialTranscript}
       chain={opts.chain || 'base'}
       startWithPicker={opts.showPicker}
       onSubmit={(value) => {
@@ -1526,8 +1874,10 @@ export function launchInkUI(opts: {
       onExit={() => {
         exiting = true;
         if (resolveInput) { resolveInput(null); resolveInput = null; }
+        cleanup();
       }}
-    />
+    />,
+    { exitOnCtrlC: false }
   );
 
   return {
@@ -1568,11 +1918,7 @@ export function launchInkUI(opts: {
       return new Promise<string | null>((resolve) => { resolveInput = resolve; });
     },
     onAbort: (cb: () => void) => { abortCallback = cb; },
-    cleanup: () => {
-      mouse.disable();
-      instance.unmount();
-      restoreTerminalAutoWrap?.();
-    },
+    cleanup,
     requestPermission: (toolName: string, description: string) => {
       const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
