@@ -37,15 +37,15 @@ interface Candidate {
 }
 
 // ─── Intent detection (code-level, not LLM-level) ──────────────────────────
-// When the user asks "check my @handle mentions/notifications/互动",
-// the tool itself routes to x.com/notifications. No LLM judgment needed.
+// When the user asks "check my @handle mentions/notifications", the tool
+// itself routes to x.com/notifications. English-only keyword fast-path;
+// the LLM-level classifier handles non-English queries before this point.
 
 const NOTIFICATION_KEYWORDS = [
   'notification', 'notifications',
   'mention', 'mentions', 'mentioned',
   'reply', 'replies',
   'interact', 'interaction', 'interactions',
-  '互动', '通知', '提及', '回复', '看看',
   'check my', 'my account', 'my x',
   'to:', 'from:', '@',
 ];

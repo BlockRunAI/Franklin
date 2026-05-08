@@ -99,9 +99,13 @@ export function extractArticleBlocks(tree: string): Array<{
 // Matches all known X time-link formats:
 //   "Mar 16", "Apr 12, 2026", "5h", "5m", "2d", "30s", "just now", "now"
 //   "31 seconds ago", "35 minutes ago", "4 hours ago" (full-word format)
-//   "Yesterday", "Apr 12", "12:30 AM", "2026年4月12日" (CJK)
+//   "Yesterday", "Apr 12", "12:30 AM"
+//   CJK-locale date markers (year/month/day in Chinese-locale rendering of
+//   tweet timestamps). Encoded via Unicode escapes to keep the source file
+//   ASCII-clean per the English-only-source policy:
+//     U+5E74 = year marker, U+6708 = month marker, U+65E5 = day marker.
 export const X_TIME_LINK_PATTERN =
-  '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d+(?:,?\\s+\\d{4})?|\\d+[smhd]|\\d+\\s+(?:second|minute|hour|day|week|month|year)s?\\s+ago|just now|now|yesterday|\\d{1,2}:\\d{2}\\s*[AaPp][Mm]|\\d{4}年\\d{1,2}月\\d{1,2}日';
+  '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d+(?:,?\\s+\\d{4})?|\\d+[smhd]|\\d+\\s+(?:second|minute|hour|day|week|month|year)s?\\s+ago|just now|now|yesterday|\\d{1,2}:\\d{2}\\s*[AaPp][Mm]|\\d{4}\\u5e74\\d{1,2}\\u6708\\d{1,2}\\u65e5';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

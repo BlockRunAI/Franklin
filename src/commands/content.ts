@@ -5,9 +5,9 @@
  * Tools (ContentCreate / ContentAddAsset) write the library during agent
  * sessions; before this command, there was no way to see the resulting
  * spend without scripting against the JSON file. Verified 2026-05-04 in
- * a live session: user asked "我花了多少钱做这个", agent ran
- * `franklin content list` and got "no content subcommand", fell back to
- * estimating from memory.
+ * a live session: user asked "how much did I spend making this", agent
+ * ran `franklin content list` and got "no content subcommand", fell
+ * back to estimating from memory.
  *
  * Subcommands:
  *   - list             : table of id, type, title, status, spent/budget, assets

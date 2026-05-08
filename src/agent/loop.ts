@@ -342,10 +342,10 @@ export function looksLikeGatewayErrorAsText(parts: ContentPart[]): { match: bool
  * pinned by tool_choice when the user prompt actually references that
  * tool's domain — otherwise we let the smart generator pick from any tool.
  *
- * The motivating bug: a real-estate question ("可以还价 20% 吗") had its
- * answer flagged as ungrounded for citing $/sqft figures. The cheap
- * evaluator model picked TradingMarket as the missing tool because it
- * was the first example in the evaluator prompt. Forcing TradingMarket
+ * The motivating bug: a real-estate question ("can I negotiate 20% off")
+ * had its answer flagged as ungrounded for citing $/sqft figures. The
+ * cheap evaluator model picked TradingMarket as the missing tool because
+ * it was the first example in the evaluator prompt. Forcing TradingMarket
  * (a crypto-only tool) on a housing question made the retry useless.
  *
  * This function returns false for specialized tools when the prompt has
@@ -355,16 +355,18 @@ export function looksLikeGatewayErrorAsText(parts: ContentPart[]): { match: bool
  */
 function isToolRelevantToPrompt(toolName: string, promptLower: string): boolean {
   // Crypto trading tools — need a ticker, "crypto", "coin", "swap", etc.
+  // English-only fast path; the LLM-level classifier handles other languages
+  // before this domain-relevance check runs.
   if (/^(Trading|DefiLlama|Jupiter|Base0x|Base0xGasless)/i.test(toolName)) {
-    return /\b(btc|eth|sol|xrp|doge|usdc|usdt|crypto|coin|token|defi|tvl|yield|swap|jupiter|uniswap|pump\.fun|solana|base chain|polygon|ethereum|币|代币|链上|做空|做多)\b/i.test(promptLower);
+    return /\b(btc|eth|sol|xrp|doge|usdc|usdt|crypto|coin|token|defi|tvl|yield|swap|jupiter|uniswap|pump\.fun|solana|base chain|polygon|ethereum)\b/i.test(promptLower);
   }
   // X.com search — need an @handle, "twitter", "tweet", "X.com"
   if (/^SearchX$/i.test(toolName) || /^PostToX$/i.test(toolName)) {
-    return /(@\w+|twitter|x\.com|tweet|推特)/i.test(promptLower);
+    return /(@\w+|twitter|x\.com|tweet)/i.test(promptLower);
   }
   // Image / video / music gen — need a creative-content request
   if (/^(ImageGen|VideoGen|MusicGen)$/i.test(toolName)) {
-    return /\b(image|picture|photo|video|clip|music|song|generate|create|render|draw|画|图|视频|音乐|歌)\b/i.test(promptLower);
+    return /\b(image|picture|photo|video|clip|music|song|generate|create|render|draw)\b/i.test(promptLower);
   }
   // General-purpose / file / shell tools — always relevant.
   return true;
@@ -955,7 +957,8 @@ export async function interactiveSession(
     try {
       // Anchor 1: the user's current message (already in lastUserInput).
       // Anchor 2: first chunk of the previous assistant reply — gives the
-      // analyzer enough context to resolve deictic follow-ups like "那 AAPL 呢".
+      // analyzer enough context to resolve deictic follow-ups like
+      // "and that one?" / "what about AAPL".
       const lastAssistantText = (() => {
         const prior = [...history.slice(0, -1)].reverse()
           .find((m: Dialogue) => m.role === 'assistant');
@@ -2027,7 +2030,7 @@ export async function interactiveSession(
           recordOutcome(lastRoutedCategory, lastRoutedModel, 'continued', turnToolCalls);
         }
         // End-of-turn marker for question-shaped responses. Real-world UX
-        // problem 2026-05-06: agent finishes a turn with "要我查一下 X 吗?"
+        // problem 2026-05-06: agent finishes a turn with "Should I look up X?"
         // and stops; the user reads the silence as "Franklin died" twice in
         // one hour. The Ink input box is already on screen but it's easy to
         // miss after a long output scroll. A single trailing italic line

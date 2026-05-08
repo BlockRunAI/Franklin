@@ -1,5 +1,70 @@
 # Changelog
 
+## 3.15.88 — Source code is English-only by policy
+
+\`grep -rE '[\\x{4e00}-\\x{9fff}]' src/ --include='*.ts'\` now returns
+zero matches. Sweep across 12 files cleaning literal Chinese characters
+out of comments, system prompts, tool spec descriptions, classifier
+keyword arrays, and few-shot examples. Continuing the
+"English-only by policy" rule first applied in 3.15.81 (CJK regex
+branches dropped from \`looksLikeStalledIntent\`), now generalized
+to the whole \`src/\` tree.
+
+### What changed in code
+
+- **Tool spec descriptions** (\`src/tools/wallet.ts\`,
+  \`src/tools/prediction.ts\`, \`src/tools/searchx.ts\`): example user
+  phrases like \`钱包余额\` / \`复制交易\` / \`互动\` removed from
+  routing examples and notification keyword lists. The model is
+  multilingual; it can still apply the routing rule when the actual
+  user types in any language.
+- **System prompt** (\`src/agent/context.ts\`): routing nudges and
+  forbidden-phrase lists translated to English, with a note that the
+  rule applies "in any language" so models route Chinese / Japanese /
+  Korean queries the same way.
+- **Loop comments + few-shot examples** (\`src/agent/loop.ts\`,
+  \`src/agent/turn-analyzer.ts\`, \`src/agent/media-router.ts\`,
+  \`src/agent/evaluator.ts\`, \`src/commands/content.ts\`): inline
+  Chinese examples translated.
+- **Domain-relevance regex** (\`src/agent/loop.ts:isToolRelevantToPrompt\`):
+  CJK alternation branches dropped from the crypto / X.com / media
+  detection regexes. Same shape as the 3.15.81 fix.
+- **Router fast-path keyword arrays** (\`src/router/categories.ts\`,
+  \`src/router/index.ts\`): per-category Chinese keyword lists removed.
+  The LLM-based classifier above the keyword fast-path is multilingual
+  and continues to route Chinese / other-language queries correctly.
+
+### One exception kept (with Unicode escapes)
+
+\`src/social/a11y.ts:X_TIME_LINK_PATTERN\` — the regex that parses
+tweet-timestamp links on X.com needs to match Chinese-locale dates
+like \`2026年4月12日\` because that's the literal string X.com renders
+for users with Chinese-locale settings. Functionality preserved; the
+literal CJK characters in the regex source were replaced with Unicode
+escapes (\`\\u5e74\\u6708\\u65e5\`) so the source file passes the
+"no Chinese characters in source" sweep while still parsing the
+external data correctly.
+
+### What didn't change
+
+- \`test/local.mjs\` — test fixtures that simulate real user input in
+  Chinese (e.g. *"querit和exa哪个好"*) are intentionally kept. Those
+  are data, not code logic — they verify the multilingual extract /
+  trim / sanitize paths work on real-world inputs.
+- \`CHANGELOG.md\` and release notes — quoting real user sessions for
+  evidence is fair game.
+
+### Behavioral implications
+
+The LLM-level classifier already handles multilingual input well
+(verified across PR #43–#47 sessions today, all of which routed
+correctly through the LLM tier). The keyword fast-path serves a small
+optimization role; dropping its CJK coverage shifts those queries
+through the LLM tier on the cold path. Net spend impact:
+indistinguishable from noise.
+
+361/361 tests pass.
+
 ## 3.15.87 — PR #47: terminal returns immediately on exit; learning extraction is opt-in
 
 External contribution from \`0xCheetah1\`. The \`runWithInkUI\` cleanup

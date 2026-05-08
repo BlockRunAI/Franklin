@@ -115,10 +115,10 @@ asksForLiveData: true | false
 ## Context anchors in input
 
 [CURRENT]    user's message this turn (primary signal)
-[PREV_REPLY] last assistant reply, first ~300 chars (for follow-up references: "那 AAPL 呢", "and that one?", "the other ticker")
+[PREV_REPLY] last assistant reply, first ~300 chars (for follow-up references: "and that one?", "the other ticker", "what about AAPL")
 [GOAL]       original session prompt, first ~200 chars
 
-If [CURRENT] uses a deictic ("it", "that", "那", "这个"), resolve intent/tier from [PREV_REPLY] or [GOAL].
+If [CURRENT] uses a deictic ("it", "that", "the other one", or any equivalent in the user's language), resolve intent/tier from [PREV_REPLY] or [GOAL].
 
 ## Examples
 
@@ -131,17 +131,17 @@ Input:
 Output: {"tier":"COMPLEX","intent":{"kind":"ticker","symbol":"CRCL","assetClass":"stock","market":"us","wantNews":true},"needsPlanning":false,"isPushback":false,"asksForLiveData":true}
 
 Input:
-[CURRENT] 那 AAPL 呢
-[PREV_REPLY] CRCL 当前价格 $96.18，最近因 Drift 诉讼下跌...
+[CURRENT] what about AAPL
+[PREV_REPLY] CRCL price $96.18, recently down on Drift lawsuit news...
 Output: {"tier":"COMPLEX","intent":{"kind":"ticker","symbol":"AAPL","assetClass":"stock","market":"us","wantNews":false},"needsPlanning":false,"isPushback":false,"asksForLiveData":true}
 
 Input:
-[CURRENT] BTC 为什么跌了
+[CURRENT] why did BTC drop
 Output: {"tier":"COMPLEX","intent":{"kind":"ticker","symbol":"BTC","assetClass":"crypto","wantNews":true},"needsPlanning":false,"isPushback":false,"asksForLiveData":true}
 
 Input:
-[CURRENT] 不对，你应该看 NVDA 不是 AAPL
-[PREV_REPLY] AAPL 当前价格 $186.42
+[CURRENT] no, you should be looking at NVDA, not AAPL
+[PREV_REPLY] AAPL price $186.42
 Output: {"tier":"COMPLEX","intent":{"kind":"ticker","symbol":"NVDA","assetClass":"stock","market":"us","wantNews":false},"needsPlanning":false,"isPushback":true,"asksForLiveData":true}
 
 Input:

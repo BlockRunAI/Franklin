@@ -53,7 +53,7 @@ Flag as ungrounded:
 - Invented specifics — names, numbers, dates the model produced without a tool call supporting them
 
 ### B. Tool-use refusal (NEW)
-If the user clearly asked for live-world data — a current price, today's news, the latest state of X — and the assistant's answer contains a refusal or deflection (e.g. "I can't provide real-time prices", "我无法提供实时数据", "check Yahoo Finance yourself", "as an AI I don't have access to live data"), that is also UNGROUNDED. Franklin HAS tools for this (TradingMarket for prices, ExaAnswer for current events, WebSearch for general web, etc.). Refusing to reach for them is the failure this check was built for.
+If the user clearly asked for live-world data — a current price, today's news, the latest state of X — and the assistant's answer contains a refusal or deflection (e.g. "I can't provide real-time prices", "I don't have access to live data", "check Yahoo Finance yourself", "as an AI I cannot fetch this"), that is also UNGROUNDED. The same rule applies in any language. Franklin HAS tools for this (TradingMarket for prices, ExaAnswer for current events, WebSearch for general web, etc.). Refusing to reach for them is the failure this check was built for.
 
 Flag as tool-use refusal:
 - "I can't check real-time prices"

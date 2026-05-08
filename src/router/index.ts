@@ -95,15 +95,20 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
 
 
 // ─── Keywords for Classification ───
+//
+// Keyword fast-path uses English only by policy (English-only-source rule).
+// Non-English user queries route through the LLM-level classifier above this
+// fast-path, which is multilingual and handles intent correctly without
+// needing per-language keyword lists here.
 
 const CODE_KEYWORDS = [
   'function', 'class', 'import', 'def', 'SELECT', 'async', 'await',
-  'const', 'let', 'var', 'return', '```', '函数', '类', '导入',
+  'const', 'let', 'var', 'return', '```',
 ];
 
 const REASONING_KEYWORDS = [
   'prove', 'theorem', 'derive', 'step by step', 'chain of thought',
-  'formally', 'mathematical', 'proof', 'logically', '证明', '定理', '推导',
+  'formally', 'mathematical', 'proof', 'logically',
 ];
 
 const SIMPLE_KEYWORDS = [
@@ -112,7 +117,7 @@ const SIMPLE_KEYWORDS = [
   // because they look easy but require external recall — sending them to
   // SIMPLE-tier models reliably produces hallucinated subscriber counts,
   // birth years, etc. that the post-hoc grounding check then has to flag.
-  'define', 'translate', 'hello', 'yes or no', '翻译', '你好',
+  'define', 'translate', 'hello', 'yes or no',
 ];
 
 // Research / fact-retrieval intent: questions whose correct answer depends
@@ -127,12 +132,11 @@ const RESEARCH_KEYWORDS = [
   'best', 'top ', 'most popular', 'compare', 'vs ', ' vs.',
   'latest', 'current', 'recent', 'today', 'now',
   'subscribers', 'members', 'followers', 'market cap', 'price of',
-  '最好的', '最新', '最近', '现在', '当前', '排名', '对比',
 ];
 
 const TECHNICAL_KEYWORDS = [
   'algorithm', 'optimize', 'architecture', 'distributed', 'kubernetes',
-  'microservice', 'database', 'infrastructure', '算法', '架构', '优化',
+  'microservice', 'database', 'infrastructure',
 ];
 
 const AGENTIC_KEYWORDS = [
@@ -140,8 +144,6 @@ const AGENTIC_KEYWORDS = [
   'deploy', 'install', 'npm', 'pip', 'fix', 'debug', 'verify',
   'commit', 'push', 'pull', 'merge', 'rename', 'replace', 'delete',
   'remove', 'add', 'change', 'move', 'refactor', 'migrate',
-  '编辑', '修改', '部署', '安装', '修复', '调试',
-  '更新', '替换', '删除', '添加', '提交', '改',
 ];
 
 // URL patterns that signal agentic/coding tasks
@@ -268,7 +270,7 @@ function classifyRequest(prompt: string, tokenCount: number): ClassifyResult {
   // Imperative verbs (build, create, implement, etc.)
   const imperativeMatches = countMatches(prompt, [
     'build', 'create', 'implement', 'design', 'develop', 'write', 'make',
-    'generate', 'construct', '构建', '创建', '实现', '设计', '开发'
+    'generate', 'construct',
   ]);
   if (imperativeMatches >= 1) {
     score += 0.15;

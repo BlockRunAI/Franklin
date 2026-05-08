@@ -921,7 +921,7 @@ export const predictionMarketCapability: CapabilityHandler = {
       'Default routing: ' +
       '"is there a market on X anywhere" → searchAll. ' +
       '"top wallets / who is profitable / who should I follow on Polymarket" → leaderboard. ' +
-      '"analyze this wallet / can I copy this trader / 复制交易 / show me their P&L AND positions" → run walletProfile + walletPnl + walletPositions IN PARALLEL with the same address — three $0.005 calls give the full picture for $0.015. Do not Bash-curl Polymarket directly; the agent has paid tools for this. ' +
+      '"analyze this wallet / can I copy this trader / show me their P&L AND positions" → run walletProfile + walletPnl + walletPositions IN PARALLEL with the same address — three $0.005 calls give the full picture for $0.015. Do not Bash-curl Polymarket directly; the agent has paid tools for this. ' +
       '"what are smart traders betting on right now" → smartActivity. ' +
       '"show smart money on this specific Polymarket market" → smartMoney with conditionId. ' +
       '"should I bet on X" → run searchPolymarket + searchKalshi in parallel and compare implied probabilities — divergence is the signal.',
