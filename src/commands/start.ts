@@ -347,6 +347,7 @@ export async function startCommand(options: StartOptions) {
 
   // Resolve resume target, if requested.
   let resumeSessionId: string | undefined;
+  let resumeTranscript: Array<{ role: 'user' | 'assistant'; text: string }> | undefined;
   if (options.resume || options.continue) {
     const { pickSession } = await import('../ui/session-picker.js');
     const { loadSessionMeta, loadSessionHistory } = await import('../session/storage.js');
@@ -372,10 +373,11 @@ export async function startCommand(options: StartOptions) {
 
     if (resumeSessionId) {
       const meta = loadSessionMeta(resumeSessionId);
-      const msgs = loadSessionHistory(resumeSessionId).length;
+      const history = loadSessionHistory(resumeSessionId);
       const when = meta ? new Date(meta.updatedAt).toLocaleString() : 'unknown';
       console.log(chalk.green(`  Resuming session ${resumeSessionId.slice(0, 24)}…`));
-      console.log(chalk.dim(`  ${msgs} messages · last active ${when}\n`));
+      console.log(chalk.dim(`  ${history.length} messages · last active ${when}\n`));
+      resumeTranscript = buildResumeTranscript(history);
     }
   }
 
@@ -413,7 +415,7 @@ export async function startCommand(options: StartOptions) {
   if (process.stdin.isTTY) {
     await runWithInkUI(agentConfig, model, workDir, version, walletInfo, (cb) => {
       onBalanceFetched = cb;
-    }, fetchBalance, importedKickoffPrompt);
+    }, fetchBalance, importedKickoffPrompt, resumeTranscript);
   } else {
     await runWithBasicUI(agentConfig, model, workDir, importedKickoffPrompt);
   }
@@ -446,6 +448,29 @@ async function runOneShot(agentConfig: AgentConfig, prompt: string): Promise<num
   return exitCode;
 }
 
+function buildResumeTranscript(history: Dialogue[]): Array<{ role: 'user' | 'assistant'; text: string }> {
+  return history
+    .map((msg) => {
+      const text = extractVisibleText(msg).replace(/\s+/g, ' ').trim();
+      if (!text) return null;
+      return { role: msg.role, text };
+    })
+    .filter((entry): entry is { role: 'user' | 'assistant'; text: string } => entry !== null);
+}
+
+function extractVisibleText(msg: Dialogue): string {
+  if (typeof msg.content === 'string') return msg.content;
+  if (!Array.isArray(msg.content)) return '';
+
+  return msg.content
+    .map((part) => {
+      if ('type' in part && part.type === 'text') return part.text;
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
 // ─── Ink UI (interactive terminal) ─────────────────────────────────────────
 
 async function runWithInkUI(
@@ -457,6 +482,7 @@ async function runWithInkUI(
   onBalanceReady?: (cb: (bal: string) => void) => void,
   fetchBalance?: () => Promise<string>,
   initialInput?: string,
+  initialTranscript?: Array<{ role: 'user' | 'assistant'; text: string }>,
 ) {
   const startSnapshot = snapshotStats();
   const ui = launchInkUI({
@@ -465,6 +491,7 @@ async function runWithInkUI(
     version,
     walletAddress: walletInfo?.address,
     walletBalance: walletInfo?.balance,
+    initialTranscript,
     chain: walletInfo?.chain,
     onModelChange: (newModel: string, reason?: 'user' | 'system') => {
       agentConfig.model = newModel;
