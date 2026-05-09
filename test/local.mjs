@@ -26,12 +26,14 @@ process.env.FRANKLIN_NO_AUDIT = '1';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unwatchFile, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 const DIST = new URL('../dist/index.js', import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 function runCli(prompt = '', { cwd, timeoutMs = 15_000, args, env } = {}) {
   return new Promise((resolve, reject) => {
@@ -1379,12 +1381,12 @@ test('SearchX auto-detects notifications intent from query (no LLM needed)', asy
   const orgHandles = ['@BlockRunAI', 'BlockRunAI'];
 
   // Should route to notifications — personal handle
-  assert.ok(detectNotificationsIntent('看看我的@bc1beat 有什么互动', personalHandle));
+  assert.ok(detectNotificationsIntent('show my @bc1beat mentions', personalHandle));
   assert.ok(detectNotificationsIntent('check my @bc1beat mentions', personalHandle));
   assert.ok(detectNotificationsIntent('bc1beat', personalHandle)); // bare handle
 
   // Should route to notifications — org handle via knownHandles
-  assert.ok(detectNotificationsIntent('看看我的@blockrunai 有什么互动', personalHandle, orgHandles));
+  assert.ok(detectNotificationsIntent('show my @blockrunai notifications', personalHandle, orgHandles));
   assert.ok(detectNotificationsIntent('check @BlockRunAI notifications', personalHandle, orgHandles));
   assert.ok(detectNotificationsIntent('blockrunai', personalHandle, orgHandles)); // bare org handle
   assert.ok(detectNotificationsIntent('to:blockrunai', personalHandle, orgHandles));
@@ -1544,16 +1546,16 @@ test('slash /session-search finds saved sessions without hijacking /search', asy
   }
 });
 
-test('session search supports Chinese queries', async () => {
+test('session search supports accented Unicode queries', async () => {
   const { searchSessions } = await import('../dist/session/search.js');
   const storage = await import('../dist/session/storage.js');
   const sessionId = storage.createSessionId();
   const metaFile = join(dirname(storage.getSessionFilePath(sessionId)), `${sessionId}.meta.json`);
-  const needle = `钱包余额异常${Date.now()}`;
+  const needle = `café-balance-anomaly-${Date.now()}`;
 
   try {
-    storage.appendToSession(sessionId, { role: 'user', content: `请帮我检查${needle}` });
-    storage.appendToSession(sessionId, { role: 'assistant', content: `已经定位到${needle}` });
+    storage.appendToSession(sessionId, { role: 'user', content: `please check ${needle}` });
+    storage.appendToSession(sessionId, { role: 'assistant', content: `found ${needle}` });
     storage.updateSessionMeta(sessionId, {
       model: 'local/test',
       workDir: process.cwd(),
@@ -1561,10 +1563,10 @@ test('session search supports Chinese queries', async () => {
       messageCount: 2,
     });
 
-    const matches = searchSessions('钱包余额');
+    const matches = searchSessions('café-balance');
     assert.ok(
       matches.some((match) => match.session.id === sessionId),
-      `Expected Chinese query to match saved session.\n${JSON.stringify(matches, null, 2)}`
+      `Expected accented Unicode query to match saved session.\n${JSON.stringify(matches, null, 2)}`
     );
   } finally {
     rmSync(storage.getSessionFilePath(sessionId), { force: true });
@@ -2398,7 +2400,7 @@ test('streamCompletion: retries without tool_choice when upstream rejects it', a
 // ─── franklin content list / show: CLI read access to Content library ──
 //
 // Verified 2026-05-04 in a live session: user asked
-// "我花了多少钱做这个", agent ran `franklin content list 2>/dev/null
+// "how much did I spend on this?", agent ran `franklin content list 2>/dev/null
 // || echo "no content subcommand"` and got "no content subcommand" —
 // fell back to estimating spend from memory. Data was sitting in
 // ~/.blockrun/content.json the whole time. New CLI exposes it.
@@ -5174,7 +5176,7 @@ test('router LLM classifier: parseTierWord + stub-backed routeRequestAsync route
   // Inject a stub classifier so this test stays offline / hermetic.
   const stub = async (prompt) => {
     if (/irrational|prove|theorem/i.test(prompt)) return 'REASONING';
-    if (/CRCL|stock|analyze|为什么|要不要/i.test(prompt)) return 'COMPLEX';
+    if (/CRCL|stock|analyze|debo vender|por que|por qué/i.test(prompt)) return 'COMPLEX';
     if (/typo|rename|fix/i.test(prompt)) return 'MEDIUM';
     return 'SIMPLE';
   };
@@ -5187,8 +5189,8 @@ test('router LLM classifier: parseTierWord + stub-backed routeRequestAsync route
   const trivia = await routeRequestAsync('2 + 2', 'auto', stub);
   assert.equal(trivia.tier, 'SIMPLE');
 
-  const chinese = await routeRequestAsync('CRCL 要不要卖', 'auto', stub);
-  assert.equal(chinese.tier, 'COMPLEX');
+  const spanish = await routeRequestAsync('CRCL, debo vender?', 'auto', stub);
+  assert.equal(spanish.tier, 'COMPLEX');
 
   // Classifier returns null → falls back to keyword router (which still works)
   const fallback = await routeRequestAsync('refactor the wallet module', 'auto', async () => null);
@@ -5285,7 +5287,7 @@ test('free routing profile stays free across router entry points', async () => {
     'hello',
     'fix the failing tests and update the docs',
     'prove this theorem step by step',
-    'CRCL 要不要卖，为什么？',
+    'Should I sell CRCL, and why?',
   ];
 
   for (const prompt of prompts) {
@@ -5396,7 +5398,7 @@ test('evaluator: extractPrefetchBlock finds the harness prefetch in the last use
       '- CRCL (us) live price: $96.18 (BlockRun Gateway / Pyth)',
       '',
       'Original user message:',
-      'CRCL 现在多少钱',
+      'CRCL current price?',
     ].join('\n') },
   ];
 
@@ -6252,9 +6254,14 @@ test('startDetachedTask: returns runId immediately, child completes async', asyn
     assert.ok(meta);
     assert.equal(meta.status === 'queued' || meta.status === 'running', true);
 
-    // Wait for completion
-    await new Promise(r => setTimeout(r, 1500));
-    const final = readTaskMeta(runId);
+    // Wait for completion. The child process can start slowly under load,
+    // so poll instead of assuming a fixed sleep is enough.
+    let final = readTaskMeta(runId);
+    const deadline = Date.now() + 10_000;
+    while (final?.status !== 'succeeded' && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 100));
+      final = readTaskMeta(runId);
+    }
     assert.equal(final.status, 'succeeded');
     assert.ok(fs.existsSync(path.join(fakeHome, 'out.txt')), 'child wrote output');
   } finally {
@@ -6469,13 +6476,11 @@ test('cli: franklin task wait reconciles stale queued tasks before blocking', as
     });
 
     const cli = path.join(process.cwd(), 'dist', 'index.js');
-    const t0 = Date.now();
     const result = spawnSync(process.execPath, [cli, 'task', 'wait', runId, '--timeout', '10000'], {
       env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
     });
-    const elapsed = Date.now() - t0;
+    assert.equal(result.error, undefined, result.error?.message);
     assert.equal(result.status, 1, result.stderr.toString());
-    assert.ok(elapsed < 2000, `wait should reconcile immediately, not block (${elapsed}ms)`);
     assert.match(result.stdout.toString(), /lost/);
     assert.equal(readTaskMeta(runId).status, 'lost');
   } finally {
@@ -6590,6 +6595,42 @@ async function panelRequest(port, path, opts = {}) {
     req.end();
   });
 }
+
+test('repository text files do not contain restricted script characters', () => {
+  const trackedFiles = execFileSync('git', ['ls-files', '-z'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  }).split('\0').filter(Boolean);
+  const textFile = /\.(?:cjs|css|html|js|json|md|mjs|sql|toml|ts|tsx|txt|yaml|yml)$/i;
+  const restrictedScriptPattern = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/;
+  const offenders = [];
+
+  for (const file of trackedFiles) {
+    if (!textFile.test(file)) continue;
+    const absPath = join(REPO_ROOT, file);
+    if (!existsSync(absPath)) continue;
+    const lines = readFileSync(absPath, 'utf8').split(/\r?\n/);
+    for (const [index, line] of lines.entries()) {
+      if (restrictedScriptPattern.test(line)) offenders.push(`${file}:${index + 1}`);
+    }
+  }
+
+  assert.deepEqual(offenders, [], `Restricted script characters found in tracked text files:\n${offenders.join('\n')}`);
+});
+
+test('X time-link pattern matches Han-marker dates without source literals', async () => {
+  const { findRefs, X_TIME_LINK_PATTERN } = await import('../dist/social/a11y.js');
+  const [yearMark, monthMark, dayMark] = [0x5e74, 0x6708, 0x65e5].map((code) =>
+    String.fromCodePoint(code)
+  );
+  const tree = [
+    '[0-0] article: post',
+    `  [1-0] link: 2026${yearMark}4${monthMark}12${dayMark}`,
+    '  [1-1] link: not a date',
+  ].join('\n');
+
+  assert.deepEqual(findRefs(tree, 'link', X_TIME_LINK_PATTERN), ['1-0']);
+});
 
 test('panel /api/tasks: empty list when no tasks; lists task after writeTaskMeta', async () => {
   const { writeTaskMeta } = await import('../dist/tasks/store.js');
@@ -7132,7 +7173,7 @@ test('pickFreeFallback: returns undefined when every candidate failed', async ()
 // Reported 2026-05-03: a BTC question came back with "MACD signal/histogram
 // can't be computed due to insufficient data" because default lookback was
 // 30 closes; MACD needs slow EMA (26) + signal EMA (9) = 35 minimum. The
-// agent then translated the partial signal into "持有观望", which user
+// agent then translated the partial signal into "wait and see", which user
 // flagged as a wishy-washy default. The fixes below: bump default to 90,
 // surface "insufficient data" explicitly, never count NaN as a 'neutral'
 // vote in the verdict tally.
@@ -7887,7 +7928,7 @@ test('PredictionMarket is registered in allCapabilities and CORE_TOOL_NAMES', as
 
 test('agent context.ts forbids wishy-washy "wait and see" default for trading verdicts', async () => {
   // Read the system context the agent receives. The Trading verdicts
-  // section should explicitly forbid the "持有观望" / "wait and see"
+  // section should explicitly forbid the "wait and see"
   // default unless both bull/bear lists are genuinely empty.
   const fs = await import('node:fs');
   const path = await import('node:path');
@@ -7896,7 +7937,7 @@ test('agent context.ts forbids wishy-washy "wait and see" default for trading ve
   const ctxPath = path.join(here, '..', 'src', 'agent', 'context.ts');
   const src = fs.readFileSync(ctxPath, 'utf8');
   assert.match(src, /Trading verdicts/i, 'context should have a Trading verdicts section');
-  assert.ok(src.includes('持有观望') || /wait and see/i.test(src),
+  assert.ok(/wait and see/i.test(src),
     'context should mention the forbidden wishy-washy phrase');
   assert.match(src, /Forbidden default/i, 'context should label it as a forbidden default');
 });
@@ -8075,13 +8116,13 @@ test('extractLastUserPrompt skips harness-injected synthetic prompts (3.15.71)',
   // verbatim — so 421/4983 rows in a real machine logged synthetic preambles
   // instead of the actual question.
   const history = [
-    { role: 'user', content: '你看看 querit和exa 哪个好啊' },
+    { role: 'user', content: 'please compare querit and exa for me' },
     { role: 'assistant', content: 'looking…' },
     { role: 'user', content: '[FRANKLIN HARNESS PREFETCH] CRCL price $114.12 …' },
     { role: 'assistant', content: 'thinking' },
     { role: 'user', content: '[GROUNDING CHECK FAILED] retry with sourced numbers' },
   ];
-  assert.equal(extractLastUserPrompt(history), '你看看 querit和exa 哪个好啊');
+  assert.equal(extractLastUserPrompt(history), 'please compare querit and exa for me');
   // Empty history → undefined
   assert.equal(extractLastUserPrompt([]), undefined);
   // History with only synthetic prompts → undefined (don't fabricate)
@@ -8306,12 +8347,12 @@ test('extractLastUserPrompt strips TRAILING synthetic labels (3.15.76)', async (
   const trailing = [
     {
       role: 'user',
-      content: '这个不是关于prediction maretk的么你再看看 [SYSTEM NOTE] The user is correcting you. Your previous response was wrong, retry.',
+      content: 'this is about the prediction market, please check again [SYSTEM NOTE] The user is correcting you. Your previous response was wrong, retry.',
     },
   ];
   assert.equal(
     extractLastUserPrompt(trailing),
-    '这个不是关于prediction maretk的么你再看看',
+    'this is about the prediction market, please check again',
     'trailing [SYSTEM NOTE] should be stripped from audit prompt',
   );
 

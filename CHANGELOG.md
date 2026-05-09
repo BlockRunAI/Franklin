@@ -3,67 +3,63 @@
 ## 3.15.88 — Source code is English-only by policy
 
 \`grep -rE '[\\x{4e00}-\\x{9fff}]' src/ --include='*.ts'\` now returns
-zero matches. Sweep across 12 files cleaning literal Chinese characters
-out of comments, system prompts, tool spec descriptions, classifier
-keyword arrays, and few-shot examples. Continuing the
-"English-only by policy" rule first applied in 3.15.81 (CJK regex
+zero matches. Sweep across source, tests, changelog, and release notes
+cleaning literal restricted-script characters out of comments, system
+prompts, tool spec descriptions, classifier keyword arrays, and few-shot
+examples. Continuing the
+"English-only by policy" rule first applied in 3.15.81 (localized regex
 branches dropped from \`looksLikeStalledIntent\`), now generalized
-to the whole \`src/\` tree.
+across tracked text files.
 
 ### What changed in code
 
 - **Tool spec descriptions** (\`src/tools/wallet.ts\`,
   \`src/tools/prediction.ts\`, \`src/tools/searchx.ts\`): example user
-  phrases like \`钱包余额\` / \`复制交易\` / \`互动\` removed from
+  phrases like \`wallet balance\` / \`copy trade\` / \`mentions\` removed from
   routing examples and notification keyword lists. The model is
   multilingual; it can still apply the routing rule when the actual
   user types in any language.
-- **System prompt** (\`src/agent/context.ts\`): routing nudges and
-  forbidden-phrase lists translated to English, with a note that the
-  rule applies "in any language" so models route Chinese / Japanese /
-  Korean queries the same way.
+- **System prompts** (\`src/agent/context.ts\`,
+  \`src/learnings/extractor.ts\`): routing nudges, forbidden-phrase
+  lists, and language examples translated to generic English wording.
 - **Loop comments + few-shot examples** (\`src/agent/loop.ts\`,
   \`src/agent/turn-analyzer.ts\`, \`src/agent/media-router.ts\`,
   \`src/agent/evaluator.ts\`, \`src/commands/content.ts\`): inline
-  Chinese examples translated.
+  non-English examples translated or replaced.
 - **Domain-relevance regex** (\`src/agent/loop.ts:isToolRelevantToPrompt\`):
-  CJK alternation branches dropped from the crypto / X.com / media
+  localized alternation branches dropped from the crypto / X.com / media
   detection regexes. Same shape as the 3.15.81 fix.
 - **Router fast-path keyword arrays** (\`src/router/categories.ts\`,
-  \`src/router/index.ts\`): per-category Chinese keyword lists removed.
+  \`src/router/index.ts\`): per-category localized keyword lists removed.
   The LLM-based classifier above the keyword fast-path is multilingual
-  and continues to route Chinese / other-language queries correctly.
+  and continues to route other-language queries correctly.
 
-### One exception kept (with Unicode escapes)
+### No encoded exception kept
 
-\`src/social/a11y.ts:X_TIME_LINK_PATTERN\` — the regex that parses
-tweet-timestamp links on X.com needs to match Chinese-locale dates
-like \`2026年4月12日\` because that's the literal string X.com renders
-for users with Chinese-locale settings. Functionality preserved; the
-literal CJK characters in the regex source were replaced with Unicode
-escapes (\`\\u5e74\\u6708\\u65e5\`) so the source file passes the
-"no Chinese characters in source" sweep while still parsing the
-external data correctly.
+\`src/social/a11y.ts:X_TIME_LINK_PATTERN\` no longer carries escaped
+restricted-script date markers. The source policy is enforced literally,
+not by hiding restricted-script text behind Unicode escapes.
 
 ### What didn't change
 
-- \`test/local.mjs\` — test fixtures that simulate real user input in
-  Chinese (e.g. *"querit和exa哪个好"*) are intentionally kept. Those
-  are data, not code logic — they verify the multilingual extract /
-  trim / sanitize paths work on real-world inputs.
-- \`CHANGELOG.md\` and release notes — quoting real user sessions for
-  evidence is fair game.
+- \`test/local.mjs\` — test fixtures that simulate multilingual user
+  input use Latin-script examples. They verify the extract / trim /
+  sanitize paths without embedding restricted-script characters in the
+  codebase.
+- \`CHANGELOG.md\` and release notes — real-session evidence is
+  paraphrased in English so the repository remains restricted-script-free.
 
 ### Behavioral implications
 
 The LLM-level classifier already handles multilingual input well
 (verified across PR #43–#47 sessions today, all of which routed
 correctly through the LLM tier). The keyword fast-path serves a small
-optimization role; dropping its CJK coverage shifts those queries
+optimization role; dropping its localized coverage shifts those queries
 through the LLM tier on the cold path. Net spend impact:
 indistinguishable from noise.
 
-361/361 tests pass.
+362/362 tests pass, including a tracked-text guard that fails on
+restricted-script characters.
 
 ## 3.15.87 — PR #47: terminal returns immediately on exit; learning extraction is opt-in
 
@@ -310,8 +306,8 @@ already has rows still surfaces the ledger summary.
 
 ## 3.15.81 — stalled-intent detector is English-only
 
-Drops the CJK regex branches added in 3.15.80. Franklin's source-level
-detection logic stays English-only by policy — Chinese / other locales
+Drops the localized regex branches added in 3.15.80. Franklin's source-level
+detection logic stays English-only by policy — non-English locales
 should not ship in agent code.
 
 ## 3.15.80 — stalled-intent recovery: switch model when a turn declares an action but emits no tool_use
@@ -471,7 +467,7 @@ hour today.**
 
 ### End-of-turn marker — silence after a question is no longer "death"
 
-Real failure pattern: agent finishes a turn with *"要我查一下 X 吗?"*,
+Real failure pattern: agent finishes a turn with *"Should I look up X?"*,
 the terminal goes quiet, the user reads the silence as "Franklin died"
 and pings to check the log. Twice in one hour today on the same
 session. The Ink input box is already on screen but easy to miss after
@@ -696,7 +692,7 @@ formatter regressions.
 
 ### Real before/after on the user's session
 
-User asked: *"0xdfe3fedc... 分析这个Polymarket地址，可以复制交易吗？"*
+User asked: *"0xdfe3fedc... analyze this Polymarket address; can I copy this trader?"*
 
 **Before (3.15.74):**
 \`\`\`
@@ -791,7 +787,7 @@ not query-parameter):
 | Positions (open + historical) | \`GET /v1/pm/polymarket/wallet/positions/{wallet}\` |
 
 Verified 2026-05-06 in a real session: opus-4.7 picked
-\`walletProfile\` correctly for "analyze 0xdfe3fedc... 复制交易"
+\`walletProfile\` correctly for "analyze 0xdfe3fedc... copy trade"
 but only got the batch endpoint, which (a) wasn't the right
 data shape for the question and (b) returned 422 because of the
 param-name bug. Even after the param fix, the agent would still
@@ -817,7 +813,7 @@ exists to provide.
 ### Routing nudge for the trader-analysis pattern
 
 \`context.ts\` system prompt and the tool description both now
-direct: *"analyze this wallet / can I copy this trader / 复制交易
+direct: *"analyze this wallet / can I copy this trader / copy trade
 / show me their P&L AND positions"* → run \`walletProfile\` +
 \`walletPnl\` + \`walletPositions\` **in parallel** with the same
 address. Three \$0.005 calls = full picture for \$0.015. Explicitly
@@ -1742,7 +1738,7 @@ retry.
 
 ## 3.15.58 — \`franklin content list / show\` — agent stops estimating spend from memory
 
-Verified 2026-05-04 in a live session: user asked "我花了多少钱做这个"
+Verified 2026-05-04 in a live session: user asked "how much did I spend on this?"
 after a creative-content burst (3 keyframes + 3 videos through
 ImageGen + VideoGen). The agent's response:
 
@@ -1753,7 +1749,7 @@ TR(err=False, "no content subcommand\n")
 
 Then the agent reconstructed the spend from memory:
 
-> 两次工程：v1 $0.46 + v2 $0.92 = $1.38 / $2.00 budget
+> Two creative passes: v1 $0.46 + v2 $0.92 = $1.38 / $2.00 budget
 
 The exact data was already on disk at \`~/.blockrun/content.json\`,
 written by the \`ContentCreate\` and \`ContentAddAsset\` capabilities
@@ -2030,7 +2026,7 @@ that asserts the helper definition + reason labels appear in
 ## 3.15.54 — TradingMarket finds TON (and any other unknown ticker via CoinGecko /search)
 
 Verified 2026-05-04 in a live side-panel session: user asked
-"帮我分析 TON 代币", TradingMarket returned:
+"analyze the TON token", TradingMarket returned:
 
 \`\`\`
 Error: No CoinGecko data for TON
@@ -2231,13 +2227,13 @@ retry cases).
 Live session 2026-05-04:
 
 \`\`\`
-你是想：
-1. 用我的 VideoGen 工具直接生成（约 \$0.42，8 秒），还是
-2. 自己拿这张图去 Seedance Pro 上生成？
+Do you want:
+1. Generate directly with my VideoGen tool (about \$0.42, 8 seconds), or
+2. Take this image to Seedance Pro yourself?
 ❯ 1
-…视频生成被取消了（没有扣费）。
+...video generation was canceled (no charge).
 ❯ 1
-…视频生成又被取消了。
+...video generation was canceled again.
 \`\`\`
 
 Wallet had **\$94.72**. Content budget had **\$2.00 untouched**.
@@ -2488,7 +2484,7 @@ After the fix the same machine shows:
 
 \`\`\`
 t_morrbsvn_667517d7  running       14m  ETL v3 - no capture_output
-t_morr21tl_6aa34dc3  failed        15m  ETL v2 - 500文件/批
+t_morr21tl_6aa34dc3  failed        15m  ETL v2 - 500 files/batch
 \`\`\`
 
 Running task age now matches the user's intuition. Terminal
@@ -3111,8 +3107,8 @@ Reading the same Opus session minutes after shipping 3.15.28's
 count-based hard stop revealed an over-correction. The session was at
 \`Bash\` call **#15**, making distinct \`gsutil\` / \`bq\` queries
 against the BlockRun GCS log bucket — each call producing genuinely
-new information ("2 月文件是 pretty-printed JSON 不是 NDJSON",
-"BQ NDJSON parser 不能直接读"...). 3.15.28 would have killed it at
+new information ("February files are pretty-printed JSON, not NDJSON",
+"BQ NDJSON parser cannot read that directly"...). 3.15.28 would have killed it at
 call 6, mistaking legitimate exploration for a search loop.
 
 The actual failure mode 3.15.28 was meant to catch is the model
@@ -3688,14 +3684,14 @@ release adds the tool.
   missing action, missing conditionId for smartMoney), and registration
   in both \`allCapabilities\` and \`CORE_TOOL_NAMES\`.
 
-## 3.15.13 — TradingSignal: 90d default, real verdict, no more "持有观望"
+## 3.15.13 — TradingSignal: 90d default, real verdict, no more "wait and see"
 
 Same BTC report from 2026-05-03 had a second-order bug. After the
 agent landed on a model that could read the tool output, TradingSignal
 returned `MACD: 1822.73 / Signal: NaN / Histogram: NaN — neutral`
 because default lookback was 30 closes — MACD needs slow EMA (26) +
 signal EMA (9) = 35 minimum. Agent translated the partial signal into
-"持有观望" / "wait and see", the exact wishy-washy default the user
+"wait and see", the exact wishy-washy default the user
 had flagged before. Three fixes, one report:
 
 - `tools/trading`: \`TradingSignal\` default \`days\` 30 → 90. Added a
@@ -3710,7 +3706,7 @@ had flagged before. Three fixes, one report:
   includes a **Data Notes** section with the exact gap and a
   re-run hint.
 - `agent/context`: new "Trading verdicts" rule alongside the
-  forbidden-phrases section. Forbids "持有观望" / "wait and see" /
+  forbidden-phrases section. Forbids "wait and see" /
   "hold for clearer signals" as a default — only acceptable when the
   Verdict is genuinely \`neutral\` AND both bull/bear signal lists are
   empty (or 1-of-each tie). Otherwise the agent must commit to the
@@ -3912,8 +3908,8 @@ Pro on launch promo makes Auto cheap and capable enough to span both ends.
 ## 3.15.5 — Quieter agent voice; YouTube transcripts; visible auto-compaction
 
 UX polish driven by a real session log: the model narrated every step
-("让我先 X...", "Now I have...", "好，现在我..."), Korean phrases leaked
-into a Chinese reply, three pasted YouTube URLs returned 32 tokens of
+("Let me check X...", "Now I have...", "Okay, now I..."), another-language phrases leaked
+into a localized reply, three pasted YouTube URLs returned 32 tokens of
 "can't access YouTube", and a 215K→9K context drop between turns had
 no explanation.
 
@@ -3921,9 +3917,9 @@ no explanation.
   Efficiency section said "do not narrate" while Tone & Style said
   "use a period not a colon" with the same example — models followed
   the latter and narrated freely. New rule explicitly bans pre-tool
-  phrases ("Let me read…", "让我先…", "好，现在我…") and adds a
+  phrases ("Let me read...", "Let me first...", "Okay, now I...") and adds a
   language-consistency rule so private reasoning in another language
-  ("좋아", "OK now") doesn't leak into user-facing text.
+  ("d'accord", "OK now") doesn't leak into user-facing text.
 - `WebFetch`: detects YouTube URLs (`youtube.com/watch`, `youtu.be`,
   `youtube.com/shorts`) and fetches the auto-caption transcript
   directly via `ytInitialPlayerResponse`. No external dependencies, no
@@ -3946,7 +3942,7 @@ had to flag it.
 
 - `router`: new `RESEARCH` signal (`+0.30` score). Detects fact-lookup
   intent — `who is`, `when was`, `best`, `top`, `compare`, `latest`,
-  `current`, `members`, `price of`, plus Chinese equivalents. Pushes
+  `current`, `members`, `price of`, plus localized equivalents. Pushes
   these prompts to a tier with WebSearch in its toolset instead of
   letting a cheap text-only model guess. Removed `who is` / `when was`
   / `capital of` / `how old` from `SIMPLE_KEYWORDS` for the same reason.
@@ -4906,7 +4902,7 @@ bug is fixed.
   - `/help` now shows a Skills block when the registry is non-empty.
 - **Wallet tool.** New first-class read-only `Wallet` capability in
   `CORE_TOOL_NAMES` returns chain + address + USDC balance in a single
-  zero-arg call. The system prompt steers "balance / 钱包余额 / wallet
+  zero-arg call. The system prompt steers "balance / wallet balance / wallet
   status" questions there explicitly so they no longer detour through
   Bash + `franklin balance` + parse, which was burning ~13K input tokens
   per natural-language balance query.

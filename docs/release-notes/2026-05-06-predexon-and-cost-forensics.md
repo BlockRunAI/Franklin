@@ -31,7 +31,7 @@ gateway. Replaced + extended. The tool now offers:
 | `smartMoney` | $0.005 | Per-condition_id smart-money drill-down |
 
 The `walletProfile + walletPnl + walletPositions` triplet is the new default
-routing for *"analyze this wallet / can I copy this trader / 复制交易"*: three
+routing for *"analyze this wallet / can I copy this trader / copy trade"*: three
 parallel $0.005 calls = full picture for $0.015. The system prompt explicitly
 forbids `Bash`-curling `data-api.polymarket.com` directly — agents now use the
 paid path the architecture exists to provide.
@@ -75,7 +75,7 @@ ship silently again.
 
 ### Real before/after
 
-User asked: *"0xdfe3fedc... 分析这个Polymarket地址，可以复制交易吗？"*
+User asked: *"0xdfe3fedc... analyze this Polymarket address; can I copy this trader?"*
 
 **Before:**
 ```
