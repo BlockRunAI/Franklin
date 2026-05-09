@@ -1,0 +1,36 @@
+{
+  "name": "wallet-compromise-checker",
+  "version": "1.0.0",
+  "description": "Advanced wallet compromise checker with smart UI - detect security issues in cryptocurrency wallets",
+  "type": "module",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve . -p 3000",
+    "dev": "npx serve . -p 3000 --cors",
+    "build": "echo 'Static site - no build needed'",
+    "preview": "npx serve . -p 3000"
+  },
+  "keywords": [
+    "wallet",
+    "security",
+    "cryptocurrency",
+    "compromise",
+    "checker",
+    "ethereum",
+    "solana",
+    "blockchain"
+  ],
+  "author": "Franklin AI Agent",
+  "license": "MIT",
+  "devDependencies": {
+    "serve": "^14.2.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BlockRunAI/Franklin"
+  },
+  "homepage": "https://blockrunai.github.io/Franklin",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

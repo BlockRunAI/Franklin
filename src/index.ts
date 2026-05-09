@@ -18,6 +18,7 @@ process.on('exit', () => flushStats());
 import { setupCommand } from './commands/setup.js';
 import { startCommand } from './commands/start.js';
 import { balanceCommand } from './commands/balance.js';
+import { buildWalletCommand } from './commands/wallet.js';
 import { modelsCommand } from './commands/models.js';
 import { configCommand } from './commands/config.js';
 import { statsCommand } from './commands/stats.js';
@@ -124,6 +125,8 @@ program
   .command('balance')
   .description('Check wallet USDC balance')
   .action(balanceCommand);
+
+program.addCommand(buildWalletCommand());
 
 program
   .command('config <action> [key] [value]')

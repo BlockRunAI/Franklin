@@ -17,6 +17,11 @@ export {
   getAddress,
 } from './manager.js';
 
+export {
+  checkWalletCompromise,
+  formatWalletCompromiseReport,
+} from './compromise.js';
+
 // ─── Re-exports from @blockrun/llm ────────────────────────────────────────
 // So callers only need one import: `@blockrun/franklin/wallet`.
 

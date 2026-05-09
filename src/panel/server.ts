@@ -276,6 +276,18 @@ export function createPanelServer(port: number): http.Server {
         return;
       }
 
+      // ─── Wallet compromise check ────────────────────────────────────────
+      if (p === '/api/wallet/check') {
+        try {
+          const { checkWalletCompromise } = await import('../wallet/compromise.js');
+          const report = await checkWalletCompromise();
+          json(res, report);
+        } catch (err) {
+          json(res, { error: (err as Error).message }, 500);
+        }
+        return;
+      }
+
       // ─── Wallet import (loopback only) ──────────────────────────────────
       // Overwrites the local wallet with a user-supplied private key.
       // Destructive — overwrites the existing wallet file without backup,

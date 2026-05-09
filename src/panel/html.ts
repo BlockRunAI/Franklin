@@ -619,6 +619,22 @@ a:hover { text-decoration:underline; }
           <li>Consider deleting the local file once imported if you no longer want Franklin to spend from it.</li>
         </ol>
       </div>
+
+      <div class="card">
+        <h3>Security check</h3>
+        <p class="wallet-hint">
+          Scan your wallet for compromise indicators: file permissions, address mismatches,
+          and other security issues that could indicate your private key has been exposed.
+        </p>
+        <div class="wallet-actions">
+          <button class="btn" id="wallet-check-btn">Run security check</button>
+          <span class="wallet-import-status" id="wallet-check-status"></span>
+        </div>
+        <div id="wallet-check-results" style="display:none; margin-top:14px;">
+          <div id="wallet-check-summary" style="margin-bottom:10px; font-weight:600;"></div>
+          <div id="wallet-check-items"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1149,6 +1165,63 @@ document.getElementById('wallet-import-btn').addEventListener('click', async () 
     document.getElementById('wallet-import-input').value = '';
     loadWallet();
     loadOverview();
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
+    status.className = 'wallet-import-status err';
+  }
+});
+
+// Security check
+document.getElementById('wallet-check-btn').addEventListener('click', async () => {
+  const status = document.getElementById('wallet-check-status');
+  const results = document.getElementById('wallet-check-results');
+  const summary = document.getElementById('wallet-check-summary');
+  const items = document.getElementById('wallet-check-items');
+
+  status.className = 'wallet-import-status';
+  status.textContent = 'Checking…';
+  results.style.display = 'none';
+
+  try {
+    const r = await fetch('/api/wallet/check');
+    const report = await r.json();
+    if (!r.ok) {
+      status.textContent = 'Error: ' + (report.error || r.statusText);
+      status.className = 'wallet-import-status err';
+      return;
+    }
+
+    // Determine overall status
+    const hasErrors = report.items.some(item => item.status === 'error');
+    const hasWarnings = report.items.some(item => item.status === 'warning');
+
+    let summaryText = '✅ No security issues found';
+    let summaryClass = 'ok';
+
+    if (hasErrors) {
+      summaryText = '❌ Security issues detected — action required';
+      summaryClass = 'err';
+    } else if (hasWarnings) {
+      summaryText = '⚠️ Potential security concerns found';
+      summaryClass = 'warn';
+    }
+
+    summary.textContent = summaryText;
+    summary.className = `wallet-import-status ${summaryClass}`;
+
+    // Render items
+    items.innerHTML = report.items.map(item => {
+      const marker = item.status === 'ok' ? '✅' : item.status === 'warning' ? '⚠️' : '❌';
+      const detail = item.detail ? ` — ${esc(item.detail)}` : '';
+      return `<div style="margin-bottom:8px; padding:8px; border-radius:6px; background:oklch(0 0 0 / 20%);">
+        ${marker} ${esc(item.description)}${detail}
+      </div>`;
+    }).join('');
+
+    results.style.display = 'block';
+    status.textContent = 'Check completed';
+    status.className = 'wallet-import-status ok';
+
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
     status.className = 'wallet-import-status err';

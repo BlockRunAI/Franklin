@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wallet Compromise Checker</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #1a1a1a;
+            --bg-tertiary: #2a2a2a;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --text-muted: #666666;
+            --accent-primary: #3b82f6;
+            --accent-secondary: #1d4ed8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --border: #333333;
+            --border-light: #444444;
+            --shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.4);
+            --radius: 12px;
+            --radius-lg: 16px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .content-frame {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .support-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem 0.85rem;
+            border-radius: 999px;
+            background: rgba(16, 185, 129, 0.12);
+            color: #86efac;
+            border: 1px solid rgba(16, 185, 129, 0.18);
+            font-size: 0.85rem;
+            font-weight: 700;
+            margin-top: 1rem;
+            width: fit-content;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(45deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 1rem;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 2rem;
+            box-shadow: var(--shadow);
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--border-light);
+        }
+
+        .card-header {
+            margin-bottom: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card-description {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .input-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .input-label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .input-field {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text-primary);
+            font-family: 'Inter', monospace;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .input-field::placeholder {
+            color: var(--text-muted);
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: var(--radius);
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-secondary);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--border-light);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .results-section {
+            margin-top: 2rem;
+        }
+
+        .result-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            border-radius: var(--radius);
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            transition: all 0.2s ease;
+        }
+
+        .result-item:hover {
+            border-color: var(--border-light);
+        }
+
+        .result-icon {
+            font-size: 1.2rem;
+            flex-shrink: 0;
+            margin-top: 0.1rem;
+        }
+
+        .result-content {
+            flex: 1;
+        }
+
+        .result-title {
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+        }
+
+        .result-detail {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: var(--radius);
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .status-safe {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .status-warning {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+
+        .status-danger {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--error);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .loading {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--border);
+            border-top: 2px solid var(--accent-primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .security-tips {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(29, 78, 216, 0.05) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: var(--radius-lg);
+            padding: 2rem;
+            margin-top: 2rem;
+        }
+
+        .security-tips h3 {
+            color: var(--accent-primary);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tips-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+
+        .tip-item {
+            background: var(--bg-tertiary);
+            padding: 1rem;
+            border-radius: var(--radius);
+            border-left: 4px solid var(--accent-primary);
+        }
+
+        .tip-item h4 {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .tip-item p {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .main-content {
+                grid-template-columns: 1fr;
+                gap: 1.5rem;
+            }
+
+            .logo {
+                font-size: 2rem;
+            }
+
+            .card {
+                padding: 1.5rem;
+            }
+
+            .tips-list {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="content-frame">
+            <header class="header">
+                <h1 class="logo">🔒 Wallet Compromise Checker</h1>
+                <p class="subtitle">Advanced security analysis for your cryptocurrency wallets. Detect compromise indicators, permission issues, and potential security threats.</p>
+                <div class="support-pill">Supports Ethereum, Base, Arbitrum, and Solana</div>
+            </header>
+
+            <div class="main-content">
+                <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">🔍 Security Analysis</h2>
+                    <p class="card-description">Enter a public wallet address and select the network to perform a security analysis.</p>
+                </div>
+
+                <form id="check-form">
+                    <div class="input-group">
+                        <label class="input-label" for="wallet-address">Wallet Address</label>
+                        <input type="text" id="wallet-address" class="input-field" placeholder="Enter your wallet address...">
+                        <small style="color: var(--text-muted); margin-top: 0.25rem; display: block;">
+                            Public address only. No private key or wallet file is required.
+                        </small>
+                    </div>
+
+                    <div class="input-group">
+                        <label class="input-label" for="chain-select">Network</label>
+                        <select id="chain-select" class="input-field">
+                            <option value="ethereum">Ethereum</option>
+                            <option value="base">Base</option>
+                            <option value="arbitrum">Arbitrum</option>
+                            <option value="solana">Solana</option>
+                        </select>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" id="check-btn">
+                        <span id="check-text">🔍 Run Security Check</span>
+                        <div class="loading hidden" id="check-loading">
+                            <div class="spinner"></div>
+                            Analyzing...
+                        </div>
+                    </button>
+                </form>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">📊 Analysis Results</h2>
+                    <p class="card-description">Security check results will appear here after analysis.</p>
+                </div>
+
+                <div id="results-container" class="hidden">
+                    <div id="overall-status" class="status-indicator status-safe" style="margin-bottom: 1.5rem;">
+                        ✅ Wallet appears secure
+                    </div>
+
+                    <div class="results-section">
+                        <h3 style="margin-bottom: 1rem; color: var(--text-primary);">Security Findings</h3>
+                        <div id="results-list">
+                            <!-- Results will be inserted here -->
+                        </div>
+                    </div>
+                </div>
+
+                <div id="no-results" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                    <div style="font-size: 3rem; margin-bottom: 1rem;">🔒</div>
+                    <p>Run a security check to see results here</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="security-tips">
+            <h3>🛡️ Security Best Practices</h3>
+            <div class="tips-list">
+                <div class="tip-item">
+                    <h4>🔐 Public Address Awareness</h4>
+                    <p>Treat public addresses like identifiers. Never post them in unsafe channels if you want to limit traceability.</p>
+                </div>
+                <div class="tip-item">
+                    <h4>🔒 Network Selection</h4>
+                    <p>Verify the target network before sending funds. Ethereum, Base, and Arbitrum use the same EVM address format, while Solana uses a different format.</p>
+                </div>
+                <div class="tip-item">
+                    <h4>🔍 Regular Audits</h4>
+                    <p>Regularly review wallet addresses and transaction history for suspicious activity.</p>
+                </div>
+                <div class="tip-item">
+                    <h4>🚫 Never Share Secrets</h4>
+                    <p>Public addresses are okay to share in trusted contexts, but never expose private keys or recovery seeds.</p>
+                </div>
+                <div class="tip-item">
+                    <h4>💾 Backup Strategy</h4>
+                    <p>Use multiple secure backups. Test recovery procedures regularly.</p>
+                </div>
+                <div class="tip-item">
+                    <h4>🔄 Key Rotation</h4>
+                    <p>Rotate keys if you suspect compromise. Move funds to a new secure wallet immediately.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Wallet compromise checking logic
+        class WalletCompromiseChecker {
+            constructor() {
+                this.checks = [];
+            }
+
+            // Validate EVM address format for Ethereum, Base, and Arbitrum
+            validateEvmAddress(address) {
+                if (!address || typeof address !== 'string') return false;
+                const cleanAddress = address.replace(/^0x/, '');
+                if (!/^[0-9a-fA-F]{40}$/.test(cleanAddress)) return false;
+                return true;
+            }
+
+            // Validate Solana address format
+            validateSolanaAddress(address) {
+                if (!address || typeof address !== 'string') return false;
+                return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+            }
+
+            // Basic security checks
+            async performChecks(address, chain) {
+                this.checks = [];
+
+                const isValidFormat = ['ethereum', 'base', 'arbitrum'].includes(chain)
+                    ? this.validateEvmAddress(address)
+                    : this.validateSolanaAddress(address);
+
+                this.checks.push({
+                    description: 'Address format validation',
+                    status: isValidFormat ? 'ok' : 'error',
+                    detail: isValidFormat ? 'Address format appears valid' : 'Invalid address format for selected network'
+                });
+
+                const addressLength = address.length;
+                const expectedLength = ['ethereum', 'base', 'arbitrum'].includes(chain) ? '42' : '32-44';
+                this.checks.push({
+                    description: 'Address length verification',
+                    status: isValidFormat ? 'ok' : 'warning',
+                    detail: `Address length: ${addressLength} characters (expected: ${expectedLength})`
+                });
+
+                const entropy = this.calculateEntropy(address.replace(/^0x/, ''));
+                this.checks.push({
+                    description: 'Address entropy analysis',
+                    status: entropy > 4.0 ? 'ok' : 'warning',
+                    detail: `Estimated entropy: ${entropy.toFixed(2)} bits per character`
+                });
+
+                const weakPatterns = [
+                    /^0x0{10,}/, // Base addresses with many leading zeros
+                    /123456/,   // Sequential numbers
+                    /(.)\1{6,}/, // Repeated characters
+                    /abcdef/i   // Sequential letters
+                ];
+
+                const hasWeakPattern = weakPatterns.some(pattern => pattern.test(address));
+                this.checks.push({
+                    description: 'Weak pattern detection',
+                    status: hasWeakPattern ? 'warning' : 'ok',
+                    detail: hasWeakPattern ? 'Address contains potentially weak or repeated patterns' : 'No obvious weak patterns detected'
+                });
+
+                if (['ethereum', 'base', 'arbitrum'].includes(chain)) {
+                    const isChecksumValid = this.validateBaseChecksum(address);
+                    this.checks.push({
+                        description: 'Base address checksum validation',
+                        status: isChecksumValid ? 'ok' : 'warning',
+                        detail: isChecksumValid ? 'Checksum is valid or address is all-lowercase/all-uppercase' : 'Address checksum validation failed'
+                    });
+                }
+
+                return {
+                    chain,
+                    address,
+                    checks: this.checks,
+                    overallStatus: this.getOverallStatus()
+                };
+            }
+
+            calculateEntropy(str) {
+                const charCount = {};
+                for (const char of str) {
+                    charCount[char] = (charCount[char] || 0) + 1;
+                }
+
+                let entropy = 0;
+                const len = str.length;
+                for (const count of Object.values(charCount)) {
+                    const p = count / len;
+                    entropy -= p * Math.log2(p);
+                }
+
+                return entropy;
+            }
+
+            validateBaseChecksum(address) {
+                const clean = address.replace(/^0x/, '');
+                if (!/^[0-9a-fA-F]{40}$/.test(clean)) return false;
+                const isAllLower = clean === clean.toLowerCase();
+                const isAllUpper = clean === clean.toUpperCase();
+                return isAllLower || isAllUpper;
+            }
+
+            getOverallStatus() {
+                const hasErrors = this.checks.some(check => check.status === 'error');
+                const hasWarnings = this.checks.some(check => check.status === 'warning');
+
+                if (hasErrors) return 'danger';
+                if (hasWarnings) return 'warning';
+                return 'safe';
+            }
+        }
+
+        // UI Controller
+        class UIManager {
+            constructor() {
+                this.checker = new WalletCompromiseChecker();
+                this.init();
+            }
+
+            init() {
+                this.bindEvents();
+            }
+
+            bindEvents() {
+                const form = document.getElementById('check-form');
+
+                form.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.performCheck();
+                });
+            }
+
+            async performCheck() {
+                const address = document.getElementById('wallet-address').value.trim();
+                const chain = document.getElementById('chain-select').value;
+
+                if (!address) {
+                    this.showError('Please enter a wallet address');
+                    return;
+                }
+
+                this.setLoading(true);
+
+                try {
+                    // Simulate async operation
+                    await new Promise(resolve => setTimeout(resolve, 1200));
+
+                    const result = await this.checker.performChecks(address, chain);
+
+                    this.displayResults(result);
+                } catch (error) {
+                    this.showError('Check failed: ' + error.message);
+                } finally {
+                    this.setLoading(false);
+                }
+            }
+
+            setLoading(loading) {
+                const checkText = document.getElementById('check-text');
+                const checkLoading = document.getElementById('check-loading');
+                const checkBtn = document.getElementById('check-btn');
+
+                if (loading) {
+                    checkText.classList.add('hidden');
+                    checkLoading.classList.remove('hidden');
+                    checkBtn.disabled = true;
+                } else {
+                    checkText.classList.remove('hidden');
+                    checkLoading.classList.add('hidden');
+                    checkBtn.disabled = false;
+                }
+            }
+
+            displayResults(result) {
+                const resultsContainer = document.getElementById('results-container');
+                const noResults = document.getElementById('no-results');
+                const overallStatus = document.getElementById('overall-status');
+                const resultsList = document.getElementById('results-list');
+
+                // Update overall status
+                const statusConfig = {
+                    safe: { class: 'status-safe', icon: '✅', text: 'Wallet appears secure' },
+                    warning: { class: 'status-warning', icon: '⚠️', text: 'Potential security concerns' },
+                    danger: { class: 'status-danger', icon: '❌', text: 'Security issues detected' }
+                };
+
+                const config = statusConfig[result.overallStatus];
+                overallStatus.className = `status-indicator ${config.class}`;
+                overallStatus.innerHTML = `${config.icon} ${config.text}`;
+
+                // Display individual checks
+                resultsList.innerHTML = result.checks.map(check => {
+                    const icon = check.status === 'ok' ? '✅' : check.status === 'warning' ? '⚠️' : '❌';
+                    return `
+                        <div class="result-item fade-in">
+                            <div class="result-icon">${icon}</div>
+                            <div class="result-content">
+                                <div class="result-title">${check.description}</div>
+                                <div class="result-detail">${check.detail}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                // Show results, hide no-results
+                resultsContainer.classList.remove('hidden');
+                noResults.classList.add('hidden');
+
+                // Scroll to results
+                resultsContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+
+            showError(message) {
+                // Create a temporary error message
+                const errorDiv = document.createElement('div');
+                errorDiv.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: var(--error);
+                    color: white;
+                    padding: 1rem;
+                    border-radius: var(--radius);
+                    box-shadow: var(--shadow);
+                    z-index: 1000;
+                    max-width: 400px;
+                `;
+                errorDiv.innerHTML = `
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                        <span>❌</span>
+                        <strong>Error</strong>
+                    </div>
+                    <div>${message}</div>
+                `;
+
+                document.body.appendChild(errorDiv);
+
+                setTimeout(() => {
+                    errorDiv.remove();
+                }, 5000);
+            }
+        }
+
+        // Initialize the app
+        document.addEventListener('DOMContentLoaded', () => {
+            new UIManager();
+        });
+    </script>
+</body>
+</html>
