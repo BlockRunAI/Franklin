@@ -15,6 +15,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import { USER_AGENT, type Chain } from '../config.js';
+import { appendSettlementRow } from '../stats/cost-log.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import type {
   Dialogue,
@@ -97,6 +98,18 @@ function parseTimeoutEnv(name: string): number | null {
   const raw = process.env[name];
   const parsed = raw ? Number.parseInt(raw, 10) : NaN;
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+/**
+ * Convert an x402 `details.amount` field (USDC in micro-units, 6 decimals)
+ * to a USD float. Mirrors the SDK's `appendCostLog` math so the agent
+ * loop, the proxy, and `cost_log.jsonl` all agree to the cent.
+ */
+function paymentAmountToUsd(amount: string | number | undefined): number {
+  if (amount === undefined || amount === null) return 0;
+  const n = typeof amount === 'string' ? parseFloat(amount) : amount;
+  if (!Number.isFinite(n)) return 0;
+  return n / 1e6;
 }
 
 /**
@@ -384,6 +397,15 @@ export class ModelClient {
   private cachedBaseWallet: { privateKey: string; address: string } | null = null;
   private cachedSolanaWallet: { privateKey: string; address: string } | null = null;
   private walletCacheTime = 0;
+  /**
+   * USDC actually charged on the most recent x402 settlement, parsed
+   * from `details.amount` (micro-USDC → USD). Reset to 0 at the start
+   * of every `streamCompletion`, written by `signBasePayment` /
+   * `signSolanaPayment`. Callers read it via `getLastPaidUsd()` after
+   * the stream completes so franklin-stats.json records the real wallet
+   * charge instead of a token-catalog estimate.
+   */
+  private lastPaidUsd = 0;
   private static WALLET_CACHE_TTL = 30 * 60 * 1000; // 30 min TTL
 
   constructor(opts: LLMClientOptions) {
@@ -432,10 +454,23 @@ export class ModelClient {
     return FALLBACKS[model] || 'nvidia/qwen3-coder-480b';
   }
 
+  /**
+   * USDC actually charged for the most recent stream. 0 if no payment
+   * was made (free model / cached / pre-stream error). Callers should
+   * read this after the stream finishes — before that it carries the
+   * value from a previous call.
+   */
+  getLastPaidUsd(): number {
+    return this.lastPaidUsd;
+  }
+
   async *streamCompletion(
     request: ModelRequest,
     signal?: AbortSignal
   ): AsyncGenerator<StreamChunk> {
+    // Reset the per-call charge tracker. signBasePayment / signSolanaPayment
+    // will set it when the gateway demands a 402 settlement.
+    this.lastPaidUsd = 0;
     // Resolve virtual models before any API call
     const resolvedModel = this.resolveVirtualModel(request.model);
     if (resolvedModel !== request.model) {
@@ -1089,7 +1124,7 @@ export class ModelClient {
     } catch (err) {
       const msg = (err as Error).message || '';
       if (msg.includes('insufficient') || msg.includes('balance')) {
-        console.error(`[franklin] Insufficient USDC balance. Run 'franklin balance' to check.`);
+        console.error(`[franklin] Insufficient USDC balance. Open http://localhost:3100/#wallet to deposit (or run 'franklin balance').`);
       } else if (this.debug) {
         console.error('[franklin] Payment error:', msg);
       } else {
@@ -1117,6 +1152,11 @@ export class ModelClient {
 
     const paymentRequired = parsePaymentRequired(paymentHeader);
     const details = extractPaymentDetails(paymentRequired);
+    this.lastPaidUsd = paymentAmountToUsd(details.amount);
+    // Mirror the SDK's appendCostLog write so cost_log.jsonl becomes a
+    // true wallet-truth ledger covering both SDK helper traffic AND the
+    // agent's main LLM stream (which uses this signer, not the SDK).
+    appendSettlementRow('/v1/messages', this.lastPaidUsd);
 
     const payload = await createPaymentPayload(
       wallet.privateKey as `0x${string}`,
@@ -1151,6 +1191,8 @@ export class ModelClient {
 
     const paymentRequired = parsePaymentRequired(paymentHeader);
     const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
+    this.lastPaidUsd = paymentAmountToUsd(details.amount);
+    appendSettlementRow('/v1/messages', this.lastPaidUsd);
 
     const secretBytes = await solanaKeyToBytes(wallet.privateKey);
     const feePayer = details.extra?.feePayer || details.recipient;

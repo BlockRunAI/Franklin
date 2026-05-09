@@ -1,6 +1,8 @@
 import chalk from 'chalk';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
-import { loadChain, API_URLS } from '../config.js';
+import { BLOCKRUN_DIR, loadChain, API_URLS } from '../config.js';
 import { retryFetchBalance } from './balance-retry.js';
 import { flushStats, loadStats } from '../stats/tracker.js';
 import { OPUS_PRICING, MODEL_PRICING } from '../pricing.js';
@@ -721,7 +723,17 @@ async function startPanelBackground(startPort: number): Promise<string | undefin
         });
         server.listen(port, '127.0.0.1', () => {
           server.unref?.();
-          resolve(`http://localhost:${port}`);
+          const url = `http://localhost:${port}`;
+          // Persist the bound URL so the agent context (assembled per-turn)
+          // can point users at /#wallet for funding without baking in the
+          // 3100 default — the panel auto-increments past EADDRINUSE.
+          // Best-effort write: a stale file from a crashed run is harmless,
+          // since the user just sees a dead link.
+          try {
+            fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+            fs.writeFileSync(path.join(BLOCKRUN_DIR, 'panel-url'), url, 'utf8');
+          } catch { /* best-effort */ }
+          resolve(url);
         });
       };
       tryListen(startPort, 0);

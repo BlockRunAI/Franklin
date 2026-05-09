@@ -11,6 +11,7 @@ import {
 } from '@blockrun/llm';
 import type { Chain } from '../config.js';
 import { recordUsage } from '../stats/tracker.js';
+import { appendSettlementRow } from '../stats/cost-log.js';
 import { appendAudit } from '../stats/audit.js';
 import {
   buildFallbackChain,
@@ -500,6 +501,11 @@ export function createProxy(options: ProxyOptions): http.Server {
 
         let response: Response;
         let finalModel = requestModel;
+        // Real x402 charge for the call that ultimately succeeded. 0 when
+        // no payment was needed (free model / cached). Fed into recordUsage
+        // and appendAudit below so franklin-stats.json reflects what the
+        // wallet actually paid, not a token-catalog estimate.
+        let paidUsd = 0;
         const requestTimeoutMs = effectiveRequestTimeoutMs;
 
         // Use fallback chain if enabled
@@ -538,6 +544,7 @@ export function createProxy(options: ProxyOptions): http.Server {
           // Use the body with the correct fallback model for payment
           body = result.bodyUsed;
           usedFallback = result.fallbackUsed;
+          paidUsd = result.paidUsd;
 
           // Skip the success log when the request originated from a test
           // fixture, even if the fallback ended on a real model. Verified
@@ -555,7 +562,7 @@ export function createProxy(options: ProxyOptions): http.Server {
             logger.info(`[franklin] ↺ Fallback successful: using ${finalModel}`);
           }
         } else {
-          response = await fetchModelAttempt(targetUrl, requestInit, body, requestModel, {
+          const attempt = await fetchModelAttempt(targetUrl, requestInit, body, requestModel, {
             method: req.method || 'POST',
             headers,
             chain,
@@ -563,6 +570,8 @@ export function createProxy(options: ProxyOptions): http.Server {
             solanaWallet,
             timeoutMs: requestTimeoutMs,
           });
+          response = attempt.response;
+          paidUsd = attempt.paidUsd;
         }
 
         const responseHeaders: Record<string, string> = {};
@@ -649,11 +658,13 @@ export function createProxy(options: ProxyOptions): http.Server {
                   if (outputTokens > 0) {
                     trackOutputTokens(finalModel, outputTokens);
                     const latencyMs = Date.now() - requestStartTime;
-                    const cost = estimateCost(
-                      finalModel,
-                      inputTokens,
-                      outputTokens
-                    );
+                    // Real x402 charge wins over the token-catalog estimate.
+                    // estimateCost only fills in for the no-payment path
+                    // (free models / cached) so stats stay non-null there.
+                    const cost = paidUsd > 0
+                      ? paidUsd
+                      : estimateCost(finalModel, inputTokens, outputTokens);
+                    const costSource = paidUsd > 0 ? 'charged' : 'estimated';
 
                     recordUsage(
                       finalModel,
@@ -673,7 +684,7 @@ export function createProxy(options: ProxyOptions): http.Server {
                       fallback: usedFallback,
                       source: 'proxy',
                     });
-                    if (options.debug) logger.debug(`[franklin] recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`);
+                    if (options.debug) logger.debug(`[franklin] recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} (${costSource}) fallback=${usedFallback}`);
                   }
                 }
                 res.end();
@@ -699,11 +710,10 @@ export function createProxy(options: ProxyOptions): http.Server {
               trackOutputTokens(finalModel, outputTokens);
               const inputTokens = parsed.usage?.input_tokens || 0;
               const latencyMs = Date.now() - requestStartTime;
-              const cost = estimateCost(
-                finalModel,
-                inputTokens,
-                outputTokens
-              );
+              const cost = paidUsd > 0
+                ? paidUsd
+                : estimateCost(finalModel, inputTokens, outputTokens);
+              const costSource = paidUsd > 0 ? 'charged' : 'estimated';
 
               recordUsage(
                 finalModel,
@@ -723,7 +733,7 @@ export function createProxy(options: ProxyOptions): http.Server {
                 fallback: usedFallback,
                 source: 'proxy',
               });
-              if (options.debug) logger.debug(`[franklin] recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`);
+              if (options.debug) logger.debug(`[franklin] recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} (${costSource}) fallback=${usedFallback}`);
             }
           } catch {
             /* not JSON */
@@ -763,6 +773,18 @@ interface ProxyFallbackResult {
   fallbackUsed: boolean;
   attemptsCount: number;
   failedModels: string[];
+  /**
+   * Actual USDC charged for this call (parsed from the x402 payment header
+   * the gateway demanded). 0 when no payment was needed — free model,
+   * cached response, or non-402 path. This is the source of truth for
+   * stats; estimateCost() is only kept as a fallback.
+   */
+  paidUsd: number;
+}
+
+interface ProxyAttemptResult {
+  response: Response;
+  paidUsd: number;
 }
 
 async function fetchModelAttempt(
@@ -771,15 +793,16 @@ async function fetchModelAttempt(
   body: string,
   model: string,
   payment: ProxyPaymentContext
-): Promise<Response> {
-  let response = await fetchWithTimeout(
+): Promise<ProxyAttemptResult> {
+  const response = await fetchWithTimeout(
     url,
     { ...init, body: body || undefined },
     payment.timeoutMs,
     `Proxy request for ${model}`
   );
 
-  if (response.status !== 402) return response;
+  // Non-402 path: free model or cached response — no payment, paidUsd = 0.
+  if (response.status !== 402) return { response, paidUsd: 0 };
 
   if (payment.chain === 'solana' && payment.solanaWallet) {
     return handleSolanaPayment(
@@ -809,7 +832,7 @@ async function fetchModelAttempt(
     );
   }
 
-  return response;
+  return { response, paidUsd: 0 };
 }
 
 /**
@@ -835,7 +858,7 @@ async function fetchWithPaymentFallback(
 
     try {
       attempts++;
-      const response = await fetchModelAttempt(url, init, body, model, payment);
+      const { response, paidUsd } = await fetchModelAttempt(url, init, body, model, payment);
 
       if (!config.retryOn.includes(response.status)) {
         return {
@@ -845,6 +868,7 @@ async function fetchWithPaymentFallback(
           fallbackUsed: i > 0,
           attemptsCount: attempts,
           failedModels,
+          paidUsd,
         };
       }
 
@@ -903,14 +927,16 @@ async function handleBasePayment(
   fromAddress: string,
   timeoutMs = getProxyRequestTimeoutMs(),
   model = 'unknown'
-): Promise<Response> {
+): Promise<ProxyAttemptResult> {
   const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
-    throw new Error('402 Payment Required — wallet may need funding. Run: franklin balance');
+    throw new Error('402 Payment Required — wallet may need funding. Open http://localhost:3100/#wallet to deposit USDC (or run: franklin balance)');
   }
 
   const paymentRequired = parsePaymentRequired(paymentHeader);
   const details = extractPaymentDetails(paymentRequired);
+  const paidUsd = paymentAmountToUsd(details.amount);
+  appendSettlementRow(extractEndpointPath(url), paidUsd);
 
   const paymentPayload = await createPaymentPayload(
     privateKey,
@@ -927,7 +953,7 @@ async function handleBasePayment(
     }
   );
 
-  return fetchWithTimeout(url, {
+  const paid = await fetchWithTimeout(url, {
     method,
     headers: {
       ...headers,
@@ -935,6 +961,8 @@ async function handleBasePayment(
     },
     body: body || undefined,
   }, timeoutMs, `Paid proxy request for ${model}`);
+
+  return { response: paid, paidUsd };
 }
 
 // ======================================================================
@@ -951,14 +979,16 @@ async function handleSolanaPayment(
   fromAddress: string,
   timeoutMs = getProxyRequestTimeoutMs(),
   model = 'unknown'
-): Promise<Response> {
+): Promise<ProxyAttemptResult> {
   const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
-    throw new Error('402 Payment Required — wallet may need funding. Run: franklin balance');
+    throw new Error('402 Payment Required — wallet may need funding. Open http://localhost:3100/#wallet to deposit USDC (or run: franklin balance)');
   }
 
   const paymentRequired = parsePaymentRequired(paymentHeader);
   const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
+  const paidUsd = paymentAmountToUsd(details.amount);
+  appendSettlementRow(extractEndpointPath(url), paidUsd);
 
   const secretKey = await solanaKeyToBytes(privateKey);
 
@@ -979,7 +1009,7 @@ async function handleSolanaPayment(
     }
   );
 
-  return fetchWithTimeout(url, {
+  const paid = await fetchWithTimeout(url, {
     method,
     headers: {
       ...headers,
@@ -987,6 +1017,31 @@ async function handleSolanaPayment(
     },
     body: body || undefined,
   }, timeoutMs, `Paid proxy request for ${model}`);
+
+  return { response: paid, paidUsd };
+}
+
+/**
+ * Extract just the path portion of a URL — `https://api.blockrun.ai/v1/messages`
+ * → `/v1/messages`. Used as the `endpoint` field in `cost_log.jsonl` so
+ * proxy entries match the SDK's path-only convention. Falls back to the
+ * raw input if URL parsing throws (defensive — better to log a weird
+ * string than skip the row).
+ */
+function extractEndpointPath(url: string): string {
+  try { return new URL(url).pathname || url; } catch { return url; }
+}
+
+/**
+ * Convert an x402 `details.amount` field (USDC in micro-units, 6 decimals)
+ * to a USD float. Mirrors the SDK's `appendCostLog` math so the proxy and
+ * `cost_log.jsonl` agree to the cent.
+ */
+function paymentAmountToUsd(amount: string | number | undefined): number {
+  if (amount === undefined || amount === null) return 0;
+  const n = typeof amount === 'string' ? parseFloat(amount) : amount;
+  if (!Number.isFinite(n)) return 0;
+  return n / 1e6;
 }
 
 // ======================================================================

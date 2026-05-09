@@ -1707,16 +1707,25 @@ export async function interactiveSession(
       });
 
       // Record usage for stats tracking (franklin stats command).
+      // Prefer the real x402 charge from the gateway over a token-catalog
+      // estimate. The estimate is wrong any time the gateway applies
+      // promo pricing, prompt-cache discounts, or per-call flat fees
+      // (verified 2026-05-09 against cost_log.jsonl: token-based
+      // estimate said $34.79 across the same calls the wallet only
+      // paid $2.24 for — a 15× drift). estimateCost only fills in
+      // when no payment was made (free model / cached / pre-stream
+      // failure), where the gateway charge is genuinely 0.
+      //
       // Pass the fallback flag so franklin-stats.json's totalFallbacks +
       // per-model fallbackCount stay in sync with the audit log a few
       // lines below — same `turnFailedModels.size > 0` predicate, same
-      // turn. Without this, stats showed 0 fallbacks across 5150 real
-      // requests on a machine that visibly hit fallback paths in
-      // franklin-debug.log; `franklin insights` was therefore useless
-      // for spotting a hot routing chain.
-      const costEstimate = estimateCost(resolvedModel, inputTokens, usage.outputTokens, 1);
+      // turn.
+      const paidUsd = client.getLastPaidUsd();
+      const callCost = paidUsd > 0
+        ? paidUsd
+        : estimateCost(resolvedModel, inputTokens, usage.outputTokens, 1);
       const llmLatencyMs = Date.now() - llmCallStartedAt;
-      recordUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, llmLatencyMs, turnFailedModels.size > 0);
+      recordUsage(resolvedModel, inputTokens, usage.outputTokens, callCost, llmLatencyMs, turnFailedModels.size > 0);
 
       // ── Circuit breakers: prevent infinite-loop wallet drain ──
       // Per-turn $-cap was removed in v3.11.0 — runaway loops are caught by
@@ -1744,7 +1753,7 @@ export async function interactiveSession(
       } else {
         consecutiveTinyResponses = 0;
       }
-      recordSessionUsage(resolvedModel, inputTokens, usage.outputTokens, costEstimate, routingTier);
+      recordSessionUsage(resolvedModel, inputTokens, usage.outputTokens, callCost, routingTier);
       // Capture tool names invoked in this assistant turn. The AuditEntry
       // interface has had a `toolCalls?: string[]` slot since 3.15.11, but
       // nothing populated it — verified 2026-05-04 in a real Opus session
@@ -1767,7 +1776,7 @@ export async function interactiveSession(
         model: resolvedModel,
         inputTokens,
         outputTokens: usage.outputTokens,
-        costUsd: costEstimate,
+        costUsd: callCost,
         // Any failed model this turn means the model that finally
         // succeeded was a fallback. Without this, audit log read 0%
         // fallbacks across 4k entries — useless for diagnosing whether
@@ -1783,11 +1792,11 @@ export async function interactiveSession(
       // Accumulate session-level totals for session meta
       sessionInputTokens += inputTokens;
       sessionOutputTokens += usage.outputTokens;
-      sessionCostUsd += costEstimate;
-      turnCostUsd += costEstimate;
+      sessionCostUsd += callCost;
+      turnCostUsd += callCost;
       const opusCost = (inputTokens / 1_000_000) * OPUS_PRICING.input
         + (usage.outputTokens / 1_000_000) * OPUS_PRICING.output;
-      sessionSavedVsOpus += Math.max(0, opusCost - costEstimate);
+      sessionSavedVsOpus += Math.max(0, opusCost - callCost);
 
       // ── Max-spend guard ──
       // Session-level cost ceiling. Batch/scripted callers pass this to bound a

@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { BLOCKRUN_DIR } from '../config.js';
 import { getWalletAddress as getBaseWalletAddress } from '@blockrun/llm';
 import { Keypair } from '@solana/web3.js';
 import bs58 from 'bs58';
@@ -98,7 +99,7 @@ Go straight to the point. Lead with the action, not the reasoning. Do not restat
 
 The exception: a single short sentence between tool calls is fine when it tells the user something they would otherwise miss — a finding ("Build passes — moving on to tests."), a course correction ("That approach won't work — switching to X."), or a one-line status before a long-running operation. One sentence per update is enough.
 
-**No internal-language leakage.** Always write your visible response in the same language the user is using. If your private reasoning happens in a different language (English while the user writes Chinese, Korean while the user writes Chinese, etc.), do NOT let phrases from that language appear in the user-facing text. The user should never see a stray "좋아", "OK now", or "Alright" in the middle of a Chinese reply.
+**No internal-language leakage.** Always write your visible response in the same language the user is using. If your private reasoning happens in a different language than the user's message, do NOT let phrases from that language appear in the user-facing text. The user should never see a stray "d'accord", "OK now", or "Alright" in the middle of a reply written in another language.
 
 Focus text output on:
 - Decisions that need the user's input
@@ -170,6 +171,19 @@ Do NOT check access before acting. Do NOT explain what you tried. Just deliver, 
 }
 
 function getWalletKnowledgeSection(): string {
+  // Read the panel URL persisted by startPanelBackground (start.ts) so we
+  // surface the actual bound port — the panel auto-increments past 3100
+  // when the default is taken (e.g. a second franklin running). Falls back
+  // to the canonical default when the file is missing (panel disabled or
+  // never started this session).
+  let panelUrl = 'http://localhost:3100';
+  try {
+    const persisted = fs.readFileSync(path.join(BLOCKRUN_DIR, 'panel-url'), 'utf8').trim();
+    if (persisted.startsWith('http://') || persisted.startsWith('https://')) {
+      panelUrl = persisted;
+    }
+  } catch { /* fall through to default */ }
+
   return `# Wallet Storage (answer "where is my wallet" directly — no searching)
 Franklin stores wallet keys in ~/.blockrun/. When the user asks about wallet location, answer from this map — do not grep or scan.
 
@@ -189,7 +203,32 @@ Franklin stores wallet keys in ~/.blockrun/. When the user asks about wallet loc
   - Use \`franklin stats\` / \`franklin content list\` instead of parsing files when the user asks "how much did I spend".
 - Programmatic access: import { getWalletAddress, getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm'
 
-When the user asks about "my wallet" without qualifier, default to Base (it's the primary chain shown at launch). Only mention Solana if the chain file says solana or the user explicitly asks.`;
+When the user asks about "my wallet" without qualifier, default to Base (it's the primary chain shown at launch). Only mention Solana if the chain file says solana or the user explicitly asks.
+
+## Funding the wallet ("how do I deposit / recharge / fund / top up", in any language)
+
+When the user asks about depositing or funding USDC — in any language — do not describe the steps in chat. **Open the panel wallet page directly in their browser** using Bash, then confirm in chat what you opened and which chain is active.
+
+The exact wallet URL for this session:
+
+  ${panelUrl}/#wallet
+
+Bash command to open it (macOS \`open\`, Linux \`xdg-open\`, Windows \`start\`):
+
+  open ${panelUrl}/#wallet
+
+That page is where the deposit address, QR code, live balance, chain switcher, and back-up controls all live. The user lands on it instead of you reciting steps.
+
+After running \`open\`:
+- Tell the user one line: "Opened the wallet page — \`${panelUrl}/#wallet\`. Active chain: <base|solana>."
+- Read the active chain from ~/.blockrun/payment-chain so they know which network to send USDC on.
+- Mention USDC is the only accepted token; ETH/SOL on their own won't settle x402 calls.
+
+Hard rules:
+- Do NOT print the private key in chat. The panel reveals it behind a click.
+- Do NOT invent a \`franklin deposit\` CLI flow — there isn't one; the panel IS the funding surface.
+- Do NOT hand-craft a different localhost port; the URL above tracks the actual bound port (3100 might have been taken; the panel could be on 3101+).
+- If \`open\` fails (e.g. no GUI on a remote box), fall back to giving them the URL as plain text and tell them to paste it into a browser.`;
 }
 
 function getBlockRunApiSection(): string {

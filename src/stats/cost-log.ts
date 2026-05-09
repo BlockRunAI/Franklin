@@ -1,24 +1,26 @@
 /**
- * Reader for `~/.blockrun/cost_log.jsonl` — the SDK-owned ledger of every
- * settled x402 payment.
+ * Reader (and limited writer) for `~/.blockrun/cost_log.jsonl` — the
+ * append-only ledger of every settled x402 payment.
  *
- * Franklin's own `franklin-stats.json` and `franklin-audit.jsonl` only
- * capture calls that pass through specific code paths (the main agent
- * loop and the proxy). Helper LLM calls (analyzeTurn, prefetchForIntent,
- * compaction, evaluator, verification, MoA, subagent, learning extraction,
- * etc.) all settle x402 payments through the SDK — those payments DO get
- * recorded in cost_log.jsonl by `@blockrun/llm` itself, but Franklin's
- * stats infra had been ignoring this file entirely.
+ * History: this file was originally SDK-only territory. `@blockrun/llm`'s
+ * internal `appendCostLog` writes one line per micropayment when callers
+ * use SDK helper methods (modal sandbox, prediction market, exa, etc.).
+ * But Franklin's main LLM stream — both the in-process agent loop
+ * (`src/agent/llm.ts`) and the proxy server (`src/proxy/server.ts`) —
+ * have **their own** x402 signers that bypass the SDK entirely. Verified
+ * 2026-05-09 on a real machine: a single paid agent turn dropped the
+ * wallet by $0.001 and updated `franklin-stats.json` correctly, but
+ * cost_log.jsonl gained zero entries. So cost_log was never the
+ * "wallet truth" it advertised — it was an SDK-subset.
  *
- * Verified 2026-05-06 against a real machine: cost_log.jsonl is written
- * by the SDK with snake_case keys (`cost_usd`, `ts` in unix seconds with
- * subsecond precision — Python convention) and Franklin's reads/writes
- * use camelCase + ms. This module bridges the format gap so stats /
- * insights / `franklin balance` can surface the wallet-truth total
- * alongside the recorded total.
+ * Fix (2026-05-09): expose `appendSettlementRow` so the agent and proxy
+ * signers can write the same shape the SDK does. The format contract
+ * (snake_case `cost_usd`, `ts` in unix seconds with subsecond precision,
+ * one JSON object per line) is preserved exactly so both writers
+ * interleave cleanly. Order in the file follows wall-clock arrival.
  *
- * Responsibility: read-only. We never write or trim cost_log.jsonl —
- * the SDK owns it.
+ * Responsibility: read + append-only write. We never trim or rotate
+ * cost_log.jsonl — that contract still belongs to the SDK / hygiene.
  */
 
 import fs from 'node:fs';
@@ -104,6 +106,32 @@ export function loadSdkSettlements(opts?: ReadOptions): SettlementRow[] {
   }
 
   return rows;
+}
+
+/**
+ * Append one settlement row to ~/.blockrun/cost_log.jsonl in the same
+ * shape `@blockrun/llm`'s internal `appendCostLog` writes. Best-effort:
+ * silently swallows fs errors so a logging failure never breaks the
+ * paid call that just succeeded. Costs <= 0 are treated as no-op (no
+ * point logging $0 — the file's purpose is "what was actually paid").
+ */
+export function appendSettlementRow(endpoint: string, costUsd: number): void {
+  if (!Number.isFinite(costUsd) || costUsd <= 0) return;
+  if (typeof endpoint !== 'string' || endpoint.length === 0) return;
+  try {
+    fs.mkdirSync(path.dirname(getCostLogPath()), { recursive: true });
+  } catch { /* best-effort */ }
+  // Match SDK conventions exactly: snake_case keys, ts in unix seconds
+  // with subsecond precision (Python convention — divide ms epoch by 1e3
+  // so the SDK reader and our reader agree on the timestamp).
+  const entry = {
+    ts: Date.now() / 1e3,
+    endpoint,
+    cost_usd: costUsd,
+  };
+  try {
+    fs.appendFileSync(getCostLogPath(), JSON.stringify(entry) + '\n');
+  } catch { /* best-effort */ }
 }
 
 /** Aggregate the SDK ledger into a single summary object. */

@@ -426,7 +426,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
             const m = balance.match(/\$([\d.]+)/);
             const num = m ? parseFloat(m[1]) : null;
             if (num !== null && num < 0.50) {
-              return <><Text color="red" bold>{balance}</Text><Text color="red"> ⚠ low — fund wallet or /model free</Text></>;
+              return <><Text color="red" bold>{balance}</Text><Text color="red"> ⚠ low — deposit at http://localhost:3100/#wallet or /model free</Text></>;
             }
             if (num !== null && num < 1.00) {
               return <Text color="yellow">{balance}</Text>;

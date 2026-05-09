@@ -3,7 +3,10 @@
  */
 
 import chalk from 'chalk';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createPanelServer } from '../panel/server.js';
+import { BLOCKRUN_DIR } from '../config.js';
 
 export async function panelCommand(options: { port?: string }): Promise<void> {
   const requestedPort = parseInt(options.port || '3100', 10);
@@ -30,9 +33,20 @@ export async function panelCommand(options: { port?: string }): Promise<void> {
     // Bind to loopback only — the panel exposes wallet secrets on /api/wallet/secret
     // and a write-capable /api/wallet/import. Never expose these on a LAN.
     server.listen(port, '127.0.0.1', () => {
+      const url = `http://localhost:${port}`;
+      // Mirror what start.ts does for the auto-panel — persist the bound
+      // URL so any concurrent `franklin start` agent can read /#wallet
+      // off the same file. Without this, a user who disables panel
+      // autostart and runs `franklin panel` separately would still get
+      // the hardcoded 3100 default in the agent prompt.
+      try {
+        fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+        fs.writeFileSync(path.join(BLOCKRUN_DIR, 'panel-url'), url, 'utf8');
+      } catch { /* best-effort */ }
+
       console.log('');
       console.log(chalk.bold('  Franklin Panel'));
-      console.log(chalk.dim(`  http://localhost:${port}`) +
+      console.log(chalk.dim(`  ${url}`) +
         (port !== requestedPort ? chalk.yellow(`  (fell back from ${requestedPort})`) : ''));
       console.log('');
       console.log(chalk.dim('  Press Ctrl+C to stop.'));
@@ -41,7 +55,7 @@ export async function panelCommand(options: { port?: string }): Promise<void> {
       // Try to open browser
       const open = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
       import('node:child_process').then(({ exec }) => {
-        exec(`${open} http://localhost:${port}`);
+        exec(`${open} ${url}`);
       }).catch(() => {});
     });
 

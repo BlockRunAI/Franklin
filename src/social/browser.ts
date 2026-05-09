@@ -115,6 +115,67 @@ export function serializeAxTree(root: AxNode): {
   return { tree: lines.join('\n'), refs };
 }
 
+// ─── CDP Accessibility tree adapter ───────────────────────────────────────
+
+/**
+ * Shape of a single node from CDP's `Accessibility.getFullAXTree`. We only
+ * pull the fields `serializeAxTree` consumes; everything else is ignored.
+ */
+interface CdpAxNode {
+  nodeId: string;
+  parentId?: string;
+  childIds?: string[];
+  ignored?: boolean;
+  role?: { value?: unknown };
+  name?: { value?: unknown };
+  value?: { value?: unknown };
+  description?: { value?: unknown };
+}
+
+function cdpStringValue(v: unknown): string {
+  if (v === undefined || v === null) return '';
+  if (typeof v === 'string') return v;
+  return String(v);
+}
+
+function cdpNodesToAxTree(nodes: CdpAxNode[] | undefined): AxNode | null {
+  if (!nodes || nodes.length === 0) return null;
+  const byId = new Map<string, CdpAxNode>();
+  const childSet = new Set<string>();
+  for (const n of nodes) {
+    byId.set(n.nodeId, n);
+    if (n.childIds) for (const cid of n.childIds) childSet.add(cid);
+  }
+  // The root has no parent (or no entry pointing at it as a child).
+  const root =
+    nodes.find((n) => !n.parentId && !childSet.has(n.nodeId)) ??
+    nodes.find((n) => !n.parentId) ??
+    nodes[0];
+
+  const seen = new Set<string>();
+  function build(node: CdpAxNode): AxNode | null {
+    if (seen.has(node.nodeId)) return null;
+    seen.add(node.nodeId);
+    const ax: AxNode = {
+      role: cdpStringValue(node.role?.value),
+      name: cdpStringValue(node.name?.value),
+      value: cdpStringValue(node.value?.value),
+      description: cdpStringValue(node.description?.value),
+      children: [],
+    };
+    if (node.childIds) {
+      for (const cid of node.childIds) {
+        const child = byId.get(cid);
+        if (!child) continue;
+        const built = build(child);
+        if (built) ax.children!.push(built);
+      }
+    }
+    return ax;
+  }
+  return build(root);
+}
+
 // ─── Browser class ─────────────────────────────────────────────────────────
 
 export interface BrowserOptions {
@@ -199,12 +260,22 @@ export class SocialBrowser {
    */
   async snapshot(): Promise<string> {
     this.requirePage();
-    // Playwright's accessibility snapshot returns a full AX tree
-    // page.accessibility was removed from Playwright types in v1.46 but still works at runtime
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const axRoot = await (this.page! as any).accessibility.snapshot({ interestingOnly: false });
+    // page.accessibility was removed from playwright-core (gone by 1.59).
+    // Calling it threw `Cannot read properties of undefined (reading 'snapshot')`
+    // in production (failures.jsonl entries 1776662596215 / 1776662608060).
+    // The supported replacement is the CDP Accessibility domain, which still
+    // ships with Chromium-based browsers.
+    const cdp = await this.page!.context().newCDPSession(this.page!);
+    let axRoot: AxNode | null;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = (await cdp.send('Accessibility.getFullAXTree' as any)) as { nodes?: CdpAxNode[] };
+      axRoot = cdpNodesToAxTree(result?.nodes);
+    } finally {
+      await cdp.detach().catch(() => {});
+    }
     if (!axRoot) return '';
-    const { tree, refs } = serializeAxTree(axRoot as AxNode);
+    const { tree, refs } = serializeAxTree(axRoot);
     this.lastRefs = refs;
     return tree;
   }
