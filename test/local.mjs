@@ -5807,6 +5807,89 @@ test('budgetToolResults: bare-string content path still truncates as before', as
   assert.match(tr.content, /Output truncated/);
 });
 
+// ─── Regression: sibling sites in reduce.ts must not destroy images ─────────
+// Same JSON.stringify(part.content) bug class as budgetToolResults — found
+// during PR #53 review. Three more functions in reduce.ts had the same
+// pattern; ageToolResults landed via PR #53; the two below are the missing
+// patches. Without them, a long conversation with a vision tool_result
+// silently lost its image once dedupe or repetitive-tool-collapse triggered.
+test('deduplicateToolResultLines preserves image blocks while deduping text', async () => {
+  const { deduplicateToolResultLines } = await import('../dist/agent/reduce.js');
+  const repeatedText = ['Fetching...', 'Fetching...', 'Fetching...', 'done'].join('\n');
+  const history = [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tu_dedupe',
+          content: [
+            { type: 'text', text: repeatedText },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'IMGDATA' } },
+          ],
+        },
+      ],
+    },
+  ];
+  const out = deduplicateToolResultLines(history);
+  const tr = out[0].content[0];
+  assert.ok(Array.isArray(tr.content), 'dedupe must keep array shape so image survives');
+  const img = tr.content.find((b) => b.type === 'image');
+  assert.ok(img, 'image block must survive dedupe');
+  assert.equal(img.source.data, 'IMGDATA', 'image bytes intact');
+  const text = tr.content.find((b) => b.type === 'text');
+  assert.ok(text, 'text block present after dedupe');
+  assert.match(text.text, /Fetching\.\.\. ×3/, 'text was actually deduped');
+});
+
+test('collapseRepetitiveTools leaves image-bearing tool_results alone', async () => {
+  const { collapseRepetitiveTools } = await import('../dist/agent/reduce.js');
+  // Six WebSearch-like tool_uses → repetitive threshold met → first three
+  // get marked for collapse. One of those carries an image; the collapser
+  // must NOT replace it with a text stub.
+  const assistant = (id) => ({
+    role: 'assistant',
+    content: [{ type: 'tool_use', id, name: 'WebSearch', input: { q: 'x' } }],
+  });
+  const userResult = (id, content) => ({
+    role: 'user',
+    content: [{ type: 'tool_result', tool_use_id: id, content }],
+  });
+  const longText = 'x'.repeat(200);
+  const history = [
+    assistant('a'), userResult('a', [
+      { type: 'text', text: longText },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'KEEPME' } },
+    ]),
+    assistant('b'), userResult('b', longText),
+    assistant('c'), userResult('c', longText),
+    assistant('d'), userResult('d', longText),
+    assistant('e'), userResult('e', longText),
+    assistant('f'), userResult('f', longText),
+  ];
+  const out = collapseRepetitiveTools(history);
+  // Find the result for tool_use_id 'a' — it should still carry the image.
+  const aResult = out.find((m) =>
+    m.role === 'user' &&
+    Array.isArray(m.content) &&
+    m.content.some((p) => p.type === 'tool_result' && p.tool_use_id === 'a')
+  );
+  const tr = aResult.content.find((p) => p.type === 'tool_result' && p.tool_use_id === 'a');
+  assert.ok(Array.isArray(tr.content), 'image-bearing result must NOT be string-collapsed');
+  const img = tr.content.find((b) => b.type === 'image');
+  assert.ok(img, 'image survives collapseRepetitiveTools');
+  assert.equal(img.source.data, 'KEEPME');
+  // 'b' (string content) SHOULD have been collapsed to a stub.
+  const bResult = out.find((m) =>
+    m.role === 'user' &&
+    Array.isArray(m.content) &&
+    m.content.some((p) => p.type === 'tool_result' && p.tool_use_id === 'b')
+  );
+  const trB = bResult.content.find((p) => p.type === 'tool_result' && p.tool_use_id === 'b');
+  assert.equal(typeof trB.content, 'string', 'string-content path still collapses');
+  assert.match(trB.content, /\[xxxx.+\.\.\.\]/);
+});
+
 test('kimi: K2.5 picker shortcuts now resolve to K2.6 (gateway retired K2.5)', async () => {
   const { resolveModel } = await import('../dist/ui/model-picker.js');
   assert.equal(resolveModel('kimi-k2.5'), 'moonshot/kimi-k2.6');
