@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.15.90 — Vision sweep: cherry-pick PR #53 + patch sibling sites it missed
+
+3.15.89 fixed `optimize.ts:budgetToolResults`. The bug class — running
+`JSON.stringify(part.content)` over arrays containing image blocks and
+then writing back a string preview — actually existed in **five** places.
+PR #53 from `KillerQueen-Z` caught a second one (`reduce.ts:ageToolResults`)
+plus added a client-side image resize on `Read` to stop the gateway from
+billing a 1.9 MB PNG as 1.36 M text tokens. This release lands those
+plus patches the remaining two destructive siblings the PR didn't touch.
+
+### What landed
+
+- **`src/agent/reduce.ts:ageToolResults`** (from PR #53) — image-bearing
+  tool_results now short-circuit age-decay. Long conversations beyond
+  3 turns no longer silently lose attached images.
+- **`src/tools/read.ts` + `sharp@^0.34.5`** (from PR #53) — images > 150 KB
+  resize to long-edge 1280 px, re-encode as JPEG q85; PNG preserved when
+  the source has non-opaque alpha. Smoke-tested 1898.7 KB → 117.6 KB
+  (16× cut). Workaround for the gateway-side base64-as-text tokenization
+  on `/v1/messages`; the resize keeps per-call cost bounded regardless
+  of when that lands.
+- **`src/agent/reduce.ts:deduplicateToolResultLines`** (new) — same
+  array-aware fix. Dedupe runs over text only; image blocks rebuild
+  alongside the deduped text segment.
+- **`src/agent/reduce.ts:collapseRepetitiveTools`** (new) — image-bearing
+  results skip the collapser entirely. The `[first-line...]` stub
+  rewrite is text-only intent; image bytes stay.
+- **`CONTRIBUTING.md`** — fixes typos (`cd franklin` → `cd Franklin`,
+  duplicate `5.` numbering, stale "RunCode" reference). Adds a
+  "Quality bar for fixes" section: search for sibling instances of a
+  bug class before opening a PR — PR #53 was the prompt (fixed 1 of 5
+  sites; review caught the rest).
+
+### Tests
+
+Two new regression tests in `test/local.mjs`:
+
+1. `deduplicateToolResultLines preserves image blocks while deduping text` —
+   repeated lines + image → text is deduped, image survives in the
+   rebuilt content array.
+2. `collapseRepetitiveTools leaves image-bearing tool_results alone` —
+   six WebSearch-like calls with one image-bearing result → string
+   results get the `[first-line...]` collapse, the image-bearing one
+   passes through untouched.
+
+368/368 tests pass.
+
+### Credits
+
+`KillerQueen-Z` (PR #53) for the `ageToolResults` fix and the `sharp`
+client-side image normalization. The optimize.ts hunk in #53 duplicated
+3.15.89 and was dropped during cherry-pick; the rest landed verbatim.
+
 ## 3.15.89 — Vision images survive the budgeter
 
 Single-issue patch. Vision calls (sonnet-4.6, opus-4.7, any image-capable
