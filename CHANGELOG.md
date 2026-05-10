@@ -1,5 +1,77 @@
 # Changelog
 
+## 3.15.91 — Vision-aware routing: Auto picks eyes, manual mode stops blind submits
+
+3.15.89/90 made sure image bytes actually reach the model. This release
+makes sure the *right model* receives them.
+
+The problem: a new session on `blockrun/auto` could send a `.png` to
+`deepseek-v4-pro` (text-only) because Auto's SIMPLE/MEDIUM tier picks
+V4 Pro for cost reasons. The gateway tokenized the base64 as text and
+the model hallucinated from the `"Image file: <path>"` stub. Same
+class of failure when a user manually picked any text-only SKU
+(deepseek family, `xai/grok-4-1-fast-reasoning`, `gpt-5.3-codex`,
+`qwen3-coder-480b`) and then attached an image.
+
+### What landed
+
+- **`src/router/vision.ts`** (new) — curated allowlist of vision-capable
+  gateway models, basename-anchored image-path regex, OpenAI- and
+  Anthropic-format messages scanner, family-aware sibling picker. The
+  allowlist is hand-maintained rather than fetched from `/v1/models` so
+  routing stays sync; models churn only at release time, which already
+  touches the router and pricing tables.
+- **`src/router/index.ts`** — `routeRequest`, `routeRequestAsync`, and
+  `resolveTierToModel` now accept `needsVision`. When true, walk the
+  tier's primary+fallback chain for the first vision-capable model;
+  escalate to COMPLEX (Opus, always vision) if the whole tier is
+  text-only. Elo-learned routing applies the same substitution when its
+  pick lacks vision — vision is a hard requirement, not an Elo
+  dimension.
+- **`src/agent/loop.ts`** — detects image references in user input on
+  the first iteration of each turn and threads `needsVision` into the
+  router. The Auto-routed line gets an `👁️` tag so the user knows
+  vision was the reason for the pick. For manual mode (no routing
+  profile) on an image turn with a text-only model, swaps to the
+  family-closest vision sibling for that turn with a visible warning
+  (`⚠️ <orig> can't see images — using <swap> for this turn.`). The
+  existing top-of-turn model-recovery block restores `baseModel` on
+  the next turn, so the user's selection isn't permanently overridden.
+- **`src/proxy/server.ts`** — same logic on the Anthropic-format proxy
+  path. Scans `messages[]` for `image` / `image_url` / `input_image`
+  parts plus image paths in text parts. Manual-mode swap logs at
+  `warn` level; Auto-mode routing logs include the `vision-required`
+  signal.
+
+### Tests
+
+Five new tests in `test/local.mjs`:
+
+1. `isVisionModel allowlist matches curated set` — explicit positive
+   and negative coverage including the failure modes (deepseek family,
+   grok-4-1-fast-reasoning, codex 5.3, qwen3-coder).
+2. `messageNeedsVision detects image path refs in user text` — Unix-,
+   home-, relative-, Windows-style paths plus bare basenames.
+3. `messagesNeedVision detects image parts and embedded paths` —
+   Anthropic image blocks, OpenAI image_url, and string content with
+   path embeds.
+4. `Auto with image upgrades V4 Pro pick to a vision model` — across
+   SIMPLE / MEDIUM / COMPLEX tiers and through `routeRequest`.
+5. `pickVisionSibling stays within the user-chosen family` — DeepSeek
+   falls through to default; xai stays in xai; openai stays in openai.
+
+333/333 tests pass.
+
+### Behavioral implications
+
+- New sessions on `auto` with a `.png` attachment now route to
+  sonnet-4.6 / gemini-flash / opus depending on tier instead of V4 Pro.
+  Per-call cost on those turns goes up — that's the cost of the model
+  actually being able to see the image, same delta 3.15.89 introduced.
+- Manual selections persist across turns as before; the per-turn vision
+  swap is one-shot and surfaces a warning so the user can decide
+  whether to switch their session's default.
+
 ## 3.15.90 — Vision sweep: cherry-pick PR #53 + patch sibling sites it missed
 
 3.15.89 fixed `optimize.ts:budgetToolResults`. The bug class — running

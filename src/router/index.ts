@@ -18,6 +18,9 @@ import { detectCategory, mapCategoryToTier, type Category } from './categories.j
 import { selectModel } from './selector.js';
 import type { LearnedWeights } from './selector.js';
 import { computeLocalElo, blendElo } from './local-elo.js';
+import { isVisionModel } from './vision.js';
+
+export { isVisionModel, messageNeedsVision, messagesNeedVision, pickVisionSibling } from './vision.js';
 
 // ─── Learned Weights Loading ───
 
@@ -93,6 +96,27 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   },
 };
 
+
+/**
+ * If this turn carries an image, the picked tier model must be able to see it.
+ * Walks the tier's primary+fallback chain for the first vision-capable model;
+ * if none of them have vision, escalates to COMPLEX (Opus is always vision).
+ *
+ * Note: only applied when the caller signals needsVision=true. Without that
+ * hint the classic per-tier defaults still rule — V4 Pro's $0.50/$1.00 promo
+ * is the right SIMPLE/MEDIUM pick for text-only turns and we don't want to
+ * blanket-upgrade everyone to a vision model.
+ */
+function pickVisionTierModel(tier: Tier): { model: string; tier: Tier; signal: string } {
+  const chain = [AUTO_TIERS[tier].primary, ...AUTO_TIERS[tier].fallback];
+  const visionInTier = chain.find(isVisionModel);
+  if (visionInTier) return { model: visionInTier, tier, signal: 'vision-required' };
+  // Tier chain is fully text-only (unusual but possible if cheap tiers get
+  // re-tuned). Escalate to COMPLEX whose primary (Opus) is always vision.
+  const escalated = [AUTO_TIERS.COMPLEX.primary, ...AUTO_TIERS.COMPLEX.fallback]
+    .find(isVisionModel) ?? AUTO_TIERS.COMPLEX.primary;
+  return { model: escalated, tier: 'COMPLEX', signal: 'vision-escalated' };
+}
 
 // ─── Keywords for Classification ───
 //
@@ -300,6 +324,7 @@ function classifyRequest(prompt: string, tokenCount: number): ClassifyResult {
 function classicRouteRequest(
   prompt: string,
   profile: RoutingProfile,
+  needsVision = false,
 ): RoutingResult {
   // Estimate token count (use byte length / 4 for better accuracy with non-ASCII)
   const byteLen = Buffer.byteLength(prompt, 'utf-8');
@@ -312,13 +337,21 @@ function classicRouteRequest(
   // 2026-05-03 — see comment on RoutingProfile above). 'free' is handled
   // earlier by the caller path; if it ever reaches here, fall through to
   // AUTO_TIERS rather than crashing.
-  const tierConfigs = AUTO_TIERS;
-
-  const model = tierConfigs[tier].primary;
+  let model: string;
+  let finalTier: Tier = tier;
+  const finalSignals = [...signals];
+  if (needsVision) {
+    const v = pickVisionTierModel(tier);
+    model = v.model;
+    finalTier = v.tier;
+    finalSignals.push(v.signal);
+  } else {
+    model = AUTO_TIERS[tier].primary;
+  }
   const savings = computeSavings(model);
   const category = detectCategory(prompt, loadLearnedWeights()?.category_keywords).category;
 
-  return { model, tier, confidence, signals, savings, category };
+  return { model, tier: finalTier, confidence, signals: finalSignals, savings, category };
 }
 
 // ─── LLM-based classifier ───
@@ -427,26 +460,36 @@ export async function routeRequestAsync(
   prompt: string,
   profile: RoutingProfile = 'auto',
   classify: TierClassifier = llmClassifyRequest,
+  needsVision = false,
 ): Promise<RoutingResult> {
   // Free / short-circuit profiles — no classifier needed.
-  if (profile === 'free') return routeRequest(prompt, profile);
+  if (profile === 'free') return routeRequest(prompt, profile, needsVision);
 
   const tier = await classify(prompt).catch(() => null);
   if (!tier) {
     // Classifier miss or disabled — fall through to the sync keyword router.
-    return routeRequest(prompt, profile);
+    return routeRequest(prompt, profile, needsVision);
   }
 
   // Build a RoutingResult from the LLM-picked tier using the same tier
   // tables the keyword path uses. Keeps downstream code path-identical.
-  const tierConfigs = AUTO_TIERS;
-  const model = tierConfigs[tier].primary;
+  let model: string;
+  let finalTier: Tier = tier;
+  const signals: string[] = ['llm-classified'];
+  if (needsVision) {
+    const v = pickVisionTierModel(tier);
+    model = v.model;
+    finalTier = v.tier;
+    signals.push(v.signal);
+  } else {
+    model = AUTO_TIERS[tier].primary;
+  }
   const category = detectCategory(prompt, loadLearnedWeights()?.category_keywords).category;
   return {
     model,
-    tier,
+    tier: finalTier,
     confidence: 0.85, // LLM classification — medium-high confidence
-    signals: ['llm-classified'],
+    signals,
     savings: computeSavings(model),
     category,
   };
@@ -461,24 +504,42 @@ export async function routeRequestAsync(
  * Use this when you have a tier already. Use `routeRequestAsync` when you
  * need the classifier to produce the tier.
  */
-export function resolveTierToModel(tier: Tier, profile: RoutingProfile = 'auto'): RoutingResult {
+export function resolveTierToModel(
+  tier: Tier,
+  profile: RoutingProfile = 'auto',
+  needsVision = false,
+): RoutingResult {
   // Free profile short-circuits — everything routes to a single free model.
+  // qwen3-coder-480b is text-only; on a vision turn the free profile can't
+  // help us. Caller should detect this and warn the user that Free won't
+  // handle images — for now we just return the free pick and let the model
+  // fail gracefully. (Open question: should we hard-fall to nvidia/llama-4-
+  // maverick here? Skipped until we see a real user hit this path.)
   if (profile === 'free') {
     return {
       model: 'nvidia/qwen3-coder-480b',
       tier: 'SIMPLE',
       confidence: 1.0,
-      signals: ['free-profile'],
+      signals: needsVision ? ['free-profile', 'vision-unsupported'] : ['free-profile'],
       savings: 1.0,
     };
   }
-  const tierConfigs = AUTO_TIERS;
-  const model = tierConfigs[tier].primary;
+  let model: string;
+  let finalTier: Tier = tier;
+  const signals: string[] = ['pre-classified'];
+  if (needsVision) {
+    const v = pickVisionTierModel(tier);
+    model = v.model;
+    finalTier = v.tier;
+    signals.push(v.signal);
+  } else {
+    model = AUTO_TIERS[tier].primary;
+  }
   return {
     model,
-    tier,
+    tier: finalTier,
     confidence: 0.85,
-    signals: ['pre-classified'],
+    signals,
     savings: computeSavings(model),
   };
 }
@@ -487,7 +548,8 @@ export function resolveTierToModel(tier: Tier, profile: RoutingProfile = 'auto')
 
 export function routeRequest(
   prompt: string,
-  profile: RoutingProfile = 'auto'
+  profile: RoutingProfile = 'auto',
+  needsVision = false,
 ): RoutingResult {
   // Free profile — always use free model
   if (profile === 'free') {
@@ -495,7 +557,7 @@ export function routeRequest(
       model: 'nvidia/qwen3-coder-480b',
       tier: 'SIMPLE',
       confidence: 1.0,
-      signals: ['free-profile'],
+      signals: needsVision ? ['free-profile', 'vision-unsupported'] : ['free-profile'],
       savings: 1.0,
     };
   }
@@ -505,7 +567,7 @@ export function routeRequest(
   // cheap/weak models on agentic work. Classic AUTO_TIERS defaults are
   // agent-tuned (Sonnet-tier backbone) and more predictable for users.
   if (profile === 'auto') {
-    return classicRouteRequest(prompt, profile);
+    return classicRouteRequest(prompt, profile, needsVision);
   }
 
   // ── Learned routing (if weights available) ──
@@ -534,6 +596,21 @@ export function routeRequest(
     const selected = selectModel(category, profile, adjustedWeights);
     if (selected) {
       const tier = mapCategoryToTier(category);
+      // Vision-aware substitution: if the Elo-picked model is text-only but
+      // the turn needs vision, swap to the tier's first vision-capable model.
+      // We deliberately don't blend Elo with vision capability — vision is a
+      // hard requirement, not a quality dimension.
+      if (needsVision && !isVisionModel(selected.model)) {
+        const v = pickVisionTierModel(tier);
+        return {
+          model: v.model,
+          tier: v.tier,
+          confidence,
+          signals: [category, v.signal],
+          savings: computeSavings(v.model),
+          category,
+        };
+      }
       const savings = computeSavings(selected.model);
       return {
         model: selected.model,
@@ -548,7 +625,7 @@ export function routeRequest(
   }
 
   // ── Classic routing (keyword-based fallback) ──
-  return classicRouteRequest(prompt, profile);
+  return classicRouteRequest(prompt, profile, needsVision);
 }
 
 function computeSavings(model: string): number {
