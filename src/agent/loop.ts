@@ -29,7 +29,7 @@ import { setSessionPersistenceDisabled } from '../session/storage.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
-import { routeRequest, routeRequestAsync, resolveTierToModel, parseRoutingProfile, getFallbackChain, pickFreeFallback } from '../router/index.js';
+import { routeRequest, routeRequestAsync, resolveTierToModel, parseRoutingProfile, getFallbackChain, pickFreeFallback, isVisionModel, messageNeedsVision, pickVisionSibling } from '../router/index.js';
 import type { Tier, RoutingProfile } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
@@ -1232,6 +1232,17 @@ export async function interactiveSession(
         sessionId,
       });
 
+      // ── Vision-need detection (per turn) ──
+      // Images enter a turn one of two ways: the user types an image path
+      // and the Read tool will inline bytes mid-turn, or the user references
+      // an image in their last message directly. We can only see (1) at this
+      // point — but that's the case we care about: the router has to decide
+      // BEFORE the model call which model to use. If the model can't see
+      // images, Read's tool_result image blocks get tokenized as base64 text
+      // by the gateway (verified 2026-05-09) and the model hallucinates from
+      // the "Image file: <path>" stub. Detect upfront, route accordingly.
+      const turnNeedsVision = loopCount === 1 && messageNeedsVision(lastUserInput);
+
       // ── Router: resolve routing profiles to concrete models ──
       // Uses the tier already decided by the turn-analyzer — one LLM call
       // up-front rather than a separate classifier here. Fallback to the
@@ -1243,8 +1254,8 @@ export async function interactiveSession(
       let routingSavings: number | undefined;
       if (routingProfile) {
         const routing = turnAnalysis
-          ? resolveTierToModel(turnAnalysis.tier, routingProfile)
-          : await routeRequestAsync(lastUserInput || '', routingProfile);
+          ? resolveTierToModel(turnAnalysis.tier, routingProfile, turnNeedsVision)
+          : await routeRequestAsync(lastUserInput || '', routingProfile, undefined, turnNeedsVision);
         resolvedModel = routing.model;
         routingTier = routing.tier;
         routingConfidence = routing.confidence;
@@ -1252,11 +1263,29 @@ export async function interactiveSession(
         lastRoutedModel = routing.model;
         lastRoutedCategory = routing.category || '';
         if (loopCount === 1) {
+          const visionTag = turnNeedsVision ? ' 👁️' : '';
           onEvent({
             kind: 'text_delta',
-            text: `*Auto → ${routing.model}*\n\n`,
+            text: `*Auto → ${routing.model}${visionTag}*\n\n`,
           });
         }
+      } else if (turnNeedsVision && !isVisionModel(resolvedModel)) {
+        // ── Manual-mode guard ──
+        // User explicitly picked a model that can't see images. Don't silently
+        // send the image — the model would only see the text stub from Read
+        // and hallucinate. Swap to the closest vision sibling JUST for this
+        // turn (next turn's model-recovery block at the top of the user-input
+        // handler resets to baseModel, so the user's intent isn't permanently
+        // overridden). Always emit a visible notice so the user knows their
+        // pick was overridden and why.
+        const original = resolvedModel;
+        const visionSwap = pickVisionSibling(original);
+        resolvedModel = visionSwap;
+        config.model = visionSwap;
+        onEvent({
+          kind: 'text_delta',
+          text: `*⚠️ ${original} can't see images — using ${visionSwap} for this turn.*\n\n`,
+        });
       }
 
       // Update token estimation model for more accurate byte-per-token ratio

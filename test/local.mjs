@@ -8586,3 +8586,163 @@ test('extractLastUserPrompt strips TRAILING synthetic labels (3.15.76)', async (
   ];
   assert.equal(extractLastUserPrompt(colonLabel), 'analyze this');
 });
+
+// ─── Vision-aware routing ────────────────────────────────────────────────
+// The router must steer image-bearing turns away from text-only models. Two
+// surfaces: Auto profile (router picks the model) and manual mode (user
+// picked a concrete model — guard handled inside the agent loop and proxy).
+// These tests cover the router-level decisions; the agent-loop guard is
+// covered by integration paths since it depends on transcript events.
+
+test('vision helpers: isVisionModel allowlist matches curated set', async () => {
+  const { isVisionModel } = await import('../dist/router/vision.js');
+
+  // Vision-capable — should all return true
+  for (const m of [
+    'anthropic/claude-opus-4.7',
+    'anthropic/claude-sonnet-4.6',
+    'anthropic/claude-haiku-4.5-20251001',
+    'openai/gpt-5.5',
+    'openai/gpt-5-mini',
+    'openai/o3',
+    'google/gemini-3.1-pro',
+    'google/gemini-2.5-flash',
+    'xai/grok-4-0709',
+    'moonshot/kimi-k2.6',
+    'nvidia/llama-4-maverick',
+  ]) {
+    assert.equal(isVisionModel(m), true, `${m} should be vision-capable`);
+  }
+
+  // Text-only — should all return false. Includes the failure modes the
+  // user reported: deepseek family is entirely text-only; grok-4.1 fast
+  // reasoning dropped vision; codex 5.3 is text-only.
+  for (const m of [
+    'deepseek/deepseek-v4-pro',
+    'deepseek/deepseek-chat',
+    'deepseek/deepseek-reasoner',
+    'nvidia/deepseek-v4-flash',
+    'xai/grok-4-1-fast-reasoning',
+    'openai/gpt-5.3-codex',
+    'nvidia/qwen3-coder-480b',
+  ]) {
+    assert.equal(isVisionModel(m), false, `${m} should be text-only`);
+  }
+
+  // Defensive: null / empty / unknown model never asserts as vision-capable
+  assert.equal(isVisionModel(undefined), false);
+  assert.equal(isVisionModel(null), false);
+  assert.equal(isVisionModel(''), false);
+  assert.equal(isVisionModel('made-up/model'), false);
+});
+
+test('vision helpers: messageNeedsVision detects image path refs in user text', async () => {
+  const { messageNeedsVision } = await import('../dist/router/vision.js');
+
+  // Positive cases — Franklin's Read tool inlines these
+  assert.equal(messageNeedsVision('what is in /tmp/foo.png?'), true);
+  assert.equal(messageNeedsVision('look at ~/Desktop/screenshot.jpg'), true);
+  assert.equal(messageNeedsVision('check ./photos/a.JPEG please'), true);
+  assert.equal(messageNeedsVision('Image at C:\\imgs\\diagram.webp'), true);
+  assert.equal(messageNeedsVision('open foo.gif'), true);
+
+  // Negative cases — text-only requests must not get falsely upgraded
+  assert.equal(messageNeedsVision('refactor the wallet module'), false);
+  assert.equal(messageNeedsVision('what is 2+2?'), false);
+  assert.equal(messageNeedsVision('thinkofpng but not as a file'), false);
+  assert.equal(messageNeedsVision(''), false);
+  assert.equal(messageNeedsVision(undefined), false);
+});
+
+test('vision helpers: messagesNeedVision detects image parts and embedded paths', async () => {
+  const { messagesNeedVision } = await import('../dist/router/vision.js');
+
+  // Anthropic-format image block
+  assert.equal(
+    messagesNeedVision([
+      { role: 'user', content: [
+        { type: 'text', text: 'hi' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'xxx' } },
+      ] },
+    ]),
+    true,
+  );
+
+  // OpenAI-format image_url
+  assert.equal(
+    messagesNeedVision([
+      { role: 'user', content: [
+        { type: 'text', text: 'describe' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,xxx' } },
+      ] },
+    ]),
+    true,
+  );
+
+  // String-content with path
+  assert.equal(
+    messagesNeedVision([{ role: 'user', content: 'see /tmp/foo.jpg' }]),
+    true,
+  );
+
+  // Plain text — no images
+  assert.equal(
+    messagesNeedVision([{ role: 'user', content: 'just text here' }]),
+    false,
+  );
+
+  // Empty / null
+  assert.equal(messagesNeedVision([]), false);
+  assert.equal(messagesNeedVision(null), false);
+});
+
+test('vision routing: Auto with image upgrades V4 Pro pick to a vision model', async () => {
+  const { resolveTierToModel, routeRequest, isVisionModel } = await import('../dist/router/index.js');
+
+  // SIMPLE tier defaults to deepseek-v4-pro (text-only). Without vision flag,
+  // V4 Pro stays. With vision flag, must pick first vision-capable model in
+  // the tier's chain — gemini-2.5-flash for SIMPLE per AUTO_TIERS ordering.
+  const simpleNoVision = resolveTierToModel('SIMPLE', 'auto', false);
+  assert.equal(simpleNoVision.model, 'deepseek/deepseek-v4-pro');
+
+  const simpleWithVision = resolveTierToModel('SIMPLE', 'auto', true);
+  assert.ok(
+    isVisionModel(simpleWithVision.model),
+    `SIMPLE+vision must pick a vision model, got ${simpleWithVision.model}`,
+  );
+  assert.ok(simpleWithVision.signals.includes('vision-required'));
+
+  // MEDIUM tier — same shape, must end on a vision-capable model
+  const mediumWithVision = resolveTierToModel('MEDIUM', 'auto', true);
+  assert.ok(
+    isVisionModel(mediumWithVision.model),
+    `MEDIUM+vision must pick a vision model, got ${mediumWithVision.model}`,
+  );
+
+  // COMPLEX tier primary (Opus) already has vision — no escalation needed
+  const complexWithVision = resolveTierToModel('COMPLEX', 'auto', true);
+  assert.equal(complexWithVision.model, 'anthropic/claude-opus-4.7');
+
+  // routeRequest path (no analyzer tier) — image-bearing prompt must end on vision
+  const routedWithImage = routeRequest('what is in /tmp/foo.png', 'auto', true);
+  assert.ok(
+    isVisionModel(routedWithImage.model),
+    `Auto-routed image turn must pick vision model, got ${routedWithImage.model}`,
+  );
+});
+
+test('vision routing: pickVisionSibling stays within the user-chosen family', async () => {
+  const { pickVisionSibling, isVisionModel } = await import('../dist/router/vision.js');
+
+  // DeepSeek has no vision SKU — fall through to the default vision pick
+  assert.ok(isVisionModel(pickVisionSibling('deepseek/deepseek-v4-pro')));
+
+  // xai/grok-4-1-fast-reasoning (text-only) → must stay in xai family if any
+  // xai vision sibling exists. Currently xai/grok-4-0709 is vision-capable.
+  assert.equal(pickVisionSibling('xai/grok-4-1-fast-reasoning'), 'xai/grok-4-0709');
+
+  // openai/gpt-5.3-codex (text-only) → must stay in openai family
+  const codexSwap = pickVisionSibling('openai/gpt-5.3-codex');
+  assert.ok(codexSwap.startsWith('openai/'), `expected openai sibling, got ${codexSwap}`);
+  assert.ok(isVisionModel(codexSwap));
+});

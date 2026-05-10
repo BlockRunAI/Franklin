@@ -23,6 +23,9 @@ import {
   routeRequest,
   parseRoutingProfile,
   getFallbackChain as getRouterFallbackChain,
+  isVisionModel,
+  messagesNeedVision,
+  pickVisionSibling,
   type RoutingProfile,
 } from '../router/index.js';
 import { estimateCost } from '../pricing.js';
@@ -398,6 +401,14 @@ export function createProxy(options: ProxyOptions): http.Server {
             }
             requestModel = parsed.model || DEFAULT_MODEL;
 
+            // Vision-need detection: does this request carry an image? We
+            // check messages[] for explicit image / image_url parts AND for
+            // image paths embedded in text — Anthropic-format proxies stream
+            // both shapes. Used both by the Auto router (pick a vision-capable
+            // tier model) and by the manual-mode guard (swap when the user
+            // explicitly picked a text-only model).
+            const proxyNeedsVision = messagesNeedVision(parsed.messages || []);
+
             // Smart routing: if model is a routing profile, classify and route
             const routingProfile = parseRoutingProfile(requestModel);
             if (routingProfile) {
@@ -418,14 +429,29 @@ export function createProxy(options: ProxyOptions): http.Server {
                 }
               }
 
-              // Route the request
-              const routing = routeRequest(promptText, routingProfile);
+              // Route the request — propagate vision-need so AUTO_TIERS' V4
+              // Pro default doesn't get picked for an image-bearing turn.
+              const routing = routeRequest(promptText, routingProfile, proxyNeedsVision);
               parsed.model = routing.model;
               requestModel = routing.model;
 
               logger.info(
                 `[franklin] 🧠 Smart routing: ${routingProfile} → ${routing.tier} → ${routing.model} ` +
                 `(${(routing.savings * 100).toFixed(0)}% savings) [${routing.signals.join(', ')}]`
+              );
+            } else if (proxyNeedsVision && !isVisionModel(requestModel)) {
+              // Manual-mode guard: user (or an upstream client) passed a
+              // concrete text-only model alongside an image. Swap to the
+              // family-closest vision sibling and log loudly — silently
+              // sending the image would tokenize as base64 text and produce
+              // a hallucinated answer. Same swap policy as the agent loop's
+              // interactive path so behavior is consistent across surfaces.
+              const original = requestModel;
+              const visionSwap = pickVisionSibling(original);
+              parsed.model = visionSwap;
+              requestModel = visionSwap;
+              logger.warn(
+                `[franklin] 👁️  Vision swap: ${original} can't see images → ${visionSwap}`
               );
             }
 
