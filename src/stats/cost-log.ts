@@ -109,13 +109,44 @@ export function loadSdkSettlements(opts?: ReadOptions): SettlementRow[] {
 }
 
 /**
+ * Optional metadata fields the SDK writes alongside `endpoint` / `cost_usd`.
+ * Adding these to agent + proxy entries keeps cost_log.jsonl uniformly
+ * queryable (group by model, filter by wallet, etc.). Verified 2026-05-10
+ * against a real cost_log: the SDK writes
+ *   {endpoint, cost_usd, model, wallet, network, client_kind}
+ * Without these on agent rows you can't tell which model burned a $0.001
+ * — the row is just `/v1/messages: 0.001`. With them, every line is a
+ * complete forensic record.
+ */
+export interface SettlementMeta {
+  model?: string;
+  wallet?: string;
+  network?: string;
+  client_kind?: string;
+}
+
+/**
  * Append one settlement row to ~/.blockrun/cost_log.jsonl in the same
  * shape `@blockrun/llm`'s internal `appendCostLog` writes. Best-effort:
  * silently swallows fs errors so a logging failure never breaks the
  * paid call that just succeeded. Costs <= 0 are treated as no-op (no
  * point logging $0 — the file's purpose is "what was actually paid").
+ *
+ * Honors FRANKLIN_NO_AUDIT=1 the same way `appendAudit` and `recordUsage`
+ * do, so test runs (test/e2e.mjs sets this) don't pollute the user's
+ * real cost_log. Verified 2026-05-10 on a real machine: two
+ * `/v1/messages: $0.000001` rows leaked into the user's cost_log from
+ * a paid e2e run because this gate was missing — paid e2e was hitting
+ * the real gateway with a real wallet, but the test framework expected
+ * NO writes to land. Restoring the gate keeps cost_log a clean ledger
+ * of REAL traffic.
  */
-export function appendSettlementRow(endpoint: string, costUsd: number): void {
+export function appendSettlementRow(
+  endpoint: string,
+  costUsd: number,
+  meta?: SettlementMeta,
+): void {
+  if (process.env.FRANKLIN_NO_AUDIT === '1' || process.env.FRANKLIN_NO_PERSIST === '1') return;
   if (!Number.isFinite(costUsd) || costUsd <= 0) return;
   if (typeof endpoint !== 'string' || endpoint.length === 0) return;
   try {
@@ -124,11 +155,15 @@ export function appendSettlementRow(endpoint: string, costUsd: number): void {
   // Match SDK conventions exactly: snake_case keys, ts in unix seconds
   // with subsecond precision (Python convention — divide ms epoch by 1e3
   // so the SDK reader and our reader agree on the timestamp).
-  const entry = {
+  const entry: Record<string, unknown> = {
     ts: Date.now() / 1e3,
     endpoint,
     cost_usd: costUsd,
   };
+  if (meta?.model) entry.model = meta.model;
+  if (meta?.wallet) entry.wallet = meta.wallet;
+  if (meta?.network) entry.network = meta.network;
+  if (meta?.client_kind) entry.client_kind = meta.client_kind;
   try {
     fs.appendFileSync(getCostLogPath(), JSON.stringify(entry) + '\n');
   } catch { /* best-effort */ }

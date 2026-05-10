@@ -626,7 +626,7 @@ export class ModelClient {
       // Handle x402 payment
       if (response.status === 402) {
         if (this.debug) console.error('[franklin] Payment required — signing...');
-        const paymentHeader = await this.signPayment(response);
+        const paymentHeader = await this.signPayment(response, request.model);
         if (!paymentHeader) {
           yield { kind: 'error', payload: { message: 'Payment signing failed' } };
           return;
@@ -704,7 +704,7 @@ export class ModelClient {
             requestTimeoutMs,
           );
           if (response.status === 402) {
-            const paymentHeader = await this.signPayment(response);
+            const paymentHeader = await this.signPayment(response, request.model);
             if (!paymentHeader) {
               yield { kind: 'error', payload: { message: 'Payment signing failed' } };
               return;
@@ -1114,13 +1114,14 @@ export class ModelClient {
   // ─── Payment ───────────────────────────────────────────────────────────
 
   private async signPayment(
-    response: Response
+    response: Response,
+    model: string,
   ): Promise<Record<string, string> | null> {
     try {
       if (this.chain === 'solana') {
-        return await this.signSolanaPayment(response);
+        return await this.signSolanaPayment(response, model);
       }
-      return await this.signBasePayment(response);
+      return await this.signBasePayment(response, model);
     } catch (err) {
       const msg = (err as Error).message || '';
       if (msg.includes('insufficient') || msg.includes('balance')) {
@@ -1135,7 +1136,8 @@ export class ModelClient {
   }
 
   private async signBasePayment(
-    response: Response
+    response: Response,
+    model: string,
   ): Promise<Record<string, string>> {
     // Refresh wallet cache after TTL to pick up balance/key changes
     if (!this.cachedBaseWallet || (Date.now() - this.walletCacheTime > ModelClient.WALLET_CACHE_TTL)) {
@@ -1156,7 +1158,14 @@ export class ModelClient {
     // Mirror the SDK's appendCostLog write so cost_log.jsonl becomes a
     // true wallet-truth ledger covering both SDK helper traffic AND the
     // agent's main LLM stream (which uses this signer, not the SDK).
-    appendSettlementRow('/v1/messages', this.lastPaidUsd);
+    // Match SDK schema (model/wallet/network/client_kind) so every row
+    // is independently queryable.
+    appendSettlementRow('/v1/messages', this.lastPaidUsd, {
+      model,
+      wallet: wallet.address,
+      network: details.network || 'base-mainnet',
+      client_kind: 'AgentClient',
+    });
 
     const payload = await createPaymentPayload(
       wallet.privateKey as `0x${string}`,
@@ -1176,7 +1185,8 @@ export class ModelClient {
   }
 
   private async signSolanaPayment(
-    response: Response
+    response: Response,
+    model: string,
   ): Promise<Record<string, string>> {
     if (!this.cachedSolanaWallet || (Date.now() - this.walletCacheTime > ModelClient.WALLET_CACHE_TTL)) {
       const w = await getOrCreateSolanaWallet();
@@ -1192,7 +1202,12 @@ export class ModelClient {
     const paymentRequired = parsePaymentRequired(paymentHeader);
     const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
     this.lastPaidUsd = paymentAmountToUsd(details.amount);
-    appendSettlementRow('/v1/messages', this.lastPaidUsd);
+    appendSettlementRow('/v1/messages', this.lastPaidUsd, {
+      model,
+      wallet: wallet.address,
+      network: details.network || 'solana-mainnet',
+      client_kind: 'AgentClient',
+    });
 
     const secretBytes = await solanaKeyToBytes(wallet.privateKey);
     const feePayer = details.extra?.feePayer || details.recipient;

@@ -936,7 +936,12 @@ async function handleBasePayment(
   const paymentRequired = parsePaymentRequired(paymentHeader);
   const details = extractPaymentDetails(paymentRequired);
   const paidUsd = paymentAmountToUsd(details.amount);
-  appendSettlementRow(extractEndpointPath(url), paidUsd);
+  appendSettlementRow(extractEndpointPath(url), paidUsd, {
+    model,
+    wallet: fromAddress,
+    network: details.network || 'base-mainnet',
+    client_kind: 'ProxyClient',
+  });
 
   const paymentPayload = await createPaymentPayload(
     privateKey,
@@ -988,7 +993,12 @@ async function handleSolanaPayment(
   const paymentRequired = parsePaymentRequired(paymentHeader);
   const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
   const paidUsd = paymentAmountToUsd(details.amount);
-  appendSettlementRow(extractEndpointPath(url), paidUsd);
+  appendSettlementRow(extractEndpointPath(url), paidUsd, {
+    model,
+    wallet: fromAddress,
+    network: details.network || 'solana-mainnet',
+    client_kind: 'ProxyClient',
+  });
 
   const secretKey = await solanaKeyToBytes(privateKey);
 
