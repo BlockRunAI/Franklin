@@ -9,7 +9,7 @@
  * 5. Pre-compact stripping — remove images/docs before summarization
  */
 
-import type { Dialogue, ContentPart, UserContentPart } from './types.js';
+import type { Dialogue, ContentPart, UserContentPart, TextSegment, ImageSegment } from './types.js';
 import { estimateTokens } from './tokens.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -96,35 +96,70 @@ export function budgetToolResults(history: Dialogue[]): Dialogue[] {
         continue;
       }
 
-      const content = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
-      const size = content.length;
+      // Decompose tool_result content. Two shapes are valid per
+      // CapabilityOutcome (types.ts:38): a bare string OR an array of
+      // text + image segments. Pre-fix, we collapsed array content to
+      // JSON.stringify(content), which made base64 image bytes count
+      // toward the char budget — a 275KB image would tip past the 32K
+      // cap, the whole content array (including the image block) got
+      // replaced with a truncated text preview, and the image was
+      // destroyed before reaching the wire. Verified 2026-05-10 from a
+      // gateway log (sonnet-4.6, ~21K input tokens — would have been
+      // ~150K with the image present): the tool_result body was a
+      // 2KB self-referential string starting with "[Output truncated:
+      // 275,952 chars → 2000 preview]\n\n[{\"type\":\"text\"…". Vision
+      // hallucinated everything in that session.
+      //
+      // Fix: only the TEXT segments count toward MAX_TOOL_RESULT_CHARS.
+      // Image segments pass through untouched. If text is over budget,
+      // truncate ONLY the text — keep the image array alongside.
+      const isArrayContent = Array.isArray(part.content);
+      const textBlocks: TextSegment[] = isArrayContent
+        ? (part.content as Array<TextSegment | ImageSegment>).filter((b): b is TextSegment => b.type === 'text')
+        : [];
+      const imageBlocks: ImageSegment[] = isArrayContent
+        ? (part.content as Array<TextSegment | ImageSegment>).filter((b): b is ImageSegment => b.type === 'image')
+        : [];
+      const textOnly = isArrayContent
+        ? textBlocks.map(b => b.text).join('\n')
+        : (part.content as string);
+      const size = textOnly.length;
 
-      // Per-tool cap
+      // Per-tool cap (text-only — images stay)
       if (size > MAX_TOOL_RESULT_CHARS) {
         modified = true;
         // Truncate at line boundary for cleaner output
-        let preview = content.slice(0, PREVIEW_CHARS);
+        let preview = textOnly.slice(0, PREVIEW_CHARS);
         const lastNewline = preview.lastIndexOf('\n');
         if (lastNewline > PREVIEW_CHARS * 0.5) {
           preview = preview.slice(0, lastNewline);
         }
+        const truncatedText = `[Output truncated: ${size.toLocaleString()} chars → ${PREVIEW_CHARS} preview]\n\n${preview}\n\n... (${size - PREVIEW_CHARS} chars omitted)`;
         budgeted.push({
           type: 'tool_result',
           tool_use_id: part.tool_use_id,
-          content: `[Output truncated: ${size.toLocaleString()} chars → ${PREVIEW_CHARS} preview]\n\n${preview}\n\n... (${size - PREVIEW_CHARS} chars omitted)`,
+          content: imageBlocks.length > 0
+            ? [{ type: 'text', text: truncatedText }, ...imageBlocks]
+            : truncatedText,
           is_error: part.is_error,
         });
         messageTotal += PREVIEW_CHARS + 200;
         continue;
       }
 
-      // Per-message aggregate cap — once exceeded, truncate remaining results
+      // Per-message aggregate cap — once exceeded, truncate remaining results.
+      // Same rule: drop only the text payload; images survive so multi-image
+      // tool flows aren't silently broken when a single chatty text result
+      // pushes the message over the cap.
       if (messageTotal + size > MAX_TOOL_RESULTS_PER_MESSAGE_CHARS) {
         modified = true;
+        const placeholder = `[Output omitted: message budget exceeded (${MAX_TOOL_RESULTS_PER_MESSAGE_CHARS / 1000}K chars/msg)]`;
         budgeted.push({
           type: 'tool_result',
           tool_use_id: part.tool_use_id,
-          content: `[Output omitted: message budget exceeded (${MAX_TOOL_RESULTS_PER_MESSAGE_CHARS / 1000}K chars/msg)]`,
+          content: imageBlocks.length > 0
+            ? [{ type: 'text', text: placeholder }, ...imageBlocks]
+            : placeholder,
           is_error: part.is_error,
         });
         messageTotal = MAX_TOOL_RESULTS_PER_MESSAGE_CHARS;

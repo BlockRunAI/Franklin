@@ -5708,6 +5708,105 @@ test('kimi: getMaxOutputTokens(moonshot/kimi-k2.6) honors gateway 65K cap', asyn
   assert.equal(getMaxOutputTokens('moonshot/kimi-k2.6'), 65_536);
 });
 
+// ─── Regression: budgetToolResults must NOT destroy image blocks ─────────────
+// Bug observed 2026-05-10 in production (sonnet-4.6 + opus-4.7 vision calls
+// hallucinating against an attached PNG). Root cause: budgetToolResults
+// JSON.stringified the entire content array and tested the resulting string
+// length against MAX_TOOL_RESULT_CHARS. A 275KB base64 image inflated the
+// stringified blob over the cap, so the array was replaced with a truncated
+// string preview — destroying the image before the gateway saw it. Gateway
+// log proof: the tool body was a 2KB self-referential
+// "[Output truncated: 275,952 chars → 2000 preview]\n\n[{\"type\":\"text\"…"
+// instead of a real image. Fix: only count text segments toward the budget;
+// pass image segments through untouched.
+test('budgetToolResults preserves image blocks even when content array stringifies large', async () => {
+  const { budgetToolResults } = await import('../dist/agent/optimize.js');
+  // Simulate what an ImageGen / Read-on-PNG tool result looks like in
+  // dialogue history: small text segment + base64 image segment that
+  // would tip over the 32K char cap if the whole array were stringified.
+  const fakeBase64 = 'A'.repeat(300_000); // > MAX_TOOL_RESULT_CHARS (32K)
+  const history = [
+    { role: 'user', content: 'find this image in the screenshot' },
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tool_use_test',
+          content: [
+            { type: 'text', text: 'Image file: /tmp/scene3_climax.png' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: fakeBase64 } },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const out = budgetToolResults(history);
+  const lastMsg = out[out.length - 1];
+  assert.ok(Array.isArray(lastMsg.content), 'tool_result message content must remain an array');
+  const tr = lastMsg.content[0];
+  assert.equal(tr.type, 'tool_result', 'first part is the tool_result');
+  // The image block MUST survive — that's the bug.
+  assert.ok(Array.isArray(tr.content), `tool_result.content must stay an array, got: ${typeof tr.content}`);
+  const survivingImage = tr.content.find((b) => b.type === 'image');
+  assert.ok(survivingImage, 'image block must survive budgetToolResults');
+  assert.equal(survivingImage.source.media_type, 'image/png');
+  assert.equal(survivingImage.source.data.length, 300_000, 'image base64 must NOT be truncated');
+  // Text segment of 35 chars is well under the 32K cap, so untouched.
+  const textPart = tr.content.find((b) => b.type === 'text');
+  assert.ok(textPart && /scene3_climax\.png/.test(textPart.text));
+});
+
+test('budgetToolResults truncates oversized text but keeps the image alongside', async () => {
+  const { budgetToolResults } = await import('../dist/agent/optimize.js');
+  // 50K of text + small image — text is over the 32K cap.
+  // Fix should truncate the text (returning a preview) and keep the image.
+  const longText = 'lorem ipsum '.repeat(5000); // ~60K chars
+  const history = [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tool_use_2',
+          content: [
+            { type: 'text', text: longText },
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'BBB' } },
+          ],
+        },
+      ],
+    },
+  ];
+  const out = budgetToolResults(history);
+  const tr = out[0].content[0];
+  assert.ok(Array.isArray(tr.content), 'truncation must keep array shape so image survives');
+  const text = tr.content.find((b) => b.type === 'text');
+  const img = tr.content.find((b) => b.type === 'image');
+  assert.ok(text, 'truncated text segment present');
+  assert.match(text.text, /Output truncated/);
+  assert.ok(text.text.length < 5_000, 'text was actually truncated');
+  assert.ok(img, 'image survives truncation');
+  assert.equal(img.source.data, 'BBB', 'image bytes intact');
+});
+
+test('budgetToolResults: bare-string content path still truncates as before', async () => {
+  const { budgetToolResults } = await import('../dist/agent/optimize.js');
+  const huge = 'x'.repeat(50_000);
+  const history = [
+    {
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 'id1', content: huge },
+      ],
+    },
+  ];
+  const out = budgetToolResults(history);
+  const tr = out[0].content[0];
+  assert.equal(typeof tr.content, 'string', 'string-content path should stay a string');
+  assert.match(tr.content, /Output truncated/);
+});
+
 test('kimi: K2.5 picker shortcuts now resolve to K2.6 (gateway retired K2.5)', async () => {
   const { resolveModel } = await import('../dist/ui/model-picker.js');
   assert.equal(resolveModel('kimi-k2.5'), 'moonshot/kimi-k2.6');
