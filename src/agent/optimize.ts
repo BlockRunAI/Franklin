@@ -9,7 +9,7 @@
  * 5. Pre-compact stripping — remove images/docs before summarization
  */
 
-import type { Dialogue, ContentPart, UserContentPart } from './types.js';
+import type { Dialogue, ContentPart, UserContentPart, TextSegment, ImageSegment } from './types.js';
 import { estimateTokens } from './tokens.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -96,7 +96,30 @@ export function budgetToolResults(history: Dialogue[]): Dialogue[] {
         continue;
       }
 
-      const content = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
+      // Vision tool_results carry [text, image] arrays. JSON.stringify-ing
+      // them and slicing to PREVIEW_CHARS destroys the image bytes, so the
+      // model sees a truncated base64 string instead of the picture
+      // (verified 2026-05-09: model hallucinated descriptions because the
+      // image block was thrown away here before reaching the gateway).
+      // For arrays, only measure / truncate the text portion; pass image
+      // blocks through intact.
+      const isArrayContent = Array.isArray(part.content);
+      let textOnly = '';
+      let hasImage = false;
+      if (isArrayContent) {
+        for (const block of part.content as unknown as Array<Record<string, unknown>>) {
+          if (block?.type === 'text' && typeof block.text === 'string') {
+            textOnly += (textOnly ? '\n' : '') + block.text;
+          } else if (block?.type === 'image') {
+            hasImage = true;
+          }
+        }
+      }
+      const content = typeof part.content === 'string'
+        ? part.content
+        : isArrayContent
+          ? textOnly
+          : JSON.stringify(part.content);
       const size = content.length;
 
       // Per-tool cap
@@ -108,12 +131,27 @@ export function budgetToolResults(history: Dialogue[]): Dialogue[] {
         if (lastNewline > PREVIEW_CHARS * 0.5) {
           preview = preview.slice(0, lastNewline);
         }
-        budgeted.push({
-          type: 'tool_result',
-          tool_use_id: part.tool_use_id,
-          content: `[Output truncated: ${size.toLocaleString()} chars → ${PREVIEW_CHARS} preview]\n\n${preview}\n\n... (${size - PREVIEW_CHARS} chars omitted)`,
-          is_error: part.is_error,
-        });
+        const truncatedText = `[Output truncated: ${size.toLocaleString()} chars → ${PREVIEW_CHARS} preview]\n\n${preview}\n\n... (${size - PREVIEW_CHARS} chars omitted)`;
+        if (hasImage) {
+          // Preserve image blocks; only swap the text block for the truncated preview.
+          const rebuilt: Array<Record<string, unknown>> = [{ type: 'text', text: truncatedText }];
+          for (const block of part.content as unknown as Array<Record<string, unknown>>) {
+            if (block?.type === 'image') rebuilt.push(block);
+          }
+          budgeted.push({
+            type: 'tool_result',
+            tool_use_id: part.tool_use_id,
+            content: rebuilt as unknown as Array<TextSegment | ImageSegment>,
+            is_error: part.is_error,
+          });
+        } else {
+          budgeted.push({
+            type: 'tool_result',
+            tool_use_id: part.tool_use_id,
+            content: truncatedText,
+            is_error: part.is_error,
+          });
+        }
         messageTotal += PREVIEW_CHARS + 200;
         continue;
       }
