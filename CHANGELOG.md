@@ -1,5 +1,55 @@
 # Changelog
 
+## 3.15.89 — Vision images survive the budgeter
+
+Single-issue patch. Vision calls (sonnet-4.6, opus-4.7, any image-capable
+model) had been silently hallucinating against attached PNGs because
+Franklin's own char-budgeter was destroying the image blocks before the
+request left the agent.
+
+`src/agent/optimize.ts:budgetToolResults` was running
+`JSON.stringify(part.content)` over arrays containing base64 image
+blocks, the resulting string trivially tipped past the 32K char cap, and
+the entire content array got replaced with a truncated text preview.
+The model only ever saw a 2KB self-referential string starting with
+`"[Output truncated: 275,952 chars → 2000 preview]\n\n[{\"type\":\"text\"…"`
+instead of the image.
+
+Verified from a real gateway log: a sonnet-4.6 vision call recorded
+20,723 input tokens (should have been ~150K with the image present),
+and the tool body was that same 2KB self-referential string.
+
+### Fix
+
+Decompose `tool_result.content` into text vs image segments before
+measuring size. Only text counts toward `MAX_TOOL_RESULT_CHARS` /
+`MAX_TOOL_RESULTS_PER_MESSAGE_CHARS`. Image segments pass through
+untouched on every code path: under cap, per-tool truncation,
+per-message truncation. Bare-string content (the original path) is
+unchanged.
+
+### Tests
+
+Three regression tests added in `test/local.mjs`:
+
+1. 300KB image + small text → image survives, base64 untruncated.
+2. 60K text + small image → text truncated, image survives alongside.
+3. 50K bare string → still truncates to a string preview (no
+   regression on the original path).
+
+366/366 tests pass.
+
+### Behavioral implications
+
+Vision-capable flows that route an image through a tool result — ImageGen,
+Read on `.png`/`.jpg`, browser screenshots — will now actually let the
+model see the image. Expect input-token counts on those calls to jump
+(a single screenshot can easily add 100K+ vision tokens) and answers to
+become accurate instead of hallucinatory. Wallet impact is real but
+expected: this is the cost of the model actually seeing what you sent.
+
+Full write-up: `docs/release-notes/2026-05-10-vision-image-fix.md`.
+
 ## 3.15.88 — Source code is English-only by policy
 
 \`grep -rE '[\\x{4e00}-\\x{9fff}]' src/ --include='*.ts'\` now returns
