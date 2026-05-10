@@ -80,6 +80,7 @@
     "playwright-core": "^1.49.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.4",
+    "sharp": "^0.34.5",
     "viem": "^2.48.1"
   },
   "devDependencies": {

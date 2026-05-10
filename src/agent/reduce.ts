@@ -53,13 +53,35 @@ export function ageToolResults(history: Dialogue[]): Dialogue[] {
     const aged: UserContentPart[] = parts.map(part => {
       if (part.type !== 'tool_result') return part;
 
+      // Vision tool_results carry [text, image] arrays. JSON.stringify-ing
+      // them and rebuilding `content` as a truncated string drops the
+      // image block entirely. Measure only the text portion; aging code
+      // below rebuilds as a string only when no image is present, otherwise
+      // we leave the part untouched (image bytes are already context-cheap
+      // once cached, and turn them into placeholders is the wrong fix).
+      let hasImage = false;
+      let textOnly = '';
+      if (Array.isArray(part.content)) {
+        for (const block of part.content as unknown as Array<Record<string, unknown>>) {
+          if (block?.type === 'text' && typeof block.text === 'string') {
+            textOnly += (textOnly ? '\n' : '') + block.text;
+          } else if (block?.type === 'image') {
+            hasImage = true;
+          }
+        }
+      }
       const content = typeof part.content === 'string'
         ? part.content
-        : JSON.stringify(part.content);
+        : Array.isArray(part.content)
+          ? textOnly
+          : JSON.stringify(part.content);
       const charLen = content.length;
 
       // Recent 3 results: keep full
       if (age <= 3) return part;
+      // Preserve image-bearing tool_results regardless of age — replacing
+      // them with a text stub would silently delete the model's vision context.
+      if (hasImage) return part;
 
       // Age 4-8: keep first 500 chars
       if (age <= 8 && charLen > 500) {

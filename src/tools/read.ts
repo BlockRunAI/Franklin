@@ -126,12 +126,62 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           output: `Image file: ${resolved} (${ext}, ${sizeStr}). Too large to inline for vision (>${Math.round(IMAGE_MAX_BYTES / 1_000_000)}MB). Resize or crop first.`,
         };
       }
-      const bytes = fs.readFileSync(resolved);
-      const base64 = bytes.toString('base64');
+      // Client-side normalization to bound vision-token cost. The BlockRun
+      // gateway (verified 2026-05-09) tokenizes image base64 as text on the
+      // /v1/messages forward path, so a 1.9MB PNG → ~2.5M base64 chars →
+      // ~1.36M billed tokens (~$0.50 per call) instead of Anthropic's
+      // native vision tokenization (~1.6k tokens). Resizing the long edge
+      // to 1280px and re-encoding as JPEG q85 cuts payload to ~80KB while
+      // keeping vision usable. Skip work if the file is already small;
+      // preserve PNG when transparency matters (alpha sample).
+      const SKIP_BELOW_BYTES = 150 * 1024;
+      const MAX_LONG_EDGE = 1280;
+      const JPEG_QUALITY = 85;
+      const rawBytes = fs.readFileSync(resolved);
+      let outBytes: Buffer = rawBytes;
+      let outMedia: string = IMAGE_MEDIA_TYPES[ext];
+      let normalizeNote = '';
+      if (stat.size > SKIP_BELOW_BYTES) {
+        try {
+          const sharpMod = await import('sharp');
+          const sharp = (sharpMod as { default: typeof import('sharp') }).default;
+          const img = sharp(rawBytes, { failOn: 'none' });
+          const meta = await img.metadata();
+          const longEdge = Math.max(meta.width ?? 0, meta.height ?? 0);
+          // Detect transparency: GIF/WebP/PNG with non-opaque alpha → keep PNG.
+          let hasAlpha = false;
+          if (meta.hasAlpha) {
+            const stats = await sharp(rawBytes).stats();
+            const alpha = stats.channels[stats.channels.length - 1];
+            hasAlpha = alpha?.min !== undefined && alpha.min < 255;
+          }
+          let pipeline = sharp(rawBytes, { failOn: 'none' });
+          if (longEdge > MAX_LONG_EDGE) {
+            pipeline = pipeline.resize({
+              width: meta.width && meta.width >= (meta.height ?? 0) ? MAX_LONG_EDGE : undefined,
+              height: meta.height && meta.height > (meta.width ?? 0) ? MAX_LONG_EDGE : undefined,
+              fit: 'inside',
+              withoutEnlargement: true,
+            });
+          }
+          if (hasAlpha) {
+            outBytes = await pipeline.png({ compressionLevel: 9 }).toBuffer();
+            outMedia = 'image/png';
+          } else {
+            outBytes = await pipeline.jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer();
+            outMedia = 'image/jpeg';
+          }
+          const outKb = (outBytes.length / 1024).toFixed(1);
+          normalizeNote = ` Normalized: ${sizeStr} → ${outKb}KB (${meta.width}×${meta.height}${longEdge > MAX_LONG_EDGE ? ` → long edge ${MAX_LONG_EDGE}` : ''}, ${hasAlpha ? 'PNG/alpha' : `JPEG q${JPEG_QUALITY}`}).`;
+        } catch {
+          // Best-effort — if sharp fails, fall through with raw bytes.
+        }
+      }
+      const base64 = outBytes.toString('base64');
       fileReadTracker.set(resolved, { mtimeMs: stat.mtimeMs, readAt: Date.now() });
       return {
-        output: `Image file: ${resolved} (${ext}, ${sizeStr}). Rendered below for vision-capable models.`,
-        images: [{ mediaType: IMAGE_MEDIA_TYPES[ext], base64 }],
+        output: `Image file: ${resolved} (${ext}, ${sizeStr}).${normalizeNote} Rendered below for vision-capable models.`,
+        images: [{ mediaType: outMedia, base64 }],
       };
     }
 
