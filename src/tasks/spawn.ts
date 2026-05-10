@@ -16,26 +16,37 @@
  *
  * CLI path resolution (in priority order):
  *   1. process.env.FRANKLIN_CLI_PATH — escape hatch for tests / dev.
- *   2. <package-dist>/index.js — resolved RELATIVE TO this module's own
- *      file location via import.meta.url. The previous implementation
- *      used `path.resolve(process.cwd(), 'dist', 'index.js')`, which
- *      assumes the user is invoking Franklin from the package root.
- *      In practice agents and the VS Code extension run with cwd set to
- *      the user's working directory (e.g. /Users/<x>/Desktop/project),
- *      so the spawned task tried to load
- *      `/Users/<x>/Desktop/project/dist/index.js` and crashed with
- *      "Cannot find module". Resolving against import.meta.url makes
- *      the lookup independent of where the user invoked from.
+ *   2. STARTUP_CLI_PATH (captured at module load) — absolute path of
+ *      the script Node is currently executing. Captured early so it
+ *      survives any later chdir; resolved to absolute so it survives
+ *      the spawn's `cwd:` override (the bug it fixes — verified
+ *      2026-05-04 from a real session: dev-mode `node dist/index.js`
+ *      run, then Detach with workingDir=other-repo, child fails with
+ *      MODULE_NOT_FOUND on `<other-repo>/dist/index.js`).
  */
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { writeTaskMeta } from './store.js';
 import { taskLogPath, ensureTaskDir } from './paths.js';
 import type { TaskRecord } from './types.js';
+
+// Captured at module load so it survives later chdir / argv mutation.
+// `process.argv[1]` may be relative (`dist/index.js` in dev mode); we
+// resolve against process.cwd() at startup which is when the user's
+// shell exec'd the bundle. Doing this at call time would be wrong if
+// any code chdir'd between startup and the Detach call.
+const STARTUP_CLI_PATH: string | undefined = (() => {
+  const argv1 = process.argv[1];
+  if (!argv1) return undefined;
+  try {
+    return path.resolve(argv1);
+  } catch {
+    return argv1;
+  }
+})();
 
 export interface StartDetachedTaskInput {
   label: string;
@@ -44,52 +55,14 @@ export interface StartDetachedTaskInput {
 }
 
 function resolveCliPath(): string {
-  // Strategy chain — first existing path wins. Two real-world deploys to
-  // satisfy: (1) standalone CLI install where spawn.js lives at
-  // dist/tasks/spawn.js, (2) VS Code extension where spawn.js is bundled
-  // INTO out/extension.cjs by esbuild, so import.meta.url points at the
-  // bundle, not the original source file.
-  const candidates: string[] = [];
-
-  // (1) Explicit override — extension sets this on activate() once it
-  //     knows where @blockrun/franklin is npm-installed in its sandbox.
   const fromEnv = process.env.FRANKLIN_CLI_PATH;
-  if (fromEnv && fromEnv.length > 0) candidates.push(fromEnv);
-
-  // (2) npm-aware resolution — works for global CLI installs and any
-  //     context where @blockrun/franklin is reachable through node's
-  //     module resolution. createRequire works in both ESM and bundled
-  //     CJS contexts.
-  try {
-    const { createRequire } = require('node:module') as typeof import('node:module');
-    const req = createRequire(import.meta.url);
-    candidates.push(req.resolve('@blockrun/franklin'));
-  } catch { /* not all bundlers preserve createRequire — fall through */ }
-
-  // (3) Relative to this module's own URL — works for the standalone
-  //     CLI install (spawn.js at dist/tasks/spawn.js → dist/index.js).
-  //     In bundled extension contexts this resolves to the bundle's
-  //     directory, which is wrong, but harmless if (1) or (2) hit first.
-  try {
-    const here = fileURLToPath(import.meta.url);
-    candidates.push(path.resolve(path.dirname(here), '..', 'index.js'));
-  } catch { /* import.meta absent — skip */ }
-
-  // (4) Last-ditch cwd-based — the original buggy behavior, kept as a
-  //     final fallback so resolveCliPath never throws even in the most
-  //     stripped-down bundler output.
-  candidates.push(path.resolve(process.cwd(), 'dist', 'index.js'));
-
-  // Return the first candidate that actually exists on disk. If none
-  // exist, return the highest-priority one anyway so the spawn fails
-  // with an explicit "Cannot find module" instead of silently using
-  // a stale path.
-  for (const p of candidates) {
-    try {
-      if (fs.statSync(p).isFile()) return p;
-    } catch { /* try next */ }
-  }
-  return candidates[0];
+  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  // STARTUP_CLI_PATH is the absolute path resolved at module load —
+  // safe to use after `cwd: input.workingDir` redirects the child.
+  // npm global installs already give an absolute path; this only
+  // matters in dev mode where `node dist/index.js` puts a relative
+  // path into argv[1].
+  return STARTUP_CLI_PATH || process.argv[1];
 }
 
 function generateRunId(): string {

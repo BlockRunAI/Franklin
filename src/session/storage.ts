@@ -13,6 +13,33 @@ import type { Dialogue } from '../agent/types.js';
 const MAX_SESSIONS = 20; // Keep last 20 sessions
 let resolvedSessionsDir: string | null = null;
 
+// When in-process tests run interactiveSession() with model="local/test*",
+// session writes were creating real .jsonl + .meta.json files in the
+// user's ~/.blockrun/sessions/ — verified 19 of 33 metas (57.6%) on a
+// real machine. Toggled at session start by the agent loop based on the
+// model name; defaults to enabled so production never accidentally goes
+// silent. No-op writes when disabled — reads still work so resume tests
+// can pre-seed state with their own writes if they want to.
+let persistenceDisabled = false;
+
+export function setSessionPersistenceDisabled(disabled: boolean): void {
+  persistenceDisabled = disabled;
+}
+
+export function isSessionPersistenceDisabled(): boolean {
+  // Also honor FRANKLIN_NO_PERSIST — a separate env var, deliberately
+  // NOT piggybacking on FRANKLIN_NO_AUDIT. test/local.mjs sets
+  // FRANKLIN_NO_AUDIT=1 at file level expecting session writes to
+  // keep working so resume tests can verify state on disk; that
+  // contract has to stay intact. FRANKLIN_NO_PERSIST is used by
+  // test/e2e.mjs to block home-dir writes from spawned franklin
+  // children. Verified 2026-05-04: prior e2e runs left 3 ghost
+  // session metas in the user's ~/.blockrun/sessions/ because real
+  // model names (zai/glm-5.1, nvidia/qwen3-coder-480b) escaped
+  // isTestFixtureModel()'s name-prefix gate.
+  return persistenceDisabled || process.env.FRANKLIN_NO_PERSIST === '1';
+}
+
 export interface SessionMeta {
   id: string;
   model: string;
@@ -21,6 +48,18 @@ export interface SessionMeta {
   updatedAt: number;
   turnCount: number;
   messageCount: number;
+  /**
+   * Chain (`base` | `solana`) the session was started on. Captured at
+   * session creation so `franklin --resume` can restore the same chain
+   * even if the user later changed their default via
+   * `franklin solana` / `franklin base`. Verified 2026-05-04: a debug
+   * invocation flipped `~/.blockrun/.chain` to `solana`; the next
+   * `--resume` silently moved the user from their funded Base wallet
+   * to an underfunded Solana wallet. Sessions are wallet-bound by
+   * conversation context — switching chains mid-resume is a bug.
+   * Optional for back-compat with pre-3.15.35 sessions.
+   */
+  chain?: 'base' | 'solana';
   // Token & cost tracking (added for per-session insights)
   inputTokens?: number;
   outputTokens?: number;
@@ -33,6 +72,12 @@ export interface SessionMeta {
    */
   channel?: string;
   /**
+   * User-assigned title (set via the VS Code extension history rename UI).
+   * When set, the extension shows this instead of the derived first-message
+   * title. Capped at 200 chars by renameSession.
+   */
+  title?: string;
+  /**
    * Per-tool invocation counts for this session, aggregated across every
    * turn. Populated by the agent loop at each tool-call batch. Used by the
    * opt-in telemetry subsystem to aggregate vertical-usage signals — do NOT
@@ -40,12 +85,14 @@ export interface SessionMeta {
    */
   toolCallCounts?: Record<string, number>;
   /**
-   * User-assigned conversation title. When set, takes precedence over the
-   * derived-from-first-message title in any UI. Lets users rename a chat
-   * (e.g. "草莓AI 短剧分镜") so it's findable later. Unset by default —
-   * UIs should fall back to the derived title.
+   * Sessions imported from another agent (`franklin migrate`). Imports often
+   * exceed MAX_SESSIONS by an order of magnitude (a Claude Code user can
+   * easily have 200+ historical sessions); without this flag, the very
+   * next `franklin` launch would prune all but the 20 most recent and
+   * silently destroy the user's history. pruneOldSessions() skips any
+   * meta with imported=true.
    */
-  title?: string;
+  imported?: true;
 }
 
 function getSessionsDir(): string {
@@ -120,6 +167,7 @@ export function appendToSession(
   sessionId: string,
   message: Dialogue
 ): void {
+  if (isSessionPersistenceDisabled()) return;
   const line = JSON.stringify(message) + '\n';
   withWritableSessionDir(() => {
     fs.appendFileSync(sessionPath(sessionId), line);
@@ -133,6 +181,7 @@ export function updateSessionMeta(
   sessionId: string,
   meta: Partial<SessionMeta>
 ): void {
+  if (isSessionPersistenceDisabled()) return;
   withWritableSessionDir(() => {
     const existing = loadSessionMeta(sessionId);
     const updated: SessionMeta = {
@@ -150,12 +199,20 @@ export function updateSessionMeta(
       ...(meta.channel !== undefined || existing?.channel !== undefined
         ? { channel: meta.channel ?? existing?.channel }
         : {}),
+      // Chain (base / solana) is sticky once set. We never let a later
+      // update overwrite an existing value with undefined — that would
+      // silently drop the bind-to-original-chain guarantee.
+      ...(meta.chain !== undefined || existing?.chain !== undefined
+        ? { chain: existing?.chain ?? meta.chain }
+        : {}),
       ...(meta.toolCallCounts !== undefined || existing?.toolCallCounts !== undefined
         ? { toolCallCounts: meta.toolCallCounts ?? existing?.toolCallCounts }
         : {}),
-      ...(meta.title !== undefined || existing?.title !== undefined
-        ? { title: meta.title ?? existing?.title }
-        : {}),
+      // `imported` is sticky like `chain`: once set by `franklin migrate`
+      // it must survive every subsequent update so pruneOldSessions keeps
+      // shielding the session from auto-deletion. Without preservation, the
+      // first turn added via `--resume` would silently drop the flag.
+      ...(meta.imported || existing?.imported ? { imported: true as const } : {}),
     };
     // Atomic write: tmp file + rename. Prevents corruption when parent
     // and sub-agent update the same session meta concurrently.
@@ -174,41 +231,6 @@ export function updateSessionMeta(
       try { fs.writeFileSync(target, payload); } catch { /* give up; stats just get stale */ }
     }
   });
-}
-
-/**
- * Permanently delete a session — both the JSONL turn log and its meta file.
- * Idempotent: missing files are silently ignored. Returns true if anything
- * was actually removed (useful for UI "deleted N sessions" feedback).
- *
- * Validation: only allows ids matching the session-id format we generate
- * (alphanumeric + underscore + dash) so a caller passing untrusted input
- * can't traverse out of the sessions directory.
- */
-export function deleteSession(sessionId: string): boolean {
-  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) return false;
-  let removed = false;
-  for (const p of [sessionPath(sessionId), metaPath(sessionId)]) {
-    try {
-      fs.unlinkSync(p);
-      removed = true;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== 'ENOENT') throw err;
-    }
-  }
-  return removed;
-}
-
-/**
- * Set or clear a user-assigned title on a session. Pass an empty string or
- * undefined to clear (UI then falls back to the derived first-message
- * title). Trimmed, capped at 200 chars to keep the meta file small.
- */
-export function renameSession(sessionId: string, title: string | undefined): void {
-  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) return;
-  const trimmed = (title ?? '').trim().slice(0, 200);
-  updateSessionMeta(sessionId, { title: trimmed.length > 0 ? trimmed : undefined });
 }
 
 /**
@@ -290,11 +312,13 @@ export function findLatestSessionByChannel(channel: string): SessionMeta | undef
  * Accepts optional activeSessionId to protect from deletion.
  */
 export function pruneOldSessions(activeSessionId?: string): void {
-  const sessions = readSessionMetas(false);
-  const allSessions = readSessionMetas(true);
+  // Only count native sessions toward the MAX_SESSIONS budget. Imported
+  // sessions (from `franklin migrate`) are user-owned history and must
+  // never be auto-deleted just because the user ran the agent again.
+  const native = readSessionMetas(false).filter(s => !s.imported);
 
-  if (sessions.length > MAX_SESSIONS) {
-    const toDelete = sessions
+  if (native.length > MAX_SESSIONS) {
+    const toDelete = native
       .slice(MAX_SESSIONS)
       .filter(s => s.id !== activeSessionId); // Never delete active session
     for (const s of toDelete) {
@@ -303,13 +327,81 @@ export function pruneOldSessions(activeSessionId?: string): void {
     }
   }
 
-  // Also clean up ghost sessions (0 messages, older than 5 minutes)
+  // Also clean up ghost sessions (0 messages, older than 5 minutes).
+  // Skip imported sessions — they may legitimately have messageCount=0
+  // if the source file had only attachments/system lines.
   const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+  const allSessions = readSessionMetas(true);
   for (const s of allSessions) {
     if (s.id === activeSessionId) continue;
+    if (s.imported) continue;
     if (s.messageCount === 0 && s.createdAt < fiveMinAgo) {
       try { fs.unlinkSync(sessionPath(s.id)); } catch { /* ok */ }
       try { fs.unlinkSync(metaPath(s.id)); } catch { /* ok */ }
     }
   }
+
+  // Sweep orphan jsonl files (left over from a session-id format change in
+  // earlier releases — meta deleted, jsonl stranded). The pre-3.x naming
+  // didn't include the random suffix, so the meta-driven prune above has
+  // no record of them and they accumulate forever. Verified on a real
+  // user machine: 21 metas, 121 jsonl, 100 orphans = ~1 MB stranded.
+  pruneOrphanJsonlFiles(activeSessionId);
+}
+
+function pruneOrphanJsonlFiles(activeSessionId?: string): void {
+  const dir = getSessionsDir();
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return; // Sessions dir doesn't exist yet — nothing to prune.
+  }
+
+  const knownIds = new Set<string>();
+  for (const f of entries) {
+    if (f.endsWith('.meta.json')) {
+      knownIds.add(f.slice(0, -'.meta.json'.length));
+    }
+  }
+
+  for (const f of entries) {
+    if (!f.endsWith('.jsonl')) continue;
+    const id = f.slice(0, -'.jsonl'.length);
+    if (id === activeSessionId) continue;
+    if (knownIds.has(id)) continue;
+    // No meta partner — orphan. Delete the jsonl.
+    try { fs.unlinkSync(path.join(dir, f)); } catch { /* ok */ }
+  }
+}
+
+/**
+ * Delete a session's jsonl + meta files. Used by the VS Code extension
+ * history panel "delete" action. Validates the id shape so untrusted
+ * input can't traverse out of the sessions directory.
+ */
+export function deleteSession(sessionId: string): boolean {
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) return false;
+  let removed = false;
+  for (const p of [sessionPath(sessionId), metaPath(sessionId)]) {
+    try {
+      fs.unlinkSync(p);
+      removed = true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw err;
+    }
+  }
+  return removed;
+}
+
+/**
+ * Set or clear a user-assigned title on a session. Empty / undefined
+ * clears (UI falls back to the derived first-message title). Trimmed,
+ * capped at 200 chars to keep the meta file small.
+ */
+export function renameSession(sessionId: string, title: string | undefined): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) return;
+  const trimmed = (title ?? '').trim().slice(0, 200);
+  updateSessionMeta(sessionId, { title: trimmed.length > 0 ? trimmed : undefined });
 }

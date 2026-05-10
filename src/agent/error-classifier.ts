@@ -10,6 +10,7 @@
 export type AgentErrorCategory =
   | 'rate_limit'
   | 'payment'
+  | 'payment_rejected'
   | 'network'
   | 'timeout'
   | 'context_limit'
@@ -21,12 +22,21 @@ export type AgentErrorCategory =
 
 export interface AgentErrorInfo {
   category: AgentErrorCategory;
-  label: 'RateLimit' | 'Payment' | 'Network' | 'Timeout' | 'Context' | 'Overloaded' | 'Server' | 'Auth' | 'Schema' | 'Unknown';
+  label: 'RateLimit' | 'Payment' | 'PaymentRejected' | 'Network' | 'Timeout' | 'Context' | 'Overloaded' | 'Server' | 'Auth' | 'Schema' | 'Unknown';
   isTransient: boolean;
   /** Max retries for this error type (overrides default). undefined = use default. */
   maxRetries?: number;
   /** User-facing suggestion for how to recover. Appended to error message in UI. */
   suggestion?: string;
+  /**
+   * Upstream-recommended wait time before retrying. Parsed from a
+   * `[retry-after-ms=...]` tag the streaming client appends to the error
+   * message when the response carries a `Retry-After` header (typically
+   * 429 / 503). The agent loop should honor this in place of its
+   * default exponential backoff. Capped at 10 minutes upstream so a
+   * malicious or buggy server can't pin the agent indefinitely.
+   */
+  retryAfterMs?: number;
 }
 
 function includesAny(text: string, patterns: string[]): boolean {
@@ -36,10 +46,43 @@ function includesAny(text: string, patterns: string[]): boolean {
 export function classifyAgentError(message: string): AgentErrorInfo {
   const err = message.toLowerCase();
 
+  // Extract Retry-After hint that streaming-client appended (see llm.ts
+  // 429 path). Surfaces on the AgentErrorInfo so the loop can honor the
+  // upstream's recommended wait instead of guessing with exponential
+  // backoff.
+  let retryAfterMs: number | undefined;
+  const retryAfterTag = /\[retry-after-ms=(\d+)\]/i.exec(message);
+  if (retryAfterTag) {
+    const n = parseInt(retryAfterTag[1], 10);
+    if (Number.isFinite(n) && n > 0 && n <= 600_000) retryAfterMs = n;
+  }
+
+  // payment_rejected — the gateway received a SIGNED payment header and
+  // rejected it during verification (signature mismatch, replay-nonce
+  // reuse, clock skew, wrong-chain wallet). Different remedy from
+  // payment_required: re-presenting the same signature won't help.
+  // Verified 2026-05-04 in a live session: ExaSearch returned
+  // `Exa /v1/exa/search failed (402): {"error":"Payment verification failed",...}`.
+  // Classify BEFORE the generic 'payment' branch below since the body
+  // contains both 'payment' and 'verification failed'.
+  if (includesAny(err, [
+    'verification failed',
+    'payment verification',
+    'signature mismatch',
+    'invalid payment signature',
+    'invalid x-payment',
+    'nonce reuse',
+    'replay protection',
+  ])) {
+    return {
+      category: 'payment_rejected', label: 'PaymentRejected', isTransient: false, maxRetries: 0,
+      suggestion: 'The gateway rejected your signed payment. Run `franklin balance` to confirm funds + chain. Common causes: clock skew (resync system clock), wrong chain selected (use `/chain` to switch), or stale nonce (the same retry will fail). Switch to a free model with `/model free` to keep working.',
+    };
+  }
+
   if (includesAny(err, [
     'insufficient',
     'payment',
-    'verification failed',
     'balance',
     '402',
     'free tier',
@@ -82,6 +125,7 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     return {
       category: 'rate_limit', label: 'RateLimit', isTransient: true, maxRetries: 1,
       suggestion: 'Try /model to switch to a different model, or wait a moment and /retry.',
+      retryAfterMs,
     };
   }
 
@@ -140,6 +184,29 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     return {
       category: 'overloaded', label: 'Overloaded', isTransient: true, maxRetries: 3,
       suggestion: 'The model is overloaded. Try /model to switch, or wait and /retry.',
+    };
+  }
+
+  // Reasoning / thinking-mode format errors — NOT transient.
+  // DeepSeek V4 family and similar thinking-enabled models reject requests
+  // when the message history's reasoning_content fields don't match the
+  // upstream's expected shape (typically: tool-call assistant messages must
+  // carry reasoning_content; non-tool-call ones must not, or vice versa).
+  // The fix is to drop the polluting history, not to swap models — every
+  // thinking-enabled model has the same constraint just with different
+  // specifics. /clear forces a fresh context that won't have the bad shape.
+  // Classified BEFORE the generic schema branch below so we surface the
+  // right suggestion.
+  if (includesAny(err, [
+    'reasoning_content',
+    'reasoning content',
+    'thinking mode must',
+    'message format incompatible',
+    'reasoning_format_error',
+  ])) {
+    return {
+      category: 'schema', label: 'Schema', isTransient: false, maxRetries: 0,
+      suggestion: 'Thinking-mode history is incompatible with this model. Use /clear to reset and retry, or /model to switch to a non-thinking model.',
     };
   }
 

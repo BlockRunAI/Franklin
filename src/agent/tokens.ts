@@ -206,9 +206,11 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'google/gemini-2.5-flash': 1_000_000,
   'google/gemini-2.5-flash-lite': 1_000_000,
   'google/gemini-3.1-pro': 1_000_000,
-  // DeepSeek
-  'deepseek/deepseek-chat': 64_000,
-  'deepseek/deepseek-reasoner': 64_000,
+  // DeepSeek (V4 family — gateway aliased deepseek-chat / -reasoner to V4
+  // Flash on 2026-05-03; context bumped 128K → 1M for both, 65K out)
+  'deepseek/deepseek-chat': 1_000_000,
+  'deepseek/deepseek-reasoner': 1_000_000,
+  'deepseek/deepseek-v4-pro': 1_000_000,
   // xAI
   'xai/grok-3': 131_072,
   'xai/grok-4-0709': 131_072,

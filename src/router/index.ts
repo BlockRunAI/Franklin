@@ -37,7 +37,13 @@ function loadLearnedWeights(): LearnedWeights | null {
 }
 
 export type Tier = 'SIMPLE' | 'MEDIUM' | 'COMPLEX' | 'REASONING';
-export type RoutingProfile = 'auto' | 'eco' | 'premium' | 'free';
+// 2026-05-03: collapsed Eco / Premium routing profiles into Auto. With V4 Pro
+// at $0.50/$1.00 (launch promo) covering SIMPLE+MEDIUM and Opus covering
+// COMPLEX, separate Eco ("free models everywhere") and Premium ("Opus
+// everywhere") profiles became redundant — Auto already spans the cost/
+// quality spectrum. `blockrun/eco` and `blockrun/premium` still parse to
+// 'auto' below so existing configs keep working.
+export type RoutingProfile = 'auto' | 'free';
 
 export interface RoutingResult {
   model: string;
@@ -50,96 +56,87 @@ export interface RoutingResult {
 
 // ─── Tier Model Configs ───
 
-// Agent-first defaults. Sonnet-tier models are the current sweet spot for
-// multi-step tool-use agent work; cheap models keep derailing on simple agent
-// loops. Each tier's fallback ends with a cheaper option so payment/quota
-// failures don't strand users on equally expensive alternatives.
+// Auto-routing strategy (post-DeepSeek-V4-Pro launch promo, 2026-05-03):
+// V4 Pro at $0.50/$1.00 with 1M context is the new sweet spot for SIMPLE +
+// MEDIUM agent work — Sonnet-quality reasoning at ~1/6 the price. Reserve
+// Opus only for genuinely complex multi-file/multi-decision tasks where
+// the model's wider context handling and tighter tool-use discipline still
+// pay for themselves. Sonnet drops to fallback because V4 Pro covers most
+// of what users were calling Sonnet for, at a fraction of the cost.
 const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
-    primary: 'google/gemini-2.5-flash',
-    fallback: ['moonshot/kimi-k2.6', 'deepseek/deepseek-chat'],
+    primary: 'deepseek/deepseek-v4-pro',
+    fallback: ['google/gemini-2.5-flash', 'moonshot/kimi-k2.6', 'deepseek/deepseek-chat'],
   },
   MEDIUM: {
-    primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.5', 'google/gemini-3.1-pro', 'moonshot/kimi-k2.6'],
+    primary: 'deepseek/deepseek-v4-pro',
+    fallback: ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.5', 'google/gemini-3.1-pro'],
   },
   COMPLEX: {
-    primary: 'anthropic/claude-sonnet-4.6',
-    fallback: ['openai/gpt-5.5', 'anthropic/claude-opus-4.7', 'moonshot/kimi-k2.6'],
+    // Hard tasks — multi-file refactors, ambiguous specs, dense reasoning
+    // chains — still go to Opus. V4 Pro is great but not a Sonnet/Opus
+    // replacement at the high end of difficulty per recent agent-bench runs.
+    primary: 'anthropic/claude-opus-4.7',
+    fallback: ['openai/gpt-5.5', 'anthropic/claude-sonnet-4.6', 'deepseek/deepseek-v4-pro'],
   },
   REASONING: {
     // Opus 4.7: step-change improvement in agentic coding over 4.6 per
-    // Anthropic. Same price, same 200k ctx in Franklin's baseline, so
-    // swap is cost-neutral. 4.6 stays in the fallback chain in case of
-    // rollout delays on the gateway side.
+    // Anthropic. 4.6 stays in the fallback chain in case of rollout delays.
     primary: 'anthropic/claude-opus-4.7',
     fallback: [
       'anthropic/claude-opus-4.6',
       'openai/o3',
+      'deepseek/deepseek-v4-pro',
       'xai/grok-4-1-fast-reasoning',
       'deepseek/deepseek-reasoner',
     ],
   },
 };
 
-const ECO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
-  SIMPLE: {
-    primary: 'nvidia/qwen3-coder-480b',
-    fallback: ['nvidia/llama-4-maverick'],
-  },
-  MEDIUM: {
-    primary: 'google/gemini-2.5-flash-lite',
-    fallback: ['nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick'],
-  },
-  COMPLEX: {
-    primary: 'google/gemini-2.5-flash-lite',
-    fallback: ['deepseek/deepseek-chat', 'nvidia/qwen3-coder-480b'],
-  },
-  REASONING: {
-    primary: 'xai/grok-4-1-fast-reasoning',
-    fallback: ['deepseek/deepseek-reasoner', 'nvidia/qwen3-coder-480b'],
-  },
-};
-
-const PREMIUM_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
-  SIMPLE: {
-    primary: 'moonshot/kimi-k2.6',
-    fallback: ['anthropic/claude-haiku-4.5'],
-  },
-  MEDIUM: {
-    primary: 'openai/gpt-5.3-codex',
-    fallback: ['anthropic/claude-sonnet-4.6'],
-  },
-  COMPLEX: {
-    primary: 'anthropic/claude-opus-4.7',
-    fallback: ['anthropic/claude-opus-4.6', 'openai/gpt-5.5', 'anthropic/claude-sonnet-4.6'],
-  },
-  REASONING: {
-    primary: 'anthropic/claude-opus-4.7',
-    fallback: ['anthropic/claude-opus-4.6', 'anthropic/claude-sonnet-4.6', 'openai/o3'],
-  },
-};
 
 // ─── Keywords for Classification ───
+//
+// Keyword fast-path uses English only by policy (English-only-source rule).
+// Non-English user queries route through the LLM-level classifier above this
+// fast-path, which is multilingual and handles intent correctly without
+// needing per-language keyword lists here.
 
 const CODE_KEYWORDS = [
   'function', 'class', 'import', 'def', 'SELECT', 'async', 'await',
-  'const', 'let', 'var', 'return', '```', '函数', '类', '导入',
+  'const', 'let', 'var', 'return', '```',
 ];
 
 const REASONING_KEYWORDS = [
   'prove', 'theorem', 'derive', 'step by step', 'chain of thought',
-  'formally', 'mathematical', 'proof', 'logically', '证明', '定理', '推导',
+  'formally', 'mathematical', 'proof', 'logically',
 ];
 
 const SIMPLE_KEYWORDS = [
-  'what is', 'define', 'translate', 'hello', 'yes or no', 'capital of',
-  'how old', 'who is', 'when was', '什么是', '翻译', '你好',
+  // True simple intents: greeting, definition lookup, translation. Factual
+  // lookups ("who is", "when was", "capital of") were moved to RESEARCH below
+  // because they look easy but require external recall — sending them to
+  // SIMPLE-tier models reliably produces hallucinated subscriber counts,
+  // birth years, etc. that the post-hoc grounding check then has to flag.
+  'define', 'translate', 'hello', 'yes or no',
+];
+
+// Research / fact-retrieval intent: questions whose correct answer depends
+// on data the model can't reliably recall from weights — current statistics,
+// latest news, comparisons, "best" rankings, identities of people/orgs.
+// Bumping tier here pushes them to a MEDIUM/COMPLEX model that has
+// WebSearch in its toolset, instead of letting a cheap text-only model
+// fabricate plausible-looking numbers.
+const RESEARCH_KEYWORDS = [
+  'who is', 'who was', 'when was', 'when did', 'what is the capital',
+  'how old', 'how many', 'how much',
+  'best', 'top ', 'most popular', 'compare', 'vs ', ' vs.',
+  'latest', 'current', 'recent', 'today', 'now',
+  'subscribers', 'members', 'followers', 'market cap', 'price of',
 ];
 
 const TECHNICAL_KEYWORDS = [
   'algorithm', 'optimize', 'architecture', 'distributed', 'kubernetes',
-  'microservice', 'database', 'infrastructure', '算法', '架构', '优化',
+  'microservice', 'database', 'infrastructure',
 ];
 
 const AGENTIC_KEYWORDS = [
@@ -147,8 +144,6 @@ const AGENTIC_KEYWORDS = [
   'deploy', 'install', 'npm', 'pip', 'fix', 'debug', 'verify',
   'commit', 'push', 'pull', 'merge', 'rename', 'replace', 'delete',
   'remove', 'add', 'change', 'move', 'refactor', 'migrate',
-  '编辑', '修改', '部署', '安装', '修复', '调试',
-  '更新', '替换', '删除', '添加', '提交', '改',
 ];
 
 // URL patterns that signal agentic/coding tasks
@@ -156,6 +151,11 @@ const AGENTIC_URL_PATTERNS = [
   /github\.com/i, /gitlab\.com/i, /bitbucket\.org/i,
   /npmjs\.com/i, /pypi\.org/i, /crates\.io/i,
   /stackoverflow\.com/i, /docs\.\w+/i,
+  // Media URLs need the model to actually fetch+understand content,
+  // not just regurgitate from weights. Bumping these prevents the
+  // "user pastes 3 YouTube links → SIMPLE-tier model gives up" path.
+  /youtube\.com/i, /youtu\.be/i,
+  /twitter\.com/i, /x\.com/i,
 ];
 
 // ─── Classifier ───
@@ -217,6 +217,18 @@ function classifyRequest(prompt: string, tokenCount: number): ClassifyResult {
     signals.push('simple');
   }
 
+  // Research / fact-lookup detection (weight: +0.30). Bumps tier upward so
+  // questions like "best subreddit", "current price of X", "how many members"
+  // route to a model that can actually call WebSearch instead of guessing
+  // from weights. Capped at one keyword's worth — research questions
+  // typically signal with one phrase, and stacking would push trivial
+  // questions into REASONING.
+  const researchMatches = countMatches(prompt, RESEARCH_KEYWORDS);
+  if (researchMatches >= 1) {
+    score += 0.30;
+    signals.push('research');
+  }
+
   // Technical complexity (weight: 0.15) - increased
   const techMatches = countMatches(prompt, TECHNICAL_KEYWORDS);
   if (techMatches >= 2) {
@@ -258,7 +270,7 @@ function classifyRequest(prompt: string, tokenCount: number): ClassifyResult {
   // Imperative verbs (build, create, implement, etc.)
   const imperativeMatches = countMatches(prompt, [
     'build', 'create', 'implement', 'design', 'develop', 'write', 'make',
-    'generate', 'construct', '构建', '创建', '实现', '设计', '开发'
+    'generate', 'construct',
   ]);
   if (imperativeMatches >= 1) {
     score += 0.15;
@@ -296,18 +308,11 @@ function classicRouteRequest(
   // Classify the request
   const { tier, confidence, signals } = classifyRequest(prompt, tokenCount);
 
-  // Select tier config based on profile
-  let tierConfigs: Record<Tier, { primary: string; fallback: string[] }>;
-  switch (profile) {
-    case 'eco':
-      tierConfigs = ECO_TIERS;
-      break;
-    case 'premium':
-      tierConfigs = PREMIUM_TIERS;
-      break;
-    default:
-      tierConfigs = AUTO_TIERS;
-  }
+  // Auto is the only routing profile now (Eco/Premium were retired
+  // 2026-05-03 — see comment on RoutingProfile above). 'free' is handled
+  // earlier by the caller path; if it ever reaches here, fall through to
+  // AUTO_TIERS rather than crashing.
+  const tierConfigs = AUTO_TIERS;
 
   const model = tierConfigs[tier].primary;
   const savings = computeSavings(model);
@@ -434,12 +439,7 @@ export async function routeRequestAsync(
 
   // Build a RoutingResult from the LLM-picked tier using the same tier
   // tables the keyword path uses. Keeps downstream code path-identical.
-  let tierConfigs: Record<Tier, { primary: string; fallback: string[] }>;
-  switch (profile) {
-    case 'eco':     tierConfigs = ECO_TIERS; break;
-    case 'premium': tierConfigs = PREMIUM_TIERS; break;
-    default:        tierConfigs = AUTO_TIERS;
-  }
+  const tierConfigs = AUTO_TIERS;
   const model = tierConfigs[tier].primary;
   const category = detectCategory(prompt, loadLearnedWeights()?.category_keywords).category;
   return {
@@ -472,12 +472,7 @@ export function resolveTierToModel(tier: Tier, profile: RoutingProfile = 'auto')
       savings: 1.0,
     };
   }
-  let tierConfigs: Record<Tier, { primary: string; fallback: string[] }>;
-  switch (profile) {
-    case 'eco':     tierConfigs = ECO_TIERS; break;
-    case 'premium': tierConfigs = PREMIUM_TIERS; break;
-    default:        tierConfigs = AUTO_TIERS;
-  }
+  const tierConfigs = AUTO_TIERS;
   const model = tierConfigs[tier].primary;
   return {
     model,
@@ -572,22 +567,51 @@ export function getFallbackChain(
   tier: Tier,
   profile: RoutingProfile = 'auto'
 ): string[] {
-  let tierConfigs: Record<Tier, { primary: string; fallback: string[] }>;
-  switch (profile) {
-    case 'eco':
-      tierConfigs = ECO_TIERS;
-      break;
-    case 'premium':
-      tierConfigs = PREMIUM_TIERS;
-      break;
-    case 'free':
-      return ['nvidia/qwen3-coder-480b'];
-    default:
-      tierConfigs = AUTO_TIERS;
-  }
-
-  const config = tierConfigs[tier];
+  if (profile === 'free') return FREE_MODELS_BY_CATEGORY.chat;
+  const config = AUTO_TIERS[tier];
   return [config.primary, ...config.fallback];
+}
+
+// ─── Free-tier fallback (used when paid models 402 / rate-limit) ───
+
+// Free fallback chains by question category. Used when a paid model fails
+// mid-turn (402 payment, rate-limit) and we need a zero-cost replacement
+// to keep the user moving without waiting for funding.
+//
+// The lists are ordered: best-fit free model first, then degraded fallbacks.
+// Coding goes to qwen3-coder; everything else (chat / trading / research /
+// reasoning / creative) prefers general-purpose free models that aren't
+// coder-tuned. Without this split, a BTC question that exhausted paid
+// models was being handed to qwen3-coder-480b — a coder model trying to
+// do technical analysis. Reported 2026-05-03 with a markets question
+// routed to a coder model on Sonnet failure.
+const FREE_MODELS_BY_CATEGORY: Record<Category, string[]> = {
+  coding:    ['nvidia/qwen3-coder-480b', 'nvidia/glm-4.7', 'nvidia/llama-4-maverick'],
+  trading:   ['nvidia/glm-4.7', 'nvidia/llama-4-maverick', 'nvidia/qwen3-coder-480b'],
+  research:  ['nvidia/glm-4.7', 'nvidia/llama-4-maverick', 'nvidia/qwen3-coder-480b'],
+  reasoning: ['nvidia/glm-4.7', 'nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick'],
+  chat:      ['nvidia/llama-4-maverick', 'nvidia/glm-4.7', 'nvidia/qwen3-coder-480b'],
+  creative:  ['nvidia/llama-4-maverick', 'nvidia/glm-4.7', 'nvidia/qwen3-coder-480b'],
+};
+
+const DEFAULT_FREE_CHAIN: string[] = [
+  'nvidia/glm-4.7',
+  'nvidia/llama-4-maverick',
+  'nvidia/qwen3-coder-480b',
+];
+
+/**
+ * Pick the next free model to try given the question category and which
+ * free models have already failed this turn. Returns undefined when every
+ * candidate has been exhausted (caller should surface an error to user).
+ */
+export function pickFreeFallback(
+  category: string,
+  alreadyFailed: Set<string>
+): string | undefined {
+  const chain = (FREE_MODELS_BY_CATEGORY as Record<string, string[]>)[category]
+    ?? DEFAULT_FREE_CHAIN;
+  return chain.find(m => !alreadyFailed.has(m));
 }
 
 /**
@@ -596,8 +620,11 @@ export function getFallbackChain(
 export function parseRoutingProfile(model: string): RoutingProfile | null {
   const lower = model.toLowerCase();
   if (lower === 'blockrun/auto' || lower === 'auto') return 'auto';
-  if (lower === 'blockrun/eco' || lower === 'eco') return 'eco';
-  if (lower === 'blockrun/premium' || lower === 'premium') return 'premium';
   if (lower === 'blockrun/free' || lower === 'free') return 'free';
+  // Back-compat: Eco / Premium routing profiles were retired 2026-05-03.
+  // Existing configs / sessions that still pass these values get silently
+  // promoted to Auto so nothing breaks; new code should use 'auto' directly.
+  if (lower === 'blockrun/eco' || lower === 'eco') return 'auto';
+  if (lower === 'blockrun/premium' || lower === 'premium') return 'auto';
   return null;
 }

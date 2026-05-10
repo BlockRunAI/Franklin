@@ -15,6 +15,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import { USER_AGENT, type Chain } from '../config.js';
+import { appendSettlementRow } from '../stats/cost-log.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import type {
   Dialogue,
@@ -26,6 +27,22 @@ import type {
 } from './types.js';
 import { ThinkTagStripper } from './think-tag-stripper.js';
 import { isNemotronProseModel, stripNemotronProse } from './nemotron-prose-stripper.js';
+
+// Reasoning-tier models the gateway routes to that reject `tool_choice`
+// outright. Pattern: OpenAI o1/o3 family + DeepSeek's reasoner variant.
+// Add new entries as their 400 errors appear in real sessions; this is
+// a known-bad allowlist, not a guess. Wildcard substring match keeps it
+// resilient to model-revision suffixes (`o1-mini`, `o3-2026-04`, etc.).
+const MODELS_WITHOUT_TOOL_CHOICE_SUBSTR = [
+  'deepseek-reasoner',
+  'openai/o1',
+  'openai/o3',
+];
+
+function modelDoesNotSupportToolChoice(model: string): boolean {
+  if (!model) return false;
+  return MODELS_WITHOUT_TOOL_CHOICE_SUBSTR.some(s => model.includes(s));
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -81,6 +98,39 @@ function parseTimeoutEnv(name: string): number | null {
   const raw = process.env[name];
   const parsed = raw ? Number.parseInt(raw, 10) : NaN;
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+/**
+ * Convert an x402 `details.amount` field (USDC in micro-units, 6 decimals)
+ * to a USD float. Mirrors the SDK's `appendCostLog` math so the agent
+ * loop, the proxy, and `cost_log.jsonl` all agree to the cent.
+ */
+function paymentAmountToUsd(amount: string | number | undefined): number {
+  if (amount === undefined || amount === null) return 0;
+  const n = typeof amount === 'string' ? parseFloat(amount) : amount;
+  if (!Number.isFinite(n)) return 0;
+  return n / 1e6;
+}
+
+/**
+ * Replace Unicode box-drawing characters with their ASCII equivalents.
+ *
+ * Models occasionally emit U+2502 (`│`) and U+2500 (`─`) in markdown tables
+ * — sometimes mixed with ASCII `|` / `-` in the same table. No markdown
+ * renderer parses the mix, and the "table" displays as run-on text. Verified
+ * 2026-05-06 in a real session: opus-4.7 emitted a CRCL fundamentals table
+ * with `│` data rows and `|` separator, ignoring the system-prompt nudge
+ * added in 3.15.76. The unconditional swap fixes the rendering at the
+ * streaming boundary so every downstream surface (user terminal, conversation
+ * history, audit log) gets the corrected version.
+ *
+ * Trade: the rare case where a user genuinely wants box-drawing in output
+ * (e.g. asking what U+2502 looks like) loses fidelity. Acceptable — that
+ * case has no real-world frequency, the broken-tables case has weekly.
+ */
+export function sanitizeTableUnicode(s: string): string {
+  if (!s) return s;
+  return s.replace(/│/g, '|').replace(/─/g, '-');
 }
 
 function getModelRequestTimeoutMs(): number {
@@ -416,6 +466,15 @@ export class ModelClient {
   private cachedBaseWallet: { privateKey: string; address: string } | null = null;
   private cachedSolanaWallet: { privateKey: string; address: string } | null = null;
   private walletCacheTime = 0;
+  /**
+   * USDC actually charged on the most recent x402 settlement, parsed
+   * from `details.amount` (micro-USDC → USD). Reset to 0 at the start
+   * of every `streamCompletion`, written by `signBasePayment` /
+   * `signSolanaPayment`. Callers read it via `getLastPaidUsd()` after
+   * the stream completes so franklin-stats.json records the real wallet
+   * charge instead of a token-catalog estimate.
+   */
+  private lastPaidUsd = 0;
   private static WALLET_CACHE_TTL = 30 * 60 * 1000; // 30 min TTL
 
   constructor(opts: LLMClientOptions) {
@@ -430,10 +489,12 @@ export class ModelClient {
    * Handles x402 payment automatically on 402 responses.
    */
   /**
-   * Resolve virtual routing profiles (blockrun/auto, blockrun/eco, etc.)
-   * to concrete models. This is the final safety net — if the router in
+   * Resolve virtual routing profiles (blockrun/auto, blockrun/free) to
+   * concrete models. This is the final safety net — if the router in
    * loop.ts didn't resolve it (e.g. old global install without router),
-   * we resolve it here before hitting the API.
+   * we resolve it here before hitting the API. Legacy blockrun/eco and
+   * blockrun/premium fall through the unknown-key path to the same
+   * default model.
    */
   private resolveVirtualModel(model: string): string {
     if (!model.startsWith('blockrun/')) return model;
@@ -450,21 +511,35 @@ export class ModelClient {
       // Router not available (e.g. old build) — use hardcoded fallback table
     }
 
-    // Static fallback if router is unavailable. Default to FREE model so
-    // users aren't silently charged when their intended model can't resolve.
+    // Static fallback when the router module isn't loadable. Defaults to a
+    // FREE model so users aren't silently charged. The unknown-key path also
+    // falls through to qwen, so legacy `blockrun/eco` / `blockrun/premium`
+    // strings (now retired routing profiles) end up at the same place
+    // without needing dedicated entries.
     const FALLBACKS: Record<string, string> = {
       'blockrun/auto': 'nvidia/qwen3-coder-480b',
-      'blockrun/eco': 'nvidia/qwen3-coder-480b',
-      'blockrun/premium': 'anthropic/claude-sonnet-4.6',
       'blockrun/free': 'nvidia/qwen3-coder-480b',
     };
     return FALLBACKS[model] || 'nvidia/qwen3-coder-480b';
+  }
+
+  /**
+   * USDC actually charged for the most recent stream. 0 if no payment
+   * was made (free model / cached / pre-stream error). Callers should
+   * read this after the stream finishes — before that it carries the
+   * value from a previous call.
+   */
+  getLastPaidUsd(): number {
+    return this.lastPaidUsd;
   }
 
   async *streamCompletion(
     request: ModelRequest,
     signal?: AbortSignal
   ): AsyncGenerator<StreamChunk> {
+    // Reset the per-call charge tracker. signBasePayment / signSolanaPayment
+    // will set it when the gateway demands a 402 settlement.
+    this.lastPaidUsd = 0;
     // Resolve virtual models before any API call
     const resolvedModel = this.resolveVirtualModel(request.model);
     if (resolvedModel !== request.model) {
@@ -473,6 +548,9 @@ export class ModelClient {
 
     const isAnthropic = request.model.startsWith('anthropic/');
     const isGLM = request.model.startsWith('zai/') || request.model.includes('glm');
+    const isGeminiThinkingRequired =
+      request.model.startsWith('google/gemini-3.1') ||
+      request.model.startsWith('google/gemini-2.5-pro');
 
     // Build the request payload, injecting model-specific optimizations
     let requestPayload: Record<string, unknown> = { ...request, stream: true };
@@ -486,6 +564,18 @@ export class ModelClient {
       delete requestPayload['tool_choice'];
     }
 
+    // Models that don't support `tool_choice` (reasoning-only families).
+    // Verified 2026-05-04 from a real session: grounding-retry forced
+    // tool_choice on a request that ended up on deepseek-reasoner, which
+    // returned `400 Invalid request: deepseek-reasoner does not support
+    // this tool_choice`. Same shape applies to OpenAI o1 / o3 and
+    // similar restricted reasoning models. Strip silently — the agent
+    // loop's grounding-retry contract already tolerates the field
+    // disappearing (it'll re-evaluate next turn).
+    if (requestPayload['tool_choice'] !== undefined && modelDoesNotSupportToolChoice(request.model)) {
+      delete requestPayload['tool_choice'];
+    }
+
     // ── GLM-specific optimizations ───────────────────────────────────────────
     // GLM models work best with temperature=0.8 per official zai spec.
     // Enable thinking mode only for explicit reasoning variants (-thinking-).
@@ -496,6 +586,30 @@ export class ModelClient {
       // Only enable thinking for models that explicitly ship reasoning mode
       if (request.model.includes('-thinking-')) {
         requestPayload['thinking'] = { type: 'enabled' };
+      }
+    }
+
+    // Gemini Pro reasoning models reject a missing/zero thinking budget. Normalize
+    // the gateway default so fallback routing doesn't fail with "Budget 0 is invalid."
+    if (isGeminiThinkingRequired) {
+      // The gateway's streaming path currently drops Gemini's thinking budget;
+      // non-streaming preserves it. We convert the JSON response back into the
+      // same internal chunks below so callers keep one code path.
+      requestPayload['stream'] = false;
+      const maxOut = request.max_tokens ?? 16_384;
+      const budgetTokens = Math.min(maxOut, 8_192);
+      const thinking = requestPayload['thinking'];
+      if (thinking && typeof thinking === 'object' && !Array.isArray(thinking)) {
+        requestPayload['thinking'] = {
+          ...thinking,
+          type: 'enabled',
+          budget_tokens: budgetTokens,
+        };
+      } else {
+        requestPayload['thinking'] = {
+          type: 'enabled',
+          budget_tokens: budgetTokens,
+        };
       }
     }
 
@@ -581,7 +695,7 @@ export class ModelClient {
       // Handle x402 payment
       if (response.status === 402) {
         if (this.debug) console.error('[franklin] Payment required — signing...');
-        const paymentHeader = await this.signPayment(response);
+        const paymentHeader = await this.signPayment(response, request.model);
         if (!paymentHeader) {
           yield { kind: 'error', payload: { message: 'Payment signing failed' } };
           return;
@@ -602,11 +716,100 @@ export class ModelClient {
 
       if (!response.ok) {
         const errorBody = await response.text().catch(() => 'unknown error');
-        const message = extractApiErrorMessage(errorBody);
-        yield {
-          kind: 'error',
-          payload: { status: response.status, message },
-        };
+        let message = extractApiErrorMessage(errorBody);
+
+        // 429 with Retry-After header: tag the error message so the
+        // classifier can extract and the loop can honor it. Verified
+        // 2026-05-04 in a live session: a 429 fired with the loop's
+        // exponential backoff (~1-2s) but the upstream's actual
+        // Retry-After window was ~30s — the agent retried prematurely
+        // and burned its rate_limit retry budget. Anthropic + most
+        // gateways send Retry-After as either seconds (integer) or an
+        // HTTP-date; we only honor the seconds form (the date form is
+        // rare in practice and harder to validate against clock skew).
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('retry-after');
+          if (retryAfter) {
+            const seconds = parseInt(retryAfter, 10);
+            if (Number.isFinite(seconds) && seconds > 0 && seconds <= 600) {
+              message = `${message} [retry-after-ms=${seconds * 1000}]`;
+            }
+          }
+        }
+
+        // Runtime tool_choice retry. The static allowlist at line ~35
+        // catches the case where the request goes directly to a model
+        // whose name contains `deepseek-reasoner` / `openai/o1` /
+        // `openai/o3`. But the gateway sometimes ALIASES a different
+        // model name to a reasoner backend — verified 2026-05-04 in a
+        // live session: a request for `deepseek/deepseek-v4-pro`
+        // returned `400 Invalid request: 400 deepseek-reasoner does not
+        // support this tool_choice`, because the gateway routed v4-pro
+        // to a deepseek-reasoner upstream. The static allowlist can't
+        // know that. Catch the error, drop tool_choice, re-fire once.
+        // No payment re-sign needed — original 402 already settled, and
+        // the gateway treats this as the same logical request.
+        const lc = message.toLowerCase();
+        const looksLikeToolChoiceReject =
+          response.status === 400 &&
+          lc.includes('tool_choice') &&
+          (lc.includes('not support') || lc.includes('unsupported') || lc.includes('does not support'));
+
+        if (looksLikeToolChoiceReject && requestPayload['tool_choice'] !== undefined) {
+          delete requestPayload['tool_choice'];
+          const retryBody = JSON.stringify(requestPayload);
+          if (this.debug) {
+            console.error(`[franklin] tool_choice rejected by upstream; retrying without it (model=${request.model})`);
+          }
+          response = await withAbortableTimeout(
+            () => fetch(endpoint, {
+              method: 'POST',
+              headers,
+              body: retryBody,
+              signal: requestController.signal,
+            }),
+            requestController,
+            createModelTimeoutError('request', request.model, requestTimeoutMs),
+            requestTimeoutMs,
+          );
+          if (response.status === 402) {
+            const paymentHeader = await this.signPayment(response, request.model);
+            if (!paymentHeader) {
+              yield { kind: 'error', payload: { message: 'Payment signing failed' } };
+              return;
+            }
+            response = await withAbortableTimeout(
+              () => fetch(endpoint, {
+                method: 'POST',
+                headers: { ...headers, ...paymentHeader },
+                body: retryBody,
+                signal: requestController.signal,
+              }),
+              requestController,
+              createModelTimeoutError('request', request.model, requestTimeoutMs),
+              requestTimeoutMs,
+            );
+          }
+          if (!response.ok) {
+            const retryBodyText = await response.text().catch(() => 'unknown error');
+            yield {
+              kind: 'error',
+              payload: { status: response.status, message: extractApiErrorMessage(retryBodyText) },
+            };
+            return;
+          }
+          // Successful retry — fall through to SSE parsing below.
+        } else {
+          yield {
+            kind: 'error',
+            payload: { status: response.status, message },
+          };
+          return;
+        }
+      }
+
+      if (requestPayload['stream'] === false) {
+        yield* this.parseNonStreamingMessage(response, request.model);
         return;
       }
 
@@ -614,6 +817,58 @@ export class ModelClient {
       yield* this.parseSSEStream(response, requestController, streamTimeoutMs, request.model);
     } finally {
       unlinkAbort();
+    }
+  }
+
+  private async *parseNonStreamingMessage(
+    response: Response,
+    model: string,
+  ): AsyncGenerator<StreamChunk> {
+    const parsed = await response.json() as Record<string, unknown>;
+    yield { kind: 'message_start', payload: { message: parsed } };
+
+    const content = Array.isArray(parsed['content']) ? parsed['content'] as Record<string, unknown>[] : [];
+    for (let index = 0; index < content.length; index++) {
+      const block = content[index];
+      yield { kind: 'content_block_start', payload: { index, content_block: block } };
+
+      if (block.type === 'text' && typeof block.text === 'string') {
+        yield {
+          kind: 'content_block_delta',
+          payload: { index, delta: { type: 'text_delta', text: block.text } },
+        };
+      } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
+        yield {
+          kind: 'content_block_delta',
+          payload: { index, delta: { type: 'thinking_delta', thinking: block.thinking } },
+        };
+        if (typeof block.signature === 'string') {
+          yield {
+            kind: 'content_block_delta',
+            payload: { index, delta: { type: 'signature_delta', signature: block.signature } },
+          };
+        }
+      } else if (block.type === 'tool_use') {
+        yield {
+          kind: 'content_block_delta',
+          payload: { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input ?? {}) } },
+        };
+      }
+
+      yield { kind: 'content_block_stop', payload: { index } };
+    }
+
+    yield {
+      kind: 'message_delta',
+      payload: {
+        delta: { stop_reason: parsed['stop_reason'] ?? 'end_turn' },
+        usage: parsed['usage'] ?? {},
+      },
+    };
+    yield { kind: 'message_stop', payload: {} };
+
+    if (this.debug) {
+      console.error(`[franklin] Parsed non-streaming response for ${model}`);
     }
   }
 
@@ -652,6 +907,16 @@ export class ModelClient {
     let toolCallRoleplayWarned = false;
     const appendText = (text: string) => {
       if (!text) return;
+
+      // Sanitize Unicode box-drawing chars to ASCII pipe/dash. 3.15.76's
+      // system-prompt nudge asked models not to emit U+2502 / U+2500 in
+      // tables — opus-4.7 ignored it 2026-05-06, shipped a CRCL analysis
+      // table where data rows used `│` and the separator used `|`. No
+      // markdown renderer parses that mix; the table displayed as run-on
+      // text. Normalize at the streaming boundary so the user, the model
+      // history (next turn the model sees its own corrected output), and
+      // the audit log all match.
+      text = sanitizeTableUnicode(text);
 
       currentText += text;
       if (textEmission.mode === 'undecided') {
@@ -884,23 +1149,52 @@ export class ModelClient {
       }
     }
 
+    // Fallback: some non-Anthropic providers behind the gateway (e.g. zai/glm-5.1)
+    // emit `message_start` with `output_tokens: 1` as a placeholder and never
+    // send a final `message_delta` carrying the real count. The audit log
+    // then records `outputTokens: 1` for every call in the session even
+    // though the model produced rich tool_use/text content. Verified
+    // 2026-05-05 in a real session: 50 audit rows, 17 distinct multi-line
+    // bash commands, total `output_tokens` summed to 1,154 — most rows
+    // showed 1. We estimate from the collected payload byte length when
+    // the reported count is implausibly low for the actual content.
+    if (usage.outputTokens <= 1 && collected.length > 0) {
+      let bytes = 0;
+      for (const part of collected) {
+        if (part.type === 'text') {
+          bytes += (part as { text?: string }).text?.length ?? 0;
+        } else if (part.type === 'tool_use') {
+          const tu = part as { name?: string; input?: unknown };
+          bytes += (tu.name?.length ?? 0) + JSON.stringify(tu.input ?? {}).length;
+        } else if (part.type === 'thinking') {
+          bytes += (part as { thinking?: string }).thinking?.length ?? 0;
+        }
+      }
+      // ~4 chars/token is a rough but standard tokenizer-agnostic rule.
+      // Only override when the estimate is noticeably larger — otherwise
+      // trust the wire value (a genuinely tiny response should stay tiny).
+      const estimated = Math.ceil(bytes / 4);
+      if (estimated > usage.outputTokens + 5) usage.outputTokens = estimated;
+    }
+
     return { content: collected, usage, stopReason };
   }
 
   // ─── Payment ───────────────────────────────────────────────────────────
 
   private async signPayment(
-    response: Response
+    response: Response,
+    model: string,
   ): Promise<Record<string, string> | null> {
     try {
       if (this.chain === 'solana') {
-        return await this.signSolanaPayment(response);
+        return await this.signSolanaPayment(response, model);
       }
-      return await this.signBasePayment(response);
+      return await this.signBasePayment(response, model);
     } catch (err) {
       const msg = (err as Error).message || '';
       if (msg.includes('insufficient') || msg.includes('balance')) {
-        console.error(`[franklin] Insufficient USDC balance. Run 'franklin balance' to check.`);
+        console.error(`[franklin] Insufficient USDC balance. Open http://localhost:3100/#wallet to deposit (or run 'franklin balance').`);
       } else if (this.debug) {
         console.error('[franklin] Payment error:', msg);
       } else {
@@ -911,7 +1205,8 @@ export class ModelClient {
   }
 
   private async signBasePayment(
-    response: Response
+    response: Response,
+    model: string,
   ): Promise<Record<string, string>> {
     // Refresh wallet cache after TTL to pick up balance/key changes
     if (!this.cachedBaseWallet || (Date.now() - this.walletCacheTime > ModelClient.WALLET_CACHE_TTL)) {
@@ -928,6 +1223,18 @@ export class ModelClient {
 
     const paymentRequired = parsePaymentRequired(paymentHeader);
     const details = extractPaymentDetails(paymentRequired);
+    this.lastPaidUsd = paymentAmountToUsd(details.amount);
+    // Mirror the SDK's appendCostLog write so cost_log.jsonl becomes a
+    // true wallet-truth ledger covering both SDK helper traffic AND the
+    // agent's main LLM stream (which uses this signer, not the SDK).
+    // Match SDK schema (model/wallet/network/client_kind) so every row
+    // is independently queryable.
+    appendSettlementRow('/v1/messages', this.lastPaidUsd, {
+      model,
+      wallet: wallet.address,
+      network: details.network || 'base-mainnet',
+      client_kind: 'AgentClient',
+    });
 
     const payload = await createPaymentPayload(
       wallet.privateKey as `0x${string}`,
@@ -947,7 +1254,8 @@ export class ModelClient {
   }
 
   private async signSolanaPayment(
-    response: Response
+    response: Response,
+    model: string,
   ): Promise<Record<string, string>> {
     if (!this.cachedSolanaWallet || (Date.now() - this.walletCacheTime > ModelClient.WALLET_CACHE_TTL)) {
       const w = await getOrCreateSolanaWallet();
@@ -962,6 +1270,13 @@ export class ModelClient {
 
     const paymentRequired = parsePaymentRequired(paymentHeader);
     const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
+    this.lastPaidUsd = paymentAmountToUsd(details.amount);
+    appendSettlementRow('/v1/messages', this.lastPaidUsd, {
+      model,
+      wallet: wallet.address,
+      network: details.network || 'solana-mainnet',
+      client_kind: 'AgentClient',
+    });
 
     const secretBytes = await solanaKeyToBytes(wallet.privateKey);
     const feePayer = details.extra?.feePayer || details.recipient;

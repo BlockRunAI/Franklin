@@ -29,7 +29,7 @@ const VALID_CATEGORIES = new Set<LearningCategory>([
 const EXTRACTION_PROMPT = `You are analyzing a conversation between a user and an AI coding agent. Extract user preferences, behavioral patterns, and project knowledge that would help personalize future interactions.
 
 Analyze for:
-1. Language — what language does the user write in? (English, Chinese, mixed?)
+1. Language — what language does the user write in? (English, another language, mixed?)
 2. Model preferences — did they switch models or express a preference?
 3. Coding style — did they correct the agent's code style? (naming, formatting, conventions)
 4. Communication — are they terse or verbose? Do they want explanations or just code?

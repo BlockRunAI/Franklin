@@ -35,7 +35,8 @@ src/
 ├── tools/                  # 12 built-in tools (Read/Write/Edit/Bash/Grep/...)
 ├── plugin-sdk/             # Public plugin contract (Workflow / Channel / Plugin)
 ├── plugins/                # Plugin registry + runner (plugin-agnostic core)
-├── plugins-bundled/        # Plugins ship with Franklin
+├── trading/                # Market data + indicators (exposed via tools/)
+├── content/                # Content library (budget-bound media gen)
 ├── session/                # Persistent sessions + full-text search
 ├── stats/                  # Usage tracking + insights engine
 ├── ui/                     # Ink-based terminal UI

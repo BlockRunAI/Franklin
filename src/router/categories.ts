@@ -7,44 +7,42 @@
 export type Category = 'coding' | 'trading' | 'reasoning' | 'chat' | 'creative' | 'research';
 
 // Built-in category keywords (used when no learned weights available)
+// Keyword fast-path uses English only by policy (English-only-source rule).
+// Non-English user queries route through the LLM-level classifier above this
+// fast-path, which is multilingual and handles intent correctly without
+// needing a per-language keyword list here.
 const DEFAULT_CATEGORY_KEYWORDS: Record<Category, string[]> = {
   coding: [
     'function', 'class', 'import', 'def', 'SELECT', 'async', 'await',
     'const', 'let', 'var', 'return', '```', 'bug', 'error', 'fix',
     'refactor', 'implement', 'test', 'npm', 'pip', 'git', 'deploy',
     'API', 'endpoint', 'database', 'query', 'migration', 'lint',
-    '函数', '类', '导入', '修复', '调试', '部署',
   ],
   trading: [
     'BTC', 'ETH', 'SOL', 'bitcoin', 'ethereum', 'solana', 'crypto',
     'price', 'market', 'signal', 'trade', 'buy', 'sell', 'RSI',
     'MACD', 'volume', 'bullish', 'bearish', 'support', 'resistance',
     'portfolio', 'risk', 'leverage', 'DeFi', 'token', 'swap',
-    '比特币', '以太坊', '价格', '市场', '交易', '信号',
   ],
   reasoning: [
     'prove', 'theorem', 'derive', 'step by step', 'chain of thought',
     'formally', 'mathematical', 'proof', 'logically', 'analyze',
     'compare', 'evaluate', 'trade-off', 'pros and cons', 'why',
     'explain why', 'reasoning', 'logic', 'deduce', 'infer',
-    '证明', '定理', '推导', '分析', '比较',
   ],
   creative: [
     'write a story', 'poem', 'creative', 'brainstorm', 'imagine',
     'generate an image', 'design', 'logo', 'illustration', 'art',
     'narrative', 'fiction', 'song', 'lyrics', 'slogan', 'tagline',
-    '写一个故事', '诗', '创意', '设计', '头脑风暴',
   ],
   research: [
     'search', 'find', 'look up', 'what is', 'who is', 'when was',
     'summarize', 'report', 'overview', 'comparison', 'review',
     'article', 'paper', 'study', 'data', 'statistics', 'trend',
-    '搜索', '查找', '什么是', '总结', '报告',
   ],
   chat: [
     'hello', 'hi', 'thanks', 'thank you', 'how are you', 'help',
     'translate', 'yes', 'no', 'ok', 'sure', 'good',
-    '你好', '谢谢', '帮我', '翻译',
   ],
 };
 

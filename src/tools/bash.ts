@@ -3,6 +3,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 
 // ─── Smart Output Compression ─────────────────────────────────────────────
@@ -317,7 +318,19 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
 function executeCommand(command: string, timeoutMs: number, ctx: ExecutionScope): Promise<CapabilityResult> {
   return new Promise<CapabilityResult>((resolve) => {
-    const shell = process.env.SHELL || '/bin/bash';
+    // Force /bin/bash (not $SHELL) so the tool's behavior matches its name
+    // and its tool description. Pre-3.15.39 used `process.env.SHELL ||
+    // '/bin/bash'`, which on macOS defaults to zsh — and zsh has
+    // semantically different rules (NOMATCH on unmatched globs is fatal,
+    // unlike bash's literal-passthrough). Verified 2026-05-04 from a real
+    // session: agent ran `rm -f data/etl_out/shard-*.ndjson` expecting
+    // bash's "if no match, -f ignores it"; zsh fatal-erred with `no
+    // matches found`. Other zsh-vs-bash divergences (process substitution
+    // syntax, `[[` bashisms in scripts, parameter expansion edge cases)
+    // would silently bite agents that learned bash. /bin/bash exists on
+    // every Linux + macOS install we ship to. Fall back to $SHELL only if
+    // /bin/bash is somehow missing (NixOS-style stores, exotic Docker).
+    const shell = fs.existsSync('/bin/bash') ? '/bin/bash' : (process.env.SHELL || '/bin/sh');
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(shell, ['-c', command], {
@@ -330,11 +343,29 @@ function executeCommand(command: string, timeoutMs: number, ctx: ExecutionScope)
           RUNCODE_WORKDIR: ctx.workingDir,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
+        // Put the shell in its own process group (pgid = pid) so a timeout
+        // can SIGTERM the entire tree. Without this, signalling only the
+        // immediate bash leaves grandchildren (e.g. `gsutil -m cp` and its
+        // python helpers) running as orphans — observed in the wild as
+        // 18-day-old leaked gsutil processes after a 30-min Bash timeout.
+        detached: true,
       });
     } catch (spawnErr) {
       resolve({ output: `Error spawning shell: ${(spawnErr as Error).message}`, isError: true });
       return;
     }
+
+    // Signal the whole process group (negative pid). ESRCH means the group
+    // is already gone — fine. Any other failure we swallow because the close
+    // handler will still resolve the promise on its own.
+    const killTree = (signal: NodeJS.Signals): void => {
+      if (typeof child.pid !== 'number') return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        /* group already dead */
+      }
+    };
 
     let stdout = '';
     let stderr = '';
@@ -345,17 +376,15 @@ function executeCommand(command: string, timeoutMs: number, ctx: ExecutionScope)
 
     const timer = setTimeout(() => {
       killed = true;
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* already dead */ }
-      }, 5000); // Give 5s for graceful shutdown before SIGKILL
+      killTree('SIGTERM');
+      setTimeout(() => killTree('SIGKILL'), 5000); // 5s grace before SIGKILL
     }, timeoutMs);
 
     // Handle abort signal
     const onAbort = () => {
       killed = true;
       abortedByUser = true;
-      child.kill('SIGTERM');
+      killTree('SIGTERM');
     };
     ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
 
@@ -562,6 +591,10 @@ IMPORTANT: Avoid using this tool to run \`find\`, \`grep\`, \`cat\`, \`head\`, \
 - Avoid unnecessary \`sleep\` commands:
   - Do not sleep between commands that can run immediately — just run them.
   - Do not retry failing commands in a sleep loop — diagnose the root cause.
+  - Do NOT write \`sleep\` inside a for/while/until loop in a single foreground Bash call to poll an external async job. That blocks the agent for the whole poll duration and looks frozen to the user; they will cancel before it finishes. Pick one:
+    1. Use the \`Detach\` tool for polling-style work (waiting for an Apify run, video generation, deploy, or build to complete). It returns a runId immediately and the polling runs persistently; check status later with \`franklin task wait/tail <runId>\`.
+    2. Use the upstream sync endpoint when one exists (e.g. Apify's \`run-sync-get-dataset-items\`) with an explicit \`timeout\` up to 600000ms — usually simpler than orchestrating async + poll yourself.
+    3. Break the poll into discrete single-call polls — one poll per Bash call, reason about the status between calls, decide whether to poll again. The user can then see progress and course-correct.
 
 Output is capped at 512KB capture / 32KB return.`,
     input_schema: {

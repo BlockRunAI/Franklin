@@ -112,15 +112,15 @@ Anti-slop rules:
 - Wrap literal text that must appear in the image in double quotes. Spell difficult words letter-by-letter.
 - One revision per turn — do not combine conflicting asks.
 - Natural language, not keyword-tag format.
-- refined_prompt stays in the same language as the user input. Chinese in → Chinese out.
+- refined_prompt stays in the same language as the user input.
 
 Examples:
 
 Input: "a photo of a cat on Mars, photoreal"
 Output: {"style":"photoreal","priority":"balanced","refined_prompt":"Eye-level photograph of a cat standing on the rust-colored Martian surface, late-afternoon low sun casting long shadows, distant canyon rim in the background, 50mm feel, shallow depth of field, editorial photo use, no watermark.","refinement_summary":"Added scene, lighting, lens, use case, constraint.","recommended":{"model":"google/nano-banana-pro","rationale":"Photoreal scenes — Nano Banana Pro has strong realism at moderate cost."},"cheaper":{"model":"google/nano-banana","rationale":"Same family, lower cost, slightly less detail."},"premium":{"model":"openai/gpt-image-2","rationale":"Best photoreal fidelity when budget allows."}}
 
-Input: "赛博朋克风格的动漫角色"
-Output: {"style":"anime","priority":"balanced","refined_prompt":"赛博朋克风格的动漫角色，站在霓虹灯映照的雨夜街道上，身穿合成纤维夹克与金属反光饰件，头顶全息广告牌漂浮，低角度视角，强烈青粉对比，海报用，居中构图。","refinement_summary":"补全了场景、光线、材质、用途、构图。","recommended":{"model":"zai/cogview-4","rationale":"CogView-4 specializes in stylized/anime imagery."},"cheaper":{"model":"google/nano-banana","rationale":"Cheaper but less stylized."},"premium":{"model":"xai/grok-imagine-image-pro","rationale":"Premium detail for complex scenes."}}
+Input: "cyberpunk-style anime character"
+Output: {"style":"anime","priority":"balanced","refined_prompt":"Cyberpunk-style anime character standing on a neon-lit rainy street at night, wearing a synthetic-fiber jacket with metallic reflective accents, holographic billboards floating overhead, low-angle view, strong cyan-and-pink contrast, poster use, centered composition.","refinement_summary":"Added scene, lighting, materials, use case, composition.","recommended":{"model":"zai/cogview-4","rationale":"CogView-4 specializes in stylized/anime imagery."},"cheaper":{"model":"google/nano-banana","rationale":"Cheaper but less stylized."},"premium":{"model":"xai/grok-imagine-image-pro","rationale":"Premium detail for complex scenes."}}
 
 Input: "a 10-second cinematic drone shot over Tokyo at night"
 Output: {"style":"concept","priority":"quality","refined_prompt":null,"refinement_summary":"Already well-specified.","recommended":{"model":"bytedance/seedance-2.0","rationale":"Seedance 2.0 delivers the best cinematic quality."},"cheaper":{"model":"bytedance/seedance-2.0-fast","rationale":"Faster + cheaper, minor quality trade-off."},"premium":{"model":null,"rationale":"2.0 is already the top tier."}}

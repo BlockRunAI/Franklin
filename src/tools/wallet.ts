@@ -62,7 +62,7 @@ export const walletCapability: CapabilityHandler = {
     name: 'Wallet',
     description:
       'Read Franklin\'s wallet status — chain, address, and USDC balance. ' +
-      'Use this for any "what\'s my balance / how much money / 钱包余额 / wallet status" question. ' +
+      'Use this for any "what\'s my balance / how much money / wallet status" question. ' +
       'Cheaper and more direct than running `franklin balance` via Bash, and never costs USDC.',
     input_schema: {
       type: 'object',

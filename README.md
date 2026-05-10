@@ -71,6 +71,8 @@ That's it. Zero signup, zero credit card, zero phone verification. Send **$5 of 
 
 ### Prefer a GUI? Try Franklin for VS Code
 
+[![Franklin for VS Code — Beta is here](assets/franklin-vscode-banner.png)](https://marketplace.visualstudio.com/items?itemName=blockrun.franklin-vscode)
+
 The same agent ships as a [VS Code extension](https://marketplace.visualstudio.com/items?itemName=blockrun.franklin-vscode) — chat panel, model picker, wallet balance, image / video generation, inline diff cards — all driven by the wallet you already funded for the CLI.
 
 ```

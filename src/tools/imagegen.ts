@@ -24,6 +24,7 @@ import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-ro
 import { recordUsage } from '../stats/tracker.js';
 import { findModel, estimateCostUsd } from '../gateway-models.js';
 import { loadConfig } from '../commands/config.js';
+import { logger } from '../logger.js';
 
 interface ImageGenInput {
   prompt: string;
@@ -336,6 +337,13 @@ function buildExecute(deps: ImageGenDeps) {
   const timeoutMs = referenceImage ? 300_000 : 180_000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
+  // Wall-clock start of the paid call, including 402 retry + (optional)
+  // 202 polling. Used by recordUsage below so franklin-stats.json
+  // populates avgLatencyMs for image models. Mirrors the agent-loop fix
+  // in 3.15.61 — same pattern, same reason: insights couldn't surface
+  // "Seedance is slower than grok" while every media call recorded 0.
+  const callStartedAt = Date.now();
+
   try {
     // First request — will get 402
     let response = await fetch(endpoint, {
@@ -345,20 +353,21 @@ function buildExecute(deps: ImageGenDeps) {
       body,
     });
 
-    // Handle x402 payment. Capture the signed headers because they may be
-    // needed again for poll-loop GETs (gateway re-validates auth on each
-    // poll call to settle on first completed response).
-    let signedPaymentHeaders: Record<string, string> | null = null;
+    // Handle x402 payment. Lifted out of the inner block so the polling
+    // path below can reuse the signed headers — every poll request
+    // re-presents the same authorization (the gateway settles on the
+    // first completed poll, same contract as videogen.ts:251).
+    let paymentHeaders: Record<string, string> | null = null;
     if (response.status === 402) {
-      signedPaymentHeaders = await signPayment(response, chain, endpoint);
-      if (!signedPaymentHeaders) {
+      paymentHeaders = await signPayment(response, chain, endpoint);
+      if (!paymentHeaders) {
         return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };
       }
 
       response = await fetch(endpoint, {
         method: 'POST',
         signal: controller.signal,
-        headers: { ...headers, ...signedPaymentHeaders },
+        headers: { ...headers, ...paymentHeaders },
         body,
       });
     }
@@ -376,6 +385,7 @@ function buildExecute(deps: ImageGenDeps) {
     let result: {
       data?: { b64_json?: string; url?: string; revised_prompt?: string }[];
       error?: unknown;
+      message?: unknown;
       // Async path fields: when generation exceeds the 30s inline window,
       // the gateway returns these instead of `data[]` and expects the
       // client to poll the poll_url with the same x-payment header.
@@ -415,13 +425,16 @@ function buildExecute(deps: ImageGenDeps) {
       }
       const origin = new URL(apiUrl).origin;
       const fullPollUrl = pollUrl.startsWith('http') ? pollUrl : `${origin}${pollUrl}`;
-      const pollHeaders = { ...headers, ...(signedPaymentHeaders || {}) };
+      const pollHeaders = { ...headers, ...(paymentHeaders || {}) };
       const pollOutcome = await pollImageJob(fullPollUrl, pollHeaders, controller.signal);
       if (pollOutcome.kind === 'failed') {
         return {
-          output: `Image generation failed during async polling: ${pollOutcome.error || 'unknown error'}`,
+          output: `Image generation failed during async polling: ${JSON.stringify(pollOutcome.error ?? '').slice(0, 240) || 'unknown error'}`,
           isError: true,
         };
+      }
+      if (pollOutcome.kind === 'poll_http_error') {
+        return { output: `Image poll failed (${pollOutcome.status}): ${pollOutcome.bodyPreview}`, isError: true };
       }
       if (pollOutcome.kind === 'timed_out') {
         return {
@@ -440,17 +453,29 @@ function buildExecute(deps: ImageGenDeps) {
     const imageData = result.data?.[0];
     if (!imageData) {
       // Surface the actual response so users / agents can act on it.
-      // Common causes: account doesn't have access to the model, the
-      // gateway routed to a backend that returned a different shape,
-      // or a soft error nested inside a 200 OK.
-      const errField = result.error
-        ? (typeof result.error === 'string' ? result.error : JSON.stringify(result.error))
-        : '';
+      // Some gateways return 200 with an `error` / `message` field for
+      // moderation, quota, or upstream-model failures instead of using
+      // HTTP error codes (verified 2026-05-04: agent guessed "gpt-image-2
+      // is forced to 1024x1024" and burned a retry on a size param that
+      // wasn't the actual cause). Combine bits-based diagnostic + raw
+      // body preview so the agent can react to both shapes.
+      const bits: string[] = [];
+      if (result.error !== undefined) {
+        bits.push(`error=${JSON.stringify(result.error).slice(0, 240)}`);
+      }
+      if (result.message !== undefined) {
+        bits.push(`message=${String(result.message).slice(0, 240)}`);
+      }
+      if (Array.isArray(result.data) && result.data.length === 0) {
+        bits.push('data=[] (empty array — likely content moderation)');
+      } else if (result.data === undefined) {
+        bits.push('data field missing');
+      }
+      const detail = bits.length > 0 ? `\nDiagnostic: ${bits.join('; ')}` : '';
       const preview = rawBody.length > 400 ? rawBody.slice(0, 400) + '…' : rawBody;
       return {
         output:
-          `Image generation returned no image data for ${imageModel}.\n` +
-          (errField ? `Gateway error field: ${errField}\n` : '') +
+          `Image generation returned no image data for ${imageModel}.${detail}\n` +
           `Raw response (first 400 chars): ${preview}\n\n` +
           `Common causes: account not granted access to this model, ` +
           `gateway backend returned a non-OpenAI response shape, or a ` +
@@ -498,11 +523,12 @@ function buildExecute(deps: ImageGenDeps) {
     // insights panel under-reported total spend and never surfaced
     // image-generation models in its "top models" list. Fire-and-forget —
     // stats write must not fail a user-visible generation.
+    const latencyMs = Date.now() - callStartedAt;
     void (async () => {
       try {
         const m = await findModel(imageModel);
         const estCost = m ? estimateCostUsd(m, { quantity: 1 }) : 0;
-        recordUsage(imageModel, 0, 0, estCost, 0);
+        recordUsage(imageModel, 0, 0, estCost, latencyMs);
       } catch { /* ignore stats errors */ }
     })();
 
@@ -553,77 +579,6 @@ function buildExecute(deps: ImageGenDeps) {
     clearTimeout(timeout);
   }
   };
-}
-
-// ─── Async image polling ────────────────────────────────────────────────
-// Mirrors videogen's pollUntilReady but tuned for images: shorter intervals
-// (images finish faster than videos once async), tighter terminal-state
-// detection (image responses don't have status='completed' fields, they
-// just gain a populated `data` array on completion).
-
-const IMAGE_POLL_INTERVAL_MS = 3_000;
-
-interface ImagePollBody {
-  data?: { b64_json?: string; url?: string; revised_prompt?: string }[];
-  status?: string;
-  error?: string;
-  [k: string]: unknown;
-}
-
-type ImagePollOutcome =
-  | { kind: 'completed'; body: ImagePollBody }
-  | { kind: 'failed'; error?: string }
-  | { kind: 'timed_out' };
-
-async function pollImageJob(
-  pollUrl: string,
-  headers: Record<string, string>,
-  abortSignal: AbortSignal,
-): Promise<ImagePollOutcome> {
-  while (true) {
-    if (abortSignal.aborted) return { kind: 'timed_out' };
-
-    const resp = await fetch(pollUrl, { method: 'GET', headers, signal: abortSignal });
-
-    if (resp.status === 202 || resp.status === 200) {
-      const body = (await resp.json().catch(() => ({}))) as ImagePollBody;
-      // Terminal: image data populated.
-      if (body.data && body.data.length > 0 && (body.data[0].b64_json || body.data[0].url)) {
-        return { kind: 'completed', body };
-      }
-      // Terminal: explicit failed status.
-      if (body.status === 'failed' || (typeof body.error === 'string' && body.error.length > 0)) {
-        return { kind: 'failed', error: body.error || 'failed' };
-      }
-      // Otherwise still pending — sleep and try again.
-    } else if (resp.status === 429 || resp.status >= 500) {
-      // Transient — back off briefly. Fall through to sleep.
-    } else {
-      const text = await resp.text().catch(() => '');
-      return { kind: 'failed', error: `Poll HTTP ${resp.status}: ${text.slice(0, 200)}` };
-    }
-
-    try {
-      await imageSleep(IMAGE_POLL_INTERVAL_MS, abortSignal);
-    } catch {
-      return { kind: 'timed_out' };
-    }
-  }
-}
-
-function imageSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(new Error('aborted'));
-    const t = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(t);
-      reject(new Error('aborted'));
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 // ─── Payment ───────────────────────────────────────────────────────────────
@@ -679,7 +634,7 @@ async function signPayment(
       return { 'PAYMENT-SIGNATURE': payload };
     }
   } catch (err) {
-    console.error(`[franklin] Image payment error: ${(err as Error).message}`);
+    logger.warn(`[franklin] Image payment error: ${(err as Error).message}`);
     return null;
   }
 }
@@ -739,3 +694,84 @@ export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHan
 
 /** Back-compat static capability for callers that don't want the Content bridge. */
 export const imageGenCapability: CapabilityHandler = createImageGenCapability();
+
+// ─── Async-completion polling ────────────────────────────────────────────────
+//
+// Extracted so the 202-queued path can be unit-tested without spinning up the
+// full x402 + wallet machinery. Mirrors videogen.ts:pollUntilReady contract:
+//   - Same `x-payment` header on every poll (gateway settles on the first
+//     completed poll).
+//   - 202 → still queued; sleep + retry.
+//   - 429 / 5xx → transient; sleep + retry.
+//   - 200 with `status: 'completed'` or non-empty `data` → done.
+//   - 200 with `status: 'failed'` → upstream-model failure.
+//   - Other 4xx → surface body for diagnosis (e.g. moderation, expired auth).
+
+export interface ImagePollBody {
+  data?: { b64_json?: string; url?: string; revised_prompt?: string }[];
+  error?: unknown;
+  status?: string;
+}
+
+export type ImagePollOutcome =
+  | { kind: 'completed'; body: ImagePollBody }
+  | { kind: 'failed'; error?: unknown }
+  | { kind: 'timed_out' }
+  | { kind: 'poll_http_error'; status: number; bodyPreview: string };
+
+export interface PollImageJobOptions {
+  /** Total wall-clock ceiling. Defaults to 5 min (matches videogen scale). */
+  maxWaitMs?: number;
+  /** Sleep between polls. Defaults to 3 s. */
+  intervalMs?: number;
+}
+
+export async function pollImageJob(
+  pollEndpoint: string,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+  options: PollImageJobOptions = {},
+): Promise<ImagePollOutcome> {
+  const maxWaitMs = options.maxWaitMs ?? 5 * 60 * 1000;
+  const intervalMs = options.intervalMs ?? 3_000;
+  const deadline = Date.now() + maxWaitMs;
+
+  while (Date.now() < deadline) {
+    if (signal.aborted) throw new Error('aborted');
+    await sleep(intervalMs, signal);
+
+    const resp = await fetch(pollEndpoint, { method: 'GET', headers, signal });
+    if (resp.status === 202) continue;            // still queued
+    if (resp.status === 429 || resp.status >= 500) continue; // transient
+
+    if (resp.ok) {
+      const body = (await resp.json().catch(() => null)) as ImagePollBody | null;
+      if (!body) continue;
+      if (body.status === 'failed') return { kind: 'failed', error: body.error };
+      if (body.status === 'completed' || (body.data && body.data[0])) {
+        return { kind: 'completed', body };
+      }
+      // Non-terminal but ok shape (e.g. status: 'in_progress') — wait.
+      continue;
+    }
+
+    const text = await resp.text().catch(() => '');
+    return { kind: 'poll_http_error', status: resp.status, bodyPreview: text.slice(0, 200) };
+  }
+  return { kind: 'timed_out' };
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error('aborted'));
+    const t = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new Error('aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}

@@ -53,7 +53,7 @@ Flag as ungrounded:
 - Invented specifics — names, numbers, dates the model produced without a tool call supporting them
 
 ### B. Tool-use refusal (NEW)
-If the user clearly asked for live-world data — a current price, today's news, the latest state of X — and the assistant's answer contains a refusal or deflection (e.g. "I can't provide real-time prices", "我无法提供实时数据", "check Yahoo Finance yourself", "as an AI I don't have access to live data"), that is also UNGROUNDED. Franklin HAS tools for this (TradingMarket for prices, ExaAnswer for current events, WebSearch for general web, etc.). Refusing to reach for them is the failure this check was built for.
+If the user clearly asked for live-world data — a current price, today's news, the latest state of X — and the assistant's answer contains a refusal or deflection (e.g. "I can't provide real-time prices", "I don't have access to live data", "check Yahoo Finance yourself", "as an AI I cannot fetch this"), that is also UNGROUNDED. The same rule applies in any language. Franklin HAS tools for this (TradingMarket for prices, ExaAnswer for current events, WebSearch for general web, etc.). Refusing to reach for them is the failure this check was built for.
 
 Flag as tool-use refusal:
 - "I can't check real-time prices"
@@ -70,9 +70,36 @@ Flag as tool-use refusal:
 
 VERDICT: GROUNDED | PARTIAL | UNGROUNDED
 
-If not GROUNDED, list each issue on its own line starting with "- " and the tool that should have been called, like:
-- Claim: "<the ungrounded part, quoted briefly>" → missing tool: <TradingMarket | ExaAnswer | ExaSearch | WebSearch | ...>
-- Refusal: "<the refusal phrase, quoted briefly>" → should have called: <tool name>
+If not GROUNDED, list each issue on its own line starting with "- " and the tool that should have been called.
+
+## Picking the right tool — strict domain rules
+
+**Default for any factual claim:** WebSearch or ExaSearch. These are the
+right answer for the OVERWHELMING majority of "the model said a number it
+didn't look up" cases — current events, statistics, prices for non-crypto
+goods (real estate, retail, salaries), people, companies, news, etc.
+
+**Use specialized tools ONLY when the claim's domain matches:**
+- TradingMarket / TradingSignal — ONLY for cryptocurrency tickers (BTC, ETH, SOL, etc). Never for stocks, real estate, currencies, commodities outside crypto.
+- DefiLlamaProtocol / DefiLlamaYields / DefiLlamaPrice — ONLY for DeFi protocols, TVL, yields, on-chain token prices.
+- SearchX — ONLY for X.com / Twitter posts and accounts.
+- ExaAnswer — research questions where you want a synthesized answer with citations.
+- WebFetch — claims that quote a SPECIFIC URL the model already named.
+
+**Anti-patterns to never produce:**
+- Real-estate price → TradingMarket (TradingMarket is crypto-only — wrong domain)
+- Stock ticker → TradingMarket (also crypto-only — use WebSearch instead)
+- Generic news / statistics → TradingMarket (use WebSearch)
+- Person's biography → TradingMarket (use WebSearch)
+
+When unsure: name **WebSearch**. It's the safe default for factual grounding.
+
+## Format examples
+
+- Claim: "<the ungrounded part, quoted briefly>" → missing tool: WebSearch
+- Claim: "BTC at $67k" → missing tool: TradingMarket
+- Claim: "Westlake $/sqft is $719" → missing tool: WebSearch
+- Refusal: "<the refusal phrase, quoted briefly>" → should have called: WebSearch
 
 Empty line between verdict and list. No other text. No preamble. No apology. Be terse.`;
 
@@ -326,15 +353,26 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
 export function renderGroundingFollowup(result: GroundingResult): string {
   if (result.verdict === 'GROUNDED' || result.verdict === 'SKIPPED') return '';
 
+  // Headers state the situation directly. Old phrasing told the user to "re-run
+  // with the suggested tools" which both put the burden on them and exposed
+  // FRANKLIN_NO_EVAL as a one-flag escape hatch from the quality gate. New
+  // phrasing names the gap and offers a concrete next action.
   const header = result.verdict === 'UNGROUNDED'
-    ? '⚠️ **Grounding check failed** — the previous answer relied on memory where a tool call was available:'
-    : '⚠️ **Grounding check flagged some claims** — re-run with the suggested tools for a verified answer:';
+    ? '⚠️ **Unverified answer** — the model produced specific claims without calling any tool to back them up:'
+    : '⚠️ **Partial verification** — some claims in the answer aren\'t backed by tool output:';
 
   const body = result.issues.length > 0
     ? result.issues.map(i => `- ${i}`).join('\n')
-    : '(evaluator returned no specific items — check the transcript manually)';
+    : '_(evaluator returned no specific items — check the transcript manually)_';
 
-  return `\n\n${header}\n${body}\n\n_Ask again with an explicit instruction to call the tools, or disable these checks with \`FRANKLIN_NO_EVAL=1\`._`;
+  // Action line: tell the user exactly how to follow up, in their own voice.
+  // No env-var escape hatch in the user-facing text — that's a config concern,
+  // not a "make this warning go away" concern.
+  const action = result.verdict === 'UNGROUNDED'
+    ? '\n\n_Reply "verify" to re-run with required tool use, or accept the answer as-is._'
+    : '\n\n_Reply "verify" to fact-check the flagged claims, or accept the answer as-is._';
+
+  return `\n\n${header}\n${body}${action}`;
 }
 
 /**

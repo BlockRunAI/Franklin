@@ -23,6 +23,10 @@ function fmtAge(ms: number): string {
   return `${Math.floor(m / 60)}h${m % 60}m`;
 }
 
+function reconcileBestEffort(): void {
+  try { reconcileLostTasks(); } catch { /* best-effort */ }
+}
+
 export function buildTaskCommand(): Command {
   const cmd = new Command('task').description('Manage long-running detached tasks');
 
@@ -30,16 +34,38 @@ export function buildTaskCommand(): Command {
     .command('list')
     .description('List recent tasks (newest first)')
     .action(() => {
-      reconcileLostTasks();
+      reconcileBestEffort();
       const tasks = listTasks();
       if (tasks.length === 0) {
         console.log('No tasks. Start one via the Task agent tool.');
         return;
       }
+      // Header row matches `franklin content list` shape — verified
+      // 2026-05-05 that task list was emitting bare data rows with no
+      // column labels, leaving users to guess at the column meaning
+      // (`14h19m` could be elapsed-since-start or since-end). The
+      // running-vs-terminal age semantics are documented in 3.15.46;
+      // the header makes the column itself self-explanatory.
+      const idHeader = 'runId';
+      const idWidth = Math.max(idHeader.length, ...tasks.map(t => t.runId.length));
+      console.log(
+        [idHeader.padEnd(idWidth), 'status'.padEnd(10), '  age', 'label'].join('  '),
+      );
       const now = Date.now();
       for (const t of tasks) {
-        const age = fmtAge(now - (t.lastEventAt ?? t.createdAt));
-        console.log(`${t.runId}  ${t.status.padEnd(10)}  ${age.padStart(5)}  ${t.label}`);
+        // For a running task, "age" should mean "how long has this been
+        // going" — use startedAt (or createdAt). For a terminal task,
+        // "age" should mean "how recently did this end" — use endedAt
+        // (or lastEventAt). Verified 2026-05-04 on a real machine: a
+        // running ETL that had been chewing through 685k files for
+        // 13 minutes was displayed as "0s" because the runner's 5s
+        // heartbeat keeps lastEventAt fresh — useless signal.
+        const isTerminal = isTerminalTaskStatus(t.status);
+        const ageRefMs = isTerminal
+          ? (t.endedAt ?? t.lastEventAt ?? t.createdAt)
+          : (t.startedAt ?? t.createdAt);
+        const age = fmtAge(now - ageRefMs);
+        console.log(`${t.runId.padEnd(idWidth)}  ${t.status.padEnd(10)}  ${age.padStart(5)}  ${t.label}`);
       }
     });
 
@@ -48,6 +74,7 @@ export function buildTaskCommand(): Command {
     .description('Print log + current status for a task')
     .option('-f, --follow', 'Poll until task reaches terminal state')
     .action(async (runId: string, opts: { follow?: boolean }) => {
+      reconcileBestEffort();
       const meta0 = readTaskMeta(runId);
       if (!meta0) {
         console.error(`No task: ${runId}`);
@@ -69,6 +96,7 @@ export function buildTaskCommand(): Command {
       if (opts.follow) {
         while (true) {
           await new Promise((r) => setTimeout(r, 1000));
+          reconcileBestEffort();
           printNew();
           const meta = readTaskMeta(runId);
           if (meta && isTerminalTaskStatus(meta.status)) break;
@@ -77,7 +105,16 @@ export function buildTaskCommand(): Command {
       const meta = readTaskMeta(runId);
       if (meta) {
         console.log(`\n--- ${meta.status} ---`);
-        if (meta.terminalSummary) console.log(meta.terminalSummary);
+        // Don't reprint terminalSummary: it's a whitespace-collapsed
+        // copy of the last ~800 bytes of the log, and we just printed
+        // the FULL log via printNew(). Verified 2026-05-04 on a real
+        // failed task: the user saw the same lines twice, the second
+        // copy as one squashed line, e.g.
+        //   [17:43:40] resume state: ... [17:43:40] manifest cached: ...
+        // which is harder to read than the multi-line original.
+        // exitCode is the only useful extra here (the log doesn't
+        // record it explicitly).
+        if (meta.exitCode !== undefined) console.log(`exitCode: ${meta.exitCode}`);
       }
     });
 
@@ -89,6 +126,7 @@ export function buildTaskCommand(): Command {
       const cap = parseInt(opts.timeout, 10);
       const t0 = Date.now();
       while (true) {
+        reconcileBestEffort();
         const meta = readTaskMeta(runId);
         if (!meta) {
           console.error(`No task: ${runId}`);
@@ -110,6 +148,7 @@ export function buildTaskCommand(): Command {
     .command('cancel <runId>')
     .description('Cancel a running task (SIGTERM to runner)')
     .action((runId: string) => {
+      reconcileBestEffort();
       const meta = readTaskMeta(runId);
       if (!meta) {
         console.error(`No task: ${runId}`);

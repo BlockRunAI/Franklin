@@ -29,6 +29,17 @@ import { postToXCapability } from './posttox.js';
 import { moaCapability } from './moa.js';
 import { webhookPostCapability } from './webhook.js';
 import { walletCapability } from './wallet.js';
+import { jupiterQuoteCapability, jupiterSwapCapability } from './jupiter.js';
+import { base0xQuoteCapability, base0xSwapCapability } from './zerox-base.js';
+import { base0xGaslessSwapCapability } from './zerox-gasless.js';
+import {
+  defiLlamaProtocolsCapability,
+  defiLlamaProtocolCapability,
+  defiLlamaChainsCapability,
+  defiLlamaYieldsCapability,
+  defiLlamaPriceCapability,
+} from './defillama.js';
+import { predictionMarketCapability } from './prediction.js';
 import { modalCapabilities } from './modal.js';
 import { createTradingCapabilities } from './trading-execute.js';
 import { Portfolio } from '../trading/portfolio.js';
@@ -161,6 +172,17 @@ export const allCapabilities: CapabilityHandler[] = [
   moaCapability,
   webhookPostCapability,
   walletCapability,
+  jupiterQuoteCapability,
+  jupiterSwapCapability,
+  base0xQuoteCapability,
+  base0xSwapCapability,
+  base0xGaslessSwapCapability,
+  defiLlamaProtocolsCapability,
+  defiLlamaProtocolCapability,
+  defiLlamaChainsCapability,
+  defiLlamaYieldsCapability,
+  defiLlamaPriceCapability,
+  predictionMarketCapability, // Polymarket / Kalshi / matching / smart money via Predexon
   // Modal GPU sandbox tools — registered but hidden by default (not in
   // CORE_TOOL_NAMES). Agent must `ActivateTool({names:["ModalCreate",...]})`
   // before they appear in its tool inventory. High-cost ($0.40/H100 create)

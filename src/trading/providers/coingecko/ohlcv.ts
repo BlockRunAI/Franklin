@@ -1,6 +1,6 @@
 import type { Fetcher } from '../fetcher.js';
 import type { OHLCVData, OHLCVQueryParams, ProviderError } from '../standard-models.js';
-import { cached, coingeckoGet, resolveProviderId, TTL } from './client.js';
+import { cached, coingeckoGet, resolveProviderIdAsync, TTL } from './client.js';
 
 export const coingeckoOHLCVFetcher: Fetcher<OHLCVQueryParams, OHLCVData> = {
   providerName: 'coingecko',
@@ -13,7 +13,7 @@ export const coingeckoOHLCVFetcher: Fetcher<OHLCVQueryParams, OHLCVData> = {
   },
 
   async fetchData(query) {
-    const id = resolveProviderId(query.ticker);
+    const id = await resolveProviderIdAsync(query.ticker);
     return cached(`ohlcv:${id}:${query.days}`, TTL.ohlcv, async () => {
       return coingeckoGet(
         `/coins/${id}/market_chart?vs_currency=usd&days=${query.days}&interval=daily`,

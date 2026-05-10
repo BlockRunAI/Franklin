@@ -9,11 +9,19 @@
  * EPERM means the pid exists but we don't have permission to signal it —
  * treat that as alive. ESRCH (or anything else) means dead.
  *
+ * Pid-less queued tasks: runner.ts writes its own pid on entry, so a task
+ * with status=queued and no pid means the runner subprocess crashed during
+ * module import (cliPath wrong, syntax error in dist) before it could record
+ * itself. We reap these once they're older than QUEUED_NO_PID_TIMEOUT_MS so
+ * `franklin task list` doesn't show them as eternally pending.
+ *
  * Best-effort: PID reuse can lie. v3.10's contract is "lazy reconciliation
  * on `task list`"; v3.11 may add a pidStartTime cross-check.
  */
 
 import { listTasks, applyEvent } from './store.js';
+
+const QUEUED_NO_PID_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
 
 function isPidAlive(pid: number): boolean {
   try {
@@ -29,14 +37,23 @@ export function reconcileLostTasks(now: number = Date.now()): number {
   let n = 0;
   for (const t of listTasks()) {
     if (t.status !== 'running' && t.status !== 'queued') continue;
-    if (typeof t.pid !== 'number') continue;
-    if (isPidAlive(t.pid)) continue;
+
+    let summary: string | null = null;
+    if (typeof t.pid !== 'number') {
+      // Only reap pid-less tasks that have been queued long enough that the
+      // runner can't plausibly still be importing. On slow networks or cold
+      // caches Franklin's startup can take 30+ seconds — 5 minutes leaves
+      // generous headroom for legitimate slow starts.
+      if (t.status !== 'queued') continue;
+      if (now - t.createdAt < QUEUED_NO_PID_TIMEOUT_MS) continue;
+      summary = 'Runner never registered a pid — likely crashed during module import.';
+    } else {
+      if (isPidAlive(t.pid)) continue;
+      summary = 'Backing process not found — task may have been killed externally.';
+    }
+
     try {
-      applyEvent(t.runId, {
-        at: now,
-        kind: 'lost',
-        summary: 'Backing process not found — task may have been killed externally.',
-      });
+      applyEvent(t.runId, { at: now, kind: 'lost', summary });
       n++;
     } catch (err) {
       // Meta could vanish mid-reconcile (e.g. the task dir was deleted out from

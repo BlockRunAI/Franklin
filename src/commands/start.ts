@@ -1,6 +1,8 @@
 import chalk from 'chalk';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
-import { loadChain, API_URLS } from '../config.js';
+import { BLOCKRUN_DIR, loadChain, API_URLS } from '../config.js';
 import { retryFetchBalance } from './balance-retry.js';
 import { flushStats, loadStats } from '../stats/tracker.js';
 import { OPUS_PRICING, MODEL_PRICING } from '../pricing.js';
@@ -69,7 +71,28 @@ export async function startCommand(options: StartOptions) {
     continueResolvedId = findLatestSessionForDir(process.cwd())?.id;
   }
 
-  const chain = loadChain();
+  // Sessions are wallet-bound: the conversation, audit trail, and tool
+  // results live on whichever chain the session was started on. If
+  // we're resuming, prefer the session's recorded chain over the
+  // persisted default — `franklin solana` / `franklin base` shortcuts
+  // mutate that default, and a debug invocation between restarts
+  // shouldn't be able to silently move the user to a different wallet.
+  // Only sessions created in 3.15.35+ have the field; older sessions
+  // fall back to the persisted default (matches pre-3.15.35 behavior).
+  let chain = loadChain();
+  const resumeIdEarly =
+    (typeof options.resume === 'string' && options.resume !== 'picker') ? options.resume
+    : continueResolvedId;
+  if (resumeIdEarly) {
+    const { loadSessionMeta } = await import('../session/storage.js');
+    const sessMeta = loadSessionMeta(resumeIdEarly);
+    if (sessMeta?.chain && sessMeta.chain !== chain) {
+      console.log(chalk.dim(`  Restoring session's chain: ${sessMeta.chain} (default was ${chain}; session is wallet-bound to ${sessMeta.chain})`));
+      chain = sessMeta.chain;
+    } else if (sessMeta?.chain) {
+      chain = sessMeta.chain;
+    }
+  }
   const apiUrl = API_URLS[chain];
   const config = loadConfig();
 
@@ -326,6 +349,7 @@ export async function startCommand(options: StartOptions) {
 
   // Resolve resume target, if requested.
   let resumeSessionId: string | undefined;
+  let resumeTranscript: Array<{ role: 'user' | 'assistant'; text: string }> | undefined;
   if (options.resume || options.continue) {
     const { pickSession } = await import('../ui/session-picker.js');
     const { loadSessionMeta, loadSessionHistory } = await import('../session/storage.js');
@@ -351,10 +375,11 @@ export async function startCommand(options: StartOptions) {
 
     if (resumeSessionId) {
       const meta = loadSessionMeta(resumeSessionId);
-      const msgs = loadSessionHistory(resumeSessionId).length;
+      const history = loadSessionHistory(resumeSessionId);
       const when = meta ? new Date(meta.updatedAt).toLocaleString() : 'unknown';
       console.log(chalk.green(`  Resuming session ${resumeSessionId.slice(0, 24)}…`));
-      console.log(chalk.dim(`  ${msgs} messages · last active ${when}\n`));
+      console.log(chalk.dim(`  ${history.length} messages · last active ${when}\n`));
+      resumeTranscript = buildResumeTranscript(history);
     }
   }
 
@@ -392,7 +417,7 @@ export async function startCommand(options: StartOptions) {
   if (process.stdin.isTTY) {
     await runWithInkUI(agentConfig, model, workDir, version, walletInfo, (cb) => {
       onBalanceFetched = cb;
-    }, fetchBalance, importedKickoffPrompt);
+    }, fetchBalance, importedKickoffPrompt, resumeTranscript);
   } else {
     await runWithBasicUI(agentConfig, model, workDir, importedKickoffPrompt);
   }
@@ -425,6 +450,39 @@ async function runOneShot(agentConfig: AgentConfig, prompt: string): Promise<num
   return exitCode;
 }
 
+function buildResumeTranscript(history: Dialogue[]): Array<{ role: 'user' | 'assistant'; text: string }> {
+  const entries = history
+    .map((msg) => {
+      const text = extractVisibleText(msg).replace(/\s+/g, ' ').trim();
+      if (!text) return null;
+      return { role: msg.role, text: text.length > 180 ? `${text.slice(0, 177)}...` : text };
+    })
+    .filter((entry): entry is { role: 'user' | 'assistant'; text: string } => entry !== null);
+
+  if (entries.length === 0) return [];
+
+  const started = entries.slice(0, 4);
+  const recentStart = entries.length > 10 ? -6 : 4;
+  const recent = entries.slice(recentStart);
+
+  return entries.length > 10
+    ? [...started, { role: 'assistant', text: '...' }, ...recent]
+    : [...started, ...recent];
+}
+
+function extractVisibleText(msg: Dialogue): string {
+  if (typeof msg.content === 'string') return msg.content;
+  if (!Array.isArray(msg.content)) return '';
+
+  return msg.content
+    .map((part) => {
+      if ('type' in part && part.type === 'text') return part.text;
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
 // ─── Ink UI (interactive terminal) ─────────────────────────────────────────
 
 async function runWithInkUI(
@@ -436,6 +494,7 @@ async function runWithInkUI(
   onBalanceReady?: (cb: (bal: string) => void) => void,
   fetchBalance?: () => Promise<string>,
   initialInput?: string,
+  initialTranscript?: Array<{ role: 'user' | 'assistant'; text: string }>,
 ) {
   const startSnapshot = snapshotStats();
   const ui = launchInkUI({
@@ -444,6 +503,7 @@ async function runWithInkUI(
     version,
     walletAddress: walletInfo?.address,
     walletBalance: walletInfo?.balance,
+    initialTranscript,
     chain: walletInfo?.chain,
     onModelChange: (newModel: string, reason?: 'user' | 'system') => {
       agentConfig.model = newModel;
@@ -463,6 +523,8 @@ async function runWithInkUI(
   agentConfig.onAskUser = (question, options) =>
     ui.requestAskUser(question, options);
   agentConfig.onModelChange = (model) => ui.updateModel(model);
+  let activeSessionId = agentConfig.resumeSessionId;
+  agentConfig.onSessionStart = (sessionId) => { activeSessionId = sessionId; };
 
   // Wire up background balance fetch to UI
   onBalanceReady?.((bal) => ui.updateBalance(bal));
@@ -508,25 +570,13 @@ async function runWithInkUI(
     recordLatestSessionIfEnabled(process.cwd(), agentConfig.chain);
   } catch { /* telemetry is best-effort */ }
 
-  // Extract learnings from the session (async, 10s timeout, never blocks exit)
-  if (sessionHistory && sessionHistory.length >= 4) {
-    try {
-      const { extractLearnings } = await import('../learnings/extractor.js');
-      const { extractBrainEntities } = await import('../brain/extract.js');
-      const { ModelClient } = await import('../agent/llm.js');
-      const client = new ModelClient({ apiUrl: agentConfig.apiUrl, chain: agentConfig.chain });
-      const sid = `session-${new Date().toISOString()}`;
-      await Promise.race([
-        Promise.all([
-          extractLearnings(sessionHistory, sid, client),
-          extractBrainEntities(sessionHistory, sid, client),
-        ]),
-        new Promise(resolve => setTimeout(resolve, 15_000)),
-      ]);
-    } catch { /* extraction is best-effort */ }
+  // Optional post-session learning extraction. Disabled by default because any
+  // network-backed background promise can keep Node alive after the UI exits.
+  if (process.env.FRANKLIN_EXTRACT_ON_EXIT === '1') {
+    runExitBackgroundTasks(sessionHistory, agentConfig).catch(() => {});
   }
 
-  await disconnectMcpServers();
+  disconnectMcpServers().catch(() => {});
 
   // Session summary — delta vs. snapshot at session start
   try {
@@ -541,7 +591,39 @@ async function runWithInkUI(
     }
   } catch { /* stats unavailable */ }
 
+  let savedSessionId: string | undefined;
+  if (activeSessionId) {
+    try {
+      const { loadSessionMeta } = await import('../session/storage.js');
+      const meta = loadSessionMeta(activeSessionId);
+      if ((meta?.messageCount ?? 0) > 0) savedSessionId = activeSessionId;
+    } catch { /* session hint is best-effort */ }
+  }
+
+  if (savedSessionId) {
+    console.log(chalk.dim(`\n  Session: ${savedSessionId}`));
+    console.log(chalk.dim(`  Resume:  franklin --resume ${savedSessionId}`));
+    console.log(chalk.dim('  Latest:  franklin --continue'));
+  }
+
   console.log(chalk.dim('\nGoodbye.\n'));
+}
+
+async function runExitBackgroundTasks(
+  sessionHistory: Dialogue[] | undefined,
+  agentConfig: AgentConfig,
+): Promise<void> {
+  if (!sessionHistory || sessionHistory.length < 4) return;
+
+  const { extractLearnings } = await import('../learnings/extractor.js');
+  const { extractBrainEntities } = await import('../brain/extract.js');
+  const { ModelClient } = await import('../agent/llm.js');
+  const client = new ModelClient({ apiUrl: agentConfig.apiUrl, chain: agentConfig.chain });
+  const sid = `session-${new Date().toISOString()}`;
+  await Promise.all([
+    extractLearnings(sessionHistory, sid, client),
+    extractBrainEntities(sessionHistory, sid, client),
+  ]);
 }
 
 // ─── Basic readline UI (piped input) ───────────────────────────────────────
@@ -641,7 +723,17 @@ async function startPanelBackground(startPort: number): Promise<string | undefin
         });
         server.listen(port, '127.0.0.1', () => {
           server.unref?.();
-          resolve(`http://localhost:${port}`);
+          const url = `http://localhost:${port}`;
+          // Persist the bound URL so the agent context (assembled per-turn)
+          // can point users at /#wallet for funding without baking in the
+          // 3100 default — the panel auto-increments past EADDRINUSE.
+          // Best-effort write: a stale file from a crashed run is harmless,
+          // since the user just sees a dead link.
+          try {
+            fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+            fs.writeFileSync(path.join(BLOCKRUN_DIR, 'panel-url'), url, 'utf8');
+          } catch { /* best-effort */ }
+          resolve(url);
         });
       };
       tryListen(startPort, 0);

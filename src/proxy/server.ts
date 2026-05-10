@@ -1,7 +1,4 @@
 import http from 'node:http';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import {
   getOrCreateWallet,
   getOrCreateSolanaWallet,
@@ -14,6 +11,7 @@ import {
 } from '@blockrun/llm';
 import type { Chain } from '../config.js';
 import { recordUsage } from '../stats/tracker.js';
+import { appendSettlementRow } from '../stats/cost-log.js';
 import { appendAudit } from '../stats/audit.js';
 import {
   buildFallbackChain,
@@ -41,36 +39,24 @@ export interface ProxyOptions {
   modelOverride?: string;
   debug?: boolean;
   fallbackEnabled?: boolean;
+  // Override the per-request timeout. Tests pass this directly instead of
+  // mutating process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS — an interrupted
+  // test run was leaving the env var set to '40' in the parent shell, which
+  // then poisoned subsequent franklin invocations with a 40ms timeout
+  // (verified in franklin-debug.log: real models like deepseek/deepseek-chat
+  // were timing out at 40ms long after the test process exited).
+  requestTimeoutMs?: number;
+  streamTimeoutMs?: number;
 }
 
-const LOG_FILE = path.join(os.homedir(), '.blockrun', 'franklin-debug.log');
-
-// Strip ANSI escape codes so log file doesn't distort terminal on replay
-function stripAnsi(str: string): string {
-  // eslint-disable-next-line no-control-regex
-  return str.replace(/\x1B\[[0-9;]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B[()][A-B]|\r/g, '');
-}
-
-function debug(options: ProxyOptions, ...args: unknown[]) {
-  if (!options.debug) return;
-  const msg = `[${new Date().toISOString()}] ${stripAnsi(args.map(String).join(' '))}\n`;
-  try {
-    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
-    fs.appendFileSync(LOG_FILE, msg);
-  } catch {
-    /* ignore */
-  }
-}
-
-function log(...args: unknown[]) {
-  const msg = `[franklin] ${args.map(String).join(' ')}`;
-  // Do NOT print to stdout — the terminal is owned by the parent process (stdio: inherit).
-  // Use `franklin logs` to read runtime messages.
-  try {
-    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${stripAnsi(msg)}\n`);
-  } catch { /* ignore */ }
-}
+// Logging here goes through the unified logger introduced in 3.15.11
+// (timestamp + [LEVEL] tag, self-rotating at 10 MB, optional stderr
+// mirror in debug mode). The previous per-module debug()/log() helpers
+// duplicated the file path, ANSI strip regex (with a slightly different
+// pattern!), and timestamp format — bug fixes never propagated. They
+// were the last holdouts after the agent loop was migrated.
+import { logger, setDebugMode } from '../logger.js';
+import { isTestFixtureModel } from '../stats/test-fixture.js';
 
 const DEFAULT_MAX_TOKENS = 4096;
 // 180s budget for *time-to-headers* — reasoning-class models (zai/glm-*,
@@ -148,11 +134,13 @@ function trackOutputTokens(model: string, tokens: number) {
 
 // Model shortcuts for quick switching
 const MODEL_SHORTCUTS: Record<string, string> = {
-  // Routing profiles
+  // Routing profiles — Auto-only since 2026-05-03 (Eco/Premium retired).
+  // `eco` / `premium` aliases retained for back-compat with proxy clients;
+  // they parse to Auto downstream.
   auto: 'blockrun/auto',
   smart: 'blockrun/auto',
-  eco: 'blockrun/eco',
-  premium: 'blockrun/premium',
+  eco: 'blockrun/auto',
+  premium: 'blockrun/auto',
   // Anthropic
   sonnet: 'anthropic/claude-sonnet-4.6',
   claude: 'anthropic/claude-sonnet-4.6',
@@ -285,9 +273,19 @@ function withinRateLimit(): boolean {
 }
 
 export function createProxy(options: ProxyOptions): http.Server {
+  // Wire stderr-mirroring of unified logger output to the proxy's debug
+  // flag — same pattern as interactiveSession in agent/loop. File writes
+  // happen regardless; only the live stderr mirror is gated.
+  setDebugMode(!!options.debug);
+
   const chain = options.chain || 'base';
   let currentModel: string | null = options.modelOverride || DEFAULT_MODEL;
   const fallbackEnabled = options.fallbackEnabled !== false; // Default true
+  // Resolve timeouts once at construction. The option wins over the env var
+  // so callers (esp. tests) can configure a single proxy without polluting
+  // process.env for the rest of the process — and for any sibling proxy.
+  const effectiveRequestTimeoutMs = options.requestTimeoutMs ?? getProxyRequestTimeoutMs();
+  const effectiveStreamTimeoutMs = options.streamTimeoutMs ?? getProxyStreamTimeoutMs();
 
   let baseWallet: { privateKey: string; address: string } | null = null;
   let solanaWallet: { privateKey: string; address: string } | null = null;
@@ -353,10 +351,7 @@ export function createProxy(options: ProxyOptions): http.Server {
       let usedFallback = false;
 
       try {
-        debug(
-          options,
-          `request: ${req.method} ${req.url} currentModel=${currentModel || 'none'}`
-        );
+        if (options.debug) logger.debug(`[franklin] request: ${req.method} ${req.url} currentModel=${currentModel || 'none'}`);
         if (body) {
           try {
             const parsed = JSON.parse(body);
@@ -364,15 +359,12 @@ export function createProxy(options: ProxyOptions): http.Server {
             // Intercept "use <model>" commands for in-session model switching
             if (parsed.messages) {
               const last = parsed.messages[parsed.messages.length - 1];
-              debug(
-                options,
-                `last msg role=${last?.role} content-type=${typeof last?.content} content=${JSON.stringify(last?.content).slice(0, 200)}`
-              );
+              if (options.debug) logger.debug(`[franklin] last msg role=${last?.role} content-type=${typeof last?.content} content=${JSON.stringify(last?.content).slice(0, 200)}`);
             }
             const switchCmd = detectModelSwitch(parsed);
             if (switchCmd) {
               currentModel = switchCmd;
-              debug(options, `model switched to: ${currentModel}`);
+              if (options.debug) logger.debug(`[franklin] model switched to: ${currentModel}`);
               const fakeResponse = {
                 id: `msg_franklin_${Date.now()}`,
                 type: 'message',
@@ -431,8 +423,8 @@ export function createProxy(options: ProxyOptions): http.Server {
               parsed.model = routing.model;
               requestModel = routing.model;
 
-              log(
-                `🧠 Smart routing: ${routingProfile} → ${routing.tier} → ${routing.model} ` +
+              logger.info(
+                `[franklin] 🧠 Smart routing: ${routingProfile} → ${routing.tier} → ${routing.model} ` +
                 `(${(routing.savings * 100).toFixed(0)}% savings) [${routing.signals.join(', ')}]`
               );
             }
@@ -456,11 +448,8 @@ export function createProxy(options: ProxyOptions): http.Server {
                   : DEFAULT_MAX_TOKENS;
               parsed.max_tokens = Math.min(adaptive, modelCap);
 
-              if (original !== parsed.max_tokens) {
-                debug(
-                  options,
-                  `max_tokens: ${original || 'unset'} → ${parsed.max_tokens} (last output: ${lastOut || 'none'})`
-                );
+              if (original !== parsed.max_tokens && options.debug) {
+                logger.debug(`[franklin] max_tokens: ${original || 'unset'} → ${parsed.max_tokens} (last output: ${lastOut || 'none'})`);
               }
             }
             body = JSON.stringify(parsed);
@@ -499,7 +488,7 @@ export function createProxy(options: ProxyOptions): http.Server {
               parsed.model = requestModel;
               body = JSON.stringify(parsed);
             } catch { /* body not JSON, skip */ }
-            log(`⚠️  Safety net: resolved unrouted ${virtualName} → ${requestModel}`);
+            logger.warn(`[franklin] ⚠️  Safety net: resolved unrouted ${virtualName} → ${requestModel}`);
           }
         }
 
@@ -512,7 +501,12 @@ export function createProxy(options: ProxyOptions): http.Server {
 
         let response: Response;
         let finalModel = requestModel;
-        const requestTimeoutMs = getProxyRequestTimeoutMs();
+        // Real x402 charge for the call that ultimately succeeded. 0 when
+        // no payment was needed (free model / cached). Fed into recordUsage
+        // and appendAudit below so franklin-stats.json reflects what the
+        // wallet actually paid, not a token-catalog estimate.
+        let paidUsd = 0;
+        const requestTimeoutMs = effectiveRequestTimeoutMs;
 
         // Use fallback chain if enabled
         if (fallbackEnabled && body && requestPath.includes('messages')) {
@@ -535,8 +529,12 @@ export function createProxy(options: ProxyOptions): http.Server {
               timeoutMs: requestTimeoutMs,
             },
             (failedModel, status, nextModel) => {
-              log(
-                `⚠️  ${failedModel} returned ${status}, falling back to ${nextModel}`
+              // Skip test-fixture model names (slow/, mock/, test/, local/test*)
+              // — these come from in-process proxy tests with mock servers and
+              // would otherwise pollute the user's real franklin-debug.log.
+              if (isTestFixtureModel(failedModel) || isTestFixtureModel(nextModel)) return;
+              logger.warn(
+                `[franklin] ⚠️  ${failedModel} returned ${status}, falling back to ${nextModel}`
               );
             }
           );
@@ -546,12 +544,25 @@ export function createProxy(options: ProxyOptions): http.Server {
           // Use the body with the correct fallback model for payment
           body = result.bodyUsed;
           usedFallback = result.fallbackUsed;
+          paidUsd = result.paidUsd;
 
-          if (usedFallback) {
-            log(`↺ Fallback successful: using ${finalModel}`);
+          // Skip the success log when the request originated from a test
+          // fixture, even if the fallback ended on a real model. Verified
+          // on a real machine: 5 spurious "↺ Fallback successful: using
+          // deepseek/deepseek-chat" entries appeared in
+          // franklin-debug.log because the proxy timeout test uses
+          // `slow/model` (filtered) as the source but ends up on
+          // `deepseek/deepseek-chat` (not filtered). Check the
+          // failedModels array — any fixture in there means the call
+          // chain started in a test.
+          const fallbackTouchedFixture =
+            result.failedModels.some(isTestFixtureModel) ||
+            isTestFixtureModel(finalModel);
+          if (usedFallback && !fallbackTouchedFixture) {
+            logger.info(`[franklin] ↺ Fallback successful: using ${finalModel}`);
           }
         } else {
-          response = await fetchModelAttempt(targetUrl, requestInit, body, requestModel, {
+          const attempt = await fetchModelAttempt(targetUrl, requestInit, body, requestModel, {
             method: req.method || 'POST',
             headers,
             chain,
@@ -559,6 +570,8 @@ export function createProxy(options: ProxyOptions): http.Server {
             solanaWallet,
             timeoutMs: requestTimeoutMs,
           });
+          response = attempt.response;
+          paidUsd = attempt.paidUsd;
         }
 
         const responseHeaders: Record<string, string> = {};
@@ -599,7 +612,7 @@ export function createProxy(options: ProxyOptions): http.Server {
           }
           res.writeHead(response.status, { 'Content-Type': 'application/json' });
           res.end(errorBody);
-          log(`⚠️  ${response.status} from backend for ${finalModel}`);
+          logger.warn(`[franklin] ⚠️  ${response.status} from backend for ${finalModel}`);
           return;
         }
 
@@ -614,13 +627,13 @@ export function createProxy(options: ProxyOptions): http.Server {
           let fullResponse = '';
           const STREAM_CAP = 5_000_000; // 5MB cap on accumulated stream
 
-          const STREAM_TIMEOUT_MS = getProxyStreamTimeoutMs();
+          const STREAM_TIMEOUT_MS = effectiveStreamTimeoutMs;
           const streamDeadline = Date.now() + STREAM_TIMEOUT_MS;
 
           const pump = async () => {
             while (true) {
               if (Date.now() > streamDeadline) {
-                log('⚠️  Stream timeout after 5 minutes');
+                logger.warn('[franklin] ⚠️  Stream timeout after 5 minutes');
                 try { reader.cancel(); } catch { /* ignore */ }
                 break;
               }
@@ -645,11 +658,13 @@ export function createProxy(options: ProxyOptions): http.Server {
                   if (outputTokens > 0) {
                     trackOutputTokens(finalModel, outputTokens);
                     const latencyMs = Date.now() - requestStartTime;
-                    const cost = estimateCost(
-                      finalModel,
-                      inputTokens,
-                      outputTokens
-                    );
+                    // Real x402 charge wins over the token-catalog estimate.
+                    // estimateCost only fills in for the no-payment path
+                    // (free models / cached) so stats stay non-null there.
+                    const cost = paidUsd > 0
+                      ? paidUsd
+                      : estimateCost(finalModel, inputTokens, outputTokens);
+                    const costSource = paidUsd > 0 ? 'charged' : 'estimated';
 
                     recordUsage(
                       finalModel,
@@ -669,10 +684,7 @@ export function createProxy(options: ProxyOptions): http.Server {
                       fallback: usedFallback,
                       source: 'proxy',
                     });
-                    debug(
-                      options,
-                      `recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
-                    );
+                    if (options.debug) logger.debug(`[franklin] recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} (${costSource}) fallback=${usedFallback}`);
                   }
                 }
                 res.end();
@@ -686,7 +698,7 @@ export function createProxy(options: ProxyOptions): http.Server {
             }
           };
           pump().catch((err) => {
-            log(`❌ Stream error: ${err instanceof Error ? err.message : String(err)}`);
+            logger.error(`[franklin] ❌ Stream error: ${err instanceof Error ? err.message : String(err)}`);
             res.end();
           });
         } else {
@@ -698,11 +710,10 @@ export function createProxy(options: ProxyOptions): http.Server {
               trackOutputTokens(finalModel, outputTokens);
               const inputTokens = parsed.usage?.input_tokens || 0;
               const latencyMs = Date.now() - requestStartTime;
-              const cost = estimateCost(
-                finalModel,
-                inputTokens,
-                outputTokens
-              );
+              const cost = paidUsd > 0
+                ? paidUsd
+                : estimateCost(finalModel, inputTokens, outputTokens);
+              const costSource = paidUsd > 0 ? 'charged' : 'estimated';
 
               recordUsage(
                 finalModel,
@@ -722,10 +733,7 @@ export function createProxy(options: ProxyOptions): http.Server {
                 fallback: usedFallback,
                 source: 'proxy',
               });
-              debug(
-                options,
-                `recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} fallback=${usedFallback}`
-              );
+              if (options.debug) logger.debug(`[franklin] recorded: model=${finalModel} in=${inputTokens} out=${outputTokens} cost=$${cost.toFixed(4)} (${costSource}) fallback=${usedFallback}`);
             }
           } catch {
             /* not JSON */
@@ -734,7 +742,7 @@ export function createProxy(options: ProxyOptions): http.Server {
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Proxy error';
-        log(`❌ Error: ${msg}`);
+        logger.error(`[franklin] ❌ Error: ${msg}`);
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -765,6 +773,18 @@ interface ProxyFallbackResult {
   fallbackUsed: boolean;
   attemptsCount: number;
   failedModels: string[];
+  /**
+   * Actual USDC charged for this call (parsed from the x402 payment header
+   * the gateway demanded). 0 when no payment was needed — free model,
+   * cached response, or non-402 path. This is the source of truth for
+   * stats; estimateCost() is only kept as a fallback.
+   */
+  paidUsd: number;
+}
+
+interface ProxyAttemptResult {
+  response: Response;
+  paidUsd: number;
 }
 
 async function fetchModelAttempt(
@@ -773,15 +793,16 @@ async function fetchModelAttempt(
   body: string,
   model: string,
   payment: ProxyPaymentContext
-): Promise<Response> {
-  let response = await fetchWithTimeout(
+): Promise<ProxyAttemptResult> {
+  const response = await fetchWithTimeout(
     url,
     { ...init, body: body || undefined },
     payment.timeoutMs,
     `Proxy request for ${model}`
   );
 
-  if (response.status !== 402) return response;
+  // Non-402 path: free model or cached response — no payment, paidUsd = 0.
+  if (response.status !== 402) return { response, paidUsd: 0 };
 
   if (payment.chain === 'solana' && payment.solanaWallet) {
     return handleSolanaPayment(
@@ -811,7 +832,7 @@ async function fetchModelAttempt(
     );
   }
 
-  return response;
+  return { response, paidUsd: 0 };
 }
 
 /**
@@ -837,7 +858,7 @@ async function fetchWithPaymentFallback(
 
     try {
       attempts++;
-      const response = await fetchModelAttempt(url, init, body, model, payment);
+      const { response, paidUsd } = await fetchModelAttempt(url, init, body, model, payment);
 
       if (!config.retryOn.includes(response.status)) {
         return {
@@ -847,6 +868,7 @@ async function fetchWithPaymentFallback(
           fallbackUsed: i > 0,
           attemptsCount: attempts,
           failedModels,
+          paidUsd,
         };
       }
 
@@ -868,11 +890,13 @@ async function fetchWithPaymentFallback(
       if (nextModel && onFallback) {
         onFallback(model, 0, nextModel);
       }
-      log(
-        `[fallback] ${model} request error: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
+      if (!isTestFixtureModel(model)) {
+        logger.warn(
+          `[franklin] [fallback] ${model} request error: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
 
       if (i < config.chain.length - 1) {
         await sleep(config.retryDelayMs);
@@ -903,14 +927,21 @@ async function handleBasePayment(
   fromAddress: string,
   timeoutMs = getProxyRequestTimeoutMs(),
   model = 'unknown'
-): Promise<Response> {
+): Promise<ProxyAttemptResult> {
   const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
-    throw new Error('402 Payment Required — wallet may need funding. Run: franklin balance');
+    throw new Error('402 Payment Required — wallet may need funding. Open http://localhost:3100/#wallet to deposit USDC (or run: franklin balance)');
   }
 
   const paymentRequired = parsePaymentRequired(paymentHeader);
   const details = extractPaymentDetails(paymentRequired);
+  const paidUsd = paymentAmountToUsd(details.amount);
+  appendSettlementRow(extractEndpointPath(url), paidUsd, {
+    model,
+    wallet: fromAddress,
+    network: details.network || 'base-mainnet',
+    client_kind: 'ProxyClient',
+  });
 
   const paymentPayload = await createPaymentPayload(
     privateKey,
@@ -927,7 +958,7 @@ async function handleBasePayment(
     }
   );
 
-  return fetchWithTimeout(url, {
+  const paid = await fetchWithTimeout(url, {
     method,
     headers: {
       ...headers,
@@ -935,6 +966,8 @@ async function handleBasePayment(
     },
     body: body || undefined,
   }, timeoutMs, `Paid proxy request for ${model}`);
+
+  return { response: paid, paidUsd };
 }
 
 // ======================================================================
@@ -951,14 +984,21 @@ async function handleSolanaPayment(
   fromAddress: string,
   timeoutMs = getProxyRequestTimeoutMs(),
   model = 'unknown'
-): Promise<Response> {
+): Promise<ProxyAttemptResult> {
   const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
-    throw new Error('402 Payment Required — wallet may need funding. Run: franklin balance');
+    throw new Error('402 Payment Required — wallet may need funding. Open http://localhost:3100/#wallet to deposit USDC (or run: franklin balance)');
   }
 
   const paymentRequired = parsePaymentRequired(paymentHeader);
   const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
+  const paidUsd = paymentAmountToUsd(details.amount);
+  appendSettlementRow(extractEndpointPath(url), paidUsd, {
+    model,
+    wallet: fromAddress,
+    network: details.network || 'solana-mainnet',
+    client_kind: 'ProxyClient',
+  });
 
   const secretKey = await solanaKeyToBytes(privateKey);
 
@@ -979,7 +1019,7 @@ async function handleSolanaPayment(
     }
   );
 
-  return fetchWithTimeout(url, {
+  const paid = await fetchWithTimeout(url, {
     method,
     headers: {
       ...headers,
@@ -987,6 +1027,31 @@ async function handleSolanaPayment(
     },
     body: body || undefined,
   }, timeoutMs, `Paid proxy request for ${model}`);
+
+  return { response: paid, paidUsd };
+}
+
+/**
+ * Extract just the path portion of a URL — `https://api.blockrun.ai/v1/messages`
+ * → `/v1/messages`. Used as the `endpoint` field in `cost_log.jsonl` so
+ * proxy entries match the SDK's path-only convention. Falls back to the
+ * raw input if URL parsing throws (defensive — better to log a weird
+ * string than skip the row).
+ */
+function extractEndpointPath(url: string): string {
+  try { return new URL(url).pathname || url; } catch { return url; }
+}
+
+/**
+ * Convert an x402 `details.amount` field (USDC in micro-units, 6 decimals)
+ * to a USD float. Mirrors the SDK's `appendCostLog` math so the proxy and
+ * `cost_log.jsonl` agree to the cent.
+ */
+function paymentAmountToUsd(amount: string | number | undefined): number {
+  if (amount === undefined || amount === null) return 0;
+  const n = typeof amount === 'string' ? parseFloat(amount) : amount;
+  if (!Number.isFinite(n)) return 0;
+  return n / 1e6;
 }
 
 // ======================================================================

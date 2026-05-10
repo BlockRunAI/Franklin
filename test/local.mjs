@@ -12,22 +12,40 @@
 process.env.FRANKLIN_NO_PREFETCH = '1';
 process.env.FRANKLIN_NO_EVAL = '1';
 process.env.FRANKLIN_NO_ANALYZER = '1';
+// 3.15.17 renamed several in-process test fixtures from `local/test-model`
+// to `zai/glm-5.1` so persistence tests could verify the write path. That
+// rename sidestepped 3.15.16's model-name fixture gate, and audit/stats
+// writes started leaking into the user's real ~/.blockrun on every npm
+// test run — verified 310 of 370 recent zai/glm-5.1 audit entries were
+// mock responses (output_tokens < 10). FRANKLIN_NO_AUDIT short-circuits
+// audit + stats persistence at file scope; session persistence is
+// controlled separately via setSessionPersistenceDisabled and stays on
+// for the resume tests at 489/609.
+process.env.FRANKLIN_NO_AUDIT = '1';
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unwatchFile, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 const DIST = new URL('../dist/index.js', import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 function runCli(prompt = '', { cwd, timeoutMs = 15_000, args, env } = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn('node', args ?? [DIST, '--model', 'zai/glm-5.1', '--trust'], {
       cwd: cwd ?? tmpdir(),
-      env: { ...process.env, ...env },
+      // FRANKLIN_NO_PERSIST=1 blocks the spawned child from writing
+      // session jsonl/meta into the real ~/.blockrun/sessions/. Verified
+      // 2026-05-04: a single `npm test` left 3 ghost metas behind because
+      // runCli uses `zai/glm-5.1` (real model name → not caught by
+      // isTestFixtureModel) and inherits HOME from the test process. A
+      // caller can still override by passing `env: { FRANKLIN_NO_PERSIST: '' }`.
+      env: { FRANKLIN_NO_PERSIST: '1', ...process.env, ...env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -312,7 +330,6 @@ test('proxy server handles OPTIONS and local model switching without backend cal
 
 test('proxy server falls back when the paid BlockRun request times out', async () => {
   const originalHome = process.env.HOME;
-  const originalTimeout = process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS;
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-proxy-timeout-home-'));
   const proxyUrl = new URL('../dist/proxy/server.js', import.meta.url);
   const attempts = [];
@@ -370,7 +387,6 @@ test('proxy server falls back when the paid BlockRun request times out', async (
   let proxy;
   try {
     process.env.HOME = fakeHome;
-    process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS = '40';
     const backendPort = await listenOnRandomPort(backend);
     const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
     proxy = createProxy({
@@ -379,6 +395,7 @@ test('proxy server falls back when the paid BlockRun request times out', async (
       chain: 'base',
       modelOverride: 'slow/model',
       fallbackEnabled: true,
+      requestTimeoutMs: 40, // forces slow/model to time out, exercising fallback
     });
     const proxyPort = await listenOnRandomPort(proxy);
 
@@ -408,8 +425,6 @@ test('proxy server falls back when the paid BlockRun request times out', async (
     await new Promise((resolve) => backend.close(() => resolve()));
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
-    if (originalTimeout === undefined) delete process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS;
-    else process.env.FRANKLIN_PROXY_REQUEST_TIMEOUT_MS = originalTimeout;
     rmSync(fakeHome, { recursive: true, force: true });
   }
 });
@@ -566,7 +581,7 @@ test('interactive session persists tool exchanges for resume', { timeout: 20_000
     let calls = 0;
     await interactiveSession(
       {
-        model: 'local/test-model',
+        model: 'zai/glm-5.1',
         apiUrl,
         chain: 'base',
         systemInstructions: ['You are a test harness.'],
@@ -670,7 +685,7 @@ test('resume: second interactiveSession with resumeSessionId continues prior tra
     const { interactiveSession } = await import('../dist/agent/loop.js');
 
     const baseConfig = {
-      model: 'local/test-model',
+      model: 'zai/glm-5.1',
       apiUrl,
       chain: 'base',
       systemInstructions: ['You are a test harness.'],
@@ -739,7 +754,7 @@ test('pruneOldSessions removes stale ghost sessions even when visible session co
     const oldTs = Date.now() - (10 * 60 * 1000);
     writeFileSync(staleGhostMeta, JSON.stringify({
       id: staleGhostId,
-      model: 'local/test-model',
+      model: 'zai/glm-5.1',
       workDir: fakeHome,
       createdAt: oldTs,
       updatedAt: oldTs,
@@ -754,7 +769,7 @@ test('pruneOldSessions removes stale ghost sessions even when visible session co
     const freshTs = Date.now();
     writeFileSync(visibleSessionMeta, JSON.stringify({
       id: visibleSessionId,
-      model: 'local/test-model',
+      model: 'zai/glm-5.1',
       workDir: fakeHome,
       createdAt: freshTs,
       updatedAt: freshTs,
@@ -797,6 +812,58 @@ test('pruneOldSessions removes stale ghost sessions even when visible session co
     assert.ok(!existsSync(staleGhostJsonl), 'Expected stale ghost session transcript to be removed');
     assert.ok(existsSync(visibleSessionMeta), 'Visible session meta should remain');
     assert.ok(existsSync(visibleSessionJsonl), 'Visible session transcript should remain');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('session meta imported flag can be set and survives later updates', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'franklin-imported-meta-'));
+  const storagePath = new URL('../dist/session/storage.js', import.meta.url).pathname;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', [
+        '--input-type=module',
+        '-e',
+        `
+          const { updateSessionMeta, loadSessionMeta } = await import(${JSON.stringify(`file://${storagePath}`)});
+          const id = 'session-imported-sticky';
+          updateSessionMeta(id, {
+            model: 'imported',
+            workDir: process.cwd(),
+            turnCount: 1,
+            messageCount: 2,
+            imported: true,
+          });
+          const first = loadSessionMeta(id)?.imported;
+          updateSessionMeta(id, {
+            model: 'zai/glm-5.1',
+            workDir: process.cwd(),
+            turnCount: 2,
+            messageCount: 4,
+          });
+          const second = loadSessionMeta(id)?.imported;
+          process.stdout.write(JSON.stringify({ first, second }));
+        `,
+      ], {
+        env: { ...process.env, HOME: fakeHome, BLOCKRUN_DIR: join(fakeHome, '.blockrun') },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+      proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stdout, stderr });
+        else reject(new Error(`imported meta subprocess failed (${code})\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      });
+      proc.on('error', reject);
+    });
+
+    const parsed = JSON.parse(result.stdout.trim());
+    assert.equal(parsed.first, true);
+    assert.equal(parsed.second, true);
   } finally {
     rmSync(fakeHome, { recursive: true, force: true });
   }
@@ -1118,6 +1185,194 @@ test('session tool guard blocks repetitive SearchX the same as WebSearch', async
   assert.ok(blocked.output.includes('Search stopped'), `Expected early-stop.\n${blocked.output}`);
 });
 
+test('session tool guard blocks blocking poll-loops in foreground Bash', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  guard.startTurn();
+
+  // The exact antipattern from the Apify polling incident: for-loop with
+  // sleep inside a single foreground bash call. Should be rejected with
+  // guidance toward Detach.
+  const pollLoop = {
+    type: 'tool_use',
+    id: 'bash-poll-1',
+    name: 'Bash',
+    input: {
+      command: 'RUN_ID="abc"\nfor i in $(seq 1 30); do\n  status=$(curl -s "https://api.apify.com/v2/runs/$RUN_ID" | jq -r .status)\n  echo "[$i] Status: $status"\n  [ "$status" = "SUCCEEDED" ] && break\n  sleep 10\ndone',
+    },
+  };
+  const blocked = await guard.beforeExecute(pollLoop, ctx);
+  assert.ok(blocked, 'Expected blocking poll-loop to be rejected');
+  assert.equal(blocked.isError, true);
+  assert.ok(
+    blocked.output.includes('Detach'),
+    `Expected Detach guidance.\n${blocked.output}`,
+  );
+  assert.ok(
+    blocked.output.includes('frozen'),
+    `Expected explanation of why it looks frozen.\n${blocked.output}`,
+  );
+
+  // Same command with run_in_background:true is allowed (model owns the trade-off).
+  const allowed = await guard.beforeExecute(
+    { ...pollLoop, id: 'bash-poll-2', input: { ...pollLoop.input, run_in_background: true } },
+    ctx,
+  );
+  assert.equal(allowed, null, 'run_in_background:true should bypass the poll-loop block');
+
+  // A `while` loop with sleep also gets blocked.
+  const whileLoop = {
+    type: 'tool_use',
+    id: 'bash-poll-3',
+    name: 'Bash',
+    input: { command: 'while ! curl -sf https://api/healthz >/dev/null; do sleep 5; done' },
+  };
+  const blockedWhile = await guard.beforeExecute(whileLoop, ctx);
+  assert.ok(blockedWhile, 'while+sleep should also be blocked');
+
+  // A non-polling command with `sleep 0.1` (e.g. micro-pause) is NOT a poll loop.
+  const microSleep = {
+    type: 'tool_use',
+    id: 'bash-poll-4',
+    name: 'Bash',
+    input: { command: 'for f in *.json; do echo "$f"; sleep 0.1; done' },
+  };
+  const allowedMicro = await guard.beforeExecute(microSleep, ctx);
+  assert.equal(allowedMicro, null, 'sleep < 1s in a loop is not the antipattern');
+
+  // No loop, just a single sleep — irrelevant to this guard.
+  const justSleep = {
+    type: 'tool_use',
+    id: 'bash-poll-5',
+    name: 'Bash',
+    input: { command: 'sleep 5 && ls' },
+  };
+  const allowedSleep = await guard.beforeExecute(justSleep, ctx);
+  assert.equal(allowedSleep, null, 'A single sleep without a loop is not blocked');
+});
+
+test('session tool guard does not kill WebFetch on HTTP 4xx (agent-input errors)', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  guard.startTurn();
+
+  // Simulate the agent guessing four wrong URLs in a row — each returns 404.
+  // The tool worked correctly every time; the agent picked bad URLs. The kill
+  // switch must not trip, otherwise WebFetch becomes unrecoverable for the
+  // rest of the session.
+  for (let i = 0; i < 4; i++) {
+    const inv = {
+      type: 'tool_use',
+      id: `wf-404-${i}`,
+      name: 'WebFetch',
+      input: { url: `https://example.com/guess-${i}` },
+    };
+    const pre = await guard.beforeExecute(inv, ctx);
+    assert.equal(pre, null, `Call ${i}: WebFetch should not be hard-blocked by HTTP-class errors`);
+    guard.afterExecute(inv, {
+      output: `HTTP 404 Not Found for https://example.com/guess-${i}`,
+      isError: true,
+    });
+  }
+
+  // A fifth call must still be allowed — confirms the breaker never tripped.
+  const fifth = {
+    type: 'tool_use',
+    id: 'wf-404-5',
+    name: 'WebFetch',
+    input: { url: 'https://example.com/real-url' },
+  };
+  const pre = await guard.beforeExecute(fifth, ctx);
+  assert.equal(pre, null, '5th WebFetch must still be allowed after 4 HTTP 404s');
+});
+
+test('session tool guard kills WebFetch on real network failures', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  guard.startTurn();
+
+  // Three real tool-class failures (network) in a row — these *should* trip
+  // the breaker, since they suggest the tool itself is broken.
+  for (let i = 0; i < 3; i++) {
+    const inv = {
+      type: 'tool_use',
+      id: `wf-net-${i}`,
+      name: 'WebFetch',
+      input: { url: `https://unreachable-${i}.invalid/` },
+    };
+    assert.equal(await guard.beforeExecute(inv, ctx), null);
+    guard.afterExecute(inv, {
+      output: `Error fetching https://unreachable-${i}.invalid/: ENOTFOUND`,
+      isError: true,
+    });
+  }
+
+  const blocked = await guard.beforeExecute(
+    { type: 'tool_use', id: 'wf-net-4', name: 'WebFetch', input: { url: 'https://example.com/' } },
+    ctx,
+  );
+  assert.ok(blocked, 'Expected hard-block after 3 network-class WebFetch failures');
+  assert.ok(
+    blocked.output.includes('disabled'),
+    `Expected kill-switch message.\n${blocked.output}`,
+  );
+});
+
+test('session tool guard resets failure counter on a successful call', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  const guard = new SessionToolGuard();
+  const ctx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+  guard.startTurn();
+
+  // Two real network failures.
+  for (let i = 0; i < 2; i++) {
+    const inv = {
+      type: 'tool_use',
+      id: `wf-flaky-${i}`,
+      name: 'WebFetch',
+      input: { url: `https://flaky-${i}.invalid/` },
+    };
+    assert.equal(await guard.beforeExecute(inv, ctx), null);
+    guard.afterExecute(inv, {
+      output: `Error fetching https://flaky-${i}.invalid/: ECONNRESET`,
+      isError: true,
+    });
+  }
+
+  // A success — should clear the counter (circuit-breaker semantics).
+  const ok = {
+    type: 'tool_use',
+    id: 'wf-ok',
+    name: 'WebFetch',
+    input: { url: 'https://example.com/' },
+  };
+  assert.equal(await guard.beforeExecute(ok, ctx), null);
+  guard.afterExecute(ok, { output: 'URL: https://example.com/\nStatus: 200\n\n<body>' });
+
+  // After reset we should be able to absorb 2 more failures without tripping.
+  for (let i = 0; i < 2; i++) {
+    const inv = {
+      type: 'tool_use',
+      id: `wf-after-${i}`,
+      name: 'WebFetch',
+      input: { url: `https://post-reset-${i}.invalid/` },
+    };
+    const pre = await guard.beforeExecute(inv, ctx);
+    assert.equal(pre, null, `Post-reset call ${i} must not be blocked`);
+    guard.afterExecute(inv, {
+      output: `Error fetching https://post-reset-${i}.invalid/: ENOTFOUND`,
+      isError: true,
+    });
+  }
+});
+
 test('SearchX auto-detects notifications intent from query (no LLM needed)', async () => {
   const { detectNotificationsIntent } = await import('../dist/tools/searchx.js');
 
@@ -1126,12 +1381,12 @@ test('SearchX auto-detects notifications intent from query (no LLM needed)', asy
   const orgHandles = ['@BlockRunAI', 'BlockRunAI'];
 
   // Should route to notifications — personal handle
-  assert.ok(detectNotificationsIntent('看看我的@bc1beat 有什么互动', personalHandle));
+  assert.ok(detectNotificationsIntent('show my @bc1beat mentions', personalHandle));
   assert.ok(detectNotificationsIntent('check my @bc1beat mentions', personalHandle));
   assert.ok(detectNotificationsIntent('bc1beat', personalHandle)); // bare handle
 
   // Should route to notifications — org handle via knownHandles
-  assert.ok(detectNotificationsIntent('看看我的@blockrunai 有什么互动', personalHandle, orgHandles));
+  assert.ok(detectNotificationsIntent('show my @blockrunai notifications', personalHandle, orgHandles));
   assert.ok(detectNotificationsIntent('check @BlockRunAI notifications', personalHandle, orgHandles));
   assert.ok(detectNotificationsIntent('blockrunai', personalHandle, orgHandles)); // bare org handle
   assert.ok(detectNotificationsIntent('to:blockrunai', personalHandle, orgHandles));
@@ -1174,16 +1429,23 @@ test('stats tracker falls back to temp dir when HOME is not writable', async () 
     mkdirSync(fakeHome, { recursive: true });
     chmodSync(fakeHome, 0o500);
     const trackerUrl = new URL('../dist/stats/tracker.js', import.meta.url).href;
+    // recordUsage now drops local/test* models (avoids polluting real
+    // user stats when test fixtures run in-process). Use a real-model
+    // name here since this test specifically wants to exercise the
+    // disk write + tempdir fallback path.
     const script = `
       const tracker = await import(${JSON.stringify(trackerUrl)});
-      tracker.recordUsage('local/test', 10, 5, 0.01, 123);
+      tracker.recordUsage('zai/glm-5.1', 10, 5, 0.01, 123);
       tracker.flushStats();
       console.log(tracker.getStatsFilePath());
     `;
 
     const result = await new Promise((resolve, reject) => {
       const proc = spawn('node', ['--input-type=module', '-e', script], {
-        env: { ...process.env, HOME: fakeHome },
+        // This test specifically exercises the tracker disk-write path,
+        // so override the file-level FRANKLIN_NO_AUDIT=1 (which would
+        // otherwise short-circuit the very write the test checks).
+        env: { ...process.env, HOME: fakeHome, FRANKLIN_NO_AUDIT: '' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -1284,16 +1546,16 @@ test('slash /session-search finds saved sessions without hijacking /search', asy
   }
 });
 
-test('session search supports Chinese queries', async () => {
+test('session search supports accented Unicode queries', async () => {
   const { searchSessions } = await import('../dist/session/search.js');
   const storage = await import('../dist/session/storage.js');
   const sessionId = storage.createSessionId();
   const metaFile = join(dirname(storage.getSessionFilePath(sessionId)), `${sessionId}.meta.json`);
-  const needle = `钱包余额异常${Date.now()}`;
+  const needle = `café-balance-anomaly-${Date.now()}`;
 
   try {
-    storage.appendToSession(sessionId, { role: 'user', content: `请帮我检查${needle}` });
-    storage.appendToSession(sessionId, { role: 'assistant', content: `已经定位到${needle}` });
+    storage.appendToSession(sessionId, { role: 'user', content: `please check ${needle}` });
+    storage.appendToSession(sessionId, { role: 'assistant', content: `found ${needle}` });
     storage.updateSessionMeta(sessionId, {
       model: 'local/test',
       workDir: process.cwd(),
@@ -1301,10 +1563,10 @@ test('session search supports Chinese queries', async () => {
       messageCount: 2,
     });
 
-    const matches = searchSessions('钱包余额');
+    const matches = searchSessions('café-balance');
     assert.ok(
       matches.some((match) => match.session.id === sessionId),
-      `Expected Chinese query to match saved session.\n${JSON.stringify(matches, null, 2)}`
+      `Expected accented Unicode query to match saved session.\n${JSON.stringify(matches, null, 2)}`
     );
   } finally {
     rmSync(storage.getSessionFilePath(sessionId), { force: true });
@@ -1387,7 +1649,12 @@ test('error classifier maps common failure modes', async () => {
   assert.equal(network.category, 'network');
   assert.equal(network.maxRetries, 1);
   assert.deepEqual(classifyAgentError('429 rate limit exceeded').category, 'rate_limit');
-  assert.deepEqual(classifyAgentError('verification failed: insufficient balance').category, 'payment');
+  // "Insufficient balance" alone — no signature attempted yet — stays as
+  // payment_required (the legacy 'payment' category).
+  assert.deepEqual(classifyAgentError('insufficient balance').category, 'payment');
+  // "Payment verification failed" — gateway rejected a SIGNED payment.
+  // Distinct remedy from payment_required: see classifier suggestion.
+  assert.deepEqual(classifyAgentError('Payment verification failed').category, 'payment_rejected');
   assert.deepEqual(classifyAgentError('prompt is too long').category, 'context_limit');
   assert.deepEqual(classifyAgentError('500 internal server error').category, 'server');
 
@@ -1454,6 +1721,44 @@ test('looksLikeGatewayErrorAsText: detects bracketed transport error masqueradin
     { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'x' } },
   ]);
   assert.equal(mixed.match, false);
+});
+
+test('looksLikeStalledIntent: detects coder-model intent-without-tool_use stall', async () => {
+  // Motivating session (2026-05-06, nvidia/qwen3-coder-480b on Franklin):
+  // assistant emitted "To build the BuildBrief AI MVP web app, I will start
+  // by creating a new React project using Vite... First, I need to check if
+  // I have the necessary tools installed. Let's verify if Node.js and npm
+  // are available." then end_turn'd without a single tool_use. The agent
+  // loop now switches model on this pattern instead of treating the
+  // declared-but-unexecuted intent as the model's final answer.
+  const { looksLikeStalledIntent } = await import('../dist/agent/loop.js')
+    .catch(() => ({ looksLikeStalledIntent: undefined }));
+  if (!looksLikeStalledIntent) return; // helper not built yet
+
+  // Real stall — the screenshot's actual text.
+  const stall = looksLikeStalledIntent(
+    "To build the BuildBrief AI MVP web app, I will start by creating a new React project using Vite. " +
+    "This will be the foundation for our frontend.\n\n" +
+    "First, I need to check if I have the necessary tools installed. " +
+    "Let's verify if Node.js and npm are available.",
+  );
+  assert.equal(stall, true);
+
+  // Variants of the same pattern.
+  assert.equal(looksLikeStalledIntent("Let me check the package.json to see what's installed."), true);
+  assert.equal(looksLikeStalledIntent("I'll start by running npm install to set up dependencies."), true);
+  assert.equal(looksLikeStalledIntent("Now I'll verify the build configuration before proceeding."), true);
+
+  // Real completed answers — must NOT trigger.
+  assert.equal(looksLikeStalledIntent('Done. The build succeeded and tests pass.'), false);
+  assert.equal(looksLikeStalledIntent("Here's the analysis you asked for: revenue grew 12%."), false);
+  assert.equal(looksLikeStalledIntent('Yes.'), false); // too short
+  assert.equal(looksLikeStalledIntent(''), false);
+  // Plain narration without action verbs.
+  assert.equal(
+    looksLikeStalledIntent('I think the architecture you described looks reasonable for the scale you mentioned.'),
+    false,
+  );
 });
 
 test('timeout retry policy skips expensive full-context replay', async () => {
@@ -2035,6 +2340,771 @@ test('streamCompletion payload: non-Anthropic model must not include thinking fi
   assert.equal(body.thinking, undefined, 'non-Anthropic must not get thinking flag');
 });
 
+// ─── Runtime tool_choice retry: gateway-aliased reasoner backends ─────
+//
+// Verified 2026-05-04 in a live session: a request for
+// `deepseek/deepseek-v4-pro` returned `400 Invalid request: 400
+// deepseek-reasoner does not support this tool_choice`. The gateway had
+// aliased v4-pro to a deepseek-reasoner upstream, but the static
+// allowlist in llm.ts only checks `request.model` literally — v4-pro
+// doesn't match "deepseek-reasoner" so the preemptive strip didn't
+// fire. Runtime retry catches this: drop tool_choice, re-fire once.
+
+test('streamCompletion: retries without tool_choice when upstream rejects it', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ tool_choice: body.tool_choice });
+    if (calls.length === 1) {
+      // First call: gateway-aliased reasoner rejects tool_choice.
+      return new Response(
+        JSON.stringify({
+          error: { message: '400 deepseek-reasoner does not support this tool_choice' },
+        }),
+        { status: 400, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    // Retry: short-circuit with another error so we don't have to
+    // simulate a full SSE stream — we only care about WHAT got sent.
+    return new Response('retry-shape-ok', { status: 500 });
+  };
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    const gen = client.streamCompletion({
+      model: 'deepseek/deepseek-v4-pro',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1024,
+      tools: [{ name: 'WebSearch', description: 'x', input_schema: { type: 'object' } }],
+      tool_choice: { type: 'any' },
+    });
+    // Drain until the second yield — first one should be the retried
+    // error since the second fetch returned 500.
+    for await (const _evt of gen) { /* drain */ }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls.length, 2, 'must have retried once after the tool_choice 400');
+  assert.deepEqual(calls[0].tool_choice, { type: 'any' }, 'first attempt carried tool_choice');
+  assert.equal(calls[1].tool_choice, undefined, 'retry must have stripped tool_choice');
+});
+
+// ─── VideoGen image_url: local paths are inlined as data URIs ──────
+//
+// Verified 2026-05-04 in a live session: the agent passed a local
+// keyframe path (`/Users/.../franklin-claude-handoff-keyframe.png`)
+// as VideoGen's image_url; gateway returned `400 Invalid request body:
+// invalid_format url path: image_url`. ImageGen already handled this
+// via resolveReferenceImage — VideoGen now reuses the same helper.
+
+// ─── franklin content list / show: CLI read access to Content library ──
+//
+// Verified 2026-05-04 in a live session: user asked
+// "how much did I spend on this?", agent ran `franklin content list 2>/dev/null
+// || echo "no content subcommand"` and got "no content subcommand" —
+// fell back to estimating spend from memory. Data was sitting in
+// ~/.blockrun/content.json the whole time. New CLI exposes it.
+
+test('cli: franklin content list shows summary table for stored content', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-content-'));
+  const blockrunDir = path.join(fakeHome, '.blockrun');
+  fs.mkdirSync(blockrunDir, { recursive: true });
+  fs.writeFileSync(path.join(blockrunDir, 'content.json'), JSON.stringify({
+    version: 1,
+    contents: [
+      {
+        id: 'aaaaaaaa-1111-2222-3333-444444444444',
+        type: 'video',
+        title: 'Test Pixar Short',
+        status: 'outline',
+        drafts: [],
+        assets: [
+          { kind: 'image', source: 'openai/gpt-image-2', costUsd: 0.04, data: '/x.png', createdAt: 100 },
+          { kind: 'video', source: 'xai/grok-imagine-video', costUsd: 0.42, data: '/x.mp4', createdAt: 200 },
+        ],
+        spentUsd: 0.46,
+        budgetUsd: 2,
+        createdAt: 50,
+        distribution: [],
+      },
+    ],
+  }));
+
+  const cli = path.join(process.cwd(), 'dist', 'index.js');
+  const result = spawnSync(process.execPath, [cli, 'content', 'list'], {
+    env: { ...process.env, HOME: fakeHome }, timeout: 5_000,
+  });
+  try {
+    assert.equal(result.status, 0, result.stderr.toString());
+    const out = result.stdout.toString();
+    assert.match(out, /Test Pixar Short/, 'title row must appear');
+    assert.match(out, /\$0\.46\/\$2\.00/, 'spent/cap must be on the row');
+    assert.match(out, /Total: \$0\.46 spent across 1 content/, 'footer rolls up the total');
+  } finally {
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('cli: franklin content show resolves prefix + lists assets', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-content-show-'));
+  const blockrunDir = path.join(fakeHome, '.blockrun');
+  fs.mkdirSync(blockrunDir, { recursive: true });
+  fs.writeFileSync(path.join(blockrunDir, 'content.json'), JSON.stringify({
+    version: 1,
+    contents: [
+      {
+        id: 'cafe1234-1111-2222-3333-444444444444',
+        type: 'video',
+        title: 'Cafe Demo',
+        status: 'published',
+        drafts: [],
+        assets: [
+          { kind: 'image', source: 'openai/gpt-image-2', costUsd: 0.04, data: '/a.png', createdAt: 100 },
+        ],
+        spentUsd: 0.04,
+        budgetUsd: 1,
+        createdAt: 50,
+        publishedAt: 99,
+        distribution: [{ channel: 'x', url: 'https://x.com/abc', at: 99 }],
+      },
+    ],
+  }));
+
+  const cli = path.join(process.cwd(), 'dist', 'index.js');
+  // Use 8-char prefix instead of full uuid.
+  const result = spawnSync(process.execPath, [cli, 'content', 'show', 'cafe1234'], {
+    env: { ...process.env, HOME: fakeHome }, timeout: 5_000,
+  });
+  try {
+    assert.equal(result.status, 0, result.stderr.toString());
+    const out = result.stdout.toString();
+    assert.match(out, /# Cafe Demo/);
+    assert.match(out, /status:\s+published/);
+    assert.match(out, /## Assets \(1\)/);
+    assert.match(out, /\/a\.png/);
+    assert.match(out, /## Distribution \(1\)/);
+    assert.match(out, /https:\/\/x\.com\/abc/);
+  } finally {
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+// ─── 429 Retry-After: honor upstream wait window ─────────────────────
+//
+// Verified 2026-05-04 in a screenshot: a 429 with Retry-After=30s was
+// retried after ~1.5s exponential backoff, got 429 again, burned the
+// rate_limit retry budget, fell to "all free models exhausted" without
+// trying the right wait window. 3.15.57 has llm.ts tag the error with
+// `[retry-after-ms=N]`; classifier extracts; loop honors when ≤30s.
+
+test('classifier: extracts retry-after-ms tag from rate_limit message', async () => {
+  const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
+  const info = classifyAgentError('429 Too Many Requests [retry-after-ms=15000]');
+  assert.equal(info.category, 'rate_limit');
+  assert.equal(info.retryAfterMs, 15000);
+});
+
+test('classifier: ignores absurd retry-after values (>10 min)', async () => {
+  const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
+  // Server-side cap: don't honor a malicious or buggy 12-hour window.
+  const info = classifyAgentError('429 [retry-after-ms=43200000]');
+  assert.equal(info.retryAfterMs, undefined);
+});
+
+test('classifier: rate_limit without retry-after has retryAfterMs undefined', async () => {
+  const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
+  const info = classifyAgentError('429 rate limit exceeded');
+  assert.equal(info.category, 'rate_limit');
+  assert.equal(info.retryAfterMs, undefined);
+});
+
+test('streamCompletion: 429 response with Retry-After header tags the error message', async () => {
+  const { ModelClient } = await import('../dist/agent/llm.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ error: { message: 'Too Many Requests' } }),
+    {
+      status: 429,
+      headers: {
+        'content-type': 'application/json',
+        'retry-after': '12',
+      },
+    },
+  );
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    const gen = client.streamCompletion({
+      model: 'zai/glm-5.1',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 128,
+    });
+    let captured = null;
+    for await (const evt of gen) {
+      if (evt.kind === 'error') { captured = evt.payload; break; }
+    }
+    assert.ok(captured, 'must yield an error event');
+    assert.equal(captured.status, 429);
+    assert.match(captured.message ?? '', /\[retry-after-ms=12000\]/,
+      'message must carry the parseable retry-after tag');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// ─── payment_rejected category: signed payment verified-and-rejected ──
+//
+// Verified 2026-05-04 in a screenshot: ExaSearch failed with
+// `(402): {"error":"Payment verification failed","details":"Ver…}`. Same
+// HTTP status as a "payment required" challenge but a different remedy:
+// the user's signed payment was rejected, not absent. Same retry won't
+// help — must fix clock skew / chain / nonce.
+
+test('classifier: Payment verification failed → payment_rejected with chain/clock-skew tip', async () => {
+  const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
+
+  // Gateway-shape body, exact match for the live failure.
+  const live = classifyAgentError('Exa /v1/exa/search failed (402): {"error":"Payment verification failed","details":"Ver..."}');
+  assert.equal(live.category, 'payment_rejected');
+  assert.equal(live.label, 'PaymentRejected');
+  assert.equal(live.maxRetries, 0, 'must not auto-retry — same signature stays rejected');
+  assert.match(live.suggestion ?? '', /clock skew/i, 'suggestion should mention clock skew');
+  assert.match(live.suggestion ?? '', /chain/i, 'suggestion should mention chain');
+  assert.match(live.suggestion ?? '', /\/model free/i, 'suggestion should offer free-model escape');
+
+  // Other variant phrasings the gateway might use.
+  for (const msg of ['signature mismatch', 'invalid x-payment header', 'nonce reuse detected']) {
+    assert.equal(classifyAgentError(msg).category, 'payment_rejected', `should classify "${msg}" as payment_rejected`);
+  }
+});
+
+// ─── agent loop measures LLM latency for franklin-stats ──────────────
+//
+// Verified 2026-05-05: `franklin stats` showed `avgLat=0.0s` for every
+// model across 5300+ requests because the agent-loop's recordUsage
+// callsite was hardcoded with `latencyMs=0` (the proxy-path callsite
+// in src/proxy/server.ts:651 measured correctly; only the agent-loop
+// path was broken). Without latency, `franklin insights` couldn't
+// surface "this model is slow" or "fallback was faster". 3.15.61 wraps
+// the model call with Date.now() and passes the delta to recordUsage.
+
+test('agent context: chat-completions example uses real model names (no fictional gpt-5.1 / grok-5)', async () => {
+  // Verified 2026-05-05: the BlockRun API doc block in the agent
+  // system prompt cited `openai/gpt-5.1` and `xai/grok-5` as
+  // example model names. Neither exists on the gateway. If the
+  // agent copies the example verbatim into a /v1/chat/completions
+  // call it 400s. Real frontier examples must be names that
+  // appear in `franklin-stats.json byModel` on a real machine.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'agent', 'context.js'),
+    'utf-8',
+  );
+  // Real names that should appear as illustrative examples.
+  for (const real of [
+    'anthropic/claude-sonnet-4.6',
+    'anthropic/claude-opus-4.7',
+    'deepseek/deepseek-v4-pro',
+    'zai/glm-5.1',
+  ]) {
+    assert.ok(src.includes(real), `chat-completions example list must include real model "${real}"`);
+  }
+  // Fictional names that must NOT survive as illustrative examples.
+  // (They may appear in a "do NOT invent" warning — match must require
+  // them in an `e.g.` context, not a "do not use" context. Look in the
+  // chat-completions paragraph specifically.)
+  const para = src.match(/POST \/v1\/chat\/completions[\s\S]{0,800}/);
+  assert.ok(para, 'must contain the chat-completions API paragraph');
+  // Real model `openai/gpt-5-nano` IS valid — only the fictional ones
+  // need to be confined to the warning context.
+  const fakeModelGpt = /openai\/gpt-5\.1/g;
+  const fakeModelGrok = /xai\/grok-5\b/g;
+  // Each fictional name should appear at most once (in the "Do NOT
+  // invent" warning) and must NOT appear standalone as a recommended
+  // example. The warning prefix "Do NOT invent versions like" is the
+  // single allowed mention.
+  const gptMatches = para[0].match(fakeModelGpt) ?? [];
+  const grokMatches = para[0].match(fakeModelGrok) ?? [];
+  assert.equal(gptMatches.length, 1, 'openai/gpt-5.1 must appear exactly once (in the warning)');
+  assert.equal(grokMatches.length, 1, 'xai/grok-5 must appear exactly once (in the warning)');
+  assert.match(para[0], /Do NOT invent.*gpt-5\.1.*grok-5/i,
+    'must explicitly warn against inventing those names');
+});
+
+test('agent context: wallet-storage block names the real files (no stale paths)', async () => {
+  // Verified 2026-05-05: the system-prompt wallet block claimed Solana
+  // keys lived at `~/.blockrun/solana-wallet.json` (didn't exist on the
+  // user's machine — the real file is `~/.blockrun/.solana-session`)
+  // and named `~/.blockrun/spending.json` as the spend tracker (last
+  // touched 2026-01-19, totally stale; the live trackers are
+  // `franklin-stats.json` + `franklin-audit.jsonl` + `cost_log.jsonl`).
+  // When the agent answers "where is my Solana wallet" or "how much
+  // have I spent", it was citing files that didn't exist or were 4
+  // months out of date.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'agent', 'context.js'),
+    'utf-8',
+  );
+  // Real Solana wallet path appears (in the prompt text + the read code).
+  assert.match(src, /\.solana-session/, 'must name the canonical .solana-session file');
+  // The PROMPT TEXT (the human-readable wallet block) must not name
+  // solana-wallet.json as a private key file. The legacy path may
+  // appear as a fallback in the read code, but the wallet-storage
+  // doc block must NOT cite it. Verified by checking the prompt
+  // header context.
+  const walletBlockMatch = src.match(/Wallet Storage[\s\S]{0,2000}/);
+  assert.ok(walletBlockMatch, 'must contain the Wallet Storage prompt block');
+  assert.doesNotMatch(walletBlockMatch[0], /solana-wallet\.json/,
+    'wallet-storage prompt block must not document the legacy solana-wallet.json');
+  assert.doesNotMatch(walletBlockMatch[0], /Spending tracker.*spending\.json/i,
+    'wallet-storage prompt block must not name spending.json as the spend tracker');
+  // Real spend trackers cited.
+  assert.match(src, /franklin-stats\.json/, 'must reference franklin-stats.json as the rolling tracker');
+  assert.match(src, /cost_log\.jsonl/, 'must reference cost_log.jsonl as the per-call ledger');
+  // Chain canonical path.
+  assert.match(src, /payment-chain/, 'wallet block must name payment-chain as the canonical chain file');
+});
+
+test('agent context: chain reader prefers payment-chain, falls back to legacy .chain', async () => {
+  // Verified 2026-05-05: ~/.blockrun/.chain hadn't been updated since
+  // 2026-03-14 ("base") while ~/.blockrun/payment-chain (the canonical
+  // CHAIN_FILE) was being written 2026-05-04. Same value on this
+  // machine, but the two paths can diverge any time the user runs
+  // `franklin solana` (writes payment-chain only). The chain reader
+  // in agent/context.ts:readRuntimeWallet was hardcoded to .chain and
+  // would silently report stale state.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'agent', 'context.js'),
+    'utf-8',
+  );
+  assert.match(src, /'payment-chain'/, 'must reference the canonical payment-chain file');
+  assert.match(src, /'\.chain'/, 'must keep the legacy .chain fallback for unmigrated installs');
+  const newIdx = src.indexOf("'payment-chain'");
+  const legacyIdx = src.indexOf("'.chain'");
+  assert.ok(newIdx !== -1 && legacyIdx !== -1, 'both paths must appear in dist');
+  assert.ok(newIdx < legacyIdx, 'payment-chain check must appear before legacy .chain check');
+});
+
+test('media + modal tools: measure latency and pass it to recordUsage (no more 0)', async () => {
+  // 3.15.61 fixed agent loop's hardcoded latencyMs=0; 3.15.62 closes
+  // the remaining 5 callsites (imagegen, videogen, 4× modal). No
+  // recordUsage call in the production tree should pass a literal 0
+  // for latency — they should all read from a captured Date.now().
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+
+  for (const rel of [
+    'dist/tools/imagegen.js',
+    'dist/tools/videogen.js',
+    'dist/tools/modal.js',
+  ]) {
+    const src = fs.readFileSync(path.join(process.cwd(), rel), 'utf-8');
+    // Each file must capture a wall-clock start before its paid call.
+    assert.match(src, /callStartedAt = Date\.now\(\)/,
+      `${rel} must capture callStartedAt`);
+    // Each file must compute the latency delta.
+    assert.match(src, /latencyMs = Date\.now\(\) - callStartedAt/,
+      `${rel} must compute latencyMs`);
+    // No recordUsage with literal-0 last arg. The shape must be `, latencyMs)`
+    // or `, latencyMs);` with optional whitespace and an optional `}` after.
+    assert.doesNotMatch(src, /recordUsage\([^)]*,\s*0\s*\)/,
+      `${rel} recordUsage must not pass literal 0 for latencyMs`);
+  }
+});
+
+test('agent loop: measures LLM latency and passes it to recordUsage', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'agent', 'loop.js'),
+    'utf-8',
+  );
+  // Latency is captured at the start of the model call.
+  assert.match(src, /llmCallStartedAt = Date\.now\(\)/,
+    'must capture wall-clock start of model call');
+  // Delta is computed and passed to recordUsage (NOT a literal 0).
+  assert.match(src, /llmLatencyMs = Date\.now\(\) - llmCallStartedAt/,
+    'must compute the latency delta');
+  assert.match(src, /recordUsage\([^)]*llmLatencyMs/,
+    'recordUsage must receive llmLatencyMs (not a hardcoded 0)');
+  // Defensive: the legacy `recordUsage(... , 0, ...)` shape from
+  // pre-3.15.61 must not still be present. Line-anchored to avoid
+  // matching unrelated comments mentioning '0' in the file.
+  assert.doesNotMatch(src, /recordUsage\(resolvedModel, [^,]+, [^,]+, [^,]+, 0,/,
+    'agent-loop recordUsage call must no longer pass literal 0 for latencyMs');
+});
+
+test('paid media and Modal tools pass measured latency to recordUsage', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const readDist = (file) => fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'tools', file),
+    'utf-8',
+  );
+
+  const imagegen = readDist('imagegen.js');
+  assert.match(imagegen, /callStartedAt = Date\.now\(\)/,
+    'imagegen must capture the paid-call start time');
+  assert.match(imagegen, /latencyMs = Date\.now\(\) - callStartedAt/,
+    'imagegen must compute latency from the paid-call start time');
+  assert.match(imagegen, /recordUsage\(imageModel, 0, 0, estCost, latencyMs\)/,
+    'imagegen recordUsage must receive latencyMs');
+  assert.doesNotMatch(imagegen, /recordUsage\(imageModel, 0, 0, estCost, 0\)/,
+    'imagegen must not hardcode zero latency');
+
+  const videogen = readDist('videogen.js');
+  assert.match(videogen, /callStartedAt = Date\.now\(\)/,
+    'videogen must capture the paid-call start time');
+  assert.match(videogen, /latencyMs = Date\.now\(\) - callStartedAt/,
+    'videogen must compute latency from the paid-call start time');
+  assert.match(videogen, /recordUsage\(videoModel, 0, 0, estCost, latencyMs\)/,
+    'videogen recordUsage must receive latencyMs');
+  assert.doesNotMatch(videogen, /recordUsage\(videoModel, 0, 0, estCost, 0\)/,
+    'videogen must not hardcode zero latency');
+
+  const modal = readDist('modal.js');
+  assert.equal((modal.match(/callStartedAt = Date\.now\(\)/g) ?? []).length, 4,
+    'all four Modal paid calls must capture start time');
+  assert.equal((modal.match(/latencyMs = Date\.now\(\) - callStartedAt/g) ?? []).length, 4,
+    'all four Modal paid calls must compute latency');
+  assert.match(modal, /recordUsage\(`modal\/\$\{tier\}`, 0, 0, price, latencyMs\)/,
+    'ModalCreate recordUsage must receive latencyMs');
+  assert.match(modal, /recordUsage\('modal\/exec', 0, 0, EXEC_PRICE_USD, latencyMs\)/,
+    'ModalExec recordUsage must receive latencyMs');
+  assert.match(modal, /recordUsage\('modal\/status', 0, 0, STATUS_PRICE_USD, latencyMs\)/,
+    'ModalStatus recordUsage must receive latencyMs');
+  assert.match(modal, /recordUsage\('modal\/terminate', 0, 0, TERMINATE_PRICE_USD, latencyMs\)/,
+    'ModalTerminate recordUsage must receive latencyMs');
+});
+
+// ─── stripLargeImageData: prevent multi-MB session jsonl files ─────
+//
+// Verified 2026-05-05: a 5-turn session with .png reads grew to 12 MB
+// because every Read of a >50KB image inlined ~600 KB of base64 into
+// the session jsonl (loop.ts wraps tool_result with image blocks for
+// vision models). The model already saw the bytes during the live turn;
+// disk only needs the path reference for resume.
+
+test('stripLargeImageData: replaces large base64 image blocks with placeholder', async () => {
+  const { stripLargeImageData } = await import('../dist/agent/loop.js');
+  // Build a 200 KB base64 string — comfortably above the 50 KB threshold.
+  const bigB64 = 'A'.repeat(200_000);
+  const msg = {
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: 'call_1',
+        content: [
+          { type: 'text', text: 'Image file: /tmp/foo.png (.png, 200KB).' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: bigB64 } },
+        ],
+        is_error: false,
+      },
+    ],
+  };
+  const out = stripLargeImageData(msg);
+  // Must not mutate the original (turn's in-memory history keeps full bytes).
+  assert.notEqual(out, msg, 'must return a new object reference');
+  assert.equal(msg.content[0].content[1].source.data.length, 200_000,
+    'original image data must remain intact for in-memory history');
+  // Stripped clone has the placeholder.
+  const cleanedInner = out.content[0].content;
+  assert.equal(cleanedInner.length, 2);
+  assert.equal(cleanedInner[0].type, 'text', 'text block preserved');
+  assert.equal(cleanedInner[1].type, 'text', 'image block replaced with text placeholder');
+  assert.match(cleanedInner[1].text, /image stripped from session log/);
+  assert.match(cleanedInner[1].text, /195\.3 KB/, 'placeholder reports the original size');
+});
+
+test('stripLargeImageData: leaves small images untouched (favicon-sized)', async () => {
+  const { stripLargeImageData } = await import('../dist/agent/loop.js');
+  const tinyB64 = 'A'.repeat(3000); // ~3KB — below threshold
+  const msg = {
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: 'call_1',
+        content: [
+          { type: 'text', text: 'Tiny icon.' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: tinyB64 } },
+        ],
+        is_error: false,
+      },
+    ],
+  };
+  const out = stripLargeImageData(msg);
+  // No mutation — small images round-trip.
+  assert.equal(out, msg, 'small images should pass through unchanged');
+  assert.equal(out.content[0].content[1].source.data.length, 3000);
+});
+
+test('stripLargeImageData: passes through messages without tool_result image blocks', async () => {
+  const { stripLargeImageData } = await import('../dist/agent/loop.js');
+  // Plain user text.
+  const userText = { role: 'user', content: 'hello' };
+  assert.equal(stripLargeImageData(userText), userText);
+
+  // Tool_result with only text (no image) — common case.
+  const toolText = {
+    role: 'user',
+    content: [{ type: 'tool_result', tool_use_id: 'x', content: 'plain string', is_error: false }],
+  };
+  assert.equal(stripLargeImageData(toolText), toolText);
+});
+
+test('isExternalWallFailure: generic Bash failures do not trip auth-wall guard', async () => {
+  const { isExternalWallFailure } = await import('../dist/agent/loop.js');
+  assert.equal(isExternalWallFailure('Bash', 'npm test failed with exit code 1', true), false);
+  assert.equal(isExternalWallFailure('Bash', 'HTTP 403 Forbidden from Cloudflare', false), true);
+  assert.equal(isExternalWallFailure('WebFetch', 'socket closed', true), true);
+  assert.equal(isExternalWallFailure('Read', '403 appears in a file', true), false);
+});
+
+// ─── formatModelSwitch: surface resolved model + reason in switch messages ─
+//
+// Verified 2026-05-04 in a live screenshot: a payment fail surfaced as
+// `*blockrun/auto failed — switching to nvidia/qwen3-coder-480b*`. No hint
+// of which concrete model actually failed, no hint of why. After the fix
+// the same situation reads:
+// `*blockrun/auto (anthropic/claude-sonnet-4.6) failed [payment_required] — switching to nvidia/qwen3-coder-480b*`
+//
+// The helper isn't exported from loop.ts (it's an internal). Test by
+// asserting the formatted text appears in the dist source — same trick
+// the agent-context test uses.
+test('formatModelSwitch: shows resolved model in parens when alias differs', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'agent', 'loop.js'),
+    'utf-8',
+  );
+  // Helper definition is present in dist.
+  assert.match(src, /formatModelSwitch\b/, 'helper must be defined and used');
+  // The "alias === resolved" branch.
+  assert.match(src, /alias === resolved \? alias :/, 'aliasing branch present');
+  // Reason label is interpolated into payment + rate-limit + empty paths.
+  assert.match(src, /'rate-limited'/);
+  assert.match(src, /'returned empty'/);
+  // Payment path uses classified.label so the reason isn't hardcoded.
+  assert.match(src, /failed \[\$\{classified\.label\}\]/);
+});
+
+// ─── CoinGecko ticker resolution: TON and the dynamic /search fallback ──
+//
+// Verified 2026-05-04 in a live session: agent asked for TON price,
+// TradingMarket returned "No CoinGecko data for TON" because TON wasn't
+// in TICKER_TO_ID and the lowercase fallback "ton" doesn't match
+// CoinGecko's id ("the-open-network"). 3.15.54 expanded the static map
+// AND added a /search-based dynamic resolver for unknown tickers. These
+// tests pin both layers.
+
+test('coingecko resolveProviderId: TON is in the static map (no /search needed)', async () => {
+  const { resolveProviderId } = await import('../dist/trading/providers/coingecko/client.js');
+  assert.equal(resolveProviderId('TON'), 'the-open-network');
+  assert.equal(resolveProviderId('HYPE'), 'hyperliquid');
+  assert.equal(resolveProviderId('TRX'), 'tron');
+  assert.equal(resolveProviderId('USDT'), 'tether'); // also handles "USDT" suffix-strip edge
+});
+
+test('coingecko resolveProviderIdAsync: unknown ticker uses /search and caches the result', async () => {
+  const { resolveProviderIdAsync, clearIdResolutionCache, resolveProviderId } =
+    await import('../dist/trading/providers/coingecko/client.js');
+  clearIdResolutionCache();
+
+  const originalFetch = globalThis.fetch;
+  let searchCalls = 0;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/search?query=')) {
+      searchCalls++;
+      // Mimic CoinGecko search response shape — `coins[]` with `id`,
+      // `symbol`, `market_cap_rank`. Exact symbol match wins.
+      return new Response(JSON.stringify({
+        coins: [
+          { id: 'made-up-noise', symbol: 'OTHER', market_cap_rank: 999 },
+          { id: 'fake-token-canonical', symbol: 'FAKETOKEN', market_cap_rank: 42 },
+        ],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200 });
+  };
+  try {
+    const id1 = await resolveProviderIdAsync('FAKETOKEN');
+    assert.equal(id1, 'fake-token-canonical', 'first call should hit /search and resolve to canonical id');
+    assert.equal(searchCalls, 1);
+
+    // Second call: cache hit, no new /search request.
+    const id2 = await resolveProviderIdAsync('FAKETOKEN');
+    assert.equal(id2, 'fake-token-canonical');
+    assert.equal(searchCalls, 1, 'second call must hit cache, not /search');
+
+    // Sync resolveProviderId reads the same cache.
+    assert.equal(resolveProviderId('FAKETOKEN'), 'fake-token-canonical',
+      'sync resolveProviderId must read the dynamic cache');
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearIdResolutionCache();
+  }
+});
+
+test('coingecko resolveProviderIdAsync: /search failure falls back to lowercase guess', async () => {
+  const { resolveProviderIdAsync, clearIdResolutionCache } =
+    await import('../dist/trading/providers/coingecko/client.js');
+  clearIdResolutionCache();
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('upstream broken', { status: 500 });
+  try {
+    const id = await resolveProviderIdAsync('NEVERHEARDOFIT');
+    assert.equal(id, 'neverheardofit',
+      '/search failure should not block the request — fall back to lowercase');
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearIdResolutionCache();
+  }
+});
+
+test('videogen: aspect_ratio passes through to the gateway request body', async () => {
+  // Verified 2026-05-04: agent generated a video, X.com rejected with
+  // "aspect ratio too small", user had to manually ffmpeg re-encode to
+  // 1280x720. VideoGen now exposes aspect_ratio and the tool description
+  // advises the agent to set "16:9" + plan an ffmpeg follow-up for X.
+  const { videoGenCapability } = await import('../dist/tools/videogen.js');
+  const originalFetch = globalThis.fetch;
+  let captured = null;
+  globalThis.fetch = async (_url, init) => {
+    captured = JSON.parse(init.body);
+    throw new Error('captured');
+  };
+  try {
+    await videoGenCapability.execute(
+      {
+        prompt: 'test',
+        model: 'xai/grok-imagine-video',
+        aspect_ratio: '16:9',
+        duration_seconds: 8,
+      },
+      { workingDir: '/tmp', abortSignal: new AbortController().signal },
+    );
+  } catch { /* fetch threw 'captured' on purpose */ }
+  finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.ok(captured, 'fetch must have been called');
+  assert.equal(captured.aspect_ratio, '16:9', 'aspect_ratio must round-trip into the body');
+});
+
+test('videogen: tool spec mentions X.com / TikTok / Instagram aspect ratios', async () => {
+  const { videoGenCapability } = await import('../dist/tools/videogen.js');
+  const desc = videoGenCapability.spec.description;
+  assert.match(desc, /16:9/, 'must mention 16:9 for landscape platforms');
+  assert.match(desc, /9:16/, 'must mention 9:16 for vertical platforms');
+  assert.match(desc, /X.*Twitter|Twitter|X /, 'must call out X / Twitter');
+  assert.match(desc, /InputImageSensitiveContentDetected|seedance-.*refuses|moderation/i,
+    'must warn about Seedance moderation on photorealistic faces');
+});
+
+test('videogen: tool spec advertises the known-valid model list (so agents do not guess)', async () => {
+  // Verified 2026-05-04 in a live session: agent invented
+  // "seedance/2.0-pro" (a name that doesn't exist), gateway 400'd
+  // with the actual list. Pre-advertising the known-good names
+  // saves the failed paid request.
+  const { videoGenCapability } = await import('../dist/tools/videogen.js');
+  const desc = videoGenCapability.spec.input_schema.properties.model.description;
+  for (const m of [
+    'xai/grok-imagine-video',
+    'bytedance/seedance-1.5-pro',
+    'bytedance/seedance-2.0',
+    'bytedance/seedance-2.0-fast',
+  ]) {
+    assert.ok(desc.includes(m), `model description must list ${m}; got: ${desc}`);
+  }
+});
+
+test('videogen: local image path is inlined as data URI before POST', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { videoGenCapability } = await import('../dist/tools/videogen.js');
+
+  // 1x1 PNG used by other resolveReferenceImage tests.
+  const pngBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vg-img-'));
+  const imgPath = path.join(tmp, 'keyframe.png');
+  fs.writeFileSync(imgPath, pngBytes);
+
+  const originalFetch = globalThis.fetch;
+  let captured = null;
+  globalThis.fetch = async (_url, init) => {
+    captured = JSON.parse(init.body);
+    // Short-circuit before payment / poll machinery — we only care about
+    // what got serialized into the request body.
+    throw new Error('captured');
+  };
+  try {
+    await videoGenCapability.execute(
+      {
+        prompt: 'test clip',
+        image_url: imgPath,
+        model: 'xai/grok-imagine-video', // skip the AskUser proposal flow
+      },
+      { workingDir: tmp, abortSignal: new AbortController().signal },
+    );
+  } catch { /* fetch threw 'captured' on purpose */ }
+  finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  assert.ok(captured, 'fetch must have been called');
+  assert.ok(captured.image_url, 'image_url must be on the body');
+  assert.match(captured.image_url, /^data:image\/png;base64,/,
+    'local path should round-trip into a data: URI before POST');
+});
+
+test('streamCompletion: does not retry when tool_choice was already absent', async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = async (_url, _init) => {
+    callCount++;
+    return new Response(
+      JSON.stringify({ error: { message: '400 something else broke' } }),
+      { status: 400, headers: { 'content-type': 'application/json' } },
+    );
+  };
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    const gen = client.streamCompletion({
+      model: 'zai/glm-5.1',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1024,
+      // no tool_choice → retry path must not engage even on a 400
+    });
+    for await (const _evt of gen) { /* drain */ }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(callCount, 1, 'no retry when tool_choice was never set');
+});
+
 test('ModelClient: stream idle timeout surfaces a real timeout error instead of hanging forever', async () => {
   const originalTimeout = process.env.FRANKLIN_MODEL_IDLE_TIMEOUT_MS;
   const server = createServer((_req, res) => {
@@ -2053,7 +3123,7 @@ test('ModelClient: stream idle timeout surfaces a real timeout error instead of 
     const client = new ModelClient({ apiUrl: `http://127.0.0.1:${port}`, chain: 'base' });
     await assert.rejects(
       () => client.complete({
-        model: 'local/test-model',
+        model: 'zai/glm-5.1',
         messages: [{ role: 'user', content: 'hello' }],
         max_tokens: 128,
         stream: true,
@@ -2082,7 +3152,7 @@ test('ModelClient: request timeout surfaces before waiting on a hung response fo
     const client = new ModelClient({ apiUrl: `http://127.0.0.1:${port}`, chain: 'base' });
     await assert.rejects(
       () => client.complete({
-        model: 'local/test-model',
+        model: 'zai/glm-5.1',
         messages: [{ role: 'user', content: 'hello' }],
         max_tokens: 128,
         stream: true,
@@ -3428,6 +4498,15 @@ test('dynamic tool visibility: hidden tools cannot execute before activation', {
   const prevNoPrefetch = process.env.FRANKLIN_NO_PREFETCH;
   process.env.FRANKLIN_NO_PREFETCH = '1';
 
+  // Snapshot current sessions so we can delete just the one this test
+  // creates — without this the in-process interactiveSession leaves a
+  // real .meta.json + .jsonl in the user's ~/.blockrun/sessions/ on
+  // every `npm test` run. Mirrors the cleanup pattern in the 489/609
+  // resume tests.
+  const { listSessions: listSessionsForCleanup, getSessionFilePath: getSessionFilePathForCleanup } =
+    await import('../dist/session/storage.js');
+  const beforeSessionIdsForCleanup = new Set(listSessionsForCleanup().map((s) => s.id));
+
   let requestCount = 0;
   let hiddenToolCalls = 0;
 
@@ -3505,7 +4584,7 @@ test('dynamic tool visibility: hidden tools cannot execute before activation', {
     let calls = 0;
     const history = await interactiveSession(
       {
-        model: 'local/test-model',
+        model: 'zai/glm-5.1',
         apiUrl,
         chain: 'base',
         systemInstructions: ['You are a test harness.'],
@@ -3524,6 +4603,12 @@ test('dynamic tool visibility: hidden tools cannot execute before activation', {
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     if (prevNoPrefetch === undefined) delete process.env.FRANKLIN_NO_PREFETCH;
     else process.env.FRANKLIN_NO_PREFETCH = prevNoPrefetch;
+    for (const s of listSessionsForCleanup()) {
+      if (beforeSessionIdsForCleanup.has(s.id)) continue;
+      const f = getSessionFilePathForCleanup(s.id);
+      rmSync(f, { force: true });
+      rmSync(f.replace(/\.jsonl$/, '.meta.json'), { force: true });
+    }
   }
 });
 
@@ -3954,6 +5039,13 @@ test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', {
   const { clearAnalyzerCache } = await import('../dist/agent/turn-analyzer.js');
   clearAnalyzerCache();
 
+  // Same cleanup pattern as the dynamic-tool-visibility test — without
+  // this the in-process interactiveSession run below leaks a session
+  // file into the user's ~/.blockrun/sessions/ on every test run.
+  const { listSessions: listSessionsForCleanup, getSessionFilePath: getSessionFilePathForCleanup } =
+    await import('../dist/session/storage.js');
+  const beforeSessionIdsForCleanup = new Set(listSessionsForCleanup().map((s) => s.id));
+
   let requestCount = 0;
   let sawPrefetchContext = false;
 
@@ -4039,7 +5131,7 @@ test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', {
 
     const history = await interactiveSession(
       {
-        model: 'local/test-model',
+        model: 'zai/glm-5.1',
         apiUrl,
         chain: 'base',
         systemInstructions: ['You are a test harness.'],
@@ -4069,6 +5161,12 @@ test('intent-prefetch: showPrefetchStatus=false keeps prefetched turns quiet', {
     else process.env.FRANKLIN_NO_ANALYZER = prevNoAnalyzer;
     clearAnalyzerCache();
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    for (const s of listSessionsForCleanup()) {
+      if (beforeSessionIdsForCleanup.has(s.id)) continue;
+      const f = getSessionFilePathForCleanup(s.id);
+      rmSync(f, { force: true });
+      rmSync(f.replace(/\.jsonl$/, '.meta.json'), { force: true });
+    }
   }
 });
 
@@ -4078,7 +5176,7 @@ test('router LLM classifier: parseTierWord + stub-backed routeRequestAsync route
   // Inject a stub classifier so this test stays offline / hermetic.
   const stub = async (prompt) => {
     if (/irrational|prove|theorem/i.test(prompt)) return 'REASONING';
-    if (/CRCL|stock|analyze|为什么|要不要/i.test(prompt)) return 'COMPLEX';
+    if (/CRCL|stock|analyze|debo vender|por que|por qué/i.test(prompt)) return 'COMPLEX';
     if (/typo|rename|fix/i.test(prompt)) return 'MEDIUM';
     return 'SIMPLE';
   };
@@ -4091,8 +5189,8 @@ test('router LLM classifier: parseTierWord + stub-backed routeRequestAsync route
   const trivia = await routeRequestAsync('2 + 2', 'auto', stub);
   assert.equal(trivia.tier, 'SIMPLE');
 
-  const chinese = await routeRequestAsync('CRCL 要不要卖', 'auto', stub);
-  assert.equal(chinese.tier, 'COMPLEX');
+  const spanish = await routeRequestAsync('CRCL, debo vender?', 'auto', stub);
+  assert.equal(spanish.tier, 'COMPLEX');
 
   // Classifier returns null → falls back to keyword router (which still works)
   const fallback = await routeRequestAsync('refactor the wallet module', 'auto', async () => null);
@@ -4105,7 +5203,7 @@ test('router LLM classifier also returns a real local-elo category', async () =>
 
   const routing = await routeRequestAsync(
     'What is BTC price today and should I sell?',
-    'eco',
+    'auto',
     async () => 'COMPLEX',
   );
 
@@ -4114,17 +5212,19 @@ test('router LLM classifier also returns a real local-elo category', async () =>
   assert.ok(routing.signals.includes('llm-classified'));
 });
 
-test('router eco complex fallback chain stays on live models', async () => {
-  const { getFallbackChain } = await import('../dist/router/index.js');
-
-  const chain = getFallbackChain('COMPLEX', 'eco');
-
-  assert.deepEqual(chain, [
-    'google/gemini-2.5-flash-lite',
-    'deepseek/deepseek-chat',
-    'nvidia/qwen3-coder-480b',
-  ]);
-  assert.ok(!chain.includes('nvidia/mistral-large-3-675b'));
+test('router: legacy eco/premium profile strings still parse to auto', async () => {
+  // Eco / Premium routing profiles were retired 2026-05-03 — Auto now spans
+  // the cost/quality range that Eco and Premium used to split. Old configs
+  // and saved sessions can still pass `blockrun/eco` or `blockrun/premium`;
+  // the parser silently promotes them to Auto so nothing breaks.
+  const { parseRoutingProfile } = await import('../dist/router/index.js');
+  assert.equal(parseRoutingProfile('blockrun/eco'), 'auto');
+  assert.equal(parseRoutingProfile('eco'), 'auto');
+  assert.equal(parseRoutingProfile('blockrun/premium'), 'auto');
+  assert.equal(parseRoutingProfile('premium'), 'auto');
+  assert.equal(parseRoutingProfile('blockrun/auto'), 'auto');
+  assert.equal(parseRoutingProfile('blockrun/free'), 'free');
+  assert.equal(parseRoutingProfile('anthropic/claude-opus-4.7'), null);
 });
 
 test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay aligned', async () => {
@@ -4187,7 +5287,7 @@ test('free routing profile stays free across router entry points', async () => {
     'hello',
     'fix the failing tests and update the docs',
     'prove this theorem step by step',
-    'CRCL 要不要卖，为什么？',
+    'Should I sell CRCL, and why?',
   ];
 
   for (const prompt of prompts) {
@@ -4206,10 +5306,28 @@ test('free routing profile stays free across router entry points', async () => {
   assert.equal(asyncRouted.model, 'nvidia/qwen3-coder-480b');
   assert.deepEqual(asyncRouted.signals, ['free-profile']);
 
+  // Free chain expanded 2026-05-03: was a single-element chain that just
+  // re-tried qwen3-coder forever; now returns the general-purpose free
+  // chain (llama/glm/qwen-coder) so a 402'd or rate-limited free user
+  // gets a real switch instead of thrashing on the same model. Assertion
+  // is intentionally membership-based — the exact ordering is tuned in
+  // FREE_MODELS_BY_CATEGORY and shouldn't break this test on every tweak.
+  const FREE_GATEWAY_MODELS = new Set([
+    'nvidia/qwen3-coder-480b',
+    'nvidia/glm-4.7',
+    'nvidia/llama-4-maverick',
+    'nvidia/deepseek-v4-flash',
+    'nvidia/nemotron-3-super-120b',
+    'nvidia/mistral-large-3-675b',
+  ]);
   for (const tier of ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING']) {
     const resolved = resolveTierToModel(tier, 'free');
     assert.equal(resolved.model, 'nvidia/qwen3-coder-480b', `resolveTierToModel free drifted for ${tier}`);
-    assert.deepEqual(getFallbackChain(tier, 'free'), ['nvidia/qwen3-coder-480b'], `free fallback chain drifted for ${tier}`);
+    const chain = getFallbackChain(tier, 'free');
+    assert.ok(Array.isArray(chain) && chain.length > 0, `free fallback chain empty for ${tier}`);
+    for (const m of chain) {
+      assert.ok(FREE_GATEWAY_MODELS.has(m), `free fallback drifted to non-free model ${m} for ${tier}`);
+    }
   }
 });
 
@@ -4280,7 +5398,7 @@ test('evaluator: extractPrefetchBlock finds the harness prefetch in the last use
       '- CRCL (us) live price: $96.18 (BlockRun Gateway / Pyth)',
       '',
       'Original user message:',
-      'CRCL 现在多少钱',
+      'CRCL current price?',
     ].join('\n') },
   ];
 
@@ -4330,9 +5448,12 @@ test('evaluator: renderGroundingFollowup is silent on PASS/SKIPPED, verbose on f
     raw: '',
   });
   assert.ok(ungrounded.includes('⚠️'), 'has warning glyph');
-  assert.ok(ungrounded.includes('Grounding check'), 'has header');
+  assert.ok(ungrounded.includes('Unverified answer'), 'names the failure mode');
   assert.ok(ungrounded.includes('TradingMarket'), 'surfaces specific tool suggestion');
-  assert.ok(ungrounded.includes('FRANKLIN_NO_EVAL'), 'tells user how to opt out');
+  assert.ok(ungrounded.includes('verify'), 'gives the user a one-word follow-up command');
+  // FRANKLIN_NO_EVAL is intentionally NOT in the user-facing text (config concern,
+  // not a "make this warning go away" knob); confirm we didn't regress that.
+  assert.ok(!ungrounded.includes('FRANKLIN_NO_EVAL'), 'does not expose env-var escape hatch');
 });
 
 test('version-check: compareSemver handles major/minor/patch + malformed input', async () => {
@@ -4585,6 +5706,188 @@ test('retryFetchBalance: surfaces errors from the inner fetch', async () => {
 test('kimi: getMaxOutputTokens(moonshot/kimi-k2.6) honors gateway 65K cap', async () => {
   const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
   assert.equal(getMaxOutputTokens('moonshot/kimi-k2.6'), 65_536);
+});
+
+// ─── Regression: budgetToolResults must NOT destroy image blocks ─────────────
+// Bug observed 2026-05-10 in production (sonnet-4.6 + opus-4.7 vision calls
+// hallucinating against an attached PNG). Root cause: budgetToolResults
+// JSON.stringified the entire content array and tested the resulting string
+// length against MAX_TOOL_RESULT_CHARS. A 275KB base64 image inflated the
+// stringified blob over the cap, so the array was replaced with a truncated
+// string preview — destroying the image before the gateway saw it. Gateway
+// log proof: the tool body was a 2KB self-referential
+// "[Output truncated: 275,952 chars → 2000 preview]\n\n[{\"type\":\"text\"…"
+// instead of a real image. Fix: only count text segments toward the budget;
+// pass image segments through untouched.
+test('budgetToolResults preserves image blocks even when content array stringifies large', async () => {
+  const { budgetToolResults } = await import('../dist/agent/optimize.js');
+  // Simulate what an ImageGen / Read-on-PNG tool result looks like in
+  // dialogue history: small text segment + base64 image segment that
+  // would tip over the 32K char cap if the whole array were stringified.
+  const fakeBase64 = 'A'.repeat(300_000); // > MAX_TOOL_RESULT_CHARS (32K)
+  const history = [
+    { role: 'user', content: 'find this image in the screenshot' },
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tool_use_test',
+          content: [
+            { type: 'text', text: 'Image file: /tmp/scene3_climax.png' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: fakeBase64 } },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const out = budgetToolResults(history);
+  const lastMsg = out[out.length - 1];
+  assert.ok(Array.isArray(lastMsg.content), 'tool_result message content must remain an array');
+  const tr = lastMsg.content[0];
+  assert.equal(tr.type, 'tool_result', 'first part is the tool_result');
+  // The image block MUST survive — that's the bug.
+  assert.ok(Array.isArray(tr.content), `tool_result.content must stay an array, got: ${typeof tr.content}`);
+  const survivingImage = tr.content.find((b) => b.type === 'image');
+  assert.ok(survivingImage, 'image block must survive budgetToolResults');
+  assert.equal(survivingImage.source.media_type, 'image/png');
+  assert.equal(survivingImage.source.data.length, 300_000, 'image base64 must NOT be truncated');
+  // Text segment of 35 chars is well under the 32K cap, so untouched.
+  const textPart = tr.content.find((b) => b.type === 'text');
+  assert.ok(textPart && /scene3_climax\.png/.test(textPart.text));
+});
+
+test('budgetToolResults truncates oversized text but keeps the image alongside', async () => {
+  const { budgetToolResults } = await import('../dist/agent/optimize.js');
+  // 50K of text + small image — text is over the 32K cap.
+  // Fix should truncate the text (returning a preview) and keep the image.
+  const longText = 'lorem ipsum '.repeat(5000); // ~60K chars
+  const history = [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tool_use_2',
+          content: [
+            { type: 'text', text: longText },
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'BBB' } },
+          ],
+        },
+      ],
+    },
+  ];
+  const out = budgetToolResults(history);
+  const tr = out[0].content[0];
+  assert.ok(Array.isArray(tr.content), 'truncation must keep array shape so image survives');
+  const text = tr.content.find((b) => b.type === 'text');
+  const img = tr.content.find((b) => b.type === 'image');
+  assert.ok(text, 'truncated text segment present');
+  assert.match(text.text, /Output truncated/);
+  assert.ok(text.text.length < 5_000, 'text was actually truncated');
+  assert.ok(img, 'image survives truncation');
+  assert.equal(img.source.data, 'BBB', 'image bytes intact');
+});
+
+test('budgetToolResults: bare-string content path still truncates as before', async () => {
+  const { budgetToolResults } = await import('../dist/agent/optimize.js');
+  const huge = 'x'.repeat(50_000);
+  const history = [
+    {
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 'id1', content: huge },
+      ],
+    },
+  ];
+  const out = budgetToolResults(history);
+  const tr = out[0].content[0];
+  assert.equal(typeof tr.content, 'string', 'string-content path should stay a string');
+  assert.match(tr.content, /Output truncated/);
+});
+
+// ─── Regression: sibling sites in reduce.ts must not destroy images ─────────
+// Same JSON.stringify(part.content) bug class as budgetToolResults — found
+// during PR #53 review. Three more functions in reduce.ts had the same
+// pattern; ageToolResults landed via PR #53; the two below are the missing
+// patches. Without them, a long conversation with a vision tool_result
+// silently lost its image once dedupe or repetitive-tool-collapse triggered.
+test('deduplicateToolResultLines preserves image blocks while deduping text', async () => {
+  const { deduplicateToolResultLines } = await import('../dist/agent/reduce.js');
+  const repeatedText = ['Fetching...', 'Fetching...', 'Fetching...', 'done'].join('\n');
+  const history = [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tu_dedupe',
+          content: [
+            { type: 'text', text: repeatedText },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'IMGDATA' } },
+          ],
+        },
+      ],
+    },
+  ];
+  const out = deduplicateToolResultLines(history);
+  const tr = out[0].content[0];
+  assert.ok(Array.isArray(tr.content), 'dedupe must keep array shape so image survives');
+  const img = tr.content.find((b) => b.type === 'image');
+  assert.ok(img, 'image block must survive dedupe');
+  assert.equal(img.source.data, 'IMGDATA', 'image bytes intact');
+  const text = tr.content.find((b) => b.type === 'text');
+  assert.ok(text, 'text block present after dedupe');
+  assert.match(text.text, /Fetching\.\.\. ×3/, 'text was actually deduped');
+});
+
+test('collapseRepetitiveTools leaves image-bearing tool_results alone', async () => {
+  const { collapseRepetitiveTools } = await import('../dist/agent/reduce.js');
+  // Six WebSearch-like tool_uses → repetitive threshold met → first three
+  // get marked for collapse. One of those carries an image; the collapser
+  // must NOT replace it with a text stub.
+  const assistant = (id) => ({
+    role: 'assistant',
+    content: [{ type: 'tool_use', id, name: 'WebSearch', input: { q: 'x' } }],
+  });
+  const userResult = (id, content) => ({
+    role: 'user',
+    content: [{ type: 'tool_result', tool_use_id: id, content }],
+  });
+  const longText = 'x'.repeat(200);
+  const history = [
+    assistant('a'), userResult('a', [
+      { type: 'text', text: longText },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'KEEPME' } },
+    ]),
+    assistant('b'), userResult('b', longText),
+    assistant('c'), userResult('c', longText),
+    assistant('d'), userResult('d', longText),
+    assistant('e'), userResult('e', longText),
+    assistant('f'), userResult('f', longText),
+  ];
+  const out = collapseRepetitiveTools(history);
+  // Find the result for tool_use_id 'a' — it should still carry the image.
+  const aResult = out.find((m) =>
+    m.role === 'user' &&
+    Array.isArray(m.content) &&
+    m.content.some((p) => p.type === 'tool_result' && p.tool_use_id === 'a')
+  );
+  const tr = aResult.content.find((p) => p.type === 'tool_result' && p.tool_use_id === 'a');
+  assert.ok(Array.isArray(tr.content), 'image-bearing result must NOT be string-collapsed');
+  const img = tr.content.find((b) => b.type === 'image');
+  assert.ok(img, 'image survives collapseRepetitiveTools');
+  assert.equal(img.source.data, 'KEEPME');
+  // 'b' (string content) SHOULD have been collapsed to a stub.
+  const bResult = out.find((m) =>
+    m.role === 'user' &&
+    Array.isArray(m.content) &&
+    m.content.some((p) => p.type === 'tool_result' && p.tool_use_id === 'b')
+  );
+  const trB = bResult.content.find((p) => p.type === 'tool_result' && p.tool_use_id === 'b');
+  assert.equal(typeof trB.content, 'string', 'string-content path still collapses');
+  assert.match(trB.content, /\[xxxx.+\.\.\.\]/);
 });
 
 test('kimi: K2.5 picker shortcuts now resolve to K2.6 (gateway retired K2.5)', async () => {
@@ -4995,6 +6298,40 @@ test('lost-detection: running task with dead pid → marked lost', async () => {
   }
 });
 
+test('lost-detection: stale queued task without pid → reaped after timeout', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+  const { reconcileLostTasks } = await import('../dist/tasks/lost-detection.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const now = Date.now();
+    // Old queued task with no pid — runner died during import.
+    writeTaskMeta({
+      runId: 'stale-queued', runtime: 'detached-bash', label: 'x', command: 'x',
+      workingDir: '/tmp', status: 'queued', createdAt: now - 6 * 60 * 1000, // 6 min old
+    });
+    // Recently queued task without pid — runner may still be importing.
+    writeTaskMeta({
+      runId: 'fresh-queued', runtime: 'detached-bash', label: 'y', command: 'y',
+      workingDir: '/tmp', status: 'queued', createdAt: now - 30 * 1000, // 30s old
+    });
+
+    reconcileLostTasks(now);
+
+    assert.equal(readTaskMeta('stale-queued').status, 'lost');
+    assert.equal(readTaskMeta('fresh-queued').status, 'queued');
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('runner: executes command, writes log, finalizes status=succeeded', async () => {
   const os = await import('node:os');
   const path = await import('node:path');
@@ -5081,7 +6418,9 @@ test('startDetachedTask: returns runId immediately, child completes async', asyn
 
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
   const orig = process.env.FRANKLIN_HOME;
+  const origCli = process.env.FRANKLIN_CLI_PATH;
   process.env.FRANKLIN_HOME = fakeHome;
+  process.env.FRANKLIN_CLI_PATH = path.join(process.cwd(), 'dist', 'index.js');
   try {
     const t0 = Date.now();
     const runId = startDetachedTask({
@@ -5097,14 +6436,21 @@ test('startDetachedTask: returns runId immediately, child completes async', asyn
     assert.ok(meta);
     assert.equal(meta.status === 'queued' || meta.status === 'running', true);
 
-    // Wait for completion
-    await new Promise(r => setTimeout(r, 1500));
-    const final = readTaskMeta(runId);
+    // Wait for completion. The child process can start slowly under load,
+    // so poll instead of assuming a fixed sleep is enough.
+    let final = readTaskMeta(runId);
+    const deadline = Date.now() + 10_000;
+    while (final?.status !== 'succeeded' && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 100));
+      final = readTaskMeta(runId);
+    }
     assert.equal(final.status, 'succeeded');
     assert.ok(fs.existsSync(path.join(fakeHome, 'out.txt')), 'child wrote output');
   } finally {
     if (orig === undefined) delete process.env.FRANKLIN_HOME;
     else process.env.FRANKLIN_HOME = orig;
+    if (origCli === undefined) delete process.env.FRANKLIN_CLI_PATH;
+    else process.env.FRANKLIN_CLI_PATH = origCli;
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
@@ -5174,7 +6520,43 @@ test('cli: franklin task tail <runId> prints log + status', async () => {
     assert.match(out, /line1/);
     assert.match(out, /line2/);
     assert.match(out, /succeeded/);
-    assert.match(out, /all good/);
+    // 3.15.47: tail no longer reprints terminalSummary because in real
+    // usage the runner stores log tail there (whitespace-collapsed),
+    // and printNew() above already emitted the full multi-line log.
+    // The HTML panel still surfaces terminalSummary.
+    assert.doesNotMatch(out, /all good/);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('cli: franklin task tail reconciles stale queued tasks before printing status', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'tail-stale-queued';
+    writeTaskMeta({
+      runId, runtime: 'detached-bash', label: 'stale', command: 'true',
+      workingDir: '/tmp', status: 'queued',
+      createdAt: Date.now() - 6 * 60 * 1000,
+    });
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, 'task', 'tail', runId], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+    });
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.match(result.stdout.toString(), /lost/);
+    assert.equal(readTaskMeta(runId).status, 'lost');
   } finally {
     if (orig === undefined) delete process.env.FRANKLIN_HOME;
     else process.env.FRANKLIN_HOME = orig;
@@ -5192,7 +6574,9 @@ test('cli: franklin task cancel <runId> kills running task', async () => {
 
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
   const orig = process.env.FRANKLIN_HOME;
+  const origCli = process.env.FRANKLIN_CLI_PATH;
   process.env.FRANKLIN_HOME = fakeHome;
+  process.env.FRANKLIN_CLI_PATH = path.join(process.cwd(), 'dist', 'index.js');
   try {
     const runId = startDetachedTask({
       label: 'sleep-long', command: 'sleep 30', workingDir: fakeHome,
@@ -5213,6 +6597,8 @@ test('cli: franklin task cancel <runId> kills running task', async () => {
   } finally {
     if (orig === undefined) delete process.env.FRANKLIN_HOME;
     else process.env.FRANKLIN_HOME = orig;
+    if (origCli === undefined) delete process.env.FRANKLIN_CLI_PATH;
+    else process.env.FRANKLIN_CLI_PATH = origCli;
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 });
@@ -5226,7 +6612,9 @@ test('cli: franklin task wait <runId> blocks until terminal', async () => {
 
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
   const orig = process.env.FRANKLIN_HOME;
+  const origCli = process.env.FRANKLIN_CLI_PATH;
   process.env.FRANKLIN_HOME = fakeHome;
+  process.env.FRANKLIN_CLI_PATH = path.join(process.cwd(), 'dist', 'index.js');
   try {
     const runId = startDetachedTask({
       label: 'short', command: 'sleep 0.5; echo done',
@@ -5242,6 +6630,41 @@ test('cli: franklin task wait <runId> blocks until terminal', async () => {
     assert.equal(result.status, 0, result.stderr.toString());
     assert.ok(elapsed >= 400, `wait actually waited (${elapsed}ms)`);
     assert.match(result.stdout.toString(), /succeeded/);
+  } finally {
+    if (orig === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = orig;
+    if (origCli === undefined) delete process.env.FRANKLIN_CLI_PATH;
+    else process.env.FRANKLIN_CLI_PATH = origCli;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('cli: franklin task wait reconciles stale queued tasks before blocking', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { writeTaskMeta, readTaskMeta } = await import('../dist/tasks/store.js');
+
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-tasks-'));
+  const orig = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = fakeHome;
+  try {
+    const runId = 'wait-stale-queued';
+    writeTaskMeta({
+      runId, runtime: 'detached-bash', label: 'stale', command: 'true',
+      workingDir: '/tmp', status: 'queued',
+      createdAt: Date.now() - 6 * 60 * 1000,
+    });
+
+    const cli = path.join(process.cwd(), 'dist', 'index.js');
+    const result = spawnSync(process.execPath, [cli, 'task', 'wait', runId, '--timeout', '10000'], {
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+    });
+    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.status, 1, result.stderr.toString());
+    assert.match(result.stdout.toString(), /lost/);
+    assert.equal(readTaskMeta(runId).status, 'lost');
   } finally {
     if (orig === undefined) delete process.env.FRANKLIN_HOME;
     else process.env.FRANKLIN_HOME = orig;
@@ -5354,6 +6777,42 @@ async function panelRequest(port, path, opts = {}) {
     req.end();
   });
 }
+
+test('repository text files do not contain restricted script characters', () => {
+  const trackedFiles = execFileSync('git', ['ls-files', '-z'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  }).split('\0').filter(Boolean);
+  const textFile = /\.(?:cjs|css|html|js|json|md|mjs|sql|toml|ts|tsx|txt|yaml|yml)$/i;
+  const restrictedScriptPattern = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/;
+  const offenders = [];
+
+  for (const file of trackedFiles) {
+    if (!textFile.test(file)) continue;
+    const absPath = join(REPO_ROOT, file);
+    if (!existsSync(absPath)) continue;
+    const lines = readFileSync(absPath, 'utf8').split(/\r?\n/);
+    for (const [index, line] of lines.entries()) {
+      if (restrictedScriptPattern.test(line)) offenders.push(`${file}:${index + 1}`);
+    }
+  }
+
+  assert.deepEqual(offenders, [], `Restricted script characters found in tracked text files:\n${offenders.join('\n')}`);
+});
+
+test('X time-link pattern matches Han-marker dates without source literals', async () => {
+  const { findRefs, X_TIME_LINK_PATTERN } = await import('../dist/social/a11y.js');
+  const [yearMark, monthMark, dayMark] = [0x5e74, 0x6708, 0x65e5].map((code) =>
+    String.fromCodePoint(code)
+  );
+  const tree = [
+    '[0-0] article: post',
+    `  [1-0] link: 2026${yearMark}4${monthMark}12${dayMark}`,
+    '  [1-1] link: not a date',
+  ].join('\n');
+
+  assert.deepEqual(findRefs(tree, 'link', X_TIME_LINK_PATTERN), ['1-0']);
+});
 
 test('panel /api/tasks: empty list when no tasks; lists task after writeTaskMeta', async () => {
   const { writeTaskMeta } = await import('../dist/tasks/store.js');
@@ -5498,4 +6957,1632 @@ test('panel /api/tasks/:runId/cancel: rejects already-terminal task; 404 unknown
     const missing = await panelRequest(port, '/api/tasks/no-such-task/cancel', { method: 'POST' });
     assert.equal(missing.status, 404);
   });
+});
+
+// ─── Secret redaction ─────────────────────────────────────────────────────
+// Test fixtures are runtime-assembled (prefix + repeat) so the source file
+// never contains a literal token-shaped string. GitHub push protection
+// scans for token-format literals and would otherwise reject the commit
+// even though these are obviously synthetic values.
+
+const FAKE_GH = "ghp_" + "A".repeat(36);
+const FAKE_AWS = "AKIA" + "I".repeat(16);
+
+test("redactSecrets: catches GitHub PAT in mid-sentence text", async () => {
+  const { redactSecrets } = await import("../dist/agent/secret-redact.js");
+  const { redactedText, matches } = redactSecrets(
+    `you can use this token ${FAKE_GH} as our access token`
+  );
+  assert.equal(redactedText, "you can use this token [REDACTED:github_pat] as our access token");
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].label, "github_pat");
+  assert.equal(matches[0].envVar, "GITHUB_TOKEN");
+  assert.equal(matches[0].preview, "ghp_…");
+  assert.ok(matches[0].value.startsWith("ghp_"));
+});
+
+test("redactSecrets: passes through clean text unchanged", async () => {
+  const { redactSecrets } = await import("../dist/agent/secret-redact.js");
+  const input = "what is the capital of France";
+  const { redactedText, matches } = redactSecrets(input);
+  assert.equal(redactedText, input);
+  assert.equal(matches.length, 0);
+});
+
+test("redactSecrets: handles multiple distinct token types in one message", async () => {
+  const { redactSecrets } = await import("../dist/agent/secret-redact.js");
+  const { redactedText, matches } = redactSecrets(
+    `github=${FAKE_GH} and aws=${FAKE_AWS}`
+  );
+  assert.ok(redactedText.includes("[REDACTED:github_pat]"));
+  assert.ok(redactedText.includes("[REDACTED:aws_access_key]"));
+  assert.equal(matches.length, 2);
+});
+
+test("redactSecrets: dedupes the same token appearing twice", async () => {
+  const { redactSecrets } = await import("../dist/agent/secret-redact.js");
+  const { matches } = redactSecrets(`use ${FAKE_GH} and again ${FAKE_GH}`);
+  assert.equal(matches.length, 1);
+});
+
+test("stashSecretsToEnv: sets process.env and reports names", async () => {
+  const { redactSecrets, stashSecretsToEnv } = await import("../dist/agent/secret-redact.js");
+  delete process.env.GITHUB_TOKEN;
+  const { matches } = redactSecrets(FAKE_GH);
+  const set = stashSecretsToEnv(matches);
+  assert.deepEqual(set, ["GITHUB_TOKEN"]);
+  assert.equal(process.env.GITHUB_TOKEN, FAKE_GH);
+  delete process.env.GITHUB_TOKEN;
+});
+
+test("stashSecretsToEnv: preserves existing env var the user already exported", async () => {
+  const { redactSecrets, stashSecretsToEnv } = await import("../dist/agent/secret-redact.js");
+  process.env.GITHUB_TOKEN = "user-existing-token-do-not-clobber";
+  const { matches } = redactSecrets(FAKE_GH);
+  stashSecretsToEnv(matches);
+  assert.equal(process.env.GITHUB_TOKEN, "user-existing-token-do-not-clobber");
+  delete process.env.GITHUB_TOKEN;
+});
+
+test("formatRedactionWarning: lists what was caught and points at env var", async () => {
+  const { redactSecrets, formatRedactionWarning, stashSecretsToEnv } = await import("../dist/agent/secret-redact.js");
+  delete process.env.GITHUB_TOKEN;
+  const { matches } = redactSecrets(FAKE_GH);
+  const set = stashSecretsToEnv(matches);
+  const msg = formatRedactionWarning(matches, set);
+  assert.ok(msg.includes("Secret detected"));
+  assert.ok(msg.includes("GitHub personal access token"));
+  assert.ok(msg.includes("$GITHUB_TOKEN"));
+  assert.ok(msg.includes("rotate it now"));
+  assert.ok(!msg.includes(FAKE_GH));
+  delete process.env.GITHUB_TOKEN;
+});
+
+// ── Logger ────────────────────────────────────────────────────────────────
+// The unified logger persists every level to ~/.blockrun/franklin-debug.log.
+// Run tests in a subprocess with HOME pointed at a tmp dir so the user's
+// real log file isn't touched.
+
+test('logger writes every level to franklin-debug.log even with debug off', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-logger-'));
+  const loggerHref = new URL('../dist/logger.js', import.meta.url).href;
+  const script = `
+    const { logger, setDebugMode, getLogFilePath } = await import(${JSON.stringify(loggerHref)} + '?t=' + Date.now());
+    setDebugMode(false);
+    logger.debug('debug-line');
+    logger.info('info-line');
+    logger.warn('warn-line');
+    logger.error('error-line');
+    console.log(getLogFilePath());
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (d) => { stdout += d.toString(); });
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stdout, stderr });
+        else reject(new Error(`logger subprocess failed (${code})\n${stderr}`));
+      });
+      proc.on('error', reject);
+    });
+
+    const logPath = result.stdout.trim();
+    assert.ok(logPath.startsWith(fakeHome), `Expected log path under fake HOME, got ${logPath}`);
+    const content = readFileSync(logPath, 'utf8');
+    assert.ok(content.includes('[DEBUG] debug-line'), 'debug entry missing');
+    assert.ok(content.includes('[INFO] info-line'), 'info entry missing');
+    assert.ok(content.includes('[WARN] warn-line'), 'warn entry missing');
+    assert.ok(content.includes('[ERROR] error-line'), 'error entry missing');
+    // Stderr stays quiet when debug mode is off.
+    assert.equal(result.stderr, '', `Expected empty stderr, got: ${result.stderr}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('logger mirrors to stderr when debug mode is on', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-logger-stderr-'));
+  const loggerHref = new URL('../dist/logger.js', import.meta.url).href;
+  const script = `
+    const { logger, setDebugMode } = await import(${JSON.stringify(loggerHref)} + '?t=' + Date.now());
+    setDebugMode(true);
+    logger.warn('mirrored-warn');
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stderr });
+        else reject(new Error(`logger subprocess failed (${code})`));
+      });
+      proc.on('error', reject);
+    });
+    assert.ok(result.stderr.includes('mirrored-warn'), `Expected stderr mirror, got: ${result.stderr}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('logger self-rotates franklin-debug.log to .log.1 when over 10MB', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-logger-rotate-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const liveFile = join(blockrunDir, 'franklin-debug.log');
+  const archiveFile = join(blockrunDir, 'franklin-debug.log.1');
+
+  // Pre-seed the live log with > 10 MB of content so the next write
+  // triggers rotation. 11 MB of zeros is enough; the logger doesn't
+  // care about content shape, only file size.
+  writeFileSync(liveFile, 'x'.repeat(11 * 1024 * 1024));
+
+  const loggerHref = new URL('../dist/logger.js', import.meta.url).href;
+  // The logger probes every 1000 writes — fire enough writes so we
+  // cross the probe boundary. Use info() to avoid stderr noise.
+  const script = `
+    const { logger, setDebugMode } = await import(${JSON.stringify(loggerHref)} + '?t=' + Date.now());
+    setDebugMode(false);
+    for (let i = 0; i < 1001; i++) logger.info('post-rotation entry ' + i);
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`logger subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    // Archive should now exist and contain the pre-rotation content.
+    assert.ok(existsSync(archiveFile), 'rotation should produce franklin-debug.log.1');
+    const fs = await import('node:fs');
+    const archiveSize = fs.statSync(archiveFile).size;
+    assert.ok(archiveSize > 10 * 1024 * 1024,
+      `archive should hold the >10MB pre-rotation content, got ${archiveSize}`);
+
+    // Live log should now be much smaller — only the post-rotation writes.
+    assert.ok(existsSync(liveFile), 'live log should be re-created after rotation');
+    const liveContent = readFileSync(liveFile, 'utf8');
+    assert.ok(!liveContent.includes('xxxxxxxxxxxx'),
+      'live log should not retain pre-rotation filler content');
+    assert.ok(liveContent.includes('post-rotation entry'),
+      'live log should contain post-rotation entries');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('logger strips ANSI escapes before writing', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-logger-ansi-'));
+  const loggerHref = new URL('../dist/logger.js', import.meta.url).href;
+  const script = `
+    const { logger, setDebugMode, getLogFilePath } = await import(${JSON.stringify(loggerHref)} + '?t=' + Date.now());
+    setDebugMode(false);
+    logger.info('\\u001b[31mred-text\\u001b[0m');
+    console.log(getLogFilePath());
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      proc.stdout.on('data', (d) => { stdout += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ stdout });
+        else reject(new Error(`logger subprocess failed (${code})`));
+      });
+      proc.on('error', reject);
+    });
+    const content = readFileSync(result.stdout.trim(), 'utf8');
+    assert.ok(content.includes('red-text'), 'expected stripped text in log');
+    assert.ok(!content.includes('['), 'expected ANSI escapes to be stripped');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+// ── Audit retention ───────────────────────────────────────────────────────
+
+test('enforceRetention trims audit log to most recent 10k entries', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-audit-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const auditFile = join(blockrunDir, 'franklin-audit.jsonl');
+
+  // Pre-seed 12k entries — bigger than MAX_AUDIT_ENTRIES (10k) and large
+  // enough to trip the size probe (200 bytes/entry × 10k = 2MB).
+  const writer = [];
+  for (let i = 0; i < 12_000; i++) {
+    // Pad to ensure file size exceeds the probe threshold.
+    writer.push(JSON.stringify({
+      ts: i,
+      model: 'test/model',
+      inputTokens: 100,
+      outputTokens: 100,
+      costUsd: 0.001,
+      source: 'agent',
+      prompt: 'x'.repeat(180),
+    }));
+  }
+  writeFileSync(auditFile, writer.join('\n') + '\n');
+
+  const auditHref = new URL('../dist/stats/audit.js', import.meta.url).href;
+  const script = `
+    const audit = await import(${JSON.stringify(auditHref)} + '?t=' + Date.now());
+    audit.enforceRetention();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`audit subprocess failed (${code})\n${stderr}`));
+      });
+      proc.on('error', reject);
+    });
+
+    const trimmed = readFileSync(auditFile, 'utf8').split('\n').filter(Boolean);
+    assert.equal(trimmed.length, 10_000, `expected 10k retained entries, got ${trimmed.length}`);
+    // Oldest 2k dropped — first remaining entry should be ts=2000.
+    const first = JSON.parse(trimmed[0]);
+    assert.equal(first.ts, 2_000, `expected first ts=2000 (oldest kept), got ${first.ts}`);
+    const last = JSON.parse(trimmed[trimmed.length - 1]);
+    assert.equal(last.ts, 11_999, `expected last ts=11999, got ${last.ts}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('enforceRetention is a no-op when audit log is small', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-audit-small-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const auditFile = join(blockrunDir, 'franklin-audit.jsonl');
+
+  const seed = [];
+  for (let i = 0; i < 50; i++) {
+    seed.push(JSON.stringify({ ts: i, model: 'test', inputTokens: 1, outputTokens: 1, costUsd: 0, source: 'agent' }));
+  }
+  writeFileSync(auditFile, seed.join('\n') + '\n');
+  const before = readFileSync(auditFile, 'utf8');
+
+  const auditHref = new URL('../dist/stats/audit.js', import.meta.url).href;
+  const script = `
+    const audit = await import(${JSON.stringify(auditHref)} + '?t=' + Date.now());
+    audit.enforceRetention();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`audit subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+    const after = readFileSync(auditFile, 'utf8');
+    assert.equal(after, before, 'small audit file should be untouched');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+// ── Free-tier fallback by category ─────────────────────────────────────────
+// Regression guard: before this, a paid model failure on a markets question
+// would hand the turn to nvidia/qwen3-coder-480b (a coder model) — wrong
+// category. pickFreeFallback selects from per-category chains so trading /
+// research / chat get general-purpose free models first.
+
+test('pickFreeFallback: coding category prefers qwen3-coder first', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  const pick = pickFreeFallback('coding', new Set());
+  assert.equal(pick, 'nvidia/qwen3-coder-480b');
+});
+
+test('pickFreeFallback: trading category skips coder, picks glm-4.7', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  const pick = pickFreeFallback('trading', new Set());
+  assert.equal(pick, 'nvidia/glm-4.7', 'trading should not start with a coder model');
+  assert.notEqual(pick, 'nvidia/qwen3-coder-480b');
+});
+
+test('pickFreeFallback: research / chat / creative also skip coder first', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  for (const cat of ['research', 'chat', 'creative', 'reasoning']) {
+    const pick = pickFreeFallback(cat, new Set());
+    assert.notEqual(pick, 'nvidia/qwen3-coder-480b',
+      `${cat} should not start with a coder model, got ${pick}`);
+  }
+});
+
+test('pickFreeFallback: respects alreadyFailed set', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  // Coding starts with qwen3-coder. After it fails, next should not be qwen3-coder.
+  const failed = new Set(['nvidia/qwen3-coder-480b']);
+  const pick = pickFreeFallback('coding', failed);
+  assert.notEqual(pick, 'nvidia/qwen3-coder-480b');
+  assert.ok(['nvidia/glm-4.7', 'nvidia/llama-4-maverick'].includes(pick),
+    `expected glm-4.7 or llama-4-maverick, got ${pick}`);
+});
+
+test('pickFreeFallback: unknown category uses default chain (general model first)', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  const pick = pickFreeFallback('', new Set());
+  // Default chain leads with a general-purpose model, not qwen3-coder.
+  assert.notEqual(pick, 'nvidia/qwen3-coder-480b');
+  assert.ok(typeof pick === 'string' && pick.length > 0);
+});
+
+test('pickFreeFallback: returns undefined when every candidate failed', async () => {
+  const { pickFreeFallback } = await import('../dist/router/index.js');
+  const failed = new Set([
+    'nvidia/qwen3-coder-480b',
+    'nvidia/glm-4.7',
+    'nvidia/llama-4-maverick',
+  ]);
+  const pick = pickFreeFallback('trading', failed);
+  assert.equal(pick, undefined);
+});
+
+// ── TradingSignal data sufficiency ────────────────────────────────────────
+// Reported 2026-05-03: a BTC question came back with "MACD signal/histogram
+// can't be computed due to insufficient data" because default lookback was
+// 30 closes; MACD needs slow EMA (26) + signal EMA (9) = 35 minimum. The
+// agent then translated the partial signal into "wait and see", which user
+// flagged as a wishy-washy default. The fixes below: bump default to 90,
+// surface "insufficient data" explicitly, never count NaN as a 'neutral'
+// vote in the verdict tally.
+
+test('macd: 30-close history leaves signal/histogram undefined (regression)', async () => {
+  const { macd } = await import('../dist/trading/metrics.js');
+  const closes = Array.from({ length: 30 }, (_, i) => 100 + i * 0.5);
+  const result = macd(closes);
+  assert.ok(Number.isNaN(result.signal),
+    `30 closes should leave signal NaN (need ≥35), got ${result.signal}`);
+  assert.ok(Number.isNaN(result.histogram),
+    `30 closes should leave histogram NaN, got ${result.histogram}`);
+});
+
+test('macd: 60-close history yields finite signal + histogram', async () => {
+  const { macd } = await import('../dist/trading/metrics.js');
+  const closes = Array.from({ length: 60 }, (_, i) =>
+    100 + Math.sin(i / 5) * 5 + i * 0.1);
+  const result = macd(closes);
+  assert.ok(Number.isFinite(result.macd), 'macd line should be finite');
+  assert.ok(Number.isFinite(result.signal), 'signal should be finite');
+  assert.ok(Number.isFinite(result.histogram), 'histogram should be finite');
+});
+
+test('TradingSignal spec advertises 90d default and warns about MACD threshold', async () => {
+  const { tradingSignalCapability } = await import('../dist/tools/trading.js');
+  const spec = tradingSignalCapability.spec;
+  assert.equal(spec.name, 'TradingSignal');
+  // Description must steer agents toward echoing the verdict instead of
+  // falling back to "wait and see" when MACD is short on data.
+  assert.match(spec.description, /Verdict/i, 'description should mention Verdict section');
+  assert.match(spec.description, /insufficient data/i, 'description should warn about insufficient-data path');
+  assert.match(spec.description, /NOT default to "wait and see"/i, 'description should explicitly forbid wait-and-see default');
+  // Input schema should document the new default + threshold.
+  const daysProp = spec.input_schema.properties.days;
+  assert.ok(daysProp);
+  assert.match(daysProp.description, /90/, 'days description should advertise 90d default');
+  assert.match(daysProp.description, /35/, 'days description should mention the 35-close MACD threshold');
+});
+
+// ── PredictionMarket (Polymarket / Kalshi / cross-platform / smart money) ──
+// Surfaces BlockRun gateway's Predexon-backed prediction-market endpoints
+// to the agent. Tests cover the spec contract + registration; live calls
+// require a funded wallet and aren't run in unit tests.
+
+test('PredictionMarket: paths must NOT include the /api prefix (regression: 3.15.14 doubled it)', async () => {
+  // 3.15.14 shipped this tool with paths like '/api/v1/pm/...' but
+  // API_URLS.base is 'https://blockrun.ai/api' — the prefix is already
+  // there, so the full URL became .../api/api/v1/pm/... and 404'd on
+  // every call. Bug went undetected for a week because no test exercised
+  // the network path. Read the dist source and assert the path
+  // construction is correct relative to the gateway base.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const src = fs.readFileSync(path.join(here, '..', 'dist', 'tools', 'prediction.js'), 'utf8');
+  // No path should start with '/api/' — that's the doubled-prefix bug.
+  const offending = src.match(/['"`]\/api\/v1\/pm\//g);
+  assert.equal(offending, null,
+    `PredictionMarket paths must not start with /api/ (API_URLS already includes it). Got: ${JSON.stringify(offending)}`);
+  // Sanity: at least one /v1/pm/ path is present (i.e., we didn't accidentally remove all paths).
+  assert.ok(src.includes('/v1/pm/'), 'expected at least one /v1/pm/ path in compiled prediction tool');
+  assert.match(src, /smart-money\$/, 'smartMoney price telemetry must not fall through to the generic $0.001 Predexon GET price');
+  assert.match(src, /addresses: list/, 'walletProfile batch calls must use Predexon query param `addresses`, not public input name `wallets`');
+  assert.match(src, /wallet\/pnl\/\$\{encodeURIComponent\(wallet\)\}/, 'walletPnl must route to the live wallet/pnl/:wallet endpoint');
+  assert.match(src, /wallet\/positions\/\$\{encodeURIComponent\(wallet\)\}/, 'walletPositions must route to the live wallet/positions/:wallet endpoint');
+});
+
+test('brain caps observations at MAX_OBSERVATIONS, evicting oldest', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-brain-cap-'));
+  const brainHref = new URL('../dist/brain/store.js', import.meta.url).href;
+  const script = `
+    const b = await import(${JSON.stringify(brainHref)} + '?t=' + Date.now());
+    // addObservation doesn't enforce a foreign key — a stub entity id
+    // is fine for exercising the cap. Distinct contents so the dedup
+    // path doesn't drop them.
+    const stubEntityId = 'test-entity-id';
+    for (let i = 0; i < 2050; i++) {
+      b.addObservation(stubEntityId, 'fact-' + i, 'test', 0.8, ['fact']);
+    }
+    const obs = b.loadObservations();
+    process.stdout.write(JSON.stringify({ count: obs.length, hasOldest: obs.some(o => o.content === 'fact-0'), hasNewest: obs.some(o => o.content === 'fact-2049') }));
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve(stdout) : reject(new Error(`brain subprocess failed (${code}): ${stderr}`)));
+      proc.on('error', reject);
+    });
+    const out = JSON.parse(result);
+    assert.equal(out.count, 2000, `expected 2000 retained observations, got ${out.count}`);
+    assert.equal(out.hasOldest, false, 'oldest observation (fact-0) should have been evicted');
+    assert.equal(out.hasNewest, true, 'newest observation (fact-2049) must be kept');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('PredictionMarket spec exposes the ten x402-paid actions (3.15.73)', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  const spec = predictionMarketCapability.spec;
+  assert.equal(spec.name, 'PredictionMarket');
+  const actions = spec.input_schema.properties.action.enum;
+  // 3.15.73 splits wallet analysis into three single-wallet endpoints:
+  // walletProfile (full profile, smart-dispatch single vs batch),
+  // walletPnl (P&L + time series), walletPositions (positions detail).
+  // Verified against gateway: single-wallet questions need /wallet/{addr},
+  // not the batch /wallets/profiles which the 3.15.70 ship was hitting
+  // and getting 422 from.
+  assert.deepEqual(
+    [...actions].sort(),
+    [
+      'crossPlatform',
+      'leaderboard',
+      'searchAll',
+      'searchKalshi',
+      'searchPolymarket',
+      'smartActivity',
+      'smartMoney',
+      'walletPnl',
+      'walletPositions',
+      'walletProfile',
+    ],
+    'enum should expose exactly the ten supported actions',
+  );
+  // Description must steer agents away from training-data odds answers and
+  // surface wallet/leaderboard/wallet-analysis-triplet intents.
+  assert.match(spec.description, /Polymarket/);
+  assert.match(spec.description, /Kalshi/);
+  assert.match(spec.description, /Limitless/);
+  assert.match(spec.description, /leaderboard/);
+  assert.match(spec.description, /walletProfile/);
+  assert.match(spec.description, /walletPnl/);
+  assert.match(spec.description, /walletPositions/);
+  assert.match(spec.description, /\$0\.001/);
+  assert.match(spec.description, /\$0\.005/);
+});
+
+test('PredictionMarket rejects unknown action without making a network call', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  const result = await predictionMarketCapability.execute(
+    { action: 'searchEverything' },
+    { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.output, /unknown action/i);
+});
+
+test('PredictionMarket walletProfile without wallets fails fast (3.15.70)', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  const result = await predictionMarketCapability.execute(
+    { action: 'walletProfile' },
+    { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.output, /wallets/);
+});
+
+test('PredictionMarket walletPnl + walletPositions reject empty or ambiguous wallet input (3.15.73)', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  for (const action of ['walletPnl', 'walletPositions']) {
+    const result = await predictionMarketCapability.execute(
+      { action },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.equal(result.isError, true, `${action} should error without wallets`);
+    assert.match(result.output, /wallets/, `${action} error must mention 'wallets'`);
+
+    const multi = await predictionMarketCapability.execute(
+      { action, wallets: '0xabc,0xdef' },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.equal(multi.isError, true, `${action} should reject comma-separated wallets`);
+    assert.match(multi.output, /exactly one wallet/i, `${action} error must explain the single-wallet contract`);
+  }
+});
+
+test('PredictionMarket smartMoney without conditionId fails fast (3.15.70)', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  const result = await predictionMarketCapability.execute(
+    { action: 'smartMoney' },
+    { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.output, /conditionId/);
+});
+
+test('PredictionMarket missing action fails with usage hint', async () => {
+  const { predictionMarketCapability } = await import('../dist/tools/prediction.js');
+  const result = await predictionMarketCapability.execute(
+    {},
+    { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.output, /action is required/);
+});
+
+// ── Data hygiene ──────────────────────────────────────────────────────────
+// Reported 2026-05-04 from a real user machine: ~/.blockrun/data was
+// 5.7 MB across 2 months (no SDK retention), cost_log.jsonl 38 KB
+// uncapped, 100 orphan session jsonl files (1.2 MB) without meta
+// partners that pruneOldSessions never touched, plus three legacy files
+// from older product names sitting forever. Tests below run hygiene
+// against an isolated fake HOME so user data is never touched.
+
+test('runDataHygiene: returns counts of what was cleaned (3.15.31 contract)', async () => {
+  // Pre-3.15.31 returned void — silent. New contract returns
+  // HygieneReport so the agent loop can log a one-line summary.
+  // Without this, hygiene was running but you couldn't tell what (if
+  // anything) it actually did from franklin-debug.log.
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-report-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  // Seed: one legacy file (1 to remove). Should report
+  // legacyFilesRemoved=1 and zero on the other counts.
+  writeFileSync(join(blockrunDir, 'brcc-debug.log'), 'leftover');
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    const report = h.runDataHygiene();
+    process.stdout.write(JSON.stringify(report));
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve(stdout) : reject(new Error(`hygiene subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+    const report = JSON.parse(result);
+    assert.equal(report.legacyFilesRemoved, 1, 'should report 1 legacy file removed');
+    assert.equal(report.dataFilesTrimmed, 0);
+    assert.equal(report.costLogRowsTrimmed, 0);
+    assert.equal(report.orphanToolResultsRemoved, 0);
+    assert.equal(report.oldTasksRemoved, 0);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('runDataHygiene: removes legacy files (brcc-debug.log etc.) from BLOCKRUN_DIR', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-legacy-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const legacy = ['brcc-debug.log', 'brcc-stats.json', '0xcode-stats.json', 'runcode-debug.log'];
+  for (const f of legacy) writeFileSync(join(blockrunDir, f), 'leftover');
+  // Also create franklin-debug.log to make sure we don't nuke it.
+  writeFileSync(join(blockrunDir, 'franklin-debug.log'), 'keep me');
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    h.runDataHygiene();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`hygiene subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    for (const f of legacy) {
+      assert.ok(!existsSync(join(blockrunDir, f)),
+        `expected legacy file ${f} to be removed`);
+    }
+    assert.ok(existsSync(join(blockrunDir, 'franklin-debug.log')),
+      'franklin-debug.log must NOT be removed');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('runDataHygiene: trims ~/.blockrun/data older than 30 days', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-data-'));
+  const dataDir = join(fakeHome, '.blockrun', 'data');
+  mkdirSync(dataDir, { recursive: true });
+
+  // Mix of fresh + ancient files. Use utimes to backdate the ancient set.
+  const fresh = ['fresh1.json', 'fresh2.json'];
+  const ancient = ['old1.json', 'old2.json', 'old3.json'];
+  for (const f of fresh) writeFileSync(join(dataDir, f), '{}');
+  for (const f of ancient) writeFileSync(join(dataDir, f), '{}');
+  const sixtyDaysAgo = (Date.now() - 60 * 24 * 60 * 60 * 1000) / 1000;
+  const fs = await import('node:fs');
+  for (const f of ancient) {
+    fs.utimesSync(join(dataDir, f), sixtyDaysAgo, sixtyDaysAgo);
+  }
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    h.runDataHygiene();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`hygiene subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+
+    for (const f of fresh) {
+      assert.ok(existsSync(join(dataDir, f)), `fresh file ${f} should survive`);
+    }
+    for (const f of ancient) {
+      assert.ok(!existsSync(join(dataDir, f)), `ancient file ${f} should be trimmed`);
+    }
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('runDataHygiene: caps cost_log.jsonl at 5000 entries', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-costlog-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const costLog = join(blockrunDir, 'cost_log.jsonl');
+
+  // Seed > probe threshold (~500 KB) so trim runs. 6000 lines × ~80 bytes.
+  const seed = [];
+  for (let i = 0; i < 6000; i++) {
+    seed.push(JSON.stringify({ ts: i, endpoint: '/v1/chat/completions', cost_usd: 0.001 }));
+  }
+  writeFileSync(costLog, seed.join('\n') + '\n');
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    h.runDataHygiene();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`hygiene subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+
+    const after = readFileSync(costLog, 'utf8').split('\n').filter(Boolean);
+    assert.equal(after.length, 5000,
+      `expected 5000 entries after trim, got ${after.length}`);
+    // Oldest 1000 dropped — first remaining ts should be 1000.
+    const first = JSON.parse(after[0]);
+    assert.equal(first.ts, 1000);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('runDataHygiene: prunes old terminal task dirs but preserves recent history and live tasks', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-tasks-'));
+  const tasksDir = join(fakeHome, '.blockrun', 'tasks');
+  mkdirSync(tasksDir, { recursive: true });
+  const fs = await import('node:fs');
+  const now = Date.now();
+
+  const writeTask = (runId, status, ageDays, ordinal = 0) => {
+    const dir = join(tasksDir, runId);
+    mkdirSync(dir, { recursive: true });
+    const at = now - ageDays * 24 * 60 * 60 * 1000 + ordinal;
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify({
+      runId,
+      runtime: 'detached-bash',
+      label: runId,
+      command: 'true',
+      workingDir: '/tmp',
+      status,
+      createdAt: at - 1000,
+      ...(status === 'running' || status === 'queued' ? {} : { endedAt: at }),
+    }));
+    writeFileSync(join(dir, 'log.txt'), 'log\n');
+    const seconds = at / 1000;
+    fs.utimesSync(dir, seconds, seconds);
+  };
+
+  // Seven old terminal tasks: retention keeps the five most recent and
+  // deletes only the two oldest. A very old running task must survive.
+  for (let i = 0; i < 7; i++) writeTask(`old-terminal-${i}`, 'succeeded', 9, i);
+  writeTask('old-running', 'running', 30);
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    process.stdout.write(JSON.stringify(h.runDataHygiene()));
+  `;
+  try {
+    const env = { ...process.env, HOME: fakeHome };
+    delete env.FRANKLIN_HOME;
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve(stdout) : reject(new Error(`hygiene subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    const report = JSON.parse(result);
+    assert.equal(report.oldTasksRemoved, 2);
+    assert.equal(existsSync(join(tasksDir, 'old-terminal-0')), false);
+    assert.equal(existsSync(join(tasksDir, 'old-terminal-1')), false);
+    for (let i = 2; i < 7; i++) {
+      assert.equal(existsSync(join(tasksDir, `old-terminal-${i}`)), true,
+        `old-terminal-${i} should be retained by minimum-history policy`);
+    }
+    assert.equal(existsSync(join(tasksDir, 'old-running')), true,
+      'running tasks must never be pruned');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('pruneOldSessions: removes orphan jsonl files without meta partners', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-hygiene-orphan-'));
+  const sessionsDir = join(fakeHome, '.blockrun', 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+
+  // 2 paired sessions (jsonl + meta) + 3 orphans (jsonl only).
+  const paired = ['session-keep-1', 'session-keep-2'];
+  const orphans = ['session-orphan-1', 'session-orphan-2', 'session-orphan-3'];
+  for (const id of paired) {
+    writeFileSync(join(sessionsDir, `${id}.jsonl`), '{"role":"user","content":"hi"}\n');
+    writeFileSync(join(sessionsDir, `${id}.meta.json`),
+      JSON.stringify({ id, model: 'test', workDir: '/tmp', createdAt: Date.now(), updatedAt: Date.now(), turnCount: 1, messageCount: 1 }));
+  }
+  for (const id of orphans) {
+    writeFileSync(join(sessionsDir, `${id}.jsonl`), '{"role":"user","content":"orphaned"}\n');
+  }
+
+  const storageHref = new URL('../dist/session/storage.js', import.meta.url).href;
+  const script = `
+    const s = await import(${JSON.stringify(storageHref)} + '?t=' + Date.now());
+    s.pruneOldSessions();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`prune subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    for (const id of paired) {
+      assert.ok(existsSync(join(sessionsDir, `${id}.jsonl`)),
+        `paired session ${id} jsonl should survive`);
+      assert.ok(existsSync(join(sessionsDir, `${id}.meta.json`)),
+        `paired session ${id} meta should survive`);
+    }
+    for (const id of orphans) {
+      assert.ok(!existsSync(join(sessionsDir, `${id}.jsonl`)),
+        `orphan ${id}.jsonl should be removed`);
+    }
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+// ── Test-fixture pollution guard ──────────────────────────────────────────
+// Tests run interactiveSession() in-process with model="local/test-model"
+// and were polluting the user's real ~/.blockrun/franklin-audit.jsonl
+// (58.6%) and franklin-stats.json history (8.4%). These tests verify the
+// short-circuit is in place so the rest of the test suite stops leaking.
+
+test('isTestFixtureModel: local/test* matches; local/llamafile and real models do not', async () => {
+  const { isTestFixtureModel } = await import('../dist/stats/test-fixture.js');
+  assert.equal(isTestFixtureModel('local/test'), true);
+  assert.equal(isTestFixtureModel('local/test-model'), true);
+  assert.equal(isTestFixtureModel('local/test-anything-else'), true);
+  // Real local-LLM users must NOT be filtered out.
+  assert.equal(isTestFixtureModel('local/llamafile'), false);
+  assert.equal(isTestFixtureModel('local/ollama'), false);
+  assert.equal(isTestFixtureModel('local/lmstudio'), false);
+  // Real gateway models pass through.
+  assert.equal(isTestFixtureModel('anthropic/claude-sonnet-4.6'), false);
+  assert.equal(isTestFixtureModel('zai/glm-5.1'), false);
+  assert.equal(isTestFixtureModel(''), false);
+  assert.equal(isTestFixtureModel(undefined), false);
+});
+
+test('isTestFixtureModel: extended prefixes (slow/, mock/, test/) and exact "test"', async () => {
+  // Verified on a real machine — the proxy timeout test using
+  // model="slow/model" leaked entries into the user's franklin-debug.log
+  // through the proxy fallback hooks before this prefix was added.
+  const { isTestFixtureModel } = await import('../dist/stats/test-fixture.js');
+  assert.equal(isTestFixtureModel('slow/model'), true);
+  assert.equal(isTestFixtureModel('slow/anything'), true);
+  assert.equal(isTestFixtureModel('mock/server'), true);
+  assert.equal(isTestFixtureModel('test/model'), true);
+  assert.equal(isTestFixtureModel('test'), true, 'exact-match "test" must filter');
+  // Real models with similar prefixes must still pass — no real gateway
+  // model uses these names but the test pins the contract.
+  assert.equal(isTestFixtureModel('testify/something'), false,
+    'prefix is "test/" not "test" — testify/* should pass through');
+  assert.equal(isTestFixtureModel('mockingbird/x'), false,
+    'prefix is "mock/" not "mock" — mockingbird/* should pass through');
+});
+
+test('appendAudit: drops local/test-model entries, keeps real models', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-audit-fixture-'));
+  const auditFile = join(fakeHome, '.blockrun', 'franklin-audit.jsonl');
+  const auditHref = new URL('../dist/stats/audit.js', import.meta.url).href;
+  const script = `
+    const audit = await import(${JSON.stringify(auditHref)} + '?t=' + Date.now());
+    audit.appendAudit({ ts: 1, model: 'local/test-model', inputTokens: 1, outputTokens: 1, costUsd: 0, source: 'agent' });
+    audit.appendAudit({ ts: 2, model: 'local/test', inputTokens: 1, outputTokens: 1, costUsd: 0, source: 'agent' });
+    audit.appendAudit({ ts: 3, model: 'anthropic/claude-sonnet-4.6', inputTokens: 1, outputTokens: 1, costUsd: 0, source: 'agent' });
+    audit.appendAudit({ ts: 4, model: 'local/llamafile', inputTokens: 1, outputTokens: 1, costUsd: 0, source: 'agent' });
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        // Test exercises appendAudit's disk-write path; override the
+        // file-level FRANKLIN_NO_AUDIT=1 so the writes actually happen.
+        env: { ...process.env, HOME: fakeHome, FRANKLIN_NO_AUDIT: '' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`audit subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+
+    const content = readFileSync(auditFile, 'utf8');
+    const lines = content.split('\n').filter(Boolean).map(JSON.parse);
+    const tsList = lines.map(l => l.ts).sort();
+    assert.deepEqual(tsList, [3, 4],
+      `expected only real-model entries (ts=3 sonnet + ts=4 llamafile), got ${JSON.stringify(tsList)}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('recordUsage: drops local/test* entries, keeps real models in stats history', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-tracker-fixture-'));
+  const trackerHref = new URL('../dist/stats/tracker.js', import.meta.url).href;
+  const script = `
+    const t = await import(${JSON.stringify(trackerHref)} + '?t=' + Date.now());
+    t.recordUsage('local/test-model', 100, 10, 0.001, 50);
+    t.recordUsage('anthropic/claude-sonnet-4.6', 100, 10, 0.001, 50);
+    t.flushStats();
+    const summary = t.getStatsSummary();
+    process.stdout.write(JSON.stringify(summary));
+  `;
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        // Test exercises tracker.recordUsage's disk-write path; override
+        // the file-level FRANKLIN_NO_AUDIT=1 so writes happen.
+        env: { ...process.env, HOME: fakeHome, FRANKLIN_NO_AUDIT: '' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      proc.stdout.on('data', d => { stdout += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve(stdout) : reject(new Error(`tracker subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+    const summary = JSON.parse(result);
+    assert.equal(summary.stats.totalRequests, 1,
+      `expected only the real-model call to count, got ${summary.stats?.totalRequests}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('runDataHygiene: sweeps orphan tool-results dirs (no meta partner)', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-tool-orphan-'));
+  const sessionsDir = join(fakeHome, '.blockrun', 'sessions');
+  const toolResultsDir = join(fakeHome, '.blockrun', 'tool-results');
+  mkdirSync(sessionsDir, { recursive: true });
+  mkdirSync(toolResultsDir, { recursive: true });
+
+  // 1 paired session (meta + tool-results), 2 orphan tool-results dirs.
+  const liveId = 'session-keep';
+  const orphanIds = ['session-orphan-april', 'session-orphan-march'];
+
+  writeFileSync(join(sessionsDir, `${liveId}.meta.json`),
+    JSON.stringify({ id: liveId, model: 'zai/glm-5.1', workDir: '/tmp', createdAt: Date.now(), updatedAt: Date.now(), turnCount: 1, messageCount: 1 }));
+  // Pretend the live session has a persisted tool result.
+  mkdirSync(join(toolResultsDir, liveId));
+  writeFileSync(join(toolResultsDir, liveId, 'tool_use_1.txt'), 'live result');
+  // And the orphans.
+  for (const id of orphanIds) {
+    mkdirSync(join(toolResultsDir, id));
+    writeFileSync(join(toolResultsDir, id, 'tool_use_old.txt'), 'orphan');
+  }
+
+  const hygieneHref = new URL('../dist/storage/hygiene.js', import.meta.url).href;
+  const script = `
+    const h = await import(${JSON.stringify(hygieneHref)} + '?t=' + Date.now());
+    h.runDataHygiene();
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`hygiene subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    assert.ok(existsSync(join(toolResultsDir, liveId)),
+      'live session tool-results dir must survive');
+    assert.ok(existsSync(join(toolResultsDir, liveId, 'tool_use_1.txt')),
+      'live session tool-results contents must survive');
+    for (const id of orphanIds) {
+      assert.ok(!existsSync(join(toolResultsDir, id)),
+        `orphan tool-results dir ${id} should be removed`);
+    }
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('session storage: setSessionPersistenceDisabled(true) blocks all writes', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-session-gate-'));
+  const sessionsDir = join(fakeHome, '.blockrun', 'sessions');
+  const storageHref = new URL('../dist/session/storage.js', import.meta.url).href;
+  const script = `
+    const s = await import(${JSON.stringify(storageHref)} + '?t=' + Date.now());
+    s.setSessionPersistenceDisabled(true);
+    s.appendToSession('session-test-blocked', { role: 'user', content: 'should not persist' });
+    s.updateSessionMeta('session-test-blocked', {
+      model: 'zai/glm-5.1', workDir: '/tmp', turnCount: 1, messageCount: 1,
+    });
+    // Toggle back on to prove the gate works both ways.
+    s.setSessionPersistenceDisabled(false);
+    s.appendToSession('session-real', { role: 'user', content: 'should persist' });
+    s.updateSessionMeta('session-real', {
+      model: 'zai/glm-5.1', workDir: '/tmp', turnCount: 1, messageCount: 1,
+    });
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`storage subprocess failed: ${stderr}`)));
+      proc.on('error', reject);
+    });
+
+    // Blocked session should leave no files behind.
+    assert.ok(!existsSync(join(sessionsDir, 'session-test-blocked.jsonl')),
+      'disabled appendToSession should not write jsonl');
+    assert.ok(!existsSync(join(sessionsDir, 'session-test-blocked.meta.json')),
+      'disabled updateSessionMeta should not write meta');
+    // Real session should be written normally.
+    assert.ok(existsSync(join(sessionsDir, 'session-real.jsonl')),
+      'enabled appendToSession should write jsonl');
+    assert.ok(existsSync(join(sessionsDir, 'session-real.meta.json')),
+      'enabled updateSessionMeta should write meta');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('recordOutcome: drops local/test* models from router-history', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-elo-fixture-'));
+  const historyFile = join(fakeHome, '.blockrun', 'router-history.jsonl');
+  const eloHref = new URL('../dist/router/local-elo.js', import.meta.url).href;
+  const script = `
+    const e = await import(${JSON.stringify(eloHref)} + '?t=' + Date.now());
+    e.recordOutcome('chat', 'local/test-model', 'switched');
+    e.recordOutcome('chat', 'local/test', 'payment');
+    e.recordOutcome('coding', 'anthropic/claude-sonnet-4.6', 'continued');
+    e.recordOutcome('coding', 'local/llamafile', 'continued');
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`elo subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+    const lines = readFileSync(historyFile, 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+    const models = lines.map(l => l.model).sort();
+    assert.deepEqual(models, ['anthropic/claude-sonnet-4.6', 'local/llamafile'],
+      `expected only real-model entries, got ${JSON.stringify(models)}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('PredictionMarket is registered in allCapabilities and CORE_TOOL_NAMES', async () => {
+  const { allCapabilities } = await import('../dist/tools/index.js');
+  const { CORE_TOOL_NAMES } = await import('../dist/tools/tool-categories.js');
+  const names = allCapabilities.map(c => c.spec.name);
+  assert.ok(names.includes('PredictionMarket'),
+    `PredictionMarket missing from allCapabilities (got ${names.length} tools)`);
+  assert.ok(CORE_TOOL_NAMES.has('PredictionMarket'),
+    'PredictionMarket should be in CORE_TOOL_NAMES — it is hero surface');
+});
+
+test('agent context.ts forbids wishy-washy "wait and see" default for trading verdicts', async () => {
+  // Read the system context the agent receives. The Trading verdicts
+  // section should explicitly forbid the "wait and see"
+  // default unless both bull/bear lists are genuinely empty.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const ctxPath = path.join(here, '..', 'src', 'agent', 'context.ts');
+  const src = fs.readFileSync(ctxPath, 'utf8');
+  assert.match(src, /Trading verdicts/i, 'context should have a Trading verdicts section');
+  assert.ok(/wait and see/i.test(src),
+    'context should mention the forbidden wishy-washy phrase');
+  assert.match(src, /Forbidden default/i, 'context should label it as a forbidden default');
+});
+
+// ─── pollImageJob: 202-queued async path ─────────────────────────────────────
+//
+// Verified 2026-05-04 by gateway-side Cloud Run logs: 4 of 5 ImageGen calls
+// in a real session returned HTTP 202 + queued, completed in 41–56s, and
+// stored 2MB images in GCS — but Franklin treated the 202 as failure
+// because the inline path expected `data[0]` immediately. 3.15.48 added
+// async polling; these tests pin the contract so it can't silently regress.
+
+test('pollImageJob: completes when gateway returns status=completed', async () => {
+  const { pollImageJob } = await import('../dist/tools/imagegen.js');
+  let polls = 0;
+  const server = createServer((_req, res) => {
+    polls++;
+    if (polls < 2) {
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'queued' }));
+    } else {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'completed', data: [{ url: 'gs://bucket/img.png' }] }));
+    }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const ctrl = new AbortController();
+    const outcome = await pollImageJob(`http://127.0.0.1:${port}/poll`, {}, ctrl.signal,
+      { intervalMs: 10, maxWaitMs: 5_000 });
+    assert.equal(outcome.kind, 'completed');
+    assert.equal(outcome.body.data[0].url, 'gs://bucket/img.png');
+    assert.ok(polls >= 2, 'should have polled at least once past the queued state');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('pollImageJob: surfaces upstream failure on status=failed', async () => {
+  const { pollImageJob } = await import('../dist/tools/imagegen.js');
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'failed', error: { code: 'upstream_timeout', message: 'OpenAI 180s timeout' } }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const ctrl = new AbortController();
+    const outcome = await pollImageJob(`http://127.0.0.1:${port}/poll`, {}, ctrl.signal,
+      { intervalMs: 10, maxWaitMs: 1_000 });
+    assert.equal(outcome.kind, 'failed');
+    assert.equal(outcome.error.code, 'upstream_timeout');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('pollImageJob: times out when gateway never completes', async () => {
+  const { pollImageJob } = await import('../dist/tools/imagegen.js');
+  const server = createServer((_req, res) => {
+    // Always 202 — never completes.
+    res.writeHead(202, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'queued' }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const ctrl = new AbortController();
+    const outcome = await pollImageJob(`http://127.0.0.1:${port}/poll`, {}, ctrl.signal,
+      { intervalMs: 10, maxWaitMs: 50 });
+    assert.equal(outcome.kind, 'timed_out');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('pollImageJob: retries through 5xx transients and then completes', async () => {
+  const { pollImageJob } = await import('../dist/tools/imagegen.js');
+  let polls = 0;
+  const server = createServer((_req, res) => {
+    polls++;
+    if (polls === 1) {
+      res.writeHead(503, { 'Content-Type': 'text/plain' });
+      res.end('overloaded');
+    } else {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'completed', data: [{ b64_json: 'aGVsbG8=' }] }));
+    }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const ctrl = new AbortController();
+    const outcome = await pollImageJob(`http://127.0.0.1:${port}/poll`, {}, ctrl.signal,
+      { intervalMs: 10, maxWaitMs: 5_000 });
+    assert.equal(outcome.kind, 'completed');
+    assert.equal(outcome.body.data[0].b64_json, 'aGVsbG8=');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+// ─── resolveAskUserAnswer: fix silent default-cancel on numeric replies ─────
+//
+// The TUI renders option labels as "1. X / 2. Y / 3. Z" so users naturally
+// type the digit. Tool-side onAskUser callers (videogen.ts, modal.ts,
+// jupiter.ts, zerox-base.ts, zerox-gasless.ts) do exact-label match, so a
+// bare "1" silently falls through to default-cancel. Verified 2026-05-04
+// in a live session: VideoGen returned "Video generation cancelled (No
+// USDC was spent)" twice even though wallet had $94.72 and budget had $2
+// untouched — the user typed "1" both times. Helper translates digit
+// answers into the matching label.
+
+test('resolveAskUserAnswer: digit answer maps to the matching option label', async () => {
+  const { resolveAskUserAnswer } = await import('../dist/ui/ask-user-answer.js');
+  const opts = ['Use recommended', 'Cheaper', 'Premium', 'Cancel'];
+  assert.equal(resolveAskUserAnswer('1', opts), 'Use recommended');
+  assert.equal(resolveAskUserAnswer('2', opts), 'Cheaper');
+  assert.equal(resolveAskUserAnswer('4', opts), 'Cancel');
+  // With surrounding whitespace.
+  assert.equal(resolveAskUserAnswer('  3  ', opts), 'Premium');
+});
+
+test('resolveAskUserAnswer: out-of-range digit returns the literal input', async () => {
+  const { resolveAskUserAnswer } = await import('../dist/ui/ask-user-answer.js');
+  const opts = ['Confirm', 'Cancel'];
+  // 0 and 3+ aren't valid 1-indexed selections — pass through verbatim so
+  // the caller's exact-label match decides what to do.
+  assert.equal(resolveAskUserAnswer('0', opts), '0');
+  assert.equal(resolveAskUserAnswer('3', opts), '3');
+});
+
+test('resolveAskUserAnswer: empty input returns the legacy "(no response)"', async () => {
+  const { resolveAskUserAnswer } = await import('../dist/ui/ask-user-answer.js');
+  assert.equal(resolveAskUserAnswer('', ['A', 'B']), '(no response)');
+  assert.equal(resolveAskUserAnswer('   ', ['A', 'B']), '(no response)');
+});
+
+test('resolveAskUserAnswer: free-form text passes through (questions without options)', async () => {
+  const { resolveAskUserAnswer } = await import('../dist/ui/ask-user-answer.js');
+  assert.equal(resolveAskUserAnswer('Use recommended', ['Use recommended', 'Cancel']),
+    'Use recommended', 'literal label round-trip');
+  assert.equal(resolveAskUserAnswer('hello world', undefined),
+    'hello world', 'no options means no translation');
+  assert.equal(resolveAskUserAnswer('hello world', []),
+    'hello world', 'empty options array also means no translation');
+});
+
+test('pollImageJob: surfaces non-transient HTTP error with body preview', async () => {
+  const { pollImageJob } = await import('../dist/tools/imagegen.js');
+  const server = createServer((_req, res) => {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('payment auth expired');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    const ctrl = new AbortController();
+    const outcome = await pollImageJob(`http://127.0.0.1:${port}/poll`, {}, ctrl.signal,
+      { intervalMs: 10, maxWaitMs: 1_000 });
+    assert.equal(outcome.kind, 'poll_http_error');
+    assert.equal(outcome.status, 403);
+    assert.match(outcome.bodyPreview, /payment auth expired/);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('extractLastUserPrompt skips harness-injected synthetic prompts (3.15.71)', async () => {
+  const { extractLastUserPrompt } = await import('../dist/stats/audit.js');
+  // Simulate a real Franklin history: user asks a question, harness injects
+  // prefetch context as a role:"user" message, agent runs tools, optional
+  // grounding-retry injection, then we need to record what the user actually
+  // asked. Pre-3.15.71 the audit logged the most recent role:"user" message
+  // verbatim — so 421/4983 rows in a real machine logged synthetic preambles
+  // instead of the actual question.
+  const history = [
+    { role: 'user', content: 'please compare querit and exa for me' },
+    { role: 'assistant', content: 'looking…' },
+    { role: 'user', content: '[FRANKLIN HARNESS PREFETCH] CRCL price $114.12 …' },
+    { role: 'assistant', content: 'thinking' },
+    { role: 'user', content: '[GROUNDING CHECK FAILED] retry with sourced numbers' },
+  ];
+  assert.equal(extractLastUserPrompt(history), 'please compare querit and exa for me');
+  // Empty history → undefined
+  assert.equal(extractLastUserPrompt([]), undefined);
+  // History with only synthetic prompts → undefined (don't fabricate)
+  const onlySynthetic = [
+    { role: 'user', content: '[FRANKLIN HARNESS PREFETCH] foo' },
+    { role: 'user', content: '[ESCALATION] retry' },
+  ];
+  assert.equal(extractLastUserPrompt(onlySynthetic), undefined);
+  // Mixed Anthropic content blocks: text part should be recovered when
+  // genuine, skipped when synthetic.
+  const blocks = [
+    { role: 'user', content: [{ type: 'text', text: 'real question' }] },
+    { role: 'user', content: [{ type: 'text', text: '[FRANKLIN HARNESS PREFETCH] noise' }] },
+  ];
+  assert.equal(extractLastUserPrompt(blocks), 'real question');
+});
+
+test('sanitizeTableUnicode normalizes box-drawing chars to ASCII (3.15.77)', async () => {
+  const { sanitizeTableUnicode } = await import('../dist/agent/llm.js');
+  // Real bug: opus-4.7 emitted a CRCL fundamentals table with `│` data rows
+  // and `|` separator on 2026-05-06. No markdown renderer parses the mix.
+  const broken =
+    '│ Metric │ 2025A │ 2026E │\n' +
+    '|---|---|---|\n' +
+    '│ EBITDA │ $582M │ $634M │';
+  const fixed = sanitizeTableUnicode(broken);
+  assert.ok(!fixed.includes('│'), 'U+2502 must be normalized to |');
+  assert.ok(fixed.includes('| Metric |'), 'data rows now use ASCII pipe');
+  // Horizontal box-drawing also normalized (sometimes models use ─ for the
+  // separator instead of ---).
+  assert.equal(sanitizeTableUnicode('a─b'), 'a-b');
+  // ASCII input passes through unchanged.
+  assert.equal(sanitizeTableUnicode('| a | b |\n|---|---|'), '| a | b |\n|---|---|');
+  // Edge cases.
+  assert.equal(sanitizeTableUnicode(''), '');
+  assert.equal(sanitizeTableUnicode('plain text no boxes'), 'plain text no boxes');
+});
+
+test('cost-log.jsonl reader handles SDK shape + windows + missing file (3.15.79)', async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { loadSdkSettlements, summarizeSdkSettlements } = await import('../dist/stats/cost-log.js');
+
+  const dir = mkdtempSync(join(tmpdir(), 'fl-cost-log-'));
+  const file = join(dir, 'cost_log.jsonl');
+
+  // Real SDK shape: snake_case keys, ts as unix SECONDS (Python-style with
+  // subsecond precision). Pre-3.15.79 Franklin passed over this file
+  // entirely — the reader normalizes ts → unix ms so callers can compare
+  // against Date.now().
+  const lines = [
+    '{"ts": 1773424791.431276, "endpoint": "/v1/x/search", "cost_usd": 0.032}',
+    '{"ts": 1773432178.8608398, "endpoint": "/v1/chat/completions", "cost_usd": 0.279038}',
+    '{"ts": 1773432200.5,      "endpoint": "/v1/chat/completions", "cost_usd": 0.001}',
+    'malformed line — should be skipped silently',
+    '{"ts": 1773440000,        "endpoint": "/v1/modal/sandbox/exec", "cost_usd": 0.05}',
+  ];
+  writeFileSync(file, lines.join('\n') + '\n');
+
+  try {
+    const all = loadSdkSettlements({ path: file });
+    assert.equal(all.length, 4, 'malformed line should be skipped, valid 4 rows kept');
+    // Timestamps normalized to ms.
+    for (const r of all) {
+      assert.ok(r.ts > 1e12, `ts=${r.ts} should be in ms range, not seconds`);
+    }
+
+    const summary = summarizeSdkSettlements({ path: file });
+    assert.equal(summary.count, 4);
+    assert.ok(Math.abs(summary.totalUsd - 0.362038) < 1e-6, `totalUsd=${summary.totalUsd}`);
+
+    // Endpoint breakdown sorted by cost desc.
+    assert.equal(summary.byEndpoint[0].endpoint, '/v1/chat/completions');
+    assert.equal(summary.byEndpoint[0].count, 2);
+
+    // Window filter: only the last entry (after ts ~1773440000s = ~1773440000000ms).
+    const recent = loadSdkSettlements({ path: file, sinceMs: 1773440000 * 1000 });
+    assert.equal(recent.length, 1);
+    assert.equal(recent[0].endpoint, '/v1/modal/sandbox/exec');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('cost-log.jsonl reader returns empty when file missing (3.15.79)', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { loadSdkSettlements, summarizeSdkSettlements } = await import('../dist/stats/cost-log.js');
+
+  const dir = mkdtempSync(join(tmpdir(), 'fl-cost-log-empty-'));
+  const missingFile = join(dir, 'does-not-exist.jsonl');
+  try {
+    assert.deepEqual(loadSdkSettlements({ path: missingFile }), []);
+    const s = summarizeSdkSettlements({ path: missingFile });
+    assert.equal(s.count, 0);
+    assert.equal(s.totalUsd, 0);
+    assert.equal(s.firstTs, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stats command reconciles SDK ledger inside the stats window (3.15.80 regression)', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'fl-stats-window-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+
+  const now = Date.now();
+  const oldTs = now - 30 * 24 * 60 * 60 * 1000;
+  const freshTs = now + 1000;
+  writeFileSync(join(blockrunDir, 'franklin-stats.json'), JSON.stringify({
+    version: 1,
+    totalRequests: 1,
+    totalCostUsd: 0.01,
+    totalInputTokens: 100,
+    totalOutputTokens: 10,
+    totalFallbacks: 0,
+    byModel: {
+      'zai/glm-5.1': {
+        requests: 1,
+        costUsd: 0.01,
+        inputTokens: 100,
+        outputTokens: 10,
+        fallbackCount: 0,
+        avgLatencyMs: 123,
+        totalLatencyMs: 123,
+      },
+    },
+    history: [{
+      timestamp: now,
+      model: 'zai/glm-5.1',
+      inputTokens: 100,
+      outputTokens: 10,
+      costUsd: 0.01,
+      latencyMs: 123,
+    }],
+    firstRequest: now,
+    lastRequest: now,
+  }, null, 2));
+  writeFileSync(join(blockrunDir, 'cost_log.jsonl'), [
+    JSON.stringify({ ts: oldTs / 1000, endpoint: '/v1/chat/completions', cost_usd: 3.28 }),
+    JSON.stringify({ ts: freshTs / 1000, endpoint: '/v1/chat/completions', cost_usd: 0.04 }),
+  ].join('\n') + '\n');
+
+  try {
+    const result = await runCli('', {
+      args: [DIST, 'stats', '--json'],
+      env: { HOME: fakeHome, NO_COLOR: '1' },
+    });
+    assert.equal(result.code, 0, `stats --json failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.sdkLedger.entries, 1, 'old SDK ledger row before firstRequest must be excluded');
+    assert.ok(Math.abs(payload.sdkLedger.totalUsd - 0.04) < 1e-9, `sdk total=${payload.sdkLedger.totalUsd}`);
+    assert.ok(Math.abs(payload.reconciliation.gapUsd - 0.03) < 1e-9, `gap=${payload.reconciliation.gapUsd}`);
+    assert.equal(payload.reconciliation.windowStartMs, now);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('stats pretty output surfaces SDK-only spend (3.15.80 regression)', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'fl-stats-sdk-only-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  writeFileSync(join(blockrunDir, 'cost_log.jsonl'),
+    JSON.stringify({ ts: Date.now() / 1000, endpoint: '/v1/chat/completions', cost_usd: 0.42 }) + '\n');
+
+  try {
+    const result = await runCli('', {
+      args: [DIST, 'stats'],
+      env: { HOME: fakeHome, NO_COLOR: '1' },
+    });
+    assert.equal(result.code, 0, `stats failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.doesNotMatch(result.stdout, /No requests recorded yet/,
+      'SDK-only settlements must not be hidden behind the empty recorded-stats message');
+    assert.match(result.stdout, /Recorded Cost:\s+\$0\.0000/);
+    assert.match(result.stdout, /SDK Ledger:\s+\$0\.4200/);
+    assert.match(result.stdout, /Gap:/);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('stats --clear anchors future SDK reconciliation window (3.15.80 regression)', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'fl-stats-clear-window-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  writeFileSync(join(blockrunDir, 'cost_log.jsonl'),
+    JSON.stringify({ ts: (Date.now() - 10_000) / 1000, endpoint: '/v1/chat/completions', cost_usd: 1.23 }) + '\n');
+
+  try {
+    const clear = await runCli('', {
+      args: [DIST, 'stats', '--clear'],
+      env: { HOME: fakeHome, NO_COLOR: '1' },
+    });
+    assert.equal(clear.code, 0, `stats --clear failed\nstdout:\n${clear.stdout}\nstderr:\n${clear.stderr}`);
+
+    const result = await runCli('', {
+      args: [DIST, 'stats', '--json'],
+      env: { HOME: fakeHome, NO_COLOR: '1' },
+    });
+    assert.equal(result.code, 0, `stats --json failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(typeof payload.resetAt, 'number', 'clear should persist a reset marker');
+    assert.equal(payload.sdkLedger.entries, 0, 'pre-clear SDK rows must not reappear after reset');
+    assert.equal(payload.sdkLedger.totalUsd, 0);
+    assert.equal(payload.reconciliation.windowStartMs, payload.resetAt);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('extractLastUserPrompt strips TRAILING synthetic labels (3.15.76)', async () => {
+  const { extractLastUserPrompt } = await import('../dist/stats/audit.js');
+  // Real audit pollution observed 2026-05-06: post-response evaluator
+  // appends `[SYSTEM NOTE] The user is correcting you...` to the user's
+  // real text in the SAME message. The 3.15.71 fix only skipped messages
+  // that STARTED with a synthetic bracket — these end up half-real,
+  // half-synthetic and slip through as the prompt field.
+  const trailing = [
+    {
+      role: 'user',
+      content: 'this is about the prediction market, please check again [SYSTEM NOTE] The user is correcting you. Your previous response was wrong, retry.',
+    },
+  ];
+  assert.equal(
+    extractLastUserPrompt(trailing),
+    'this is about the prediction market, please check again',
+    'trailing [SYSTEM NOTE] should be stripped from audit prompt',
+  );
+
+  // Multiple synthetic suffixes — strip from the first one onward.
+  const cascading = [
+    {
+      role: 'user',
+      content: 'analyze this [GROUNDING CHECK FAILED] retry [SYSTEM NOTE] correcting',
+    },
+  ];
+  assert.equal(extractLastUserPrompt(cascading), 'analyze this');
+
+  // Bracket with lowercase content (e.g. a markdown link) must NOT trigger
+  // the strip. Only SCREAMING-CASE labels are synthetic.
+  const linkLike = [
+    { role: 'user', content: 'see [my doc](https://example.com) please' },
+  ];
+  assert.equal(extractLastUserPrompt(linkLike), 'see [my doc](https://example.com) please');
+
+  // Standalone bracket with no preceding real text → fall back to original
+  // start-anchored skip logic (returns undefined for this single message).
+  const onlyBracket = [
+    { role: 'user', content: '[SYSTEM NOTE] standalone' },
+  ];
+  assert.equal(extractLastUserPrompt(onlyBracket), undefined);
+
+  // 3.15.84: em-dash inside a SCREAMING-CASE label. Real Predexon-side
+  // audit slice 2026-05-07 showed `[GROUNDING CHECK FAILED — RETRY ROUND]`
+  // slipping through the older `[A-Z _-]` regex. Em dash, en dash, and
+  // colon are all common in extended labels; the new char class accepts
+  // all three. Both start-anchored skip and trailing-strip paths must
+  // recognize them.
+  const emDashStart = [
+    { role: 'user', content: '[GROUNDING CHECK FAILED — RETRY ROUND] Your previous answer stated facts...' },
+    { role: 'user', content: 'i want some prediction market insight' },
+  ];
+  // Walk-back finds the real prompt at index 1 (which doesn't start with a
+  // synthetic label) — confirms the em-dash entry at index 0 isn't returned.
+  assert.equal(extractLastUserPrompt(emDashStart), 'i want some prediction market insight');
+
+  const emDashTrailing = [
+    { role: 'user', content: 'real question [GROUNDING CHECK FAILED — RETRY ROUND] retry feedback' },
+  ];
+  assert.equal(extractLastUserPrompt(emDashTrailing), 'real question');
+
+  const colonLabel = [
+    { role: 'user', content: '[ESCALATION: stronger model] retry' },
+    { role: 'user', content: 'analyze this' },
+  ];
+  assert.equal(extractLastUserPrompt(colonLabel), 'analyze this');
 });

@@ -33,7 +33,9 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
+import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
+import { resolveReferenceImage } from './imagegen.js';
 import { ModelClient } from '../agent/llm.js';
 import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -47,6 +49,7 @@ interface VideoGenInput {
   image_url?: string;
   duration_seconds?: number;
   contentId?: string;
+  aspect_ratio?: string;
 }
 
 export interface VideoGenDeps {
@@ -75,9 +78,31 @@ function buildExecute(deps: VideoGenDeps) {
     ctx: ExecutionScope,
   ): Promise<CapabilityResult> {
     const rawInput = input as unknown as VideoGenInput;
-    const { output_path, model, image_url, duration_seconds, contentId } = rawInput;
+    const { output_path, model, image_url, duration_seconds, contentId, aspect_ratio } = rawInput;
 
     if (!rawInput.prompt) return { output: 'Error: prompt is required', isError: true };
+
+    // Resolve image_url before sending. The gateway requires a URL (http(s)
+    // or data: URI), but agents naturally pass a local file path —
+    // verified 2026-05-04 in a live session: agent passed
+    // `/Users/.../keyframe.png` and the gateway returned
+    // `400 Invalid request body: invalid_format url path: image_url`.
+    // ImageGen already had `resolveReferenceImage` for the same problem;
+    // sharing the helper keeps the contract consistent across both tools
+    // (local path → base64 data URI; http(s) URL → fetched + inlined;
+    // data: URI → passes through). On any resolution failure, surface
+    // the message instead of letting the gateway 400 bubble back.
+    let resolvedImageUrl: string | undefined;
+    if (image_url) {
+      try {
+        resolvedImageUrl = await resolveReferenceImage(image_url, ctx.workingDir);
+      } catch (err) {
+        return {
+          output: `Could not resolve image_url ${JSON.stringify(image_url)}: ${(err as Error).message}`,
+          isError: true,
+        };
+      }
+    }
 
     // One-shot refinement opt-out: leading `///` tells Franklin "don't
     // refine this prompt." Strip the prefix and pass skipRefine through.
@@ -181,14 +206,27 @@ function buildExecute(deps: VideoGenDeps) {
     const body = JSON.stringify({
       model: videoModel,
       prompt: chosenPrompt,
-      ...(image_url ? { image_url } : {}),
+      ...(resolvedImageUrl ? { image_url: resolvedImageUrl } : {}),
       ...(duration_seconds ? { duration_seconds } : {}),
+      // aspect_ratio passes through to the gateway. Models that support it
+      // (newer Seedance / grok variants) honor it; models that ignore it
+      // produce their default size. If the gateway rejects an unknown
+      // value, the 400 body surfaces via 3.15.45 diagnostic so the agent
+      // can drop the param and retry.
+      ...(aspect_ratio ? { aspect_ratio } : {}),
     });
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'User-Agent': `franklin/${VERSION}`,
     };
+
+    // Wall-clock start of the paid call (submit + poll + download). Fed
+    // to recordUsage below so franklin-stats.json populates avgLatencyMs
+    // for video models. Same fix as 3.15.61 (agent loop) — five
+    // recordUsage callsites in this codebase, three of them were
+    // hardcoding 0.
+    const callStartedAt = Date.now();
 
     const onAbort = (ctrl: AbortController) => () => ctrl.abort();
 
@@ -202,7 +240,7 @@ function buildExecute(deps: VideoGenDeps) {
     ctx.abortSignal.addEventListener('abort', submitAbort, { once: true });
 
     let paymentHeaders: Record<string, string> | null = null;
-    let submitResult: { id?: string; poll_url?: string };
+    let submitResult: { id?: string; poll_url?: string; error?: unknown; message?: unknown };
 
     try {
       let response = await fetch(endpoint, {
@@ -249,7 +287,15 @@ function buildExecute(deps: VideoGenDeps) {
     }
 
     if (!submitResult.poll_url || !paymentHeaders) {
-      return { output: 'API did not return a poll_url for the video job', isError: true };
+      // Surface any diagnostic the body contained — same rationale as
+      // imagegen.ts: "missing field" tells the agent nothing about
+      // whether it was moderation, quota, or upstream model failure.
+      const bits: string[] = [];
+      if (!paymentHeaders) bits.push('payment headers missing');
+      if (submitResult?.error !== undefined) bits.push(`error=${JSON.stringify(submitResult.error).slice(0, 240)}`);
+      if (submitResult?.message !== undefined) bits.push(`message=${String(submitResult.message).slice(0, 240)}`);
+      const detail = bits.length > 0 ? ` — ${bits.join('; ')}` : '';
+      return { output: `API did not return a poll_url for the video job${detail}`, isError: true };
     }
 
     // Phase 2: poll GET /v1/videos/generations/{id} with the SAME signed
@@ -278,7 +324,14 @@ function buildExecute(deps: VideoGenDeps) {
     const videoData = outcome.data;
     const videoUrl = videoData.url;
     if (!videoUrl) {
-      return { output: 'No video URL returned from API', isError: true };
+      // Same diagnostic pattern as the submit-side path above.
+      const d = videoData as Record<string, unknown>;
+      const bits: string[] = [];
+      if (d.error !== undefined) bits.push(`error=${JSON.stringify(d.error).slice(0, 240)}`);
+      if (d.message !== undefined) bits.push(`message=${String(d.message).slice(0, 240)}`);
+      if (d.status !== undefined) bits.push(`status=${String(d.status).slice(0, 80)}`);
+      const detail = bits.length > 0 ? ` — ${bits.join('; ')}` : '';
+      return { output: `No video URL returned from API${detail}`, isError: true };
     }
 
     try {
@@ -312,11 +365,12 @@ function buildExecute(deps: VideoGenDeps) {
       // Prefer the live gateway price when the model is in the catalog;
       // fall back to the legacy $0.05/s estimate otherwise. Fire-and-
       // forget — stats write must not fail a user-visible generation.
+      const latencyMs = Date.now() - callStartedAt;
       void (async () => {
         try {
           const m = await findModel(videoModel);
           const estCost = m ? estimateCostUsd(m, { duration_seconds: dur }) : estimateVideoCostUsd(dur);
-          recordUsage(videoModel, 0, 0, estCost, 0);
+          recordUsage(videoModel, 0, 0, estCost, latencyMs);
         } catch { /* ignore stats errors */ }
       })();
 
@@ -495,7 +549,7 @@ async function signPayment(
     );
     return { 'PAYMENT-SIGNATURE': payload };
   } catch (err) {
-    console.error(`[franklin] Video payment error: ${(err as Error).message}`);
+    logger.warn(`[franklin] Video payment error: ${(err as Error).message}`);
     return null;
   }
 }
@@ -523,15 +577,40 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
         "xai/grok-imagine-video bills $0.05/s (8s default ≈ $0.42). Generation " +
         "takes ~20–60s. ALWAYS confirm with the user before calling — videos " +
         "are expensive and slow. Pass contentId to attach to a Content piece " +
-        "(budget is checked before paying; asset is recorded on success).",
+        "(budget is checked before paying; asset is recorded on success). " +
+        "PLATFORM TARGETING: when the user says they'll post to X / Twitter, " +
+        "set aspect_ratio: '16:9' AND plan a follow-up `ffmpeg -vf scale=1280:720` " +
+        "step — X rejects videos under 720p with 'aspect ratio too small'. " +
+        "TikTok / Reels / Shorts: aspect_ratio '9:16'. Instagram Square: '1:1'. " +
+        "MODERATION: bytedance/seedance-* refuses photorealistic human faces " +
+        "(`InputImageSensitiveContentDetected.PrivacyInformation`); when the " +
+        "seed image has a real-looking person, use xai/grok-imagine-video " +
+        "instead, or regenerate the keyframe in a more stylized style first.",
       input_schema: {
         type: 'object',
         properties: {
           prompt: { type: 'string', description: 'Text description of the video to generate' },
           output_path: { type: 'string', description: 'Where to save the MP4. Default: generated-<timestamp>.mp4 in working directory' },
-          model: { type: 'string', description: 'Video model. Default: xai/grok-imagine-video' },
-          image_url: { type: 'string', description: 'Optional seed image URL (image-to-video)' },
+          model: {
+            type: 'string',
+            description:
+              'Video model. Default: xai/grok-imagine-video. Known-valid models on the BlockRun gateway as of 2026-05: ' +
+              'xai/grok-imagine-video, bytedance/seedance-1.5-pro, bytedance/seedance-2.0, bytedance/seedance-2.0-fast. ' +
+              'Pick from this list; the gateway rejects unknown names with HTTP 400 (no money charged on rejection). ' +
+              'Speak "Seedance Pro" → bytedance/seedance-2.0; speak "Seedance fast" → bytedance/seedance-2.0-fast.',
+          },
+          image_url: { type: 'string', description: 'Optional seed image (image-to-video). Accepts http(s) URL, data: URI, or local file path — local paths get inlined as base64 data URIs automatically.' },
           duration_seconds: { type: 'number', description: 'Duration billed for. Default depends on model (8s for grok-imagine-video).' },
+          aspect_ratio: {
+            type: 'string',
+            description:
+              'Optional aspect ratio hint passed to the model. Common values: ' +
+              '"16:9" (landscape — X/Twitter, YouTube, TikTok-landscape), ' +
+              '"9:16" (vertical — TikTok, Reels, Shorts), ' +
+              '"1:1" (square — Instagram feed). Models that don\'t support the ' +
+              'param ignore it; if the gateway 400s on an unknown value, the ' +
+              'error body surfaces — drop the param and retry.',
+          },
           contentId: { type: 'string', description: 'Optional Content id to attach and budget against.' },
         },
         required: ['prompt'],
@@ -541,3 +620,10 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
     concurrent: false,
   };
 }
+
+/**
+ * Default singleton — used by tests and any caller that doesn't need to
+ * override deps. Mirrors main's API so test fixtures keep working after
+ * the v0.6 sync merge.
+ */
+export const videoGenCapability: CapabilityHandler = createVideoGenCapability();

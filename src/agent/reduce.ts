@@ -53,13 +53,35 @@ export function ageToolResults(history: Dialogue[]): Dialogue[] {
     const aged: UserContentPart[] = parts.map(part => {
       if (part.type !== 'tool_result') return part;
 
+      // Vision tool_results carry [text, image] arrays. JSON.stringify-ing
+      // them and rebuilding `content` as a truncated string drops the
+      // image block entirely. Measure only the text portion; aging code
+      // below rebuilds as a string only when no image is present, otherwise
+      // we leave the part untouched (image bytes are already context-cheap
+      // once cached, and turn them into placeholders is the wrong fix).
+      let hasImage = false;
+      let textOnly = '';
+      if (Array.isArray(part.content)) {
+        for (const block of part.content as unknown as Array<Record<string, unknown>>) {
+          if (block?.type === 'text' && typeof block.text === 'string') {
+            textOnly += (textOnly ? '\n' : '') + block.text;
+          } else if (block?.type === 'image') {
+            hasImage = true;
+          }
+        }
+      }
       const content = typeof part.content === 'string'
         ? part.content
-        : JSON.stringify(part.content);
+        : Array.isArray(part.content)
+          ? textOnly
+          : JSON.stringify(part.content);
       const charLen = content.length;
 
       // Recent 3 results: keep full
       if (age <= 3) return part;
+      // Preserve image-bearing tool_results regardless of age — replacing
+      // them with a text stub would silently delete the model's vision context.
+      if (hasImage) return part;
 
       // Age 4-8: keep first 500 chars
       if (age <= 8 && charLen > 500) {
@@ -230,7 +252,29 @@ export function deduplicateToolResultLines(history: Dialogue[]): Dialogue[] {
     const newParts = parts.map(part => {
       if (part.type !== 'tool_result') return part;
 
-      const raw = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
+      // Vision tool_results carry [text, image] arrays. JSON.stringify-ing
+      // them and writing back as a string would destroy the image (same
+      // bug class as ageToolResults / budgetToolResults — sibling site,
+      // verified 2026-05-10 during PR #53 review). For arrays, dedupe
+      // only the text segments; image segments pass through untouched.
+      let raw: string;
+      const imageBlocks: unknown[] = [];
+      if (typeof part.content === 'string') {
+        raw = part.content;
+      } else if (Array.isArray(part.content)) {
+        const blocks = part.content as unknown as Array<Record<string, unknown>>;
+        const texts: string[] = [];
+        for (const b of blocks) {
+          if (b?.type === 'text' && typeof b.text === 'string') {
+            texts.push(b.text);
+          } else if (b?.type === 'image') {
+            imageBlocks.push(b);
+          }
+        }
+        raw = texts.join('\n');
+      } else {
+        raw = JSON.stringify(part.content);
+      }
 
       // Strip ANSI codes
       const stripped = raw.replace(ANSI_RE_REDUCE, '');
@@ -254,6 +298,19 @@ export function deduplicateToolResultLines(history: Dialogue[]): Dialogue[] {
       const result = deduped.join('\n');
       if (result === raw) return part;
       partModified = true;
+      // If the original content was an array with image blocks, rebuild
+      // as an array — keep all image segments, replace the joined text
+      // payload with a single deduped text segment. This way dedupe runs
+      // for free on image-bearing results without losing vision context.
+      if (Array.isArray(part.content) && imageBlocks.length > 0) {
+        return {
+          ...part,
+          content: [
+            { type: 'text', text: result },
+            ...(imageBlocks as Array<{ type: 'image'; source: unknown }>),
+          ],
+        } as UserContentPart;
+      }
       return { ...part, content: result };
     });
 
@@ -323,6 +380,18 @@ export function collapseRepetitiveTools(history: Dialogue[]): Dialogue[] {
     let changed = false;
     const parts = (msg.content as UserContentPart[]).map(part => {
       if (part.type !== 'tool_result' || !oldIds.has(part.tool_use_id)) return part;
+      // Image-bearing results (third sibling site of the JSON.stringify
+      // bug class — same pattern as ageToolResults / budgetToolResults /
+      // deduplicateToolResultLines). Don't collapse; replacing them with
+      // a `[first-line...]` string would destroy the vision context.
+      // Image bytes are already cache-cheap upstream once prompt-cached;
+      // the cost-control intent of this collapser is satisfied without
+      // touching them.
+      if (Array.isArray(part.content) && part.content.some(
+        (b) => (b as { type?: string }).type === 'image'
+      )) {
+        return part;
+      }
       const content = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
       if (content.length <= 80) return part;
       changed = true;

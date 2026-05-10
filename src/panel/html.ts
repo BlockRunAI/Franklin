@@ -651,7 +651,7 @@ a:hover { text-decoration:underline; }
   <div class="tab" id="tab-markets">
     <div class="content-header">
       <h2>Markets</h2>
-      <p>How Franklin gets trading data — and what it costs.</p>
+      <p>How Franklin gets trading + prediction-market data — and what it costs.</p>
     </div>
 
     <div class="grid grid-4">

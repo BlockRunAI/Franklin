@@ -24,7 +24,7 @@
  * @returns       Array of ref ids like ["0-0", "1-3"] in document order
  */
 export function findRefs(tree: string, role: string, label = '.*'): string[] {
-  const re = new RegExp(`\\[(\\d+-\\d+)\\]\\s+${escapeRegex(role)}:\\s*${label}`, 'g');
+  const re = new RegExp(`\\[(\\d+-\\d+)\\]\\s+${escapeRegex(role)}:\\s*(?:${label})`, 'gu');
   const out: string[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(tree)) !== null) {
@@ -42,7 +42,7 @@ export function findRefsWithLabels(
   role: string,
   label = '.*'
 ): Array<{ ref: string; label: string }> {
-  const re = new RegExp(`\\[(\\d+-\\d+)\\]\\s+${escapeRegex(role)}:\\s*(${label})`, 'g');
+  const re = new RegExp(`\\[(\\d+-\\d+)\\]\\s+${escapeRegex(role)}:\\s*(${label})`, 'gu');
   const out: Array<{ ref: string; label: string }> = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(tree)) !== null) {
@@ -99,9 +99,10 @@ export function extractArticleBlocks(tree: string): Array<{
 // Matches all known X time-link formats:
 //   "Mar 16", "Apr 12, 2026", "5h", "5m", "2d", "30s", "just now", "now"
 //   "31 seconds ago", "35 minutes ago", "4 hours ago" (full-word format)
-//   "Yesterday", "Apr 12", "12:30 AM", "2026年4月12日" (CJK)
+//   "Yesterday", "Apr 12", "12:30 AM"
+//   Locale-rendered numeric dates separated by Han-script date markers
 export const X_TIME_LINK_PATTERN =
-  '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d+(?:,?\\s+\\d{4})?|\\d+[smhd]|\\d+\\s+(?:second|minute|hour|day|week|month|year)s?\\s+ago|just now|now|yesterday|\\d{1,2}:\\d{2}\\s*[AaPp][Mm]|\\d{4}年\\d{1,2}月\\d{1,2}日';
+  '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d+(?:,?\\s+\\d{4})?|\\d+[smhd]|\\d+\\s+(?:second|minute|hour|day|week|month|year)s?\\s+ago|just now|now|yesterday|\\d{1,2}:\\d{2}\\s*[AaPp][Mm]|\\d{4}\\p{Script=Han}\\d{1,2}\\p{Script=Han}\\d{1,2}\\p{Script=Han}';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

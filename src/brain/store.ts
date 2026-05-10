@@ -14,11 +14,97 @@ const ENTITIES_FILE = path.join(BRAIN_DIR, 'entities.jsonl');
 const OBSERVATIONS_FILE = path.join(BRAIN_DIR, 'observations.jsonl');
 const RELATIONS_FILE = path.join(BRAIN_DIR, 'relations.jsonl');
 const MAX_ENTITIES = 200;
+// Observations and relations were previously unbounded — `extract.ts`
+// runs at every session end (commands/start.ts:515) so they grew
+// linearly forever. Caps below give comfortable headroom for a year+
+// of normal use without making per-entity scans pathological:
+//  - 2000 obs / 200 entities = ~10 observations per entity on average
+//  - 500 relations covers heavy cross-references between the entity set
+// On cap breach we drop the oldest entries — younger observations are
+// usually more relevant and more confident than an aging one.
+const MAX_OBSERVATIONS = 2000;
+const MAX_RELATIONS = 500;
 
 function uid(): string { return crypto.randomBytes(8).toString('hex'); }
 
 function ensureDir(): void {
   fs.mkdirSync(BRAIN_DIR, { recursive: true });
+}
+
+// Names the extractor model emits but that aren't real entities — they're
+// programmatic strings that happened to be in the transcript. Verified
+// 2026-05-04 on a real machine: 7 of 44 entities (16%) were junk by these
+// patterns — `Bash(git commit:*)` (tool permission), `gs://bucket/path/**`
+// (object URI + glob), `t_morkaf83_f03a0b10` (Franklin task runId tagged
+// as "project"). The vacuous observations they then accumulated ("This is
+// a task ID for an ETL process") leaked back into context on every later
+// session. Keep the patterns conservative — anything that looks
+// programmatic rather than nameable.
+const JUNK_ENTITY_NAME_PATTERNS: RegExp[] = [
+  /^[A-Z][a-zA-Z]*\(.*\)$/,        // Tool-permission shape, e.g. Bash(...), Edit(...)
+  /^(?:gs|s3|file|https?):\/\//i,  // URIs
+  /\*\*?(?:\/|$)/,                 // Glob patterns
+  /^t_[a-z0-9]+_[a-z0-9]{6,}$/i,   // Franklin task runIds
+  /^run_[a-z0-9_-]+$/i,            // Generic run/job ids
+  /^session-\d{4}-/,               // Session ids
+  /^[0-9a-f]{16,}$/,               // Hex hashes / commit shas / uuids without dashes
+];
+
+export function isJunkEntityName(name: string): boolean {
+  const trimmed = name.trim();
+  if (trimmed.length < 2) return true;
+  return JUNK_ENTITY_NAME_PATTERNS.some(rx => rx.test(trimmed));
+}
+
+/**
+ * Remove existing junk entities (and their observations + relations)
+ * from disk. Called once per session start by runDataHygiene to clear
+ * accumulated low-quality extractions from earlier brain runs that
+ * predate the post-extraction filter.
+ *
+ * Returns counts so the hygiene report can surface the cleanup —
+ * silent purges are hard to verify.
+ */
+export function pruneJunkBrainEntries(): {
+  entitiesRemoved: number;
+  observationsRemoved: number;
+  relationsRemoved: number;
+} {
+  const result = { entitiesRemoved: 0, observationsRemoved: 0, relationsRemoved: 0 };
+  let entities: Entity[];
+  try {
+    entities = loadEntities();
+  } catch { return result; }
+  if (entities.length === 0) return result;
+
+  const junkIds = new Set<string>();
+  const surviving: Entity[] = [];
+  for (const e of entities) {
+    if (isJunkEntityName(e.name)) {
+      junkIds.add(e.id);
+      result.entitiesRemoved++;
+    } else {
+      surviving.push(e);
+    }
+  }
+  if (junkIds.size === 0) return result;
+
+  // Drop observations + relations referencing the junk entities.
+  const obs = loadJsonl<Observation>(OBSERVATIONS_FILE);
+  const survivingObs = obs.filter(o => !junkIds.has(o.entity_id));
+  result.observationsRemoved = obs.length - survivingObs.length;
+
+  const rels = loadJsonl<Relation>(RELATIONS_FILE);
+  const survivingRels = rels.filter(r => !junkIds.has(r.from_id) && !junkIds.has(r.to_id));
+  result.relationsRemoved = rels.length - survivingRels.length;
+
+  // Atomic rewrites — saveJsonl uses tmp + rename so a crash mid-purge
+  // leaves the prior state intact.
+  saveEntities(surviving);
+  saveJsonl(OBSERVATIONS_FILE, survivingObs);
+  saveJsonl(RELATIONS_FILE, survivingRels);
+
+  return result;
 }
 
 // ─── Generic JSONL helpers ────────────────────────────────────────────────
@@ -140,7 +226,7 @@ export function addObservation(
     return;
   }
 
-  appendJsonl(OBSERVATIONS_FILE, {
+  const next: Observation = {
     id: uid(),
     entity_id: entityId,
     content,
@@ -148,7 +234,20 @@ export function addObservation(
     confidence,
     tags,
     created_at: Date.now(),
-  } satisfies Observation);
+  };
+
+  // Cap reached — rewrite the file with the trimmed set instead of
+  // appending. saveJsonl is atomic (tmp + rename) so a crash mid-write
+  // can't corrupt observations.
+  if (existing.length >= MAX_OBSERVATIONS) {
+    existing.sort((a, b) => b.created_at - a.created_at);
+    existing.length = MAX_OBSERVATIONS - 1;
+    existing.unshift(next);
+    saveJsonl(OBSERVATIONS_FILE, existing);
+    return;
+  }
+
+  appendJsonl(OBSERVATIONS_FILE, next);
 }
 
 // ─── Relations ────────────────────────────────────────────────────────────
@@ -174,7 +273,7 @@ export function upsertRelation(fromId: string, toId: string, type: string, confi
     existing.confidence = Math.min(existing.confidence + 0.05, 1.0);
     saveJsonl(RELATIONS_FILE, relations);
   } else {
-    appendJsonl(RELATIONS_FILE, {
+    const next: Relation = {
       id: uid(),
       from_id: fromId,
       to_id: toId,
@@ -182,7 +281,23 @@ export function upsertRelation(fromId: string, toId: string, type: string, confi
       confidence,
       count: 1,
       last_seen: Date.now(),
-    } satisfies Relation);
+    };
+    // Same cap pattern as observations. When the relation set is at
+    // its ceiling we drop the lowest-count, oldest-seen entries to
+    // make room — count + recency together approximate "this
+    // relation is still being seen", so eviction targets entries the
+    // brain extractor hasn't reinforced in a while.
+    if (relations.length >= MAX_RELATIONS) {
+      relations.sort((a, b) => {
+        if (b.count !== a.count) return b.count - a.count;
+        return b.last_seen - a.last_seen;
+      });
+      relations.length = MAX_RELATIONS - 1;
+      relations.unshift(next);
+      saveJsonl(RELATIONS_FILE, relations);
+    } else {
+      appendJsonl(RELATIONS_FILE, next);
+    }
   }
 }
 

@@ -19,11 +19,257 @@ import {
 import { estimateCost } from '../pricing.js';
 import { formatTokens, shortModelName } from '../stats/format.js';
 import { mouse, forceDisableMouseTracking, type MouseEvent as TermMouseEvent } from './mouse.js';
+import { resolveAskUserAnswer } from './ask-user-answer.js';
 
 // ─── Full-width input box ──────────────────────────────────────────────────
 
+const BRACKETED_PASTE_START = '[200~';
+const BRACKETED_PASTE_END = '[201~';
+const ENABLE_BRACKETED_PASTE = '\x1b[?2004h';
+const DISABLE_BRACKETED_PASTE = '\x1b[?2004l';
+const USER_PROMPT_COLOR = '#FFD700';
+const PASTE_BLOCK_START = '\uE000PASTE:';
+const PASTE_BLOCK_END = ':PASTE\uE001';
+
 const DISABLE_AUTO_WRAP = '\x1b[?7l';
 const ENABLE_AUTO_WRAP = '\x1b[?7h';
+
+function stripPasteMarkers(input: string): string {
+  return input
+    .replaceAll(BRACKETED_PASTE_START, '')
+    .replaceAll(BRACKETED_PASTE_END, '');
+}
+
+function normalizeInputNewlines(input: string): string {
+  return input.replace(/\r\n|\r|\n/g, '\n').replace(/\x1b/g, '');
+}
+
+interface PasteBlock {
+  start: number;
+  end: number;
+  content: string;
+}
+
+function encodePasteBlock(content: string): string {
+  return `${PASTE_BLOCK_START}${Buffer.from(content, 'utf8').toString('base64')}${PASTE_BLOCK_END}`;
+}
+
+function decodePasteBlock(token: string): string {
+  if (!token.startsWith(PASTE_BLOCK_START) || !token.endsWith(PASTE_BLOCK_END)) return token;
+  const payload = token.slice(PASTE_BLOCK_START.length, -PASTE_BLOCK_END.length);
+  try {
+    return Buffer.from(payload, 'base64').toString('utf8');
+  } catch {
+    return token;
+  }
+}
+
+function findPasteBlocks(value: string): PasteBlock[] {
+  const blocks: PasteBlock[] = [];
+  let searchFrom = 0;
+
+  while (searchFrom < value.length) {
+    const start = value.indexOf(PASTE_BLOCK_START, searchFrom);
+    if (start < 0) break;
+    const endMarker = value.indexOf(PASTE_BLOCK_END, start + PASTE_BLOCK_START.length);
+    if (endMarker < 0) break;
+    const end = endMarker + PASTE_BLOCK_END.length;
+    blocks.push({ start, end, content: decodePasteBlock(value.slice(start, end)) });
+    searchFrom = end;
+  }
+
+  return blocks;
+}
+
+function decodePromptValue(value: string): string {
+  let decoded = '';
+  let cursor = 0;
+
+  for (const block of findPasteBlocks(value)) {
+    decoded += value.slice(cursor, block.start) + block.content;
+    cursor = block.end;
+  }
+
+  return decoded + value.slice(cursor);
+}
+
+function pasteSummary(content: string): string {
+  const lines = content.length === 0 ? 0 : content.split('\n').length;
+  const lineLabel = lines > 1 ? `~${lines} lines` : '~1 line';
+  return `[Pasted ${lineLabel}]`;
+}
+
+function renderInputValue(value: string, cursorOffset: number, focused: boolean): string {
+  const blocks = findPasteBlocks(value);
+  if (blocks.length > 0) {
+    let rendered = '';
+    let cursor = 0;
+
+    for (const block of blocks) {
+      rendered += renderPlainInputSegment(value.slice(cursor, block.start), cursorOffset - cursor, focused && cursorOffset >= cursor && cursorOffset <= block.start);
+      if (focused && cursorOffset === block.start) rendered += chalk.inverse(' ');
+      rendered += chalk.hex(USER_PROMPT_COLOR).bold(pasteSummary(block.content));
+      if (focused && cursorOffset === block.end) rendered += chalk.inverse(' ');
+      cursor = block.end;
+    }
+
+    rendered += renderPlainInputSegment(value.slice(cursor), cursorOffset - cursor, focused && cursorOffset >= cursor);
+    return rendered || (focused ? chalk.inverse(' ') : '');
+  }
+
+  return renderPlainInputSegment(value, cursorOffset, focused);
+}
+
+function renderPlainInputSegment(value: string, cursorOffset: number, focused: boolean): string {
+  const displayValue = value.replace(/\r\n|\r|\n/g, ' ');
+  if (!focused) return displayValue;
+
+  const safeCursor = Math.max(0, Math.min(cursorOffset, displayValue.length));
+  if (displayValue.length === 0) return chalk.inverse(' ');
+
+  const before = displayValue.slice(0, safeCursor);
+  const current = displayValue[safeCursor] ?? ' ';
+  const after = displayValue.slice(safeCursor + (safeCursor < displayValue.length ? 1 : 0));
+  return before + chalk.inverse(current) + after;
+}
+
+function PromptTextInput({ value, onChange, onSubmit, placeholder = '', focus = true }: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: (value: string) => void;
+  placeholder?: string;
+  focus?: boolean;
+}) {
+  const [cursorOffset, setCursorOffset] = useState(value.length);
+  const valueRef = useRef(value);
+  const cursorOffsetRef = useRef(value.length);
+  const pasteActiveRef = useRef(false);
+  const pasteBufferRef = useRef('');
+
+  useEffect(() => {
+    valueRef.current = value;
+    setCursorOffset((offset) => {
+      const nextOffset = Math.min(offset, value.length);
+      cursorOffsetRef.current = nextOffset;
+      return nextOffset;
+    });
+  }, [value]);
+
+  const updateValue = useCallback((nextValue: string, nextCursorOffset: number) => {
+    valueRef.current = nextValue;
+    cursorOffsetRef.current = Math.max(0, Math.min(nextCursorOffset, nextValue.length));
+    onChange(nextValue);
+    setCursorOffset(cursorOffsetRef.current);
+  }, [onChange]);
+
+  useInput((input, key) => {
+    if (!focus) return;
+
+    const currentValue = valueRef.current;
+    const currentCursorOffset = cursorOffsetRef.current;
+    const pasteBlockBeforeCursor = findPasteBlocks(currentValue).find((block) => block.end === currentCursorOffset);
+    const pasteBlockAfterCursor = findPasteBlocks(currentValue).find((block) => block.start === currentCursorOffset);
+
+    const hasPasteStart = input.includes(BRACKETED_PASTE_START);
+    const hasPasteEnd = input.includes(BRACKETED_PASTE_END);
+    const isPasting = pasteActiveRef.current || hasPasteStart;
+
+    if (hasPasteStart && !pasteActiveRef.current) {
+      pasteActiveRef.current = true;
+      pasteBufferRef.current = '';
+    }
+
+    if (key.return && !isPasting) {
+      onSubmit(decodePromptValue(currentValue));
+      return;
+    }
+
+    if (key.home || (key.ctrl && input === 'a')) {
+      cursorOffsetRef.current = 0;
+      setCursorOffset(0);
+      return;
+    }
+
+    if (key.end || (key.ctrl && input === 'e')) {
+      cursorOffsetRef.current = currentValue.length;
+      setCursorOffset(currentValue.length);
+      return;
+    }
+
+    if (key.leftArrow) {
+      const previousBlock = findPasteBlocks(currentValue).find((block) => block.end === currentCursorOffset);
+      const nextOffset = previousBlock ? previousBlock.start : Math.max(0, currentCursorOffset - 1);
+      cursorOffsetRef.current = nextOffset;
+      setCursorOffset(nextOffset);
+      return;
+    }
+
+    if (key.rightArrow) {
+      const nextBlock = findPasteBlocks(currentValue).find((block) => block.start === currentCursorOffset);
+      const nextOffset = nextBlock ? nextBlock.end : Math.min(currentValue.length, currentCursorOffset + 1);
+      cursorOffsetRef.current = nextOffset;
+      setCursorOffset(nextOffset);
+      return;
+    }
+
+    if (key.backspace || key.delete) {
+      if (key.backspace && pasteBlockBeforeCursor) {
+        updateValue(currentValue.slice(0, pasteBlockBeforeCursor.start) + currentValue.slice(pasteBlockBeforeCursor.end), pasteBlockBeforeCursor.start);
+        return;
+      }
+
+      if (key.delete && pasteBlockAfterCursor) {
+        updateValue(currentValue.slice(0, pasteBlockAfterCursor.start) + currentValue.slice(pasteBlockAfterCursor.end), pasteBlockAfterCursor.start);
+        return;
+      }
+
+      if (currentCursorOffset > 0) {
+        updateValue(
+          currentValue.slice(0, currentCursorOffset - 1) + currentValue.slice(currentCursorOffset),
+          currentCursorOffset - 1,
+        );
+      }
+      return;
+    }
+
+    if (key.upArrow || key.downArrow || key.tab || key.ctrl || key.meta) return;
+
+    let text = normalizeInputNewlines(stripPasteMarkers(input));
+    if (key.return && isPasting) text = '\n';
+
+    if (isPasting) {
+      pasteBufferRef.current += text;
+
+      if (!hasPasteEnd) return;
+
+      text = encodePasteBlock(pasteBufferRef.current);
+      pasteBufferRef.current = '';
+      pasteActiveRef.current = false;
+    }
+
+    if (!text) {
+      if (hasPasteEnd) pasteActiveRef.current = false;
+      return;
+    }
+
+    updateValue(
+      currentValue.slice(0, currentCursorOffset) + text + currentValue.slice(currentCursorOffset),
+      currentCursorOffset + text.length,
+    );
+
+    if (hasPasteEnd) pasteActiveRef.current = false;
+  }, { isActive: focus });
+
+  const rendered = value.length > 0
+    ? renderInputValue(value, cursorOffset, focus)
+    : (focus && placeholder ? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1)) : chalk.grey(placeholder));
+
+  return <Text>{rendered}</Text>;
+}
+
+function formatUserPromptForDisplay(value: string): string {
+  return `❯ ${decodePromptValue(value)}`;
+}
 
 function disableTerminalAutoWrap(): (() => void) | undefined {
   if (!process.stdout.isTTY) return undefined;
@@ -36,6 +282,25 @@ function disableTerminalAutoWrap(): (() => void) | undefined {
   };
 
   process.stdout.write(DISABLE_AUTO_WRAP);
+  process.once('exit', restore);
+
+  return () => {
+    process.off('exit', restore);
+    restore();
+  };
+}
+
+function enableBracketedPaste(): (() => void) | undefined {
+  if (!process.stdout.isTTY) return undefined;
+
+  let restored = false;
+  const restore = () => {
+    if (restored || !process.stdout.writable) return;
+    restored = true;
+    process.stdout.write(DISABLE_BRACKETED_PASTE);
+  };
+
+  process.stdout.write(ENABLE_BRACKETED_PASTE);
   process.once('exit', restore);
 
   return () => {
@@ -66,7 +331,7 @@ function useTerminalSize() {
   return size;
 }
 
-function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail, sessionCost, queued, queuedCount, focused, busy, contextPct, vimMode, onVimModeChange }: {
+function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail, sessionCost, queued, queuedCount, focused, busy, awaitingApproval, awaitingAnswer, contextPct, vimMode, onVimModeChange }: {
   input: string;
   setInput: (v: string) => void;
   onSubmit: (v: string) => void;
@@ -81,6 +346,12 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
   queuedCount?: number;
   focused?: boolean;
   busy?: boolean;
+  /** True when a Permission required dialog is up — input box swaps its
+   *  spinner+placeholder for an unmissable "approve above" pointer so users
+   *  in another window don't see "Working..." and assume the agent is busy. */
+  awaitingApproval?: boolean;
+  /** True when an AskUser dialog is up. Same idea, different wording. */
+  awaitingAnswer?: boolean;
   contextPct?: number;
   vimMode?: boolean;
   onVimModeChange?: (mode: VimMode) => void;
@@ -91,16 +362,34 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
   // borders behind on re-render after errors / status changes.
   const boxWidth = Math.max(20, cols - 2);
 
-  const placeholder = busy
+  // Awaiting-input states beat "Working..." — the agent isn't busy, it's
+  // blocked on the user. Saying "Working..." here while a permission dialog
+  // sits in the scrollback above is exactly how users miss it (verified
+  // 2026-05-04 from a real screenshot — "Working..." spinner kept turning
+  // while the agent waited on a Bash approval).
+  const placeholder = awaitingApproval
+    ? '⚠  Approval needed — press [y]/[a]/[n] in the prompt above'
+    : awaitingAnswer
+    ? '⚠  Question above — type your answer'
+    : busy
     ? (queued
         ? `⏎ ${queuedCount ?? 1} queued: ${queued.slice(0, 40)}`
         : 'Working...')
     : 'Type a message...';
 
+  // Color the input-box border to match the urgency. Awaiting-user states
+  // get a bright yellow border so the focal point physically moves down to
+  // the input field, even peripheral vision picks it up.
+  const borderColor = awaitingApproval || awaitingAnswer ? 'yellow' : undefined;
+  const showSpinner = busy && !input && !awaitingApproval && !awaitingAnswer;
+  const leadingGlyph = (awaitingApproval || awaitingAnswer)
+    ? <Text color="yellow" bold>⚠ </Text>
+    : (showSpinner ? <Text color="yellow"><Spinner type="dots" /> </Text> : null);
+
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Box borderStyle="round" borderDimColor paddingX={1} width={boxWidth}>
-        {busy && !input ? <Text color="yellow"><Spinner type="dots" /> </Text> : null}
+      <Box borderStyle="round" borderColor={borderColor} borderDimColor={!borderColor} paddingX={1} width={boxWidth}>
+        {leadingGlyph}
         <Box flexGrow={1}>
           {vimMode ? (
             <VimInput
@@ -113,7 +402,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
               onModeChange={onVimModeChange}
             />
           ) : (
-            <TextInput
+            <PromptTextInput
               value={input}
               onChange={setInput}
               onSubmit={onSubmit}
@@ -126,7 +415,24 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
       <Box marginLeft={2}>
         <Text dimColor>
           {busy ? <Text color="yellow"><Spinner type="dots" /></Text> : null}
-          {busy ? ' ' : ''}{shortModelName(model)}  ·  {balance}
+          {busy ? ' ' : ''}{shortModelName(model)}  ·  {(() => {
+            // Color the balance by funding state. Real session 2026-05-04
+            // had a user staring at "$0.08 USDC" in dim text wondering
+            // whether it meant "out of money" or "wrong chain". Make
+            // low/critical balances unmistakable. Thresholds match the
+            // ~$0.10 / ~$0.50 ranges where a typical Opus turn ($0.08–
+            // $0.15) tips over: <$0.50 = red bold + low hint;
+            // <$1.00 = yellow; otherwise plain dim.
+            const m = balance.match(/\$([\d.]+)/);
+            const num = m ? parseFloat(m[1]) : null;
+            if (num !== null && num < 0.50) {
+              return <><Text color="red" bold>{balance}</Text><Text color="red"> ⚠ low — deposit at http://localhost:3100/#wallet or /model free</Text></>;
+            }
+            if (num !== null && num < 1.00) {
+              return <Text color="yellow">{balance}</Text>;
+            }
+            return balance;
+          })()}
           {chain ? <Text>  ·  <Text color="magenta">{chain}</Text>{walletTail ? <Text dimColor>:{walletTail}</Text> : ''}</Text> : ''}
           {sessionCost > 0.00001 ? <Text color="yellow">  -${sessionCost.toFixed(4)}</Text> : ''}
           {contextPct !== undefined && contextPct > 0 ? (() => {
@@ -213,6 +519,7 @@ interface AppProps {
   workDir: string;
   walletAddress: string;
   walletBalance: string;
+  initialTranscript?: Array<{ role: 'user' | 'assistant'; text: string }>;
   startWithPicker?: boolean;
   chain: string;
   onSubmit: (input: string) => void;
@@ -223,9 +530,14 @@ interface AppProps {
 
 function RunCodeApp({
   initialModel, workDir, walletAddress, walletBalance, chain,
-  startWithPicker, onSubmit, onModelChange, onAbort, onExit,
+  initialTranscript, startWithPicker, onSubmit, onModelChange, onAbort, onExit,
 }: AppProps) {
   const { exit } = useApp();
+  // Track terminal rows so we can cap the dynamic-region height. Ink wipes the
+  // terminal scrollback (via ansiEscapes.clearTerminal → \x1b[3J) whenever the
+  // dynamic output exceeds rows, so any tall live region (streaming text,
+  // model picker) must be windowed to preserve "scroll to the start" history.
+  const { rows: termRows } = useTerminalSize();
   const [input, setInput] = useState('');
   const [streamText, setStreamText] = useState('');
   const [thinking, setThinking] = useState(false);
@@ -236,7 +548,16 @@ function RunCodeApp({
   // Last completed tool — shown in dynamic area so it can be expanded/collapsed with Tab
   const [expandableTool, setExpandableTool] = useState<(ToolStatus & { key: string }) | null>(null);
   // Full responses committed to Static immediately — goes into terminal scrollback
-  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number; thinkMs?: number; thinkChars?: number }>>([]);
+  const [committedResponses, setCommittedResponses] = useState<Array<{ key: string; text: string; tokens: { input: number; output: number; calls: number }; cost: number; model?: string; tier?: string; savings?: number; thinkMs?: number; thinkChars?: number; ctxPct?: number }>>(() =>
+    (initialTranscript ?? []).map((entry, idx) => ({
+      key: `${entry.role === 'user' ? 'user' : 'resume'}-${idx}`,
+      text: entry.role === 'user'
+        ? chalk.hex('#FFD700').bold('❯ ') + chalk.hex('#FFD700').bold(entry.text)
+        : entry.text,
+      tokens: { input: 0, output: 0, calls: 0 },
+      cost: 0,
+    }))
+  );
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
   const [responsePreview, setResponsePreview] = useState('');
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS_FLAT[0].id);
@@ -270,6 +591,24 @@ function RunCodeApp({
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [askUserRequest, setAskUserRequest] = useState<AskUserRequest | null>(null);
   const [askUserInput, setAskUserInput] = useState('');
+
+  // Ring the terminal bell exactly once when a permission/askUser dialog
+  // first appears. Helpful when the user has Franklin in a background
+  // tab and the agent stops to ask for approval — verified 2026-05-04
+  // from a real screenshot where the user missed the dialog because the
+  // input box still read "Working...". Opt-out via FRANKLIN_NO_BELL=1.
+  const bellPlayedRef = useRef(false);
+  useEffect(() => {
+    const dialogActive = !!permissionRequest || !!askUserRequest;
+    if (dialogActive && !bellPlayedRef.current) {
+      bellPlayedRef.current = true;
+      if (process.env.FRANKLIN_NO_BELL !== '1') {
+        try { process.stderr.write('\x07'); } catch { /* swallow — never break the UI on a TTY without bell */ }
+      }
+    } else if (!dialogActive) {
+      bellPlayedRef.current = false;
+    }
+  }, [permissionRequest, askUserRequest]);
   // Messages queued while agent is busy — auto-submitted FIFO when turns complete.
   const [queuedInputs, setQueuedInputs] = useState<string[]>([]);
   const turnDoneCallbackRef = useRef<(() => void) | null>(null);
@@ -329,7 +668,9 @@ function RunCodeApp({
   const turnModelRef = useRef<string | undefined>(undefined);
   const turnTierRef = useRef<string | undefined>(undefined);
   const turnSavingsRef = useRef<number | undefined>(undefined);
+  const turnCtxPctRef = useRef<number | undefined>(undefined);
   const queuedInputsRef = useRef<string[]>([]);
+  const lastCtrlCRef = useRef(0);
 
   // Keep refs in sync so memoized event handlers can read current values
   streamTextRef.current = streamText;
@@ -351,6 +692,25 @@ function RunCodeApp({
       setTimeout(() => setStatusMsg(''), durationMs);
     }
   }, []);
+
+  const requestExit = useCallback((abortTurn = false) => {
+    if (abortTurn) onAbort();
+    onExit();
+    exit();
+  }, [onAbort, onExit, exit]);
+
+  useInput((ch, key) => {
+    if (!(key.ctrl && ch === 'c')) return;
+
+    const now = Date.now();
+    if (now - lastCtrlCRef.current < 2000) {
+      requestExit(true);
+      return;
+    }
+
+    lastCtrlCRef.current = now;
+    showStatus('Press Ctrl+C again to exit', 'warning', 2000);
+  });
 
   const commitResponse = useCallback((
     text: string,
@@ -375,6 +735,7 @@ function RunCodeApp({
         model: turnModelRef.current,
         tier: turnTierRef.current,
         savings: turnSavingsRef.current,
+        ctxPct: turnCtxPctRef.current,
         thinkMs,
         thinkChars,
       }];
@@ -410,7 +771,7 @@ function RunCodeApp({
 
   // Key handler for picker + esc + abort
   const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input) || !ready;
-  useInput((ch, key) => {
+  useInput((_ch, key) => {
     // Escape during generation → abort current turn (skip if permission dialog open)
     if (key.escape && !ready && !permissionRequest) {
       onAbort();
@@ -425,8 +786,7 @@ function RunCodeApp({
     // In Vim mode: Esc goes to normal mode (handled by VimInput), only quit on Esc in normal mode with empty input
     if (key.escape && mode === 'input' && ready && !input) {
       if (vimEnabled && currentVimMode === 'insert') return; // Let VimInput handle Esc → normal
-      onExit();
-      exit();
+      requestExit(false);
       return;
     }
 
@@ -492,9 +852,7 @@ function RunCodeApp({
       lower === 'exit' || lower === 'quit' || lower === 'q' ||
       lower === '/exit' || lower === '/quit';
     if (isExit) {
-      onAbort();
-      onExit();
-      exit();
+      requestExit(true);
       return;
     }
 
@@ -565,6 +923,7 @@ function RunCodeApp({
           turnModelRef.current = undefined;
           turnTierRef.current = undefined;
           turnSavingsRef.current = undefined;
+          turnCtxPctRef.current = undefined;
           setWaiting(true);
           setReady(false);
           // Pass through to agent loop to clear the actual conversation history
@@ -587,6 +946,7 @@ function RunCodeApp({
           turnModelRef.current = undefined;
           turnTierRef.current = undefined;
           turnSavingsRef.current = undefined;
+          turnCtxPctRef.current = undefined;
           onSubmit(lastPrompt);
           return;
 
@@ -607,9 +967,7 @@ function RunCodeApp({
     // Show user message in scrollback so the conversation is readable
     setCommittedResponses(rs => [...rs, {
       key: `user-${Date.now()}`,
-      // Gold matches the top of the Franklin banner gradient (#FFD700).
-      // Brand-consistent, readable on dark terminals, evokes $100-bill identity.
-      text: chalk.hex('#FFD700').bold('❯ ') + chalk.hex('#FFD700').bold(trimmed),
+      text: formatUserPromptForDisplay(trimmed),
       tokens: { input: 0, output: 0, calls: 0 },
       cost: 0,
     }]);
@@ -638,8 +996,9 @@ function RunCodeApp({
     turnModelRef.current = undefined;
     turnTierRef.current = undefined;
     turnSavingsRef.current = undefined;
+    turnCtxPctRef.current = undefined;
     onSubmit(trimmed);
-  }, [ready, currentModel, totalCost, onSubmit, onModelChange, onAbort, onExit, exit, lastPrompt, inputHistory, showStatus]);
+  }, [ready, currentModel, totalCost, onSubmit, onModelChange, requestExit, lastPrompt, inputHistory, showStatus]);
 
   // Mouse support — OFF by default because Node stdin is shared: mouse escape
   // sequences leak into Ink's input handler as typed text. Opt in with
@@ -803,7 +1162,10 @@ function RunCodeApp({
             turnModelRef.current = event.model;
             if (event.tier) turnTierRef.current = event.tier;
             if (event.savings !== undefined) turnSavingsRef.current = event.savings;
-            if (event.contextPct !== undefined) setContextPct(event.contextPct);
+            if (event.contextPct !== undefined) {
+              setContextPct(event.contextPct);
+              turnCtxPctRef.current = event.contextPct;
+            }
             break;
           }
           case 'turn_done': {
@@ -1040,12 +1402,18 @@ function RunCodeApp({
                 </Box>
               )}
               <Box paddingLeft={isUserMsg ? 0 : 2}>
-                <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
+                {isUserMsg ? (
+                  <Text wrap="wrap" color={USER_PROMPT_COLOR} bold>{r.text}</Text>
+                ) : (
+                  <Text wrap="wrap">{renderMarkdown(r.text)}</Text>
+                )}
               </Box>
               {(r.tokens.input > 0 || r.tokens.output > 0) && (
                 <Box marginLeft={2} marginBottom={1}>
                   <Text dimColor>
-                    {r.tier && <Text color="cyan">[{r.tier}] </Text>}
+                    {r.tier
+                      ? <Text color="cyan">[{r.tier}] </Text>
+                      : (r.model ? <Text dimColor>[direct] </Text> : null)}
                     {r.model ? shortModelName(r.model) : ''}
                     {r.model ? '  ·  ' : ''}
                     {r.tokens.calls > 0 && r.tokens.input === 0
@@ -1053,6 +1421,9 @@ function RunCodeApp({
                       : `${formatTokens(r.tokens.input)} in / ${formatTokens(r.tokens.output)} out`}
                     {r.cost > 0 ? `  ·  $${r.cost.toFixed(4)}` : ''}
                     {r.savings !== undefined && r.savings > 0 ? <Text color="green">  saved {Math.round(r.savings * 100)}%</Text> : ''}
+                    {r.ctxPct !== undefined && r.ctxPct >= 5
+                      ? <Text color={r.ctxPct >= 80 ? 'red' : r.ctxPct >= 50 ? 'yellow' : undefined} dimColor={r.ctxPct < 50}>  ·  ctx {r.ctxPct}%</Text>
+                      : ''}
                   </Text>
                 </Box>
               )}
@@ -1061,9 +1432,17 @@ function RunCodeApp({
         }}
       </Static>
 
-      {/* Permission dialog — rendered inline, captured via useInput above */}
+      {/* Permission dialog — rendered inline, captured via useInput above.
+          Visual prominence is critical here. The pre-3.15.27 yellow box was
+          easy to miss in a busy scrollback (verified from a real screenshot
+          where the user didn't notice the prompt and the bottom spinner
+          kept reading "Working..."). Now: red ACTION REQUIRED header, the
+          input box below changes its placeholder to match (see InputBox),
+          and we hide the waiting spinner / stream / response preview while
+          this is up so the dialog sits alone right above the input field. */}
       {permissionRequest && (
         <Box flexDirection="column" marginTop={1} marginLeft={2}>
+          <Text color="red" bold>━━━━━━━━━━ ⚠  ACTION REQUIRED  ⚠ ━━━━━━━━━━</Text>
           <Text color="yellow">╭─ Permission required ─────────────────</Text>
           <Text color="yellow">│ <Text bold>{permissionRequest.toolName}</Text></Text>
           {permissionRequest.description.split('\n').map((line, i) => (
@@ -1083,9 +1462,11 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* AskUser dialog — text input for agent questions */}
+      {/* AskUser dialog — text input for agent questions. Same urgency
+          treatment as permission: bright header, hidden noise around it. */}
       {askUserRequest && (
         <Box flexDirection="column" marginTop={1} marginLeft={2}>
+          <Text color="magenta" bold>━━━━━━━━━━ ⚠  ANSWER REQUIRED  ⚠ ━━━━━━━━━━</Text>
           <Text color="cyan">╭─ Question ─────────────────────────────</Text>
           <Text color="cyan">│ <Text bold>{askUserRequest.question}</Text></Text>
           {askUserRequest.options && askUserRequest.options.length > 0 && (
@@ -1100,7 +1481,12 @@ function RunCodeApp({
               value={askUserInput}
               onChange={setAskUserInput}
               onSubmit={(val) => {
-                const answer = val.trim() || '(no response)';
+                // resolveAskUserAnswer translates "1" / "2" / ... into the
+                // matching label string when the dialog showed a numbered
+                // option list. Without it, every onAskUser caller's
+                // exact-label match fails for digit answers and silently
+                // falls through to the default branch (typically cancel).
+                const answer = resolveAskUserAnswer(val, askUserRequest.options);
                 const r = askUserRequest.resolve;
                 setAskUserRequest(null);
                 setAskUserInput('');
@@ -1112,8 +1498,9 @@ function RunCodeApp({
         </Box>
       )}
 
-      {/* Expandable tool — last completed tool, can be toggled with Tab */}
-      {expandableTool && (() => {
+      {/* Expandable tool — last completed tool, can be toggled with Tab.
+          Hidden while a dialog is active so the dialog stays at the bottom. */}
+      {expandableTool && !permissionRequest && !askUserRequest && (() => {
         const tool = expandableTool;
         const elapsedFmt = tool.elapsed >= 1000
           ? `${(tool.elapsed / 1000).toFixed(1)}s`
@@ -1164,8 +1551,11 @@ function RunCodeApp({
         );
       })()}
 
-      {/* Active (in-progress) tools — bordered box with multi-line streaming output */}
-      {Array.from(tools.entries()).map(([id, tool]) => {
+      {/* Active (in-progress) tools — bordered box with multi-line streaming output.
+          Hidden during permission/askUser dialogs so the dialog can sit alone
+          right above the input field — the user's focal point shouldn't be
+          divided while we're waiting on them. */}
+      {!permissionRequest && !askUserRequest && Array.from(tools.entries()).map(([id, tool]) => {
         const elapsed = Math.round((Date.now() - tool.startTime) / 1000);
         const elapsedStr = elapsed > 0 ? ` ${elapsed}s` : '';
         return (
@@ -1190,7 +1580,7 @@ function RunCodeApp({
       {/* Thinking — compact by default (just spinner). Preview shown only when
           FRANKLIN_SHOW_THINKING=1 is set, so terminal stays clean for reasoning
           models like o3 that emit long chains of thought. */}
-      {thinking && (
+      {thinking && !permissionRequest && !askUserRequest && (
         <Box flexDirection="column" marginLeft={2}>
           <Text color="magenta">
             <Spinner type="dots" />{' '}
@@ -1211,7 +1601,7 @@ function RunCodeApp({
       )}
 
       {/* Waiting — model name and step counter */}
-      {waiting && !thinking && tools.size === 0 && (
+      {waiting && !thinking && tools.size === 0 && !permissionRequest && !askUserRequest && (
         <Box marginLeft={2}>
           <Text color="yellow">
             <Spinner type="dots" />{' '}
@@ -1224,11 +1614,24 @@ function RunCodeApp({
           Closed lines render with full markdown; the trailing partial line
           renders as plain text until its newline arrives, so mid-stream
           `**bold` or `[link](` half-pairs can't emit unbalanced ANSI that
-          Ink's wrap would then mangle. */}
-      {streamText && (() => {
-        const { rendered, partial } = renderMarkdownStreaming(streamText);
+          Ink's wrap would then mangle.
+
+          Capped to the last ~(rows - 12) lines: the full text is committed to
+          Static at turn end (committedResponses), so scrollback retains every
+          word. Capping here is purely to keep Ink's dynamic region under the
+          terminal height — when it exceeds rows, Ink fires clearTerminal
+          which wipes the user's entire scrollback buffer. */}
+      {streamText && !permissionRequest && !askUserRequest && (() => {
+        const maxLines = Math.max(8, termRows - 12);
+        const lines = streamText.split('\n');
+        const truncated = lines.length > maxLines;
+        const visible = truncated ? lines.slice(-maxLines).join('\n') : streamText;
+        const { rendered, partial } = renderMarkdownStreaming(visible);
         return (
-          <Box marginTop={0} marginBottom={0} marginLeft={2}>
+          <Box flexDirection="column" marginTop={0} marginBottom={0} marginLeft={2}>
+            {truncated && (
+              <Text dimColor>↑ {lines.length - maxLines} earlier line{lines.length - maxLines === 1 ? '' : 's'} — full response will appear in scrollback when this turn finishes</Text>
+            )}
             <Text wrap="wrap">
               {rendered}
               {rendered && partial ? '\n' : ''}
@@ -1239,8 +1642,9 @@ function RunCodeApp({
       })()}
 
       {/* Preview of latest response — last 5 lines shown in dynamic area for quick reference.
-          Full text is already in Static/scrollback above. Cleared when next turn starts. */}
-      {responsePreview && !streamText && (
+          Full text is already in Static/scrollback above. Cleared when next turn starts.
+          Hidden while a dialog is active so the dialog stays at the bottom. */}
+      {responsePreview && !streamText && !permissionRequest && !askUserRequest && (
         <Box flexDirection="column" marginBottom={0} marginLeft={2}>
           <Text wrap="wrap">{renderMarkdown(responsePreview)}</Text>
         </Box>
@@ -1249,47 +1653,84 @@ function RunCodeApp({
       {/* Model picker — rendered inline below scrollback. Categories shown as
           dim headers, flat cursor (pickerIdx) navigates all non-header rows.
           Hides the InputBox while active but leaves all Static scrollback
-          above it mounted, so conversation history visually survives a switch. */}
+          above it mounted, so conversation history visually survives a switch.
+
+          Viewport: at most ~(rows - 12) model rows are shown at once, windowed
+          around pickerIdx. Beyond that we render "↑ N more" / "↓ N more"
+          markers. Same reason as streamText — Ink wipes scrollback the moment
+          dynamic output exceeds the terminal height. */}
       {inPicker && (() => {
-        let flatIdx = 0;
+        const totalModels = PICKER_MODELS_FLAT.length;
+        const maxModels = Math.max(6, termRows - 12);
+        let start = Math.max(0, pickerIdx - Math.floor(maxModels / 2));
+        let end = Math.min(totalModels, start + maxModels);
+        // Expand window backward if we hit the bottom of the list, so we
+        // always fill `maxModels` rows when the list is long enough.
+        if (end - start < maxModels) start = Math.max(0, end - maxModels);
+        const hiddenAbove = start;
+        const hiddenBelow = totalModels - end;
+        // Pre-compute each category's base offset into the flat model list so
+        // we can map (cat, localIdx) → globalIdx in one pass without re-walking.
+        let cursor = 0;
+        const catBases = PICKER_CATEGORIES.map((cat) => {
+          const base = cursor;
+          cursor += cat.models.length;
+          return base;
+        });
         return (
           <Box flexDirection="column" marginTop={1}>
             <Box marginLeft={2}>
               <Text bold>Select a model </Text>
               <Text dimColor>(↑↓ navigate, Enter select, Esc cancel)</Text>
             </Box>
-            {PICKER_CATEGORIES.map((cat) => (
-              <Box key={cat.category} flexDirection="column" marginTop={1}>
-                <Box marginLeft={2}>
-                  <Text dimColor>── {cat.category} ──</Text>
-                </Box>
-                {cat.models.map((m) => {
-                  const myIdx = flatIdx++;
-                  const isSelected = myIdx === pickerIdx;
-                  const isCurrent = m.id === currentModel;
-                  const isHighlight = m.highlight === true;
-                  return (
-                    <Box key={m.id} marginLeft={2}>
-                      <Text
-                        inverse={isSelected}
-                        color={isSelected ? 'cyan' : isHighlight ? 'yellow' : undefined}
-                        bold={isSelected || isHighlight}
-                      >
-                        {' '}{m.label.padEnd(26)}{' '}
-                      </Text>
-                      <Text dimColor> {m.shortcut.padEnd(14)}</Text>
-                      <Text
-                        color={m.price === 'FREE' ? 'green' : isHighlight ? 'yellow' : undefined}
-                        dimColor={!isHighlight && m.price !== 'FREE'}
-                      >
-                        {m.price}
-                      </Text>
-                      {isCurrent && <Text color="green"> ←</Text>}
-                    </Box>
-                  );
-                })}
+            {hiddenAbove > 0 && (
+              <Box marginLeft={2} marginTop={1}>
+                <Text dimColor>↑ {hiddenAbove} more above</Text>
               </Box>
-            ))}
+            )}
+            {PICKER_CATEGORIES.map((cat, catIdx) => {
+              const base = catBases[catIdx];
+              const visible = cat.models
+                .map((m, localIdx) => ({ m, globalIdx: base + localIdx }))
+                .filter(({ globalIdx }) => globalIdx >= start && globalIdx < end);
+              if (visible.length === 0) return null;
+              return (
+                <Box key={cat.category} flexDirection="column" marginTop={1}>
+                  <Box marginLeft={2}>
+                    <Text dimColor>── {cat.category} ──</Text>
+                  </Box>
+                  {visible.map(({ m, globalIdx }) => {
+                    const isSelected = globalIdx === pickerIdx;
+                    const isCurrent = m.id === currentModel;
+                    const isHighlight = m.highlight === true;
+                    return (
+                      <Box key={m.id} marginLeft={2}>
+                        <Text
+                          inverse={isSelected}
+                          color={isSelected ? 'cyan' : isHighlight ? 'yellow' : undefined}
+                          bold={isSelected || isHighlight}
+                        >
+                          {' '}{m.label.padEnd(26)}{' '}
+                        </Text>
+                        <Text dimColor> {m.shortcut.padEnd(14)}</Text>
+                        <Text
+                          color={m.price === 'FREE' ? 'green' : isHighlight ? 'yellow' : undefined}
+                          dimColor={!isHighlight && m.price !== 'FREE'}
+                        >
+                          {m.price}
+                        </Text>
+                        {isCurrent && <Text color="green"> ←</Text>}
+                      </Box>
+                    );
+                  })}
+                </Box>
+              );
+            })}
+            {hiddenBelow > 0 && (
+              <Box marginLeft={2} marginTop={1}>
+                <Text dimColor>↓ {hiddenBelow} more below</Text>
+              </Box>
+            )}
             <Box marginTop={1} marginLeft={2}>
               <Text dimColor>Your conversation stays above — picking a model keeps all history intact.</Text>
             </Box>
@@ -1297,13 +1738,15 @@ function RunCodeApp({
         );
       })()}
 
-      {/* Full-width input box — blocked when permission or askUser dialog is active
-          or while the model picker is open. */}
-      {!inPicker && (
+      {/* Full-width input box — hidden while a dialog is active (dialog has its own
+          input row) or while the model picker is open. Hiding it when the dialog
+          shows lets the dialog sit at the visual bottom instead of stranding an
+          empty input below it. */}
+      {!inPicker && !permissionRequest && !askUserRequest && (
         <InputBox
-          input={(permissionRequest || askUserRequest) ? '' : input}
-          setInput={(permissionRequest || askUserRequest) ? () => {} : setInput}
-          onSubmit={(permissionRequest || askUserRequest) ? () => {} : handleSubmit}
+          input={input}
+          setInput={setInput}
+          onSubmit={handleSubmit}
           model={currentModel}
           balance={liveBalance}
           chain={chain}
@@ -1313,6 +1756,8 @@ function RunCodeApp({
           queuedCount={queuedInputs.length}
           focused={!permissionRequest && !askUserRequest}
           busy={!askUserRequest && (waiting || thinking || tools.size > 0)}
+          awaitingApproval={!!permissionRequest}
+          awaitingAnswer={!!askUserRequest}
           contextPct={contextPct}
           vimMode={vimEnabled}
           onVimModeChange={setCurrentVimMode}
@@ -1342,6 +1787,7 @@ export function launchInkUI(opts: {
   version: string;
   walletAddress?: string;
   walletBalance?: string;
+  initialTranscript?: Array<{ role: 'user' | 'assistant'; text: string }>;
   chain?: string;
   showPicker?: boolean;
   onModelChange?: (model: string, reason?: 'user' | 'system') => void;
@@ -1351,13 +1797,26 @@ export function launchInkUI(opts: {
   let exiting = false;
   let abortCallback: (() => void) | null = null;
   const restoreTerminalAutoWrap = disableTerminalAutoWrap();
+  const restoreBracketedPaste = enableBracketedPaste();
+  let cleanedUp = false;
+  let instance: ReturnType<typeof render> | undefined;
 
-  const instance = render(
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    mouse.disable();
+    restoreBracketedPaste?.();
+    restoreTerminalAutoWrap?.();
+    instance?.unmount();
+  };
+
+  instance = render(
     <RunCodeApp
       initialModel={opts.model}
       workDir={opts.workDir}
       walletAddress={opts.walletAddress || 'not set — run: franklin setup'}
       walletBalance={opts.walletBalance || 'unknown'}
+      initialTranscript={opts.initialTranscript}
       chain={opts.chain || 'base'}
       startWithPicker={opts.showPicker}
       onSubmit={(value) => {
@@ -1374,8 +1833,10 @@ export function launchInkUI(opts: {
       onExit={() => {
         exiting = true;
         if (resolveInput) { resolveInput(null); resolveInput = null; }
+        cleanup();
       }}
-    />
+    />,
+    { exitOnCtrlC: false }
   );
 
   return {
@@ -1416,11 +1877,7 @@ export function launchInkUI(opts: {
       return new Promise<string | null>((resolve) => { resolveInput = resolve; });
     },
     onAbort: (cb: () => void) => { abortCallback = cb; },
-    cleanup: () => {
-      mouse.disable();
-      instance.unmount();
-      restoreTerminalAutoWrap?.();
-    },
+    cleanup,
     requestPermission: (toolName: string, description: string) => {
       const ui = (globalThis as Record<string, unknown>).__franklin_ui as {
         requestPermission: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;

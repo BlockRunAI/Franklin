@@ -41,6 +41,15 @@ function globKey(invocation: CapabilityInvocation): string {
   return `${pattern}::${path}`;
 }
 
+// Detect a blocking poll-loop in a foreground bash command:
+// any `for|while|until` loop containing a `sleep` of ≥1 second. This is
+// the canonical antipattern that makes the agent feel frozen — see
+// beforeBash() for the full rationale and the recommended alternatives.
+// Use [\s\S] for cross-line match so we catch multi-line scripts; require
+// `sleep [1-9]` so trivial `sleep 0` / `sleep 0.1` micro-pauses don't trip.
+export const BLOCKING_POLL_LOOP_RE: RegExp =
+  /\b(?:for|while|until)\b[\s\S]*?\bsleep\s+[1-9]/;
+
 const WRITE_KEYWORDS: RegExp = (() => {
   const words = [
     'rm', 'mv', 'cp', 'mkdir', 'touch', 'chmod', 'chown', 'ln',
@@ -170,6 +179,32 @@ function fetchKey(url: string, maxLength?: number): string {
   return `${url}::${maxLength ?? 12288}`;
 }
 
+// Circuit-breaker classifier for the per-tool kill switch.
+//
+// `isError: true` covers everything from "tool itself broke" (network, parse,
+// timeout) to "agent fed me a bad input" (404 on a guessed URL, malformed URL).
+// Only the first category should count toward disabling the tool — otherwise
+// three hallucinated URLs in one prompt permanently kill WebFetch for the
+// session, even though the tool worked correctly each time.
+export function isToolClassFailure(name: string, result: CapabilityResult): boolean {
+  if (!result.isError) return false;
+  const out = String(result.output ?? '');
+
+  if (name === 'WebFetch') {
+    // HTTP 4xx/5xx — the URL was real-but-wrong or the upstream had issues.
+    // Either way, the tool worked; the agent should pick a different URL.
+    if (/^HTTP \d{3}\b/.test(out)) return false;
+    // Bad URL syntax / unsupported protocol / missing arg — agent input error.
+    if (out.startsWith('Error: invalid URL')) return false;
+    if (out.startsWith('Error: only http')) return false;
+    if (out.startsWith('Error: url is required')) return false;
+    // User interrupt — not a tool failure.
+    if (out.startsWith('Error: request aborted')) return false;
+  }
+
+  return true;
+}
+
 export class SessionToolGuard {
   private turn = 0;
   private webSearchesThisTurn = 0;
@@ -200,14 +235,12 @@ export class SessionToolGuard {
     scope: ExecutionScope
   ): Promise<CapabilityResult | null> {
     // Hard-block tools that have failed too many times this session.
-    // Media-generation tools are exempt: their failures are typically
-    // transient (gateway hiccup, rate limit, prompt rejection) and the
-    // user often wants to retry the exact same call. Auto-disabling
-    // ImageGen / VideoGen mid-session forces a full session reset to
-    // recover, which is much worse than a noisy retry loop.
-    // Modal lifecycle tools especially MUST never auto-disable: orphan
-    // sandboxes keep billing GPU time, and ModalTerminate is the only
-    // way to recover from agent-side. Same logic for media gen.
+    // Modal lifecycle tools are exempt: orphan sandboxes keep billing
+    // GPU time, and ModalTerminate is the only way to recover from
+    // agent-side. Auto-disabling it after 3 transient errors would
+    // strand a $0.40/hr H100 until the session ends. Same logic for
+    // media-gen tools: failures are usually transient (gateway hiccup,
+    // prompt rejection) and the user often wants to retry.
     const FAILURE_EXEMPT = new Set([
       'ImageGen',
       'VideoGen',
@@ -247,6 +280,33 @@ export class SessionToolGuard {
   private beforeBash(invocation: CapabilityInvocation): CapabilityResult | null {
     const cmd = String(invocation.input.command ?? '').trim();
     if (!cmd) return null;
+
+    // Reject blocking poll-loops in foreground bash. A single bash call with
+    // `sleep N` inside a for/while/until loop blocks the agent for the full
+    // duration — the UI repeats the same status line and the user almost
+    // always cancels before it finishes. The right pattern is `Detach`
+    // (persistent background task) or `run_in_background: true`.
+    const runInBackground = Boolean(invocation.input.run_in_background);
+    if (!runInBackground && BLOCKING_POLL_LOOP_RE.test(cmd)) {
+      return {
+        output:
+          'Blocked: this Bash command runs `sleep` inside a for/while/until loop in the ' +
+          'foreground. That blocks the agent for the full poll duration and looks frozen ' +
+          'to the user — they almost always cancel before it finishes.\n\n' +
+          'Use the `Detach` tool for polling-style work (waiting for an Apify run, video ' +
+          'generation, deploy, build, or any external async job to complete). It returns ' +
+          'a runId immediately and the polling continues persistently. Check status later ' +
+          'with `franklin task wait <runId>` or `franklin task tail <runId>` via a ' +
+          'separate Bash call.\n\n' +
+          'If you need the result inline, break the loop into discrete single-poll Bash ' +
+          'calls — poll once, reason about the status, then decide whether to poll again. ' +
+          'Or, if the upstream API has a sync variant (e.g. Apify\'s ' +
+          '`run-sync-get-dataset-items`), use that with a `timeout` of 300000–600000 ms ' +
+          'instead of orchestrating async + poll yourself.',
+        isError: true,
+      };
+    }
+
     // Only dedup deterministic read-only commands. Skip anything writing/network/long-running.
     if (WRITE_KEYWORDS.test(cmd)) return null;
     // Normalize whitespace so "ls   -la" and "ls -la" share a cache entry.
@@ -294,12 +354,16 @@ export class SessionToolGuard {
   }
 
   afterExecute(invocation: CapabilityInvocation, result: CapabilityResult): void {
-    // Track per-tool error counts across the session
-    if (result.isError) {
+    // Per-tool circuit breaker: count consecutive tool-class failures, reset on
+    // any success. Agent-input errors (e.g. WebFetch 404 on a guessed URL) are
+    // not tool failures and must not trip the breaker.
+    if (isToolClassFailure(invocation.name, result)) {
       this.toolErrorCounts.set(
         invocation.name,
         (this.toolErrorCounts.get(invocation.name) ?? 0) + 1,
       );
+    } else if (!result.isError) {
+      this.toolErrorCounts.delete(invocation.name);
     }
 
     switch (invocation.name) {

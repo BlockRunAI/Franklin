@@ -140,7 +140,7 @@ export interface StreamCapabilityDone {
 
 export interface StreamTurnDone {
   kind: 'turn_done';
-  reason: 'completed' | 'max_turns' | 'aborted' | 'error' | 'budget' | 'no_progress';
+  reason: 'completed' | 'max_turns' | 'aborted' | 'error' | 'budget' | 'no_progress' | 'cap_exceeded';
   error?: string;
 }
 
@@ -199,6 +199,8 @@ export interface AgentConfig {
   baseModel?: string;
   /** Resume an existing session by ID — loads prior history and keeps appending to the same JSONL */
   resumeSessionId?: string;
+  /** Notify callers of the concrete session ID once created/resolved. */
+  onSessionStart?: (sessionId: string) => void;
   /**
    * Optional channel tag persisted to SessionMeta. Lets non-CLI drivers
    * (Telegram bot, Discord bot, future ingresses) find their own sessions

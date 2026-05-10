@@ -58,6 +58,9 @@ export function parseSkill(content: string): ParseResult {
   if (typeof fields['cost-receipt'] === 'boolean') {
     skill.costReceipt = fields['cost-receipt'];
   }
+  if (Array.isArray(fields.triggers)) {
+    skill.triggers = fields.triggers.filter((t): t is string => typeof t === 'string');
+  }
 
   return { skill, warnings };
 }
@@ -81,20 +84,26 @@ function extractFrontmatter(content: string): FrontmatterMatch | null {
 }
 
 type ScalarValue = string | number | boolean;
+type FrontmatterValue = ScalarValue | string[];
 
 interface FrontmatterParse {
-  fields: Record<string, ScalarValue>;
+  fields: Record<string, FrontmatterValue>;
   warnings: string[];
 }
 
+const LIST_ITEM_RE = /^\s+-\s+(.+)$/;
+
 function parseFrontmatter(text: string): FrontmatterParse | { error: string } {
-  const fields: Record<string, ScalarValue> = {};
+  const fields: Record<string, FrontmatterValue> = {};
   const warnings: string[] = [];
   const lines = text.split('\n');
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
+
+    // YAML list continuation: skip — handled by the key-line that opened it.
+    if (LIST_ITEM_RE.test(line)) continue;
 
     const colon = line.indexOf(':');
     if (colon < 0) {
@@ -105,6 +114,30 @@ function parseFrontmatter(text: string): FrontmatterParse | { error: string } {
     const rawValue = line.slice(colon + 1).trim();
     if (key.length === 0) {
       return { error: `frontmatter line ${i + 1} has empty key` };
+    }
+
+    // Empty value followed by indented `- item` lines = YAML list.
+    if (rawValue === '') {
+      const items: string[] = [];
+      let j = i + 1;
+      while (j < lines.length) {
+        const next = lines[j];
+        if (next.trim() === '') {
+          j++;
+          continue;
+        }
+        const m = LIST_ITEM_RE.exec(next);
+        if (!m) break;
+        items.push(parseScalarString(m[1].trim()));
+        j++;
+      }
+      if (items.length > 0) {
+        fields[key] = items;
+        continue;
+      }
+      // No list followed; treat as empty string.
+      fields[key] = '';
+      continue;
     }
 
     fields[key] = parseScalar(rawValue);
@@ -177,8 +210,11 @@ function parseScalar(raw: string): ScalarValue {
   if (raw === 'false') return false;
   if (/^-?\d+$/.test(raw)) return Number.parseInt(raw, 10);
   if (/^-?\d+\.\d+$/.test(raw)) return Number.parseFloat(raw);
+  return parseScalarString(raw);
+}
 
-  // Strip surrounding quotes if present.
+/** Strip surrounding quotes from a string-shaped value, leaving everything else as-is. */
+function parseScalarString(raw: string): string {
   if (
     (raw.startsWith('"') && raw.endsWith('"') && raw.length >= 2) ||
     (raw.startsWith("'") && raw.endsWith("'") && raw.length >= 2)

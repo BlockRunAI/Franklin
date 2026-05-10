@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/franklin",
-  "version": "3.11.0",
+  "version": "3.15.90",
   "description": "Franklin — The AI agent with a wallet. Spends USDC autonomously to get real work done. Pay per action, no subscriptions.",
   "type": "module",
   "exports": {
@@ -84,6 +84,7 @@
     "playwright-core": "^1.49.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.4",
+    "sharp": "^0.34.5",
     "viem": "^2.48.1"
   },
   "devDependencies": {

@@ -27,6 +27,7 @@ import { initCommand } from './commands/init.js';
 import { uninitCommand } from './commands/uninit.js';
 import { proxyCommand } from './commands/proxy.js';
 import { buildTaskCommand } from './commands/task.js';
+import { buildContentCommand } from './commands/content.js';
 
 import { VERSION as version } from './config.js';
 
@@ -275,6 +276,11 @@ program
 // `franklin task <subcmd>` — human-facing CLI for detached background tasks.
 // Defined in src/commands/task.ts; subcommands: list, tail, cancel, wait.
 program.addCommand(buildTaskCommand());
+
+// `franklin content <subcmd>` — read access to the Content library
+// (~/.blockrun/content.json) so users + agent shell-outs can inspect
+// spend without scripting against the JSON file. Subcommands: list, show.
+program.addCommand(buildContentCommand());
 
 // Hidden internal subcommand — invoked by startDetachedTask via spawn(detached).
 // The underscore prefix signals "not for humans"; we still register it via

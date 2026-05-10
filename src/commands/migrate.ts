@@ -35,19 +35,42 @@ function detectSources(): MigrationSource[] {
   const home = os.homedir();
 
   // ── `~/.claude/` config dir (used by several agent CLIs) ──
+  // Real Claude Code (2026 layout) writes:
+  //   ~/.claude.json                       (top-level, mcpServers + global state)
+  //   ~/.claude/CLAUDE.md                  (global instructions)
+  //   ~/.claude/projects/<slug>/<uuid>.jsonl  (one file per session)
+  //   ~/.claude/projects/<slug>/memory/*.md   (project memories)
+  // Older agents and pre-3.x Claude Code variants wrote:
+  //   ~/.claude/mcp.json
+  //   ~/.claude/history.jsonl
+  // We support both — prefer the new layout but fall back so users with
+  // legacy state still get their data imported.
   const claudeDir = path.join(home, '.claude');
-  if (fs.existsSync(claudeDir)) {
+  const claudeJson = path.join(home, '.claude.json');
+  const hasClaudeData = fs.existsSync(claudeDir) || fs.existsSync(claudeJson);
+  if (hasClaudeData) {
     const items: MigrationItem[] = [];
 
-    // MCP servers
-    const claudeMcp = path.join(claudeDir, 'mcp.json');
-    if (fs.existsSync(claudeMcp)) {
+    // MCP servers — prefer top-level ~/.claude.json (new layout); fall back
+    // to legacy ~/.claude/mcp.json. Only add one item; whichever we find
+    // first is what migrateMcp() will read.
+    const newMcpHasServers = fileHasMcpServers(claudeJson);
+    const legacyMcp = path.join(claudeDir, 'mcp.json');
+    if (newMcpHasServers) {
       items.push({
-        label: 'MCP servers',
-        source: claudeMcp,
+        label: 'MCP servers (~/.claude.json)',
+        source: claudeJson,
         target: path.join(BLOCKRUN_DIR, 'mcp.json'),
-        size: fileSize(claudeMcp),
-        transform: () => migrateMcp(claudeMcp),
+        size: fileSize(claudeJson),
+        transform: () => migrateMcp(claudeJson),
+      });
+    } else if (fs.existsSync(legacyMcp)) {
+      items.push({
+        label: 'MCP servers (legacy ~/.claude/mcp.json)',
+        source: legacyMcp,
+        target: path.join(BLOCKRUN_DIR, 'mcp.json'),
+        size: fileSize(legacyMcp),
+        transform: () => migrateMcp(legacyMcp),
       });
     }
 
@@ -63,21 +86,33 @@ function detectSources(): MigrationSource[] {
       });
     }
 
-    // Session history
-    const claudeHistory = path.join(claudeDir, 'history.jsonl');
-    if (fs.existsSync(claudeHistory)) {
-      const lines = countLines(claudeHistory);
+    // Session history — prefer per-project session JSONLs (new layout); fall
+    // back to legacy ~/.claude/history.jsonl. The new layout preserves session
+    // boundaries (one file = one conversation) instead of collapsing every
+    // message into a daily blob.
+    const projectsDir = path.join(claudeDir, 'projects');
+    const sessionFiles = fs.existsSync(projectsDir) ? findClaudeCodeSessionFiles(projectsDir) : [];
+    const legacyHistory = path.join(claudeDir, 'history.jsonl');
+    if (sessionFiles.length > 0) {
       items.push({
-        label: `Session history (${lines.toLocaleString()} messages)`,
-        source: claudeHistory,
+        label: `Session history (${sessionFiles.length.toLocaleString()} sessions)`,
+        source: projectsDir,
         target: path.join(BLOCKRUN_DIR, 'sessions'),
-        size: fileSize(claudeHistory),
-        transform: () => migrateSessions(claudeHistory),
+        size: `${sessionFiles.length} files`,
+        transform: () => migrateClaudeCodeSessions(sessionFiles),
+      });
+    } else if (fs.existsSync(legacyHistory)) {
+      const lines = countLines(legacyHistory);
+      items.push({
+        label: `Session history (legacy, ${lines.toLocaleString()} messages)`,
+        source: legacyHistory,
+        target: path.join(BLOCKRUN_DIR, 'sessions'),
+        size: fileSize(legacyHistory),
+        transform: () => migrateSessions(legacyHistory),
       });
     }
 
     // Project memory files
-    const projectsDir = path.join(claudeDir, 'projects');
     if (fs.existsSync(projectsDir)) {
       const memoryFiles = findMemoryFiles(projectsDir);
       if (memoryFiles.length > 0) {
@@ -125,7 +160,10 @@ function migrateMcp(source: string): void {
   const target = path.join(BLOCKRUN_DIR, 'mcp.json');
   const raw = JSON.parse(fs.readFileSync(source, 'utf-8'));
 
-  // Source format:  { mcpServers: { name: { command, args, env } } }
+  // Source format (Claude Code ~/.claude.json or legacy mcp.json):
+  //   { mcpServers: { name: { type?, transport?, command, args, env? } } }
+  //   ~/.claude.json wraps mcpServers among hundreds of unrelated state keys —
+  //   we only read the one field.
   // Franklin format: { mcpServers: { name: { transport, command, args, label } } }
   const servers: Record<string, unknown> = {};
   const skipped: string[] = [];
@@ -152,7 +190,8 @@ function migrateMcp(source: string): void {
         continue;
       }
       servers[name] = {
-        transport: (config.transport as string) || 'stdio',
+        // Claude Code uses `type`; older agents used `transport`. Accept both.
+        transport: (config.transport as string) || (config.type as string) || 'stdio',
         command: config.command,
         args: config.args || [],
         label: name,
@@ -234,6 +273,122 @@ function migrateInstructions(source: string): void {
   }
 }
 
+/**
+ * Import per-session JSONL files written by current Claude Code (2026 layout).
+ * One source file = one Franklin session — we preserve session boundaries
+ * instead of mashing everything into a daily blob like the legacy importer.
+ *
+ * Source line shape:
+ *   { type: "user"|"assistant"|"attachment"|"permission-mode"|...,
+ *     message?: { role, content }, timestamp, sessionId, cwd }
+ * Target Dialogue line shape: { role, content }
+ */
+function migrateClaudeCodeSessions(sessionFiles: string[]): void {
+  const sessionsDir = path.join(BLOCKRUN_DIR, 'sessions');
+  fs.mkdirSync(sessionsDir, { recursive: true });
+
+  let imported = 0;
+  let skipped = 0;
+  let totalTurns = 0;
+
+  for (const file of sessionFiles) {
+    const sessionId = path.basename(file, '.jsonl');
+    const targetJsonl = path.join(sessionsDir, `${sessionId}.jsonl`);
+    const targetMeta = path.join(sessionsDir, `${sessionId}.meta.json`);
+
+    // Don't re-import on a second run — the user might have already
+    // resumed and added turns to the imported session.
+    if (fs.existsSync(targetMeta)) { skipped++; continue; }
+
+    let raw: string;
+    try { raw = fs.readFileSync(file, 'utf-8'); } catch { continue; }
+
+    const dialogues: string[] = [];
+    let firstTs = 0;
+    let lastTs = 0;
+    let workDir = os.homedir();
+    let model = 'claude-code-import';
+
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let entry: Record<string, unknown>;
+      try { entry = JSON.parse(trimmed); } catch { continue; }
+
+      // Track timestamps + cwd from any line that has them.
+      const ts = entry.timestamp;
+      if (typeof ts === 'string') {
+        const t = Date.parse(ts);
+        if (Number.isFinite(t)) {
+          if (!firstTs || t < firstTs) firstTs = t;
+          if (t > lastTs) lastTs = t;
+        }
+      }
+      if (typeof entry.cwd === 'string' && entry.cwd) workDir = entry.cwd;
+
+      // Only user/assistant turns become Franklin Dialogue lines. Everything
+      // else (attachments, permission-mode, summary, system) is metadata
+      // we don't replay.
+      if (entry.type !== 'user' && entry.type !== 'assistant') continue;
+      const msg = entry.message as { role?: string; content?: unknown; model?: string } | undefined;
+      if (!msg || (msg.role !== 'user' && msg.role !== 'assistant')) continue;
+      if (typeof msg.model === 'string') model = msg.model;
+
+      dialogues.push(JSON.stringify({ role: msg.role, content: msg.content }));
+    }
+
+    if (dialogues.length === 0) { skipped++; continue; }
+
+    fs.writeFileSync(targetJsonl, dialogues.join('\n') + '\n');
+    fs.writeFileSync(targetMeta, JSON.stringify({
+      id: sessionId,
+      model,
+      workDir,
+      createdAt: firstTs || Date.now(),
+      updatedAt: lastTs || Date.now(),
+      turnCount: Math.floor(dialogues.length / 2),
+      messageCount: dialogues.length,
+      imported: true,
+    }, null, 2));
+    imported++;
+    totalTurns += dialogues.length;
+  }
+
+  const skipNote = skipped > 0 ? chalk.dim(` (${skipped} skipped)`) : '';
+  console.log(chalk.green(`    ✓ ${imported} session(s) imported, ${totalTurns.toLocaleString()} turns${skipNote}`));
+}
+
+/** Walk ~/.claude/projects/<slug>/*.jsonl — one file per Claude Code session. */
+function findClaudeCodeSessionFiles(projectsDir: string): string[] {
+  const out: string[] = [];
+  let projects: string[] = [];
+  try { projects = fs.readdirSync(projectsDir); } catch { return out; }
+  for (const project of projects) {
+    const projectPath = path.join(projectsDir, project);
+    let entries: string[] = [];
+    try {
+      const stat = fs.statSync(projectPath);
+      if (!stat.isDirectory()) continue;
+      entries = fs.readdirSync(projectPath);
+    } catch { continue; }
+    for (const entry of entries) {
+      if (!entry.endsWith('.jsonl')) continue;
+      out.push(path.join(projectPath, entry));
+    }
+  }
+  return out;
+}
+
+/** True iff the file is JSON with a non-empty mcpServers object. */
+function fileHasMcpServers(p: string): boolean {
+  try {
+    const raw = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    return !!raw && typeof raw === 'object' &&
+      !!raw.mcpServers && typeof raw.mcpServers === 'object' &&
+      Object.keys(raw.mcpServers).length > 0;
+  } catch { return false; }
+}
+
 function migrateSessions(source: string): void {
   const sessionsDir = path.join(BLOCKRUN_DIR, 'sessions');
   fs.mkdirSync(sessionsDir, { recursive: true });
@@ -271,7 +426,9 @@ function migrateSessions(source: string): void {
 
     fs.writeFileSync(sessionFile, msgs.join('\n') + '\n');
 
-    // Create metadata
+    // Create metadata. `imported: true` shields these from pruneOldSessions —
+    // a fresh import of 200+ historical sessions would otherwise be deleted
+    // on the next `franklin` launch when the agent loop prunes to 20.
     const meta = {
       id: sessionId,
       model: 'imported',
@@ -280,6 +437,7 @@ function migrateSessions(source: string): void {
       updatedAt: Date.now(),
       turnCount: Math.floor(msgs.length / 2),
       messageCount: msgs.length,
+      imported: true,
     };
     fs.writeFileSync(
       path.join(sessionsDir, `${sessionId}.meta.json`),
@@ -383,7 +541,7 @@ export async function migrateCommand(): Promise<void> {
 
   if (sources.length === 0) {
     console.log(chalk.dim('  No other AI tools detected. Nothing to migrate.\n'));
-    console.log(chalk.dim('  Looked for: ~/.claude/, VS Code agent extension, editor agent configs\n'));
+    console.log(chalk.dim('  Looked for: ~/.claude.json, ~/.claude/, VS Code agent extension, editor agent configs\n'));
     return;
   }
 

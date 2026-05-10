@@ -16,6 +16,7 @@ import type { PermissionManager } from './permissions.js';
 import { recordFailure } from '../stats/failures.js';
 import type { SessionToolGuard } from './tool-guard.js';
 import { BLOCKRUN_DIR } from '../config.js';
+import { logger } from '../logger.js';
 
 interface PendingTool {
   invocation: CapabilityInvocation;
@@ -246,8 +247,23 @@ export class StreamingExecutor {
         }
       }
 
+      // Track elapsed for slow-tool forensics. Verified 2026-05-04
+      // from a real session: a 337.6s Bash error left no trace in
+      // franklin-debug.log — the user could see the ✗ in the UI but
+      // had no post-hoc way to ask "which Bash took 5+ minutes
+      // yesterday and what did it run". 30s threshold is conservative
+      // (Read/Glob/Grep finish in <1s; only network or shell work
+      // crosses).
+      const execStart = Date.now();
       let result = await handler.execute(invocation.input, progressScope);
       this.guard?.afterExecute(invocation, result);
+
+      const execElapsed = Date.now() - execStart;
+      if (execElapsed >= 30_000) {
+        const status = result.isError ? 'error' : 'ok';
+        const preview = this.inputPreview(invocation) || '';
+        logger.info(`[franklin] Slow tool: ${invocation.name} ${status} after ${(execElapsed / 1000).toFixed(1)}s${preview ? ` — ${preview.slice(0, 80)}` : ''}`);
+      }
 
       // Persist large results to disk with preview.
       // Instead of just truncating, save the full result to disk so it can be re-read later.
@@ -261,15 +277,22 @@ export class StreamingExecutor {
       return result;
     } catch (err) {
       this.guard?.cancelInvocation(invocation.id);
+      const errMsg = (err as Error).message;
       recordFailure({
         timestamp: Date.now(),
         model: '', // not available at tool level
         failureType: 'tool_error',
         toolName: invocation.name,
-        errorMessage: (err as Error).message,
+        errorMessage: errMsg,
       });
+      // Always log thrown tool errors. Pre-3.15.32 these went only to
+      // failures.jsonl (which the user rarely opens) and were absent
+      // from franklin-debug.log entirely. Now `franklin logs` shows
+      // them alongside everything else.
+      const preview = this.inputPreview(invocation) || '';
+      logger.warn(`[franklin] Tool error: ${invocation.name} threw "${errMsg.slice(0, 120)}"${preview ? ` — ${preview.slice(0, 80)}` : ''}`);
       return {
-        output: `Error executing ${invocation.name}: ${(err as Error).message}`,
+        output: `Error executing ${invocation.name}: ${errMsg}`,
         isError: true,
       };
       }
