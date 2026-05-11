@@ -1109,11 +1109,29 @@ export async function interactiveSession(
       // where input-replay tax has clearly started biting; the
       // fire-once-per-turn flag still bounds the worst case at one
       // extra summary call (~$0.005).
+      //
+      // 2026-05-11: added a high-cost early-exit. The original
+      // (>15 calls AND >$0.03) gate works well for cheap models
+      // where 15 calls clears the $0.03 floor trivially. For Opus-
+      // class models, cost climbs much faster than call count —
+      // verified in production from a real session:
+      // `Research-bloat compacted at 16 calls / $9.4552: ~3129
+      // tokens`. By the time the 16-call gate fired, $9.45 was
+      // already spent on input-replay. With an early-exit at
+      // $1.00 turn-cost, the compact would have fired around
+      // call 4-5, saving ~$8 on that turn. The cost cap is
+      // intentionally conservative — even extended-thinking Opus
+      // shouldn't legitimately need >$1 of context-replay before
+      // compacting (the compact itself runs on a cheaper model
+      // and costs <$0.05).
+      const TURN_COST_CAP_FOR_EARLY_COMPACT = 1.00;
       if (
         !bloatCompactedThisTurn &&
         compactFailures < 3 &&
-        turnToolCalls > 15 &&
-        turnCostUsd > 0.03
+        (
+          (turnToolCalls > 15 && turnCostUsd > 0.03) ||
+          turnCostUsd > TURN_COST_CAP_FOR_EARLY_COMPACT
+        )
       ) {
         try {
           const beforeTokens = estimateHistoryTokens(history);

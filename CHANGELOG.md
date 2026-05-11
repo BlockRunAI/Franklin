@@ -1,5 +1,66 @@
 # Changelog
 
+## 3.15.94 — Research-bloat compactor fires on $1 cost ceiling, not just 15-call gate
+
+Real-production fix found via `franklin doctor --anomaly` (3.15.92's
+new diagnostic). debug.log entry from a real session:
+
+```
+[2026-05-11T21:58:09] Research-bloat compacted at 16 calls / $9.4552: ~3129 tokens
+```
+
+Compare to two normal compactions earlier the same day:
+
+```
+[18:31] 17 calls / $0.2848 / ~9528 tokens
+[18:49] 16 calls / $0.0832 / ~5850 tokens
+```
+
+The 21:58 compact was **34× more expensive per call** for one-third the
+recovered context. By the time the 16-call gate fired, the turn had
+already burned $9.45 on input-replay.
+
+### Root cause
+
+The gate required BOTH `turnToolCalls > 15` AND `turnCostUsd > 0.03`.
+For cheap models (`deepseek-chat`, `glm-5.1`, `qwen-coder`), 16 calls
+clears the $0.03 floor trivially → compact fires at the right time. For
+Opus-class models (`anthropic/claude-opus-4.7` at $5/$25 per M tokens),
+cost climbs much faster than call count. By call #4 the per-call input
+might already be 50K+ tokens; call #16 = $9.45 of cumulative input
+replay before the 15-call gate releases the compact.
+
+### Fix
+
+Add a high-cost early-exit to the trigger:
+
+```ts
+if (
+  !bloatCompactedThisTurn &&
+  compactFailures < 3 &&
+  (
+    (turnToolCalls > 15 && turnCostUsd > 0.03) ||   // existing gate
+    turnCostUsd > 1.00                              // NEW early-exit
+  )
+)
+```
+
+`$1.00/turn` is intentionally conservative. Even extended-thinking Opus
+shouldn't need >$1 of context replay before compacting; the compact
+itself runs on a cheaper model and costs <$0.05. With this gate, the
+21:58 session would have triggered around call 4-5, saving ~$8 on that
+turn.
+
+### What didn't change
+
+- Call-count gate still applies for cheap-model bloat (16+ calls is
+  still the canonical "long research session" tripwire).
+- Fire-once-per-turn flag is unchanged.
+- The compactor itself (`forceCompact`) is unchanged — only the trigger
+  fires earlier.
+
+382/382 tests pass.
+
 ## 3.15.93 — `franklin doctor` forces a fresh version fetch (no more 24h-stale "all clear")
 
 Single-fix patch found while reviewing the user's own ledger.
