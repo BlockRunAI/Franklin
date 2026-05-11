@@ -262,7 +262,13 @@ function printHuman(checks: Check[]): void {
   console.log();
 }
 
-export async function doctorCommand(opts: { json?: boolean } = {}): Promise<void> {
+export async function doctorCommand(
+  opts: { json?: boolean; anomaly?: boolean } = {},
+): Promise<void> {
+  if (opts.anomaly) {
+    await anomalyReportCommand(opts);
+    return;
+  }
   const checks = await runChecks();
   if (opts.json) {
     const fails = checks.filter(c => c.status === 'fail').length;
@@ -272,4 +278,37 @@ export async function doctorCommand(opts: { json?: boolean } = {}): Promise<void
   printHuman(checks);
   const fails = checks.filter(c => c.status === 'fail').length;
   process.exit(fails > 0 ? 1 : 0);
+}
+
+/**
+ * `franklin doctor --anomaly` — print failure spikes vs 30-day baseline.
+ * Exits non-zero when at least one anomaly is surfaced, so it can be
+ * wired into a cron / CI without parsing stdout.
+ */
+async function anomalyReportCommand(opts: { json?: boolean }): Promise<void> {
+  const { getToolAnomalies } = await import('../stats/failures.js');
+  const reports = getToolAnomalies();
+  if (opts.json) {
+    process.stdout.write(JSON.stringify({ anomalies: reports }, null, 2) + '\n');
+    process.exit(reports.length > 0 ? 1 : 0);
+  }
+  console.log(chalk.bold('\n  franklin doctor --anomaly'));
+  console.log(chalk.dim('  Looking for (tool, category) failure spikes in the last 24h vs the 30-day baseline.\n'));
+  if (reports.length === 0) {
+    console.log(chalk.green('  No anomalies. Tool failure rates match the 30-day baseline.\n'));
+    process.exit(0);
+  }
+  for (const a of reports) {
+    const newType = !Number.isFinite(a.spikeRatio);
+    const header = `  ${chalk.red('•')} ${chalk.bold(a.toolName)} / ${chalk.yellow(a.category)}`;
+    const ratio = newType
+      ? chalk.red('NEW failure type (no baseline)')
+      : chalk.red(`${a.spikeRatio.toFixed(1)}× baseline`);
+    const counts = chalk.dim(`recent=${a.recentCount}, baseline=${a.baselineCount}`);
+    console.log(`${header}  ${ratio}  ${counts}`);
+    const trimmed = a.sampleMessage.length > 140 ? a.sampleMessage.slice(0, 140) + '…' : a.sampleMessage;
+    console.log(chalk.dim(`    sample: ${trimmed}`));
+  }
+  console.log(chalk.dim(`\n  ${reports.length} anomalies. Investigate before they snowball.\n`));
+  process.exit(1);
 }

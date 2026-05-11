@@ -1,5 +1,86 @@
 # Changelog
 
+## 3.15.92 — Tool failure taxonomy + per-tool anomaly detector + `franklin doctor --anomaly`
+
+Adopts a Cursor-style tool-failure taxonomy and a baseline-vs-recent
+spike detector so the "check failures.jsonl by hand every day" loop
+stops being a manual human task. Six categories
+(`InvalidArguments`, `UnexpectedEnvironment`, `ProviderError`,
+`UserAborted`, `Timeout`, `Unknown`), each captured per failure record,
+plus a 24h-vs-30d rate-normalized spike detector that surfaces
+brand-new failure types and >3× regressions per `(tool, category)`
+bucket.
+
+### What landed
+
+- **`src/stats/failures.ts`** — new `ToolFailureCategory` enum,
+  `classifyToolFailure()` layered pattern matcher (drawn from real
+  errors in this repo's `failures.jsonl`), `category` field on every
+  `FailureRecord`. Writer auto-classifies on append; reader back-fills
+  historical entries on load — no file migration needed. Now honors
+  `FRANKLIN_NO_AUDIT` / `FRANKLIN_NO_PERSIST` so test runs don't
+  pollute `~/.blockrun/failures.jsonl`. Path resolves at call-time via
+  `FRANKLIN_HOME` (existing convention from `src/tasks/paths.ts`) so
+  sandbox runs work cleanly.
+- **`getToolAnomalies(opts)`** — rate-normalized comparison of last 24h
+  vs last 30d. Surfaces a bucket when `recentCount >= 3` and
+  `spikeRatio >= 3.0`, or when the baseline is zero (brand-new failure
+  type, sorts first). Defaults overridable per call.
+- **`franklin doctor --anomaly`** — one-line CLI summary. Exits 0 when
+  clean, 1 when any anomaly is surfaced — suitable for cron / CI hooks.
+  `--json` for machine-readable output.
+
+### Why now
+
+The last six release cycles all started with "check the log" — user
+asks, agent scans `failures.jsonl` + `franklin-debug.log` by hand,
+proposes fixes. That works, but it's hand-driven and gates every
+review on a human session. The data to automate it is already on disk;
+this release adds the classifier + spike detector that closes the loop.
+
+Inspired by Cursor's published harness-engineering writeup (same five
+categories + per-tool baselines). Tuned classifier patterns to
+Franklin's actual tool surface (SearchX login-walls, Bash EACCES, x402
+payment rejections, etc.).
+
+### Tests
+
+Eight new in `test/local.mjs`:
+
+- Six classifier round-trips, one per category, using real error
+  messages observed in production (the
+  `"Cannot read properties of undefined (reading 'snapshot')"` test
+  is the actual SearchX failure that prompted the playwright-snapshot
+  fix earlier this week).
+- One math fixture for `getToolAnomalies`: synthetic 5 / 4 / 6 / 80
+  failure mix → asserts new-type Infinity spike surfaces first,
+  sub-3× ratio does NOT surface, sufficient-baseline 6× DOES.
+
+381/381 tests pass.
+
+### Smoke tests
+
+Real machine, current `failures.jsonl` (clean):
+
+```
+$ franklin doctor --anomaly
+  No anomalies. Tool failure rates match the 30-day baseline.
+exit: 0
+```
+
+Synthetic spike (sandbox via `FRANKLIN_HOME` + four fresh SearchX
+entries):
+
+```
+  • SearchX / InvalidArguments  NEW failure type (no baseline)  recent=4, baseline=0
+    sample: Cannot read properties of undefined (reading 'snapshot')
+
+  1 anomalies. Investigate before they snowball.
+exit: 1
+```
+
+Full write-up: `docs/release-notes/2026-05-11-tool-failure-taxonomy.md`.
+
 ## 3.15.91 — Vision-aware routing: Auto picks eyes, manual mode stops blind submits
 
 3.15.89/90 made sure image bytes actually reach the model. This release
@@ -60,7 +141,7 @@ Five new tests in `test/local.mjs`:
 5. `pickVisionSibling stays within the user-chosen family` — DeepSeek
    falls through to default; xai stays in xai; openai stays in openai.
 
-333/333 tests pass.
+373/373 tests pass.
 
 ### Behavioral implications
 
