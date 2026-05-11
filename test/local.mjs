@@ -5905,6 +5905,26 @@ test('kimi: K2.5 picker shortcuts now resolve to K2.6 (gateway retired K2.5)', a
 // (these are the patterns we actually see in the wild — drawn from
 // failures.jsonl on a real machine).
 
+// ─── Version-check freshness (franklin doctor authoritativeness) ──────────
+// Bug observed 2026-05-11: between same-day releases, the daily cache made
+// `franklin doctor` print "✓ Franklin v3.15.88" for a user who was actually
+// 4 versions behind, because they ran doctor in the gap between npm publish
+// and the next cache refresh. Fix: getAvailableUpdateFresh() forces a real
+// fetch (bounded 2s) so doctor is authoritative; fall back to cache if the
+// fetch fails.
+test('getAvailableUpdateFresh: returns update info when remote > current', async () => {
+  // Compare semver helper exposed for unit tests.
+  const { compareSemver } = await import('../dist/version-check.js');
+  assert.equal(compareSemver('3.15.92', '3.15.88'), 1);
+  assert.equal(compareSemver('3.15.88', '3.15.92'), -1);
+  assert.equal(compareSemver('3.15.92', '3.15.92'), 0);
+  // Edge: leading 'v' and pre-release suffix tolerated.
+  assert.equal(compareSemver('v3.15.92', '3.15.92'), 0);
+  assert.equal(compareSemver('3.15.92-beta.1', '3.15.92'), 0);
+  // Unparseable input returns 0 — never crashes.
+  assert.equal(compareSemver('not-a-version', '3.15.92'), 0);
+});
+
 test('classifyToolFailure: UserAborted wins over Timeout/Provider text', async () => {
   const { classifyToolFailure } = await import('../dist/stats/failures.js');
   // Real entry from production failures.jsonl

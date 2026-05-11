@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.15.93 — `franklin doctor` forces a fresh version fetch (no more 24h-stale "all clear")
+
+Single-fix patch found while reviewing the user's own ledger.
+
+**The bug.** `franklin doctor` was relying on the daily-refreshed
+`~/.blockrun/version-check.json` cache for its Franklin-version check.
+With 4 patch releases in 3 days (3.15.89 → 3.15.92), a user could
+trivially be 4 versions behind while doctor printed `✓ Franklin v3.15.88`
+— because the cache hadn't refreshed yet, the cached `latestVersion`
+still pointed at an older release, and `compareSemver(cache.latest, VERSION)`
+returned 0.
+
+Verified on a real machine 2026-05-11: global `franklin` was 3.15.88
+for the entire 48 hours during which 3.15.89/90/91 shipped. Doctor said
+"all clear" the whole time. Worse, the bug-fix releases (cost_log
+writer, agent-side stats writer) couldn't run in production for that
+user — every paid call in those 48 hours hit the wallet but neither
+the cost_log nor stats trackers captured it. The wallet dropped $22
+that didn't land in any local ledger.
+
+**The fix.** New `getAvailableUpdateFresh()` in `src/version-check.ts`
+forces a real `fetch()` against npm (bounded by the existing 2s
+timeout). Doctor now kicks the fetch off in parallel with the other
+checks; total wall-clock stays under 2s. If the fetch fails (offline,
+slow npm), falls back to the cached value — same behavior as before,
+just refreshed when possible.
+
+The daily-cache `kickoffVersionCheck()` path is unchanged for other
+entry points (banner, etc.) so we don't hammer npm on every startup.
+
+### Tests
+
+`compareSemver` got explicit unit coverage in `test/local.mjs`:
+basic ordering, leading-v tolerance, pre-release suffix stripping,
+unparseable-input safety. Smoke test confirms doctor renders correctly
+when on latest.
+
+382/382 tests pass.
+
 ## 3.15.92 — Tool failure taxonomy + per-tool anomaly detector + `franklin doctor --anomaly`
 
 Adopts a Cursor-style tool-failure taxonomy and a baseline-vs-recent

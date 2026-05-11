@@ -139,3 +139,30 @@ export function getAvailableUpdate(): UpdateInfo | null {
   }
   return null;
 }
+
+/**
+ * Authoritative check that forces a fresh fetch (up to FETCH_TIMEOUT_MS).
+ * Use for on-demand diagnostics like `franklin doctor` where the user
+ * explicitly asked "am I up to date?" and a 24h-stale cache is the wrong
+ * answer. Verified 2026-05-11: between two same-day releases (3.15.91 →
+ * 3.15.92), the daily cache made `franklin doctor` show green for a user
+ * who was actually 4 versions behind (3.15.88), because they ran doctor
+ * in the brief gap between npm publish and the next cache refresh.
+ *
+ * Falls back to the cached value if the fetch fails (offline, slow npm,
+ * etc.) — same behavior as the cached check, just refreshed when
+ * possible.
+ */
+export async function getAvailableUpdateFresh(): Promise<UpdateInfo | null> {
+  if (isDisabled()) return getAvailableUpdate();
+  const latest = await fetchLatestVersion();
+  if (latest) {
+    writeCache({ latestVersion: latest, checkedAt: Date.now() });
+    if (compareSemver(latest, VERSION) > 0) {
+      return { current: VERSION, latest };
+    }
+    return null;
+  }
+  // Fetch failed — fall back to whatever the cache says.
+  return getAvailableUpdate();
+}

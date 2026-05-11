@@ -21,7 +21,7 @@ import {
 } from '@blockrun/llm';
 import { loadChain, API_URLS, VERSION, BLOCKRUN_DIR } from '../config.js';
 import { isTelemetryEnabled, readAllRecords, telemetryPaths } from '../telemetry/store.js';
-import { getAvailableUpdate, kickoffVersionCheck } from '../version-check.js';
+import { getAvailableUpdateFresh, kickoffVersionCheck } from '../version-check.js';
 
 interface Check {
   name: string;
@@ -32,6 +32,15 @@ interface Check {
 
 async function runChecks(): Promise<Check[]> {
   const out: Check[] = [];
+
+  // Kick off the authoritative version fetch FIRST, in parallel with the
+  // other checks. Doctor is a diagnostic — the user just asked "am I
+  // healthy?" — so a 24h-stale cache is the wrong answer. The fetch is
+  // bounded by the same 2s timeout the background check uses, and falls
+  // back to the cached value on failure. By the time we render the
+  // Franklin-version check below, the fetch has typically settled in
+  // <300ms (npm is fast) and we have a current answer.
+  const freshUpdatePromise = getAvailableUpdateFresh();
 
   // ── 1. Runtime ────────────────────────────────────────────────────
   const nodeVer = process.versions.node;
@@ -44,10 +53,10 @@ async function runChecks(): Promise<Check[]> {
   });
 
   // ── 2. Franklin version ───────────────────────────────────────────
-  // Kick the daily cache refresh so subsequent doctor runs carry fresh
-  // data. Current run uses whatever's already cached.
+  // Keep kickoffVersionCheck() so non-doctor entry points (banner etc.)
+  // still warm the cache through their normal daily refresh path.
   kickoffVersionCheck();
-  const update = getAvailableUpdate();
+  const update = await freshUpdatePromise;
   out.push({
     name: 'Franklin',
     status: update ? 'warn' : 'ok',
