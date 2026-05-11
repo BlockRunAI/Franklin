@@ -232,7 +232,8 @@ program
   .command('doctor')
   .description('One-command health check (node, wallet, chain, gateway, MCP, telemetry)')
   .option('--json', 'Machine-readable output')
-  .action(async (opts: { json?: boolean }) => {
+  .option('--anomaly', 'Surface (tool, category) failure spikes vs 30-day baseline')
+  .action(async (opts: { json?: boolean; anomaly?: boolean }) => {
     const { doctorCommand } = await import('./commands/doctor.js');
     await doctorCommand(opts);
   });

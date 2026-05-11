@@ -60,7 +60,7 @@ Five new tests in `test/local.mjs`:
 5. `pickVisionSibling stays within the user-chosen family` — DeepSeek
    falls through to default; xai stays in xai; openai stays in openai.
 
-333/333 tests pass.
+373/373 tests pass.
 
 ### Behavioral implications
 

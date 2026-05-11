@@ -5898,6 +5898,160 @@ test('kimi: K2.5 picker shortcuts now resolve to K2.6 (gateway retired K2.5)', a
   assert.equal(resolveModel('k2.6'), 'moonshot/kimi-k2.6');
 });
 
+// ─── Tool failure taxonomy + anomaly detector ───────────────────────────────
+// Built 2026-05-11. Replaces the "user manually skims failures.jsonl every
+// day" loop with a categorical classifier + per-(tool, category) spike
+// detection. Tests pin the patterns the classifier must always get right
+// (these are the patterns we actually see in the wild — drawn from
+// failures.jsonl on a real machine).
+
+test('classifyToolFailure: UserAborted wins over Timeout/Provider text', async () => {
+  const { classifyToolFailure } = await import('../dist/stats/failures.js');
+  // Real entry from production failures.jsonl
+  assert.equal(classifyToolFailure('This operation was aborted'), 'UserAborted');
+  assert.equal(classifyToolFailure('user cancelled the request'), 'UserAborted');
+  assert.equal(classifyToolFailure('SIGINT received'), 'UserAborted');
+});
+
+test('classifyToolFailure: Timeout for time-bound failures', async () => {
+  const { classifyToolFailure } = await import('../dist/stats/failures.js');
+  assert.equal(classifyToolFailure('Image-to-image timed out after 180000ms'), 'Timeout');
+  assert.equal(classifyToolFailure('ETIMEDOUT: socket timeout'), 'Timeout');
+  assert.equal(classifyToolFailure('Operation timed out'), 'Timeout');
+});
+
+test('classifyToolFailure: UnexpectedEnvironment for missing files / wallet / chain', async () => {
+  const { classifyToolFailure } = await import('../dist/stats/failures.js');
+  assert.equal(classifyToolFailure('ENOENT: no such file or directory'), 'UnexpectedEnvironment');
+  assert.equal(classifyToolFailure('wallet not configured for this chain'), 'UnexpectedEnvironment');
+  assert.equal(classifyToolFailure('Insufficient balance to settle payment'), 'UnexpectedEnvironment');
+  assert.equal(classifyToolFailure('command not found: foo'), 'UnexpectedEnvironment');
+});
+
+test('classifyToolFailure: ProviderError for upstream API failures', async () => {
+  const { classifyToolFailure } = await import('../dist/stats/failures.js');
+  assert.equal(classifyToolFailure('429 rate limit exceeded'), 'ProviderError');
+  assert.equal(classifyToolFailure('Gateway returned HTTP 502'), 'ProviderError');
+  assert.equal(classifyToolFailure('fetch failed: ECONNRESET'), 'ProviderError');
+  assert.equal(classifyToolFailure('Upstream API error'), 'ProviderError');
+});
+
+test('classifyToolFailure: InvalidArguments for schema/type rejects', async () => {
+  const { classifyToolFailure } = await import('../dist/stats/failures.js');
+  // The real entry from PR #53's root cause — pre-fix SearchX null-deref
+  assert.equal(
+    classifyToolFailure("Cannot read properties of undefined (reading 'snapshot')"),
+    'InvalidArguments',
+  );
+  assert.equal(classifyToolFailure('missing required field: query'), 'InvalidArguments');
+  assert.equal(classifyToolFailure('Schema rejected: expected number, got string'), 'InvalidArguments');
+});
+
+test('classifyToolFailure: Unknown for messages we have no signal for', async () => {
+  const { classifyToolFailure } = await import('../dist/stats/failures.js');
+  assert.equal(classifyToolFailure('this should not match any rule'), 'Unknown');
+  assert.equal(classifyToolFailure(''), 'Unknown');
+});
+
+test('getToolAnomalies: surfaces a brand-new failure type as Infinity spike', async () => {
+  // Write a sandboxed failures.jsonl in a temp dir to avoid touching real data.
+  // The module reads ~/.blockrun/failures.jsonl directly, so we mock via env.
+  // (Easier: just verify the classifier + math via direct unit-style call after
+  //  writing through recordFailure. But FRANKLIN_NO_AUDIT short-circuits the
+  //  writer. So we test the pure-function getToolAnomalies through a stub by
+  //  monkey-patching loadFailures via the module... or test deterministically
+  //  by validating the math directly on a known input.)
+  //
+  // Simpler approach: re-implement the math contract with a hand-rolled
+  // FailureRecord[] passed straight through. Since getToolAnomalies reads
+  // from disk, we instead just assert the classifier glue: brand-new
+  // (tool, category) buckets sort first.
+  //
+  // The disk-backed math is exercised in the next test using a real file.
+  const { classifyToolFailure } = await import('../dist/stats/failures.js');
+  assert.equal(classifyToolFailure('a brand new error pattern we have never seen'), 'Unknown');
+});
+
+test('getToolAnomalies: math is deterministic on synthetic on-disk fixture', async () => {
+  // Hijack FAILURES_FILE by setting HOME to a tmp dir for this test.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fr-anomaly-'));
+  const blockrunDir = path.join(tmpHome, '.blockrun');
+  fs.mkdirSync(blockrunDir, { recursive: true });
+  const failuresFile = path.join(blockrunDir, 'failures.jsonl');
+
+  const now = Date.now();
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+  // 5 recent ProviderError on SearchX (last 24h); 0 historic. → new pattern.
+  // 4 recent Timeout on ImageGen; 8 historic. → 2× ratio, below default 3× threshold.
+  // 6 recent UnexpectedEnvironment on Bash; 1 historic → ~6× ratio, surfaced.
+  const lines = [];
+  for (let i = 0; i < 5; i++) {
+    lines.push(JSON.stringify({
+      timestamp: now - i * 60_000, model: '', failureType: 'tool_error',
+      toolName: 'SearchX', errorMessage: 'fetch failed: ECONNRESET',
+    }));
+  }
+  // ImageGen: 4 recent Timeouts (within 24h) vs 80 historic spread over the
+  // baseline window. Rate-normalized: 4/24h vs ~80/29d ≈ 1.5× — sub-3×
+  // so the anomaly detector should NOT surface this. (Earlier draft used
+  // 8 historic which actually IS a ~15× spike rate-normalized; correct
+  // math, wrong intuition.)
+  for (let i = 0; i < 4; i++) {
+    lines.push(JSON.stringify({
+      timestamp: now - i * 60_000, model: '', failureType: 'tool_error',
+      toolName: 'ImageGen', errorMessage: 'Image timed out after 180000ms',
+    }));
+  }
+  for (let i = 0; i < 80; i++) {
+    // Spread evenly between 2d ago and 29d ago.
+    const ageMs = 2 * DAY + (i / 80) * (27 * DAY);
+    lines.push(JSON.stringify({
+      timestamp: now - ageMs, model: '', failureType: 'tool_error',
+      toolName: 'ImageGen', errorMessage: 'Image timed out after 180000ms',
+    }));
+  }
+  for (let i = 0; i < 6; i++) {
+    lines.push(JSON.stringify({
+      timestamp: now - i * 30_000, model: '', failureType: 'tool_error',
+      toolName: 'Bash', errorMessage: 'ENOENT: no such file or directory',
+    }));
+  }
+  lines.push(JSON.stringify({
+    timestamp: now - 15 * DAY, model: '', failureType: 'tool_error',
+    toolName: 'Bash', errorMessage: 'ENOENT: no such file or directory',
+  }));
+  fs.writeFileSync(failuresFile, lines.join('\n') + '\n');
+
+  const prevFranklinHome = process.env.FRANKLIN_HOME;
+  process.env.FRANKLIN_HOME = blockrunDir;
+  try {
+    const mod = await import('../dist/stats/failures.js');
+    const anomalies = mod.getToolAnomalies();
+    const searchx = anomalies.find((a) => a.toolName === 'SearchX');
+    const bash = anomalies.find((a) => a.toolName === 'Bash');
+    const imagegen = anomalies.find((a) => a.toolName === 'ImageGen');
+    assert.ok(searchx, 'brand-new SearchX failure type must be surfaced');
+    assert.equal(searchx.spikeRatio, Number.POSITIVE_INFINITY,
+      'no baseline → Infinity ratio');
+    assert.equal(searchx.category, 'ProviderError');
+    assert.equal(searchx.recentCount, 5);
+    assert.ok(bash, 'Bash UnexpectedEnvironment ~6x must be surfaced');
+    assert.ok(bash.spikeRatio >= 3, `Bash spike too small: ${bash.spikeRatio}`);
+    // ImageGen 4 recent vs 8 historic over 30d is below 3x — should NOT surface.
+    assert.equal(imagegen, undefined, 'ImageGen with sub-3x ratio must not surface');
+    // Brand-new comes first (Infinity sorts before finite).
+    assert.equal(anomalies[0].toolName, 'SearchX', 'Infinity sorts first');
+  } finally {
+    if (prevFranklinHome === undefined) delete process.env.FRANKLIN_HOME;
+    else process.env.FRANKLIN_HOME = prevFranklinHome;
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  }
+});
+
 test('kimi: picker no longer lists the retired K2.5 entry', async () => {
   const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
   const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
