@@ -1227,7 +1227,7 @@ export async function interactiveSession(
       const modelMaxOut = getMaxOutputTokens(config.model);
       let maxTokens = Math.min(maxTokensOverride ?? CAPPED_MAX_TOKENS, modelMaxOut);
       let responseParts: ContentPart[] = [];
-      let usage: { inputTokens: number; outputTokens: number };
+      let usage: import('./llm.js').CompletionUsage;
       let stopReason: string;
 
       // Create streaming executor for concurrent tool execution
@@ -1823,6 +1823,8 @@ export async function interactiveSession(
         model: resolvedModel,
         inputTokens,
         outputTokens: usage.outputTokens,
+        cacheCreationInputTokens: usage.cacheCreationInputTokens,
+        cacheReadInputTokens: usage.cacheReadInputTokens,
         costUsd: callCost,
         // Any failed model this turn means the model that finally
         // succeeded was a fallback. Without this, audit log read 0%

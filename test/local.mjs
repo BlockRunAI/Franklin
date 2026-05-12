@@ -8106,6 +8106,55 @@ test('appendAudit: drops local/test-model entries, keeps real models', async () 
   }
 });
 
+test('appendAudit: cache_creation/cache_read_input_tokens round-trip through audit.jsonl', async () => {
+  // Pin the fix for the 2026-05-11 audit-vs-wallet discrepancy: Opus 4.7
+  // turns billed $0.567 but audit logged inputTokens=3653, because the
+  // streaming client read `input_tokens` but ignored
+  // `cache_creation_input_tokens` / `cache_read_input_tokens`. AuditEntry
+  // now carries those fields end-to-end; this test pins the
+  // serialization so a regression would fail loudly.
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-audit-cache-'));
+  const auditFile = join(fakeHome, '.blockrun', 'franklin-audit.jsonl');
+  const auditHref = new URL('../dist/stats/audit.js', import.meta.url).href;
+  const script = `
+    const audit = await import(${JSON.stringify(auditHref)} + '?t=' + Date.now());
+    audit.appendAudit({
+      ts: 1700000000000,
+      model: 'anthropic/claude-opus-4.7',
+      inputTokens: 3653,
+      outputTokens: 56,
+      cacheCreationInputTokens: 96000,
+      cacheReadInputTokens: 0,
+      costUsd: 0.567,
+      source: 'agent',
+    });
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome, FRANKLIN_NO_AUDIT: '' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`audit subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+
+    const lines = readFileSync(auditFile, 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+    assert.equal(lines.length, 1);
+    const row = lines[0];
+    assert.equal(row.inputTokens, 3653);
+    assert.equal(row.cacheCreationInputTokens, 96000,
+      'cache_creation_input_tokens must survive to audit row');
+    assert.equal(row.cacheReadInputTokens, 0,
+      'cache_read_input_tokens must survive to audit row (0 is meaningful — distinct from undefined)');
+    assert.equal(row.costUsd, 0.567);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('recordUsage: drops local/test* entries, keeps real models in stats history', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-tracker-fixture-'));
   const trackerHref = new URL('../dist/stats/tracker.js', import.meta.url).href;

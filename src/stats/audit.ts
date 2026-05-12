@@ -36,6 +36,18 @@ export interface AuditEntry {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Anthropic prompt-cache fields, captured when the model reports them
+   * in `usage.cache_creation_input_tokens` / `usage.cache_read_input_tokens`.
+   * `inputTokens` above is the *uncached* portion; the cache fields are
+   * additional billed input the gateway charges for separately. Without
+   * these, vision and cache-heavy sessions show a wildly inconsistent
+   * cost-per-token ratio in audit dashboards — verified 2026-05-11 from
+   * an Opus 4.7 call with inputTokens=3653 but costUsd=$0.567 (implies
+   * ~113K real billed tokens once cache_creation is counted).
+   */
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
   costUsd: number;
   latencyMs?: number;
   fallback?: boolean;

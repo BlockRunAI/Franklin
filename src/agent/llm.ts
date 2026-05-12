@@ -86,6 +86,19 @@ export interface StreamChunk {
 export interface CompletionUsage {
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Anthropic prompt-cache fields. `input_tokens` only counts the base
+   * (uncached) portion; the cache-creation and cache-read counts are
+   * separate and billed at different rates (1.25× / 0.1× of base input,
+   * respectively). Pre-fix, Franklin only read `input_tokens` and
+   * silently undercounted every vision / cache-using call's total
+   * token spend — verified 2026-05-11 from an Opus 4.7 turn billed
+   * $0.567 with audit logging `inputTokens: 3653` (implies ~113K real
+   * billed input tokens). Surface all three so audits, stats, and any
+   * future estimation paths see the full picture.
+   */
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
 }
 
 export interface LLMClientOptions {
@@ -1024,6 +1037,15 @@ export class ModelClient {
           const msgUsage = chunk.payload['usage'] as Record<string, number> | undefined;
           if (msgUsage) {
             usage.outputTokens = msgUsage['output_tokens'] ?? usage.outputTokens;
+            // Cache and tool-call breakdowns can arrive in message_delta
+            // too; merge whatever's present without clobbering values set
+            // by message_start.
+            if (msgUsage['cache_creation_input_tokens'] !== undefined) {
+              usage.cacheCreationInputTokens = msgUsage['cache_creation_input_tokens'];
+            }
+            if (msgUsage['cache_read_input_tokens'] !== undefined) {
+              usage.cacheReadInputTokens = msgUsage['cache_read_input_tokens'];
+            }
           }
           const delta = chunk.payload['delta'] as Record<string, unknown> | undefined;
           if (delta?.['stop_reason']) {
@@ -1037,6 +1059,18 @@ export class ModelClient {
           if (msgUsage) {
             usage.inputTokens = msgUsage['input_tokens'] ?? 0;
             usage.outputTokens = msgUsage['output_tokens'] ?? 0;
+            // Vision and prompt-cache calls return up to two extra
+            // billed-tokens counts that input_tokens does NOT include:
+            // cache_creation_input_tokens (1.25× base price) and
+            // cache_read_input_tokens (0.1× base price). Without these,
+            // any audit/stats over a vision-heavy session looks wildly
+            // inconsistent with the wallet charge.
+            if (msgUsage['cache_creation_input_tokens'] !== undefined) {
+              usage.cacheCreationInputTokens = msgUsage['cache_creation_input_tokens'];
+            }
+            if (msgUsage['cache_read_input_tokens'] !== undefined) {
+              usage.cacheReadInputTokens = msgUsage['cache_read_input_tokens'];
+            }
           }
           break;
         }

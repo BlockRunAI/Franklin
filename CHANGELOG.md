@@ -1,5 +1,71 @@
 # Changelog
 
+## 3.15.95 — Audit captures `cache_creation_input_tokens` / `cache_read_input_tokens` (vision + cache calls no longer look 28× over-billed)
+
+Observability fix. The streaming client was reading `input_tokens`
+from Anthropic's `usage` object but ignoring the two cache fields
+(`cache_creation_input_tokens` at 1.25× base, `cache_read_input_tokens`
+at 0.1× base) that vision and prompt-cache calls return. Result: the
+wallet charge was correct (gateway settled against the full token
+count), but the audit log recorded only the uncached portion — making
+per-call cost/token ratios look insane in dashboards.
+
+Verified 2026-05-11 from a real audit row:
+
+```
+Opus 4.7 call: inputTokens=3653, outputTokens=56, costUsd=$0.567
+```
+
+At Opus 4.7's $5/M input rate, $0.567 implies ~113K real billed
+tokens — 28× what the audit shows. The missing 109K were
+cache-creation tokens from a vision-heavy turn.
+
+### Fix
+
+- `CompletionUsage` gains optional `cacheCreationInputTokens` /
+  `cacheReadInputTokens`.
+- The SSE parser in `src/agent/llm.ts` reads both fields from
+  `message_start` and `message_delta` events.
+- `AuditEntry` carries the fields end-to-end so dashboards can compute
+  true billed-token counts and cache-hit rate.
+- The local `usage` declaration in `src/agent/loop.ts` now references
+  `CompletionUsage` directly instead of an inline narrower type, so
+  future additions to the interface flow through automatically.
+
+### Tests
+
+New round-trip test in `test/local.mjs`:
+
+```js
+appendAudit({
+  ...,
+  inputTokens: 3653,
+  cacheCreationInputTokens: 96000,
+  cacheReadInputTokens: 0,
+  costUsd: 0.567,
+});
+// Read back and assert both cache fields survived.
+```
+
+383/383 tests pass.
+
+### What didn't change
+
+- Wallet charges are unaffected — they were always correct (the
+  gateway settles against Anthropic's real billing).
+- Stats `costUsd` totals are unaffected — those use the real x402
+  settlement (3.15.89's fix).
+- The fix only restores observability. No new model selection, no
+  new behavior, no new failure modes.
+
+### Why this matters
+
+Dashboards that compute `costPerInputToken` or "cache hit rate" or
+"input efficiency" against `byModel` totals were silently broken for
+every vision-capable session since 3.15.91. This release restores the
+ground truth. Cache-hit-rate visibility — a major lever for cost
+reduction — now becomes possible.
+
 ## 3.15.94 — Research-bloat compactor fires on $1 cost ceiling, not just 15-call gate
 
 Real-production fix found via `franklin doctor --anomaly` (3.15.92's
