@@ -261,7 +261,19 @@ export class StreamingExecutor {
       const execElapsed = Date.now() - execStart;
       if (execElapsed >= 30_000) {
         const status = result.isError ? 'error' : 'ok';
-        const preview = this.inputPreview(invocation) || '';
+        // Single-line the preview before logging. Bash invocations like
+        // `python3 -c "<heredoc>"` carry embedded newlines that, sliced
+        // raw, break the one-line-per-entry contract of
+        // franklin-debug.log and shred any parser that splits on
+        // `^\[timestamp\]`. Verified 2026-05-04 (and reviewed again
+        // 2026-05-12): a real entry produced
+        //   `Slow tool: Bash ok after 438.4s — cd ... python3 -c "`
+        //   `import subprocess`
+        //   `[2026-05-04T19:25:10] [ERROR] Signature-loop hard stop ...`
+        // where "import subprocess" sat on its own line, untimestamped,
+        // because the preview's first 80 chars contained the heredoc
+        // opener.
+        const preview = (this.inputPreview(invocation) || '').replace(/[\r\n]+/g, ' ');
         logger.info(`[franklin] Slow tool: ${invocation.name} ${status} after ${(execElapsed / 1000).toFixed(1)}s${preview ? ` — ${preview.slice(0, 80)}` : ''}`);
       }
 

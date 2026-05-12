@@ -86,7 +86,22 @@ function writeFile(level: LogLevel, msg: string): void {
       writesSinceRotateProbe = 0;
       maybeRotate();
     }
-    const clean = msg.replace(ANSI_RE, '');
+    // Two-step sanitize, in this order:
+    //   1. Collapse embedded newlines (\n / \r / \r\n) to a literal
+    //      " ↵ " marker so a single logger call always produces one
+    //      physical log line.
+    //   2. Strip ANSI escape sequences.
+    //
+    // Order matters: ANSI_RE strips bare \r (used by progress bars), so
+    // running it first would erase \r-only line breaks and let
+    // "first\rsecond" appear as "firstsecond" in the log. Verified
+    // 2026-05-12 from franklin-debug.log: a `Slow tool: Bash ok ...
+    // python3 -c "` preview leaked `import subprocess` onto its own
+    // untimestamped line because the embedded \n in the bash command
+    // survived the preview slice and broke any parser that splits on
+    // ^\[timestamp\]. Cheaper to enforce one-line-per-entry here than
+    // to police every callsite.
+    const clean = msg.replace(/\r\n|\r|\n/g, ' ↵ ').replace(ANSI_RE, '');
     fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] [${level.toUpperCase()}] ${clean}\n`);
   } catch { /* best-effort — never break the agent on log failure */ }
 }

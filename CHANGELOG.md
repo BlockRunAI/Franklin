@@ -1,5 +1,59 @@
 # Changelog
 
+## 3.15.97 — log entries are one physical line (embedded newlines collapse to ↵)
+
+Format-integrity fix. Real entry from `franklin-debug.log`:
+
+```
+[2026-05-04T19:24:53.314Z] [INFO] [franklin] Slow tool: Bash ok after 438.4s — cd ... python3 -c "
+import subprocess
+[2026-05-04T19:25:10.146Z] [ERROR] [franklin] Signature-loop hard stop: ...
+```
+
+The `python3 -c "<heredoc>"` invocation's embedded `\n` survived the
+preview slice in `streaming-executor.ts` and made it into the log line.
+Any parser that splits on `/^\[timestamp\]/` (including
+`franklin doctor --anomaly`, future cost-spike detection, and
+`grep -E "^\[.+ERROR"`) broke on that entry. The orphan
+`import subprocess` line was silently mis-classified as part of
+nothing.
+
+### Fix
+
+Two-layer defense:
+
+1. **`src/logger.ts:writeFile`** — collapse embedded `\n` / `\r` /
+   `\r\n` to a literal `" ↵ "` marker before writing. Order with
+   ANSI-strip matters: ANSI_RE strips bare `\r`, so newline collapse
+   has to run first.
+2. **`src/agent/streaming-executor.ts`** — keep the per-callsite
+   `replace(/[\r\n]+/g, ' ')` on the slow-tool preview as belt-and-
+   braces. The logger guards the contract; this guards the specific
+   callsite that already misfired in production.
+
+The logger fix is the load-bearing one — every existing `logger.info`
+/ `warn` / `error` / `debug` callsite is now newline-safe, even ones
+that haven't been audited yet.
+
+### Tests
+
+New round-trip test in `test/local.mjs`: spawn a subprocess that calls
+`logger.info('first\\nsecond\\rthird')` and asserts the resulting log
+file has exactly one physical line per call, with the markers in
+place. Catches both the order-of-operations regression (ANSI strip
+before vs after) and any future logger change that drops newline
+sanitization.
+
+384/384 tests pass.
+
+### Behavioral implications
+
+Logs are now grep-safe. `awk '$1 ~ /^\[20/'` (used by
+`franklin doctor --anomaly` and any homegrown log scanner) returns
+exactly one row per log event. The visual marker `↵` makes it obvious
+when a multi-line payload was collapsed, so debugging multi-line tool
+output is still legible.
+
 ## 3.15.96 — `franklin doctor` warns on low balance (< $1) instead of "all clear"
 
 Real-machine bug. Doctor's USDC balance check was binary: `> 0` =

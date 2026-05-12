@@ -8106,6 +8106,50 @@ test('appendAudit: drops local/test-model entries, keeps real models', async () 
   }
 });
 
+test('logger: embedded newlines collapse to ↵ so each entry is one physical line', async () => {
+  // Pin the 2026-05-12 fix. A real franklin-debug.log entry had
+  // `Slow tool: Bash ok ... python3 -c "` followed on the next line
+  // by `import subprocess`, because the bash command's embedded
+  // newline survived the preview slice and the logger didn't
+  // sanitize. Any parser splitting on /^\[\d{4}/ broke on that.
+  // Sandbox via FRANKLIN_HOME so we don't write to ~/.blockrun.
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-logger-newline-'));
+  // logger.ts uses BLOCKRUN_DIR = os.homedir() + '/.blockrun', so sandbox
+  // by overriding HOME in the subprocess. (No FRANKLIN_HOME shortcut for
+  // the logger yet — that would be a separate refactor.)
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const logFile = join(blockrunDir, 'franklin-debug.log');
+  const loggerHref = new URL('../dist/logger.js', import.meta.url).href;
+  const script = `
+    const { logger } = await import(${JSON.stringify(loggerHref)} + '?t=' + Date.now());
+    logger.info('first line\\nsecond line\\rthird line');
+    logger.info('plain single-line entry');
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`logger subprocess failed (${code})`)));
+      proc.on('error', reject);
+    });
+
+    const content = readFileSync(logFile, 'utf8');
+    const lines = content.split('\n').filter(Boolean);
+    assert.equal(lines.length, 2, `expected 2 physical log lines, got ${lines.length}:\n${content}`);
+    // First entry: all three "lines" of input collapsed onto one log line.
+    assert.match(lines[0], /\[INFO\] first line ↵ second line ↵ third line$/);
+    // Second entry: untouched.
+    assert.match(lines[1], /\[INFO\] plain single-line entry$/);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('appendAudit: cache_creation/cache_read_input_tokens round-trip through audit.jsonl', async () => {
   // Pin the fix for the 2026-05-11 audit-vs-wallet discrepancy: Opus 4.7
   // turns billed $0.567 but audit logged inputTokens=3653, because the
