@@ -8106,6 +8106,105 @@ test('appendAudit: drops local/test-model entries, keeps real models', async () 
   }
 });
 
+// ─── PR #54: token estimator must NOT JSON.stringify image blocks ──────────
+// Bug verified empirically in PR #54: same 4-message session with one
+// ~100KB image showed /context = 75K/200K (37.8%) before fix, 1.9K/200K
+// (1.0%) after — a 40× over-count caused by JSON.stringify-ing arrays
+// containing base64 image data. Same bug class as 3.15.89/90/95 but in
+// a different file (tokens.ts) and a different layer (context display +
+// /compact trigger threshold).
+test('estimateContentPartTokens: image block counts as ~1500 tokens, not base64 char length', async () => {
+  const { estimateHistoryTokens } = await import('../dist/agent/tokens.js');
+  // A typical normalized image after Read's sharp resize: ~140KB base64.
+  // Pre-fix this would tokenize as ~70K chars / 2 chars/token = 35K tokens.
+  // Post-fix it should be ~1500 tokens regardless of base64 size.
+  const fakeBase64 = 'A'.repeat(140_000);
+  const history = [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tu_test',
+          content: [
+            { type: 'text', text: 'Image file: /tmp/scene.png' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: fakeBase64 } },
+          ],
+        },
+      ],
+    },
+  ];
+  const tokens = estimateHistoryTokens(history);
+  // Total should be dominated by the 1500-token image estimate + a few
+  // for "Image file: /tmp/scene.png" (~10 tokens). Anything above 3000
+  // means we're still counting base64 as text.
+  assert.ok(tokens < 3000, `Expected < 3000 tokens for image+small text, got ${tokens}`);
+  assert.ok(tokens > 1000, `Expected ≥ 1000 tokens (image not silently zero), got ${tokens}`);
+});
+
+test('estimateContentPartTokens: text-only string content path unchanged', async () => {
+  const { estimateHistoryTokens } = await import('../dist/agent/tokens.js');
+  // A regular bash-output tool_result with a string body — no image.
+  const history = [
+    {
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 'tu1', content: 'x'.repeat(4000) },
+      ],
+    },
+  ];
+  const tokens = estimateHistoryTokens(history);
+  // 4000 chars / 2 chars/token ≈ 2000. Allow margin for overhead.
+  assert.ok(tokens >= 1900 && tokens <= 2500,
+    `Expected ~2000 tokens for 4K-char string body, got ${tokens}`);
+});
+
+test('estimateChars (reduce.ts): image blocks count as ~6K chars, not base64 length', async () => {
+  // Sibling fix — same JSON.stringify-image bug class in reduce.ts's
+  // length-only counter. Pre-fix, an image-bearing message inflated
+  // estimateChars enough to skew reduce-pass decisions toward
+  // collapsing the image away. We don't export estimateChars directly,
+  // but we can exercise it via reduceTokens, which gates its passes on
+  // estimateChars output.
+  //
+  // Direct contract assertion via dynamic harness: build a history with
+  // a 140KB-base64 image, call reduceTokens, assert the function
+  // doesn't crash and returns either unchanged or trimmed history with
+  // image preserved.
+  const { reduceTokens } = await import('../dist/agent/reduce.js');
+  const fakeBase64 = 'B'.repeat(140_000);
+  const history = [];
+  // Build 12 messages so reduceTokens actually engages (its short-
+  // history threshold is 8).
+  for (let i = 0; i < 6; i++) {
+    history.push({ role: 'user', content: 'hi' });
+    history.push({
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: `tu${i}`, name: 'Read', input: { file_path: `/tmp/${i}.png` } }],
+    });
+  }
+  // Last user turn carries the image-bearing tool result.
+  history.push({
+    role: 'user',
+    content: [{
+      type: 'tool_result', tool_use_id: 'tu5',
+      content: [
+        { type: 'text', text: 'Image file: /tmp/5.png' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: fakeBase64 } },
+      ],
+    }],
+  });
+  const out = reduceTokens(history);
+  // The image-bearing tool_result must still carry the image after
+  // reduceTokens. Pre-fix: inflated estimateChars triggered aggressive
+  // collapsing that destroyed the image.
+  const lastResult = out[out.length - 1].content[0];
+  assert.equal(lastResult.type, 'tool_result');
+  assert.ok(Array.isArray(lastResult.content), 'image-bearing tool_result must stay an array');
+  const stillHasImage = lastResult.content.some((b) => b.type === 'image' && b.source?.data === fakeBase64);
+  assert.ok(stillHasImage, 'image base64 must survive reduceTokens passes');
+});
+
 test('logger: embedded newlines collapse to ↵ so each entry is one physical line', async () => {
   // Pin the 2026-05-12 fix. A real franklin-debug.log entry had
   // `Slow tool: Bash ok ... python3 -c "` followed on the next line

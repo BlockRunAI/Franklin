@@ -485,7 +485,25 @@ function estimateChars(history: Dialogue[]): number {
         if ('type' in p) {
           if (p.type === 'text') total += p.text.length;
           else if (p.type === 'tool_result') {
-            total += typeof p.content === 'string' ? p.content.length : JSON.stringify(p.content).length;
+            // Sibling of PR #54's tokens.ts fix: JSON.stringify-ing a
+            // [{text}, {image}] array counts the base64 `data` field as
+            // text and inflates the char count by ~70K per image. That
+            // skews every reduce-pass decision (when to dedupe, when to
+            // collapse) toward "save chars by collapsing the image-
+            // bearing result" — exactly wrong. Walk blocks instead.
+            if (typeof p.content === 'string') {
+              total += p.content.length;
+            } else if (Array.isArray(p.content)) {
+              for (const block of p.content) {
+                if ((block as { type?: string }).type === 'text') {
+                  total += ((block as { text?: string }).text || '').length;
+                } else if ((block as { type?: string }).type === 'image') {
+                  // Mirror tokens.ts: image ≈ 1500 tokens ≈ ~6K chars
+                  // at the 4-chars/token rule estimateTokens uses.
+                  total += 6000;
+                }
+              }
+            }
           } else if (p.type === 'tool_use') {
             total += JSON.stringify(p.input).length;
           }

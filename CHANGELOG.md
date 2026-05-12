@@ -1,5 +1,75 @@
 # Changelog
 
+## 3.15.98 — Image-bearing context-token counters across the codebase (PR #54 + 3 missed siblings)
+
+Bundle of related fixes — PR #54 from `KillerQueen-Z` landed verbatim
+plus three sibling sites the review caught.
+
+The bug class: any function that turned `tool_result.content` arrays
+into strings via `JSON.stringify(part.content)` was counting a 140KB
+base64 image as ~70K phantom tokens / chars. The bug had **eight
+known sites** as of 2026-05-11 — five fixed in 3.15.89/90, three more
+fixed here:
+
+| Site | Function | Effect of bug | Status |
+|---|---|---|---|
+| `optimize.ts:budgetToolResults` | 32K char trim | destroyed image block | 3.15.89 |
+| `reduce.ts:ageToolResults` | age decay | destroyed image | 3.15.90 (PR #53) |
+| `reduce.ts:deduplicateToolResultLines` | ANSI/dedupe | destroyed image | 3.15.90 |
+| `reduce.ts:collapseRepetitiveTools` | stub old results | destroyed image | 3.15.90 |
+| `tokens.ts:estimateContentPartTokens` | /context display | inflated ~40× | **3.15.98 (PR #54)** |
+| `reduce.ts:estimateChars` | reduce pass gates | inflated → wrong collapse decisions | **3.15.98** |
+| `compact.ts:tool_result preview` | summary prompt | sent base64 to summarizer | **3.15.98** |
+| `commands.ts:/context tool char count` | UI display | inflated tool-char count | **3.15.98** |
+
+Empirical proof from PR #54: same session with one 100KB image showed
+`/context = 75K/200K (37.8%)` before fix vs `1.9K/200K (1.0%)` after.
+
+### Also in PR #54
+
+- **`getAnchoredTokenCount` returned `contextUsagePct: 0`** on both
+  return paths. The renderer's context ring sat at 0% regardless of
+  real fullness because the agent loop emits this value verbatim.
+  Fixed to compute `(estimated / contextWindow) * 100` using the
+  current model's window.
+- **`loop.ts:contextPct` was integer-rounded.** A 200-message session
+  at 0.4% rounded to 0 and froze the ring. Now `.toFixed(1)`-style.
+
+### What's now consistent
+
+Every per-call layer treats an image block as ~1500 tokens (close to
+Anthropic's `(w*h)/750` billing math — `Read` caps long edge to
+1280px so normalized images land near 1050 tokens):
+
+- Context display (`/context`, the renderer ring)
+- Compaction trigger (won't fire spuriously on image-bearing turns)
+- Reduce passes (won't aggressively dedupe an image-heavy session)
+- Summary prompt (no more base64 dumped into the summarizer)
+
+### Tests
+
+Three new in `test/local.mjs`:
+
+1. `estimateContentPartTokens: image block counts as ~1500 tokens,
+   not base64 char length` — pins the main PR #54 fix against a
+   140KB synthetic image. Asserts result is <3000 tokens.
+2. `estimateContentPartTokens: text-only string content path
+   unchanged` — guards against regression in the simple path.
+3. `estimateChars (reduce.ts): image blocks count as ~6K chars, not
+   base64 length` — pins the sibling fix. Builds a 12-message
+   history with a 140KB image, runs `reduceTokens`, asserts the
+   image base64 survives intact.
+
+387/387 tests pass.
+
+### Credits
+
+`KillerQueen-Z` for PR #54 — both the empirical reproduction (40×
+discrepancy on a real session) and the clean three-part fix
+(`tokens.ts` walker + `getAnchoredTokenCount` denominator +
+`loop.ts` precision). The three sibling fixes were caught during
+review by grepping for `JSON.stringify(part.content)` across `src/`.
+
 ## 3.15.97 — log entries are one physical line (embedded newlines collapse to ↵)
 
 Format-integrity fix. Real entry from `franklin-debug.log`:

@@ -472,7 +472,32 @@ function formatForSummarization(messages: Dialogue[]): string {
               textParts.push(`[Called tool: ${part.name}(${JSON.stringify(part.input).slice(0, 200)})]`);
               break;
             case 'tool_result': {
-              const content = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
+              // Sibling of PR #54's tokens.ts fix: when content is a
+              // [{text}, {image}] array, JSON.stringify dumps base64
+              // bytes into the summary prompt — bloats the summarizer's
+              // input and produces a useless preview ("[Tool result:
+              // [{\"type\":\"text\",\"text\":\"Image file: ...\"},{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"data\":\"...").
+              // Build the preview from text blocks only; mark images
+              // explicitly so the summarizer knows they exist.
+              let content: string;
+              if (typeof part.content === 'string') {
+                content = part.content;
+              } else if (Array.isArray(part.content)) {
+                const pieces: string[] = [];
+                let imageCount = 0;
+                for (const block of part.content) {
+                  const t = (block as { type?: string }).type;
+                  if (t === 'text') {
+                    pieces.push((block as { text?: string }).text || '');
+                  } else if (t === 'image') {
+                    imageCount++;
+                  }
+                }
+                if (imageCount > 0) pieces.push(`[${imageCount} image block${imageCount > 1 ? 's' : ''}]`);
+                content = pieces.join(' ');
+              } else {
+                content = JSON.stringify(part.content);
+              }
               const truncated = content.length > 500 ? content.slice(0, 500) + '...' : content;
               textParts.push(`[Tool result${part.is_error ? ' (ERROR)' : ''}: ${truncated}]`);
               break;

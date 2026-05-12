@@ -1750,7 +1750,11 @@ export async function interactiveSession(
         tier: routingTier,
         confidence: routingConfidence,
         savings: routingSavings,
-        contextPct: Math.round(contextUsagePct),
+        // Preserve sub-1% precision: a fresh session at 0.4% would
+        // round to 0 and freeze the renderer's context ring until the
+        // conversation grows past ~1k tokens. Match `/context`'s
+        // `.toFixed(1)` fidelity.
+        contextPct: Math.round(contextUsagePct * 10) / 10,
       });
 
       // Record usage for stats tracking (franklin stats command).

@@ -201,8 +201,23 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
         if ('type' in part) {
           if (part.type === 'tool_result') {
             toolResults++;
-            const c = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
-            totalToolChars += c.length;
+            // Sibling of PR #54's tokens.ts fix: image base64 must NOT
+            // count toward the displayed char total — `/context` would
+            // otherwise show ~70K chars per attached image and confuse
+            // the user about why the ring is at 1% but "total tool
+            // chars" is huge.
+            if (typeof part.content === 'string') {
+              totalToolChars += part.content.length;
+            } else if (Array.isArray(part.content)) {
+              for (const block of part.content) {
+                const t = (block as { type?: string }).type;
+                if (t === 'text') {
+                  totalToolChars += ((block as { text?: string }).text || '').length;
+                } else if (t === 'image') {
+                  totalToolChars += 6000; // ~1500 tokens × 4 chars/tok
+                }
+              }
+            }
           }
           if (part.type === 'thinking') thinkingBlocks++;
         }
