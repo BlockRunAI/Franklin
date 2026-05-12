@@ -1,4 +1,4 @@
-# Franklin by example
+# Franklin Agent by example
 
 Every file in this directory is a **real prompt** you can paste into
 Franklin at the interactive terminal. Nothing here is pseudocode, nothing

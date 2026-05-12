@@ -130,7 +130,7 @@ export function printBanner(version: string): void {
 
 function printCompactBanner(version: string): void {
   const title = chalk.bold.hex(GOLD_START)('FRANKLIN');
-  const meta = chalk.dim(`  ·  blockrun.ai  ·  v${version}`);
+  const meta = chalk.dim(` Agent  ·  blockrun.ai  ·  v${version}`);
   console.log(`${title}${meta}`);
   console.log(chalk.dim('The AI agent with a wallet'));
   console.log('');

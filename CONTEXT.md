@@ -1,4 +1,4 @@
-# Franklin
+# Franklin Agent
 
 The reference implementation of an **Economic Agent** — an AI agent that holds a user-funded USDC wallet, prices every action, signs a micropayment per paid call, and stops when the wallet is empty. This file is the canonical glossary used in code, comments, commits, PRs, and design discussions. Higher-level positioning lives in [`PHILOSOPHY.md`](./PHILOSOPHY.md); the project map and conventions live in [`CLAUDE.md`](./CLAUDE.md).
 

@@ -1,6 +1,6 @@
-# Franklin Plugin SDK
+# Franklin Agent Plugin SDK
 
-Franklin is plugin-first. Workflows like `social`, `trading`, `content` are
+Franklin Agent is plugin-first. Workflows like `social`, `trading`, `content` are
 plugins, not hardcoded features. Core stays plugin-agnostic — adding a new
 plugin should never require editing core.
 

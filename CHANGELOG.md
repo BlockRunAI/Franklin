@@ -1,5 +1,43 @@
 # Changelog
 
+## Franklin Agent 3.15.99 — Brand rebrand: marketing copy says "Franklin Agent"
+
+Naming evolution. The product is now consistently called **Franklin Agent**
+in user-facing surfaces (README, banner subtitle, package.json description,
+PHILOSOPHY / CONTEXT / CONTRIBUTING / AGENTS first mentions, marketing
+docs). Shortform "Franklin" remains the conversational nickname inside
+prose after the first full mention — same pattern as "MacBook Pro" → "MacBook"
+in continuing references.
+
+**Not changed** (deliberately):
+
+- The npm package name `@blockrun/franklin` — would break every user's
+  install.
+- The `franklin` CLI command — would break every user's script and tutorial.
+- Code identifiers, file paths (`franklin-audit.jsonl`, `franklin-debug.log`),
+  internal config dirs (`~/.blockrun/`).
+- The agent's self-identity in `src/agent/context.ts` ("You are Franklin…").
+- Historical CHANGELOG entries and release notes — they shipped under
+  the "Franklin" brand and reflect that.
+
+**What changed:**
+
+- `README.md` — H1 set to `Franklin Agent`, first mention in pitch /
+  YOPO sections expanded to full name. Shortform mentions in body
+  prose preserved.
+- `src/banner.ts` — compact banner subtitle now reads
+  `FRANKLIN Agent · blockrun.ai · vX.Y.Z`. ASCII wordmark `FRANKLIN`
+  stays as the logo.
+- `package.json` — description prefixed `Franklin Agent —`.
+- `AGENTS.md` — stale `# RunCode` header (left over from pre-rename)
+  finally updated to `# Franklin Agent`.
+- `PHILOSOPHY.md`, `CONTEXT.md`, `CONTRIBUTING.md`, `docs/plugin-sdk.md`,
+  `docs/examples/README.md` — H1 / first-mention rebranded.
+- Going forward, CHANGELOG entries (starting with this one) use
+  `## Franklin Agent X.Y.Z — title` style.
+
+387/387 tests pass.
+
 ## 3.15.98 — Image-bearing context-token counters across the codebase (PR #54 + 3 missed siblings)
 
 Bundle of related fixes — PR #54 from `KillerQueen-Z` landed verbatim

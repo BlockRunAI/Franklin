@@ -1,4 +1,4 @@
-# Franklin Philosophy
+# Franklin Agent Philosophy
 
 ## One sentence
 

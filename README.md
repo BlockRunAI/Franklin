@@ -2,14 +2,15 @@
 
 <br>
 
-<img src="assets/terminal-banner.png" alt="Franklin terminal" width="680">
+<img src="assets/terminal-banner.png" alt="Franklin Agent terminal" width="680">
 
 <br><br>
 
+<h1>Franklin Agent</h1>
 <h3>The AI agent with a wallet.</h3>
 
 <p>
-  Other agents write code. Franklin writes code <em>and spends money</em> to get things done.<br>
+  Other agents write code. Franklin Agent writes code <em>and spends money</em> to get things done.<br>
   One wallet. Every model. Every paid API. Pay only for outcomes — not subscriptions.
 </p>
 
@@ -41,14 +42,14 @@
 
 ## The pitch in one paragraph
 
-Most coding agents write code. Franklin writes code **and spends money to get the job done**. It holds a USDC wallet, picks the best model per task from 55+ providers, purchases trading data, generates images, pays for web search — all autonomously. You state an outcome and set a budget. Franklin decides what to call, what to pay for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
+Most coding agents write code. Franklin Agent writes code **and spends money to get the job done**. It holds a USDC wallet, picks the best model per task from 55+ providers, purchases trading data, generates images, pays for web search — all autonomously. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
 
 Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships as one npm package.
 
 > **YOPO — You Only Pay Outcome**
 >
 > Not a subscription (pay for access). Not a generic pay-per-call (pay for trying).
-> You pay only for the work Franklin delivers. Provider cost + 5%, settled per action
+> You pay only for the work Franklin Agent delivers. Provider cost + 5%, settled per action
 > in USDC. No monthly fees. No rate limits. No overdraft.
 
 ---
@@ -87,13 +88,13 @@ Free models work immediately. Paid models, image gen, and video gen activate the
 
 ## YOPO
 
-**You Only Pay Outcome.** This is Franklin's pricing model, and it is the opposite of almost every other AI product you use.
+**You Only Pay Outcome.** This is Franklin Agent's pricing model, and it is the opposite of almost every other AI product you use.
 
 |                         | You pay for...                               | Result                               |
 | ----------------------- | -------------------------------------------- | ------------------------------------ |
 | AI subscription       | Access. Paid whether you use it or not. | $20–200/month, rate-limited.         |
 | Pay-per-call (OpenAI API, etc.) | Every attempt — even failed ones.    | Hidden cost from retries, dead ends. |
-| **Franklin (YOPO)**     | **The outcome.** Each signed micropayment.  | **Provider cost + 5%. No more.**     |
+| **Franklin Agent (YOPO)**     | **The outcome.** Each signed micropayment.  | **Provider cost + 5%. No more.**     |
 
 Three consequences fall out of this:
 

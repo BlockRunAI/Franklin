@@ -1,4 +1,4 @@
-# Contributing to Franklin
+# Contributing to Franklin Agent
 
 ## Setup
 
