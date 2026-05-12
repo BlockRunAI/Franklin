@@ -226,6 +226,12 @@ function modalEndpoint(path: string): string {
   return `${API_URLS[chain]}/v1/modal/sandbox/${path}`;
 }
 
+/** Same as modalEndpoint but for v2 function/* and volume/* paths. */
+function modalEndpointV2(category: 'function' | 'volume', action: string): string {
+  const chain = loadChain();
+  return `${API_URLS[chain]}/v1/modal/${category}/${action}`;
+}
+
 /**
  * Normalize the agent's `command` input into the execve-style array Modal
  * expects. LLMs frequently pass a shell string ("pip install torch && python
@@ -765,6 +771,311 @@ export async function terminateAllSessionSandboxes(opts: { abortSignal?: AbortSi
   return { attempted: ids.length, succeeded, failed };
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// v2 — Long-running functions + Volumes (matches gateway PR)
+// ═══════════════════════════════════════════════════════════════════════
+// New surface: instead of 24h-capped sandboxes, agents can deploy a
+// long-running Python function (with custom pip packages, GPU choice, up
+// to 24h timeout per Modal SDK limit) and persist state across runs via
+// Volumes. Pricing is upfront at deploy time (same model as long-task
+// sandboxes today). Smart-rebate (actual-usage settle + refund) is
+// deferred to Phase B — see the gateway team's Notion checklist.
+
+const ALLOWED_FUNCTION_GPUS = ['T4', 'L4', 'A10G', 'A100', 'H100'] as const;
+type FunctionGpu = typeof ALLOWED_FUNCTION_GPUS[number];
+
+interface FunctionDeployInput {
+  app_name: string;
+  code: string;                  // raw Python — we base64-encode before sending
+  entry_function?: string;
+  pip?: string[];
+  gpu?: FunctionGpu | null;
+  cpu?: number;
+  memory_mb?: number;
+  timeout?: number;
+  volumes?: string[];
+}
+
+export const modalDeployFunctionCapability: CapabilityHandler = {
+  spec: {
+    name: 'ModalDeployFunction',
+    description:
+      'Register a long-running Python function on Modal (via BlockRun gateway). ' +
+      'Unlike ModalCreate (which spawns a sandbox for ≤5min flat / ≤24h hourly), ' +
+      'ModalDeployFunction is the right tool for fine-tuning, batch jobs, anything ' +
+      'that benefits from a stable function + persistent Volume + custom pip deps. ' +
+      'PRICING: charged UPFRONT at deploy time based on max timeout × hourly GPU rate ' +
+      '(T4 $1.50/h, A100 $4/h, H100 $8/h, CPU $0.10/h). NO REFUND on early termination ' +
+      'in v1 — pick `timeout` carefully (over-allocation = wasted USDC). ' +
+      'After deploy, call ModalRunFunction(function_id, input) to trigger; poll with ' +
+      'ModalGetFunctionStatus(run_id). ' +
+      'Code MUST define a function whose name matches `entry_function` (default: "main"). ' +
+      'pip packages install on first run (~30-90s overhead, then cached).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        app_name: { type: 'string', description: 'Short name for this function, [a-z0-9-]{1,32}. Re-deploying same name overwrites.' },
+        code: { type: 'string', description: 'Python source. Must define the `entry_function`. Max 256KB after base64 encoding.' },
+        entry_function: { type: 'string', description: 'Name of function to invoke in `code`. Default "main".' },
+        pip: { type: 'array', items: { type: 'string' }, description: 'PyPI packages to install before each run (cached after first).' },
+        gpu: { type: 'string', description: `GPU tier: ${ALLOWED_FUNCTION_GPUS.join(', ')}. Omit for CPU-only ($0.10/h).` },
+        cpu: { type: 'number', description: 'CPU cores (default 2, max 8).' },
+        memory_mb: { type: 'number', description: 'Memory in MB (default 4096, max 32768).' },
+        timeout: { type: 'number', description: 'Max function lifetime in seconds (10-86400). CHARGED FULL AMOUNT UPFRONT.' },
+        volumes: { type: 'array', items: { type: 'string' }, description: 'Pre-created Volume names to mount at /data/<name>.' },
+      },
+      required: ['app_name', 'code'],
+    },
+  },
+  concurrent: false,
+  async execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
+    const raw = input as unknown as FunctionDeployInput;
+    if (!raw.app_name || !raw.code) {
+      return { isError: true, output: 'app_name and code are required' };
+    }
+    let gpu = raw.gpu;
+    if (typeof gpu === 'string') {
+      const matched = ALLOWED_FUNCTION_GPUS.find(g => g.toLowerCase() === (gpu as string).toLowerCase());
+      gpu = (matched ?? null) as FunctionGpu | null;
+    }
+    const body = {
+      app_name: raw.app_name,
+      code: Buffer.from(raw.code, 'utf-8').toString('base64'),
+      entry_function: raw.entry_function ?? 'main',
+      image: { base: 'python:3.11', pip: raw.pip ?? [], apt: [] },
+      gpu: gpu ?? null,
+      cpu: raw.cpu ?? 2,
+      memory_mb: raw.memory_mb ?? 4096,
+      timeout: raw.timeout ?? 3600,
+      volumes: raw.volumes ?? [],
+    };
+    const endpoint = modalEndpointV2('function', 'deploy');
+    const res = await postWithPayment(
+      endpoint,
+      body,
+      `Modal function deploy: ${raw.app_name}`,
+      ctx.abortSignal,
+      45_000,
+    );
+    if (!res.ok) {
+      return {
+        isError: true,
+        output: `ModalDeployFunction failed (${res.status}): ${JSON.stringify(res.body).slice(0, 400)}`,
+      };
+    }
+    return {
+      output:
+        `Function deployed.\n` +
+        `function_id: ${res.body.function_id}\n` +
+        `Estimated cost: $${res.body.estimated_cost_usd ?? '(see X-Payment-Receipt header)'}\n` +
+        `Next: ModalRunFunction(function_id=${res.body.function_id}, input={...})`,
+    };
+  },
+};
+
+interface FunctionRunInput { function_id: string; input?: Record<string, unknown>; }
+
+export const modalRunFunctionCapability: CapabilityHandler = {
+  spec: {
+    name: 'ModalRunFunction',
+    description:
+      'Trigger a previously deployed function with input args. Returns run_id immediately — ' +
+      'poll ModalGetFunctionStatus to get the result. Compute is already paid (at deploy time), ' +
+      'so this only charges a tiny trigger fee ($0.005).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        function_id: { type: 'string', description: 'function_id from ModalDeployFunction.' },
+        input: { type: 'object', description: 'JSON object passed as the function argument.' },
+      },
+      required: ['function_id'],
+    },
+  },
+  concurrent: false,
+  async execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
+    const raw = input as unknown as FunctionRunInput;
+    if (!raw.function_id) return { isError: true, output: 'function_id is required' };
+    const res = await postWithPayment(
+      modalEndpointV2('function', 'run'),
+      { function_id: raw.function_id, input: raw.input ?? {} },
+      `Modal function run: ${raw.function_id}`,
+      ctx.abortSignal,
+      45_000,
+    );
+    if (!res.ok) {
+      return {
+        isError: true,
+        output: `ModalRunFunction failed (${res.status}): ${JSON.stringify(res.body).slice(0, 400)}`,
+      };
+    }
+    return {
+      output:
+        `Run started.\n` +
+        `run_id: ${res.body.run_id}\n` +
+        `status: ${res.body.status}\n` +
+        `Poll with ModalGetFunctionStatus(run_id=${res.body.run_id}).`,
+    };
+  },
+};
+
+interface FunctionStatusInput { run_id: string; }
+
+export const modalGetFunctionStatusCapability: CapabilityHandler = {
+  spec: {
+    name: 'ModalGetFunctionStatus',
+    description:
+      'Poll a function run for status, result, or error. Returns immediately. ' +
+      'status field: "running" | "done" | "failed". When done, `result` holds the function return value; ' +
+      'when failed, `error` holds the traceback summary.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        run_id: { type: 'string', description: 'run_id from ModalRunFunction.' },
+      },
+      required: ['run_id'],
+    },
+  },
+  concurrent: true,
+  async execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
+    const raw = input as unknown as FunctionStatusInput;
+    if (!raw.run_id) return { isError: true, output: 'run_id is required' };
+    const res = await postWithPayment(
+      modalEndpointV2('function', 'status'),
+      { run_id: raw.run_id },
+      `Modal function status: ${raw.run_id}`,
+      ctx.abortSignal,
+      20_000,
+    );
+    if (!res.ok) {
+      return {
+        isError: true,
+        output: `ModalGetFunctionStatus failed (${res.status}): ${JSON.stringify(res.body).slice(0, 400)}`,
+      };
+    }
+    const status = (res.body.status as string) ?? 'unknown';
+    const lines = [`status: ${status}`];
+    if (res.body.started_at) lines.push(`started_at: ${res.body.started_at}`);
+    if (res.body.ended_at) lines.push(`ended_at: ${res.body.ended_at}`);
+    if (status === 'done' && res.body.result !== undefined) {
+      lines.push(`result: ${JSON.stringify(res.body.result).slice(0, 2000)}`);
+    } else if (status === 'failed' && res.body.error) {
+      lines.push(`error: ${String(res.body.error).slice(0, 1000)}`);
+    }
+    return { output: lines.join('\n') };
+  },
+};
+
+interface VolumeCreateInput { name: string; size_gb: number; }
+
+export const modalCreateVolumeCapability: CapabilityHandler = {
+  spec: {
+    name: 'ModalCreateVolume',
+    description:
+      'Create a persistent Modal Volume for storing checkpoints / datasets / model weights. ' +
+      'Volumes survive across Function runs and reboots. PRICING: $0.20 per GB per month, ' +
+      'prepaid 1 month at create time. No refund on delete. Max 200GB total per wallet.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Volume name, [a-z0-9-]{1,32}.' },
+        size_gb: { type: 'number', description: 'Size in GB (1-200).' },
+      },
+      required: ['name', 'size_gb'],
+    },
+  },
+  concurrent: false,
+  async execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
+    const raw = input as unknown as VolumeCreateInput;
+    if (!raw.name || !raw.size_gb) return { isError: true, output: 'name and size_gb are required' };
+    const res = await postWithPayment(
+      modalEndpointV2('volume', 'create'),
+      { name: raw.name, size_gb: raw.size_gb },
+      `Modal volume create: ${raw.name} (${raw.size_gb}GB)`,
+      ctx.abortSignal,
+      30_000,
+    );
+    if (!res.ok) {
+      return {
+        isError: true,
+        output: `ModalCreateVolume failed (${res.status}): ${JSON.stringify(res.body).slice(0, 400)}`,
+      };
+    }
+    return {
+      output:
+        `Volume created.\n` +
+        `name: ${raw.name}\n` +
+        `size_gb: ${raw.size_gb}\n` +
+        `mount_path: ${res.body.mount_path}\n` +
+        `Pass "${raw.name}" in the "volumes" array of ModalDeployFunction to use it.`,
+    };
+  },
+};
+
+export const modalListVolumesCapability: CapabilityHandler = {
+  spec: {
+    name: 'ModalListVolumes',
+    description: 'List all volumes owned by the caller. Charges $0.001.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  concurrent: true,
+  async execute(_input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
+    const res = await postWithPayment(
+      modalEndpointV2('volume', 'list'),
+      {},
+      'Modal volume list',
+      ctx.abortSignal,
+      15_000,
+    );
+    if (!res.ok) {
+      return {
+        isError: true,
+        output: `ModalListVolumes failed (${res.status}): ${JSON.stringify(res.body).slice(0, 400)}`,
+      };
+    }
+    const volumes = (res.body.volumes as Array<{ name: string; size_gb: number; created_at: string }>) ?? [];
+    if (volumes.length === 0) return { output: 'No volumes.' };
+    const rows = volumes.map(v => `  - ${v.name} (${v.size_gb} GB, created ${v.created_at})`);
+    return { output: `${volumes.length} volume(s):\n${rows.join('\n')}` };
+  },
+};
+
+interface VolumeDeleteInput { name: string; }
+
+export const modalDeleteVolumeCapability: CapabilityHandler = {
+  spec: {
+    name: 'ModalDeleteVolume',
+    description:
+      'Delete a Modal Volume permanently. Does NOT refund the prepaid storage period. ' +
+      'Confirm before calling.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Volume name to delete.' },
+      },
+      required: ['name'],
+    },
+  },
+  concurrent: false,
+  async execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
+    const raw = input as unknown as VolumeDeleteInput;
+    if (!raw.name) return { isError: true, output: 'name is required' };
+    const res = await postWithPayment(
+      modalEndpointV2('volume', 'delete'),
+      { name: raw.name },
+      `Modal volume delete: ${raw.name}`,
+      ctx.abortSignal,
+      20_000,
+    );
+    if (!res.ok) {
+      return {
+        isError: true,
+        output: `ModalDeleteVolume failed (${res.status}): ${JSON.stringify(res.body).slice(0, 400)}`,
+      };
+    }
+    return { output: `Deleted volume: ${res.body.deleted}` };
+  },
+};
+
 // ─── All-in-one export for index.ts registration ─────────────────────────
 
 export const modalCapabilities: CapabilityHandler[] = [
@@ -772,4 +1083,11 @@ export const modalCapabilities: CapabilityHandler[] = [
   modalExecCapability,
   modalStatusCapability,
   modalTerminateCapability,
+  // v2 — long-running GPU functions + persistent volumes
+  modalDeployFunctionCapability,
+  modalRunFunctionCapability,
+  modalGetFunctionStatusCapability,
+  modalCreateVolumeCapability,
+  modalListVolumesCapability,
+  modalDeleteVolumeCapability,
 ];
