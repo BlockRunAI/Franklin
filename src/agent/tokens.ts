@@ -58,6 +58,12 @@ export function getAnchoredTokenCount(history: Dialogue[]): {
   apiAnchored: boolean;
   contextUsagePct: number;
 } {
+  // The model that just billed input — used as the denominator below.
+  // _currentModel is set per-turn by setEstimationModel(), so it reflects
+  // whatever the router actually resolved (not just config.model, which
+  // may be a routing profile like blockrun/auto).
+  const contextWindow = _currentModel ? getContextWindow(_currentModel) : 200_000;
+
   if (lastApiInputTokens > 0 && lastApiMessageCount > 0 && history.length >= lastApiMessageCount) {
     // Sanity check: if history was mutated (compaction, micro-compact), anchor may be stale.
     // Detect by checking if new messages were only appended (length grew), not if content changed.
@@ -73,7 +79,7 @@ export function getAnchoredTokenCount(history: Dialogue[]): {
       return {
         estimated: total,
         apiAnchored: true,
-        contextUsagePct: 0,
+        contextUsagePct: (total / contextWindow) * 100,
       };
     }
     // Too much growth — anchor is unreliable, fall through to estimation
@@ -81,10 +87,11 @@ export function getAnchoredTokenCount(history: Dialogue[]): {
   }
 
   // No anchor — pure estimation
+  const est = estimateHistoryTokens(history);
   return {
-    estimated: estimateHistoryTokens(history),
+    estimated: est,
     apiAnchored: false,
-    contextUsagePct: 0,
+    contextUsagePct: (est / contextWindow) * 100,
   };
 }
 
@@ -133,10 +140,38 @@ function estimateContentPartTokens(part: ContentPart | UserContentPart): number 
       // +16 tokens for tool_use framing (type, id, name fields, JSON structure)
       return 16 + estimateTokens(part.name) + estimateTokens(JSON.stringify(part.input), 2);
     case 'tool_result': {
-      const content = typeof part.content === 'string'
-        ? part.content
-        : JSON.stringify(part.content);
-      return estimateTokens(content, 2);
+      // String content: count as text directly.
+      if (typeof part.content === 'string') {
+        return estimateTokens(part.content, 2);
+      }
+      // Array content: sum block-by-block. CRITICAL: image blocks must
+      // NOT go through JSON.stringify — their base64 `data` field would
+      // be tokenized as text (a 100KB image → ~70k phantom tokens),
+      // which is what made the context ring read ~86% on a 2-image chat
+      // and triggered premature /compact loops. Anthropic actually
+      // bills (w*h)/750 per image, ≈1100-1500 for typical sizes; a flat
+      // 1500-token estimate is close enough without needing to decode
+      // the image dimensions client-side.
+      let total = 0;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const blocks = part.content as any[];
+      for (const block of blocks) {
+        const blockType = block?.type;
+        if (blockType === 'text') {
+          total += estimateTokens((block?.text as string) ?? '', 2);
+        } else if (blockType === 'image') {
+          total += 1500;
+        } else {
+          // Unknown block — stringify minus any nested base64 data field
+          // to avoid the same blow-up for future block kinds.
+          const sanitized = { ...block };
+          if (sanitized?.source && typeof sanitized.source === 'object' && sanitized.source.data) {
+            sanitized.source = { ...sanitized.source, data: '<bytes>' };
+          }
+          total += estimateTokens(JSON.stringify(sanitized), 2);
+        }
+      }
+      return total;
     }
     case 'thinking':
       return estimateTokens(part.thinking);
