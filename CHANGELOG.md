@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.15.96 — `franklin doctor` warns on low balance (< $1) instead of "all clear"
+
+Real-machine bug. Doctor's USDC balance check was binary: `> 0` =
+green, `= 0` = warn. Verified 2026-05-11 on a real run:
+
+```
+✓ USDC balance       $0.37
+```
+
+Wallet had $0.37. Any paid Opus call costs $0.50+, so the next paid
+turn would fail mid-stream with "insufficient funds". Doctor said
+"all clear".
+
+### Fix
+
+Tiered status with a $1.00 floor:
+
+- `$0.00` → warn, "free-tier models only (no paid calls possible)"
+- `$0.01 – $0.99` → warn, "low; paid calls likely to fail mid-stream"
+- `$1.00+` → ok
+
+Both warning paths surface the deposit address AND the localhost
+wallet panel URL (`http://localhost:3100/#wallet`) as remedies, so
+the user has a one-click deposit path regardless of where they're
+running franklin.
+
+### Why $1.00
+
+It covers ~10 cheap-model calls (`deepseek-chat` ~$0.005 each) or
+~2 mid-tier Sonnet calls (~$0.04 each). Below that, any
+non-trivial paid session is going to bounce, so flagging it as a
+problem is the right move.
+
+383/383 tests pass.
+
 ## 3.15.95 — Audit captures `cache_creation_input_tokens` / `cache_read_input_tokens` (vision + cache calls no longer look 28× over-billed)
 
 Observability fix. The streaming client was reading `input_tokens`

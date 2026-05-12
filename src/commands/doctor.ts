@@ -123,13 +123,30 @@ async function runChecks(): Promise<Check[]> {
         status: 'ok',
         detail: `${walletAddress.slice(0, 10)}…${walletAddress.slice(-6)}`,
       });
+      // Tiered balance status. Binary `> 0` was misleading — verified
+      // 2026-05-11 from a real run: doctor printed `✓ USDC balance
+      // $0.37` (green) on a wallet that couldn't fund a single Opus
+      // call ($0.50+ each). Threshold of $1.00 covers ~10 cheap-model
+      // calls or ~2 mid-tier calls — anything below that is
+      // operationally empty for paid workflows. Free models still work.
+      const LOW_BALANCE_THRESHOLD = 1.00;
+      const balanceStatus: 'ok' | 'warn' =
+        walletBalance >= LOW_BALANCE_THRESHOLD ? 'ok' : 'warn';
+      const balanceDetail =
+        walletBalance === 0
+          ? '$0.00 — free-tier models only (no paid calls possible)'
+          : walletBalance < LOW_BALANCE_THRESHOLD
+          ? `$${walletBalance.toFixed(2)} — low; paid calls likely to fail mid-stream`
+          : `$${walletBalance.toFixed(2)}`;
+      const balanceRemedy =
+        walletBalance < LOW_BALANCE_THRESHOLD
+          ? `Send USDC on ${chain} to ${walletAddress} (or open http://localhost:3100/#wallet)`
+          : undefined;
       out.push({
         name: 'USDC balance',
-        status: walletBalance > 0 ? 'ok' : 'warn',
-        detail: `$${walletBalance.toFixed(2)}${walletBalance === 0 ? ' — free-tier models only' : ''}`,
-        remedy: walletBalance === 0
-          ? `Send USDC on ${chain} to ${walletAddress} to unlock paid models`
-          : undefined,
+        status: balanceStatus,
+        detail: balanceDetail,
+        remedy: balanceRemedy,
       });
     } catch (err) {
       const msg = (err as Error).message || '';
