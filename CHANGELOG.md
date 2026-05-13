@@ -1,5 +1,42 @@
 # Changelog
 
+## Franklin Agent 3.15.103 — cost-log dedupe: use `Math.floor` for second-bucket boundaries
+
+Follow-up to 3.15.102. The dedupe key in `cost-log.ts` used
+`Math.round(r.ts / 1000)` to bucket rows by second. That splits same-
+second duplicates across two buckets when their ms drift across the
+0.5-second boundary:
+
+| ts (ms) | `Math.round(ts/1000)` |
+|---|---|
+| 1499 | 1 |
+| 1500 | 2 |
+
+Two writes both stamped within second 1 (e.g. 1499ms and 1500ms) end
+up in different buckets and don't dedupe. `Math.floor` correctly maps
+both to bucket 1.
+
+### Fix
+
+One-character change: `Math.round` → `Math.floor`.
+
+### Tests
+
+New regression test pinning both edges:
+
+- `ts=136.49` + `ts=136.51` (same physical second 136, straddling
+  the half-second mark) → must collapse to 1 row.
+- `ts=138.90` + `ts=139.10` (adjacent physical seconds, close to the
+  boundary) → must remain 2 distinct rows.
+
+391/391 tests pass.
+
+### What didn't change
+
+The total cost number from real data stays `$7.48` — the previously-
+misbucketed row was already covered by the same call's earlier rows,
+so net total is unchanged. The change is correctness, not magnitude.
+
 ## Franklin Agent 3.15.102 — `cost_log.jsonl` reader: dedupe SDK double-writes + filter Anvil test wallets
 
 Verified read-time guards. Two real-data bugs surfaced in a routine

@@ -167,7 +167,7 @@ export function loadSdkSettlements(opts?: ReadOptions): SettlementRow[] {
 function dedupeRows(rows: SettlementRow[]): SettlementRow[] {
   const seen = new Map<string, SettlementRow>();
   for (const r of rows) {
-    const bucket = Math.round(r.ts / 1000);
+    const bucket = Math.floor(r.ts / 1000);
     const microUsd = Math.round(r.costUsd * 1e6);
     const key = `${bucket}|${r.endpoint}|${r.model ?? ''}|${microUsd}`;
     // Keep the FIRST row in each bucket (chronologically earliest by ts).

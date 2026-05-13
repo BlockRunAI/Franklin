@@ -8899,6 +8899,41 @@ test('cost-log reader dedupes same-second duplicate writes from multiple SDK cli
   }
 });
 
+test('cost-log reader buckets dedupe by physical second boundaries', async () => {
+  const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { loadSdkSettlements } = await import('../dist/stats/cost-log.js');
+  const dir = mkdtempSync(join(tmpdir(), 'fl-costlog-second-bucket-'));
+  const file = join(dir, 'cost_log.jsonl');
+  const lines = [
+    // Same physical second, straddling the half-second mark: must collapse.
+    JSON.stringify({ ts: 1778603136.49, endpoint: '/v1/chat/completions', cost_usd: 1.0,
+      model: 'openai/gpt-5.5', wallet: '0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8',
+      client_kind: 'LLMClient' }),
+    JSON.stringify({ ts: 1778603136.51, endpoint: '/v1/chat/completions', cost_usd: 1.0,
+      model: 'openai/gpt-5.5', wallet: '0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8',
+      client_kind: 'AsyncLLMClient' }),
+    // Adjacent physical seconds, close to the boundary: must remain distinct.
+    JSON.stringify({ ts: 1778603138.90, endpoint: '/v1/chat/completions', cost_usd: 2.0,
+      model: 'openai/gpt-5.5', wallet: '0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8',
+      client_kind: 'LLMClient' }),
+    JSON.stringify({ ts: 1778603139.10, endpoint: '/v1/chat/completions', cost_usd: 2.0,
+      model: 'openai/gpt-5.5', wallet: '0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8',
+      client_kind: 'AsyncLLMClient' }),
+  ];
+  writeFileSync(file, lines.join('\n') + '\n');
+  try {
+    const rows = loadSdkSettlements({ path: file });
+    assert.equal(rows.filter((r) => r.costUsd === 1.0).length, 1,
+      'same physical second duplicate should collapse even across the half-second mark');
+    assert.equal(rows.filter((r) => r.costUsd === 2.0).length, 2,
+      'adjacent physical seconds should not collapse even near the boundary');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('cost-log reader filters out known Anvil/Hardhat test wallets', async () => {
   const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
