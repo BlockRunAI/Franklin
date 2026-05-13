@@ -34,7 +34,35 @@ export interface SettlementRow {
   costUsd: number;
   /** Unix milliseconds (normalized — SDK writes seconds). */
   ts: number;
+  /** Wallet that signed (lowercased). Used for test-wallet filtering. */
+  wallet?: string;
+  /** Model that was charged (e.g. `openai/gpt-5.5`). */
+  model?: string;
+  /** Which client wrote the row (LLMClient / AgentClient / ProxyClient / AsyncLLMClient). */
+  clientKind?: string;
 }
+
+/**
+ * Anvil/Hardhat deterministic test accounts. The first one
+ * (0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266) leaked into a real
+ * cost_log on 2026-05-13 — some SDK path signed with a hardcoded test
+ * key in production. These addresses are public knowledge (the private
+ * keys are in the Anvil source), so a settlement signed by them is
+ * definitionally not a real user spend. Filter them out at read time
+ * so dashboards / stats don't surface phantom rows.
+ */
+const KNOWN_TEST_WALLETS = new Set([
+  '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266', // Anvil #0
+  '0x70997970c51812dc3a010c7d01b50e0d17dc79c8', // Anvil #1
+  '0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc', // Anvil #2
+  '0x90f79bf6eb2c4f870365e785982e1f101e93b906', // Anvil #3
+  '0x15d34aaf54267db7d7c367839aaf71a00a2c6a65', // Anvil #4
+  '0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc', // Anvil #5
+  '0x976ea74026e726554db657fa54763abd0c3a0aa9', // Anvil #6
+  '0x14dc79964da2c08b23698b3d3cc7ca32193d9955', // Anvil #7
+  '0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f', // Anvil #8
+  '0xa0ee7a142d267c1f36714e4a8f75612f20a79720', // Anvil #9
+]);
 
 export interface SettlementSummary {
   /** Path to cost_log.jsonl (or the fallback location). */
@@ -102,10 +130,52 @@ export function loadSdkSettlements(opts?: ReadOptions): SettlementRow[] {
     const ts = tsRaw < 1e12 ? Math.round(tsRaw * 1000) : Math.round(tsRaw);
 
     if (ts < sinceMs || ts > untilMs) continue;
-    rows.push({ endpoint, costUsd, ts });
+
+    // Filter out known test-wallet leaks. Verified 2026-05-13: a real
+    // cost_log had a $1 entry written under Anvil account #0
+    // (0xf39Fd6...) — public test key. Any settlement under those
+    // addresses is by definition not real user spend; drop.
+    const walletRaw = typeof obj.wallet === 'string' ? obj.wallet : undefined;
+    const wallet = walletRaw?.toLowerCase();
+    if (wallet && KNOWN_TEST_WALLETS.has(wallet)) continue;
+
+    const model = typeof obj.model === 'string' ? obj.model : undefined;
+    const clientKindRaw = obj.client_kind ?? obj.clientKind;
+    const clientKind = typeof clientKindRaw === 'string' ? clientKindRaw : undefined;
+
+    rows.push({ endpoint, costUsd, ts, wallet, model, clientKind });
   }
 
-  return rows;
+  return dedupeRows(rows);
+}
+
+/**
+ * Collapse SDK double-writes. Verified 2026-05-13: a single
+ * `gpt-5.5 / /v1/chat/completions / $1.00` call generated THREE
+ * cost_log rows in the same physical second (two `LLMClient`, one
+ * `AsyncLLMClient`) because the SDK wraps the same fetch through two
+ * client classes, both of which call `appendCostLog`. Bucket by
+ * `(second, endpoint, model, cost-in-micro-USDC)` and keep the first;
+ * the others were always duplicates.
+ *
+ * Edge case: two legitimate same-second / same-model / same-price
+ * calls would also dedupe to one. Accepting that trade-off — the SDK
+ * bug currently inflates by 200-300%; a worst-case 1-row undercount
+ * on rapid-fire identical calls is a much smaller error and the user's
+ * dashboards round to cents anyway.
+ */
+function dedupeRows(rows: SettlementRow[]): SettlementRow[] {
+  const seen = new Map<string, SettlementRow>();
+  for (const r of rows) {
+    const bucket = Math.round(r.ts / 1000);
+    const microUsd = Math.round(r.costUsd * 1e6);
+    const key = `${bucket}|${r.endpoint}|${r.model ?? ''}|${microUsd}`;
+    // Keep the FIRST row in each bucket (chronologically earliest by ts).
+    // If the existing row in the map already has earlier ts, leave it.
+    const existing = seen.get(key);
+    if (!existing || r.ts < existing.ts) seen.set(key, r);
+  }
+  return [...seen.values()].sort((a, b) => a.ts - b.ts);
 }
 
 /**

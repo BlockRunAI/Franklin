@@ -1,5 +1,85 @@
 # Changelog
 
+## Franklin Agent 3.15.102 — `cost_log.jsonl` reader: dedupe SDK double-writes + filter Anvil test wallets
+
+Verified read-time guards. Two real-data bugs surfaced in a routine
+log review 2026-05-13:
+
+### Bug A — SDK writes the same call up to 3 times
+
+A single `gpt-5.5 / /v1/chat/completions / $1.00` call produced three
+cost_log rows in the same physical second under two `client_kind`
+labels (`LLMClient`, `AsyncLLMClient`). The SDK wraps the same fetch
+through multiple client classes, each of which calls `appendCostLog`.
+Net effect: `franklin stats` inflated by ~200-300% on any session
+that used the async wrappers.
+
+### Bug B — Anvil deterministic test wallet leaked into production
+
+A $1.00 entry was logged under `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`
+— Anvil's first deterministic account (publicly-known private key).
+Some SDK path signed with a hardcoded test key in production. The
+$1 wasn't really spent from the user's wallet, but it sat in the log
+making stats lie.
+
+### Verified impact (real user, 2026-05-13)
+
+| Metric | Before fix | After fix | Wallet truth |
+|---|---|---|---|
+| 24h cost_log total | $12.48 (52 rows) | **$7.48** (47 rows) | **$7.54** ✓ |
+
+Stats now match the wallet drop to within rounding noise ($0.06). The
+5 phantom rows = 4 same-second SDK duplicates + 1 Anvil-wallet leak.
+
+### Fix
+
+Both guards live in `src/stats/cost-log.ts:loadSdkSettlements` — the
+single read path every Franklin dashboard / CLI / detector uses. No
+SDK upgrade required; the bug remains in `@blockrun/llm` but our
+reader defends.
+
+- **Dedupe**: bucket rows by `(round(ts to second), endpoint, model,
+  cost-in-micro-USDC)`, keep the chronologically-first row in each
+  bucket. Edge case acknowledged: two genuinely identical same-second
+  calls would also collapse — accepting that trade-off given the
+  current 2-3× over-count is a much bigger error.
+- **Test-wallet filter**: hardcoded set of the 10 Anvil/Hardhat
+  deterministic accounts. Any row signed by these addresses is
+  definitionally not real user spend.
+- `SettlementRow` interface gained `wallet`, `model`, `clientKind`
+  optional fields so the filters can run and downstream callers can
+  see the metadata.
+
+### Tests
+
+Two new in `test/local.mjs`:
+
+1. Dedupe fixture: 3 same-second duplicates + 1 legitimate 10s-later
+   identical call. Asserts 2 rows survive, $2 total.
+2. Test-wallet filter: 2 Anvil rows + 1 real-user row. Asserts only
+   the real-user row survives.
+
+390/390 tests pass.
+
+### What didn't change
+
+- The raw `cost_log.jsonl` file. Read-time guards don't rewrite the
+  ledger. Historical rows survive on disk; the dashboards see clean
+  numbers.
+- Wallet billing. Was always correct (gateway settles against real
+  on-chain payments). The bug was observability only.
+- `recordFailure` / `franklin doctor --anomaly` — independent paths.
+
+### Note on upstream
+
+The SDK-side fixes (stop double-writing from AsyncLLMClient; stop
+signing with the Anvil key in production) belong in `@blockrun/llm`.
+This release is the defensive read layer until those land — and even
+after, the read-time guards stay because:
+- Historical rows on disk are already polluted.
+- Future SDK bugs (or new client classes that re-introduce the
+  pattern) won't catch users by surprise.
+
 ## Franklin Agent 3.15.101 — `[a] always` now actually means always (persists across sessions)
 
 User-reported UX bug. The permission prompt advertised `[a] always`, but

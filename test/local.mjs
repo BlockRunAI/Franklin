@@ -8854,6 +8854,88 @@ test('cost-log.jsonl reader returns empty when file missing (3.15.79)', async ()
   }
 });
 
+// ─── cost-log read-time guards (3.15.102) ──────────────────────────────────
+// Verified 2026-05-13 from a real cost_log: the SDK wrote the same
+// gpt-5.5 / $1.00 call three times in the same physical second under
+// two client_kind labels (LLMClient, AsyncLLMClient), and a separate $1
+// entry was signed under the Anvil deterministic test wallet
+// (0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266). Both inflate stats
+// without affecting wallet truth. Read-time dedupe + test-wallet filter
+// keep dashboards honest until the SDK is fixed upstream.
+test('cost-log reader dedupes same-second duplicate writes from multiple SDK client_kinds', async () => {
+  const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { loadSdkSettlements } = await import('../dist/stats/cost-log.js');
+  const dir = mkdtempSync(join(tmpdir(), 'fl-costlog-dedupe-'));
+  const file = join(dir, 'cost_log.jsonl');
+  // Same call, written 3 times within the same second by different client classes.
+  // Real fixture from production cost_log on 2026-05-13.
+  const ts = 1778603136.74;
+  const lines = [
+    JSON.stringify({ ts, endpoint: '/v1/chat/completions', cost_usd: 1.0,
+      model: 'openai/gpt-5.5', wallet: '0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8',
+      client_kind: 'LLMClient' }),
+    JSON.stringify({ ts: ts + 0.06, endpoint: '/v1/chat/completions', cost_usd: 1.0,
+      model: 'openai/gpt-5.5', wallet: '0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8',
+      client_kind: 'AsyncLLMClient' }),
+    JSON.stringify({ ts: ts + 0.18, endpoint: '/v1/chat/completions', cost_usd: 1.0,
+      model: 'openai/gpt-5.5', wallet: '0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8',
+      client_kind: 'LLMClient' }),
+    // A genuinely different call ~10s later — must NOT dedupe.
+    JSON.stringify({ ts: ts + 10, endpoint: '/v1/chat/completions', cost_usd: 1.0,
+      model: 'openai/gpt-5.5', wallet: '0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8',
+      client_kind: 'LLMClient' }),
+  ];
+  writeFileSync(file, lines.join('\n') + '\n');
+  try {
+    const rows = loadSdkSettlements({ path: file });
+    assert.equal(rows.length, 2,
+      `expected 2 rows after dedupe (one same-second cluster + one later call); got ${rows.length}`);
+    const total = rows.reduce((s, r) => s + r.costUsd, 0);
+    assert.equal(total, 2.0, `expected $2 total post-dedupe, got $${total}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('cost-log reader filters out known Anvil/Hardhat test wallets', async () => {
+  const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { loadSdkSettlements } = await import('../dist/stats/cost-log.js');
+  const dir = mkdtempSync(join(tmpdir(), 'fl-costlog-testwallet-'));
+  const file = join(dir, 'cost_log.jsonl');
+  const ts = 1778567783;
+  const lines = [
+    // Anvil #0 — must be dropped
+    JSON.stringify({ ts, endpoint: '/v1/chat/completions', cost_usd: 1.0,
+      model: 'openai/gpt-5.5',
+      wallet: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      client_kind: 'AsyncLLMClient' }),
+    // Anvil #1 — also dropped
+    JSON.stringify({ ts: ts + 1, endpoint: '/v1/chat/completions', cost_usd: 1.0,
+      model: 'openai/gpt-5.5',
+      wallet: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+      client_kind: 'LLMClient' }),
+    // Real user wallet — must survive
+    JSON.stringify({ ts: ts + 2, endpoint: '/v1/messages', cost_usd: 0.001,
+      model: 'anthropic/claude-haiku-4.5',
+      wallet: '0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8',
+      client_kind: 'AgentClient' }),
+  ];
+  writeFileSync(file, lines.join('\n') + '\n');
+  try {
+    const rows = loadSdkSettlements({ path: file });
+    assert.equal(rows.length, 1, `expected 1 row (test wallets filtered), got ${rows.length}`);
+    assert.equal(rows[0].wallet, '0xcc8c44ad3dc2a58d841c3eb26131e49b22665ef8',
+      'real wallet (lowercased) must survive');
+    assert.equal(rows[0].costUsd, 0.001);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('stats command reconciles SDK ledger inside the stats window (3.15.80 regression)', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'fl-stats-window-'));
   const blockrunDir = join(fakeHome, '.blockrun');
