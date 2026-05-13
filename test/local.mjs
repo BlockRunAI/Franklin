@@ -2197,23 +2197,44 @@ test('bash-guard e2e: plan mode denies all bash regardless of risk', async () =>
 });
 
 test('bash-guard e2e: session allow overrides risk classification', async () => {
+  // NOTE: as of 2026-05-12 / 3.15.101, promptUser('always') ALSO persists
+  // the tool to ~/.blockrun/franklin-permissions.json (so the user
+  // doesn't get re-prompted across `franklin start` restarts). This test
+  // exercises the in-process behavior with the real BLOCKRUN_DIR — clean
+  // up after so we don't pollute the developer's real config file or
+  // break other in-process tests that assume an empty allow list.
+  const realConfigFile = join(homedir(), '.blockrun', 'franklin-permissions.json');
+  const preExistedSnapshot = existsSync(realConfigFile) ? readFileSync(realConfigFile, 'utf-8') : null;
   let promptCalled = false;
   const pm = new PermissionManager('default', async () => {
     promptCalled = true;
     return 'always'; // User clicks "always allow"
   });
 
-  // First call: normal command, should ask → user says "always"
-  const first = await pm.check('Bash', { command: 'npm install' });
-  assert.equal(first.behavior, 'ask');
-  // Simulate the user granting permission
-  await pm.promptUser('Bash', { command: 'npm install' });
-  assert.ok(promptCalled, 'promptFn should have been called');
+  try {
+    // First call: normal command, should ask → user says "always"
+    const first = await pm.check('Bash', { command: 'npm install' });
+    assert.equal(first.behavior, 'ask');
+    // Simulate the user granting permission
+    await pm.promptUser('Bash', { command: 'npm install' });
+    assert.ok(promptCalled, 'promptFn should have been called');
 
-  // Second call: after "always", even dangerous commands are allowed
-  const second = await pm.check('Bash', { command: 'rm -rf /' });
-  assert.equal(second.behavior, 'allow');
-  assert.equal(second.reason, 'session allow');
+    // Second call: after "always", even dangerous commands are allowed
+    const second = await pm.check('Bash', { command: 'rm -rf /' });
+    assert.equal(second.behavior, 'allow');
+    // Reason can be 'session allow' (the in-memory Set) or 'allowed by rule'
+    // (the persistAllowRule update to this.rules.allow). Either is valid —
+    // the user-visible contract is "allowed", not which code path got there.
+    assert.ok(second.reason === 'session allow' || second.reason === 'allowed by rule',
+      `expected session-allow or rule-allow, got ${second.reason}`);
+  } finally {
+    // Restore the pre-test state of the real config file.
+    if (preExistedSnapshot === null) {
+      try { rmSync(realConfigFile, { force: true }); } catch { /* ignore */ }
+    } else {
+      try { writeFileSync(realConfigFile, preExistedSnapshot); } catch { /* ignore */ }
+    }
+  }
 });
 
 test('bash-guard e2e: non-Bash tools are not affected by risk classifier', async () => {
@@ -8204,6 +8225,64 @@ test('estimateChars (reduce.ts): image blocks count as ~6K chars, not base64 len
   const stillHasImage = lastResult.content.some((b) => b.type === 'image' && b.source?.data === fakeBase64);
   assert.ok(stillHasImage, 'image base64 must survive reduceTokens passes');
 });
+
+// ─── PermissionManager: [a] always must persist across sessions ─────────────
+// Bug observed 2026-05-12: user reported being prompted for permission
+// repeatedly across `franklin start` invocations even after hitting [a]
+// each time. Root cause: "always" only added the tool to an in-memory
+// `sessionAllowed` Set; ~/.blockrun/franklin-permissions.json was never
+// touched. Pinning the persistence contract here so a future refactor
+// can't silently regress to the session-only behavior.
+test('PermissionManager.persistAllowRule: writes to franklin-permissions.json on [a] always', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-perm-persist-'));
+  const blockrunDir = join(fakeHome, '.blockrun');
+  mkdirSync(blockrunDir, { recursive: true });
+  const configFile = join(blockrunDir, 'franklin-permissions.json');
+  const permHref = new URL('../dist/agent/permissions.js', import.meta.url).href;
+  // Drive the prompt path with a fake promptFn that always returns 'always'.
+  const script = `
+    const { PermissionManager } = await import(${JSON.stringify(permHref)} + '?t=' + Date.now());
+    const pm = new PermissionManager('default', async () => 'always');
+    const granted = await pm.promptUser('Bash', { command: 'echo hi' });
+    if (!granted) { console.error('expected granted=true'); process.exit(2); }
+    // Second prompt for the same tool — should still go through promptFn
+    // since "session allow" was added but the file write doesn't affect
+    // an existing PermissionManager instance's matchesRule path unless
+    // the in-memory rules.allow was also updated. Both should be true.
+    const granted2 = await pm.promptUser('Bash', { command: 'ls' });
+    if (!granted2) { console.error('expected granted2=true'); process.exit(3); }
+  `;
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('node', ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const stderr = [];
+      proc.stderr.on('data', (b) => stderr.push(b.toString()));
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`perm subprocess failed (${code}): ${stderr.join('')}`)));
+      proc.on('error', reject);
+    });
+
+    // The file must exist and contain Bash in `allow`.
+    assert.ok(existsSync(configFile), 'franklin-permissions.json must be created on [a]');
+    const saved = JSON.parse(readFileSync(configFile, 'utf-8'));
+    assert.ok(Array.isArray(saved.allow), 'allow array present');
+    assert.ok(saved.allow.includes('Bash'), `Bash must be in allow list: ${JSON.stringify(saved.allow)}`);
+    // Idempotent: the second [a] must NOT duplicate the entry.
+    const bashCount = saved.allow.filter((x) => x === 'Bash').length;
+    assert.equal(bashCount, 1, `Bash appears ${bashCount} times — must be exactly 1 (idempotent write)`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+// (Same-instance behavior is covered by the pre-existing
+// `bash-guard e2e: session allow overrides risk classification` test
+// at line ~2199, which now also exercises the persist-to-disk path
+// added in 3.15.101 with its try/finally cleanup.)
 
 test('logger: embedded newlines collapse to ↵ so each entry is one physical line', async () => {
   // Pin the 2026-05-12 fix. A real franklin-debug.log entry had

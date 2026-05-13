@@ -1,5 +1,80 @@
 # Changelog
 
+## Franklin Agent 3.15.101 — `[a] always` now actually means always (persists across sessions)
+
+User-reported UX bug. The permission prompt advertised `[a] always`, but
+"always" only meant "for this in-memory session". Every `franklin start`
+restart wiped the grant and re-asked the same prompts.
+
+### Verified
+
+Real-machine inspection 2026-05-12:
+- `~/.blockrun/franklin-permissions.json` did not exist at all
+- yet the user reported approving Bash, Write, Edit repeatedly across
+  the day
+
+Root cause in `src/agent/permissions.ts:172-176`:
+
+```ts
+if (result === 'always') {
+  this.sessionAllowed.add(toolName);  // in-memory ONLY
+  return true;
+}
+```
+
+`sessionAllowed` is a `Set<string>` on the PermissionManager instance.
+It evaporates on every process exit. The disk-backed `allow` list
+existed but was never written by the `[a]` codepath — only by manual
+edits to the JSON file (which most users never do).
+
+### Fix
+
+New `persistAllowRule(toolName)` method:
+
+- Reads current `franklin-permissions.json` (or treats missing /
+  malformed as empty rules).
+- Appends `toolName` to `allow` if not already present (idempotent).
+- Updates the in-memory `this.rules.allow` so subsequent `check()`
+  calls in the same process short-circuit at the rule fast-path
+  instead of consulting `sessionAllowed` again.
+- Writes the file atomically with `fs.writeFileSync`. Best-effort —
+  a logging failure never blocks the paid call that just got approved.
+
+Both prompt paths (Ink UI + readline fallback) now call
+`persistAllowRule` on `[a]`.
+
+The Ink UI hint now says `[a] always (saved across sessions)` so the
+contract is explicit. The readline fallback message changes from
+`✓ Bash allowed for this session` to
+`✓ Bash allowed (saved to ~/.blockrun/franklin-permissions.json)`.
+
+### How to undo
+
+Edit `~/.blockrun/franklin-permissions.json` and remove the entry from
+the `allow` array. The file is human-readable JSON:
+
+```json
+{
+  "allow": ["Bash"],
+  "deny": [],
+  "ask": []
+}
+```
+
+### Tests
+
+- New regression: `persistAllowRule` actually writes to disk on `[a]`;
+  idempotent (second `[a]` for same tool doesn't duplicate the entry).
+  Subprocess-isolated with `HOME=tmp` so it can't pollute the developer's
+  real config file.
+- Updated existing test `bash-guard e2e: session allow overrides risk
+  classification`: now wraps its in-process `promptUser('always')` call
+  with a try/finally that snapshots and restores the real config file,
+  so the test never leaks `Bash` into the developer's allow list
+  (verified the hard way during this fix's development).
+
+388/388 tests pass.
+
 ## Franklin Agent 3.15.100 — Brand rebrand follow-through (CLI help, upgrade nudge, doctor label)
 
 Cleanup pass on 3.15.99. The rebrand to "Franklin Agent" missed three

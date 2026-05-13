@@ -1454,7 +1454,9 @@ function RunCodeApp({
               <Text bold color="green">[y]</Text>
               <Text dimColor> yes  </Text>
               <Text bold color="cyan">[a]</Text>
-              <Text dimColor> always  </Text>
+              <Text dimColor> always </Text>
+              <Text dimColor italic>(saved across sessions)</Text>
+              <Text dimColor>  </Text>
               <Text bold color="red">[n]</Text>
               <Text dimColor> no</Text>
             </Text>

@@ -170,7 +170,15 @@ export class PermissionManager {
     if (this.promptFn) {
       const result = await this.promptFn(toolName, hint);
       if (result === 'always') {
+        // "Always" must mean ALWAYS — including after the user restarts
+        // franklin. Pre-fix it was only in-memory: every `franklin start`
+        // re-asked the same prompts even after the user had pressed [a]
+        // explicitly. Verified 2026-05-12: ~/.blockrun/franklin-permissions.json
+        // was non-existent despite the user reporting repeated prompts.
+        // Persist to disk and update in-memory rules so subsequent
+        // checks short-circuit at the allow-rule stage (line 124).
         this.sessionAllowed.add(toolName);
+        this.persistAllowRule(toolName);
         return true;
       }
       return result === 'yes';
@@ -194,7 +202,8 @@ export class PermissionManager {
 
     if (normalized === 'a' || normalized === 'always') {
       this.sessionAllowed.add(toolName);
-      console.error(chalk.green(`  ✓ ${toolName} allowed for this session`));
+      this.persistAllowRule(toolName);
+      console.error(chalk.green(`  ✓ ${toolName} allowed (saved to ~/.blockrun/franklin-permissions.json)`));
       return true;
     }
 
@@ -207,6 +216,48 @@ export class PermissionManager {
   }
 
   // ─── Internal ──────────────────────────────────────────────────────────
+
+  /**
+   * Persist a tool name to the user's allow rules so future sessions
+   * skip the prompt. Idempotent: appends to the existing
+   * `allow: []` array only if not already present.
+   *
+   * Why this exists: pre-2026-05-12, "always" in the UI prompt was a
+   * misnomer — it only added the tool to the in-memory `sessionAllowed`
+   * Set, which evaporated on every `franklin start`. Users reported
+   * being prompted repeatedly across sessions despite hitting [a] each
+   * time. Persistence here makes "always" actually mean always.
+   *
+   * Best-effort writes (try/catch around fs) — a logging failure should
+   * never block the paid call that just got approved.
+   */
+  private persistAllowRule(toolName: string): void {
+    const configPath = path.join(BLOCKRUN_DIR, 'franklin-permissions.json');
+    try {
+      // Read current state (may not exist). Treat missing/malformed as
+      // empty rules — never throw on the user's tool execution path.
+      let current: PermissionRules = { allow: [], deny: [], ask: [] };
+      if (fs.existsSync(configPath)) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+          current = {
+            allow: Array.isArray(raw.allow) ? raw.allow : [],
+            deny: Array.isArray(raw.deny) ? raw.deny : [],
+            ask: Array.isArray(raw.ask) ? raw.ask : [],
+          };
+        } catch { /* malformed — reset */ }
+      }
+      if (current.allow.includes(toolName)) return; // already saved
+      current.allow.push(toolName);
+      // Update in-memory rules too so subsequent checks short-circuit
+      // at line 124 (matchesRule against allow) without re-prompting.
+      if (!this.rules.allow.includes(toolName)) {
+        this.rules.allow.push(toolName);
+      }
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(configPath, JSON.stringify(current, null, 2));
+    } catch { /* best-effort */ }
+  }
 
   private loadRules(): PermissionRules {
     const configPath = path.join(BLOCKRUN_DIR, 'franklin-permissions.json');
