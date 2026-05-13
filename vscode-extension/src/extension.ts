@@ -12,6 +12,7 @@ import {
   estimateCost,
   listSessions,
   loadSessionHistory,
+  loadSessionMeta,
   deleteSession,
   renameSession,
   generateInsights,
@@ -51,51 +52,88 @@ function getWorkDir(): { dir: string; hasWorkspace: boolean } {
   return { dir: os.homedir(), hasWorkspace: false };
 }
 
-/** Inline model shortcuts — synced with src/ui/model-picker.ts MODEL_SHORTCUTS */
+/** Inline model shortcuts — synced with src/ui/model-picker.ts MODEL_SHORTCUTS.
+ *  When that CLI table changes, mirror the edits here AND in
+ *  franklin-desktop/src/host.ts. Three places, same content. */
 const MODEL_SHORTCUTS: Record<string, string> = {
-  // Routing
+  // Routing — eco/premium retired 2026-05-03, kept as aliases for back-compat.
   auto: 'blockrun/auto',
-  eco: 'blockrun/eco',
-  premium: 'blockrun/premium',
+  smart: 'blockrun/auto',
+  eco: 'blockrun/auto',
+  premium: 'blockrun/auto',
   // Anthropic
   sonnet: 'anthropic/claude-sonnet-4.6',
   claude: 'anthropic/claude-sonnet-4.6',
+  'sonnet-4.6': 'anthropic/claude-sonnet-4.6',
   opus: 'anthropic/claude-opus-4.7',
   'opus-4.7': 'anthropic/claude-opus-4.7',
   'opus-4.6': 'anthropic/claude-opus-4.6',
   haiku: 'anthropic/claude-haiku-4.5-20251001',
-  // OpenAI
-  gpt: 'openai/gpt-5.4',
+  'haiku-4.5': 'anthropic/claude-haiku-4.5-20251001',
+  // OpenAI — gpt/gpt5/gpt-5 follow the current flagship (5.5).
+  gpt: 'openai/gpt-5.5',
+  gpt5: 'openai/gpt-5.5',
+  'gpt-5': 'openai/gpt-5.5',
+  'gpt-5.5': 'openai/gpt-5.5',
+  'gpt-5.4': 'openai/gpt-5.4',
   'gpt-5.4-pro': 'openai/gpt-5.4-pro',
+  'gpt-5.3': 'openai/gpt-5.3',
+  'gpt-5.2': 'openai/gpt-5.2',
+  'gpt-5.2-pro': 'openai/gpt-5.2-pro',
+  'gpt-4.1': 'openai/gpt-4.1',
   codex: 'openai/gpt-5.3-codex',
-  mini: 'openai/gpt-5-mini',
   nano: 'openai/gpt-5-nano',
+  mini: 'openai/gpt-5-mini',
   o3: 'openai/o3',
   o4: 'openai/o4-mini',
+  'o4-mini': 'openai/o4-mini',
   o1: 'openai/o1',
   // Google
   gemini: 'google/gemini-2.5-pro',
-  'gemini-3': 'google/gemini-3.1-pro',
+  'gemini-2.5': 'google/gemini-2.5-pro',
   flash: 'google/gemini-2.5-flash',
+  'gemini-3': 'google/gemini-3.1-pro',
+  'gemini-3.1': 'google/gemini-3.1-pro',
   // xAI
   grok: 'xai/grok-3',
+  'grok-3': 'xai/grok-3',
   'grok-4': 'xai/grok-4-0709',
   'grok-fast': 'xai/grok-4-1-fast-reasoning',
-  // DeepSeek
+  'grok-4.1': 'xai/grok-4-1-fast-reasoning',
+  // DeepSeek — paid V4 Pro / V4 Flash; free tier via nvidia.
   deepseek: 'deepseek/deepseek-chat',
   r1: 'deepseek/deepseek-reasoner',
-  // Others
-  kimi: 'moonshot/kimi-k2.6',
-  'kimi-k2.5': 'moonshot/kimi-k2.5',
-  minimax: 'minimax/minimax-m2.7',
-  glm: 'zai/glm-5.1',
-  'glm-turbo': 'zai/glm-5.1-turbo',
-  // Free
-  free: 'nvidia/glm-4.7',
-  'glm-4.7': 'nvidia/glm-4.7',
+  'deepseek-v4-pro': 'deepseek/deepseek-v4-pro',
+  'dsv4-pro': 'deepseek/deepseek-v4-pro',
+  'v4-pro': 'deepseek/deepseek-v4-pro',
+  'deepseek-v4': 'nvidia/deepseek-v4-flash',
+  'deepseek-v4-flash': 'nvidia/deepseek-v4-flash',
+  dsv4: 'nvidia/deepseek-v4-flash',
+  'deepseek-v3.2': 'nvidia/deepseek-v3.2',
+  'deepseek-v3': 'nvidia/deepseek-v3.2',
+  // Free fallbacks
+  free: 'nvidia/qwen3-coder-480b',
+  glm4: 'nvidia/qwen3-coder-480b',
+  'deepseek-free': 'nvidia/qwen3-coder-480b',
   'qwen-coder': 'nvidia/qwen3-coder-480b',
+  'qwen-think': 'nvidia/qwen3-coder-480b',
   maverick: 'nvidia/llama-4-maverick',
-  'qwen-think': 'nvidia/qwen3-next-80b-a3b-thinking',
+  'gpt-oss': 'nvidia/qwen3-coder-480b',
+  'gpt-oss-small': 'nvidia/qwen3-coder-480b',
+  'mistral-small': 'nvidia/llama-4-maverick',
+  nemotron: 'nvidia/qwen3-coder-480b',
+  devstral: 'nvidia/qwen3-coder-480b',
+  // Others
+  minimax: 'minimax/minimax-m2.7',
+  'm2.7': 'minimax/minimax-m2.7',
+  glm: 'zai/glm-5.1',
+  'glm-turbo': 'zai/glm-5-turbo',
+  glm5: 'zai/glm-5.1',
+  kimi: 'moonshot/kimi-k2.6',
+  'k2.6': 'moonshot/kimi-k2.6',
+  // K2.5 retired by gateway in favor of K2.6 — aliases stay for muscle memory.
+  'kimi-k2.5': 'moonshot/kimi-k2.6',
+  'k2.5': 'moonshot/kimi-k2.6',
 };
 function resolveModel(input: string): string {
   return MODEL_SHORTCUTS[input.trim().toLowerCase()] || input.trim();
@@ -261,6 +299,25 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   private agentRunning = false;
   /** Set by startNewSession() so the next runAgentSession skips auto-resume. */
   private forceFreshSession = false;
+  /**
+   * Set by resumeExistingSession() — overrides the auto-resume logic in
+   * runAgentSession() so we restart the loop pointed at a specific
+   * sessionId (the one the user just clicked in the history list).
+   * Without this the webview shows the old transcript but the agent
+   * keeps running against whatever session it auto-resumed at panel
+   * open, so the model "forgets" everything visible on screen.
+   */
+  private pendingResumeSessionId: string | null = null;
+  /**
+   * Monotonic generation counter — incremented every time a new agent
+   * session is started (panel open or "+ new chat"). Embedded in every
+   * event posted to the webview so late-arriving events from a now-aborted
+   * loop can be silently discarded by the webview instead of bleeding
+   * into the new chat. Without this guard, mid-stream tool_use / text
+   * events from the old loop paint old content into the freshly cleared
+   * UI right after the user clicks "+".
+   */
+  private sessionGen = 0;
   private walletRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   private agentConfig?: { model: string; baseModel?: string };
 
@@ -783,6 +840,44 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     askR?.('');
   }
 
+  /**
+   * Persist a base64 data URL (image/png|jpeg|gif|webp) to a temp file and
+   * return its absolute path. Used by the image-attachment bridge: webview
+   * collects images, sends them via postMessage as data URLs, we drop them
+   * to disk, and the agent's existing Read tool picks up the path and
+   * forwards the bytes to vision-capable models. Returns null on any error
+   * (oversized, malformed mime, write failure) so the caller skips that
+   * image without aborting the whole turn.
+   */
+  private async saveImageDataUrlToTemp(dataURL: string, hintName?: string): Promise<string | null> {
+    try {
+      const m = dataURL.match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/i);
+      if (!m) return null;
+      const ext = m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase();
+      const buf = Buffer.from(m[2], 'base64');
+      // Mirror src/tools/read.ts IMAGE_MAX_BYTES (10 MB). Bigger payloads
+      // would also blow past LLM provider request size caps anyway.
+      if (buf.length > 10 * 1024 * 1024) return null;
+      const dir = path.join(os.tmpdir(), 'franklin-vscode-images');
+      try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+      // Sanitize hintName (drop directory parts, restrict charset) so a
+      // malicious clipboard payload can't escape the temp dir or land
+      // weird characters in the path.
+      const safeBase = (hintName ?? 'pasted')
+        .replace(/.*[\\/]/, '')
+        .replace(/\.[^.]*$/, '')
+        .replace(/[^A-Za-z0-9._-]/g, '_')
+        .slice(0, 40) || 'pasted';
+      const stamp = Date.now().toString(36) + '-' + randomBytes(4).toString('hex');
+      const file = path.join(dir, `${safeBase}-${stamp}.${ext}`);
+      fs.writeFileSync(file, buf);
+      return file;
+    } catch (err) {
+      log.appendLine(`[saveImageDataUrlToTemp] error: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
   private async pushWelcome() {
     const { dir, hasWorkspace } = getWorkDir();
     log.appendLine(`[pushWelcome] workDir=${dir}`);
@@ -807,7 +902,7 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   }
 
   private postEvent(ev: StreamEvent) {
-    void this.webview?.postMessage({ type: 'event', event: ev });
+    void this.webview?.postMessage({ type: 'event', event: ev, gen: this.sessionGen });
   }
 
   private async handleSwitchChain() {
@@ -921,11 +1016,52 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     }, 400);
   }
 
-  private async handleMessage(msg: { type?: string; text?: string; settings?: unknown }) {
+  private async handleMessage(msg: { type?: string; text?: string; settings?: unknown; images?: Array<{ dataURL?: string; name?: string }> }) {
     if (msg.type === 'send' && typeof msg.text === 'string') {
       const t = msg.text.trim();
-      if (!t) return;
-      this.finishInput(t);
+      // Save any attached images to disk first, then prepend their paths to
+      // the user prompt. The agent's Read tool detects the file extensions
+      // and loads them as vision content for vision-capable models. We
+      // don't need to touch the agent loop or Read tool — the bridge IS
+      // the temp-file path written here.
+      const imgs = Array.isArray(msg.images) ? msg.images : [];
+      const tempPaths: string[] = [];
+      for (const img of imgs) {
+        if (!img || typeof img.dataURL !== 'string') continue;
+        const p = await this.saveImageDataUrlToTemp(img.dataURL, img.name);
+        if (p) tempPaths.push(p);
+      }
+      // Schedule cleanup AFTER agent has had time to read. 5 minutes is
+      // generous (covers slow Read on big PNGs, slow LLM, multi-tool
+      // chains). If the user really hits Send 60+ times in 5 min the
+      // worst case is some pending unlinks pile up — small price.
+      if (tempPaths.length > 0) {
+        setTimeout(() => {
+          for (const p of tempPaths) {
+            try { fs.unlinkSync(p); } catch { /* already gone or in use */ }
+          }
+        }, 5 * 60_000);
+      }
+      let enriched = t;
+      if (tempPaths.length > 0) {
+        const list = tempPaths.map((p, i) => `  ${i + 1}. ${p}`).join('\n');
+        // STRONG instruction: models (especially fast ones) tend to skip
+        // Read and guess from filenames. Make refusal-to-Read explicitly
+        // unacceptable. Paths are temp files — the filename is meaningless
+        // (it's just an upload stamp), only the bytes matter.
+        const intro = [
+          `[USER ATTACHED ${tempPaths.length} IMAGE${tempPaths.length === 1 ? '' : 'S'} — YOU MUST READ THEM]`,
+          `Paths:`,
+          list,
+          ``,
+          `MANDATORY: call the Read tool on EACH path above before responding.`,
+          `The path filename is a meaningless upload stamp — it tells you NOTHING about content.`,
+          `You CANNOT see the image without calling Read. Do NOT guess. Do NOT skip. Do NOT compare to "previous similar images" — each upload is independent.`,
+        ].join('\n');
+        enriched = t ? `${intro}\n\nUser question after reading: ${t}` : intro;
+      }
+      if (!enriched) return;  // truly nothing
+      this.finishInput(enriched);
       return;
     }
     if (msg.type === 'askUserReply' && typeof msg.text === 'string') {
@@ -1053,6 +1189,18 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
           }
         }
         this.loadHistory(history, title);
+        // NOTE: we previously seeded the ring with meta.inputTokens here,
+        // but that field is the cumulative sum of every turn's input
+        // (loop.ts:sessionInputTokens), not the current context size.
+        // With the webview's fixed "assign, don't accumulate" ring logic,
+        // feeding the cumulative number in would over-state context by
+        // N× turn count. Ring shows 0% briefly until the next live turn
+        // emits a real `usage` event with `contextPct`.
+        // Tear down the running loop and restart it pointed at this
+        // sessionId — otherwise the UI shows the old transcript but
+        // the agent keeps running blind against a different (or empty)
+        // session, and the context-window ring sits at 0%.
+        void this.resumeExistingSession(sessionId);
       }
     }
   }
@@ -1066,11 +1214,33 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
   private async startNewSession(): Promise<void> {
     log.appendLine('[startNewSession] aborting current loop and starting fresh');
     this.forceFreshSession = true;
+    // Bump generation FIRST — any event posted by the old (now-aborting)
+    // loop after this point will arrive at the webview tagged with the
+    // OLD gen and be discarded by the webview's gen guard.
+    this.sessionGen++;
+    void this.webview?.postMessage({ type: 'sessionReset', gen: this.sessionGen });
     // Cancel the current input wait + loop
     this.finishInput(null);
     latestAbort?.();
     // The agent loop's finally block sets agentRunning=false, then we
     // kick off a new run. Wait briefly to ensure cleanup happens first.
+    setTimeout(() => { void this.runAgentSession(); }, 50);
+  }
+
+  /**
+   * Like startNewSession() but targets a specific past session: stages
+   * `pendingResumeSessionId`, aborts the current loop, then restarts
+   * runAgentSession which picks it up. UI history was already painted
+   * by the caller (loadSession handler) so the experience is "click an
+   * old chat in the sidebar → keep typing where you left off."
+   */
+  private async resumeExistingSession(sessionId: string): Promise<void> {
+    log.appendLine(`[resumeExistingSession] switching to ${sessionId}`);
+    this.pendingResumeSessionId = sessionId;
+    this.sessionGen++;
+    void this.webview?.postMessage({ type: 'sessionReset', gen: this.sessionGen, resumed: sessionId });
+    this.finishInput(null);
+    latestAbort?.();
     setTimeout(() => { void this.runAgentSession(); }, 50);
   }
 
@@ -1102,7 +1272,14 @@ class FranklinChatProvider implements vscode.WebviewViewProvider {
     // truly clean — no inherited tool guards, no prior context.
     const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
     let resumeSessionId: string | undefined;
-    if (this.forceFreshSession) {
+    if (this.pendingResumeSessionId) {
+      // User explicitly clicked a history item — honor that, bypass the
+      // auto-resume heuristic. Clearing here so a later panel re-open
+      // falls back to the default behaviour.
+      resumeSessionId = this.pendingResumeSessionId;
+      this.pendingResumeSessionId = null;
+      log.appendLine(`[runAgentSession] explicit resume of ${resumeSessionId}`);
+    } else if (this.forceFreshSession) {
       log.appendLine('[runAgentSession] forceFreshSession set — skipping auto-resume');
       this.forceFreshSession = false;
     } else {
@@ -1236,26 +1413,32 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       flex-direction: column;
       position: relative;
     }
-    /* User messages are rendered as a quieter, quote-style line —
-     * assistant messages are the main visual weight. Previously user
-     * bubbles were the loudest thing on screen despite usually being the
-     * shortest / lowest-value content in the transcript. */
+    /* User messages: right-aligned chat bubbles (Wechat / ChatGPT
+     * convention). Assistant messages stay left-aligned with the
+     * workflow timeline so the eye can quickly separate "what I said"
+     * (right) from "what the agent did" (left). Colors use vscode-*
+     * tokens so the bubble adapts to whichever VS Code theme the user
+     * is on (dark / light / high-contrast). */
     .user {
-      display: block;
-      margin: 14px 0 6px;
-      padding: 2px 0 2px 12px;
-      border-left: 2px solid var(--vscode-focusBorder, rgba(0,127,212,0.55));
+      display: flex;
+      justify-content: flex-end;
+      margin: 16px 0 8px;
+      padding: 0;
+      border: none;
     }
     .user .bubble {
-      display: block;
-      background: none;
-      border-radius: 0;
-      padding: 0;
-      max-width: none;
-      font-size: 12px;
-      line-height: 1.5;
-      color: var(--vscode-descriptionForeground);
+      display: inline-block;
+      background: var(--vscode-input-background, rgba(127,127,127,0.15));
+      border: 1px solid var(--vscode-widget-border, rgba(127,127,127,0.20));
+      border-radius: 16px 16px 4px 16px;
+      padding: 8px 14px;
+      max-width: 75%;
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--vscode-foreground);
       word-break: break-word;
+      text-align: left;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
     }
     .assistant {
       color: var(--vscode-foreground);
@@ -1354,6 +1537,93 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     }
     .assistant strong { font-weight: 600; }
     .assistant em { font-style: italic; }
+    /* ── Routing chip ── shown at the start of an assistant turn when the
+       router decides which model handles it (e.g. "*Auto → google/gemini-2.5-flash*").
+       Replaces a plain markdown italic with a styled animated badge so users
+       can see at a glance which tier / provider / model handled the turn. */
+    .route-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      margin: 0 2px 4px 0;
+      border-radius: 999px;
+      background: linear-gradient(135deg,
+        rgba(120, 120, 140, 0.10),
+        rgba(120, 120, 140, 0.18));
+      border: 1px solid rgba(128, 128, 128, 0.25);
+      font-size: 11px;
+      line-height: 1.4;
+      font-weight: 500;
+      color: var(--vscode-descriptionForeground);
+      vertical-align: middle;
+      white-space: nowrap;
+      animation: route-chip-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+      transition: transform 0.18s ease, border-color 0.18s ease;
+    }
+    /* Suppress the entrance animation on re-renders of the same chip
+       identity. The streaming markdown re-renderer recreates the DOM on
+       every text_delta, which would otherwise replay the bounce ~30
+       times per turn. */
+    .route-chip.route-chip-static { animation: none; }
+    .route-chip:hover {
+      transform: translateY(-1px);
+      border-color: rgba(128, 128, 128, 0.55);
+    }
+    .route-chip .route-tier {
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      color: var(--vscode-foreground);
+      text-transform: uppercase;
+      font-size: 9px;
+    }
+    .route-chip .route-arrow {
+      opacity: 0.55;
+      animation: route-arrow-glide 1.4s ease-in-out infinite;
+    }
+    .route-chip .route-model {
+      display: inline-flex;
+      align-items: baseline;
+      font-family: var(--vscode-editor-font-family, monospace);
+    }
+    .route-chip .route-provider {
+      opacity: 0.7;
+      font-size: 10px;
+    }
+    .route-chip .route-slash {
+      opacity: 0.45;
+      margin: 0 1px;
+    }
+    .route-chip .route-modelname {
+      color: var(--vscode-foreground);
+      font-weight: 500;
+    }
+    .route-chip .route-spark {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--vscode-focusBorder, #4ea3f5);
+      box-shadow: 0 0 6px var(--vscode-focusBorder, #4ea3f5);
+      animation: route-spark-pulse 1.6s ease-in-out infinite;
+    }
+    /* Tier-specific accent on the spark */
+    .route-tier-auto .route-spark    { background: #4ea3f5; box-shadow: 0 0 6px #4ea3f5; }
+    .route-tier-eco .route-spark     { background: #6ed68a; box-shadow: 0 0 6px #6ed68a; }
+    .route-tier-premium .route-spark { background: #c89af0; box-shadow: 0 0 8px #c89af0; }
+    .route-tier-free .route-spark    { background: #9da3ad; box-shadow: 0 0 6px #9da3ad; }
+    @keyframes route-chip-in {
+      0%   { opacity: 0; transform: translateY(-4px) scale(0.92); }
+      60%  { opacity: 1; transform: translateY(0) scale(1.02); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes route-spark-pulse {
+      0%, 100% { transform: scale(1);   opacity: 0.85; }
+      50%      { transform: scale(1.4); opacity: 1; }
+    }
+    @keyframes route-arrow-glide {
+      0%, 100% { transform: translateX(0); }
+      50%      { transform: translateX(2px); }
+    }
     /* ── Composer (Cursor-style) ── */
     #composer {
       flex-shrink: 0;
@@ -1375,6 +1645,55 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     }
     body.session-busy #composer:not(:focus-within) {
       animation: fk-border-flow 2.2s ease-in-out infinite;
+    }
+    /* Image attachments strip — sits above textarea inside composer.
+       Each tile shows a 64px thumbnail with an × remove button. */
+    #image-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 10px 0 10px;
+      max-height: 160px;
+      overflow-y: auto;
+    }
+    #image-strip .img-tile {
+      position: relative;
+      width: 64px;
+      height: 64px;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--vscode-widget-border, #444);
+      background: var(--vscode-editor-background);
+    }
+    #image-strip .img-tile img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    #image-strip .img-tile .rm {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.65);
+      color: #fff;
+      border: none;
+      font-size: 11px;
+      line-height: 16px;
+      cursor: pointer;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #image-strip .img-tile .rm:hover { background: #c00; }
+    /* Drag-over visual cue for the whole composer */
+    #composer.dragover {
+      border-color: var(--vscode-focusBorder, #007fd4);
+      box-shadow: 0 0 0 2px var(--vscode-focusBorder, #007fd4);
     }
     #in {
       width: 100%;
@@ -2337,6 +2656,19 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     #stop { background: rgba(160,160,160,0.4); color: var(--vscode-editor-background, #1e1e1e); border: none; }
     #stop:hover:not(:disabled) { background: rgba(160,160,160,0.55); }
     #stop.hidden-btn { display: none; }
+    /* Attach (paperclip) is secondary — quieter than Send so it visually
+       fades into the toolbar instead of competing with the primary action.
+       Matches the muted descriptionForeground tone of other left-side
+       toolbar icons (model picker, wallet, trading). */
+    #attach {
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.7;
+    }
+    #attach:hover:not(:disabled) {
+      background: rgba(160,160,160,0.18);
+      opacity: 1;
+    }
     /* Activity row (inline in log) */
     .activity {
       display: flex;
@@ -3059,7 +3391,9 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     <div id="prefetch-indicator" style="display:none;"></div>
     <div class="meta" id="status"></div>
   <div id="composer">
-    <textarea id="in" rows="1" placeholder="Plan, @ for context, / for commands. Enter to send, Shift+Enter for newline." autocomplete="off"></textarea>
+    <div id="image-strip" style="display:none;"></div>
+    <input type="file" id="file-input" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" multiple style="display:none;" />
+    <textarea id="in" rows="1" placeholder="Plan, @ for context, / for commands. Paste / drop images. Enter to send, Shift+Enter for newline." autocomplete="off"></textarea>
     <div id="composer-toolbar">
       <div style="position:relative;display:flex;align-items:center;gap:2px;">
         <button type="button" id="model-picker-btn">
@@ -3138,6 +3472,9 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
             <text id="contextPct" x="13" y="13" text-anchor="middle" dominant-baseline="central" fill="var(--vscode-descriptionForeground)" font-size="7" font-family="var(--vscode-font-family)">0%</text>
           </svg>
         </div>
+        <button type="button" id="attach" class="composer-btn" title="Attach image (or paste / drop)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"></path></svg>
+        </button>
         <button type="button" id="stop" class="composer-btn hidden-btn" title="Stop generation">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2" y="2" width="10" height="10" rx="2" fill="currentColor"></rect></svg>
         </button>
@@ -3164,6 +3501,16 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     var activityMode = 'waiting';
     var toolNameStr = '';
     var streamingModelName = '';
+    // Session generation guard — incremented by extension when "+" is clicked.
+    // Events tagged with older gen are discarded so an aborted loop can't
+    // paint old content into a freshly-cleared chat.
+    var currentSessionGen = 0;
+    // Tracks which routing-chip identities have already been rendered with
+    // the bouncy entrance animation in the current chat. Reset on chat
+    // reset and on each new assistant turn so the FIRST paint of a chip
+    // bounces, but subsequent re-renders during the streaming text update
+    // come in static. Without this the chip pops every text_delta.
+    var routeChipSeen = {};
     // ── Workflow state ──
     var thinkingBuf = '';
     var thinkStartTime = 0;
@@ -3201,6 +3548,14 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       toolStepMap = {};
       wfTextStep = null;
       currentToolGroup = null;
+      // Reset context-usage ring — without this, the indicator carries the
+      // accumulated token count from the prior session, so a fresh chat
+      // can show "100%" before the user has even typed anything.
+      totalInputTokens = 0;
+      updateContextRing();
+      // Reset routing-chip animation memory so the next assistant turn's
+      // first chip render bounces in fresh.
+      routeChipSeen = {};
       refreshHasMessages();
     }
     var historyDropdown = document.getElementById('view-history');
@@ -4126,50 +4481,44 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     }
 
     // ── Model dropdown ──
+    // Synced with CLI: Franklin/src/ui/model-picker.ts (PICKER_CATEGORIES).
+    // When the CLI picker changes, mirror here AND in
+    // franklin-desktop/src/renderer/index.html. Retired entries dropped
+    // from picker; shortcuts still resolve via MODEL_SHORTCUTS.
     var MODEL_LIST = [
       {group: 'Promo ($0.001/call)', items: [
-        {label: 'GLM-5.1', shortcut: 'glm', price: '$0.001/call', desc: 'Zhipu flagship model. Strong multilingual and reasoning.', ctx: '128k'},
-        {label: 'GLM-5.1 Turbo', shortcut: 'glm-turbo', price: '$0.001/call', desc: 'Fast variant of GLM-5.1. Good balance of speed and quality.', ctx: '128k'}
+        {label: 'GLM-5.1', shortcut: 'glm', price: '$0.001/call', desc: 'Zhipu flagship. Strong multilingual and reasoning.', ctx: '128k'},
+        {label: 'GLM-5 Turbo', shortcut: 'glm-turbo', price: '$0.001/call', desc: 'Fast Zhipu variant.', ctx: '128k'}
       ]},
       {group: 'Smart Routing', items: [
-        {label: 'Auto', shortcut: 'auto', price: 'routed', desc: 'Auto-pick the best model for each task.', ctx: 'varies'},
-        {label: 'Eco', shortcut: 'eco', price: 'cheapest', desc: 'Route to cheapest capable model.', ctx: 'varies'},
-        {label: 'Premium', shortcut: 'premium', price: 'best', desc: 'Route to the best available model.', ctx: 'varies'}
+        {label: 'Auto', shortcut: 'auto', price: 'routed', desc: 'Auto-pick the best model per task. Cheap on simple work, frontier on hard.', ctx: 'varies'}
       ]},
       {group: 'Premium Frontier', items: [
-        {label: 'Claude Sonnet 4.6', shortcut: 'sonnet', price: '$3/$15', desc: 'Anthropic best-value model. Great for everyday coding tasks.', ctx: '200k'},
-        {label: 'Claude Opus 4.7', shortcut: 'opus', price: '$5/$25', desc: 'Anthropic most capable model. 1M context, 128k output. Best for complex reasoning.', ctx: '1M', isNew: true},
-        {label: 'Claude Opus 4.6', shortcut: 'opus-4.6', price: '$5/$25', desc: 'Previous Opus generation.', ctx: '200k'},
-        {label: 'GPT-5.4', shortcut: 'gpt', price: '$2.5/$15', desc: 'OpenAI latest flagship model. Great for complex tasks.', ctx: '272k'},
-        {label: 'GPT-5.4 Pro', shortcut: 'gpt-5.4-pro', price: '$30/$180', desc: 'OpenAI most capable. Best for hardest problems.', ctx: '272k'},
-        {label: 'Gemini 2.5 Pro', shortcut: 'gemini', price: '$1.25/$10', desc: 'Google flagship model. Strong at code and multimodal.', ctx: '1M'},
+        {label: 'Claude Opus 4.7', shortcut: 'opus', price: '$5/$25', desc: 'Anthropic most capable. 1M context, 128k output. Best for complex reasoning.', ctx: '1M', isNew: true},
+        {label: 'Claude Sonnet 4.6', shortcut: 'sonnet', price: '$3/$15', desc: 'Anthropic best-value. Great for everyday coding tasks.', ctx: '200k'},
+        {label: 'GPT-5.5', shortcut: 'gpt', price: '$5/$30', desc: 'OpenAI latest flagship. Best general capability.', ctx: '272k', isNew: true},
         {label: 'Gemini 3.1 Pro', shortcut: 'gemini-3', price: '$2/$12', desc: 'Google next-gen flagship. Improved reasoning.', ctx: '1M'},
-        {label: 'Grok 4', shortcut: 'grok-4', price: '$0.2/$1.5', desc: 'xAI latest model. Strong general reasoning.', ctx: '128k'},
-        {label: 'Grok 3', shortcut: 'grok', price: '$3/$15', desc: 'xAI flagship model. Capable general-purpose.', ctx: '128k'}
+        {label: 'Gemini 2.5 Pro', shortcut: 'gemini', price: '$1.25/$10', desc: 'Google flagship. Strong at code and multimodal.', ctx: '1M'},
+        {label: 'Grok 4', shortcut: 'grok-4', price: '$0.2/$1.5', desc: 'xAI latest. Strong general reasoning.', ctx: '128k'}
       ]},
       {group: 'Reasoning', items: [
         {label: 'O3', shortcut: 'o3', price: '$2/$8', desc: 'OpenAI reasoning model. Strong at math and logic.', ctx: '200k'},
-        {label: 'O4 Mini', shortcut: 'o4', price: '$1.1/$4.4', desc: 'OpenAI compact reasoning. Good cost/performance.', ctx: '200k'},
-        {label: 'O1', shortcut: 'o1', price: '$15/$60', desc: 'OpenAI advanced reasoning. Best for complex problems.', ctx: '200k'},
         {label: 'GPT-5.3 Codex', shortcut: 'codex', price: '$1.75/$14', desc: 'OpenAI code-specialized model.', ctx: '272k'},
-        {label: 'DeepSeek R1', shortcut: 'r1', price: '$0.28/$0.42', desc: 'DeepSeek reasoning. Chain-of-thought for hard problems.', ctx: '128k'},
+        {label: 'DeepSeek V4 Pro', shortcut: 'v4-pro', price: '$0.5/$1 (promo)', desc: '1.6T MoE, 1M context. Punches up to GPT-5.5/Opus on hard tasks at <1/10 the price. Launch promo through 2026-05-31.', ctx: '1M', isNew: true},
+        {label: 'DeepSeek V4 Flash R.', shortcut: 'r1', price: '$0.2/$0.4', desc: 'DeepSeek reasoning. Chain-of-thought for hard problems.', ctx: '128k'},
         {label: 'Grok 4.1 Fast R.', shortcut: 'grok-fast', price: '$0.2/$0.5', desc: 'xAI fast reasoning model.', ctx: '128k'}
       ]},
       {group: 'Budget', items: [
-        {label: 'Claude Haiku 4.5', shortcut: 'haiku', price: '$1/$5', desc: 'Anthropic fastest model. Quick responses at low cost.', ctx: '200k'},
+        {label: 'Claude Haiku 4.5', shortcut: 'haiku', price: '$1/$5', desc: 'Anthropic fastest. Quick responses at low cost.', ctx: '200k'},
         {label: 'GPT-5 Mini', shortcut: 'mini', price: '$0.25/$2', desc: 'Compact and fast. Good for simpler tasks.', ctx: '1M'},
-        {label: 'GPT-5 Nano', shortcut: 'nano', price: '$0.05/$0.4', desc: 'Smallest OpenAI. Ultra-low cost for basic tasks.', ctx: '1M'},
         {label: 'Gemini 2.5 Flash', shortcut: 'flash', price: '$0.3/$2.5', desc: 'Google fast model. Low cost with solid quality.', ctx: '1M'},
-        {label: 'DeepSeek V3', shortcut: 'deepseek', price: '$0.28/$0.42', desc: 'DeepSeek latest. Excellent code generation.', ctx: '128k'},
-        {label: 'Kimi K2.6', shortcut: 'kimi', price: '$0.95/$4', desc: 'Moonshot flagship. 256K context, vision + reasoning.', ctx: '256k', isNew: true},
-        {label: 'Kimi K2.5', shortcut: 'kimi-k2.5', price: '$0.6/$3', desc: 'Kimi previous generation.', ctx: '128k'},
-        {label: 'Minimax M2.7', shortcut: 'minimax', price: '$0.3/$1.2', desc: 'Minimax model. Good general-purpose budget option.', ctx: '128k'}
+        {label: 'DeepSeek V4 Flash Chat', shortcut: 'deepseek', price: '$0.2/$0.4', desc: 'DeepSeek V4 Flash, paid. 1M context, excellent code generation.', ctx: '1M', isNew: true},
+        {label: 'Kimi K2.6', shortcut: 'kimi', price: '$0.95/$4', desc: 'Moonshot flagship. 256k context, vision + reasoning.', ctx: '256k'}
       ]},
       {group: 'Free (no USDC needed)', items: [
-        {label: 'GLM-4.7', shortcut: 'free', price: '', desc: 'Zhipu GLM-4.7 via NVIDIA. Default free model.', ctx: '128k'},
-        {label: 'Qwen3 Coder 480B', shortcut: 'qwen-coder', price: '', desc: 'Alibaba coding model. Free, specialized for code.', ctx: '256k'},
-        {label: 'Llama 4 Maverick', shortcut: 'maverick', price: '', desc: 'Meta Llama 4. Free, strong multilingual.', ctx: '128k'},
-        {label: 'Qwen3 Next 80B Thinking', shortcut: 'qwen-think', price: '', desc: 'Alibaba reasoning model. Free, extended thinking.', ctx: '128k', isNew: true}
+        {label: 'DeepSeek V4 Flash', shortcut: 'deepseek-v4', price: '', desc: 'DeepSeek V4 Flash via NVIDIA. Newest free model, fast and general-purpose.', ctx: '128k', isNew: true},
+        {label: 'Qwen3 Coder 480B', shortcut: 'free', price: '', desc: 'Alibaba coding model. Free, specialized for code.', ctx: '256k'},
+        {label: 'Llama 4 Maverick', shortcut: 'maverick', price: '', desc: 'Meta Llama 4. Free, strong multilingual.', ctx: '128k'}
       ]}
     ];
 
@@ -4414,6 +4763,43 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     // ── Context ring ──
     var CIRC = 69.12;
     var totalInputTokens = 0;
+    // Per-model context window. Keys are franklin model-id prefixes;
+    // first match wins. When adding a new model to MODEL_LIST drop its
+    // window here too or the ring will fall back to the 200k default.
+    var MODEL_CONTEXT = [
+      ['anthropic/claude-opus-4.7', 1000000],
+      ['anthropic/claude-opus', 200000],
+      ['anthropic/claude-sonnet', 200000],
+      ['anthropic/claude-haiku', 200000],
+      ['anthropic/', 200000],
+      ['openai/gpt-5.4', 272000],
+      ['openai/gpt-5.3', 272000],
+      ['openai/gpt-5', 272000],
+      ['openai/o1', 200000],
+      ['openai/o3', 200000],
+      ['openai/o4', 200000],
+      ['openai/', 128000],
+      ['google/gemini-3', 1000000],
+      ['google/gemini-2.5', 1000000],
+      ['google/', 1000000],
+      ['xai/grok-4', 128000],
+      ['xai/grok-3', 128000],
+      ['xai/', 128000],
+      ['deepseek/', 128000],
+      ['moonshot/kimi', 200000],
+      ['moonshot/', 128000],
+      ['minimax/', 200000],
+      ['zai/glm', 128000],
+      ['nvidia/', 128000],
+      ['blockrun/', 200000],
+    ];
+    function contextWindowFor(model) {
+      if (!model) return 200000;
+      for (var i = 0; i < MODEL_CONTEXT.length; i++) {
+        if (model.indexOf(MODEL_CONTEXT[i][0]) === 0) return MODEL_CONTEXT[i][1];
+      }
+      return 200000;
+    }
     var maxContext = 200000;
     var contextArc = document.getElementById('contextArc');
     var contextPctText = document.getElementById('contextPct');
@@ -4509,6 +4895,26 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     var BT3 = BT+BT+BT;
     var codeBlockIdx = 0;
     function renderMarkdown(text) {
+      // Routing chip: *Auto → provider/model* (or Eco / Premium variants).
+      // First render uses the bouncy entrance animation; subsequent renders
+      // (the same chip re-painted on every streaming text delta) get the
+      // -static variant so they don't keep popping each time the textarea
+      // refreshes. routeChipSeen is reset per assistant turn (see
+      // resetChatLog / new-step paths).
+      var routeChipRe = /\\*\\s*(Auto|Eco|Premium|Free)\\s*[→\\-]+\\s*([A-Za-z0-9._\\/-]+)\\*/g;
+      text = text.replace(routeChipRe, function(_, tier, model) {
+        var shortModel = String(model).replace(/^[^/]+\\//, '');
+        var providerHost = String(model).split('/')[0] || '';
+        var key = tier + ':' + model;
+        var freshClass = routeChipSeen[key] ? ' route-chip-static' : '';
+        routeChipSeen[key] = true;
+        return '<span class="route-chip route-tier-' + tier.toLowerCase() + freshClass + '">' +
+          '<span class="route-spark"></span>' +
+          '<span class="route-tier">' + tier + '</span>' +
+          '<svg class="route-arrow" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>' +
+          '<span class="route-model" title="' + escHtml(model) + '"><span class="route-provider">' + escHtml(providerHost) + '</span>' + (shortModel !== model ? '<span class="route-slash">/</span><span class="route-modelname">' + escHtml(shortModel) + '</span>' : '') + '</span>' +
+        '</span>';
+      });
       // Code blocks → wrapped in .code-block with header + copy button
       var codeBlockRe = new RegExp(BT3+'(\\\\w*)\\\\n([\\\\s\\\\S]*?)'+BT3, 'g');
       text = text.replace(codeBlockRe, function(_, lang, code) {
@@ -5153,7 +5559,20 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
         status.textContent = 'Session ended. Reopen the side bar to start again.';
         return;
       }
+      if (m.type === 'sessionReset') {
+        // Adopt the new generation; any further events tagged with an older
+        // gen are discarded by the guard below. Belt-and-suspenders against
+        // late-arriving events from an aborted loop bleeding into a freshly
+        // cleared chat.
+        if (typeof m.gen === 'number') currentSessionGen = m.gen;
+        return;
+      }
       if (m.type !== 'event' || !m.event) return;
+      // Discard events from a stale (aborted) session generation. Without
+      // this guard, in-flight LLM stream events from the old loop arrive
+      // AFTER the user clicks "+", and paint old content into the new
+      // empty chat.
+      if (typeof m.gen === 'number' && m.gen < currentSessionGen) return;
       const ev = m.event;
       switch (ev.kind) {
         case 'text_delta':
@@ -5280,8 +5699,28 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
             var mSpan = wfTextStep.step.querySelector('.msg-model');
             if (mSpan) mSpan.textContent = shortModelName(ev.model);
           }
-          if (typeof ev.inputTokens === 'number') {
-            totalInputTokens += ev.inputTokens;
+          // Re-target the ring's denominator to whichever model just
+          // reported usage — otherwise Opus 4.7 / Gemini sessions
+          // (1M window) read as "always near full" against the 200k
+          // default.
+          if (ev.model) {
+            var winNow = contextWindowFor(ev.model);
+            if (winNow !== maxContext) maxContext = winNow;
+          }
+          if (typeof ev.contextPct === 'number') {
+            // Trust the agent's anchored context calculation
+            // (getAnchoredTokenCount(history) — already accounts for
+            // prompt caching and history aging). The authoritative
+            // "how full is the model's context now" measure.
+            totalInputTokens = Math.round((ev.contextPct / 100) * maxContext);
+            updateContextRing();
+          } else if (typeof ev.inputTokens === 'number') {
+            // Fallback for events without contextPct.
+            // CRITICAL: assign, do NOT accumulate. input_tokens per turn
+            // is the FULL prompt size that turn (= current context).
+            // Accumulating across turns multi-counted the same history;
+            // a 2-image chat could appear to use 170k tokens.
+            totalInputTokens = ev.inputTokens;
             updateContextRing();
           }
           break;
@@ -5291,16 +5730,58 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
     });
 
     // ── Slash command menu ──
+    // Synced with Franklin/src/agent/commands.ts. Curated for the chat
+    // UI — slash commands that only make sense in the CLI terminal are
+    // omitted, but everything a user would reasonably reach for in a
+    // GUI session is here.
     var SLASH_CMDS = [
-      { cmd: '/clear',   desc: 'Clear the current chat log' },
-      { cmd: '/new',     desc: 'Start a new conversation' },
-      { cmd: '/history', desc: 'Browse conversation history' },
-      { cmd: '/model',   desc: 'Switch the active model' },
-      { cmd: '/image',   desc: 'Generate an image (agent picks model + previews cost)' },
-      { cmd: '/video',   desc: 'Generate a video (agent picks model + previews cost)' },
-      { cmd: '/stop',    desc: 'Stop the current generation' },
-      { cmd: '/compact', desc: 'Compact conversation context' },
-      { cmd: '/cost',    desc: 'Show session cost so far' }
+      // Session
+      { cmd: '/clear',    desc: 'Clear the current chat log' },
+      { cmd: '/new',      desc: 'Start a new conversation' },
+      { cmd: '/history',  desc: 'Browse conversation history' },
+      { cmd: '/sessions', desc: 'List saved sessions' },
+      { cmd: '/resume',   desc: 'Resume a saved session by id' },
+      { cmd: '/compact',  desc: 'Compact conversation to free context' },
+      { cmd: '/context',  desc: 'Show context-window usage' },
+      { cmd: '/tokens',   desc: 'Show detailed token breakdown' },
+      { cmd: '/cost',     desc: 'Show session cost so far' },
+      { cmd: '/status',   desc: 'Show session status + wallet' },
+      // Model / mode
+      { cmd: '/model',     desc: 'Switch the active model' },
+      { cmd: '/plan',      desc: 'Enter plan mode (read-only tools)' },
+      { cmd: '/execute',   desc: 'Exit plan mode, enable all tools' },
+      { cmd: '/ultrathink',desc: 'Toggle extended-reasoning mode' },
+      { cmd: '/retry',     desc: 'Retry the last turn with same input' },
+      // Generation
+      { cmd: '/image',    desc: 'Generate an image (agent picks model + cost)' },
+      { cmd: '/video',    desc: 'Generate a video (agent picks model + cost)' },
+      // Git / dev workflow
+      { cmd: '/diff',     desc: 'Show current git diff' },
+      { cmd: '/commit',   desc: 'Stage relevant changes and commit' },
+      { cmd: '/push',     desc: 'Push current branch to remote' },
+      { cmd: '/pr',       desc: 'Open a pull request for current branch' },
+      { cmd: '/review',   desc: 'Code-review the current diff' },
+      { cmd: '/test',     desc: 'Run the project test suite' },
+      { cmd: '/fix',      desc: 'Investigate and fix the most recent error' },
+      { cmd: '/debug',    desc: 'Diagnose the most recent error' },
+      { cmd: '/init',     desc: 'Summarize project structure + entry points' },
+      { cmd: '/todo',     desc: 'Find all TODO / FIXME / HACK comments' },
+      { cmd: '/deps',     desc: 'List key project dependencies' },
+      { cmd: '/lint',     desc: 'Check code quality + suggest improvements' },
+      { cmd: '/optimize', desc: 'Find performance issues + recommendations' },
+      { cmd: '/security', desc: 'Audit codebase for security issues' },
+      { cmd: '/clean',    desc: 'Find + remove dead code' },
+      { cmd: '/undo',     desc: 'Undo the last agent action' },
+      // Tools / system
+      { cmd: '/tasks',    desc: 'List background tasks' },
+      { cmd: '/mcp',      desc: 'List connected MCP servers' },
+      { cmd: '/doctor',   desc: 'Run system health check' },
+      { cmd: '/failures', desc: 'Show recent provider failures' },
+      { cmd: '/dump',     desc: 'Dump current system prompt' },
+      { cmd: '/version',  desc: 'Show Franklin version' },
+      { cmd: '/bug',      desc: 'Report a bug with session context' },
+      { cmd: '/help',     desc: 'List all commands' },
+      { cmd: '/stop',     desc: 'Stop the current generation' }
     ];
     var slashMenu = document.getElementById('slash-menu');
     var slashSelected = -1;
@@ -5415,16 +5896,299 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       }
     });
 
+    // ─── Image attachment state ───
+    // pendingImages buffers images the user has pasted / dropped / picked
+    // before they hit Send. Each entry is { dataURL, name }. dataURL is the
+    // base64 data: URL (already vetted by handleImageFile to be image/*).
+    // The strip below the composer is the canonical view onto this array.
+    var pendingImages = [];
+    var IMG_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per image, matches Read tool cap
+    var imageStrip = document.getElementById('image-strip');
+    var fileInput = document.getElementById('file-input');
+    var attachBtn = document.getElementById('attach');
+
+    function renderImageStrip() {
+      imageStrip.innerHTML = '';
+      if (pendingImages.length === 0) { imageStrip.style.display = 'none'; return; }
+      imageStrip.style.display = 'flex';
+      pendingImages.forEach(function (img, idx) {
+        var tile = document.createElement('div');
+        tile.className = 'img-tile';
+        tile.title = img.name || ('image-' + (idx + 1));
+        var imgEl = document.createElement('img');
+        imgEl.src = img.dataURL;
+        imgEl.alt = tile.title;
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'rm';
+        rm.textContent = '×';
+        rm.title = 'Remove';
+        rm.addEventListener('click', function () {
+          pendingImages.splice(idx, 1);
+          renderImageStrip();
+        });
+        tile.appendChild(imgEl);
+        tile.appendChild(rm);
+        imageStrip.appendChild(tile);
+      });
+    }
+
+    // ─── Image normalization ───
+    // 1280 long edge is slightly tighter than Anthropic's recommended
+    // 1568 — chosen because BlockRun gateway has been observed to
+    // truncate base64 payloads above ~1.5–2 MB. Once the gateway lifts
+    // that cap (tracked in Notion TODO 2026-05-09), we can move to 1568.
+    // Skip the canvas roundtrip entirely when the source already fits
+    // under MAX_LONG_EDGE — re-encoding via canvas.toBlob('png') uses an
+    // unoptimized encoder and frequently INFLATES well-compressed PNGs,
+    // which would defeat the whole point.
+    var MAX_LONG_EDGE = 1280;
+    var JPEG_QUALITY = 0.85;
+
+    function fileToDataURL(blobOrFile) {
+      return new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onload = function (e) { resolve(e.target && e.target.result); };
+        reader.onerror = function () { reject(new Error('FileReader error')); };
+        reader.readAsDataURL(blobOrFile);
+      });
+    }
+
+    // Anything bigger than this gets re-encoded even if dimensions are
+    // already small. AI-generated PNGs at 1024x1024 routinely come in
+    // at 1.5–2 MB, which fits dimensionally but still gets truncated by
+    // the BlockRun gateway. JPEG q85 typically cuts these to ~10–20%
+    // of the original PNG size with no perceptible quality loss.
+    var SAFE_PAYLOAD_BYTES = 800 * 1024;
+    var SKIP_BELOW_BYTES = 150 * 1024; // truly tiny files: don't touch
+
+    async function normalizeImage(file) {
+      var bitmap;
+      try { bitmap = await createImageBitmap(file); }
+      catch (err) {
+        console.warn('[franklin-img] createImageBitmap failed, falling back to original:', err);
+        return await fileToDataURL(file);
+      }
+
+      var w = bitmap.width;
+      var h = bitmap.height;
+      var longEdge = Math.max(w, h);
+      var dimensionsOk = longEdge <= MAX_LONG_EDGE;
+      var sizeOk = file.size <= SAFE_PAYLOAD_BYTES;
+      var trulyTiny = file.size <= SKIP_BELOW_BYTES;
+
+      // Truly tiny → skip everything (icons, sub-150KB clipart).
+      if (trulyTiny && dimensionsOk) {
+        console.log('[franklin-img] skip normalize (tiny): ' + bitmap.width + 'x' + bitmap.height + ', ' + file.size + ' B');
+        return await fileToDataURL(file);
+      }
+
+      // If dimensions AND size both fit, AND it's already JPEG, leave alone.
+      // PNGs of that size still benefit from JPEG re-encode (5-10x smaller).
+      if (dimensionsOk && sizeOk && file.type === 'image/jpeg') {
+        console.log('[franklin-img] skip normalize (JPEG within budget): ' + bitmap.width + 'x' + bitmap.height + ', ' + file.size + ' B');
+        return await fileToDataURL(file);
+      }
+
+      // Need to re-encode (either resize or compress or both).
+      if (!dimensionsOk) {
+        var scale = MAX_LONG_EDGE / longEdge;
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+
+      var canvas = (typeof OffscreenCanvas !== 'undefined')
+        ? new OffscreenCanvas(w, h)
+        : (function () { var c = document.createElement('canvas'); c.width = w; c.height = h; return c; })();
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0, w, h);
+
+      // Decide JPEG vs PNG by actually sampling alpha. Source MIME alone
+      // is misleading: most PNGs in the wild (AI-generated images, photo
+      // exports, screenshots) are fully opaque and would be 5-10x smaller
+      // as JPEG. Sample a handful of pixels — full scan would be too slow
+      // at large sizes but we don't need certainty, just a "probably opaque".
+      var hasAlpha = false;
+      if (file.type !== 'image/jpeg' && file.type !== 'image/jpg') {
+        try {
+          // Sample a 32x32 patch from each corner + center → 5 patches,
+          // 5120 alpha checks total. Fast and catches alpha around logos /
+          // floating objects which is where transparency usually lives.
+          var sampleSize = 32;
+          var patches = [
+            [0, 0],
+            [w - sampleSize, 0],
+            [0, h - sampleSize],
+            [w - sampleSize, h - sampleSize],
+            [Math.floor((w - sampleSize) / 2), Math.floor((h - sampleSize) / 2)],
+          ];
+          outer: for (var pi = 0; pi < patches.length; pi++) {
+            var px = Math.max(0, patches[pi][0]);
+            var py = Math.max(0, patches[pi][1]);
+            var data = ctx.getImageData(px, py, Math.min(sampleSize, w - px), Math.min(sampleSize, h - py)).data;
+            for (var i = 3; i < data.length; i += 4) {
+              if (data[i] < 255) { hasAlpha = true; break outer; }
+            }
+          }
+        } catch (sampleErr) {
+          // Tainted canvas / oddball error — be safe and keep PNG.
+          console.warn('[franklin-img] alpha sample failed, keeping PNG:', sampleErr);
+          hasAlpha = true;
+        }
+      }
+      var outType = hasAlpha ? 'image/png' : 'image/jpeg';
+
+      async function encodeAs(type, quality) {
+        if (canvas.convertToBlob) {
+          return await canvas.convertToBlob(
+            type === 'image/jpeg' ? { type: type, quality: quality } : { type: type }
+          );
+        }
+        return await new Promise(function (resolve) {
+          canvas.toBlob(resolve, type, type === 'image/jpeg' ? quality : undefined);
+        });
+      }
+
+      var blob = await encodeAs(outType, JPEG_QUALITY);
+
+      // Fallback compression — if still over budget, drop JPEG quality.
+      // Only applies to JPEG path; PNG can't be quality-reduced (would need
+      // lossy palette quantization which canvas doesn't expose).
+      if (blob.size > SAFE_PAYLOAD_BYTES && outType === 'image/jpeg') {
+        var blob2 = await encodeAs('image/jpeg', 0.7);
+        if (blob2.size < blob.size) {
+          console.log('[franklin-img] retried at q=0.70: ' + blob.size + ' B → ' + blob2.size + ' B');
+          blob = blob2;
+        }
+      }
+
+      console.log('[franklin-img] normalized: ' + file.size + ' B → ' + blob.size + ' B, ' + bitmap.width + 'x' + bitmap.height + ' → ' + w + 'x' + h + ', ' + outType);
+      return await fileToDataURL(blob);
+    }
+
+    async function handleImageFile(file) {
+      console.log('[franklin-img] handleImageFile', file && { name: file.name, type: file.type, size: file.size });
+      if (!file || !file.type || file.type.indexOf('image/') !== 0) {
+        console.log('[franklin-img] reject: not an image type');
+        return;
+      }
+      if (file.size > IMG_MAX_BYTES) {
+        appendLine('user', '[image rejected: ' + (file.name || 'untitled') + ' is larger than 10 MB — please resize first]');
+        return;
+      }
+      try {
+        var dataURL = await normalizeImage(file);
+        if (typeof dataURL !== 'string') {
+          console.error('[franklin-img] dataURL not a string after normalize');
+          return;
+        }
+        console.log('[franklin-img] dataURL ready, length=' + dataURL.length + ', adding to pendingImages');
+        pendingImages.push({ dataURL: dataURL, name: file.name || 'pasted-image' });
+        renderImageStrip();
+      } catch (err) {
+        console.error('[franklin-img] handleImageFile error:', err);
+        appendLine('user', '[image read failed: ' + (file.name || 'untitled') + ']');
+      }
+    }
+
+    // Paste — bind on BOTH textarea and document. Screenshots taken with
+    // Cmd+Shift+4 → pasted from clipboard sometimes deliver as kind:'file'
+    // and sometimes as kind:'string' with image/* type depending on macOS
+    // version, so we accept anything whose .type starts with image/.
+    // document-level binding ensures the handler fires even when the user
+    // is focused outside the textarea (e.g. clicked a chat message first).
+    function onPaste(e) {
+      console.log('[franklin-img] paste event fired', e.target && e.target.tagName);
+      var items = e.clipboardData && e.clipboardData.items;
+      if (!items) { console.log('[franklin-img] no clipboardData.items'); return; }
+      var hadImage = false;
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        console.log('[franklin-img] item ' + i + ': kind=' + it.kind + ' type=' + it.type);
+        if (it.type && it.type.indexOf('image/') === 0) {
+          var f = it.getAsFile();
+          if (f) {
+            console.log('[franklin-img] pasting image file', f.name, f.type, f.size);
+            hadImage = true;
+            handleImageFile(f);
+          }
+        }
+      }
+      if (hadImage) e.preventDefault();
+    }
+    // Only document-level — paste events bubble up from textarea, so this
+    // catches both "textarea focused" and "click-elsewhere-then-paste"
+    // cases. Adding a textarea-specific listener too would double-fire the
+    // handler (each pasted image getting added twice to pendingImages).
+    document.addEventListener('paste', onPaste);
+
+    // Drag & drop — VS Code's editor will INTERCEPT file drops at the host
+    // level if we don't register at document with preventDefault on
+    // dragover/drop. Bind on document for the early-cancel, then visually
+    // highlight only when the cursor is over our composer.
+    var composerEl = document.getElementById('composer');
+    function stopDrag(e) { e.preventDefault(); e.stopPropagation(); }
+
+    document.addEventListener('dragover', function (e) {
+      // Must preventDefault here too, otherwise the browser default
+      // "no-drop" cursor shows and the drop event never fires.
+      stopDrag(e);
+    });
+    document.addEventListener('drop', function (e) {
+      stopDrag(e);
+      console.log('[franklin-img] document drop', e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length);
+      composerEl.classList.remove('dragover');
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || files.length === 0) return;
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        console.log('[franklin-img] dropped file', f.name, f.type, f.size);
+        handleImageFile(f);
+      }
+    });
+
+    // Composer-level highlight — only visual, the actual drop logic lives
+    // at document level above so we never lose the event to VS Code's
+    // editor handlers.
+    composerEl.addEventListener('dragenter', function (e) { stopDrag(e); composerEl.classList.add('dragover'); });
+    composerEl.addEventListener('dragover',  function (e) { stopDrag(e); composerEl.classList.add('dragover'); });
+    composerEl.addEventListener('dragleave', function (e) {
+      stopDrag(e);
+      // Only clear when leaving the composer entirely, not when crossing a
+      // child boundary (dragleave fires on the parent every child cross).
+      if (!composerEl.contains(e.relatedTarget)) composerEl.classList.remove('dragover');
+    });
+
+    // Attach button → hidden file picker
+    attachBtn.addEventListener('click', function () { fileInput.click(); });
+    fileInput.addEventListener('change', function (e) {
+      var files = e.target && e.target.files;
+      if (!files) return;
+      for (var i = 0; i < files.length; i++) handleImageFile(files[i]);
+      // Reset so picking the same file twice in a row still fires 'change'.
+      fileInput.value = '';
+    });
+
     function send() {
       var t = input.value.trim();
-      if (!t) return;
+      // Allow image-only sends — if user only attached images and hit Send,
+      // we still post (no text required). Skip when both empty.
+      if (!t && pendingImages.length === 0) return;
       isLiveChat = true;
       historyDropdown.classList.remove('open');
+      // Build the visible chat line so user sees what they sent (text + image
+      // count). Actual image bytes ride on the postMessage payload.
+      var displayLine = t;
+      if (pendingImages.length > 0) {
+        var suffix = ' [' + pendingImages.length + ' image' + (pendingImages.length === 1 ? '' : 's') + ' attached]';
+        displayLine = t ? (t + suffix) : suffix.trim();
+      }
       if (!currentChatTitle || currentChatTitle === 'Untitled' || currentChatTitle === 'New Chat') {
-        currentChatTitle = t.length > 30 ? t.slice(0, 30) + '...' : t;
+        var titleSrc = t || 'image upload';
+        currentChatTitle = titleSrc.length > 30 ? titleSrc.slice(0, 30) + '...' : titleSrc;
         navTitle.textContent = currentChatTitle;
       }
-      appendLine('user', t);
+      appendLine('user', displayLine);
       assistantBuf = '';
       assistantEl = null;
       thinkingBuf = '';
@@ -5438,7 +6202,15 @@ function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): stri
       toolNameStr = '';
       status.textContent = '';
       updateActivityRow();
-      vscode.postMessage({ type: 'send', text: t });
+      // Pull images out before clearing so we send the snapshot.
+      var imgsForSend = pendingImages.slice();
+      pendingImages = [];
+      renderImageStrip();
+      vscode.postMessage({
+        type: 'send',
+        text: t,
+        images: imgsForSend,
+      });
       input.value = '';
       // Snap height back to single-row baseline after clearing.
       input.style.height = '';
