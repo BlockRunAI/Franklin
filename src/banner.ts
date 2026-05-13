@@ -116,7 +116,7 @@ export function printBanner(version: string): void {
     if (update) {
       console.log(
         chalk.yellow('⟳ ') +
-        chalk.bold(`Franklin ${update.latest}`) +
+        chalk.bold(`Franklin Agent ${update.latest}`) +
         chalk.dim(` available — you have ${update.current}`),
       );
       console.log(

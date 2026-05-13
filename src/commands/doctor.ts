@@ -58,7 +58,7 @@ async function runChecks(): Promise<Check[]> {
   kickoffVersionCheck();
   const update = await freshUpdatePromise;
   out.push({
-    name: 'Franklin',
+    name: 'Franklin Agent',
     status: update ? 'warn' : 'ok',
     detail: update
       ? `v${VERSION} — update available: v${update.latest}`

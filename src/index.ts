@@ -36,8 +36,8 @@ const program = new Command();
 program
   .name('franklin')
   .description(
-    'Franklin — The AI agent with a wallet.\n\n' +
-      'While others chat, Franklin spends — turning your USDC into real work.\n\n' +
+    'Franklin Agent — The AI agent with a wallet.\n\n' +
+      'While others chat, Franklin Agent spends — turning your USDC into real work.\n\n' +
       'Pay per action in USDC on Base or Solana. No subscriptions. No accounts.'
   )
   .version(version);

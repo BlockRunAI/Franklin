@@ -1,5 +1,24 @@
 # Changelog
 
+## Franklin Agent 3.15.100 — Brand rebrand follow-through (CLI help, upgrade nudge, doctor label)
+
+Cleanup pass on 3.15.99. The rebrand to "Franklin Agent" missed three
+user-facing CLI surfaces; this release brings them in line.
+
+| Surface | Before | After |
+|---|---|---|
+| `franklin --help` description | `Franklin — The AI agent…` | `Franklin Agent — The AI agent…` |
+| Upgrade nudge on startup | `⟳ Franklin 3.15.X available` | `⟳ Franklin Agent 3.15.X available` |
+| `franklin doctor` version-check label | `✓ Franklin v3.15.X` | `✓ Franklin Agent v3.15.X` |
+
+Found by running the binary after 3.15.99 shipped and grepping for
+remaining `"Franklin"` strings in `src/`. Tool descriptions seen by
+the LLM (`zerox-base.ts:603`, `jupiter.ts:478`, `memory.ts:38`,
+`detach.ts:53`) are intentionally left as shortform — they're
+internal context, the agent already knows what Franklin is.
+
+387/387 tests pass.
+
 ## Franklin Agent 3.15.99 — Brand rebrand: marketing copy says "Franklin Agent"
 
 Naming evolution. The product is now consistently called **Franklin Agent**
