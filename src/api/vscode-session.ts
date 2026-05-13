@@ -44,7 +44,13 @@ export type { GatewayModel } from '../gateway-models.js';
 // via `franklin task list`). Reading directly from the on-disk store +
 // killing pids by SIGTERM keeps the surface tiny and avoids depending on
 // the panel HTTP server being up.
-export { listTasks, readTaskMeta, readTaskEvents } from '../tasks/store.js';
+export {
+  listTasks,
+  readTaskMeta,
+  readTaskEvents,
+  deleteTask,
+  pruneCompletedTasks,
+} from '../tasks/store.js';
 export { reconcileLostTasks } from '../tasks/lost-detection.js';
 export { taskLogPath } from '../tasks/paths.js';
 export type {

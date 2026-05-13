@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { runVsCodeSession, getVsCodeWelcomeInfo, getVsCodeWalletStatus, estimateCost, listSessions, loadSessionHistory, deleteSession, renameSession, generateInsights, runDoctorChecks, saveChain, loadChain, loadConfig, saveConfig, getModelsByCategory, 
 // Task subsystem (v3.10.0 Detach tool integration) — extension surfaces
 // running / completed background tasks in a Tasks overlay.
-listTasks, readTaskMeta, readTaskEvents, reconcileLostTasks, taskLogPath, 
+listTasks, readTaskMeta, readTaskEvents, reconcileLostTasks, deleteTask, pruneCompletedTasks, taskLogPath, 
 // Session import (v3.10 PR #37) — bring in Claude Code / Codex sessions.
 listExternalSessionCandidates, importExternalSessionAsFranklin, 
 // Wallet QR — chain-aware payload (EIP-681 / Solana Pay).
@@ -108,6 +108,17 @@ export function activate(context) {
     catch (e) {
         log.appendLine(`[Franklin] FRANKLIN_CLI_PATH probe error: ${e.message}`);
     }
+    // Silent housekeeping: drop terminal background tasks older than 7 days
+    // so ~/.franklin/tasks doesn't grow unbounded for users who never open
+    // the Tasks panel. Manual prune button uses a tighter 24h threshold.
+    // Best-effort — never blocks activation.
+    try {
+        const result = pruneCompletedTasks(7 * 24 * 60 * 60 * 1000);
+        if (result.deleted > 0) {
+            log.appendLine(`[Franklin] Auto-pruned ${result.deleted} terminal task(s) older than 7 days.`);
+        }
+    }
+    catch { /* ignore */ }
     const provider = new FranklinChatProvider(context.extensionUri);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(FranklinChatProvider.viewType, provider, {
         webviewOptions: { retainContextWhenHidden: true },
@@ -545,6 +556,36 @@ class FranklinChatProvider {
             void this.webview?.postMessage({ type: 'taskCancelResult', runId, ok: false, reason: String(e) });
         }
     }
+    /** Permanently delete a single task (only allowed when terminal). */
+    deleteOneTask(runId) {
+        if (!/^[a-zA-Z0-9_-]+$/.test(runId))
+            return;
+        try {
+            const result = deleteTask(runId);
+            void this.webview?.postMessage({
+                type: 'taskDeleteResult', runId, ok: result.ok, reason: result.reason,
+            });
+            this.sendTasks();
+        }
+        catch (e) {
+            void this.webview?.postMessage({
+                type: 'taskDeleteResult', runId, ok: false, reason: String(e),
+            });
+        }
+    }
+    /** Bulk-prune terminal tasks older than 24 hours. */
+    pruneOldTasks() {
+        try {
+            const result = pruneCompletedTasks();
+            void this.webview?.postMessage({
+                type: 'tasksPruneResult', deleted: result.deleted, skipped: result.skipped,
+            });
+            this.sendTasks();
+        }
+        catch (e) {
+            void this.webview?.postMessage({ type: 'tasksPruneResult', error: String(e) });
+        }
+    }
     /** Generate and push the wallet QR (chain-aware payload). */
     async sendWalletQr() {
         try {
@@ -965,6 +1006,12 @@ class FranklinChatProvider {
         }
         if (msg.type === 'cancelTask' && typeof msg.text === 'string') {
             this.cancelTask(msg.text);
+        }
+        if (msg.type === 'deleteTask' && typeof msg.text === 'string') {
+            this.deleteOneTask(msg.text);
+        }
+        if (msg.type === 'pruneOldTasks') {
+            this.pruneOldTasks();
         }
         if (msg.type === 'loadWalletQr') {
             void this.sendWalletQr();
@@ -1535,13 +1582,26 @@ function getWebviewHtml(webview, extensionUri) {
       border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.4)); border-radius: 3px;
       font: inherit;
     }
-    /* ── Media preview (ImageGen / VideoGen) ── */
+    /* ── Media preview (ImageGen / VideoGen) ──
+     * Thumbnail-by-default to avoid webview jank from inline-decoded
+     * multi-MB PNGs. Click the thumb to open a lightbox modal that
+     * renders the full image. Videos stay full-size since the user is
+     * usually about to play them and a thumb would be misleading. */
     .media-preview {
       margin: 8px 12px; padding: 6px; border-radius: 6px;
       background: rgba(128,128,128,0.08); border: 1px solid rgba(128,128,128,0.2);
       max-width: calc(100% - 24px);
     }
-    .media-preview img, .media-preview video {
+    .media-preview img.media-thumb {
+      display: block;
+      max-width: 240px;
+      max-height: 200px;
+      border-radius: 4px;
+      cursor: zoom-in;
+      transition: transform 120ms ease;
+    }
+    .media-preview img.media-thumb:hover { transform: scale(1.02); }
+    .media-preview video {
       display: block; max-width: 100%; max-height: 360px; border-radius: 4px;
     }
     .media-preview-footer {
@@ -1559,6 +1619,38 @@ function getWebviewHtml(webview, extensionUri) {
       border: 1px solid rgba(128,128,128,0.4); border-radius: 3px;
     }
     .media-preview-open:hover { background: rgba(128,128,128,0.15); }
+    /* Lightbox: full-bleed black overlay, click anywhere to dismiss.
+     * Used for thumbnails that the user clicks to expand. The overlay
+     * also respects Escape to close. */
+    #media-lightbox {
+      position: fixed; inset: 0; z-index: 400;
+      background: rgba(0,0,0,0.88);
+      display: none;
+      align-items: center; justify-content: center;
+      padding: 24px; box-sizing: border-box;
+      cursor: zoom-out;
+      animation: lightbox-fade 160ms ease-out;
+    }
+    #media-lightbox.open { display: flex; }
+    #media-lightbox img {
+      max-width: 100%; max-height: 100%;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+      border-radius: 4px;
+      cursor: default;
+    }
+    #media-lightbox-close {
+      position: absolute; top: 12px; right: 12px;
+      background: rgba(0,0,0,0.5);
+      color: #fff; border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 4px;
+      padding: 4px 8px; cursor: pointer;
+      font-size: 12px;
+    }
+    #media-lightbox-close:hover { background: rgba(255,255,255,0.12); }
+    @keyframes lightbox-fade {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
     /* ── Edit diff card (Edit / Write / MultiEdit) ── */
     .edit-diff-card {
       margin: 8px 12px; border-radius: 6px; overflow: hidden;
@@ -2846,6 +2938,9 @@ function getWebviewHtml(webview, extensionUri) {
       <div class="overlay-header">
         <h3>Background Tasks</h3>
         <div style="display:flex;align-items:center;gap:6px;">
+          <button class="overlay-close" id="tasks-prune" title="Delete all completed tasks older than 24h">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M5 4V2h6v2M6 7v5M10 7v5M4 4l1 10h6l1-10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <button class="overlay-close" id="tasks-refresh" title="Refresh">
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 1 1-1.3-3.5M13.5 2v2.5H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
@@ -2900,6 +2995,13 @@ function getWebviewHtml(webview, extensionUri) {
 
   <!-- ── Toast notifications (rate-limit, etc.) ── -->
   <div id="toast-stack" aria-live="polite"></div>
+
+  <!-- Image lightbox — opens when user clicks an inline media thumbnail.
+       Hidden by default; toggled via class. -->
+  <div id="media-lightbox" role="dialog" aria-label="Image preview">
+    <button type="button" id="media-lightbox-close">Close (Esc)</button>
+    <img id="media-lightbox-img" alt="" />
+  </div>
 
   <!-- ── Wallet popover (address + QR + copy) ── -->
   <div id="wallet-popover">
@@ -3402,6 +3504,12 @@ function getWebviewHtml(webview, extensionUri) {
       vscode.postMessage({ type: 'loadTasks' });
       if (openTaskLogId) vscode.postMessage({ type: 'tailTaskLog', text: openTaskLogId });
     });
+    document.getElementById('tasks-prune').addEventListener('click', function() {
+      // Bulk-delete every terminal task older than 24 hours. Running /
+      // queued tasks are protected by the core deleteTask validation.
+      if (!window.confirm('Delete all completed background tasks older than 24 hours?')) return;
+      vscode.postMessage({ type: 'pruneOldTasks' });
+    });
     tasksOverlay.addEventListener('click', function(e) {
       if (e.target === tasksOverlay) closeTasks();
     });
@@ -3476,6 +3584,9 @@ function getWebviewHtml(webview, extensionUri) {
         });
         actions.appendChild(tailBtn);
         if (t.status === 'running' || t.status === 'queued') {
+          // Live tasks: only Cancel makes sense (delete is blocked
+          // server-side anyway). Cancel sends SIGTERM, the runner will
+          // flip status to terminal and a future delete is then allowed.
           var cancelBtn = document.createElement('button');
           cancelBtn.className = 'task-action-btn danger';
           cancelBtn.textContent = 'Cancel';
@@ -3485,6 +3596,21 @@ function getWebviewHtml(webview, extensionUri) {
             cancelBtn.textContent = 'Cancelling…';
           });
           actions.appendChild(cancelBtn);
+        } else {
+          // Terminal tasks: Delete permanently removes the per-task dir
+          // (meta + events + log). With confirm because logs may be the
+          // only record of what the agent actually did in there.
+          var deleteBtn = document.createElement('button');
+          deleteBtn.className = 'task-action-btn danger';
+          deleteBtn.textContent = 'Delete';
+          deleteBtn.title = 'Permanently delete this task and its logs';
+          deleteBtn.addEventListener('click', function() {
+            if (!window.confirm('Delete this task permanently? Its log and event history will be gone.')) return;
+            vscode.postMessage({ type: 'deleteTask', text: t.runId });
+            deleteBtn.disabled = true;
+            deleteBtn.textContent = 'Deleting…';
+          });
+          actions.appendChild(deleteBtn);
         }
         row.appendChild(actions);
 
@@ -3708,6 +3834,39 @@ function getWebviewHtml(webview, extensionUri) {
       showToast('⏳ Gateway rate-limited — auto-retrying in a few seconds…', 'warning', 5000);
       return true;
     }
+
+    // ── Image lightbox (click-to-zoom for inline media thumbnails) ──
+    var lightboxEl = document.getElementById('media-lightbox');
+    var lightboxImg = document.getElementById('media-lightbox-img');
+    var lightboxClose = document.getElementById('media-lightbox-close');
+    function openLightbox(src, alt) {
+      if (!lightboxEl || !lightboxImg) return;
+      lightboxImg.src = src;
+      lightboxImg.alt = alt || 'image';
+      lightboxEl.classList.add('open');
+    }
+    function closeLightbox() {
+      if (!lightboxEl || !lightboxImg) return;
+      lightboxEl.classList.remove('open');
+      // Drop the src to release the decoded bitmap from memory after fade.
+      setTimeout(function() {
+        if (!lightboxEl.classList.contains('open')) lightboxImg.src = '';
+      }, 200);
+    }
+    if (lightboxEl) {
+      // Click anywhere outside the image (including the dim backdrop) closes.
+      // The image itself stops propagation so clicks on it don't dismiss.
+      lightboxEl.addEventListener('click', function(e) {
+        if (e.target === lightboxImg) return;
+        closeLightbox();
+      });
+    }
+    if (lightboxClose) lightboxClose.addEventListener('click', closeLightbox);
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && lightboxEl && lightboxEl.classList.contains('open')) {
+        closeLightbox();
+      }
+    });
 
     // ── Wallet popover (chain-aware QR + copy) ──
     var walletPopover = document.getElementById('wallet-popover');
@@ -4570,6 +4729,8 @@ function getWebviewHtml(webview, extensionUri) {
       wrap.className = 'media-preview';
       var el;
       if (kind === 'video') {
+        // Videos render full-size — autoplay is off so memory cost is low,
+        // and a thumb would be misleading (user usually wants to play).
         el = document.createElement('video');
         el.controls = true;
         // Explicitly ensure unmuted — some VS Code webview sandboxes start
@@ -4579,9 +4740,15 @@ function getWebviewHtml(webview, extensionUri) {
         el.preload = 'metadata';
         el.src = src;
       } else {
+        // Images render as a constrained thumbnail (max 240×200) to avoid
+        // webview jank from inline-decoding multi-MB PNGs. Click to open
+        // a fullscreen lightbox at native resolution.
         el = document.createElement('img');
+        el.className = 'media-thumb';
         el.src = src;
         el.alt = filePath || 'generated image';
+        el.title = 'Click to enlarge';
+        el.addEventListener('click', function() { openLightbox(src, filePath); });
       }
       wrap.appendChild(el);
       if (filePath) {
@@ -4939,6 +5106,21 @@ function getWebviewHtml(webview, extensionUri) {
         if (m.ok) showToast('Cancel signal sent', 'info', 2500);
         else showToast('Cancel failed: ' + (m.reason || 'unknown'), 'warning');
         vscode.postMessage({ type: 'loadTasks' });
+        return;
+      }
+      if (m.type === 'taskDeleteResult') {
+        if (m.ok) showToast('Task deleted', 'info', 2000);
+        else showToast('Delete failed: ' + (m.reason || 'unknown'), 'warning');
+        return;
+      }
+      if (m.type === 'tasksPruneResult') {
+        if (m.error) {
+          showToast('Prune failed: ' + m.error, 'warning');
+        } else {
+          var msg = 'Deleted ' + (m.deleted || 0) + ' task' + ((m.deleted === 1) ? '' : 's');
+          if (m.skipped) msg += ' (' + m.skipped + ' kept — too recent or still running)';
+          showToast(msg, 'info', 3000);
+        }
         return;
       }
       if (m.type === 'sandboxesData') {

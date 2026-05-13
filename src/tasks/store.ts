@@ -18,12 +18,14 @@
 
 import fs from 'node:fs';
 import type { TaskRecord, TaskEventRecord } from './types.js';
+import { isTerminalTaskStatus } from './types.js';
 import {
   ensureTaskDir,
   taskMetaPath,
   taskEventsPath,
   getTasksDir,
   getLegacyTasksDir,
+  getTaskDir,
 } from './paths.js';
 
 export function writeTaskMeta(record: TaskRecord): void {
@@ -100,6 +102,60 @@ export function applyEvent(runId: string, event: TaskEventRecord): TaskRecord {
   appendTaskEvent(runId, event);
   writeTaskMeta(next);
   return next;
+}
+
+/**
+ * Permanently delete a task — meta.json, events.jsonl, log.txt, the
+ * whole per-task directory. Refuses to delete a task that is still
+ * `queued` or `running` (the runner subprocess might still hold open
+ * fds, and removing meta out from under it leads to confused state).
+ * Returns true if anything was actually removed.
+ */
+export function deleteTask(runId: string): { ok: boolean; reason?: string } {
+  if (!/^[a-zA-Z0-9_-]+$/.test(runId)) return { ok: false, reason: 'invalid runId' };
+  const meta = readTaskMeta(runId);
+  if (meta && (meta.status === 'queued' || meta.status === 'running')) {
+    return {
+      ok: false,
+      reason: `task is still ${meta.status} — cancel it first via SIGTERM (its pid is recorded in meta.json), then delete.`,
+    };
+  }
+  const dir = getTaskDir(runId);
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+}
+
+/**
+ * Bulk cleanup: delete every task in a terminal state (succeeded /
+ * failed / timed_out / cancelled / lost) older than `olderThanMs`.
+ * Default cutoff = 24 hours so the panel doesn't accumulate forever.
+ * Running / queued tasks are always preserved. Returns counts for
+ * UI feedback.
+ */
+export function pruneCompletedTasks(olderThanMs: number = 24 * 60 * 60 * 1000): {
+  deleted: number;
+  skipped: number;
+} {
+  const cutoff = Date.now() - olderThanMs;
+  const all = listTasks();
+  let deleted = 0;
+  let skipped = 0;
+  for (const t of all) {
+    if (!isTerminalTaskStatus(t.status)) continue;
+    const ageRef = t.endedAt ?? t.lastEventAt ?? t.createdAt;
+    if (ageRef > cutoff) {
+      skipped++;
+      continue;
+    }
+    const result = deleteTask(t.runId);
+    if (result.ok) deleted++;
+    else skipped++;
+  }
+  return { deleted, skipped };
 }
 
 export function listTasks(): TaskRecord[] {

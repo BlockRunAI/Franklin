@@ -41,6 +41,30 @@ Franklin is an autonomous AI agent that runs directly in VS Code. It doesn't jus
 
 ## Changelog
 
+### 0.6.0 (Beta)
+- **Modal GPU sandbox tools** — `ModalCreate` / `ModalExec` / `ModalStatus` / `ModalTerminate` (hidden behind `ActivateTool`). Spin up Python 3.11 sandboxes on Modal Labs via the BlockRun gateway with x402 USDC payment. Per-tier pricing: CPU $0.01, T4 $0.05, L4 $0.08, A10G $0.10, A100 $0.20, H100 $0.40 (all one-time per create, sandbox lifetime hard-capped at 5 minutes by gateway). Cost preview AskUser card before each create; `command` accepts shell strings (auto-wrapped to `["sh","-c",...]`) or execve arrays; verbose error diagnostics include the gateway's full validation details.
+- **GPU Sandboxes overlay panel** — new toolbar ⚡ button + active-count badge. Lists every sandbox the agent created with id / tier / age / auto-terminate countdown. 🗑 button bulk-terminates everything (with confirm). Auto-refreshes every 5s while open.
+- **Tasks overlay panel** — new toolbar Tasks button + active-count badge for v3.10.0 Detach background jobs. Each row shows status / label / elapsed, [View log] tails the last 12KB, [Cancel] sends SIGTERM. Refreshes every 3s while open and after every agent turn.
+- **Detach cwd-resolution bug fix** — `franklin task tail` and Detach jobs no longer crash with `Cannot find module '<cwd>/dist/index.js'` when invoked from a non-package working directory. Uses 4-strategy fallback (env var → `createRequire` → `import.meta.url` → cwd) with `fs.existsSync` validation. Extension also injects `FRANKLIN_CLI_PATH` on activate to satisfy strategy 1 directly.
+- **History rename + delete** — hover a history entry, two icons fade in (✏️ rename inline-edit, ❌ delete with confirm pill). User-set titles persist via the new `SessionMeta.title` field and take precedence over the auto-derived "first user message" title.
+- **Wallet QR popover** — click the wallet icon to see address + chain + balance + scannable QR. Payload is chain-aware (EIP-681 for Base, Solana Pay URI for Solana) so wallet apps land on the right network/token without manual configuration.
+- **Session import (Claude Code / Codex)** — "+ new chat" gets a ▼ dropdown with "Import session from Claude Code… / Codex…". Scans `~/.claude/projects/` or `~/.codex/sessions/`, lists candidates with summary + cwd + age, importing creates a fresh Franklin session pre-loaded with handoff context.
+- **Rate-limit friendly toast** — gateway 429 / "rate limit" errors no longer dump red stack traces into chat. Detected and surfaced as a non-blocking warning toast (6s throttle to prevent stacking).
+- **Insights "By Category" breakdown** — usage analytics now splits cost into Chat / Media / Sandbox cards alongside the per-model bars. Modal entries display as "Modal T4 GPU" / "Modal exec" instead of `modal/T4` / `modal/exec`.
+- **ImageGen reliability** —
+  - Stripped `response_format` for `openai/gpt-image-*` family (their API doesn't accept it; including made the gateway return empty data).
+  - Added async polling for slow models that exceed the gateway's 30s inline window (gpt-image-2 specifically). Mirrors the VideoGen pattern.
+  - Verbose error message includes the gateway's actual response body when no image data is returned, instead of a single-line "No image data returned from API".
+  - Now respects the user-configured `default-image-model` from the settings popover (ditto for VideoGen and `default-video-model`).
+- **Settings popover refresh** — three-section layout (Wallet / Media / Spending limits), pill-style chain toggle, focus-ring on inputs, slide-up animation, cleaner typography. Save closes the popover.
+- **Multi-line chat input** — composer is now a textarea that auto-grows to 220px and word-wraps long lines. Enter sends, Shift+Enter inserts newline.
+- **Tool guard exempt for paid tools** — ImageGen / VideoGen / ModalCreate / ModalExec / ModalStatus / ModalTerminate no longer auto-disable after 3 failures (lifecycle ops like ModalTerminate especially must always work to recover orphan sandboxes).
+- **Defensive sanitization of outgoing API messages** — null/undefined `text` fields in conversation history (which previously caused `messages.N.content.0.text.text: Input should be a valid string` 400s from Anthropic) are now coerced to `[empty]` before sending. Original session JSONL is untouched so the root cause stays diagnosable.
+- **Image / Video preview lazy-load** — generated media now renders as a constrained-size thumbnail by default; click expands to full-res in a modal overlay. Avoids webview jank when ImageGen produces a >5MB image.
+- Synced with Franklin core v3.11.0 (the per-turn spend cap was removed upstream — wallet balance is the only ceiling now). The legacy `max-turn-spend-usd` setting in earlier configs is silently stripped on save.
+
+> **Note** — parallel image / video generation (single agent turn fires N image/video tools concurrently into a 4-up pool) is in development on `feature/parallel-media-gen` but **not in this build**. The current build runs media generation calls strictly serially.
+
 ### 0.5.1
 - **Fix: \"Saved vs Opus\" no longer goes negative** — when meaningful spend hit ImageGen / VideoGen, the savings widget showed numbers like `$-8.79` because chat-only Opus baseline was being compared against total spend (chat + media). Now compared apples-to-apples (media counts on both sides; saved is the chat-side delta, clamped to >= 0). Mirror of upstream PR #36.
 
