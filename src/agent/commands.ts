@@ -256,7 +256,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
       `  **Coding:** /commit /review /test /fix /debug /explain /search /find /refactor /scaffold\n` +
       `  **Git:** /push /pr /undo /status /diff /log /branch /stash /unstash\n` +
       `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
-      `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /session-search /context /tasks\n` +
+      `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /session-search /context /tasks /history /transcript\n` +
       `  **Power:** /ultrathink [query] /ultraplan /noplan /moa [query] /dump\n` +
       `  **Info:** /model /auto /wallet /cost /tokens /learnings /brain /mcp /doctor /version /bug /help\n` +
       `  **UI:** /clear /exit\n` +
@@ -281,6 +281,51 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
       }
     }
     output += 'Use `/delete <number>` to remove exchanges (e.g., `/delete 2` or `/delete 3-5`).\n';
+    output += 'Use `/transcript` for the full, un-truncated transcript.\n';
+    ctx.onEvent({ kind: 'text_delta', text: output });
+    emitDone(ctx);
+  },
+  '/transcript': (ctx) => {
+    // Dump the FULL, un-truncated conversation as a single fresh stdout
+    // block. Works around the limitation that the terminal's native
+    // scrollback fills up faster than we can render long Franklin sessions
+    // — by the time you scroll up to look for the first message, the
+    // older Ink output has been pushed out of the terminal's ring buffer.
+    // The fresh emit here becomes one contiguous block, so the user can
+    // scroll *that* to read everything in order.
+    const { history, config } = ctx;
+    const modelName = config.model.split('/').pop() || config.model;
+    const exchanges = buildExchanges(history);
+    if (exchanges.length === 0) {
+      ctx.onEvent({ kind: 'text_delta', text: 'No history in the current session yet.\n' });
+      emitDone(ctx);
+      return;
+    }
+    let output = `**Full Transcript** — ${exchanges.length} exchange${exchanges.length === 1 ? '' : 's'}, session \`${ctx.sessionId}\`\n\n`;
+    output += '─'.repeat(70) + '\n\n';
+    for (let i = 0; i < exchanges.length; i++) {
+      const ex = exchanges[i];
+      // Re-read full text from raw history (buildExchanges truncated).
+      const userMsg = history[ex.startIdx];
+      const fullUser = extractText(userMsg);
+      // Find first assistant text in this exchange (full, not truncated).
+      let fullAssistant = '';
+      for (let j = ex.startIdx + 1; j <= ex.endIdx; j++) {
+        const m = history[j];
+        if (m.role === 'assistant') {
+          const t = extractText(m);
+          if (t && !fullAssistant) fullAssistant = t;
+        }
+      }
+      output += `❯ [${i + 1}] ${fullUser}\n\n`;
+      if (fullAssistant) output += `${fullAssistant}\n`;
+      if (ex.toolNames.length > 0) {
+        output += `\n  _tools: ${ex.toolNames.join(', ')}_\n`;
+      }
+      output += `\n[${modelName}]\n\n`;
+      output += '─'.repeat(70) + '\n\n';
+    }
+    output += `End of transcript — ${history.length} raw messages, ${exchanges.length} user/assistant exchanges.\n`;
     ctx.onEvent({ kind: 'text_delta', text: output });
     emitDone(ctx);
   },

@@ -1,5 +1,27 @@
 # Changelog
 
+## Franklin Agent 3.16.4 — `/transcript` slash command for full session history
+
+The terminal's native scrollback fills up faster than long Franklin
+sessions produce output — by the time you scroll up to revisit the
+first prompt, the older Ink output has been pushed out of the
+terminal's ring buffer. Claude Code-style "scroll all the way to the
+top" doesn't survive a 100-turn session.
+
+`/transcript` dumps the full, un-truncated conversation as a single
+fresh stdout block. Each exchange shows the complete user prompt and
+complete assistant text (no `/history` 80/120 char truncation), plus
+the tools that fired during that turn. Because it's one contiguous
+fresh write, the user can scroll *that* to read everything in order —
+working around terminal scrollback eviction without changing the
+rendering architecture.
+
+Use:
+```
+/transcript          — full session history, fresh dump
+/history             — short summary with delete prompt (unchanged)
+```
+
 ## Franklin Agent 3.16.3 — defensive snapshot guard in SearchX / PostToX
 
 `failures.jsonl` carried two unresolved entries from 2026-04-20:
