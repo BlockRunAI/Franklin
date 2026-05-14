@@ -1,5 +1,16 @@
 # Changelog
 
+## Franklin Agent 3.16.2 — raise per-turn soft tool cap 25 → 40
+
+Companion to 3.16.1's signature-loop relaxation. The 25-call soft cap
+was firing several times per day on real exploratory work — visible in
+`franklin-debug.log` as `Tool call cap hit: 25 calls this turn (soft
+cap 25, hard cap 50)`. Three hits today alone on legitimate sessions.
+
+Raise the soft cap to 40. `HARD_TOOL_CAP = soft * 2 = 80` remains as
+the runaway safety net (used to be 50; recomputed because it's defined
+as `soft * 2`).
+
 ## Franklin Agent 3.16.1 — relax signature-loop hard stop (3 → 5)
 
 The signature-loop guardrail was killing legitimate sessions too

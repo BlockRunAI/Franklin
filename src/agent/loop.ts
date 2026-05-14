@@ -893,7 +893,7 @@ export async function interactiveSession(
     let turnToolCalls = 0;                              // Total tool calls this user turn
     const turnToolCounts = new Map<string, number>();    // Per-tool-name counts this turn
     const readFileCache = new Set<string>();             // Files already read (dedup)
-    const MAX_TOOL_CALLS_PER_TURN = 25;                 // Hard cap per user turn
+    const MAX_TOOL_CALLS_PER_TURN = 40;                 // Soft cap — model gets a stop nudge but can finish. Raised from 25 (3.16.2): real exploratory work routinely needs 25-35 distinct calls, and the soft cap was firing on legit sessions multiple times per day.
     // Hard break threshold for runaways. The cap above is soft — we
     // inject a "limit reached" tool_result once and let the model
     // close out. If it ignores that signal and keeps calling tools,
