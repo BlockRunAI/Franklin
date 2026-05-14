@@ -1,5 +1,27 @@
 # Changelog
 
+## Franklin Agent 3.16.1 — relax signature-loop hard stop (3 → 5)
+
+The signature-loop guardrail was killing legitimate sessions too
+early. Two real-world failures captured:
+
+- 37 productive tool calls / $0.037 spent → killed because Bash
+  was called with the same input 3× across the turn (a verify-then-
+  retry pattern after an intermediate fix).
+- 24 productive tool calls / $0.024 spent → killed because Read
+  was called on the same path 3× (legitimate polling of a background
+  task output file).
+
+The guard was added in 3.15.30 to catch the actual failure mode of
+"model retrying the exact same call hoping something changes." The
+real failure mode involves the model calling the same signature
+10+ times in a tight loop, not 3× spread across a turn with real
+work in between.
+
+Bump `SAME_SIGNATURE_HARD_STOP` from 3 to 5. Pathological loops
+still trigger long before `HARD_TOOL_CAP = 50` would step in as a
+safety net.
+
 ## Franklin Agent 3.16.0 — bump @blockrun/llm to 2.0.0 (unified cost_log)
 
 @blockrun/llm 2.0.0 ships the canonical cost-log fix: every successful

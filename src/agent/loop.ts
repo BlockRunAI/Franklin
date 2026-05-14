@@ -909,9 +909,15 @@ export async function interactiveSession(
     // running data-engineering on GCS logs: 15 distinct gsutil/bq calls,
     // each producing new insights, would have been cut off at call 6.
     // 3.15.30 detects ACTUAL loops by tracking the (tool, input)
-    // signature: only break when the model calls the SAME signature 3
-    // times in one turn. Different inputs → exploration, allowed.
-    const SAME_SIGNATURE_HARD_STOP = 3;
+    // signature: only break when the model calls the SAME signature
+    // repeatedly in one turn. Different inputs → exploration, allowed.
+    //
+    // 3.16.1 bumps the threshold 3 → 5. The "3" rule was killing real
+    // sessions at 25-40 productive distinct calls when the model
+    // legitimately re-ran the same Read/Bash twice for polling or
+    // verification. Real infinite loops still trigger well before
+    // HARD_TOOL_CAP (50) bails out as a safety net.
+    const SAME_SIGNATURE_HARD_STOP = 5;
     // Tracks which tool names have already had a warn injected this turn.
     // Without it, every call past threshold pushes another [SYSTEM] STOP
     // tool_result into the model's context — same shape bug as the cap
