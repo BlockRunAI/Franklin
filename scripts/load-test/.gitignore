@@ -1,0 +1,5 @@
+# Runtime artifacts from glm-1000.mjs and similar load tests.
+# Only the *.mjs scripts are checked in.
+*.jsonl
+*.status.json
+*.console.log

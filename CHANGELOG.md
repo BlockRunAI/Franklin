@@ -1,5 +1,30 @@
 # Changelog
 
+## Franklin Agent 3.16.0 — bump @blockrun/llm to 2.0.0 (unified cost_log)
+
+@blockrun/llm 2.0.0 ships the canonical cost-log fix: every successful
+x402 settlement on the SDK side now appends to `~/.blockrun/cost_log.jsonl`
+using the same schema Franklin's AgentClient already writes. Previously
+the SDK's `logCost()` helper was defined but never called, so any non-
+Franklin caller had zero automatic cost visibility.
+
+After this bump:
+- Single ledger covers both code paths (Franklin's Anthropic-compatible
+  `/v1/messages` flow and the SDK's `/v1/chat/completions` flow).
+- `franklin stats` already reads the unified file — no command change.
+- Testnet helpers (`testnetClient`, `isTestnet`) removed in 2.0.0. Franklin
+  never imported them, so no Franklin-side cleanup needed.
+
+### Other
+
+- Docs: `src/agent/context.ts` description of cost_log.jsonl updated to
+  reflect that both Franklin and the SDK now write to it.
+- Tooling: `scripts/load-test/glm-1000.mjs` checked in — a natural-pacing
+  1000-call load runner that exercises the gateway through the SDK with
+  random delay distribution (short bursts + medium pauses + occasional
+  long breaks). Runtime artifacts (.jsonl/.console.log/.status.json)
+  are gitignored.
+
 ## Franklin Agent 3.15.103 — cost-log dedupe: use `Math.floor` for second-bucket boundaries
 
 Follow-up to 3.15.102. The dedupe key in `cost-log.ts` used

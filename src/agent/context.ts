@@ -199,7 +199,7 @@ Franklin stores wallet keys in ~/.blockrun/. When the user asks about wallet loc
 - Spending data:
   - ~/.blockrun/franklin-stats.json — rolling totals + per-model breakdown (what \`franklin stats\` reads).
   - ~/.blockrun/franklin-audit.jsonl — append-only forensic ledger of every LLM call.
-  - ~/.blockrun/cost_log.jsonl — append-only ledger of every settled x402 payment (written by @blockrun/llm SDK).
+  - ~/.blockrun/cost_log.jsonl — append-only ledger of every settled x402 payment. Both Franklin (via AgentClient in src/agent/llm.ts) and the @blockrun/llm SDK (>= 2.0.0, via its chatCompletion / raw payment paths) append to the same file with the canonical schema.
   - Use \`franklin stats\` / \`franklin content list\` instead of parsing files when the user asks "how much did I spend".
 - Programmatic access: import { getWalletAddress, getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm'
 
