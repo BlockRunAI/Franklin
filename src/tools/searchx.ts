@@ -161,7 +161,21 @@ async function execute(
       return { output: `SearchX: Failed to open X.com: ${msg.slice(0, 200)}`, isError: true };
     }
     await browser.waitForTimeout(4000);
-    const tree = await browser.snapshot();
+    // Defensive: snapshot() has historically thrown "Cannot read properties
+    // of undefined (reading 'snapshot')" when Playwright's underlying page
+    // closes between waitForTimeout and the snapshot call (verified in
+    // failures.jsonl 2026-04-20). Convert the cryptic error into a useful
+    // hint instead of leaking it into the audit log unchanged.
+    let tree: string;
+    try {
+      tree = await browser.snapshot();
+    } catch (snapErr) {
+      const snapMsg = snapErr instanceof Error ? snapErr.message : String(snapErr);
+      return {
+        output: `SearchX: Page snapshot failed (${snapMsg.slice(0, 100)}). The browser session likely closed mid-flight — retry, or run \`franklin social setup\` to refresh.`,
+        isError: true,
+      };
+    }
 
     // ── Diagnose page state ───────────────────────────────────────────
     const isLoginWall = tree.includes('Sign in') && tree.includes('Create account');

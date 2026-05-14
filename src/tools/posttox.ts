@@ -60,7 +60,19 @@ async function execute(
       `https://x.com/search?q=${encodeURIComponent(search_query)}&src=typed_query&f=live`;
     await browser.open(searchUrl);
     await browser.waitForTimeout(3500);
-    const tree = await browser.snapshot();
+    // Same defensive guard as SearchX — Playwright can drop the page out
+    // from under us during the wait. Surface a useful hint instead of
+    // "Cannot read properties of undefined (reading 'snapshot')".
+    let tree: string;
+    try {
+      tree = await browser.snapshot();
+    } catch (snapErr) {
+      const snapMsg = snapErr instanceof Error ? snapErr.message : String(snapErr);
+      return {
+        output: `PostToX: Page snapshot failed (${snapMsg.slice(0, 100)}). The browser session likely closed mid-flight — retry, or run \`franklin social setup\` to refresh.`,
+        isError: true,
+      };
+    }
 
     // ── Find the article matching the given pre_key ──────────────────
     const articles = extractArticleBlocks(tree);

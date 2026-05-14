@@ -1,5 +1,26 @@
 # Changelog
 
+## Franklin Agent 3.16.3 — defensive snapshot guard in SearchX / PostToX
+
+`failures.jsonl` carried two unresolved entries from 2026-04-20:
+
+```
+SearchX: Cannot read properties of undefined (reading 'snapshot')
+```
+
+Root cause: Playwright's underlying page can close between
+`browser.waitForTimeout()` and `browser.snapshot()` — typically when
+X.com's anti-bot navigates or a tab crashes mid-wait. The wrapper
+method then dereferences a null internal page and throws this cryptic
+message into the audit log.
+
+Wrap the `snapshot()` call in both `tools/searchx.ts` and
+`tools/posttox.ts` so the error surfaces as a user-readable hint
+("Page snapshot failed — retry or run `franklin social setup`")
+instead of an unhandled crash. Doesn't *prevent* the underlying close,
+but the audit log stops carrying mystery stack-trace noise and the
+user sees an actionable next step.
+
 ## Franklin Agent 3.16.2 — raise per-turn soft tool cap 25 → 40
 
 Companion to 3.16.1's signature-loop relaxation. The 25-call soft cap
