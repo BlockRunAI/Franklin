@@ -225,6 +225,13 @@ export class SessionToolGuard {
   startTurn(): void {
     this.turn++;
     this.webSearchesThisTurn = 0;
+    // The per-tool circuit breaker exists to stop a model from burning a
+    // whole turn re-attacking a wall. It must NOT outlive the user turn that
+    // earned the failures — a fresh prompt is a fresh intent. Without this
+    // reset, three failed Bash calls (e.g. `franklin social login x` on a
+    // host without the right env) permanently disable Bash for the rest of
+    // the session, even on completely unrelated follow-ups.
+    this.toolErrorCounts.clear();
     for (const family of this.searchFamilies) {
       family.turnSearches = 0;
     }
@@ -280,6 +287,36 @@ export class SessionToolGuard {
   private beforeBash(invocation: CapabilityInvocation): CapabilityResult | null {
     const cmd = String(invocation.input.command ?? '').trim();
     if (!cmd) return null;
+
+    // Reject interactive franklin subcommands that require the human at the
+    // keyboard (they spawn a non-headless Chrome and wait for the user to
+    // close it). If the agent runs them via Bash they block until timeout,
+    // burn a tool-failure strike, and contribute nothing. Tell the agent to
+    // ask the user to run them in a separate terminal instead.
+    if (/^\s*franklin\s+social\s+(login|setup)\b/.test(cmd)) {
+      return {
+        output:
+          'Blocked: `franklin social login` / `franklin social setup` are INTERACTIVE — ' +
+          'they open a Chrome window the human must drive and close. They cannot run from ' +
+          'an agent Bash call (they will hang then time out). ' +
+          'Ask the user to run this in their own terminal, then continue once they say it is done.',
+        isError: true,
+      };
+    }
+
+    // `franklin social run` is a batch poster/replier that loops over the
+    // user's configured search_queries — it is not the right tool for
+    // "read this specific tweet" or "draft replies to one post". Steer the
+    // agent to SearchX (now URL-aware) instead.
+    if (/^\s*franklin\s+social\s+run\b/.test(cmd)) {
+      return {
+        output:
+          'Blocked: `franklin social run` is a batch reply loop over the user\'s configured ' +
+          'queries, not a single-tweet reader. Use the SearchX tool instead — pass a tweet URL ' +
+          'as the query to read one post, or use mode="search"/"notifications" for discovery.',
+        isError: true,
+      };
+    }
 
     // Reject blocking poll-loops in foreground bash. A single bash call with
     // `sleep N` inside a for/while/until loop blocks the agent for the full

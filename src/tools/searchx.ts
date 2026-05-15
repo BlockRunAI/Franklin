@@ -23,7 +23,20 @@ import { browserPool } from '../social/browser-pool.js';
 interface SearchXInput {
   query: string;
   max_results?: number;
-  mode?: 'search' | 'notifications';
+  mode?: 'search' | 'notifications' | 'url';
+}
+
+// Detect a tweet permalink the user (or a paste) handed us instead of a
+// keyword. Treat twitter.com and x.com interchangeably; trim the tracking
+// suffix (?s=20 etc.) and normalise to the canonical x.com host so the
+// browser doesn't waste a redirect hop.
+const TWEET_URL_RE = /^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/[^/\s]+\/status\/(\d+)/i;
+
+export function canonicalTweetUrl(input: string): string | null {
+  const m = TWEET_URL_RE.exec((input ?? '').trim());
+  if (!m) return null;
+  return input.trim().replace(/^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com/i, 'https://x.com')
+    .replace(/[?#].*$/, '');
 }
 
 interface Candidate {
@@ -88,6 +101,92 @@ export function detectNotificationsIntent(
   return false;
 }
 
+async function readTweetByUrl(rawUrl: string): Promise<CapabilityResult> {
+  const url = canonicalTweetUrl(rawUrl) ?? rawUrl;
+  let browser;
+  try {
+    browser = await browserPool.getBrowser();
+    try {
+      await browser.open(url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        output: `SearchX (url mode): failed to open ${url}: ${msg.slice(0, 200)}`,
+        isError: true,
+      };
+    }
+    // Tweet pages are SPAs that lazy-render the article block. A single
+    // 4s wait + single snapshot misses content on slow networks or when
+    // X briefly shows the auth-wall during hydration even for logged-in
+    // sessions. Retry up to 3 times with progressive backoff and a small
+    // scroll to nudge the virtual list into rendering.
+    let tree = '';
+    let articles: ReturnType<typeof extractArticleBlocks> = [];
+    const WAIT_MS = [2500, 4000, 5000];
+    let attempt = 0;
+    while (attempt < WAIT_MS.length) {
+      await browser.waitForTimeout(WAIT_MS[attempt]);
+      try {
+        tree = await browser.snapshot();
+      } catch (snapErr) {
+        const snapMsg = snapErr instanceof Error ? snapErr.message : String(snapErr);
+        return {
+          output: `SearchX (url mode): snapshot failed (${snapMsg.slice(0, 100)}). The browser session likely closed mid-flight — retry, or ask the user to run \`franklin social setup\` in a separate terminal.`,
+          isError: true,
+        };
+      }
+      if (tree.includes('Rate limit') || tree.includes('Something went wrong')) {
+        return {
+          output: `SearchX: X returned an error page on ${url} (rate limit or server issue). Try again in a minute.`,
+          isError: true,
+        };
+      }
+      if (/this post is unavailable|tweet was deleted|page (doesn'?t|does not) exist|account.*suspended/i.test(tree)) {
+        return {
+          output: `SearchX: tweet at ${url} is unavailable, deleted, or its author is suspended.`,
+          isError: true,
+        };
+      }
+      articles = extractArticleBlocks(tree);
+      if (articles.length > 0) break;
+      // Nudge the page so X mounts the lazy article block.
+      try { await browser.scroll(400, 400, 0, 400); } catch { /* ignore */ }
+      attempt++;
+    }
+
+    const treeLen = tree.length;
+    if (articles.length === 0 && tree.includes('Sign in') && tree.includes('Create account')) {
+      return {
+        output: `SearchX: X is showing a login wall on ${url} after ${WAIT_MS.length} attempts. If you ARE logged in, the cached session may have expired — ask the user to run \`franklin social login x\` in a separate terminal (interactive: opens a Chrome window).`,
+        isError: true,
+      };
+    }
+    if (articles.length === 0) {
+      return {
+        output: `SearchX (url mode): no article extracted from ${url} after ${WAIT_MS.length} attempts. ` +
+          `Page rendered ${treeLen} chars. The tweet may load with a non-standard layout — drive the browser ` +
+          `directly with BrowserX (action="snapshot" to inspect, action="scroll" to load more, ` +
+          `action="open" url=<other> to navigate).\n\n[debug] tree preview:\n${tree.slice(0, 600)}`,
+        isError: true,
+      };
+    }
+    const primary = articles[0];
+    const texts = findStaticText(primary.text);
+    const snippet = texts.join(' ').trim().slice(0, 1200);
+
+    let output = `Tweet at ${url}:\n\n${snippet}\n\n---\n`;
+    output += 'IMPORTANT: This is the real post content. ';
+    output += 'Do NOT fabricate additional context, replies, or metrics. ';
+    output += 'If the user asked for replies/comments, draft them from THIS text only.';
+    return { output };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { output: `SearchX (url mode) error: ${msg}`, isError: true };
+  } finally {
+    browserPool.releaseBrowser();
+  }
+}
+
 async function execute(
   input: Record<string, unknown>,
   _ctx: ExecutionScope,
@@ -99,6 +198,15 @@ async function execute(
   }
 
   const maxResults = Math.min(Math.max(max_results ?? 10, 1), 50);
+
+  // ── URL fast-path: user pasted a tweet permalink ────────────────────
+  // SearchX is the only X-aware tool. If the input is a tweet URL we read
+  // the post directly instead of searching for its URL as a keyword (which
+  // always returns empty). Triggers on mode="url" OR auto-detected URL.
+  const tweetUrl = canonicalTweetUrl(query ?? '');
+  if (mode === 'url' || tweetUrl) {
+    return await readTweetByUrl(tweetUrl ?? query!);
+  }
 
   // ── Config: load if available, degrade gracefully if not ────────────
   const config = loadConfig();
@@ -131,7 +239,7 @@ async function execute(
     if (!preflight.ready) {
       if (isNotifications) {
         return {
-          output: 'Not logged in to X. Run `franklin social login x` first — notifications require authentication.',
+          output: 'Not logged in to X. Ask the user to run `franklin social login x` in a separate terminal (it opens a Chrome window for them to log in and is NOT runnable by you via Bash) first — notifications require authentication.',
           isError: true,
         };
       }
@@ -184,7 +292,7 @@ async function execute(
 
     if (isLoginWall) {
       return {
-        output: `SearchX: X is showing a login wall. Run \`franklin social login x\` to authenticate.\n\nTree preview (${treeLen} chars):\n${tree.slice(0, 500)}`,
+        output: `SearchX: X is showing a login wall. Ask the user to run \`franklin social login x\` in a separate terminal (interactive — opens a Chrome window they must drive). Do NOT try to run that command from Bash; it will hang and time out.\n\nTree preview (${treeLen} chars):\n${tree.slice(0, 500)}`,
         isError: true,
       };
     }
@@ -336,20 +444,22 @@ export const searchXCapability: CapabilityHandler = {
     name: 'SearchX',
     description:
       'The ONLY tool that can access X (Twitter). Returns real posts with URLs. ' +
-      'Use mode "search" to find posts by keyword. Use mode "notifications" to check mentions/replies. ' +
-      'Call ONCE per topic — do not retry. WebSearch/WebFetch CANNOT access X.com.',
+      'Use mode "search" to find posts by keyword, "notifications" to check mentions/replies, ' +
+      'or "url" to read a specific tweet — you can also just pass a tweet URL as the query and ' +
+      'this tool will auto-detect URL mode. Call ONCE per topic — do not retry. ' +
+      'WebSearch/WebFetch CANNOT access X.com.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        query: { type: 'string', description: 'Search query (required for search mode, optional for notifications mode)' },
+        query: { type: 'string', description: 'Search query for "search" mode, OR a tweet URL (https://x.com/<user>/status/<id>) for "url" mode — URL is auto-detected if passed in query. Optional for "notifications" mode.' },
         max_results: {
           type: 'number',
-          description: 'Max posts to return (default 10)',
+          description: 'Max posts to return (default 10, ignored in "url" mode)',
         },
         mode: {
           type: 'string',
-          enum: ['search', 'notifications'],
-          description: 'Mode: "search" to find posts by keyword, "notifications" to check your mentions/replies/interactions that need response. Default: search',
+          enum: ['search', 'notifications', 'url'],
+          description: 'Mode: "search" finds posts by keyword, "notifications" checks your mentions/replies, "url" reads a specific tweet. Default: auto (URL → "url" mode, otherwise "search").',
         },
       },
       required: [],
