@@ -26,6 +26,7 @@ import { askUserCapability } from './askuser.js';
 import { tradingSignalCapability, tradingMarketCapability } from './trading.js';
 import { searchXCapability } from './searchx.js';
 import { postToXCapability } from './posttox.js';
+import { browserXCapability } from './browsex.js';
 import { moaCapability } from './moa.js';
 import { webhookPostCapability } from './webhook.js';
 import { walletCapability } from './wallet.js';
@@ -169,6 +170,7 @@ export const allCapabilities: CapabilityHandler[] = [
   ...defaultContentCapabilities, // ContentCreate, ContentAddAsset, ContentShow, ContentList
   searchXCapability,
   postToXCapability,
+  browserXCapability,
   moaCapability,
   webhookPostCapability,
   walletCapability,

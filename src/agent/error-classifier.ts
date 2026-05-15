@@ -229,6 +229,22 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     };
   }
 
+  // Unknown / typo'd model id — gateway returns HTTP 400 with a body like
+  // "Unknown model: moonshot/kimi-k2". Without this branch the error falls
+  // through to the catch-all 'unknown' category and shows the user a bare
+  // "Type: Unknown" with no actionable next step.
+  if (includesAny(err, [
+    'unknown model',
+    'model not found',
+    'model does not exist',
+    'no such model',
+  ])) {
+    return {
+      category: 'schema', label: 'Schema', isTransient: false, maxRetries: 0,
+      suggestion: 'The gateway rejected the model id (unknown / typo). Use /model to pick a valid one, or upgrade Franklin if a fallback chain references a stale id.',
+    };
+  }
+
   if (includesAny(err, [
     '500',
     '502',

@@ -290,12 +290,12 @@ const BLOCKED_DOMAINS: BlockedDomain[] = [
   {
     pattern: /(^|\.)x\.com$/i,
     reason: 'X.com requires authenticated API',
-    alternative: 'use SearchX (the dedicated X tool) instead of WebFetch',
+    alternative: 'use SearchX. For a specific tweet URL pass it as the query (SearchX auto-detects /status/<id> URLs and reads the post directly). For keyword discovery use mode="search". WebFetch on x.com will not work.',
   },
   {
     pattern: /(^|\.)twitter\.com$/i,
     reason: 'X.com requires authenticated API',
-    alternative: 'use SearchX (the dedicated X tool) instead of WebFetch',
+    alternative: 'use SearchX. For a specific tweet URL pass it as the query (SearchX auto-detects /status/<id> URLs and reads the post directly). For keyword discovery use mode="search". WebFetch on twitter.com will not work.',
   },
   {
     pattern: /(^|\.)tiktok\.com$/i,

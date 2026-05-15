@@ -391,6 +391,12 @@ export function looksLikeStalledIntent(text: string): boolean {
   if (!text) return false;
   const trimmed = text.trim();
   if (trimmed.length < 24) return false;
+  // If the final non-empty line is a short question to the user, the model is
+  // explicitly deferring ("Which would you prefer?", "Want me to proceed?") —
+  // that's a handoff, not a stall. Avoid re-invoking on another model and
+  // billing twice for what is in fact correct behavior.
+  const lastLine = trimmed.split(/\n+/).map(s => s.trim()).filter(Boolean).pop() ?? '';
+  if (lastLine.length > 0 && lastLine.length <= 120 && /[?？]\s*$/.test(lastLine)) return false;
   // Look at the last ~400 chars only — intent-to-act lives near the end.
   const tail = trimmed.slice(-400).toLowerCase();
   // Strong "I'm about to do something" markers near the tail.
@@ -1470,7 +1476,7 @@ export async function interactiveSession(
             // Excludes nvidia/* and *-coder-* — they're the source population.
             const TOOL_USE_FALLBACK_MODELS = [
               'anthropic/claude-haiku-4.5',
-              'moonshot/kimi-k2',
+              'moonshot/kimi-k2.6',
               'openai/gpt-5',
               'anthropic/claude-sonnet-4.6',
             ];

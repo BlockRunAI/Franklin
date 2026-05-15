@@ -27,6 +27,66 @@ function ensureProfileDir(): void {
   }
 }
 
+// Chrome leaves a few singleton lock files in the user-data-dir when running.
+// If the previous Chromium process crashed (or franklin was killed with -9)
+// these files survive even though no real Chrome owns the profile. The next
+// launchPersistentContext sees them and refuses to start the browser. We
+// detect that case (lock exists + no process), remove the locks, and retry.
+const SINGLETON_LOCKS = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+
+function readSingletonOwnerPid(): number | null {
+  // On macOS/Linux, Chrome writes the PID into SingletonLock as a symlink
+  // target like "hostname-12345". Parse it; if any token is a live PID, the
+  // profile is genuinely in use.
+  const lockPath = path.join(SOCIAL_PROFILE_DIR, 'SingletonLock');
+  try {
+    const target = fs.readlinkSync(lockPath);
+    const match = /-(\d+)$/.exec(target);
+    if (!match) return null;
+    const pid = Number.parseInt(match[1], 10);
+    return Number.isFinite(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // ESRCH = no such process. EPERM = exists but we can't signal it (still alive).
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function clearStaleSingletonLocks(): boolean {
+  const pid = readSingletonOwnerPid();
+  if (pid !== null && isPidAlive(pid)) return false; // real Chrome still using it
+  let removedAny = false;
+  for (const name of SINGLETON_LOCKS) {
+    const p = path.join(SOCIAL_PROFILE_DIR, name);
+    try {
+      fs.rmSync(p, { force: true });
+      removedAny = true;
+    } catch {
+      // ignore — file may simply not exist
+    }
+  }
+  return removedAny;
+}
+
+function isProfileLockError(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes('profile') && (m.includes('in use') || m.includes('locked')) ||
+    m.includes('singletonlock') ||
+    m.includes('processsingleton') ||
+    m.includes('user data directory is already in use') ||
+    m.includes('failed to create a chromedriver')
+  );
+}
+
 // ─── A11y tree serialization ───────────────────────────────────────────────
 
 /**
@@ -210,18 +270,20 @@ export class SocialBrowser {
     // import cost on every franklin command (e.g. `franklin --version`)
     const { chromium } = await import('playwright-core');
 
+    const launchOnce = () => chromium.launchPersistentContext(SOCIAL_PROFILE_DIR, {
+      headless: this.opts.headless,
+      channel: this.opts.channel,
+      slowMo: this.opts.slowMo,
+      viewport: this.opts.viewport,
+      // Pretend to be a regular Chrome (not headless fingerprint)
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--no-default-browser-check',
+      ],
+    });
+
     try {
-      this.context = await chromium.launchPersistentContext(SOCIAL_PROFILE_DIR, {
-        headless: this.opts.headless,
-        channel: this.opts.channel,
-        slowMo: this.opts.slowMo,
-        viewport: this.opts.viewport,
-        // Pretend to be a regular Chrome (not headless fingerprint)
-        args: [
-          '--disable-blink-features=AutomationControlled',
-          '--no-default-browser-check',
-        ],
-      });
+      this.context = await launchOnce();
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes('Executable doesn') || msg.includes("wasn't found")) {
@@ -231,7 +293,34 @@ export class SocialBrowser {
           `Original error: ${msg}`
         );
       }
-      throw err;
+      // Stale singleton-lock from a crashed Chrome / killed franklin. If no
+      // live PID owns the lock, scrub it and retry once. Don't auto-clean
+      // when a real process still owns the profile — that would corrupt
+      // their running session.
+      if (isProfileLockError(msg) || msg.toLowerCase().includes('failed to launch')) {
+        const cleared = clearStaleSingletonLocks();
+        if (cleared) {
+          try {
+            this.context = await launchOnce();
+          } catch (err2) {
+            throw new Error(
+              `Chrome profile lock recovery failed. The profile dir at\n  ${SOCIAL_PROFILE_DIR}\n` +
+              `had stale lock files; we removed them and retried, but launch still failed.\n` +
+              `Close any running Chrome/Chromium using this profile and try again.\n\n` +
+              `Original error: ${msg}\nRetry error: ${(err2 as Error).message}`
+            );
+          }
+        } else {
+          throw new Error(
+            `Chrome profile is in use at\n  ${SOCIAL_PROFILE_DIR}\n` +
+            `Another franklin instance (or a Chrome with that user-data-dir) is running.\n` +
+            `Close it and retry, or run: pkill -f social-chrome-profile\n\n` +
+            `Original error: ${msg}`
+          );
+        }
+      } else {
+        throw err;
+      }
     }
 
     // Reuse existing tab if any, else open new

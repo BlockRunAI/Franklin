@@ -159,7 +159,17 @@ RULES (violations will produce garbage output):
 6. End with: "Reply to any? Give me the number."
 7. Do NOT auto-post. Do NOT explain how the social system works.
 
-When checking notifications/mentions: Use SearchX with mode="notifications". One call, done.`;
+When the user pastes a specific tweet URL (https://x.com/<user>/status/<id>): Call SearchX with the URL as the query. The tool auto-detects URL mode and reads the post directly. Do NOT search for the URL as a keyword (always returns empty), and do NOT try WebFetch on x.com.
+
+When checking notifications/mentions: Use SearchX with mode="notifications". One call, done.
+
+If SearchX returns empty or "no article extracted" on a URL/query you believe SHOULD have content (you can see the page in the browser, or the user confirms it exists), DO NOT give up — drop down to the BrowserX primitive and drive the browser yourself:
+  1. BrowserX action="snapshot" → see what's on screen right now
+  2. BrowserX action="scroll" dy=600 → trigger lazy-render / load more
+  3. BrowserX action="snapshot" again → re-inspect after scroll
+  4. BrowserX action="click" ref=<id> → follow a permalink (refs come from the last snapshot)
+  5. BrowserX action="open" url=<other> → try a different URL (e.g. /search?q=… or a profile page)
+BrowserX shares the logged-in X session with SearchX, so authentication is already handled. Use BrowserX only for read/navigation; replies still go through PostToX with explicit user confirmation.`;
 }
 
 function getMissingAccessSection(): string {
