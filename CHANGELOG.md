@@ -1,5 +1,47 @@
 # Changelog
 
+## Franklin Agent 3.18.0 — Phone & Voice panel + CSRF defense
+
+Franklin's web panel grows a new **Phone** tab for managing the
+wallet-bound numbers BlockRun provisions for you. Each number ticks
+down its own 30-day lease with a colour-coded chip (green → amber at
+≤7 days → red at ≤2 days → expired), and the sidebar nav badge lights
+up when any number is in the warning band, so you notice from any tab.
+Renew is a single click, charged from the same wallet the panel
+already controls. Buy is explicitly additive — "this adds a new number
+alongside any you already own" — because the gateway lets one wallet
+hold many numbers, and we don't want surprise double-purchases.
+
+There's deliberately no auto-renew toggle: a wallet that runs dry
+between charges would fail the renewal silently and the user would
+lose their number anyway. Instead, browser notifications fire at
+T-7d / T-3d / T-1d / expired, deduped per session, so the action stays
+in the user's hands.
+
+The cache (`~/.blockrun/phone-numbers.json`, 6-hour TTL) is the same
+file the upcoming terminal status bar will read, so both surfaces stay
+in lockstep.
+
+This release also lands a **CSRF defense** on the panel server.
+Loopback binding stopped LAN exposure but didn't stop a malicious
+website in your browser from POSTing to localhost. Spendful and
+wallet-mutating routes — including the new `/api/phone/*` set, plus
+the existing `/api/wallet/secret`, `/api/wallet/import`, `/api/chain` —
+now require either no Origin header (curl, direct navigation) or the
+exact local origin that served the panel page. The wildcard
+`Access-Control-Allow-Origin` is also gone from the panel JSON helper;
+it was defeating the same-origin check for cross-origin requests.
+
+New panel server endpoints:
+
+```
+GET  /api/phone/numbers              # cached read
+POST /api/phone/numbers/refresh      # force-refetch ($0.001)
+POST /api/phone/numbers/buy          # provision ($5)
+POST /api/phone/numbers/renew        # extend 30d ($5)
+POST /api/phone/numbers/release      # release (free)
+```
+
 ## Franklin Agent 3.16.4 — `/transcript` slash command for full session history
 
 The terminal's native scrollback fills up faster than long Franklin
