@@ -411,6 +411,63 @@ a:hover { text-decoration:underline; }
 .btn-danger { background:oklch(0.65 0.20 25 / 18%); color:var(--danger); border-color:oklch(0.65 0.20 25 / 35%); }
 .btn-danger:hover { background:oklch(0.65 0.20 25 / 30%); }
 
+.nav-badge {
+  margin-left:auto; font-size:10px; font-weight:700; letter-spacing:0.3px;
+  padding:2px 7px; border-radius:8px;
+  background:oklch(0.65 0.20 25 / 22%); color:var(--danger);
+  border:1px solid oklch(0.65 0.20 25 / 35%);
+}
+.nav-badge.warn { background:oklch(0.78 0.14 85 / 22%); color:var(--gold); border-color:oklch(0.78 0.14 85 / 35%); }
+
+.phone-list { display:flex; flex-direction:column; gap:10px; }
+.phone-row {
+  display:grid; grid-template-columns:auto 1fr auto; gap:14px; align-items:center;
+  padding:14px 16px; background:var(--bg-card); border:1px solid var(--border);
+  border-radius:var(--radius); transition:border-color 0.15s, background 0.15s;
+}
+.phone-row:hover { background:var(--bg-card-hover); }
+.phone-row.warn { border-color:oklch(0.78 0.14 85 / 50%); }
+.phone-row.crit { border-color:oklch(0.65 0.20 25 / 55%); }
+.phone-row.expired { opacity:0.65; border-color:oklch(0.65 0.20 25 / 45%); }
+.phone-icon-bubble {
+  width:36px; height:36px; border-radius:10px; display:grid; place-items:center;
+  background:oklch(0.68 0.16 260 / 18%); color:var(--brand);
+}
+.phone-main { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.phone-num {
+  font-family:var(--mono); font-size:15px; font-weight:600; color:var(--text);
+  letter-spacing:0.02em;
+}
+.phone-meta { font-size:12px; color:var(--text-muted); display:flex; gap:10px; flex-wrap:wrap; }
+.phone-meta .chip {
+  display:inline-flex; align-items:center; gap:4px;
+  padding:2px 7px; border-radius:6px; background:oklch(0 0 0 / 25%);
+  font-size:10.5px; letter-spacing:0.5px; text-transform:uppercase; font-weight:700;
+}
+.phone-meta .chip.green { color:var(--success); background:oklch(0.65 0.18 145 / 18%); }
+.phone-meta .chip.amber { color:var(--gold);    background:oklch(0.78 0.14 85 / 20%); }
+.phone-meta .chip.red   { color:var(--danger);  background:oklch(0.65 0.20 25 / 20%); }
+.phone-row .phone-actions { display:flex; align-items:center; gap:6px; }
+.phone-row.expired .phone-num { text-decoration:line-through; }
+
+.phone-empty {
+  padding:24px; text-align:center; border:1px dashed var(--border);
+  border-radius:var(--radius); color:var(--text-muted); font-size:13px;
+  line-height:1.6;
+}
+.phone-empty strong { color:var(--text); font-weight:600; display:block; margin-bottom:6px; font-size:14px; }
+
+.phone-buy-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+.phone-buy-form select, .phone-buy-form input {
+  padding:7px 10px; background:oklch(0 0 0 / 35%); color:var(--text);
+  border:1px solid var(--border); border-radius:7px; font-size:13px;
+  font-family:var(--mono);
+}
+.phone-buy-form input { width:120px; }
+.phone-status { font-size:12px; color:var(--text-muted); }
+.phone-status.ok  { color:var(--success); }
+.phone-status.err { color:var(--danger); }
+
 @media (max-width:768px) {
   body { flex-direction:column; }
   .sidebar { width:100%; min-width:100%; flex-direction:row; padding:8px; overflow-x:auto; border-right:none; border-bottom:1px solid var(--border); }
@@ -455,6 +512,11 @@ a:hover { text-decoration:underline; }
     <button class="nav-item" data-tab="markets">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/></svg>
       Markets
+    </button>
+    <button class="nav-item" data-tab="phone">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      Phone
+      <span class="nav-badge" id="phone-nav-badge" style="display:none"></span>
     </button>
     <button class="nav-item" data-tab="sessions">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -674,6 +736,46 @@ a:hover { text-decoration:underline; }
         <div id="mk-providers" style="margin-top:6px"></div>
         <h3 style="margin-top:18px">Recent paid calls</h3>
         <div id="mk-paid" class="empty" style="margin-top:6px">No paid calls yet</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phone & Voice -->
+  <div class="tab" id="tab-phone">
+    <div class="content-header">
+      <h2>Phone &amp; Voice</h2>
+      <p>Numbers your wallet owns. Leases run 30 days &mdash; renew before they expire or set auto-renew.</p>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <h3 style="margin:0">Your numbers</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="phone-status" id="phone-list-status"></span>
+          <button class="btn btn-ghost" id="phone-refresh-btn" title="Refetch from BlockRun ($0.001)">Refresh</button>
+        </div>
+      </div>
+      <div id="phone-list" style="margin-top:12px">
+        <div class="phone-empty">Loading&hellip;</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 6px">Add another number</h3>
+      <p class="wallet-hint">
+        $5 USDC for a fresh number, bound to your wallet for 30 days. <strong>This adds
+        a new number alongside any you already own &mdash; nothing is replaced.</strong>
+        Use it as caller ID for outbound AI voice calls, or (soon) to receive inbound calls.
+        Multiple numbers are fine; release any you no longer need to stop paying renewals on them.
+      </p>
+      <div class="phone-buy-form">
+        <select id="phone-buy-country">
+          <option value="US">United States (+1)</option>
+          <option value="CA">Canada (+1)</option>
+        </select>
+        <input id="phone-buy-areacode" placeholder="Area code (opt)" maxlength="6" />
+        <button class="btn btn-warn" id="phone-buy-btn">Buy for $5</button>
+        <span class="phone-status" id="phone-buy-status"></span>
       </div>
     </div>
   </div>
@@ -1544,6 +1646,307 @@ document.addEventListener('visibilitychange', () => {
 });
 
 document.getElementById('tasks-refresh-btn')?.addEventListener('click', fetchTasks);
+
+// ─── Phone & Voice ──────────────────────────────────────────────────────
+// Renders the user's wallet-owned numbers, days-remaining countdown,
+// renew / release / auto-renew controls, and the buy form. Drives the
+// sidebar nav badge so users with an expiring number see it even from
+// the Overview tab. Notification ladder uses the Notifications API,
+// dedupe-keyed in sessionStorage so we don't spam the user every open.
+
+const phoneState = { data: null, countdownTimer: null };
+
+function formatPhoneNumber(e164) {
+  // E.164 → human, for display only. Keep raw value for actions.
+  if (!e164) return '—';
+  const m = String(e164).match(/^\\+1(\\d{3})(\\d{3})(\\d{4})$/);
+  if (m) return '+1 (' + m[1] + ') ' + m[2] + '-' + m[3];
+  return e164;
+}
+
+function daysLeft(expiresAt) {
+  const expiry = new Date(expiresAt).getTime();
+  if (isNaN(expiry)) return 0;
+  return Math.floor((expiry - Date.now()) / 86400000);
+}
+
+function phoneTier(days) {
+  if (days < 0) return 'expired';
+  if (days <= 2) return 'crit';
+  if (days <= 7) return 'warn';
+  return 'ok';
+}
+
+function phoneChipClass(tier) {
+  if (tier === 'expired' || tier === 'crit') return 'red';
+  if (tier === 'warn') return 'amber';
+  return 'green';
+}
+
+function phoneCountdownLabel(days) {
+  if (days < 0) return 'expired ' + Math.abs(days) + 'd ago';
+  if (days === 0) return 'expires today';
+  if (days === 1) return '1 day left';
+  return days + ' days left';
+}
+
+function updatePhoneNavBadge(numbers) {
+  const badge = document.getElementById('phone-nav-badge');
+  if (!badge) return;
+  let worst = 999;
+  let anyExpired = false;
+  numbers.forEach(n => {
+    const d = daysLeft(n.expires_at);
+    if (d < 0) anyExpired = true;
+    if (d < worst) worst = d;
+  });
+  if (anyExpired) {
+    badge.textContent = '!'; badge.className = 'nav-badge'; badge.style.display = '';
+  } else if (worst <= 2) {
+    badge.textContent = worst + 'd'; badge.className = 'nav-badge'; badge.style.display = '';
+  } else if (worst <= 7) {
+    badge.textContent = worst + 'd'; badge.className = 'nav-badge warn'; badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function maybeNotifyExpiry(numbers) {
+  if (typeof Notification === 'undefined') return;
+  if (Notification.permission !== 'granted') return;
+  numbers.forEach(n => {
+    const d = daysLeft(n.expires_at);
+    let mark = null;
+    if (d < 0) mark = 'expired';
+    else if (d <= 1) mark = 't1';
+    else if (d <= 3) mark = 't3';
+    else if (d <= 7) mark = 't7';
+    if (!mark) return;
+    const key = 'phone:notify:' + n.phone_number + ':' + mark;
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, '1');
+    const human = formatPhoneNumber(n.phone_number);
+    const title = 'Franklin: ' + human;
+    const body = mark === 'expired'
+      ? 'This number has expired. Provision a new one in the Phone tab.'
+      : (mark === 't1'
+        ? 'Expires in 1 day. Click to renew for $5.'
+        : (mark === 't3'
+          ? 'Expires in 3 days. Click to renew for $5.'
+          : 'Expires in a week. Renew when convenient.'));
+    try {
+      const notif = new Notification(title, { body, tag: key });
+      notif.onclick = () => {
+        try { window.focus(); } catch (e) {}
+        location.hash = 'phone';
+        activateTab('phone');
+        notif.close();
+      };
+    } catch (e) { /* ignore */ }
+  });
+}
+
+function renderPhoneNumbers(data) {
+  const list = document.getElementById('phone-list');
+  if (!list) return;
+  const numbers = (data && data.numbers) || [];
+  updatePhoneNavBadge(numbers);
+
+  if (!numbers.length) {
+    list.innerHTML = '<div class="phone-empty">' +
+      '<strong>No numbers yet</strong>' +
+      'Provision a number below to give Franklin a phone identity. ' +
+      'Numbers cost $5 for a 30-day lease and are bound to your wallet.' +
+      '</div>';
+    return;
+  }
+
+  const html = numbers.map(n => {
+    const d = daysLeft(n.expires_at);
+    const tier = phoneTier(d);
+    const chipCls = phoneChipClass(tier);
+    const rowCls = tier === 'ok' ? '' : (' ' + tier);
+    const human = formatPhoneNumber(n.phone_number);
+    const renewBtn = tier === 'expired'
+      ? ''
+      : '<button class="btn btn-warn" data-phone-renew="' + n.phone_number + '">Renew $5</button>';
+    const releaseLabel = tier === 'expired' ? 'Remove' : 'Release';
+    return ''
+      + '<div class="phone-row' + rowCls + '">'
+      + '  <div class="phone-icon-bubble">'
+      + '    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+      + '      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>'
+      + '    </svg>'
+      + '  </div>'
+      + '  <div class="phone-main">'
+      + '    <div class="phone-num">' + human + '</div>'
+      + '    <div class="phone-meta">'
+      + '      <span class="chip">' + (n.chain || '—') + '</span>'
+      + '      <span class="chip ' + chipCls + '">' + phoneCountdownLabel(d) + '</span>'
+      + '    </div>'
+      + '  </div>'
+      + '  <div class="phone-actions">'
+      +      renewBtn
+      + '    <button class="btn btn-ghost" data-phone-release="' + n.phone_number + '" title="' + releaseLabel + ' this number">' + releaseLabel + '</button>'
+      + '  </div>'
+      + '</div>';
+  }).join('');
+
+  list.innerHTML = html;
+
+  list.querySelectorAll('[data-phone-renew]').forEach(btn => {
+    btn.addEventListener('click', () => renewPhoneNumber(btn.getAttribute('data-phone-renew')));
+  });
+  list.querySelectorAll('[data-phone-release]').forEach(btn => {
+    btn.addEventListener('click', () => releasePhoneNumber(btn.getAttribute('data-phone-release')));
+  });
+
+  maybeNotifyExpiry(numbers);
+}
+
+async function loadPhone(opts) {
+  const force = !!(opts && opts.force);
+  const statusEl = document.getElementById('phone-list-status');
+  if (statusEl) statusEl.textContent = force ? 'Refreshing…' : 'Loading…';
+  try {
+    const url = '/api/phone/numbers';
+    const r = force
+      ? await fetch('/api/phone/numbers/refresh', { method: 'POST' })
+      : await fetch(url);
+    const data = await r.json();
+    if (!r.ok) {
+      if (statusEl) { statusEl.textContent = data.error || 'Failed to load'; statusEl.className = 'phone-status err'; }
+      const list = document.getElementById('phone-list');
+      if (list) list.innerHTML = '<div class="phone-empty"><strong>Could not load numbers</strong>' + (data.error || 'Unknown error') + '</div>';
+      return;
+    }
+    phoneState.data = data;
+    renderPhoneNumbers(data);
+    if (statusEl) {
+      statusEl.className = 'phone-status';
+      statusEl.textContent = data.fromCache
+        ? 'Cached ' + new Date(data.fetchedAt).toLocaleTimeString()
+        : 'Synced ' + new Date(data.fetchedAt || Date.now()).toLocaleTimeString();
+    }
+  } catch (err) {
+    if (statusEl) { statusEl.textContent = 'Network error'; statusEl.className = 'phone-status err'; }
+  }
+}
+
+async function renewPhoneNumber(num) {
+  const statusEl = document.getElementById('phone-list-status');
+  if (statusEl) { statusEl.textContent = 'Renewing ' + formatPhoneNumber(num) + '…'; statusEl.className = 'phone-status'; }
+  try {
+    const r = await fetch('/api/phone/numbers/renew', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phoneNumber: num }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      if (statusEl) { statusEl.textContent = data.error || 'Renew failed'; statusEl.className = 'phone-status err'; }
+      return;
+    }
+    // Clear dedupe keys so a renewed number can re-notify if it expires again later
+    Object.keys(sessionStorage).filter(k => k.startsWith('phone:notify:' + num + ':')).forEach(k => sessionStorage.removeItem(k));
+    if (statusEl) { statusEl.textContent = 'Renewed — new expiry ' + new Date(data.expires_at).toLocaleDateString(); statusEl.className = 'phone-status ok'; }
+    await loadPhone({});
+  } catch (err) {
+    if (statusEl) { statusEl.textContent = 'Network error'; statusEl.className = 'phone-status err'; }
+  }
+}
+
+async function releasePhoneNumber(num) {
+  if (!confirm('Release ' + formatPhoneNumber(num) + '? This permanently gives up the number and cannot be undone.')) return;
+  const statusEl = document.getElementById('phone-list-status');
+  if (statusEl) { statusEl.textContent = 'Releasing…'; statusEl.className = 'phone-status'; }
+  try {
+    const r = await fetch('/api/phone/numbers/release', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phoneNumber: num }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      if (statusEl) { statusEl.textContent = data.error || 'Release failed'; statusEl.className = 'phone-status err'; }
+      return;
+    }
+    if (statusEl) { statusEl.textContent = 'Released ' + formatPhoneNumber(num); statusEl.className = 'phone-status ok'; }
+    await loadPhone({});
+  } catch (err) {
+    if (statusEl) { statusEl.textContent = 'Network error'; statusEl.className = 'phone-status err'; }
+  }
+}
+
+async function buyPhoneNumber() {
+  const country = (document.getElementById('phone-buy-country') || {}).value || 'US';
+  const areaCode = ((document.getElementById('phone-buy-areacode') || {}).value || '').trim();
+  const statusEl = document.getElementById('phone-buy-status');
+  const btn = document.getElementById('phone-buy-btn');
+  const existingCount = ((phoneState.data && phoneState.data.numbers) || []).filter(n => daysLeft(n.expires_at) >= 0).length;
+  const intro = existingCount > 0
+    ? 'You already own ' + existingCount + ' active number' + (existingCount === 1 ? '' : 's') + '. This will ADD a new number — nothing is replaced.\\n\\n'
+    : '';
+  if (!confirm(intro + 'Buy a new phone number for $5? It will be charged from your wallet immediately and last 30 days.')) return;
+  if (statusEl) { statusEl.textContent = 'Provisioning…'; statusEl.className = 'phone-status'; }
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/phone/numbers/buy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ country, areaCode: areaCode || undefined }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      if (statusEl) { statusEl.textContent = data.error || 'Purchase failed'; statusEl.className = 'phone-status err'; }
+      return;
+    }
+    if (statusEl) { statusEl.textContent = 'Got ' + formatPhoneNumber(data.phone_number); statusEl.className = 'phone-status ok'; }
+    await loadPhone({});
+  } catch (err) {
+    if (statusEl) { statusEl.textContent = 'Network error'; statusEl.className = 'phone-status err'; }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function startPhoneCountdown() {
+  if (phoneState.countdownTimer) return;
+  // Re-render every minute so countdown chips age in place. Cheap — no
+  // network, just DOM. Pauses when tab not visible (see visibilitychange).
+  phoneState.countdownTimer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    if (phoneState.data) renderPhoneNumbers(phoneState.data);
+  }, 60000);
+}
+
+function stopPhoneCountdown() {
+  if (phoneState.countdownTimer) {
+    clearInterval(phoneState.countdownTimer);
+    phoneState.countdownTimer = null;
+  }
+}
+
+document.querySelector('[data-tab="phone"]')?.addEventListener('click', () => {
+  // Ask once for notification permission when the user first opens the tab.
+  // We never auto-prompt on page load — that would be annoying.
+  if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+    Notification.requestPermission().catch(() => {});
+  }
+  loadPhone({});
+  startPhoneCountdown();
+});
+
+document.addEventListener('tab:deactivated', (e) => {
+  if (e.detail && e.detail.name === 'phone') stopPhoneCountdown();
+});
+
+document.getElementById('phone-refresh-btn')?.addEventListener('click', () => loadPhone({ force: true }));
+document.getElementById('phone-buy-btn')?.addEventListener('click', buyPhoneNumber);
+
+// Prime the nav badge so an expiring number is visible even before the user
+// clicks into the Phone tab. Cached read — no network cost.
+loadPhone({});
 
 loadOverview();
 loadSessions();

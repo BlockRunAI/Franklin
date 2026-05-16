@@ -17,3 +17,6 @@ dist/
 # Local CLI agent settings (user-specific allowlists, not portable)
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# Playwright MCP scratch snapshots
+.playwright-mcp/

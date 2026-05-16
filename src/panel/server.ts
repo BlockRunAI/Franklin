@@ -8,6 +8,18 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadChain, saveChain, type Chain } from '../config.js';
+import {
+  listNumbers as gatewayListNumbers,
+  renewNumber as gatewayRenewNumber,
+  buyNumber as gatewayBuyNumber,
+  releaseNumber as gatewayReleaseNumber,
+} from '../phone/client.js';
+import {
+  readCache as readPhoneCache,
+  writeCache as writePhoneCache,
+  clearCache as clearPhoneCache,
+  isFresh as isPhoneCacheFresh,
+} from '../phone/cache.js';
 import { loadStats, getStatsSummary, getStatsFilePath } from '../stats/tracker.js';
 import { generateInsights } from '../stats/insights.js';
 import { listSessions, loadSessionHistory } from '../session/storage.js';
@@ -65,6 +77,26 @@ function broadcast(data: unknown): void {
   for (const client of sseClients) {
     try { client.write(msg); } catch { sseClients.delete(client); }
   }
+}
+
+/**
+ * Resolve the current active wallet address (Base or Solana, depending on
+ * the active chain). Used by phone endpoints that key the cache by wallet,
+ * and that must sign x402 payments out of the wallet the user owns.
+ *
+ * Throws if no wallet exists yet — the UI handles this by showing an
+ * empty state with a "Create wallet" CTA before any phone calls can be made.
+ */
+async function currentWalletAddress(): Promise<string> {
+  const chain = loadChain();
+  if (chain === 'solana') {
+    const { setupAgentSolanaWallet } = await import('@blockrun/llm');
+    const client = await setupAgentSolanaWallet({ silent: true });
+    return await client.getWalletAddress();
+  }
+  const { setupAgentWallet } = await import('@blockrun/llm');
+  const client = setupAgentWallet({ silent: true });
+  return client.getWalletAddress();
 }
 
 export function createPanelServer(port: number): http.Server {
@@ -362,6 +394,141 @@ export function createPanelServer(port: number): http.Server {
             balance = await client.getBalance();
           }
           json(res, { ok: true, chain: target, address, balance });
+        } catch (err) {
+          json(res, { error: (err as Error).message }, 500);
+        }
+        return;
+      }
+
+      // ─── Phone & Voice ──────────────────────────────────────────────────
+      // GET  /api/phone/numbers           — list wallet-owned numbers (cached)
+      // POST /api/phone/numbers/refresh   — force-refresh from BlockRun ($0.001)
+      // POST /api/phone/numbers/renew     — extend lease 30d ($5)
+      // POST /api/phone/numbers/buy       — provision new number ($5)
+      // POST /api/phone/numbers/release   — release (free)
+      //
+      // Renewals are explicit user clicks. No silent auto-renew: a wallet
+      // that runs dry between charges would fail the renewal and surprise
+      // the user. Notifications at T-7/3/1 days keep them in the loop.
+      //
+      // All mutating endpoints are loopback-only because they spend money
+      // out of the user's wallet — same posture as /api/wallet/secret.
+
+      if (p === '/api/phone/numbers' && (!req.method || req.method === 'GET')) {
+        try {
+          const wallet = await currentWalletAddress();
+          const chain = loadChain();
+          const cache = readPhoneCache();
+          if (cache && isPhoneCacheFresh(cache, wallet, chain)) {
+            json(res, {
+              wallet,
+              chain,
+              fetchedAt: cache.fetchedAt,
+              fromCache: true,
+              numbers: cache.numbers,
+            });
+            return;
+          }
+          // Cache stale or missing — fetch fresh (costs $0.001).
+          // We pay through the panel's wallet, which is the same wallet
+          // that owns the numbers, so the gateway returns this user's list.
+          const fresh = await gatewayListNumbers({ walletAddress: wallet });
+          json(res, {
+            wallet,
+            chain,
+            fetchedAt: Date.now(),
+            fromCache: false,
+            paid: fresh.paid,
+            numbers: fresh.numbers,
+          });
+        } catch (err) {
+          json(res, { error: (err as Error).message, numbers: [] }, 500);
+        }
+        return;
+      }
+
+      if (p === '/api/phone/numbers/refresh' && req.method === 'POST') {
+        if (!isLoopback(req)) { json(res, { error: 'forbidden' }, 403); return; }
+        try {
+          const wallet = await currentWalletAddress();
+          clearPhoneCache();
+          const fresh = await gatewayListNumbers({ walletAddress: wallet });
+          broadcast({ type: 'phone.refreshed' });
+          json(res, {
+            wallet,
+            chain: loadChain(),
+            paid: fresh.paid,
+            numbers: fresh.numbers,
+          });
+        } catch (err) {
+          json(res, { error: (err as Error).message }, 500);
+        }
+        return;
+      }
+
+      if (p === '/api/phone/numbers/renew' && req.method === 'POST') {
+        if (!isLoopback(req)) { json(res, { error: 'forbidden' }, 403); return; }
+        try {
+          const raw = await readBody(req);
+          const body = JSON.parse(raw) as { phoneNumber?: string };
+          const target = (body.phoneNumber || '').trim();
+          if (!target) { json(res, { error: 'phoneNumber required' }, 400); return; }
+          const result = await gatewayRenewNumber(target);
+          // Patch the cache in place so the panel UI gets the new expiry
+          // without a follow-up $0.001 list call.
+          const cache = readPhoneCache();
+          if (cache) {
+            const idx = cache.numbers.findIndex(n => n.phone_number === target);
+            if (idx >= 0) {
+              cache.numbers[idx] = {
+                ...cache.numbers[idx],
+                expires_at: result.expires_at,
+                active: true,
+              };
+              writePhoneCache({ wallet: cache.wallet, chain: cache.chain, numbers: cache.numbers });
+            }
+          }
+          broadcast({ type: 'phone.renewed', phoneNumber: target, expires_at: result.expires_at });
+          json(res, { ok: true, ...result });
+        } catch (err) {
+          json(res, { error: (err as Error).message }, 500);
+        }
+        return;
+      }
+
+      if (p === '/api/phone/numbers/buy' && req.method === 'POST') {
+        if (!isLoopback(req)) { json(res, { error: 'forbidden' }, 403); return; }
+        try {
+          const raw = await readBody(req);
+          const body = JSON.parse(raw) as { country?: string; areaCode?: string };
+          const result = await gatewayBuyNumber({
+            country: body.country,
+            areaCode: body.areaCode,
+          });
+          clearPhoneCache(); // forces next /api/phone/numbers to re-list
+          broadcast({ type: 'phone.bought', phoneNumber: result.phone_number });
+          json(res, { ok: true, ...result });
+        } catch (err) {
+          json(res, { error: (err as Error).message }, 500);
+        }
+        return;
+      }
+
+      if (p === '/api/phone/numbers/release' && req.method === 'POST') {
+        if (!isLoopback(req)) { json(res, { error: 'forbidden' }, 403); return; }
+        try {
+          const raw = await readBody(req);
+          const body = JSON.parse(raw) as { phoneNumber?: string };
+          const target = (body.phoneNumber || '').trim();
+          if (!target) { json(res, { error: 'phoneNumber required' }, 400); return; }
+          const result = await gatewayReleaseNumber(target);
+          const cache = readPhoneCache();
+          if (cache) {
+            const next = cache.numbers.filter(n => n.phone_number !== target);
+            writePhoneCache({ wallet: cache.wallet, chain: cache.chain, numbers: next });
+          }
+          broadcast({ type: 'phone.released', phoneNumber: target });
+          json(res, { ok: true, ...result });
         } catch (err) {
           json(res, { error: (err as Error).message }, 500);
         }
