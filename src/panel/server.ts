@@ -43,7 +43,7 @@ const sseClients = new Set<http.ServerResponse>();
 function json(res: http.ServerResponse, data: unknown, status = 200): void {
   res.writeHead(status, {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
+    'Cache-Control': 'no-store',
   });
   res.end(JSON.stringify(data));
 }
@@ -56,6 +56,40 @@ function json(res: http.ServerResponse, data: unknown, status = 200): void {
 function isLoopback(req: http.IncomingMessage): boolean {
   const addr = req.socket.remoteAddress || '';
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+function isLocalHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1';
+}
+
+/**
+ * Loopback binding prevents LAN exposure, but it does not stop a malicious
+ * website open in the user's browser from issuing requests to localhost.
+ * Browsers attach Origin on cross-origin fetches, so spendful and
+ * wallet-mutating routes require either no Origin (curl/direct navigation)
+ * or the exact same local origin that served the panel page.
+ */
+function isTrustedPanelOrigin(req: http.IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  if (Array.isArray(origin)) return false;
+
+  const host = req.headers.host;
+  if (!host) return false;
+
+  try {
+    const originUrl = new URL(origin);
+    const hostUrl = new URL(`http://${host}`);
+    return originUrl.protocol === 'http:' &&
+      originUrl.host === hostUrl.host &&
+      isLocalHostname(originUrl.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLocalPanelRequest(req: http.IncomingMessage): boolean {
+  return isLoopback(req) && isTrustedPanelOrigin(req);
 }
 
 async function readBody(req: http.IncomingMessage, maxBytes = 16 * 1024): Promise<string> {
@@ -278,9 +312,9 @@ export function createPanelServer(port: number): http.Server {
       // ─── Wallet secret (loopback only) ──────────────────────────────────
       // Returns the private key so the user can back it up / move it.
       // Hardened: loopback-only (belt-and-suspenders on the 127.0.0.1 bind),
-      // no-store cache header, JSON only.
+      // same-origin for browser requests, no-store cache header, JSON only.
       if (p === '/api/wallet/secret') {
-        if (!isLoopback(req)) {
+        if (!isLocalPanelRequest(req)) {
           json(res, { error: 'forbidden' }, 403);
           return;
         }
@@ -311,9 +345,9 @@ export function createPanelServer(port: number): http.Server {
       // ─── Wallet import (loopback only) ──────────────────────────────────
       // Overwrites the local wallet with a user-supplied private key.
       // Destructive — overwrites the existing wallet file without backup,
-      // so the UI warns the user. Loopback-only.
+      // so the UI warns the user. Loopback + same-origin only.
       if (p === '/api/wallet/import' && req.method === 'POST') {
-        if (!isLoopback(req)) {
+        if (!isLocalPanelRequest(req)) {
           json(res, { error: 'forbidden' }, 403);
           return;
         }
@@ -366,7 +400,7 @@ export function createPanelServer(port: number): http.Server {
       // reads and for the *next* agent invocation, but won't flip chain
       // mid-session for an already-running agent. UI copy makes this clear.
       if (p === '/api/chain' && req.method === 'POST') {
-        if (!isLoopback(req)) {
+        if (!isLocalPanelRequest(req)) {
           json(res, { error: 'forbidden' }, 403);
           return;
         }
@@ -411,10 +445,12 @@ export function createPanelServer(port: number): http.Server {
       // that runs dry between charges would fail the renewal and surprise
       // the user. Notifications at T-7/3/1 days keep them in the loop.
       //
-      // All mutating endpoints are loopback-only because they spend money
-      // out of the user's wallet — same posture as /api/wallet/secret.
+      // All spendful/mutating endpoints are loopback + same-origin because
+      // they spend money out of the user's wallet. Even the list endpoint can
+      // cost $0.001 on cache miss, so it gets the same browser-origin guard.
 
       if (p === '/api/phone/numbers' && (!req.method || req.method === 'GET')) {
+        if (!isLocalPanelRequest(req)) { json(res, { error: 'forbidden', numbers: [] }, 403); return; }
         try {
           const wallet = await currentWalletAddress();
           const chain = loadChain();
@@ -448,7 +484,7 @@ export function createPanelServer(port: number): http.Server {
       }
 
       if (p === '/api/phone/numbers/refresh' && req.method === 'POST') {
-        if (!isLoopback(req)) { json(res, { error: 'forbidden' }, 403); return; }
+        if (!isLocalPanelRequest(req)) { json(res, { error: 'forbidden' }, 403); return; }
         try {
           const wallet = await currentWalletAddress();
           clearPhoneCache();
@@ -467,7 +503,7 @@ export function createPanelServer(port: number): http.Server {
       }
 
       if (p === '/api/phone/numbers/renew' && req.method === 'POST') {
-        if (!isLoopback(req)) { json(res, { error: 'forbidden' }, 403); return; }
+        if (!isLocalPanelRequest(req)) { json(res, { error: 'forbidden' }, 403); return; }
         try {
           const raw = await readBody(req);
           const body = JSON.parse(raw) as { phoneNumber?: string };
@@ -497,7 +533,7 @@ export function createPanelServer(port: number): http.Server {
       }
 
       if (p === '/api/phone/numbers/buy' && req.method === 'POST') {
-        if (!isLoopback(req)) { json(res, { error: 'forbidden' }, 403); return; }
+        if (!isLocalPanelRequest(req)) { json(res, { error: 'forbidden' }, 403); return; }
         try {
           const raw = await readBody(req);
           const body = JSON.parse(raw) as { country?: string; areaCode?: string };
@@ -515,7 +551,7 @@ export function createPanelServer(port: number): http.Server {
       }
 
       if (p === '/api/phone/numbers/release' && req.method === 'POST') {
-        if (!isLoopback(req)) { json(res, { error: 'forbidden' }, 403); return; }
+        if (!isLocalPanelRequest(req)) { json(res, { error: 'forbidden' }, 403); return; }
         try {
           const raw = await readBody(req);
           const body = JSON.parse(raw) as { phoneNumber?: string };
