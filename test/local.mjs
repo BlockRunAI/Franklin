@@ -32,7 +32,7 @@ import { dirname, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-const DIST = new URL('../dist/index.js', import.meta.url).pathname;
+const DIST = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 function runCli(prompt = '', { cwd, timeoutMs = 15_000, args, env } = {}) {
@@ -818,7 +818,7 @@ test('resume: second interactiveSession with resumeSessionId continues prior tra
 
 test('pruneOldSessions removes stale ghost sessions even when visible session count is below the cap', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'franklin-ghost-prune-'));
-  const storagePath = new URL('../dist/session/storage.js', import.meta.url).pathname;
+  const storagePath = fileURLToPath(new URL('../dist/session/storage.js', import.meta.url));
 
   try {
     const sessionsDir = join(fakeHome, '.blockrun', 'sessions');
@@ -895,7 +895,7 @@ test('pruneOldSessions removes stale ghost sessions even when visible session co
 
 test('session meta imported flag can be set and survives later updates', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'franklin-imported-meta-'));
-  const storagePath = new URL('../dist/session/storage.js', import.meta.url).pathname;
+  const storagePath = fileURLToPath(new URL('../dist/session/storage.js', import.meta.url));
   try {
     const result = await new Promise((resolve, reject) => {
       const proc = spawn('node', [

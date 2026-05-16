@@ -11,13 +11,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { parseSkill, loadSkillsFromDir } from '../dist/skills/loader.js';
 import { substituteVariables, matchSkill } from '../dist/skills/invoke.js';
 import { Registry } from '../dist/skills/registry.js';
 import { loadBundledSkills, getSkillVars } from '../dist/skills/bootstrap.js';
 
-const DIST = new URL('../dist/index.js', import.meta.url).pathname;
+const DIST = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 
 function runCli(args, { timeoutMs = 8000 } = {}) {
   return new Promise((resolve, reject) => {

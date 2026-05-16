@@ -16,8 +16,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
-const DIST = new URL('../dist/index.js', import.meta.url).pathname;
+const DIST = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 const TIMEOUT_MS = Number.parseInt(process.env.FREE_MODEL_MATRIX_TIMEOUT_MS || '180000', 10);
 
 const { MODEL_PRICING, estimateCost } = await import('../dist/pricing.js');
