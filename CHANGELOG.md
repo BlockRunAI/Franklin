@@ -1,5 +1,67 @@
 # Changelog
 
+## Franklin Agent 3.19.0 — `BlockRun` primitive + Surf skills (Market / Chain / Social / Chat)
+
+The shape of how Franklin talks to BlockRun changes in this release.
+
+So far, every new BlockRun partner API (Image, Video, Music, Phone, …)
+shipped as a hand-written `CapabilityHandler` in `src/tools/`, each with
+its own signing helper and tool spec. That pattern is a dead end with
+84 Surf endpoints landing this week and more partners coming — every
+new integration meant a Franklin npm release and another item in the
+agent's tool list.
+
+**3.19.0 lands a generic primitive plus the skill-driven pattern.**
+
+The new `BlockRun` capability is one tool that signs an x402 USDC
+payment from the user's wallet and forwards to any path under the
+gateway. It knows nothing about specific endpoints — it just plumbs the
+payment and returns the response, with `paid_usd` and the settlement
+tx hash filled in from the on-chain receipt:
+
+```
+BlockRun({ path, method, params, body })
+  → POST /v1/surf/chat/completions, GET /v1/surf/market/fear-greed,
+    POST /v1/phone/numbers/list, …whatever path
+  → response body + paid_usd + tx
+```
+
+Alongside, four bundled skills document the curated Surf endpoint
+subset and tell the LLM which path to call for which question:
+
+- **`/surf-market`** — exchange / market / token / project / news / fund.
+  Prices, futures, ETFs, options, fear/greed, RSI/MACD, tokenomics,
+  VC portfolios. ~28 endpoints, $0.001–$0.005 each.
+- **`/surf-chain`** — on-chain SQL, structured chain queries, schema
+  introspection, gas, bridges, yield, wallet labels (CEX/Whale/MEV…),
+  net worth, transfers, DeFi positions. The Tier-3 ($0.02) raw-SQL
+  endpoint is the unique-to-Franklin headline. ~15 endpoints.
+- **`/surf-social`** — KOL mindshare, smart-follower history, project
+  ranking, tweets + replies, user profile graph. The canonical source
+  for crypto-Twitter signal. ~11 endpoints.
+- **`/surf-chat`** — the `surf-1.5` model with first-class citations
+  (`source` + `chart`). Flat $0.02/call. Crypto-native research with
+  sources attached, instead of vibes.
+
+Each skill is chain-aware via `{{wallet_chain}}` — Surf currently
+settles its x402 payments on Base only (treasury `0x058a59…`), so
+Solana users are told to `/chain base` before retrying. On-chain
+endpoints with a `chain` parameter (gas-price, tx, token holders,
+wallet detail) get sensibly defaulted to the active payment chain.
+
+Skipped on purpose: Surf's 17 prediction-market endpoints (use the
+existing `PredictionMarket` tool), 11 search endpoints (use `ExaSearch`),
+1 web/fetch endpoint (use `BrowserX`).
+
+**What this means going forward.** New BlockRun partner APIs ship as
+new `SKILL.md` files describing which paths to call. No Franklin code
+change. Existing hardcoded tools (`ImageGen`, `Phone`, `Prediction`,
+etc.) stay put for v3.19.0 — they're scheduled to migrate to the
+primitive + skill pattern in v3.21.0 after Surf proves out the shape.
+Phase 2 of the skill system (user-local + project-local discovery
+from `~/.blockrun/skills/`) is queued for v3.20.0; that's what unlocks
+"drop a skill, no release."
+
 ## Franklin Agent 3.18.0 — Phone & Voice panel + CSRF defense
 
 Franklin's web panel grows a new **Phone** tab for managing the
