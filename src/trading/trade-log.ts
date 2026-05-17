@@ -21,6 +21,39 @@ import { dirname } from 'node:path';
 
 import type { Side } from './portfolio.js';
 
+/**
+ * Trade rationale — the "why" behind a fill, captured at trade time so
+ * the journal can score for discipline (not P&L). Inspired by the AI-Trader
+ * signal-quality model: verifiability + evidence + specificity drive better
+ * decisions than rewarding outcomes (which incentivizes curve-fitting).
+ *
+ * All fields are optional; the scorer rewards completeness without forcing it.
+ */
+export interface TradeRationale {
+  direction?: 'long' | 'short' | 'neutral';
+  priceTarget?: number;       // expected exit price
+  stopLoss?: number;          // forced exit floor
+  timeHorizon?: string;       // free-form: "1h", "1d", "1w", "1m", …
+  conviction?: 1 | 2 | 3 | 4 | 5;
+  evidence?: string[];        // sources, links, indicator names
+  tags?: string[];            // e.g. "momentum", "macro", "mean-reversion"
+  thesis?: string;            // free-text reasoning
+}
+
+/**
+ * Persisted quality breakdown — five components on 0–1 scales plus a 0–5
+ * total. Written next to each entry at append time so portfolio reads
+ * never need to re-score.
+ */
+export interface QualityScore {
+  total: number;          // 0–5
+  verifiability: number;  // 0–1
+  evidence: number;       // 0–1
+  specificity: number;    // 0–1
+  novelty: number;        // 0–1
+  review: number;         // 0–1
+}
+
 export interface TradeLogEntry {
   timestamp: number; // ms since epoch
   symbol: string;
@@ -30,6 +63,12 @@ export interface TradeLogEntry {
   feeUsd: number;
   /** Realized P&L from this specific fill — 0 for opens, ± for closes. */
   realizedPnlUsd: number;
+  /** Journal-v2 fields (optional, back-compat: older entries lack these). */
+  rationale?: TradeRationale;
+  /** User's post-trade note. Boosts the `review` component of the score. */
+  review?: string;
+  /** Computed at append time so portfolio reads don't re-score on every render. */
+  qualityScore?: QualityScore;
 }
 
 export class TradeLog {

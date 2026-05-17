@@ -14,7 +14,9 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import type { TradingEngine } from '../trading/engine.js';
 import type { Position, Portfolio } from '../trading/portfolio.js';
 import type { RiskConfig } from '../trading/risk.js';
-import type { TradeLog } from '../trading/trade-log.js';
+import type { TradeLog, TradeLogEntry, TradeRationale } from '../trading/trade-log.js';
+import { scoreEntry } from '../trading/journal-quality.js';
+import { renderDisciplineFooter } from '../trading/journal-display.js';
 import {
   renderOrderBlocked,
   renderOrderFilled,
@@ -23,6 +25,28 @@ import {
   renderTradeHistory,
   windowToSince,
 } from './trading-views.js';
+
+/**
+ * Pull a `rationale` object out of the LLM's input safely. Skips fields
+ * that don't match the expected shape so a half-filled rationale is still
+ * captured (the scorer rewards completeness, doesn't require it).
+ */
+function extractRationale(raw: unknown): TradeRationale | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: TradeRationale = {};
+  if (r.direction === 'long' || r.direction === 'short' || r.direction === 'neutral') out.direction = r.direction;
+  if (typeof r.priceTarget === 'number' && r.priceTarget > 0) out.priceTarget = r.priceTarget;
+  if (typeof r.stopLoss === 'number' && r.stopLoss > 0) out.stopLoss = r.stopLoss;
+  if (typeof r.timeHorizon === 'string' && r.timeHorizon.trim()) out.timeHorizon = r.timeHorizon.trim();
+  if (typeof r.conviction === 'number' && r.conviction >= 1 && r.conviction <= 5) {
+    out.conviction = Math.round(r.conviction) as 1 | 2 | 3 | 4 | 5;
+  }
+  if (Array.isArray(r.evidence)) out.evidence = r.evidence.filter((x): x is string => typeof x === 'string');
+  if (Array.isArray(r.tags)) out.tags = r.tags.filter((x): x is string => typeof x === 'string');
+  if (typeof r.thesis === 'string' && r.thesis.trim()) out.thesis = r.thesis.trim();
+  return Object.keys(out).length ? out : undefined;
+}
 
 export interface TradingCapabilitiesDeps {
   engine: TradingEngine;
@@ -84,7 +108,14 @@ export function createTradingCapabilities(
     concurrent: true,
     async execute(_input, _ctx: ExecutionScope): Promise<CapabilityResult> {
       const snap = await buildPortfolioSnapshot(engine);
-      return { output: renderPortfolio(snap, riskConfig) };
+      const base = renderPortfolio(snap, riskConfig);
+      if (!tradeLog) return { output: base };
+      // Journal discipline footer — last 10 scored entries from the log.
+      // If no entries carry qualityScore yet (pre-v3.20 history or no rationale
+      // ever recorded), renderDisciplineFooter returns null and we skip silently.
+      const recent = tradeLog.recent(10);
+      const footer = renderDisciplineFooter(recent);
+      return { output: footer ? `${base}\n${footer}` : base };
     },
   };
 
@@ -95,7 +126,10 @@ export function createTradingCapabilities(
         'Open (buy into) a position. Pre-trade risk checks enforce per-position and total ' +
         'exposure caps; a blocked order returns a normal text result with the reason — the ' +
         'agent should read it and try again with a smaller qty if appropriate. This is paper ' +
-        'trading: fills are simulated against the provided price.',
+        'trading: fills are simulated against the provided price. ' +
+        'Optionally pass a `rationale` object documenting why — direction, price target, stop, ' +
+        'time horizon, conviction, evidence, tags, thesis. The journal scores entries on ' +
+        'rationale completeness (not P&L) and surfaces the discipline trend in TradingPortfolio.',
       input_schema: {
         type: 'object',
         required: ['symbol', 'qty', 'priceUsd'],
@@ -103,6 +137,21 @@ export function createTradingCapabilities(
           symbol: { type: 'string', description: 'Ticker (e.g., "BTC", "ETH")' },
           qty: { type: 'number', description: 'Quantity in base units (e.g., 0.01 for 0.01 BTC)' },
           priceUsd: { type: 'number', description: 'Price at which to execute, in USD' },
+          rationale: {
+            type: 'object',
+            description: 'Optional — why you are opening this position. Captured in the trade journal and scored on discipline (verifiability, evidence, specificity, novelty, review).',
+            properties: {
+              direction: { type: 'string', enum: ['long', 'short', 'neutral'], description: 'Trade direction. For paper-trade longs use "long".' },
+              priceTarget: { type: 'number', description: 'Expected exit price (USD).' },
+              stopLoss: { type: 'number', description: 'Forced exit floor (USD).' },
+              timeHorizon: { type: 'string', description: 'How long you expect to hold: "1h", "1d", "1w", "1m", "3m", etc.' },
+              conviction: { type: 'number', description: 'How sure are you, 1 (low) to 5 (high).' },
+              evidence: { type: 'array', items: { type: 'string' }, description: 'Sources, links, or indicator names supporting the thesis.' },
+              tags: { type: 'array', items: { type: 'string' }, description: 'Categorization: "momentum", "macro", "mean-reversion", etc.' },
+              thesis: { type: 'string', description: 'Free-text reasoning (≥200 chars scores best).' },
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
@@ -128,7 +177,8 @@ export function createTradingCapabilities(
       }
 
       if (tradeLog) {
-        tradeLog.append({
+        const rationale = extractRationale(input.rationale);
+        const draftEntry: TradeLogEntry = {
           timestamp: Date.now(),
           symbol,
           side: 'buy',
@@ -136,7 +186,11 @@ export function createTradingCapabilities(
           priceUsd: outcome.fill.priceUsd,
           feeUsd: outcome.fill.feeUsd,
           realizedPnlUsd: 0,
-        });
+          rationale,
+        };
+        const history = tradeLog.all();
+        draftEntry.qualityScore = scoreEntry(draftEntry, history);
+        tradeLog.append(draftEntry);
       }
       if (onStateChange) await onStateChange();
 
@@ -156,7 +210,9 @@ export function createTradingCapabilities(
       description:
         'Close (sell) an open position, realizing P&L against the average entry price. ' +
         "Omit qty to flatten the position entirely; pass qty to partially reduce. Uses the " +
-        "exchange's current mark — no manual price required.",
+        "exchange's current mark — no manual price required. " +
+        'Optionally pass a `review` note documenting whether the trade hit its plan; that ' +
+        'boosts the journal discipline score for this entry.',
       input_schema: {
         type: 'object',
         required: ['symbol'],
@@ -165,6 +221,10 @@ export function createTradingCapabilities(
           qty: {
             type: 'number',
             description: 'Optional — partial size. Omit to close the full position.',
+          },
+          review: {
+            type: 'string',
+            description: 'Optional post-trade note: did the trade hit its target / stop / hypothesis? Boosts the journal "review" score component.',
           },
         },
         additionalProperties: false,
@@ -193,7 +253,8 @@ export function createTradingCapabilities(
 
       const tradeRealized = portfolio.realizedPnlUsd - priorRealized;
       if (tradeLog) {
-        tradeLog.append({
+        const review = typeof input.review === 'string' && input.review.trim() ? input.review.trim() : undefined;
+        const draftEntry: TradeLogEntry = {
           timestamp: Date.now(),
           symbol,
           side: 'sell',
@@ -201,7 +262,10 @@ export function createTradingCapabilities(
           priceUsd: outcome.fill.priceUsd,
           feeUsd: outcome.fill.feeUsd,
           realizedPnlUsd: tradeRealized,
-        });
+          review,
+        };
+        draftEntry.qualityScore = scoreEntry(draftEntry, tradeLog.all());
+        tradeLog.append(draftEntry);
       }
       if (onStateChange) await onStateChange();
 

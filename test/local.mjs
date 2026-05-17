@@ -9382,3 +9382,142 @@ test('vision routing: pickVisionSibling stays within the user-chosen family', as
   assert.ok(codexSwap.startsWith('openai/'), `expected openai sibling, got ${codexSwap}`);
   assert.ok(isVisionModel(codexSwap));
 });
+
+// ─── journal-quality scorer ─────────────────────────────────────────────
+// Non-outcome trade discipline metric ported from AI-Trader's signal_quality
+// model. Five weighted components produce a 0–5 total. These tests pin the
+// math so the discipline footer in TradingPortfolio stays meaningful across
+// refactors.
+
+test('journal-quality: full rationale entry scores high (≥ 4.0/5)', async () => {
+  const { scoreEntry } = await import('../dist/trading/journal-quality.js');
+  const entry = {
+    timestamp: 1_700_000_000_000,
+    symbol: 'BTC',
+    side: 'buy',
+    qty: 0.01,
+    priceUsd: 50000,
+    feeUsd: 5,
+    realizedPnlUsd: 0,
+    rationale: {
+      direction: 'long',
+      priceTarget: 60000,
+      stopLoss: 45000,
+      timeHorizon: '1w',
+      conviction: 4,
+      evidence: ['CoinGecko trending', 'BTC RSI 28 oversold on 1d', 'ETF inflows +$500M last week'],
+      tags: ['momentum', 'macro'],
+      thesis: 'BTC is oversold on the 1d RSI (28) after a 15% drop and ETF inflows turned positive. Targeting reversion to the 50-day SMA around $60k. Stop below the recent swing low at $45k. Position sized for a 1w horizon while the macro narrative resolves.',
+    },
+  };
+  const score = scoreEntry(entry, []);
+  assert.ok(score.total >= 4.0, `expected ≥ 4.0, got ${score.total}`);
+  assert.equal(score.verifiability, 1, 'direction + priceTarget present');
+  assert.ok(score.evidence >= 0.7, 'should score well — long thesis with RSI keyword');
+  assert.ok(score.specificity >= 0.7, 'symbol + 2 tags present');
+});
+
+test('journal-quality: bare fill (no rationale) scores low (≤ 1.5/5)', async () => {
+  const { scoreEntry } = await import('../dist/trading/journal-quality.js');
+  const entry = {
+    timestamp: 1_700_000_000_000,
+    symbol: 'BTC',
+    side: 'buy',
+    qty: 0.01,
+    priceUsd: 50000,
+    feeUsd: 5,
+    realizedPnlUsd: 0,
+  };
+  const score = scoreEntry(entry, []);
+  // Only specificity earns half a point (symbol present), and total = 5 * (0.5 * 0.20) = 0.5.
+  assert.ok(score.total <= 1.5, `expected ≤ 1.5, got ${score.total}`);
+  assert.equal(score.verifiability, 0);
+  assert.equal(score.evidence, 0);
+  assert.equal(score.review, 0);
+});
+
+test('journal-quality: novelty penalty fires for repeat symbol+direction within 7d', async () => {
+  const { scoreEntry } = await import('../dist/trading/journal-quality.js');
+  const t0 = 1_700_000_000_000;
+  const make = (offsetMs) => ({
+    timestamp: t0 + offsetMs,
+    symbol: 'BTC',
+    side: 'buy',
+    qty: 0.01,
+    priceUsd: 50000,
+    feeUsd: 5,
+    realizedPnlUsd: 0,
+    rationale: { direction: 'long', priceTarget: 60000, thesis: 'similar', evidence: [], tags: [] },
+  });
+  const first = make(0);
+  const second = make(86_400_000);   // +1 day
+  const third = make(2 * 86_400_000); // +2 days
+
+  const firstScore = scoreEntry(first, []);
+  const thirdScore = scoreEntry(third, [first, second]);
+
+  assert.ok(thirdScore.novelty < firstScore.novelty,
+    `third score novelty should be lower (got first=${firstScore.novelty}, third=${thirdScore.novelty})`);
+  assert.ok(thirdScore.total < firstScore.total,
+    `third total should be lower (got first=${firstScore.total}, third=${thirdScore.total})`);
+});
+
+test('journal-quality: review note boosts the score', async () => {
+  const { scoreEntry } = await import('../dist/trading/journal-quality.js');
+  const baseEntry = {
+    timestamp: 1_700_000_000_000,
+    symbol: 'BTC',
+    side: 'sell',
+    qty: 0.01,
+    priceUsd: 52000,
+    feeUsd: 5,
+    realizedPnlUsd: 20,
+  };
+  const withReview = { ...baseEntry, review: 'Hit target, closed at +4%. Plan worked.' };
+  const noReview = scoreEntry(baseEntry, []);
+  const reviewed = scoreEntry(withReview, []);
+  assert.ok(reviewed.total > noReview.total,
+    `review should boost total (got noReview=${noReview.total}, reviewed=${reviewed.total})`);
+  assert.equal(reviewed.review, 1);
+  assert.equal(noReview.review, 0);
+});
+
+test('journal-quality: aggregateScores returns null for empty + scores correctly otherwise', async () => {
+  const { aggregateScores, scoreEntry } = await import('../dist/trading/journal-quality.js');
+  assert.equal(aggregateScores([]), null);
+  assert.equal(aggregateScores([{ timestamp: 0, symbol: 'X', side: 'buy', qty: 1, priceUsd: 1, feeUsd: 0, realizedPnlUsd: 0 }]), null);
+
+  // Mixed: one scored, one unscored — aggregator should only count the scored one.
+  const scoredEntry = {
+    timestamp: 1_700_000_000_000,
+    symbol: 'BTC',
+    side: 'buy', qty: 0.01, priceUsd: 50000, feeUsd: 5, realizedPnlUsd: 0,
+    rationale: { direction: 'long', priceTarget: 60000, thesis: 'short' },
+  };
+  scoredEntry.qualityScore = scoreEntry(scoredEntry, []);
+  const unscored = { timestamp: 1_700_000_000_001, symbol: 'ETH', side: 'buy', qty: 1, priceUsd: 2000, feeUsd: 5, realizedPnlUsd: 0 };
+  const agg = aggregateScores([scoredEntry, unscored]);
+  assert.equal(agg.count, 1, 'unscored entries are filtered out');
+  assert.equal(agg.averageTotal, scoredEntry.qualityScore.total);
+});
+
+test('journal-display: renderDisciplineFooter flags components below 3.0', async () => {
+  const { renderDisciplineFooter } = await import('../dist/trading/journal-display.js');
+  const { scoreEntry } = await import('../dist/trading/journal-quality.js');
+  // Build a deliberately weak entry so most components score below the threshold.
+  const weak = {
+    timestamp: 1_700_000_000_000,
+    symbol: 'BTC',
+    side: 'buy', qty: 0.01, priceUsd: 50000, feeUsd: 5, realizedPnlUsd: 0,
+  };
+  weak.qualityScore = scoreEntry(weak, []);
+  const footer = renderDisciplineFooter([weak]);
+  assert.ok(footer, 'footer should render for ≥1 scored entry');
+  assert.ok(footer.includes('Journal discipline'), 'header is present');
+  assert.ok(footer.includes('verifiability'));
+  assert.ok(footer.includes('←'), 'low-component flag arrow is present');
+
+  // No scored entries → footer is null.
+  const unscoredOnly = { timestamp: 0, symbol: 'X', side: 'buy', qty: 1, priceUsd: 1, feeUsd: 0, realizedPnlUsd: 0 };
+  assert.equal(renderDisciplineFooter([unscoredOnly]), null);
+});
