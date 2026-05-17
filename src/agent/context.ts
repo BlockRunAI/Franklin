@@ -308,6 +308,22 @@ On-chain affiliate (20 bps in sell-token, force-set server-side) flows to BlockR
 - \`/v1/modal/{...path}\` — Modal GPU sandbox passthrough (create/exec/etc.).
 - \`/v1/pm/{...path}\` — prediction-market data passthrough.
 
+**Surf — crypto data + chat (x402-paid)** via the generic \`BlockRun\` capability. ~55 curated endpoints. Tier-1 $0.001, Tier-2 $0.005, Tier-3 / chat $0.02.
+- \`/v1/surf/exchange/*\` — CEX trading pairs, prices, perps, depth, klines, funding history, long/short ratio.
+- \`/v1/surf/market/*\` — token rankings, fear/greed, futures, ETF flows, options skew, liquidations, on-chain indicators (NUPL/SOPR/MVRV), price indicators (RSI/MACD/BBANDS).
+- \`/v1/surf/news/{feed,detail}\` — AI-curated crypto news.
+- \`/v1/surf/onchain/{bridge,yield,gas-price,tx,schema,query,sql}\` — bridge/yield rankings, gas, tx detail, **raw SQL against 80+ indexed chain tables (Tier-3, $0.02)**, structured chain query, schema introspection.
+- \`/v1/surf/token/{tokenomics,dex-trades,holders,transfers}\` — token analytics.
+- \`/v1/surf/wallet/{detail,history,net-worth,transfers,protocols,labels/batch}\` — wallet intelligence + batch labels (CEX/Whale/Bridge/MEV).
+- \`/v1/surf/social/*\` — KOL/CT mindshare, smart-follower history, tweets, user profiles. The canonical source for crypto-Twitter signal.
+- \`/v1/surf/fund/{detail,portfolio,ranking}\` — VC fund profiles, portfolios, ranking.
+- \`/v1/surf/project/{detail,defi/metrics,defi/ranking}\` — project profiles + DeFi protocol metrics.
+- \`/v1/surf/chat/completions\` — surf-1.5 chat model with first-class citations (\`citation: ["source","chart"]\`). \$0.02/call flat.
+
+For Surf workflows, prefer the bundled skills (\`/surf-market\`, \`/surf-chain\`, \`/surf-social\`, \`/surf-chat\`) — they document which endpoint to pick for which question and the cost trade-off. Skipped (use the dedicated tools instead): \`/v1/surf/prediction-market/*\` (use \`PredictionMarket\`), \`/v1/surf/search/*\` (use \`ExaSearch\`), \`/v1/surf/web/*\` (use \`BrowserX\`).
+
+**Generic gateway primitive**: \`BlockRun({ path, method, params, body })\` is a single capability that signs x402 and forwards to ANY path under \`/api\`. Use it for Surf endpoints (above) and any future BlockRun partner that doesn't have a dedicated capability yet. Always specify the exact path; the primitive will not guess.
+
 **Endpoints that DO NOT exist** (common hallucinations — do NOT call):
 - \`/v1/image/generate\` (singular — use \`/v1/images/generations\`)
 - \`/v1/spending\` (no such route — derive from on-chain history if needed)
