@@ -346,14 +346,78 @@ export const voiceCallCapability: CapabilityHandler = {
   },
 };
 
+/** Statuses that mean the call has reached a final outcome (one of completed,
+ *  failed, no-answer, busy, voicemail). Anything else (queued / ringing /
+ *  in-progress / etc.) means the call is still running and we should keep
+ *  polling. */
+const VOICE_TERMINAL_STATUSES = new Set([
+  'completed', 'failed', 'no-answer', 'busy', 'voicemail',
+  'cancelled', 'no_answer',  // Bland upstream uses both spellings
+]);
+
+/** Poll cadence + ceiling. max_duration is capped at 30 min upstream, so
+ *  35 min is enough headroom even for the longest call to either complete
+ *  or get force-cut by Bland. 5 s interval matches videogen.ts pattern. */
+const VOICE_POLL_INTERVAL_MS = 5_000;
+const VOICE_POLL_MAX_WAIT_MS = 35 * 60 * 1000;
+
+async function voiceSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error('aborted'));
+    const t = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new Error('aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/** Write whatever the gateway gave us back into the local CallLog so the
+ *  panel Calls tab + future agent reads stay current. Append-only; latest
+ *  row wins on read. Best-effort — journal write failures don't bubble. */
+function patchCallJournal(callId: string, res: Record<string, unknown>): void {
+  try {
+    const prior = callLog().byCallId(callId);
+    if (!prior) return;
+    const recording =
+      typeof res.recording_url === 'string' ? res.recording_url :
+      typeof res.recording === 'string' ? res.recording : undefined;
+    const duration =
+      typeof res.call_length === 'number' ? Math.round(res.call_length) :
+      typeof res.duration === 'number' ? Math.round(res.duration) :
+      typeof res.duration_sec === 'number' ? Math.round(res.duration_sec) : undefined;
+    const transcript =
+      typeof res.concatenated_transcript === 'string' ? res.concatenated_transcript :
+      typeof res.transcript === 'string' ? res.transcript : undefined;
+    callLog().append({
+      ...prior,
+      timestamp: Date.now(),
+      paid_usd: prior.paid_usd, // status polls are free; preserve per-call total
+      status: normalizeStatus(res.status ?? res.queue_status ?? res.disposition),
+      duration_sec: duration ?? prior.duration_sec,
+      transcript: transcript ?? prior.transcript,
+      recording_url: recording ?? prior.recording_url,
+    });
+  } catch { /* best-effort */ }
+}
+
 export const voiceStatusCapability: CapabilityHandler = {
   spec: {
     name: 'VoiceStatus',
     description:
-      'Poll a previously-initiated voice call for its current status, transcript, recording URL, ' +
-      'and final disposition (completed / failed / no-answer / busy / voicemail). Free — no USDC ' +
-      'charged. Use the call_id returned by VoiceCall. Call this every 30–60 s until status is ' +
-      'a terminal state.',
+      'Wait for a previously-initiated voice call to complete, then return ' +
+      'the final status, transcript, recording URL, and disposition ' +
+      '(completed / failed / no-answer / busy / voicemail). Free — no USDC ' +
+      'charged. Use the call_id returned by VoiceCall.\n\n' +
+      'CALL THIS ONCE. The tool blocks internally, polling the gateway every ' +
+      '5 s for up to 35 min until the call reaches a terminal state. Do NOT ' +
+      'invoke VoiceStatus repeatedly in a loop — Franklin\'s signature-loop ' +
+      'guard will kill the turn after 5 identical inputs. A single call is ' +
+      'sufficient.',
     input_schema: {
       type: 'object',
       properties: {
@@ -369,46 +433,54 @@ export const voiceStatusCapability: CapabilityHandler = {
     if (typeof input.call_id !== 'string') {
       return { output: 'call_id required', isError: true };
     }
-    try {
-      const res = await getNoPayment<Record<string, unknown>>(
-        `/v1/voice/call/${encodeURIComponent(input.call_id)}`,
-        ctx,
-        { tool: 'VoiceStatus', priceUsd: 0 },
-      );
-      // Patch the local journal with whatever fields the gateway returned —
-      // transcript / recording / duration / disposition. Append-only schema
-      // means we just write a new row; CallLog.summary() picks the latest.
+    const callId = input.call_id;
+    const deadline = Date.now() + VOICE_POLL_MAX_WAIT_MS;
+
+    // Internal poll-until-terminal loop — mirrors videogen.ts pollUntilReady
+    // and imagegen.ts pollImageJob. The agent emits one VoiceStatus tool_use
+    // and gets back the final transcript when the call ends. Without this
+    // loop the agent has to drive the poll cadence itself and will trip the
+    // signature-loop guard at 5 identical inputs.
+    let lastRes: Record<string, unknown> | null = null;
+    while (Date.now() < deadline) {
+      if (ctx.abortSignal.aborted) {
+        return { output: 'VoiceStatus aborted by user', isError: true };
+      }
       try {
-        const prior = callLog().byCallId(input.call_id);
-        if (prior) {
-          const recording =
-            typeof res.recording_url === 'string' ? res.recording_url :
-            typeof res.recording === 'string' ? res.recording : undefined;
-          const duration =
-            typeof res.call_length === 'number' ? Math.round(res.call_length) :
-            typeof res.duration === 'number' ? Math.round(res.duration) :
-            typeof res.duration_sec === 'number' ? Math.round(res.duration_sec) : undefined;
-          const transcript =
-            typeof res.concatenated_transcript === 'string' ? res.concatenated_transcript :
-            typeof res.transcript === 'string' ? res.transcript : undefined;
-          callLog().append({
-            ...prior,
-            timestamp: Date.now(),
-            paid_usd: prior.paid_usd, // status polls are free; preserve the per-call total
-            status: normalizeStatus(res.status ?? res.queue_status ?? res.disposition),
-            duration_sec: duration ?? prior.duration_sec,
-            transcript: transcript ?? prior.transcript,
-            recording_url: recording ?? prior.recording_url,
-          });
-        }
-      } catch { /* best-effort */ }
-      return {
-        output:
-          `## Voice call status\n\n` +
-          '```json\n' + JSON.stringify(res, null, 2) + '\n```',
-      };
-    } catch (err) {
-      return { output: `VoiceStatus failed: ${(err as Error).message}`, isError: true };
+        lastRes = await getNoPayment<Record<string, unknown>>(
+          `/v1/voice/call/${encodeURIComponent(callId)}`,
+          ctx,
+          { tool: 'VoiceStatus', priceUsd: 0 },
+        );
+      } catch (err) {
+        return { output: `VoiceStatus failed: ${(err as Error).message}`, isError: true };
+      }
+      patchCallJournal(callId, lastRes);
+      const status = String(lastRes.status ?? lastRes.queue_status ?? '').toLowerCase();
+      if (VOICE_TERMINAL_STATUSES.has(status)) {
+        return {
+          output:
+            `## Voice call status (terminal: ${status})\n\n` +
+            '```json\n' + JSON.stringify(lastRes, null, 2) + '\n```',
+        };
+      }
+      try {
+        await voiceSleep(VOICE_POLL_INTERVAL_MS, ctx.abortSignal);
+      } catch {
+        return { output: 'VoiceStatus aborted by user', isError: true };
+      }
     }
+    // Hit the 35-min ceiling without seeing a terminal state — return the
+    // latest snapshot we have so the agent + journal still have partial
+    // context, but flag it as still in progress.
+    return {
+      output:
+        `## Voice call status (still in progress after ${Math.round(VOICE_POLL_MAX_WAIT_MS / 60_000)} min)\n\n` +
+        `Bland.ai upstream caps any single call at 30 min, so a call this long ` +
+        `is unusual — likely an upstream stall. Ask the user before reinvoking ` +
+        `VoiceStatus (would burn another full poll cycle).\n\n` +
+        '```json\n' + JSON.stringify(lastRes ?? {}, null, 2) + '\n```',
+      isError: true,
+    };
   },
 };
