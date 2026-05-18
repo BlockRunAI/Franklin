@@ -56,13 +56,45 @@ export interface PermissionDecision {
 
 // ─── Default Rules ─────────────────────────────────────────────────────────
 
-const READ_ONLY_TOOLS = new Set(['Read', 'Glob', 'Grep', 'WebSearch', 'Task', 'AskUser', 'ActivateTool', 'ImageGen', 'TradingSignal', 'TradingMarket', 'SearchX', 'BrowserX']);
+const READ_ONLY_TOOLS = new Set([
+  'Read', 'Glob', 'Grep', 'WebSearch', 'Task', 'AskUser', 'ActivateTool',
+  'ImageGen', 'TradingSignal', 'TradingMarket', 'SearchX', 'BrowserX',
+  // Phone & Voice — side-effect-free queries. None of these dial anyone,
+  // hold a phone number, or mutate gateway state. ListPhoneNumbers is a
+  // cached read ($0.001), VoiceStatus is a free GET poll on an existing
+  // call, PhoneLookup / PhoneFraudCheck are pure metadata lookups.
+  // Pricing here is orthogonal to side-effect category — WebSearch /
+  // ImageGen also cost money but live here because they don't change the
+  // world outside the gateway.
+  'VoiceStatus',
+  'ListPhoneNumbers',
+  'PhoneLookup',
+  'PhoneFraudCheck',
+]);
 const DESTRUCTIVE_TOOLS = new Set(['Write', 'Edit', 'Bash']);
 
 const DEFAULT_RULES: PermissionRules = {
-  allow: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Task', 'AskUser', 'ActivateTool', 'ImageGen', 'TradingSignal', 'TradingMarket', 'SearchX', 'BrowserX'],
+  allow: [
+    'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Task', 'AskUser',
+    'ActivateTool', 'ImageGen', 'TradingSignal', 'TradingMarket', 'SearchX',
+    'BrowserX',
+    // See READ_ONLY_TOOLS above for the side-effect-free rationale.
+    'VoiceStatus', 'ListPhoneNumbers', 'PhoneLookup', 'PhoneFraudCheck',
+  ],
   deny: [],
-  ask: ['Write', 'Edit', 'Bash', 'Agent', 'PostToX'],
+  ask: [
+    'Write', 'Edit', 'Bash', 'Agent', 'PostToX',
+    // Phone & Voice — real-world side effects. VoiceCall dials a real human
+    // ($0.54). BuyPhoneNumber / RenewPhoneNumber hold a real Twilio number
+    // for 30 days ($5). ReleasePhoneNumber permanently returns the number
+    // to the pool (free but irreversible — user could lose a number they
+    // care about). All four must prompt every time, matching the
+    // Write/Edit/Bash policy: any agent-initiated real-world action goes
+    // through explicit user consent. Without this, the agent silently
+    // dials people / spends $5 on phone numbers / releases numbers the
+    // user is using — no recovery path.
+    'VoiceCall', 'BuyPhoneNumber', 'RenewPhoneNumber', 'ReleasePhoneNumber',
+  ],
 };
 
 // ─── Permission Manager ────────────────────────────────────────────────────
