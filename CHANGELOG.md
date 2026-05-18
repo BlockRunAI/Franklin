@@ -1,5 +1,59 @@
 # Changelog
 
+## Franklin Agent 3.21.3 — fix: call cost displays correctly + Calls tab XSS hardening
+
+Two issues found while reviewing v3.21.2 against real call data:
+
+**Call cost showed \$0 instead of \$0.54 after a call completed.** The
+\`VoiceCall\` POST writes a "queued" row with \`paid_usd: 0.54\` on
+initiation; subsequent \`VoiceStatus\` polls (free) write update rows
+with \`paid_usd: 0\`. The panel's \`/api/calls\` endpoint used
+\`log.summary()\` and \`log.byCallId()\`, which both returned the
+*latest* row per \`call_id\` — so the completed-status row's \`paid_usd:
+0\` overwrote the initial \$0.54 in the UI.
+
+Fixed two ways (belt-and-suspenders):
+
+1. \`src/phone/call-log.ts\` — \`summary()\` and \`byCallId()\` now take
+   \`Math.max\` of \`paid_usd\` across all rows for a given \`call_id\`,
+   so the largest charge (the initial POST) always wins regardless of
+   row order or status update timing.
+2. \`src/tools/voice.ts\` — \`VoiceStatus\` update writes now carry
+   \`prior.paid_usd\` instead of \`0\`, so any reader that picks "latest
+   row" without aggregation still sees the right cost.
+
+Two new test assertions pin the behavior (\`summary preserves initial
+call charge across free status updates\` + the \`byCallId\` variant).
+Tests went from 404 to 405; all 405 pass.
+
+**Calls tab XSS hardening.** The Calls panel rendered call data
+(recipient/caller numbers, status, transcript, recording URL,
+timestamp) directly into innerHTML. While the data comes from the
+local JSONL journal — which only the agent writes — the upstream
+Bland.ai transcripts and recording URLs flow through unfiltered. A
+maliciously crafted task spoken on the call could in theory smuggle
+markup into the transcript field.
+
+Hardening:
+
+- New \`escapeHtml()\` helper covers \`& < > " '\` (was previously only
+  \`& < >\`)
+- New \`safeHttpUrl()\` validates that recording URLs use the \`http:\`
+  or \`https:\` protocol before injecting them as \`<a href>\` — blocks
+  \`javascript:\` URL smuggling
+- All Calls-tab user-data renders now go through \`escapeHtml\`
+  (recipient number, caller-ID, status label, transcript, timestamp);
+  recording-link href goes through \`safeHttpUrl\` then \`escapeHtml\`
+
+Defense-in-depth — the immediate risk is theoretical since the journal
+is local-only, but the panel renders trusted-looking content directly
+to the DOM and the discipline is worth having before anyone deploys
+the panel in a less-trusted environment.
+
+**Also bundled**: deep-link from URL hash to the Calls tab —
+\`localhost:3100/#calls\` now auto-loads the list (was rendering empty
+because \`loadCalls()\` only fired on click).
+
 ## Franklin Agent 3.21.2 — VideoGen RealFace support + panel rebrand
 
 Aligns Franklin with two recent BlockRun gateway changes:

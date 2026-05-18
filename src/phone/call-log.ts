@@ -129,22 +129,28 @@ export class CallLog {
   summary(limit = 50): CallLogEntry[] {
     const all = this.all();
     const latest = new Map<string, CallLogEntry>();
+    const paidByCall = new Map<string, number>();
     for (const e of all) {
+      paidByCall.set(e.call_id, Math.max(paidByCall.get(e.call_id) ?? 0, e.paid_usd));
       const cur = latest.get(e.call_id);
       // Keep the row with the FRESHEST timestamp per call_id (status updates).
       if (!cur || e.timestamp >= cur.timestamp) latest.set(e.call_id, e);
     }
     // Sort newest-first by the latest-row timestamp.
-    const list = Array.from(latest.values()).sort((a, b) => b.timestamp - a.timestamp);
+    const list = Array.from(latest.values())
+      .map(e => ({ ...e, paid_usd: paidByCall.get(e.call_id) ?? e.paid_usd }))
+      .sort((a, b) => b.timestamp - a.timestamp);
     return list.slice(0, limit);
   }
 
   byCallId(callId: string): CallLogEntry | null {
     let best: CallLogEntry | null = null;
+    let paidUsd = 0;
     for (const e of this.all()) {
       if (e.call_id !== callId) continue;
+      paidUsd = Math.max(paidUsd, e.paid_usd);
       if (!best || e.timestamp >= best.timestamp) best = e;
     }
-    return best;
+    return best ? { ...best, paid_usd: paidUsd } : null;
   }
 }

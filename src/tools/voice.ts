@@ -394,7 +394,7 @@ export const voiceStatusCapability: CapabilityHandler = {
           callLog().append({
             ...prior,
             timestamp: Date.now(),
-            paid_usd: 0,           // status polls are free; only the initial POST charges
+            paid_usd: prior.paid_usd, // status polls are free; preserve the per-call total
             status: normalizeStatus(res.status ?? res.queue_status ?? res.disposition),
             duration_sec: duration ?? prior.duration_sec,
             transcript: transcript ?? prior.transcript,

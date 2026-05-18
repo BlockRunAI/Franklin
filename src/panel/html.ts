@@ -1991,6 +1991,22 @@ function formatDuration(sec) {
   return m > 0 ? m + 'm ' + s + 's' : s + 's';
 }
 
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+function safeHttpUrl(value) {
+  if (typeof value !== 'string') return '';
+  try {
+    const u = new URL(value);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : '';
+  } catch (e) {
+    return '';
+  }
+}
+
 function renderCallsList(calls) {
   const list = document.getElementById('calls-list');
   if (!list) return;
@@ -2008,13 +2024,14 @@ function renderCallsList(calls) {
     const fromHuman = formatPhoneNumber(c.from);
     const when = new Date(c.timestamp).toLocaleString();
     const cost = c.paid_usd ? '$' + c.paid_usd.toFixed(2) : '—';
-    const safeTask = (c.task || '').replace(/[<>&]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch]));
+    const safeTask = escapeHtml(c.task || '');
+    const recordingUrl = safeHttpUrl(c.recording_url);
     const transcriptHtml = c.transcript
       ? '<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--text-dim);font-size:12px">Transcript</summary><pre style="white-space:pre-wrap;background:oklch(0 0 0 / 25%);padding:10px;border-radius:8px;font-size:12px;margin-top:6px;max-height:400px;overflow:auto">' +
-        c.transcript.replace(/[<>&]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch])) + '</pre></details>'
+        escapeHtml(c.transcript) + '</pre></details>'
       : '';
-    const recordingHtml = c.recording_url
-      ? '<a href="' + c.recording_url + '" target="_blank" rel="noopener" style="font-size:11px;color:var(--brand);text-decoration:none;margin-left:8px">▶ recording</a>'
+    const recordingHtml = recordingUrl
+      ? '<a href="' + escapeHtml(recordingUrl) + '" target="_blank" rel="noopener" style="font-size:11px;color:var(--brand);text-decoration:none;margin-left:8px">▶ recording</a>'
       : '';
     return ''
       + '<div class="phone-row" style="grid-template-columns:auto 1fr auto;align-items:start">'
@@ -2024,12 +2041,12 @@ function renderCallsList(calls) {
       + '    </svg>'
       + '  </div>'
       + '  <div class="phone-main">'
-      + '    <div class="phone-num">' + human + ' <span style="font-size:11px;color:var(--text-dim);font-weight:400">from ' + fromHuman + '</span></div>'
+      + '    <div class="phone-num">' + escapeHtml(human) + ' <span style="font-size:11px;color:var(--text-dim);font-weight:400">from ' + escapeHtml(fromHuman) + '</span></div>'
       + '    <div class="phone-meta">'
-      + '      <span class="chip ' + st.cls + '">' + st.label + '</span>'
+      + '      <span class="chip ' + st.cls + '">' + escapeHtml(st.label) + '</span>'
       + '      <span class="chip">' + formatDuration(c.duration_sec) + '</span>'
       + '      <span class="chip">' + cost + '</span>'
-      + '      <span style="font-size:11px;color:var(--text-dim)">' + when + '</span>'
+      + '      <span style="font-size:11px;color:var(--text-dim)">' + escapeHtml(when) + '</span>'
       + recordingHtml
       + '    </div>'
       + '    <div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.5">' + (safeTask.slice(0, 200) + (safeTask.length > 200 ? '…' : '')) + '</div>'
@@ -2075,6 +2092,7 @@ document.querySelector('[data-tab="markets"]')?.addEventListener('click', loadMa
   const initialHash = (location.hash || '').replace(/^#/, '');
   if (initialHash && initialHash !== 'overview' && document.getElementById('tab-' + initialHash)) {
     activateTab(initialHash);
+    if (initialHash === 'calls') loadCalls();
   }
 }
 

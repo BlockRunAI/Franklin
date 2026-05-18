@@ -236,6 +236,19 @@ test('panel HTML wires the Tasks tab (list + detail + /api/tasks polling)', asyn
   assert.ok(html.includes('/api/tasks'), 'Tasks JS module not wired (no /api/tasks fetch)');
 });
 
+test('panel HTML wires Calls tab safely (deep link + recording URL escaping)', async () => {
+  const htmlUrl = new URL('../dist/panel/html.js', import.meta.url);
+  const { getHTML } = await import(`${htmlUrl.href}?t=${Date.now()}`);
+  const html = getHTML();
+  assert.ok(html.includes('data-tab="calls"'), 'Missing Calls tab nav (data-tab="calls")');
+  assert.ok(html.includes('id="tab-calls"'), 'Missing Calls tab content section (id="tab-calls")');
+  assert.ok(html.includes('/api/calls?limit=50'), 'Calls JS module not wired (no /api/calls fetch)');
+  assert.ok(html.includes("if (initialHash === 'calls') loadCalls();"), 'Calls deep link must load journal data');
+  assert.ok(html.includes('function safeHttpUrl'), 'Calls recording links must be protocol-filtered');
+  assert.ok(html.includes('escapeHtml(recordingUrl)'), 'Calls recording href must be attribute-escaped');
+  assert.ok(!html.includes('href="\' + c.recording_url + \'"'), 'Calls recording href must not directly interpolate raw journal data');
+});
+
 test('panel server serves dashboard HTML and stats JSON', async () => {
   const panelUrl = new URL('../dist/panel/server.js', import.meta.url);
   const { createPanelServer } = await import(`${panelUrl.href}?t=${Date.now()}`);
@@ -246,7 +259,7 @@ test('panel server serves dashboard HTML and stats JSON', async () => {
     const htmlRes = await fetch(`http://127.0.0.1:${port}/`);
     assert.equal(htmlRes.status, 200, `Expected dashboard HTML, got ${htmlRes.status}`);
     const html = await htmlRes.text();
-    assert.ok(html.includes('<title>Franklin Panel</title>'), 'Missing panel title in HTML');
+    assert.ok(html.includes('<title>Franklin Agent Panel</title>'), 'Missing panel title in HTML');
     assert.ok(html.includes('Overview'), 'Missing Overview section in HTML');
 
     const statsRes = await fetch(`http://127.0.0.1:${port}/api/stats`);
@@ -9573,6 +9586,7 @@ test('CallLog: summary picks latest row per call_id (status updates win)', async
   assert.equal(sum[1].status, 'completed');
   assert.equal(sum[1].duration_sec, 73);
   assert.equal(sum[1].transcript, 'Hi! How are you?');
+  assert.equal(sum[1].paid_usd, 0.54, 'summary preserves initial call charge across free status updates');
 });
 
 test('CallLog: byCallId returns latest matching row, null if missing', async () => {
@@ -9586,6 +9600,7 @@ test('CallLog: byCallId returns latest matching row, null if missing', async () 
   const found = log.byCallId('xyz');
   assert.ok(found, 'found');
   assert.equal(found.status, 'failed', 'latest row wins');
+  assert.equal(found.paid_usd, 0.54, 'detail preserves initial call charge across free status updates');
   assert.equal(log.byCallId('nonexistent'), null, 'unknown call_id → null');
 });
 
