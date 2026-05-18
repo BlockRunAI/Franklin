@@ -43,6 +43,15 @@ import {
 import { predictionMarketCapability } from './prediction.js';
 import { modalCapabilities } from './modal.js';
 import { blockrunCapability } from './blockrun.js';
+import {
+  listPhoneNumbersCapability,
+  buyPhoneNumberCapability,
+  renewPhoneNumberCapability,
+  releasePhoneNumberCapability,
+  phoneLookupCapability,
+  phoneFraudCheckCapability,
+} from './phone.js';
+import { voiceCallCapability, voiceStatusCapability } from './voice.js';
 import { createTradingCapabilities } from './trading-execute.js';
 import { Portfolio } from '../trading/portfolio.js';
 import { RiskEngine } from '../trading/risk.js';
@@ -186,7 +195,19 @@ export const allCapabilities: CapabilityHandler[] = [
   defiLlamaYieldsCapability,
   defiLlamaPriceCapability,
   predictionMarketCapability, // Polymarket / Kalshi / matching / smart money via Predexon
-  blockrunCapability, // Generic x402-paid gateway primitive — Surf, Phone, future partners (see /surf-* skills)
+  blockrunCapability, // Generic x402-paid gateway primitive — Surf, future partners (see /surf-* skills)
+  // Phone & Voice — typed surface so the agent pattern-matches on the user
+  // intent ("buy a number", "make a call") without needing to consult the
+  // BlockRun primitive or the .well-known/x402 manifest. All wrap the same
+  // /v1/phone/* and /v1/voice/* endpoints under the hood.
+  listPhoneNumbersCapability,    // ListPhoneNumbers — $0.001
+  buyPhoneNumberCapability,      // BuyPhoneNumber   — $5 / 30 days
+  renewPhoneNumberCapability,    // RenewPhoneNumber — $5 / 30 days
+  releasePhoneNumberCapability,  // ReleasePhoneNumber — free
+  phoneLookupCapability,         // PhoneLookup      — $0.01
+  phoneFraudCheckCapability,     // PhoneFraudCheck  — $0.05
+  voiceCallCapability,           // VoiceCall        — $0.54 / call (Bland.ai)
+  voiceStatusCapability,         // VoiceStatus      — free (poll)
   // Modal GPU sandbox tools — registered but hidden by default (not in
   // CORE_TOOL_NAMES). Agent must `ActivateTool({names:["ModalCreate",...]})`
   // before they appear in its tool inventory. High-cost ($0.40/H100 create)
