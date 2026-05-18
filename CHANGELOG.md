@@ -1,5 +1,38 @@
 # Changelog
 
+## Franklin Agent 3.21.4 — fix: typed Phone/Voice tool prompt spam + VoiceStatus polls internally
+
+External contributor [@KillerQueen-Z](https://github.com/KillerQueen-Z)
+landed PR #59 fixing two real bugs from a session today:
+
+**Spammy "Allow?" prompts on every VoiceStatus poll.** PR #58 wired the
+8 typed Phone/Voice tools but skipped the permissions classifier, so
+every \`VoiceStatus\` poll during an in-progress call triggered an
+interactive prompt — 11 prompts during a single call in the repro.
+Fixed by classifying tools in \`src/agent/permissions.ts\`:
+
+| Tool | Category | Why |
+|---|---|---|
+| \`ListPhoneNumbers\`, \`PhoneLookup\`, \`PhoneFraudCheck\`, \`VoiceStatus\` | READ_ONLY | Info queries, don't change the world. Price is orthogonal — same treatment as \`ImageGen\` and \`ExaSearch\` which also cost USDC. |
+| \`VoiceCall\` | ASK | Dials a real human, irreversible |
+| \`BuyPhoneNumber\`, \`RenewPhoneNumber\` | ASK | Holds / extends a number for 30 days, costs \$5 |
+| \`ReleasePhoneNumber\` | ASK | Permanently returns number to pool |
+
+**VoiceStatus now polls internally.** Same PR also refactored
+\`VoiceStatus\` to block-and-poll-until-terminal (5 s interval, 35 min
+ceiling) instead of returning one snapshot per call. Solves the
+signature-loop-guard issue (Franklin kills turns at 5 identical
+inputs, which previously killed manual polling loops) and collapses
+the agent's mental model to "fire VoiceCall, then VoiceStatus once,
+get transcript when it ends." Mirrors the \`videogen.ts pollUntilReady\`
++ \`imagegen.ts pollImageJob\` patterns.
+
+**\`/phone-call\` skill updated** to reflect the new shape — step 6 is
+now "call VoiceStatus once and it waits for completion" instead of
+"loop every 30 s manually." Removes 4 lines of polling instructions.
+
+405/405 tests still pass.
+
 ## Franklin Agent 3.21.3 — fix: call cost displays correctly + Calls tab XSS hardening
 
 Two issues found while reviewing v3.21.2 against real call data:

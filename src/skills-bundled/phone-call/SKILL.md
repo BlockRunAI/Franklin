@@ -73,17 +73,15 @@ VoiceCall({
 })
 ```
 
-Tool returns a `call_id` immediately. Surface it to the user along with "polling now."
+Tool returns a `call_id` immediately. Surface it to the user along with "waiting for call to complete."
 
-### 6 · Auto-poll status
+### 6 · Wait for completion
 
-Loop, every ~30 seconds, calling `VoiceStatus({ call_id })`:
+Call `VoiceStatus({ call_id })` **once**. The tool blocks internally — it polls the gateway every 5 seconds for up to 35 minutes until the call reaches a terminal state (`completed` / `failed` / `cancelled` / `busy` / `no-answer` / `voicemail`), then returns the final transcript.
 
-- If status is `queued` or `in_progress` → continue.
-- If status is one of `completed` / `failed` / `cancelled` / `busy` / `no-answer` / `voicemail` → stop polling.
-- Cap the loop at ~10 minutes total (20 polls). If you hit the cap, tell the user the call is still running and they can rerun `VoiceStatus call_id="…"` later.
+**Do not loop VoiceStatus.** Franklin's signature-loop guard kills the turn after 5 identical inputs. One VoiceStatus call is sufficient — the tool drives the poll cadence itself.
 
-VoiceStatus is **free** — poll as often as needed.
+VoiceStatus is **free** — no USDC charged on polling.
 
 ### 7 · Surface the result
 
