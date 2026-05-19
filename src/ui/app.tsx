@@ -30,8 +30,12 @@ const DISABLE_BRACKETED_PASTE = '\x1b[?2004l';
 const USER_PROMPT_COLOR = '#FFD700';
 const PASTE_BLOCK_START = '\uE000PASTE:';
 const PASTE_BLOCK_END = ':PASTE\uE001';
-// Mirror Hermes: only collapse pastes of >= this many lines into a [Pasted ~N lines] block.
-// Short pastes (one-liners, 2-4 line snippets) inline as plain text so the model sees them verbatim.
+// Only collapse pastes of >= this many lines into a [Pasted ~N lines] block.
+// Short pastes (one-liners, 2-4 line snippets) inline as plain text so the
+// model sees them verbatim and the user can read what they pasted in the
+// input box. 5 lines is a sweet spot — long enough to skip multi-line code
+// dumps and log tails, short enough that ordinary prose pastes still show
+// inline.
 const PASTE_COLLAPSE_LINE_THRESHOLD = 5;
 
 const DISABLE_AUTO_WRAP = '\x1b[?7l';

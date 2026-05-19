@@ -1,5 +1,34 @@
 # Changelog
 
+## Franklin Agent 3.21.5 — UI: inline short pastes, only collapse when ≥ 5 lines
+
+External contributor [@KillerQueen-Z](https://github.com/KillerQueen-Z)
+shipped [PR #60](https://github.com/BlockRunAI/Franklin/pull/60) fixing
+a real bracketed-paste UX bug: every paste — even a single-sentence
+prompt — was being replaced in the input box with a
+`[Pasted ~N lines]` placeholder, so the user couldn't see what they
+had pasted.
+
+Root cause: `findPasteBlocks(...) > 0` triggered the collapse
+unconditionally with no line-count threshold.
+
+Fix: new `PASTE_COLLAPSE_LINE_THRESHOLD = 5` constant. Pastes shorter
+than 5 lines render inline as plain text; longer pastes still collapse
+to a placeholder. Decoding at submit time is unchanged — both branches
+expand any preserved placeholder back to the original content before
+the model sees it.
+
+Behavior table:
+
+| Paste                       | Before               | After                  |
+|-----------------------------|----------------------|------------------------|
+| 1-line, 230-char prompt     | `[Pasted ~1 line]`   | inline                 |
+| 4-line stack trace          | `[Pasted ~4 lines]`  | inline                 |
+| 5-line code block           | `[Pasted ~5 lines]`  | `[Pasted ~5 lines]`    |
+| 50-line log dump            | `[Pasted ~50 lines]` | `[Pasted ~50 lines]`   |
+
+Single-file change to `src/ui/app.tsx`. 405/405 tests still pass.
+
 ## Franklin Agent 3.21.4 — fix: typed Phone/Voice tool prompt spam + VoiceStatus polls internally
 
 External contributor [@KillerQueen-Z](https://github.com/KillerQueen-Z)
