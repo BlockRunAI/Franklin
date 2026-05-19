@@ -30,6 +30,9 @@ const DISABLE_BRACKETED_PASTE = '\x1b[?2004l';
 const USER_PROMPT_COLOR = '#FFD700';
 const PASTE_BLOCK_START = '\uE000PASTE:';
 const PASTE_BLOCK_END = ':PASTE\uE001';
+// Mirror Hermes: only collapse pastes of >= this many lines into a [Pasted ~N lines] block.
+// Short pastes (one-liners, 2-4 line snippets) inline as plain text so the model sees them verbatim.
+const PASTE_COLLAPSE_LINE_THRESHOLD = 5;
 
 const DISABLE_AUTO_WRAP = '\x1b[?7l';
 const ENABLE_AUTO_WRAP = '\x1b[?7h';
@@ -242,7 +245,11 @@ function PromptTextInput({ value, onChange, onSubmit, placeholder = '', focus = 
 
       if (!hasPasteEnd) return;
 
-      text = encodePasteBlock(pasteBufferRef.current);
+      const buffered = pasteBufferRef.current;
+      const lineCount = buffered.length === 0 ? 0 : buffered.split('\n').length;
+      text = lineCount >= PASTE_COLLAPSE_LINE_THRESHOLD
+        ? encodePasteBlock(buffered)
+        : buffered;
       pasteBufferRef.current = '';
       pasteActiveRef.current = false;
     }
