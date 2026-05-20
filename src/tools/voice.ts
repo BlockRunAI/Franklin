@@ -283,6 +283,20 @@ export const voiceCallCapability: CapabilityHandler = {
           type: 'boolean',
           description: 'If true, AI waits for the recipient to speak first before talking.',
         },
+        voicemail_action: {
+          type: 'string',
+          enum: ['hangup', 'leave_message', 'ignore'],
+          description:
+            'What to do if voicemail is detected. Default (omitted): hang up without a message. ' +
+            '"leave_message" speaks voicemail_message once then hangs up (voicemail_message required). ' +
+            '"ignore" skips detection and treats the call as live — only use when sure a human answers.',
+        },
+        voicemail_message: {
+          type: 'string',
+          description:
+            'The message to leave when voicemail_action is "leave_message" (≤1000 chars). ' +
+            'Voicemail is one-way — this is spoken once as a monologue, there is no back-and-forth.',
+        },
       },
       required: ['to', 'from', 'task'],
     },
@@ -306,6 +320,8 @@ export const voiceCallCapability: CapabilityHandler = {
     if (typeof input.language === 'string') body.language = input.language;
     if (typeof input.first_sentence === 'string') body.first_sentence = input.first_sentence;
     if (typeof input.wait_for_greeting === 'boolean') body.wait_for_greeting = input.wait_for_greeting;
+    if (typeof input.voicemail_action === 'string') body.voicemail_action = input.voicemail_action;
+    if (typeof input.voicemail_message === 'string') body.voicemail_message = input.voicemail_message;
 
     try {
       const res = await postWithPayment<Record<string, unknown>>(
