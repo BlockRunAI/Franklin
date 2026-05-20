@@ -78,8 +78,16 @@ function replaceHistory(target: Dialogue[], replacement: Dialogue[]): void {
   target.splice(0, target.length, ...replacement);
 }
 
+// 400/422 (malformed request / failed param validation) are added alongside
+// 401/403/429/5xx: like an auth wall, retrying the same bad request never
+// recovers — the agent must change its inputs, not hammer the endpoint. Caught
+// 2026-05-20 when a `status=active` 422 (invalid enum, Predexon wants
+// open|closed) spun PredictionMarket to the 50-call HARD_TOOL_CAP because the
+// 422 was neither charged (cost guard idle) nor matched here (wall guard idle).
+// 404 is intentionally excluded — "not found" is a legitimate cue to retry
+// with a different query, not a dead wall.
 const EXTERNAL_WALL_FAILURE_PATTERN =
-  /\b(?:401|403|429|5\d{2})\b|\bunauthor|\bforbid|\bWAF\b|\bcloudflare\b|\bfault filter\b|\bblocked\b|\binvalid (?:auth|api|token|key|bearer)\b/i;
+  /\b(?:400|401|403|422|429|5\d{2})\b|\bunauthor|\bforbid|\bWAF\b|\bcloudflare\b|\bfault filter\b|\bblocked\b|\binvalid (?:auth|api|token|key|bearer)\b/i;
 
 export function isExternalWallFailure(toolName: string, output: string, isError?: boolean): boolean {
   if (toolName === 'WebFetch') {
