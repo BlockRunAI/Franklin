@@ -238,40 +238,100 @@ function formatPct(value: unknown, digits = 1): string {
 
 // Both gateways return slightly different shapes; we intentionally use
 // loose typing here because we re-shape into our own markdown anyway.
+// Predexon v2 PolymarketMarket shape (verified against openapi-v2.json):
+// titles live in `title`, money in `total_volume_usd` / `liquidity_usd`, and
+// each outcome is a {label, price} object inside `outcomes` — NOT the old
+// flat `volume` / `liquidity` / parallel `outcomes[]`+`outcome_prices[]` this
+// tool originally assumed. Those wrong names rendered every metric as `n/a`,
+// which pushed the agent to bash-curl the Polymarket Gamma API instead.
+// Old names kept as optional fallbacks.
+type PolymarketOutcome = { label?: string; price?: number | null; token_id?: string | null };
 type PolyMarket = {
+  title?: string;
   question?: string;
   market_slug?: string;
   condition_id?: string;
+  total_volume_usd?: number;
+  liquidity_usd?: number;
+  end_time?: string | null;
+  close_time?: string | null;
+  outcomes?: PolymarketOutcome[] | string[];
+  status?: string;
+  // Legacy/flat fallbacks.
   volume?: number;
   liquidity?: number;
   end_date?: string;
-  outcomes?: string[];
   outcome_prices?: number[];
-  status?: string;
 };
+// Predexon v2 KalshiMarket: price is `last_price` (0–1 probability), not the
+// `yes_bid`/`yes_ask` cents this tool assumed (those fields don't exist →
+// rendered `n/a`). volume / open_interest names are correct.
 type KalshiMarket = {
   ticker?: string;
   event_ticker?: string;
   title?: string;
-  yes_bid?: number;
-  yes_ask?: number;
+  yes_subtitle?: string;
+  last_price?: number | null;
   volume?: number;
   open_interest?: number;
   status?: string;
-  close_time?: string;
+  close_time?: string | null;
+  // Legacy fallbacks.
+  yes_bid?: number;
+  yes_ask?: number;
+};
+// Predexon v2 `/matching-markets/pairs` shape (verified against
+// openapi-v2.json MatchedPair/PolymarketPairInfo/KalshiPairInfo): each venue
+// is an UPPERCASE sub-object with a nested `title`, not a flat
+// `polymarket_question` / `kalshi_title`. POLYMARKET is the only required
+// anchor; KALSHI (and the other venues) can be null when there's no match.
+type PairVenueInfo = {
+  title?: string | null;
+  market_slug?: string;
+  condition_id?: string | null;
+  market_id?: string | null;
+  market_ticker?: string;
+  slug?: string;
 };
 type MatchedPair = {
-  polymarket_condition_id?: string;
+  POLYMARKET?: PairVenueInfo;
+  KALSHI?: PairVenueInfo | null;
+  LIMITLESS?: PairVenueInfo | null;
+  PREDICT?: PairVenueInfo | null;
+  OPINION?: PairVenueInfo | null;
+  similarity?: number | null;
+  explanation?: string | null;
+  predexon_id?: string | null;
+  // Legacy/flat fallbacks — kept so a gateway shape change can't blank titles.
   polymarket_question?: string;
-  kalshi_ticker?: string;
   kalshi_title?: string;
-  similarity?: number;
+  kalshi_ticker?: string;
+};
+// Predexon v2 smart-money response (verified live 2026-05-20): a single
+// `positioning` aggregate, NOT buyers/sellers arrays. Reports net buyer/seller
+// counts, smart buy/sell volume, and avg prices for wallets meeting the
+// criteria. The old buyers/sellers/net_yes_size shape never existed on v2.
+type SmartMoneyPositioning = {
+  condition_id?: string;
+  title?: string;
+  smart_wallet_count?: number;
+  net_buyers?: number;
+  net_sellers?: number;
+  neutral?: number;
+  net_buyers_pct?: number;
+  total_smart_volume?: number;
+  total_smart_buy_volume?: number;
+  total_smart_sell_volume?: number;
+  avg_smart_buy_price?: number;
+  avg_smart_sell_price?: number;
+  total_smart_realized_pnl?: number;
+  avg_smart_roi?: number;
+  avg_smart_win_rate?: number;
 };
 type SmartMoneyResp = {
-  buyers?: Array<{ wallet?: string; size?: number | string; outcome?: string }>;
-  sellers?: Array<{ wallet?: string; size?: number | string; outcome?: string }>;
-  net_yes_size?: number | string;
-  net_no_size?: number | string;
+  smart_wallet_criteria?: Record<string, unknown>;
+  window?: string;
+  positioning?: SmartMoneyPositioning;
 };
 // API responses sometimes come wrapped as `{data: [...], pagination: ...}`,
 // other times as a bare array. Normalise to an array.
@@ -284,6 +344,7 @@ function unwrapList<T>(raw: unknown): T[] {
     if (Array.isArray(obj.pairs)) return obj.pairs as T[];
     if (Array.isArray(obj.results)) return obj.results as T[];
     if (Array.isArray(obj.positions)) return obj.positions as T[];
+    if (Array.isArray(obj.entries)) return obj.entries as T[]; // leaderboard
   }
   return [];
 }
@@ -293,6 +354,46 @@ function parseWalletsInput(value: string): string[] {
     .split(',')
     .map(w => w.trim())
     .filter(Boolean);
+}
+
+// Predexon's market-list endpoints (polymarket/markets, kalshi/markets,
+// markets/search) all validate `status` against StatusOption = {open, closed}
+// — verified against openapi-v2.json. Earlier code defaulted Polymarket to
+// `active` (the Polymarket Gamma-API convention), which 422s on Predexon.
+// Normalize the common synonyms so an explicit `active` / `archived` coming
+// from the agent or the user still resolves to a valid value.
+// Polymarket leaderboard `sort_by` enum (openapi-v2.json:
+// realized_pnl | total_pnl | volume | roi | profit_factor | win_rate | trades).
+// Maps the ergonomic values the tool advertises ("pnl | volume | win_rate")
+// — and a few obvious synonyms — onto the real enum. Unknown keys resolve to
+// undefined so the param is omitted and the gateway uses its own default.
+const LEADERBOARD_SORT_ALIASES: Record<string, string> = {
+  pnl: 'total_pnl',
+  total_pnl: 'total_pnl',
+  realized_pnl: 'realized_pnl',
+  realized: 'realized_pnl',
+  volume: 'volume',
+  roi: 'roi',
+  profit_factor: 'profit_factor',
+  win_rate: 'win_rate',
+  winrate: 'win_rate',
+  trades: 'trades',
+};
+
+// smartActivity and smart-money both REQUIRE at least one smart-wallet
+// criterion (min_realized_pnl / min_total_pnl / min_roi / …) or Predexon 400s
+// with "At least one smart wallet criterion must be specified" — verified live
+// 2026-05-20. The old code sent none, so both endpoints failed every call.
+// Default to a sensible "smart = profitable" floor; the agent can still pass
+// its own threshold via the `minTotalPnl` input.
+const DEFAULT_SMART_MIN_TOTAL_PNL = 10000;
+
+function normalizeMarketStatus(status: string | undefined): string | undefined {
+  if (!status) return status;
+  const s = status.trim().toLowerCase();
+  if (s === 'active' || s === 'open' || s === 'live') return 'open';
+  if (s === 'closed' || s === 'archived' || s === 'resolved' || s === 'inactive') return 'closed';
+  return s;
 }
 
 /**
@@ -377,7 +478,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
         // searchPolymarket / searchKalshi; rename on the wire.
         const raw = await getWithPayment<unknown>('/v1/pm/markets/search', {
           q: search,
-          status,
+          status: normalizeMarketStatus(status),
           sort,
           limit: cappedLimit,
         }, ctx);
@@ -402,7 +503,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
             shown.forEach((m, i) => {
               const title = pickString(m.title, m.question, m.market, m.event, m.market_slug, m.slug, m.ticker) ?? 'untitled';
               const id = pickString(m.condition_id, m.ticker, m.id);
-              const idTag = id ? ` · \`${String(id).slice(0, 18)}…\`` : '';
+              const idTag = id ? ` · \`${String(id)}\`` : '';
               const vol = m.volume != null ? ` · vol ${formatUsd(m.volume as number)}` : '';
               lines.push(`${i + 1}. ${title}${idTag}${vol}`);
               totalShown++;
@@ -439,9 +540,15 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       case 'leaderboard': {
         // Global top-wallet ranking. Cheap ($0.001) — the right answer to
         // "who's making money on Polymarket" / "who should I follow".
+        // Predexon's param is `sort_by` (enum), NOT `sort` — sending `sort`
+        // is silently ignored, so the ranking never honored the agent's
+        // intent. Map the ergonomic aliases to the real enum values
+        // (verified against openapi-v2.json), drop anything unrecognized so
+        // the gateway falls back to its own default rather than 422-ing.
+        const sortBy = sort ? LEADERBOARD_SORT_ALIASES[sort.trim().toLowerCase()] : undefined;
         const raw = await getWithPayment<unknown>('/v1/pm/polymarket/leaderboard', {
           limit: cappedLimit,
-          sort,
+          sort_by: sortBy,
         }, ctx);
         const rows = unwrapList<Record<string, unknown>>(raw);
         if (rows.length === 0) {
@@ -452,13 +559,18 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           '',
         ];
         rows.forEach((r, i) => {
-          const wallet = pickString(r.wallet, r.address, r.proxy_wallet, r.proxyWallet) ?? 'unknown';
+          // Predexon v2 entry: { rank, user, metrics:{ total_pnl, volume,
+          // win_rate, ... }, ... } — verified live 2026-05-20. P&L/volume/win
+          // live under `metrics`, the address is `user`; the old flat
+          // r.pnl / r.wallet reads returned undefined for every row.
+          const metrics = (r.metrics && typeof r.metrics === 'object' ? r.metrics : {}) as Record<string, unknown>;
+          const wallet = pickString(r.user, r.wallet, r.address, r.proxy_wallet, r.proxyWallet) ?? 'unknown';
           const w = wallet.length > 12
             ? `${wallet.slice(0, 8)}…${wallet.slice(-4)}`
             : wallet;
-          const pnl = r.pnl ?? r.realized_pnl ?? r.total_pnl;
-          const volume = r.volume ?? r.total_volume;
-          const winRate = r.win_rate ?? r.winRate;
+          const pnl = metrics.total_pnl ?? metrics.realized_pnl ?? r.pnl ?? r.realized_pnl ?? r.total_pnl;
+          const volume = metrics.volume ?? r.volume ?? r.total_volume;
+          const winRate = metrics.win_rate ?? r.win_rate ?? r.winRate;
           const name = pickString(r.name, r.handle, r.username);
           const handle = name ? ` (${name})` : '';
           const parts: string[] = [];
@@ -731,9 +843,11 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
         // "Discover markets where high-performing wallets are active right now."
         // Complements `smartMoney`: this discovers interesting markets across
         // the venue; smartMoney drills into one condition_id.
+        // Requires a smart-wallet criterion (else 400). `search` is not a
+        // supported param here, so it was silently dropped — removed.
         const raw = await getWithPayment<unknown>('/v1/pm/polymarket/markets/smart-activity', {
           limit: cappedLimit,
-          search,
+          min_total_pnl: DEFAULT_SMART_MIN_TOTAL_PNL,
         }, ctx);
         const rows = unwrapList<Record<string, unknown>>(raw);
         if (rows.length === 0) {
@@ -747,12 +861,17 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
         rows.forEach((r, i) => {
           const title = pickString(r.question, r.title, r.market, r.event, r.market_slug, r.slug) ?? 'untitled';
           const cid = pickString(r.condition_id, r.id);
-          const cidTag = cid ? ` · \`${String(cid).slice(0, 14)}…\`` : '';
-          const smartCount = r.smart_wallets_count ?? r.wallet_count;
-          const netFlow = r.net_size ?? r.net_yes_size;
+          // Full condition_id so the agent can chain into smartMoney.
+          const cidTag = cid ? ` · \`${String(cid)}\`` : '';
+          // Predexon v2 fields (verified live): smart_wallet_count (singular),
+          // smart_volume, net_buyers_pct.
+          const smartCount = r.smart_wallet_count ?? r.smart_wallets_count ?? r.wallet_count;
+          const smartVol = r.smart_volume ?? r.net_size ?? r.net_yes_size;
+          const netBuyersPct = r.net_buyers_pct;
           const stats: string[] = [];
           if (smartCount != null) stats.push(`${smartCount} smart wallet${smartCount === 1 ? '' : 's'}`);
-          if (netFlow != null) stats.push(`net ${formatUsd(netFlow as number)}`);
+          if (smartVol != null) stats.push(`smart vol ${formatUsd(smartVol as number)}`);
+          if (netBuyersPct != null) stats.push(`${formatPct(netBuyersPct as number, 0)} net buyers`);
           lines.push(`${i + 1}. **${title}**${cidTag}` + (stats.length > 0 ? `\n   ${stats.join(' · ')}` : ''));
         });
         lines.push('', `_$0.005 paid via x402._`);
@@ -766,34 +885,38 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
             isError: true,
           };
         }
-        // Per-market drill-down. Official live registry:
-        // /api/v1/pm/polymarket/market/:condition_id/smart-money
+        // Per-market drill-down. Requires a smart-wallet criterion (else 400).
+        // Predexon v2 returns a single `positioning` aggregate (net buyer/
+        // seller counts + smart buy/sell volume + avg prices), NOT buyers/
+        // sellers arrays — verified live 2026-05-20.
         const path = `/v1/pm/polymarket/market/${encodeURIComponent(conditionId)}/smart-money`;
-        const data = await getWithPayment<SmartMoneyResp>(path, {}, ctx);
-        const buyers = (data.buyers ?? []).slice(0, 5);
-        const sellers = (data.sellers ?? []).slice(0, 5);
+        const data = await getWithPayment<SmartMoneyResp>(path, {
+          min_total_pnl: DEFAULT_SMART_MIN_TOTAL_PNL,
+        }, ctx);
+        const pos = data.positioning;
+        if (!pos || typeof pos !== 'object') {
+          return { output: `No smart-money positioning recorded for \`${conditionId.slice(0, 14)}…\` yet.` };
+        }
         const lines: string[] = [
-          `## Smart money — \`${conditionId.slice(0, 14)}…\``,
+          `## Smart money — ${pos.title ?? `\`${conditionId.slice(0, 14)}…\``}`,
         ];
-        if (data.net_yes_size != null || data.net_no_size != null) {
-          lines.push(`**Net flow:** YES ${formatUsd(data.net_yes_size)} / NO ${formatUsd(data.net_no_size)}`);
-        }
-        if (buyers.length > 0) {
-          lines.push('', '**Top buyers**');
-          buyers.forEach((b, i) => {
-            const w = b.wallet ? `${b.wallet.slice(0, 8)}…${b.wallet.slice(-4)}` : 'unknown';
-            lines.push(`${i + 1}. ${w} — ${formatUsd(b.size)} on ${b.outcome ?? 'unknown side'}`);
-          });
-        }
-        if (sellers.length > 0) {
-          lines.push('', '**Top sellers**');
-          sellers.forEach((s, i) => {
-            const w = s.wallet ? `${s.wallet.slice(0, 8)}…${s.wallet.slice(-4)}` : 'unknown';
-            lines.push(`${i + 1}. ${w} — ${formatUsd(s.size)} on ${s.outcome ?? 'unknown side'}`);
-          });
-        }
-        if (buyers.length === 0 && sellers.length === 0) {
-          lines.push('No smart-money flow recorded for this market yet.');
+        const head: string[] = [];
+        if (pos.smart_wallet_count != null) head.push(`${pos.smart_wallet_count} smart wallets`);
+        if (pos.net_buyers != null && pos.net_sellers != null) head.push(`${pos.net_buyers} buyers / ${pos.net_sellers} sellers`);
+        if (pos.net_buyers_pct != null) head.push(`${formatPct(pos.net_buyers_pct, 0)} net buyers`);
+        if (head.length > 0) lines.push(head.join(' · '));
+        const flow: string[] = [];
+        if (pos.total_smart_buy_volume != null) flow.push(`buy ${formatUsd(pos.total_smart_buy_volume)}`);
+        if (pos.total_smart_sell_volume != null) flow.push(`sell ${formatUsd(pos.total_smart_sell_volume)}`);
+        if (pos.avg_smart_buy_price != null) flow.push(`avg buy ${formatPct(pos.avg_smart_buy_price)}`);
+        if (pos.avg_smart_sell_price != null) flow.push(`avg sell ${formatPct(pos.avg_smart_sell_price)}`);
+        if (flow.length > 0) lines.push('', `**Smart flow:** ${flow.join(' · ')}`);
+        if (pos.total_smart_realized_pnl != null || pos.avg_smart_roi != null) {
+          const perf: string[] = [];
+          if (pos.total_smart_realized_pnl != null) perf.push(`realized P&L ${formatUsd(pos.total_smart_realized_pnl)}`);
+          if (pos.avg_smart_roi != null) perf.push(`avg ROI ${formatPct(pos.avg_smart_roi, 1)}`);
+          if (pos.avg_smart_win_rate != null) perf.push(`win ${formatPct(pos.avg_smart_win_rate, 0)}`);
+          lines.push(`**Smart performance:** ${perf.join(' · ')}`);
         }
         lines.push('', `_$0.005 paid via x402._`);
         return { output: lines.join('\n') };
@@ -802,7 +925,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       case 'searchPolymarket': {
         const raw = await getWithPayment<unknown>('/v1/pm/polymarket/markets', {
           search,
-          status: status ?? 'active',
+          status: normalizeMarketStatus(status) ?? 'open',
           sort: sort ?? 'volume',
           limit: cappedLimit,
         }, ctx);
@@ -818,14 +941,29 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           '',
         ];
         markets.forEach((m, i) => {
-          const yesPx = m.outcomes && m.outcome_prices && m.outcomes.length === m.outcome_prices.length
-            ? m.outcomes.map((o, j) => `${o}=${formatPct(m.outcome_prices![j])}`).join(' / ')
-            : 'n/a';
-          const cid = m.condition_id ? ` · condition_id=\`${m.condition_id.slice(0, 14)}…\`` : '';
+          // Prices: Predexon v2 nests each outcome as {label, price} inside
+          // `outcomes`. Fall back to the legacy parallel `outcomes[]` (strings)
+          // + `outcome_prices[]` shape if a gateway version still returns it.
+          let yesPx = 'n/a';
+          if (Array.isArray(m.outcomes) && m.outcomes.length > 0 && typeof m.outcomes[0] === 'object') {
+            const outs = m.outcomes as PolymarketOutcome[];
+            const parts = outs
+              .filter(o => o && o.price != null)
+              .map(o => `${o.label ?? '?'}=${formatPct(o.price)}`);
+            if (parts.length > 0) yesPx = parts.join(' / ');
+          } else if (Array.isArray(m.outcomes) && Array.isArray(m.outcome_prices) && m.outcomes.length === m.outcome_prices.length) {
+            yesPx = (m.outcomes as string[]).map((o, j) => `${o}=${formatPct(m.outcome_prices![j])}`).join(' / ');
+          }
+          const vol = m.total_volume_usd ?? m.volume;
+          const liq = m.liquidity_usd ?? m.liquidity;
+          const end = m.end_time ?? m.close_time ?? m.end_date;
+          // Full condition_id (NOT truncated) — the agent chains it into
+          // smartMoney; a truncated id 404s. Verified live 2026-05-20.
+          const cid = m.condition_id ? ` · condition_id=\`${m.condition_id}\`` : '';
           lines.push(
-            `${i + 1}. **${m.question || m.market_slug || 'untitled'}**${cid}\n` +
-            `   prices: ${yesPx} · vol: ${formatUsd(m.volume)} · liq: ${formatUsd(m.liquidity)}` +
-            (m.end_date ? ` · ends ${m.end_date.slice(0, 10)}` : '')
+            `${i + 1}. **${m.title || m.question || m.market_slug || 'untitled'}**${cid}\n` +
+            `   prices: ${yesPx} · vol: ${formatUsd(vol)} · liq: ${formatUsd(liq)}` +
+            (end ? ` · ends ${String(end).slice(0, 10)}` : '')
           );
         });
         lines.push('', `_$0.001 paid via x402._`);
@@ -835,7 +973,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       case 'searchKalshi': {
         const raw = await getWithPayment<unknown>('/v1/pm/kalshi/markets', {
           search,
-          status: status ?? 'open',
+          status: normalizeMarketStatus(status) ?? 'open',
           sort: sort ?? 'volume',
           limit: cappedLimit,
         }, ctx);
@@ -850,15 +988,20 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           '',
         ];
         markets.forEach((m, i) => {
-          // Kalshi quotes prices in cents (0–100). Surface them as a tight
-          // bid/ask so the agent can read implied probability at a glance.
-          const bid = m.yes_bid != null ? `${m.yes_bid}¢` : 'n/a';
-          const ask = m.yes_ask != null ? `${m.yes_ask}¢` : 'n/a';
+          // Predexon v2 gives a single `last_price` (0–1 probability), not the
+          // yes_bid/yes_ask cents this once assumed. Render it as an implied
+          // YES %; fall back to legacy bid/ask if a gateway version sends them.
+          let yes = 'n/a';
+          if (m.last_price != null) {
+            yes = formatPct(m.last_price);
+          } else if (m.yes_bid != null || m.yes_ask != null) {
+            yes = `${m.yes_bid ?? '?'}¢/${m.yes_ask ?? '?'}¢`;
+          }
           const ticker = m.ticker ? ` · ticker=\`${m.ticker}\`` : '';
           lines.push(
             `${i + 1}. **${m.title || m.ticker || 'untitled'}**${ticker}\n` +
-            `   yes ${bid}/${ask} · vol: ${m.volume?.toLocaleString() ?? 'n/a'} · OI: ${m.open_interest?.toLocaleString() ?? 'n/a'}` +
-            (m.close_time ? ` · closes ${m.close_time.slice(0, 10)}` : '')
+            `   yes ${yes} · vol: ${m.volume?.toLocaleString() ?? 'n/a'} · OI: ${m.open_interest?.toLocaleString() ?? 'n/a'}` +
+            (m.close_time ? ` · closes ${String(m.close_time).slice(0, 10)}` : '')
           );
         });
         lines.push('', `_$0.001 paid via x402._`);
@@ -879,13 +1022,27 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           '',
         ];
         pairs.forEach((p, i) => {
+          // Venues are nested UPPERCASE sub-objects in Predexon v2. pickString
+          // walks the sub-object's name keys (title/slug/...), so passing the
+          // whole `POLYMARKET` / `KALSHI` object resolves the title regardless
+          // of which name-bearing key is populated. Flat legacy fields are
+          // passed as fallbacks.
+          const poly = p.POLYMARKET ?? undefined;
+          const kalshi = p.KALSHI ?? undefined;
+          const polyTitle = pickString(poly, p.polymarket_question) ?? '(untitled)';
+          const kalshiTitle = pickString(kalshi, p.kalshi_title);
+          const ticker = (kalshi && kalshi.market_ticker) || p.kalshi_ticker;
           const sim = p.similarity != null ? ` · similarity ${formatPct(p.similarity, 0)}` : '';
-          lines.push(
-            `${i + 1}. **Polymarket:** ${p.polymarket_question || '(untitled)'}\n` +
-            `   **Kalshi:** ${p.kalshi_title || '(untitled)'}` +
-            (p.kalshi_ticker ? ` · ticker=\`${p.kalshi_ticker}\`` : '') +
-            sim
-          );
+          lines.push(`${i + 1}. **Polymarket:** ${polyTitle}`);
+          if (kalshi) {
+            lines.push(
+              `   **Kalshi:** ${kalshiTitle ?? '(untitled)'}` +
+              (ticker ? ` · ticker=\`${ticker}\`` : '') +
+              sim
+            );
+          } else {
+            lines.push(`   _(no Kalshi match)_${sim}`);
+          }
         });
         lines.push('', `_$0.005 paid via x402._`);
         return { output: lines.join('\n') };
@@ -950,7 +1107,7 @@ export const predictionMarketCapability: CapabilityHandler = {
         },
         status: {
           type: 'string',
-          description: 'Polymarket: active | closed | archived (default active). Kalshi: open | closed (default open). Forwarded to searchAll where supported.',
+          description: 'Market status filter — Predexon accepts `open` or `closed` for Polymarket, Kalshi, and searchAll alike (default `open`). Synonyms like `active`/`archived` are normalized automatically.',
         },
         sort: {
           type: 'string',
