@@ -1,5 +1,57 @@
 # Changelog
 
+## Franklin Agent 3.21.7 — PredictionMarket schema realignment + 400/422 in agent-loop retry guard
+
+External contributor [@KillerQueen-Z](https://github.com/KillerQueen-Z)
+landed [PR #62](https://github.com/BlockRunAI/Franklin/pull/62) fixing
+9 distinct bugs across all 10 PredictionMarket actions, plus a small
+but load-bearing agent-loop change.
+
+The PredictionMarket tool was modeled on the public Polymarket Gamma /
+Kalshi API conventions, but the data actually comes from Predexon's
+normalized v2 schema behind the BlockRun gateway. Hand-written types
+cast from \`unknown\` gave no compile-time signal, so every field /
+param mismatch was invisible until a live call. Every action realigned
+to the real schema, verified against \`openapi-v2.json\` and live
+gateway responses on 2026-05-20.
+
+### Bugs fixed
+
+| # | Action | Symptom | Root cause |
+|---|---|---|---|
+| 1 | searchPolymarket | 422 every call | \`status\` defaulted to \`active\`; Predexon enum is \`{open, closed}\` |
+| 2 | searchPolymarket / searchKalshi | all metrics \`n/a\` | wrong field names (\`total_volume_usd\` / \`liquidity_usd\` / \`outcomes[].price\` for PM; \`last_price\` for Kalshi) |
+| 3 | crossPlatform | blank titles | venues are UPPERCASE nested objects (\`POLYMARKET\`/\`KALSHI{title}\`) |
+| 4 | leaderboard | "no data" + n/a | rows under \`entries\`, stats under \`metrics.*\`, address is \`user\`; \`sort\` should be \`sort_by\` enum |
+| 5 | smartActivity | 400 every call | requires ≥1 smart-wallet criterion; field is \`smart_wallet_count\` |
+| 6 | smartMoney | 400 → wrong shape | requires criterion; response is a single \`positioning\` aggregate, not buyers/sellers arrays |
+| 7 | smartMoney | 404 when chained | \`condition_id\` was truncated to 14 chars in search output, so chained calls saw a partial id |
+| 8 | searchAll / searchKalshi | status synonyms rejected | \`active\` normalization missing |
+| 9 | agent loop | spun to 50-call cap on Predexon 422 | external-wall guard didn't treat 400/422 as retry-useless, and 422 isn't billed so the cost guard stayed idle |
+
+### Agent loop fix
+
+The \`EXTERNAL_WALL_FAILURE_PATTERN\` regex now also matches HTTP \`400\`
+and \`422\` — semantically "the same bad payload won't recover by
+hammering the endpoint." Caught a real failure mode where a Predexon
+422 (\`status=active\` enum mismatch) wasn't charged (cost guard idle)
+and wasn't matched as a wall (retry guard idle), so the agent spun to
+the 50-call \`HARD_TOOL_CAP\` before stopping. \`404\` deliberately stays
+out of the pattern — it's a legitimate "retry with a different query"
+signal, not a wall.
+
+### Verified live, not just compiled
+
+The PR author re-ran the 4 article-example workflows (compare Fed-cut
+odds, leaderboard read, smart-activity, smart-money) end-to-end
+through \`franklin start -p\`. Before this fix, the simple
+"Polymarket vs Kalshi spread" workflow was 422'ing or returning \`n/a\`
+and sometimes pushing the agent into a runaway loop costing ~\$0.30.
+After: real volumes, implied odds, and the 1.8% vs ~5% arbitrage read
+land in the agent's output.
+
+405/405 tests still pass.
+
 ## Franklin Agent 3.21.6 — VoiceCall: voicemail controls
 
 External contributor [@KillerQueen-Z](https://github.com/KillerQueen-Z)
