@@ -1,5 +1,46 @@
 # Changelog
 
+## Franklin Agent 3.21.8 — strip RealFace from VideoGen (upstream pulled the surface)
+
+Regression fix following BlockRun gateway commit
+[`f527c3b`](https://github.com/BlockRunAI/blockrun/commit/f527c3b) —
+"drop real-person video entirely." KYC at the upstream verification
+provider conflicts with BlockRun's wallet-only stance, so the gateway
+no longer accepts `real_face_asset_id` as a body field on
+`/v1/videos/generations`. Calls with it now 400.
+
+Franklin shipped `real_face_asset_id` support in v3.21.2 (matching the
+then-active gateway commit `b86d5e9`). That parameter is now gone
+upstream. Stripping from `VideoGen`:
+
+- Drop `real_face_asset_id` from `VideoGenInput` interface
+- Drop `REAL_FACE_ASSET_ID_REGEX` and `REAL_FACE_MODELS` constants
+- Drop the format / model-gate / image_url-mutex validation block
+- Drop the body-forwarding line
+- Drop the `real_face_asset_id` entry from `input_schema.properties`
+
+Net change: about 50 LOC removed, zero new behaviour. Existing video
+calls without `real_face_asset_id` are unaffected.
+
+Other upstream Seedance changes since v3.21.2 that **don't** require a
+Franklin code change yet but are worth knowing:
+
+- Gateway now defaults Seedance to **720p + audio** server-side (commit
+  `e6dc1f1`). Cost-per-call goes up unless the caller explicitly passes
+  a lower resolution. Franklin's `VideoGen` tool doesn't yet expose
+  `resolution` / `generate_audio` as input fields — could be added
+  later if users want cost control.
+- Gateway gained optional `generate_audio` / `resolution` / `seed` /
+  `watermark` / `return_last_frame` body fields (commit `4564119`). Not
+  yet surfaced through Franklin; deferred to a separate plan.
+
+For Token360's RealFace path going forward: BlockRun's docs at
+`/docs/video/real-person-ip` walk users through enrollment + `ta_xxxx`
+asset id, then the user calls Token360 directly. Not something Franklin
+should re-add as long as the gateway stays wallet-only.
+
+405/405 tests still pass.
+
 ## Franklin Agent 3.21.7 — PredictionMarket schema realignment + 400/422 in agent-loop retry guard
 
 External contributor [@KillerQueen-Z](https://github.com/KillerQueen-Z)

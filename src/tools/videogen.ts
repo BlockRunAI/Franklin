@@ -49,16 +49,7 @@ interface VideoGenInput {
   duration_seconds?: number;
   contentId?: string;
   aspect_ratio?: string;
-  real_face_asset_id?: string;
 }
-
-// BytePlus RealFace asset IDs from token360 Asset UI (after H5 verification).
-// Format: `ta_` + alphanumeric.
-const REAL_FACE_ASSET_ID_REGEX = /^ta_[A-Za-z0-9]+$/;
-const REAL_FACE_MODELS = new Set([
-  'bytedance/seedance-2.0',
-  'bytedance/seedance-2.0-fast',
-]);
 
 export interface VideoGenDeps {
   library?: ContentLibrary;
@@ -86,34 +77,9 @@ function buildExecute(deps: VideoGenDeps) {
     ctx: ExecutionScope,
   ): Promise<CapabilityResult> {
     const rawInput = input as unknown as VideoGenInput;
-    const { output_path, model, image_url, duration_seconds, contentId, aspect_ratio, real_face_asset_id } = rawInput;
+    const { output_path, model, image_url, duration_seconds, contentId, aspect_ratio } = rawInput;
 
     if (!rawInput.prompt) return { output: 'Error: prompt is required', isError: true };
-
-    // RealFace asset client-side validations (the gateway 400s on the same
-    // conditions but a local check is friendlier — and the rejected request
-    // doesn't burn an x402 round-trip).
-    if (real_face_asset_id !== undefined) {
-      if (typeof real_face_asset_id !== 'string' || !REAL_FACE_ASSET_ID_REGEX.test(real_face_asset_id)) {
-        return {
-          output: `Error: real_face_asset_id must match "ta_<alphanumeric>" (e.g. ta_abc123). Got: ${JSON.stringify(real_face_asset_id)}`,
-          isError: true,
-        };
-      }
-      const chosenModel = model || DEFAULT_MODEL;
-      if (!REAL_FACE_MODELS.has(chosenModel)) {
-        return {
-          output: `Error: real_face_asset_id is only supported on Seedance 2.0 variants (${[...REAL_FACE_MODELS].join(', ')}). Current model: ${chosenModel}.`,
-          isError: true,
-        };
-      }
-      if (image_url) {
-        return {
-          output: 'Error: real_face_asset_id and image_url both seed the first frame — pick one. Drop image_url to use RealFace, or drop real_face_asset_id to use the image.',
-          isError: true,
-        };
-      }
-    }
 
     // Resolve image_url before sending. The gateway requires a URL (http(s)
     // or data: URI), but agents naturally pass a local file path —
@@ -235,10 +201,6 @@ function buildExecute(deps: VideoGenDeps) {
       // value, the 400 body surfaces via 3.15.45 diagnostic so the agent
       // can drop the param and retry.
       ...(aspect_ratio ? { aspect_ratio } : {}),
-      // RealFace (BytePlus, Seedance 2.0 only) — seeds the first frame from
-      // a real-person asset for cross-frame character consistency. Client
-      // already validated the ID + model gate above; just pass through.
-      ...(real_face_asset_id ? { real_face_asset_id } : {}),
     });
 
     const headers: Record<string, string> = {
@@ -637,15 +599,6 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
               'error body surfaces — drop the param and retry.',
           },
           contentId: { type: 'string', description: 'Optional Content id to attach and budget against.' },
-          real_face_asset_id: {
-            type: 'string',
-            description:
-              'Optional BytePlus RealFace asset id (format `ta_<alphanumeric>`) for cross-frame ' +
-              'character consistency. Users get asset IDs from token360\'s Asset UI after H5 ' +
-              'verification. Seedance 2.0 variants only (bytedance/seedance-2.0, ' +
-              'bytedance/seedance-2.0-fast). Mutually exclusive with image_url — both seed the ' +
-              'first frame; pick one.',
-          },
         },
         required: ['prompt'],
       },
