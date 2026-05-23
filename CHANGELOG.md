@@ -1,5 +1,34 @@
 # Changelog
 
+## Franklin Agent 3.21.9 — VoiceCall: expose interruption_threshold + model controls
+
+External contributor [@BeneficialVast1048](https://github.com/BeneficialVast1048)
+shipped [PR #66](https://github.com/BlockRunAI/Franklin/pull/66)
+closing [#65](https://github.com/BlockRunAI/Franklin/issues/65) (filed
+by [@KillerQueen-Z](https://github.com/KillerQueen-Z)) — adds two
+optional pass-throughs to the `VoiceCall` tool that the BlockRun
+gateway already accepts but Franklin wasn't surfacing:
+
+| Field | Range / values | What it controls |
+|---|---|---|
+| `interruption_threshold` | integer 50–500 (ms) | How long the AI waits before talking over the recipient. Lower = more polite, higher = AI dominates the call. One of the biggest factors in whether the call feels natural vs rude. |
+| `model` | `base` / `enhanced` / `turbo` | Bland model tier — trades latency, quality, cost. |
+
+PR also tidies the body-building into a reusable `buildVoiceCallBody()`
+helper so any future pass-through field lands in one obvious place
+instead of being scattered between schema + execute. Test covers the
+new fields and the refactor.
+
+Both fields are optional and only forwarded when provided, so existing
+VoiceCall invocations are completely unchanged.
+
+**Gateway support verified** — probed `/v1/voice/call` with both new
+fields, got past `.strict()` schema validation (hit the `task` length
+check, proving unknown-field rejection didn't fire). Cross-checked
+against `blockrun/src/lib/bland.ts:39-40`.
+
+406/406 tests pass (one new VoiceCall regression).
+
 ## Franklin Agent 3.21.8 — strip RealFace from VideoGen (upstream pulled the surface)
 
 Regression fix following BlockRun gateway commit
