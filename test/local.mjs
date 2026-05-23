@@ -9540,6 +9540,35 @@ test('journal-display: renderDisciplineFooter flags components below 3.0', async
 // Append-only with multiple rows per call_id so concurrent status polls don't
 // race. summary() picks the latest row per call_id.
 
+test('VoiceCall: exposes and forwards interruption/model controls', async () => {
+  const { buildVoiceCallBody, voiceCallCapability } = await import('../dist/tools/voice.js');
+  const props = voiceCallCapability.spec.input_schema.properties;
+
+  assert.equal(props.interruption_threshold.type, 'integer');
+  assert.equal(props.interruption_threshold.minimum, 50);
+  assert.equal(props.interruption_threshold.maximum, 500);
+  assert.deepEqual(props.model.enum, ['base', 'enhanced', 'turbo']);
+
+  const body = buildVoiceCallBody({
+    to: '+14155552671',
+    from: '+15705550123',
+    task: 'Confirm the appointment time and end the call politely.',
+    voice: 'maya',
+    interruption_threshold: 120,
+    model: 'turbo',
+    unexpected: 'ignored',
+  });
+
+  assert.deepEqual(body, {
+    to: '+14155552671',
+    from: '+15705550123',
+    task: 'Confirm the appointment time and end the call politely.',
+    voice: 'maya',
+    interruption_threshold: 120,
+    model: 'turbo',
+  });
+});
+
 test('CallLog: append + read round-trip preserves all fields', async () => {
   const { CallLog } = await import('../dist/phone/call-log.js');
   const tmpFile = join(mkdtempSync(join(tmpdir(), 'franklin-calls-')), 'calls.jsonl');

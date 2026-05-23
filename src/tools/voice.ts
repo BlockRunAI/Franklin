@@ -222,6 +222,26 @@ async function extractPaymentReq(response: Response): Promise<string | null> {
 
 // ─── Tools ─────────────────────────────────────────────────────────────────
 
+export function buildVoiceCallBody(input: Record<string, unknown>): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    to: input.to,
+    from: input.from,
+    task: input.task,
+  };
+  // The gateway validates additionalProperties: false - only forward known
+  // optional fields, don't echo back whatever the caller passed.
+  if (typeof input.voice === 'string') body.voice = input.voice;
+  if (typeof input.max_duration === 'number') body.max_duration = input.max_duration;
+  if (typeof input.language === 'string') body.language = input.language;
+  if (typeof input.first_sentence === 'string') body.first_sentence = input.first_sentence;
+  if (typeof input.wait_for_greeting === 'boolean') body.wait_for_greeting = input.wait_for_greeting;
+  if (typeof input.voicemail_action === 'string') body.voicemail_action = input.voicemail_action;
+  if (typeof input.voicemail_message === 'string') body.voicemail_message = input.voicemail_message;
+  if (typeof input.interruption_threshold === 'number') body.interruption_threshold = input.interruption_threshold;
+  if (typeof input.model === 'string') body.model = input.model;
+  return body;
+}
+
 export const voiceCallCapability: CapabilityHandler = {
   spec: {
     name: 'VoiceCall',
@@ -297,6 +317,18 @@ export const voiceCallCapability: CapabilityHandler = {
             'The message to leave when voicemail_action is "leave_message" (≤1000 chars). ' +
             'Voicemail is one-way — this is spoken once as a monologue, there is no back-and-forth.',
         },
+        interruption_threshold: {
+          type: 'integer',
+          minimum: 50,
+          maximum: 500,
+          description:
+            'Milliseconds of recipient speech before the agent pauses to listen (50-500).',
+        },
+        model: {
+          type: 'string',
+          enum: ['base', 'enhanced', 'turbo'],
+          description: 'Call model tier to use for the conversation.',
+        },
       },
       required: ['to', 'from', 'task'],
     },
@@ -308,20 +340,7 @@ export const voiceCallCapability: CapabilityHandler = {
       return { output: 'task required (10–4000 chars natural-language description)', isError: true };
     }
 
-    const body: Record<string, unknown> = {
-      to: input.to,
-      from: input.from,
-      task: input.task,
-    };
-    // The gateway validates additionalProperties: false — only forward known
-    // optional fields, don't echo back whatever the caller passed.
-    if (typeof input.voice === 'string') body.voice = input.voice;
-    if (typeof input.max_duration === 'number') body.max_duration = input.max_duration;
-    if (typeof input.language === 'string') body.language = input.language;
-    if (typeof input.first_sentence === 'string') body.first_sentence = input.first_sentence;
-    if (typeof input.wait_for_greeting === 'boolean') body.wait_for_greeting = input.wait_for_greeting;
-    if (typeof input.voicemail_action === 'string') body.voicemail_action = input.voicemail_action;
-    if (typeof input.voicemail_message === 'string') body.voicemail_message = input.voicemail_message;
+    const body = buildVoiceCallBody(input);
 
     try {
       const res = await postWithPayment<Record<string, unknown>>(
