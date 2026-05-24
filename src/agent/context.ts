@@ -317,8 +317,10 @@ On-chain affiliate (20 bps in sell-token, force-set server-side) flows to BlockR
 - US/CA destinations only. Marketing/sales calls require prior express consent (TCPA).
 
 **Surf — crypto data + chat (x402-paid)** via the generic \`BlockRun\` capability. ~55 curated endpoints. Tier-1 $0.001, Tier-2 $0.005, Tier-3 / chat $0.02.
-- \`/v1/surf/exchange/*\` — CEX trading pairs, prices, perps, depth, klines, funding history, long/short ratio.
-- \`/v1/surf/market/*\` — token rankings, fear/greed, futures, ETF flows, options skew, liquidations, on-chain indicators (NUPL/SOPR/MVRV), price indicators (RSI/MACD/BBANDS).
+- \`/v1/surf/market/ranking\` — token rankings (market cap, volume, change). **This is the token-ranking endpoint — there is no \`market/token-ranking\` or \`market/concept-ranking\`.**
+- \`/v1/surf/market/fear-greed\` — Fear & Greed index. \`market/futures\` — futures overview. \`market/price\` (needs \`symbol\`) — price history. \`market/etf\` (needs \`symbol\`) — spot ETF flows. \`market/options\` (needs \`symbol\`) — options skew/IV.
+- \`/v1/surf/market/{liquidation/chart,liquidation/order,onchain-indicator,price-indicator}\` — liquidations, on-chain indicators (NUPL/SOPR/MVRV), technical indicators (RSI/MACD/BBANDS). Tier-2 $0.005.
+- \`/v1/surf/exchange/{price,perp,markets,depth,klines,funding-history}\` — CEX ticker, perps, pairs catalog, depth, klines, funding.
 - \`/v1/surf/news/{feed,detail}\` — AI-curated crypto news.
 - \`/v1/surf/onchain/{bridge,yield,gas-price,tx,schema,query,sql}\` — bridge/yield rankings, gas, tx detail, **raw SQL against 80+ indexed chain tables (Tier-3, $0.02)**, structured chain query, schema introspection.
 - \`/v1/surf/token/{tokenomics,dex-trades,holders,transfers}\` — token analytics.
@@ -327,7 +329,7 @@ On-chain affiliate (20 bps in sell-token, force-set server-side) flows to BlockR
 - \`/v1/surf/fund/{detail,portfolio,ranking}\` — VC fund profiles, portfolios, ranking.
 - \`/v1/surf/project/{detail,defi/metrics,defi/ranking}\` — project profiles + DeFi protocol metrics.
 
-For Surf workflows, prefer the bundled skills (\`/surf-market\`, \`/surf-chain\`, \`/surf-social\`) — they document which endpoint to pick for which question and the cost trade-off. Skipped (use the dedicated tools instead): \`/v1/surf/prediction-market/*\` (use \`PredictionMarket\`), \`/v1/surf/search/*\` (use \`ExaSearch\`), \`/v1/surf/web/*\` (use \`BrowserX\`). The Surf chat surface (\`/v1/surf/chat/completions\`, surf-1.5) is **not currently exposed** by the BlockRun gateway — removed from the registry pending an upstream redesign around per-token billing. Do not attempt to call it; use the data endpoints above for crypto context, or any of the standard LLMs on \`/v1/chat/completions\` for general chat.
+**Endpoint discovery**: if you are unsure of the exact Surf path, do NOT guess blindly — any wrong \`/v1/surf/...\` path returns a 404 whose body lists every valid endpoint under \`available\`. Read that list and retry with a real path. The bundled skills (\`/surf-market\`, \`/surf-chain\`, \`/surf-social\`) also document which endpoint to pick for which question and the cost trade-off. Skipped (use the dedicated tools instead): \`/v1/surf/prediction-market/*\` (use \`PredictionMarket\`), \`/v1/surf/search/*\` (use \`ExaSearch\`), \`/v1/surf/web/*\` (use \`BrowserX\`). The Surf chat surface (\`/v1/surf/chat/completions\`, surf-1.5) is **not currently exposed** by the BlockRun gateway — removed from the registry pending an upstream redesign around per-token billing. Do not attempt to call it; use the data endpoints above for crypto context, or any of the standard LLMs on \`/v1/chat/completions\` for general chat.
 
 **Generic gateway primitive**: \`BlockRun({ path, method, params, body })\` is a single capability that signs x402 and forwards to ANY path under \`/api\`. Use it for Surf endpoints (above) and any future BlockRun partner that doesn't have a dedicated capability yet. Always specify the exact path; the primitive will not guess.
 

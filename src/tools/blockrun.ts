@@ -317,12 +317,21 @@ export const blockrunCapability: CapabilityHandler = {
     } catch { /* best-effort */ }
 
     if (!result.ok) {
-      const detail = typeof (result.body as Record<string, unknown>)?.error === 'string'
-        ? (result.body as { error: string }).error
-        : `HTTP ${result.status}`;
+      const b = result.body as Record<string, unknown>;
+      const detail = typeof b?.error === 'string' ? b.error : `HTTP ${result.status}`;
       const fullOutput = result.raw || JSON.stringify(result.body, null, 2);
+      // Surface the gateway's self-correction hints into the model-visible
+      // output. On a wrong path the Surf route returns `available: [...all
+      // valid paths]` (and often a `message`); without this the model only
+      // saw "Not Found" and kept guessing until the tool-failure circuit
+      // breaker tripped. The list comes straight from the live registry, so
+      // it's always complete and in sync — no drift.
+      const hint = typeof b?.message === 'string' ? `\n${b.message}` : '';
+      const avail = Array.isArray(b?.available)
+        ? `\nValid endpoints: ${(b.available as unknown[]).filter((x) => typeof x === 'string').join(', ')}`
+        : '';
       return {
-        output: `BlockRun ${method} ${path} failed: ${detail} (status ${result.status}). No charge if status is 4xx pre-payment.`,
+        output: `BlockRun ${method} ${path} failed: ${detail} (status ${result.status}). No charge if status is 4xx pre-payment.${hint}${avail}`,
         fullOutput,
         isError: true,
       };
