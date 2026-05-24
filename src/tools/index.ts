@@ -44,6 +44,7 @@ import { predictionMarketCapability } from './prediction.js';
 import { modalCapabilities } from './modal.js';
 import { blockrunCapability } from './blockrun.js';
 import { surfCapabilities } from './surf.js';
+import { realFaceCapability } from './realface.js';
 import {
   listPhoneNumbersCapability,
   buyPhoneNumberCapability,
@@ -210,6 +211,7 @@ export const allCapabilities: CapabilityHandler[] = [
   phoneFraudCheckCapability,     // PhoneFraudCheck  — $0.05
   voiceCallCapability,           // VoiceCall        — $0.54 / call (Bland.ai)
   voiceStatusCapability,         // VoiceStatus      — free (poll)
+  realFaceCapability,            // RealFace — init/status/enroll/list; $0.01 enroll → ta_xxx avatar for VideoGen
   // Modal GPU sandbox tools — registered but hidden by default (not in
   // CORE_TOOL_NAMES). Agent must `ActivateTool({names:["ModalCreate",...]})`
   // before they appear in its tool inventory. High-cost ($0.40/H100 create)
