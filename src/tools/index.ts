@@ -43,6 +43,7 @@ import {
 import { predictionMarketCapability } from './prediction.js';
 import { modalCapabilities } from './modal.js';
 import { blockrunCapability } from './blockrun.js';
+import { surfCapabilities } from './surf.js';
 import {
   listPhoneNumbersCapability,
   buyPhoneNumberCapability,
@@ -195,7 +196,8 @@ export const allCapabilities: CapabilityHandler[] = [
   defiLlamaYieldsCapability,
   defiLlamaPriceCapability,
   predictionMarketCapability, // Polymarket / Kalshi / matching / smart money via Predexon
-  blockrunCapability, // Generic x402-paid gateway primitive — Surf, future partners (see /surf-* skills)
+  blockrunCapability, // Generic x402-paid gateway primitive — future partners + long-tail Surf paths
+  ...surfCapabilities, // SurfMarket / SurfChain / SurfSocial — endpoint-enum function tools (no path guessing, auto x402)
   // Phone & Voice — typed surface so the agent pattern-matches on the user
   // intent ("buy a number", "make a call") without needing to consult the
   // BlockRun primitive or the .well-known/x402 manifest. All wrap the same
