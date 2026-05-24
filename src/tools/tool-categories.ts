@@ -50,6 +50,13 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   // category. Cross-platform pair lookup is unique to the gateway and
   // is the kind of data a non-wallet agent fundamentally cannot reach.
   'PredictionMarket',
+  // Crypto market data — fear/greed, token rankings, ETF flows, options,
+  // liquidations, technical & on-chain indicators. The "what's the crypto
+  // mood / which coins are pumping / BTC's RSI" category. Core so the agent
+  // reaches for it on natural crypto questions instead of falling back to
+  // TradingMarket prices + guessing the Fear & Greed index. SurfChain /
+  // SurfSocial stay activation-gated (lower-frequency, long-tail surface).
+  'SurfMarket',
   // Research — synthesized answers with real citations, semantic web
   // search, and clean URL fetching. Any factual current-events question
   // ("why did X drop?") should route here rather than the model's prior.
