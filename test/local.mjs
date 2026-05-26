@@ -3379,14 +3379,34 @@ test('estimateImageCostUsd: dall-e-3 wide/tall formats are $0.08', async () => {
   assert.equal(estimateImageCostUsd('openai/dall-e-3', '1024x1792'), 0.08);
 });
 
-test('estimateImageCostUsd: gpt-image-1 1024x1024 is $0.042', async () => {
+test('estimateImageCostUsd: gpt-image-1 mirrors gateway base prices by size', async () => {
   const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
-  assert.equal(estimateImageCostUsd('openai/gpt-image-1', '1024x1024'), 0.042);
+  // Base prices from blockrun src/lib/models.ts IMAGE_MODELS.
+  assert.equal(estimateImageCostUsd('openai/gpt-image-1', '1024x1024'), 0.02);
+  assert.equal(estimateImageCostUsd('openai/gpt-image-1', '1536x1024'), 0.04);
+  assert.equal(estimateImageCostUsd('openai/gpt-image-1', '1024x1536'), 0.04);
+});
+
+test('estimateImageCostUsd: gpt-image-2 and Google edit models are priced by size', async () => {
+  const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
+  assert.equal(estimateImageCostUsd('openai/gpt-image-2', '1024x1024'), 0.06);
+  assert.equal(estimateImageCostUsd('openai/gpt-image-2', '1536x1024'), 0.12);
+  assert.equal(estimateImageCostUsd('google/nano-banana', '1024x1024'), 0.05);
+  assert.equal(estimateImageCostUsd('google/nano-banana-pro', '1024x1024'), 0.1);
+  assert.equal(estimateImageCostUsd('google/nano-banana-pro', '4096x4096'), 0.15);
+});
+
+test('estimateImageCostUsd: cost scales with n (count)', async () => {
+  const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
+  assert.equal(estimateImageCostUsd('openai/gpt-image-1', '1024x1024', 3), 0.06);
+  // Default n is 1.
+  assert.equal(estimateImageCostUsd('openai/gpt-image-2', '1024x1024'), 0.06);
 });
 
 test('estimateImageCostUsd: unknown model returns 0 (free model, no surprise charge in the report)', async () => {
   const { estimateImageCostUsd } = await import('../dist/content/image-pricing.js');
   assert.equal(estimateImageCostUsd('who/knows', '1024x1024'), 0);
+  assert.equal(estimateImageCostUsd('who/knows', '1024x1024', 4), 0);
 });
 
 // ─── Content generation vertical ──────────────────────────────────────────
@@ -5709,13 +5729,80 @@ test('imagegen: resolveReferenceImage rejects unsupported extensions and oversiz
   }
 });
 
-test('imagegen: EDIT_SUPPORTED_MODELS lists OpenAI image-edit models', async () => {
-  const { EDIT_SUPPORTED_MODELS } = await import('../dist/tools/imagegen.js');
+test('imagegen: EDIT_SUPPORTED_MODELS mirrors the gateway edit models', async () => {
+  const { EDIT_SUPPORTED_MODELS, MASK_SUPPORTED_MODELS } = await import('../dist/tools/imagegen.js');
+  // OpenAI gpt-image-* and Google Nano Banana both support image2image.
   assert.ok(EDIT_SUPPORTED_MODELS.has('openai/gpt-image-1'));
   assert.ok(EDIT_SUPPORTED_MODELS.has('openai/gpt-image-2'));
-  // Other providers can be added once the gateway wires them up.
-  assert.ok(!EDIT_SUPPORTED_MODELS.has('google/nano-banana-pro'));
+  assert.ok(EDIT_SUPPORTED_MODELS.has('google/nano-banana'));
+  assert.ok(EDIT_SUPPORTED_MODELS.has('google/nano-banana-pro'));
+  // Not an edit model.
   assert.ok(!EDIT_SUPPORTED_MODELS.has('xai/grok-imagine-image-pro'));
+  // Mask inpainting stays OpenAI-only.
+  assert.ok(MASK_SUPPORTED_MODELS.has('openai/gpt-image-1'));
+  assert.ok(MASK_SUPPORTED_MODELS.has('openai/gpt-image-2'));
+  assert.ok(!MASK_SUPPORTED_MODELS.has('google/nano-banana'));
+  assert.ok(!MASK_SUPPORTED_MODELS.has('google/nano-banana-pro'));
+});
+
+test('imagegen: IMAGE_MODEL_SIZES mirrors gateway size sets (no DALL-E 1792 sizes)', async () => {
+  const { IMAGE_MODEL_SIZES } = await import('../dist/tools/imagegen.js');
+  // gpt-image models use 1536 variants, NOT the DALL-E 3 1792 sizes — the bug
+  // this fixes is the tool advertising 1792x1024 which gpt-image rejects.
+  assert.deepEqual(IMAGE_MODEL_SIZES['openai/gpt-image-1'], ['1024x1024', '1536x1024', '1024x1536']);
+  assert.ok(!IMAGE_MODEL_SIZES['openai/gpt-image-1'].includes('1792x1024'));
+  assert.deepEqual(IMAGE_MODEL_SIZES['google/nano-banana'], ['1024x1024']);
+  assert.deepEqual(IMAGE_MODEL_SIZES['google/nano-banana-pro'], ['1024x1024', '2048x2048', '4096x4096']);
+});
+
+test('imagegen: withIndexSuffix inserts -N before the extension', async () => {
+  const { withIndexSuffix } = await import('../dist/tools/imagegen.js');
+  assert.equal(withIndexSuffix('/tmp/hero.png', 2), '/tmp/hero-2.png');
+  assert.equal(withIndexSuffix('/tmp/a/b/shot.jpeg', 1), '/tmp/a/b/shot-1.jpeg');
+  // No extension → suffix still appended.
+  assert.equal(withIndexSuffix('/tmp/noext', 3), '/tmp/noext-3');
+});
+
+test('imagegen: image2image rejects unsupported edit model, mask+google, mask+multi, fusion over cap, bad size, bad n', async () => {
+  const { createImageGenCapability } = await import('../dist/tools/imagegen.js');
+  const cap = createImageGenCapability();
+  const ctx = { workingDir: '/tmp', onAskUser: undefined };
+  const dataUri = 'data:image/png;base64,iVBORw0KGgo=';
+
+  // Reference image + a non-edit model → fail before paying.
+  let r = await cap.execute({ prompt: 'x', image_url: dataUri, model: 'zai/cogview-4' }, ctx);
+  assert.ok(r.isError);
+  assert.match(r.output, /does not support reference images/);
+
+  // Mask with a Google edit model → mask is OpenAI-only.
+  r = await cap.execute({ prompt: 'x', image_url: dataUri, mask: dataUri, model: 'google/nano-banana-pro' }, ctx);
+  assert.ok(r.isError);
+  assert.match(r.output, /does not support mask-based editing/);
+
+  // Mask with multiple source images → invalid combination.
+  r = await cap.execute({ prompt: 'x', images: [dataUri, dataUri], mask: dataUri, model: 'openai/gpt-image-1' }, ctx);
+  assert.ok(r.isError);
+  assert.match(r.output, /mask cannot be combined with multiple source images/);
+
+  // Mask without any source image.
+  r = await cap.execute({ prompt: 'x', mask: dataUri, model: 'openai/gpt-image-1' }, ctx);
+  assert.ok(r.isError);
+  assert.match(r.output, /mask requires a source image/);
+
+  // Google fusion cap is 3 → 4 images rejected.
+  r = await cap.execute({ prompt: 'x', images: [dataUri, dataUri, dataUri, dataUri], model: 'google/nano-banana-pro' }, ctx);
+  assert.ok(r.isError);
+  assert.match(r.output, /at most 3 source images/);
+
+  // Unsupported size for the model.
+  r = await cap.execute({ prompt: 'x', image_url: dataUri, model: 'openai/gpt-image-1', size: '1792x1024' }, ctx);
+  assert.ok(r.isError);
+  assert.match(r.output, /invalid size 1792x1024 for openai\/gpt-image-1/);
+
+  // n out of range.
+  r = await cap.execute({ prompt: 'x', n: 7 }, ctx);
+  assert.ok(r.isError);
+  assert.match(r.output, /n must be an integer between 1 and 4/);
 });
 
 // ─── wallet tool ──────────────────────────────────────────────────────────

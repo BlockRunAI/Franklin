@@ -39,12 +39,13 @@ export function checkImageBudget(
   contentId: string,
   model: string,
   size: string,
+  count: number = 1,
 ): { ok: true } | { ok: false; reason: string } {
   const content = library.get(contentId);
   if (!content) {
     return { ok: false, reason: `Content ${contentId} not found` };
   }
-  const cost = estimateImageCostUsd(model, size);
+  const cost = estimateImageCostUsd(model, size, count);
   if (content.spentUsd + cost > content.budgetUsd + 1e-9) {
     return {
       ok: false,

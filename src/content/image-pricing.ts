@@ -12,24 +12,45 @@
  * should be preferred — fall back to this estimate when it's missing.
  */
 
-export function estimateImageCostUsd(model: string, size: string): number {
-  const m = model.toLowerCase();
+/**
+ * Per-image base price by model + size. Mirrors the gateway's IMAGE_MODELS.sizes
+ * (blockrun src/lib/models.ts). These are base prices — the realized x402 charge
+ * adds a small markup — but they're close enough for budget tracking. Sizes not
+ * listed for a model fall back to that model's 1024x1024 tier.
+ */
+const PRICE_TABLE: Record<string, { sizes: Record<string, number>; base: number }> = {
+  'openai/dall-e-3': {
+    base: 0.04,
+    sizes: { '1024x1024': 0.04, '1792x1024': 0.08, '1024x1792': 0.08 },
+  },
+  'openai/gpt-image-1': {
+    base: 0.02,
+    sizes: { '1024x1024': 0.02, '1536x1024': 0.04, '1024x1536': 0.04 },
+  },
+  'openai/gpt-image-2': {
+    base: 0.06,
+    sizes: { '1024x1024': 0.06, '1536x1024': 0.12, '1024x1536': 0.12 },
+  },
+  'google/nano-banana': {
+    base: 0.05,
+    sizes: { '1024x1024': 0.05 },
+  },
+  'google/nano-banana-pro': {
+    base: 0.1,
+    sizes: { '1024x1024': 0.1, '2048x2048': 0.1, '4096x4096': 0.15 },
+  },
+};
+
+/**
+ * Estimate the USD cost of `n` images for a model + size. `n` defaults to 1.
+ * Unknown models return 0 rather than a guess — a free/custom model should not
+ * carry a phantom charge against the Content budget, and surprise overcharging
+ * from a wrong guess is worse than under-counting.
+ */
+export function estimateImageCostUsd(model: string, size: string, n: number = 1): number {
+  const entry = PRICE_TABLE[model.toLowerCase()];
+  if (!entry) return 0;
   const s = size.replace(/\s+/g, '');
-
-  if (m === 'openai/dall-e-3') {
-    if (s === '1792x1024' || s === '1024x1792') return 0.08;
-    // All other sizes fall back to the standard 1024x1024 tier.
-    return 0.04;
-  }
-
-  if (m === 'openai/gpt-image-1') {
-    // gpt-image-1 standard tier; larger sizes would tier up but Franklin
-    // sends 1024x1024 as default.
-    return 0.042;
-  }
-
-  // Unknown model: return 0 rather than a guess. A free/custom model should
-  // not have a phantom charge against the Content budget, and surprise
-  // overcharging from a wrong guess is worse than under-counting.
-  return 0;
+  const perImage = entry.sizes[s] ?? entry.base;
+  return perImage * Math.max(1, n);
 }

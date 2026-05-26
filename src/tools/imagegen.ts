@@ -33,33 +33,88 @@ interface ImageGenInput {
   /**
    * Optional reference image for image-to-image generation (style transfer,
    * character consistency, edits). When set, the call is routed to
-   * /v1/images/image2image instead of /v1/images/generations and only models
-   * that support reference images may be used (gpt-image-1/2,
-   * nano-banana-pro, grok-imagine-image-pro). Accepts:
-   *   - http(s) URL — fetched server-side
+   * /v1/images/image2image instead of /v1/images/generations and only
+   * edit-capable models may be used (see EDIT_SUPPORTED_MODELS). Accepts:
+   *   - http(s) URL — fetched and inlined client-side
    *   - data URI (data:image/...;base64,...)
    *   - local file path — read, base64-encoded, capped at ~4 MB
    */
   image_url?: string;
   /**
+   * Optional list of reference images for multi-image fusion (e.g. a subject
+   * photo + a brand logo). Each entry accepts the same forms as image_url.
+   * Merged with image_url (if both are given). Per-provider cap: OpenAI 4,
+   * Google 3. Cannot be combined with `mask`.
+   */
+  images?: string[];
+  /**
+   * Optional mask for inpainting: transparent pixels mark the editable region.
+   * Same input forms as image_url. OpenAI edit models only; cannot be combined
+   * with multiple source images.
+   */
+  mask?: string;
+  /**
+   * Number of images to generate (1–4). Default 1. Cost scales with n.
+   */
+  n?: number;
+  /**
    * Optional Content id to attach this generation to. When provided:
    *   (1) Budget is checked BEFORE the paid generation — refusing up-front
    *       saves wasting USDC on a fill that couldn't be recorded.
-   *   (2) On successful generation, the saved image is recorded as an asset
+   *   (2) On successful generation, each saved image is recorded as an asset
    *       on that content with the estimated USD cost.
    */
   contentId?: string;
 }
 
 /**
- * Models that accept a reference image via /v1/images/image2image. Currently
- * limited to OpenAI's edit endpoint — Gemini Nano Banana Pro and Grok Imagine
- * Image Pro need gateway-side support before they can be wired in here.
+ * Models that accept a reference image via /v1/images/image2image. Mirrors the
+ * gateway's EDIT_SUPPORTED_MODELS (src/app/api/v1/images/image2image/route.ts):
+ * both OpenAI gpt-image-* and Google Nano Banana support image-to-image edits.
  */
 export const EDIT_SUPPORTED_MODELS = new Set([
   'openai/gpt-image-1',
   'openai/gpt-image-2',
+  'google/nano-banana',
+  'google/nano-banana-pro',
 ]);
+
+/**
+ * Mask-based inpainting is OpenAI-only. Gemini (Nano Banana) does prompt-based
+ * edits with no mask concept. Mirrors the gateway's MASK_SUPPORTED_MODELS.
+ */
+export const MASK_SUPPORTED_MODELS = new Set([
+  'openai/gpt-image-1',
+  'openai/gpt-image-2',
+]);
+
+/**
+ * Per-provider multi-image (fusion) cap. Mirrors the gateway's
+ * MAX_IMAGES_BY_PREFIX: OpenAI fuses up to 4 anchors, Gemini up to 3.
+ */
+const MAX_IMAGES_BY_PREFIX: Record<string, number> = {
+  'openai/': 4,
+  'google/': 3,
+};
+
+/**
+ * Output-image count ceiling. The gateway has no hard max but price scales with
+ * n, so cap client-side to keep a typo from draining the wallet.
+ */
+export const MAX_OUTPUT_IMAGES = 4;
+
+/**
+ * Valid sizes per known image model, mirroring the gateway's IMAGE_MODELS.sizes
+ * (src/lib/models.ts). Used to fail cheaply before paying when a caller or the
+ * media router picks a size the model rejects. Models absent from this table
+ * (custom / future gateway models) skip validation and let the gateway decide.
+ */
+export const IMAGE_MODEL_SIZES: Record<string, string[]> = {
+  'openai/gpt-image-1': ['1024x1024', '1536x1024', '1024x1536'],
+  'openai/gpt-image-2': ['1024x1024', '1536x1024', '1024x1536'],
+  'google/nano-banana': ['1024x1024'],
+  'google/nano-banana-pro': ['1024x1024', '2048x2048', '4096x4096'],
+};
 
 export const REFERENCE_IMAGE_MAX_BYTES = 4_000_000;
 
@@ -133,22 +188,37 @@ function buildExecute(deps: ImageGenDeps) {
     ctx: ExecutionScope,
   ): Promise<CapabilityResult> {
     const rawInput = input as unknown as ImageGenInput;
-    const { output_path, size, model, contentId, image_url } = rawInput;
+    const { output_path, size, model, contentId, image_url, mask } = rawInput;
 
     if (!rawInput.prompt) {
       return { output: 'Error: prompt is required', isError: true };
     }
 
-    // Resolve the reference image (if any) before any paid call so we fail
-    // cheaply on bad paths / oversize attachments. Holds the resolved data URI
-    // / http URL that gets posted to /v1/images/image2image.
-    let referenceImage: string | undefined;
-    if (image_url) {
-      try {
-        referenceImage = await resolveReferenceImage(image_url, ctx.workingDir);
-      } catch (err) {
-        return { output: `Error: ${(err as Error).message}`, isError: true };
-      }
+    // Collect reference images: image_url (single, back-compat) + images[]
+    // (fusion), in that order. Edit mode is active whenever at least one
+    // reference image is present — the call then routes to image2image.
+    const referenceInputs: string[] = [
+      ...(image_url ? [image_url] : []),
+      ...(Array.isArray(rawInput.images) ? rawInput.images.filter(Boolean) : []),
+    ];
+    const editMode = referenceInputs.length > 0;
+
+    // Output count: 1–4. Reject out-of-range up front so a typo can't blow the
+    // wallet (price scales with n) or get silently clamped.
+    const n = rawInput.n ?? 1;
+    if (!Number.isInteger(n) || n < 1 || n > MAX_OUTPUT_IMAGES) {
+      return {
+        output: `Error: n must be an integer between 1 and ${MAX_OUTPUT_IMAGES} (got ${rawInput.n}).`,
+        isError: true,
+      };
+    }
+
+    // A mask only makes sense as an inpainting directive on a source image.
+    if (mask && !editMode) {
+      return {
+        output: 'Error: mask requires a source image. Pass image_url (or images) alongside mask.',
+        isError: true,
+      };
     }
 
     // One-shot refinement opt-out: leading `///` tells Franklin "don't
@@ -170,7 +240,7 @@ function buildExecute(deps: ImageGenDeps) {
     // Reference-image mode forces an edit-capable model. If the caller named
     // an unsupported one, fail loudly so we don't silently downgrade their
     // request to text-only generation.
-    if (referenceImage && model && !EDIT_SUPPORTED_MODELS.has(model)) {
+    if (editMode && model && !EDIT_SUPPORTED_MODELS.has(model)) {
       return {
         output:
           `Error: model ${model} does not support reference images. ` +
@@ -179,9 +249,43 @@ function buildExecute(deps: ImageGenDeps) {
       };
     }
 
-    let imageModel = model || (referenceImage ? 'openai/gpt-image-2' : 'openai/gpt-image-1');
+    let imageModel = model || (editMode ? 'openai/gpt-image-2' : 'openai/gpt-image-1');
     let imageSize = size || '1024x1024';
     let chosenPrompt = prompt;
+
+    // ── Edit-mode constraint checks (mirror the gateway, fail before paying) ──
+    if (editMode) {
+      // Mask inpainting is OpenAI-only.
+      if (mask && !MASK_SUPPORTED_MODELS.has(imageModel)) {
+        return {
+          output:
+            `Error: model ${imageModel} does not support mask-based editing. ` +
+            `Mask inpainting is available on: ${[...MASK_SUPPORTED_MODELS].join(', ')}. ` +
+            `Omit mask to edit with ${imageModel}.`,
+          isError: true,
+        };
+      }
+      // A mask targets a single region — it has no meaning across multiple
+      // source images.
+      if (mask && referenceInputs.length > 1) {
+        return {
+          output:
+            'Error: mask cannot be combined with multiple source images. ' +
+            'Send a single image with a mask, or multiple images without a mask.',
+          isError: true,
+        };
+      }
+      // Per-provider fusion cap.
+      const maxImages = MAX_IMAGES_BY_PREFIX[`${imageModel.split('/')[0]}/`] ?? 1;
+      if (referenceInputs.length > maxImages) {
+        return {
+          output:
+            `Error: model ${imageModel} accepts at most ${maxImages} source ` +
+            `image${maxImages > 1 ? 's' : ''} per edit (got ${referenceInputs.length}).`,
+          isError: true,
+        };
+      }
+    }
 
     // Skip the proposal flow when a reference image is set: the media router
     // doesn't know which models support image-to-image, so its suggestions
@@ -189,14 +293,14 @@ function buildExecute(deps: ImageGenDeps) {
     // for now; a future router upgrade can pick between the four edit-capable
     // models based on the prompt.
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
-    if (!model && !autoApprove && ctx.onAskUser && !referenceImage) {
+    if (!model && !autoApprove && ctx.onAskUser && !editMode) {
       try {
         const chain = loadChain();
         const client = new ModelClient({ apiUrl: API_URLS[chain], chain });
         const proposal = await analyzeMediaRequest({
           kind: 'image',
           prompt,
-          quantity: 1,
+          quantity: n,
           client,
           signal: ctx.abortSignal,
           skipRefine,
@@ -240,8 +344,22 @@ function buildExecute(deps: ImageGenDeps) {
       imageSize = '1024x1024';
     }
 
+    // Validate the size against the model's supported set before paying. The
+    // gateway rejects unsupported sizes with a 400, so catching it here saves
+    // a wasted round-trip (and historically a wasted x402 retry). Models not
+    // in the table (custom / future gateway models) skip this check.
+    const supportedSizes = IMAGE_MODEL_SIZES[imageModel];
+    if (supportedSizes && !supportedSizes.includes(imageSize)) {
+      return {
+        output:
+          `Error: invalid size ${imageSize} for ${imageModel}. ` +
+          `Supported sizes: ${supportedSizes.join(', ')}.`,
+        isError: true,
+      };
+    }
+
     if (contentId && deps.library) {
-      const decision = checkImageBudget(deps.library, contentId, imageModel, imageSize);
+      const decision = checkImageBudget(deps.library, contentId, imageModel, imageSize, n);
       if (!decision.ok) {
         // Normal text output, not isError — the agent should adapt (smaller
         // size, different model, raise budget) rather than trigger retry.
@@ -255,11 +373,28 @@ function buildExecute(deps: ImageGenDeps) {
       }
     }
 
+    // Resolve all reference images + the mask into base64 data URIs now, right
+    // before the paid call. Done after the cheap validations so bad paths /
+    // oversize attachments / unsupported combinations fail without any network
+    // or filesystem cost beyond what's necessary.
+    let referenceImages: string[] = [];
+    let resolvedMask: string | undefined;
+    if (editMode) {
+      try {
+        referenceImages = await Promise.all(
+          referenceInputs.map(r => resolveReferenceImage(r, ctx.workingDir)),
+        );
+        if (mask) resolvedMask = await resolveReferenceImage(mask, ctx.workingDir);
+      } catch (err) {
+        return { output: `Error: ${(err as Error).message}`, isError: true };
+      }
+    }
+
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
   // Reference-image mode hits the dedicated /v1/images/image2image endpoint;
   // otherwise stay on text-to-image generations.
-  const endpoint = referenceImage
+  const endpoint = editMode
     ? `${apiUrl}/v1/images/image2image`
     : `${apiUrl}/v1/images/generations`;
 
@@ -269,18 +404,22 @@ function buildExecute(deps: ImageGenDeps) {
     : path.resolve(ctx.workingDir, `generated-${Date.now()}.png`);
 
   const body = JSON.stringify(
-    referenceImage
+    editMode
       ? {
           model: imageModel,
           prompt: chosenPrompt,
-          image: referenceImage,
+          // Gateway accepts a string (single) or array (fusion) for `image`.
+          // Send a string for the single-image case to keep that path byte-
+          // identical to before.
+          image: referenceImages.length === 1 ? referenceImages[0] : referenceImages,
+          ...(resolvedMask ? { mask: resolvedMask } : {}),
           size: imageSize,
-          n: 1,
+          n,
         }
       : {
           model: imageModel,
           prompt: chosenPrompt,
-          n: 1,
+          n,
           size: imageSize,
           response_format: 'b64_json',
         },
@@ -298,7 +437,7 @@ function buildExecute(deps: ImageGenDeps) {
   // both x402 retry attempts plus the actual generation, which made
   // image-to-image effectively always time out. Image-to-image gets 3
   // minutes; text-to-image keeps the original 60s.
-  const timeoutMs = referenceImage ? 180_000 : 60_000;
+  const timeoutMs = editMode ? 180_000 : 60_000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   // Wall-clock start of the paid call, including 402 retry + (optional)
@@ -389,8 +528,11 @@ function buildExecute(deps: ImageGenDeps) {
       result = outcome.body;
     }
 
-    const imageData = result.data?.[0];
-    if (!imageData) {
+    const items = (result.data ?? []).filter(
+      (d): d is { b64_json?: string; url?: string; revised_prompt?: string } =>
+        !!d && (!!d.b64_json || !!d.url),
+    );
+    if (items.length === 0) {
       // Some gateways return 200 with an `error` / `message` field for
       // moderation, quota, or upstream-model failures instead of using
       // HTTP error codes. Without surfacing those, the agent sees only
@@ -415,37 +557,23 @@ function buildExecute(deps: ImageGenDeps) {
       return { output: `No image data returned from API${detail}`, isError: true };
     }
 
-    // Save image. The /v1/images/image2image endpoint returns Gemini results
-    // as a data URI in `url`, so decode those locally instead of going through
-    // fetch — saves a network round-trip and avoids data:-URI fetch quirks.
-    if (imageData.b64_json) {
-      const buffer = Buffer.from(imageData.b64_json, 'base64');
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, buffer);
-    } else if (imageData.url && imageData.url.startsWith('data:')) {
-      const match = imageData.url.match(/^data:[^;]+;base64,(.+)$/);
-      if (!match) {
-        return { output: 'Malformed data URI in response', isError: true };
-      }
-      const buffer = Buffer.from(match[1], 'base64');
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, buffer);
-    } else if (imageData.url) {
-      // Download from URL (with 30s timeout)
-      const dlCtrl = new AbortController();
-      const dlTimeout = setTimeout(() => dlCtrl.abort(), 30_000);
-      const imgResp = await fetch(imageData.url, { signal: dlCtrl.signal });
-      clearTimeout(dlTimeout);
-      const buffer = Buffer.from(await imgResp.arrayBuffer());
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, buffer);
-    } else {
-      return { output: 'No image data (b64_json or url) in response', isError: true };
-    }
+    // Output paths: one image keeps the requested path verbatim; multiple
+    // images get a -1/-2/... suffix before the extension so nothing clobbers.
+    const targetPaths =
+      items.length === 1 ? [outPath] : items.map((_, i) => withIndexSuffix(outPath, i + 1));
 
-    const fileSize = fs.statSync(outPath).size;
-    const sizeKB = (fileSize / 1024).toFixed(1);
-    const revisedPrompt = imageData.revised_prompt ? `\nRevised prompt: ${imageData.revised_prompt}` : '';
+    // Save each returned image. The /v1/images/image2image endpoint returns
+    // Gemini results as a data URI in `url`, so decode those locally instead
+    // of going through fetch — saves a round-trip and avoids data:-URI quirks.
+    const savedPaths: string[] = [];
+    for (let i = 0; i < items.length; i++) {
+      try {
+        await saveImageDataToFile(items[i], targetPaths[i]);
+      } catch (err) {
+        return { output: `Error saving image ${i + 1}: ${(err as Error).message}`, isError: true };
+      }
+      savedPaths.push(targetPaths[i]);
+    }
 
     // Stats: record this generation so it shows up in `franklin insights`
     // alongside chat spend. Before this, media generations bypassed
@@ -457,25 +585,39 @@ function buildExecute(deps: ImageGenDeps) {
     void (async () => {
       try {
         const m = await findModel(imageModel);
-        const estCost = m ? estimateCostUsd(m, { quantity: 1 }) : 0;
+        const estCost = m ? estimateCostUsd(m, { quantity: items.length }) : 0;
         recordUsage(imageModel, 0, 0, estCost, latencyMs);
       } catch { /* ignore stats errors */ }
     })();
 
     let contentSummary = '';
     if (contentId && deps.library) {
-      const rec = recordImageAsset(deps.library, {
-        contentId,
-        imagePath: outPath,
-        model: imageModel,
-        size: imageSize,
-      });
-      if (rec.ok) {
+      // Record each saved image as its own asset so the content's budget
+      // counts every paid output, not just the first.
+      let attached = 0;
+      let totalCost = 0;
+      let lastReason = '';
+      for (const p of savedPaths) {
+        const rec = recordImageAsset(deps.library, {
+          contentId,
+          imagePath: p,
+          model: imageModel,
+          size: imageSize,
+        });
+        if (rec.ok) {
+          attached++;
+          totalCost += rec.costUsd;
+        } else {
+          lastReason = rec.reason;
+        }
+      }
+      if (attached > 0) {
         if (deps.onContentChange) await deps.onContentChange();
         const c = deps.library.get(contentId);
         contentSummary =
           `\n\n## Content updated\n` +
-          `- Attached to \`${contentId}\` at est. $${rec.costUsd.toFixed(2)}\n` +
+          `- Attached ${attached} image${attached > 1 ? 's' : ''} to ` +
+          `\`${contentId}\` at est. $${totalCost.toFixed(2)}\n` +
           (c
             ? `- Spent: $${c.spentUsd.toFixed(2)} / $${c.budgetUsd.toFixed(2)} cap ` +
               `(remaining $${(c.budgetUsd - c.spentUsd).toFixed(2)})`
@@ -485,20 +627,36 @@ function buildExecute(deps: ImageGenDeps) {
         // after a successful paid generation is rare (TOCTOU) but possible.
         contentSummary =
           `\n\n## Content NOT updated\n` +
-          `- ${rec.reason}\n` +
-          `- The image was generated and saved locally; cost was NOT recorded ` +
-          `against the content budget.`;
+          `- ${lastReason}\n` +
+          `- The image${savedPaths.length > 1 ? 's were' : ' was'} generated and ` +
+          `saved locally; cost was NOT recorded against the content budget.`;
       }
     }
 
+    const revisedPrompt = items[0]?.revised_prompt
+      ? `\nRevised prompt: ${items[0].revised_prompt}`
+      : '';
+    const summaryLines = savedPaths.map(p => {
+      const kb = (fs.statSync(p).size / 1024).toFixed(1);
+      return `- ${p} (${kb}KB, ${imageSize})`;
+    });
+    const header =
+      savedPaths.length === 1
+        ? `Image saved to ${savedPaths[0]} (${(fs.statSync(savedPaths[0]).size / 1024).toFixed(1)}KB, ${imageSize})`
+        : `${savedPaths.length} images saved:\n${summaryLines.join('\n')}`;
+    const openHint =
+      savedPaths.length === 1
+        ? `\n\nOpen with: open ${savedPaths[0]}`
+        : `\n\nOpen with: open ${savedPaths.join(' ')}`;
+
     return {
-      output: `Image saved to ${outPath} (${sizeKB}KB, ${imageSize})${revisedPrompt}\n\nOpen with: open ${outPath}${contentSummary}`,
+      output: `${header}${revisedPrompt}${openHint}${contentSummary}`,
     };
   } catch (err) {
     const msg = (err as Error).message || '';
     if (msg.includes('abort')) {
       return {
-        output: referenceImage
+        output: editMode
           ? 'Image-to-image timed out (180s limit). The reference image may be too large or the model under load — try a smaller image or simpler prompt.'
           : 'Image generation timed out (60s limit). Try a simpler prompt.',
         isError: true,
@@ -509,6 +667,47 @@ function buildExecute(deps: ImageGenDeps) {
     clearTimeout(timeout);
   }
   };
+}
+
+/** Insert a `-{idx}` suffix before the file extension: a.png → a-2.png. */
+export function withIndexSuffix(p: string, idx: number): string {
+  const ext = path.extname(p);
+  const base = ext ? p.slice(0, p.length - ext.length) : p;
+  return `${base}-${idx}${ext}`;
+}
+
+/**
+ * Save one gateway image item to disk. Handles b64_json, data-URI `url`
+ * (Gemini), and remote `url` (downloaded with a 30s timeout). Throws on a
+ * malformed or empty item.
+ */
+async function saveImageDataToFile(
+  imageData: { b64_json?: string; url?: string },
+  destPath: string,
+): Promise<void> {
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+  if (imageData.b64_json) {
+    fs.writeFileSync(destPath, Buffer.from(imageData.b64_json, 'base64'));
+    return;
+  }
+  if (imageData.url && imageData.url.startsWith('data:')) {
+    const match = imageData.url.match(/^data:[^;]+;base64,(.+)$/);
+    if (!match) throw new Error('Malformed data URI in response');
+    fs.writeFileSync(destPath, Buffer.from(match[1], 'base64'));
+    return;
+  }
+  if (imageData.url) {
+    const dlCtrl = new AbortController();
+    const dlTimeout = setTimeout(() => dlCtrl.abort(), 30_000);
+    try {
+      const imgResp = await fetch(imageData.url, { signal: dlCtrl.signal });
+      fs.writeFileSync(destPath, Buffer.from(await imgResp.arrayBuffer()));
+    } finally {
+      clearTimeout(dlTimeout);
+    }
+    return;
+  }
+  throw new Error('No image data (b64_json or url) in response');
 }
 
 // ─── Payment ───────────────────────────────────────────────────────────────
@@ -594,24 +793,30 @@ export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHan
     spec: {
       name: 'ImageGen',
       description:
-        "Generate an image from a text prompt — optionally with a reference " +
-        "image for style transfer / character consistency / edits. Costs USDC " +
-        "from the user's wallet — confirm before generating. Saves to a local " +
-        "file. Default size: 1024x1024. Do NOT call repeatedly to iterate on " +
-        "style — ask the user first. Pass contentId to attach the result to " +
-        "an existing Content piece: the content's budget is checked BEFORE " +
-        "paying, and on success the image is recorded as an asset with its " +
-        "estimated cost. Skipping contentId generates a one-off image with no " +
-        "budget tracking. When image_url is set, only edit-capable models " +
-        "(openai/gpt-image-1, openai/gpt-image-2) are accepted.",
+        "Generate or edit an image. Text-to-image from a prompt, or " +
+        "image-to-image when you pass a reference image (style transfer, " +
+        "character consistency, edits). Supports mask-based inpainting and " +
+        "multi-image fusion. Costs USDC from the user's wallet — confirm " +
+        "before generating. Saves to local file(s). Default size: 1024x1024. " +
+        "Do NOT call repeatedly to iterate on style — ask the user first. " +
+        "Pass contentId to attach the result to an existing Content piece: " +
+        "the content's budget is checked BEFORE paying, and on success each " +
+        "image is recorded as an asset with its estimated cost. Skipping " +
+        "contentId generates one-off images with no budget tracking. " +
+        "Edit-capable models: openai/gpt-image-1, openai/gpt-image-2, " +
+        "google/nano-banana, google/nano-banana-pro. Mask inpainting is " +
+        "OpenAI-only; multi-image fusion is capped at 4 (OpenAI) / 3 (Google).",
       input_schema: {
         type: 'object',
         properties: {
-          prompt: { type: 'string', description: 'Text description of the image to generate' },
-          output_path: { type: 'string', description: 'Where to save the image. Default: generated-<timestamp>.png in working directory' },
-          size: { type: 'string', description: 'Image size: 1024x1024, 1792x1024, or 1024x1792. Default: 1024x1024. Note: openai/gpt-image-2 is forced to 1024x1024 (other sizes time out at the gateway).' },
-          model: { type: 'string', description: 'Image model to use. Default: openai/gpt-image-1' },
-          image_url: { type: 'string', description: 'Optional reference image (image-to-image / style transfer). Accepts an http(s) URL, a data URI, or a local file path. Only works with edit-capable models.' },
+          prompt: { type: 'string', description: 'Text description of the image to generate, or edit instructions when a reference image is provided' },
+          output_path: { type: 'string', description: 'Where to save the image. Default: generated-<timestamp>.png in working directory. With n>1, a -1/-2/... suffix is appended before the extension.' },
+          size: { type: 'string', description: 'Image size. gpt-image-1/2: 1024x1024, 1536x1024, 1024x1536. google/nano-banana: 1024x1024. google/nano-banana-pro: 1024x1024, 2048x2048, 4096x4096. Default: 1024x1024. Note: openai/gpt-image-2 is forced to 1024x1024 (other sizes time out at the gateway).' },
+          model: { type: 'string', description: 'Image model to use. Default: openai/gpt-image-1 (text-to-image) / openai/gpt-image-2 (image-to-image).' },
+          image_url: { type: 'string', description: 'Optional reference image (image-to-image / style transfer). Accepts an http(s) URL, a data URI, or a local file path. Only edit-capable models are accepted.' },
+          images: { type: 'array', items: { type: 'string' }, description: 'Optional list of reference images for multi-image fusion (e.g. subject + logo). Same forms as image_url. Merged with image_url. Cap: OpenAI 4, Google 3. Cannot combine with mask.' },
+          mask: { type: 'string', description: 'Optional mask for inpainting — transparent pixels mark the editable region. Same forms as image_url. OpenAI edit models only; cannot combine with multiple source images.' },
+          n: { type: 'number', description: 'Number of images to generate, 1-4. Default 1. Cost scales with n.' },
           contentId: { type: 'string', description: 'Optional Content id to attach this generation to. Pre-flight budget check + auto-record on success.' },
         },
         required: ['prompt'],
