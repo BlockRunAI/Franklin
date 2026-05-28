@@ -15,6 +15,7 @@ import { StreamingExecutor } from './streaming-executor.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
 import { classifyAgentError } from './error-classifier.js';
 import { SessionToolGuard } from './tool-guard.js';
+import { ToolCallRepair } from './repair/index.js';
 import { resetToolSessionState } from '../tools/index.js';
 import { CORE_TOOL_NAMES, dynamicToolsEnabled } from '../tools/tool-categories.js';
 import { createActivateToolCapability } from '../tools/activate.js';
@@ -65,6 +66,8 @@ import type {
   ContentPart,
   Dialogue,
   StreamEvent,
+  TextSegment,
+  ThinkingSegment,
   UserContentPart,
 } from './types.js';
 
@@ -695,6 +698,11 @@ export async function interactiveSession(
   // outputs, or paths. Fed into opt-in telemetry at session end.
   const sessionToolCounts = new Map<string, number>();
   const toolGuard = new SessionToolGuard();
+  // Recovers tool calls that the model leaked into the text or thinking
+  // channels instead of the structured tool_use channel. See
+  // src/agent/repair/scavenge.ts for the failure modes — most common on
+  // DeepSeek R1 and small Qwen/Llama variants behind the BlockRun gateway.
+  const callRepair = new ToolCallRepair({ allowedToolNames: activeTools });
   const persistSessionMeta = () => {
     updateSessionMeta(sessionId, {
       model: config.model,
@@ -1433,6 +1441,38 @@ export async function interactiveSession(
         responseParts = result.content;
         usage = result.usage;
         stopReason = result.stopReason;
+
+        // ── Tool-call scavenge ──
+        // Recover tool calls the model emitted as text/thinking instead of
+        // structured tool_use blocks. Common on DeepSeek R1 (leaks JSON
+        // into reasoning_content) and small Qwen/Llama variants. If the
+        // scavenger finds anything, splice it into responseParts so the
+        // empty-response and stalled-intent checks below see tools.
+        {
+          const declaredCalls = responseParts.filter(
+            (p): p is CapabilityInvocation => p.type === 'tool_use',
+          );
+          const reasoningText = responseParts
+            .filter((p): p is ThinkingSegment => p.type === 'thinking')
+            .map(p => p.thinking)
+            .join('\n');
+          const contentText = responseParts
+            .filter((p): p is TextSegment => p.type === 'text')
+            .map(p => p.text)
+            .join('\n');
+          const repaired = callRepair.process(
+            declaredCalls,
+            reasoningText || null,
+            contentText || null,
+          );
+          if (repaired.report.scavenged > 0) {
+            const novelCalls = repaired.calls.slice(declaredCalls.length);
+            responseParts = [...responseParts, ...novelCalls];
+            logger.warn(
+              `[franklin] scavenged ${repaired.report.scavenged} leaked tool call(s) from ${config.model}: ${repaired.report.notes.join('; ')}`,
+            );
+          }
+        }
 
         // ── Empty response recovery ──
         // If the model returns nothing, DON'T just retry the same model with the same input.

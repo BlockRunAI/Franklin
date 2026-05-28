@@ -27,6 +27,7 @@ import type {
 } from './types.js';
 import { ThinkTagStripper } from './think-tag-stripper.js';
 import { isNemotronProseModel, stripNemotronProse } from './nemotron-prose-stripper.js';
+import { repairAndParseArgs } from './repair/index.js';
 
 // Reasoning-tier models the gateway routes to that reject `tool_choice`
 // outright. Pattern: OpenAI o1/o3 family + DeepSeek's reasoner variant.
@@ -947,16 +948,27 @@ export class ModelClient {
           if (currentToolId) {
             let parsedInput: Record<string, unknown> = {};
             let inputParseError = false;
+            // First try strict parse; on failure, fall back to the
+            // truncation-repair pipeline (closes unbalanced braces,
+            // trims trailing commas, fills dangling keys with null).
+            // Saves a turn whenever max_tokens cut a tool_use mid-emit.
             try {
               parsedInput = JSON.parse(currentToolInput || '{}');
             } catch (parseErr) {
-              // Incomplete JSON from stream abort or model error.
-              // Mark as error so the executor returns an error result
-              // instead of silently invoking the tool with empty/wrong params.
-              inputParseError = true;
-              if (this.debug) {
-                console.error(`[franklin] Malformed tool input JSON for ${currentToolName}: ${(parseErr as Error).message}`);
-                console.error(`[franklin] Raw input was: ${currentToolInput.slice(0, 200)}`);
+              const repaired = repairAndParseArgs(currentToolInput || '{}');
+              if (repaired) {
+                parsedInput = repaired.input;
+                if (this.debug && repaired.repaired) {
+                  console.error(
+                    `[franklin] repaired truncated tool_use JSON for ${currentToolName}: ${repaired.notes.join('; ')}`,
+                  );
+                }
+              } else {
+                inputParseError = true;
+                if (this.debug) {
+                  console.error(`[franklin] Malformed tool input JSON for ${currentToolName}: ${(parseErr as Error).message}`);
+                  console.error(`[franklin] Raw input was: ${currentToolInput.slice(0, 200)}`);
+                }
               }
             }
 
