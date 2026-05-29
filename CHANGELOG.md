@@ -1,5 +1,32 @@
 # Changelog
 
+## Franklin Agent 3.23.0 — Claude Opus 4.8 is the new flagship + tool-call repair pipeline
+
+The BlockRun gateway now serves **`anthropic/claude-opus-4.8`** — the most
+capable Claude for complex reasoning and agentic coding (1M context, 128k
+output, vision, adaptive thinking, $5/$25). Franklin promotes it to the
+default Opus everywhere:
+
+- **`opus` shortcut → 4.8.** The picker, model shortcuts, and the proxy all
+  resolve `opus` to 4.8. Opus 4.7 stays live as `opus-4.7` and as a routing
+  fallback, so nothing breaks if you pinned it.
+- **Smart routing.** COMPLEX and REASONING tiers now send hard tasks to 4.8
+  first, falling back 4.7 → 4.6 if the rollout lags.
+- **Capabilities wired in** — 128k max output, native vision, adaptive
+  thinking (no extended-thinking flag, like 4.7), and a conservative 200k
+  context baseline (bumped to 1M in a later commit once a real >200k call is
+  verified end-to-end).
+- **Savings math** tracks 4.8 as the flagship Opus price, so the "saved vs
+  Opus" numbers reflect the current frontier.
+
+Also shipping the **tool-call repair pipeline**: Franklin now recovers leaked
+and truncated `tool_use` blocks instead of erroring out, so a model that emits
+a malformed or cut-off tool call gets repaired and retried rather than failing
+the turn.
+
+435/435 tests pass (4.8 routing, picker, vision, adaptive-thinking, and
+gateway-example coverage added/updated).
+
 ## Franklin Agent 3.22.0 — ImageGen edits catch up to the gateway: mask inpainting, multi-image fusion, more models
 
 ImageGen could already do single-reference image-to-image, but the
