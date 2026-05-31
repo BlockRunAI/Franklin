@@ -15,7 +15,8 @@ import { validateToolDescriptions } from '../tools/validate.js';
 import { launchInkUI } from '../ui/app.js';
 import { pickModel, resolveModel } from '../ui/model-picker.js';
 import { loadMcpConfig } from '../mcp/config.js';
-import { connectMcpServers, disconnectMcpServers } from '../mcp/client.js';
+import { connectMcpServers, disconnectMcpServers, getMcpServerInstructions } from '../mcp/client.js';
+import { ensureCodegraphIndex } from '../mcp/codegraph.js';
 import type { AgentConfig, Dialogue, StreamTurnDone } from '../agent/types.js';
 
 interface StartOptions {
@@ -316,6 +317,10 @@ export async function startCommand(options: StartOptions) {
 
   // Connect MCP servers (non-blocking — add tools if servers are available)
   const mcpConfig = loadMcpConfig(workDir);
+  // Kick off the CodeGraph index build (no-op if disabled/absent/already built).
+  // Runs in the background so it never blocks startup; the agent falls back to
+  // grep/read until the index is ready.
+  ensureCodegraphIndex(workDir);
   let mcpTools: typeof allCapabilities = [];
   const mcpServerCount = Object.keys(mcpConfig.mcpServers).filter(k => !mcpConfig.mcpServers[k].disabled).length;
   if (mcpServerCount > 0) {
@@ -323,6 +328,13 @@ export async function startCommand(options: StartOptions) {
       mcpTools = await connectMcpServers(mcpConfig, options.debug);
       if (mcpTools.length > 0) {
         console.log(chalk.dim(`  MCP:    ${mcpTools.length} tools from ${mcpServerCount} server(s)`));
+      }
+      // Fold each connected server's playbook (from its initialize response)
+      // into the system prompt. For CodeGraph this is what drives the agent to
+      // query the index instead of looping grep — the bulk of the savings.
+      const mcpInstructions = getMcpServerInstructions();
+      if (mcpInstructions) {
+        systemInstructions.push(mcpInstructions);
       }
     } catch (err) {
       if (options.debug) {

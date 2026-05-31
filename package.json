@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/franklin",
-  "version": "3.23.1",
+  "version": "3.24.0",
   "description": "Franklin Agent — The AI agent with a wallet. Spends USDC autonomously to get real work done. Pay per action, no subscriptions.",
   "type": "module",
   "exports": {
@@ -67,6 +67,7 @@
   },
   "dependencies": {
     "@blockrun/llm": "^2.0.0",
+    "@colbymchenry/codegraph": "^0.9.7",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",

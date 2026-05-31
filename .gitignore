@@ -20,3 +20,6 @@ dist/
 
 # Playwright MCP scratch snapshots
 .playwright-mcp/
+
+# CodeGraph local symbol index (built-in MCP server, rebuilt per machine)
+.codegraph/

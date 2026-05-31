@@ -39,6 +39,8 @@ interface ConnectedServer {
   client: Client;
   transport: StdioClientTransport;
   tools: CapabilityHandler[];
+  /** Server-level playbook from the `initialize` response (how to use the toolset). */
+  instructions?: string;
 }
 
 // ─── Connection Management ────────────────────────────────────────────────
@@ -201,7 +203,13 @@ async function connectStdio(
     // Server doesn't support resources — that's fine, tools-only mode
   }
 
-  const connected: ConnectedServer = { name, client, transport, tools: capabilities };
+  // Server-level instructions from the initialize response. MCP servers use
+  // this to tell the agent HOW to use their tools (selection-by-intent, common
+  // chains, anti-patterns) — e.g. CodeGraph's "answer directly, don't grep to
+  // re-verify" playbook, which is where most of its tool-call savings come from.
+  const instructions = (client.getInstructions() || '').trim() || undefined;
+
+  const connected: ConnectedServer = { name, client, transport, tools: capabilities, instructions };
   connections.set(name, connected);
   return connected;
 }
@@ -270,6 +278,32 @@ export async function disconnectMcpServers(): Promise<void> {
     }
     connections.delete(name);
   }
+}
+
+/**
+ * Aggregate server-level instructions from all connected MCP servers into a
+ * single system-prompt section, or '' if no server supplied any.
+ *
+ * These come from the `initialize` response of servers Franklin chose to
+ * connect (built-in, or user-configured + trusted), so they're treated as
+ * trusted guidance rather than untrusted data. The agent reads this once per
+ * session to learn each toolset's playbook (which tool for which question,
+ * common chains, anti-patterns) instead of rediscovering it by trial.
+ */
+export function getMcpServerInstructions(): string {
+  const blocks: string[] = [];
+  for (const [name, conn] of connections) {
+    if (conn.instructions) {
+      blocks.push(`### MCP server: ${name}\n${conn.instructions}`);
+    }
+  }
+  if (blocks.length === 0) return '';
+  return [
+    '## Connected MCP tool playbooks',
+    'Each connected MCP server below provides guidance on how to use its tools effectively. Follow these playbooks when those tools are relevant.',
+    '',
+    blocks.join('\n\n'),
+  ].join('\n');
 }
 
 /**

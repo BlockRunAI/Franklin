@@ -10,6 +10,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { BLOCKRUN_DIR } from '../config.js';
 import type { McpConfig, McpServerConfig } from './client.js';
+import { getCodegraphServerConfig } from './codegraph.js';
 
 const GLOBAL_MCP_FILE = path.join(BLOCKRUN_DIR, 'mcp.json');
 
@@ -50,6 +51,14 @@ export function loadMcpConfig(workDir: string): McpConfig {
     if (config.command && isCommandAvailable(config.command)) {
       servers[name] = config;
     }
+  }
+
+  // Built-in CodeGraph: shipped as a dependency (not on PATH), so it's
+  // resolved + pinned to this workDir rather than probed via `which`.
+  // User config below can still override or disable it.
+  const codegraph = getCodegraphServerConfig(workDir);
+  if (codegraph) {
+    servers.codegraph = codegraph;
   }
 
   // 1. Global config

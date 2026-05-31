@@ -1,5 +1,36 @@
 # Changelog
 
+## Franklin Agent 3.24.0 — built-in CodeGraph: answer code questions from an index, not a grep loop
+
+Every grep and Read the agent runs to understand a codebase is a paid LLM
+round-trip — real USDC out of your wallet. Until now Franklin navigated code
+the expensive way: regex, glob, read, repeat, rediscovering the same structure
+every session. This release ships a pre-built semantic index so the agent
+*looks up* answers instead of *searching* for them.
+
+- **CodeGraph is now a built-in MCP server.** [CodeGraph](https://github.com/colbymchenry/codegraph)
+  (MIT) builds a local SQLite knowledge graph of your repo's symbols, call
+  edges, and files via tree-sitter, exposing ten tools —
+  `codegraph_context`, `codegraph_search`, `codegraph_callers`/`callees`,
+  `codegraph_impact`, `codegraph_trace`, `codegraph_explore`, and more.
+  "How does X work / what calls Y / trace this flow" gets answered from the
+  index, often with **zero file reads**. Its published benchmark across seven
+  real repos: ~25% cheaper, ~62% fewer tool calls. Fewer tool calls is fewer
+  paid round-trips — a direct cut to what a coding task costs your wallet.
+- **The index builds itself.** On the first session in a repo, Franklin kicks
+  off `codegraph init` in the background; the server's file watcher keeps it
+  fresh after. Until it's ready the agent simply falls back to grep/read — no
+  blocking, no regression. Shipped as a dependency, so there's nothing extra
+  to install. Opt out with `FRANKLIN_CODEGRAPH=0`.
+- **Franklin now reads MCP server playbooks.** MCP servers can return
+  usage guidance in their `initialize` response — which tool for which
+  question, common chains, anti-patterns. Franklin previously discarded it;
+  now it's folded into the system prompt. This is what makes the savings
+  real: the agent learns to query the index directly instead of grepping to
+  re-verify. Any MCP server's playbook benefits, not just CodeGraph's.
+
+439/439 local tests pass.
+
 ## Franklin Agent 3.23.1 — a 6% gateway blip no longer kills the whole session
 
 Telemetry (audited 2026-05-28) showed the Solana gateway intermittently

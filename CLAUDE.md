@@ -51,6 +51,7 @@ src/
 
 - `@blockrun/llm` — LLM gateway SDK with x402 payment handling
 - `@modelcontextprotocol/sdk` — MCP protocol for extensible tools
+- `@colbymchenry/codegraph` — built-in MCP server: local tree-sitter symbol/call graph (see `src/mcp/codegraph.ts`)
 - `ink` / `react` — Terminal UI framework
 - `commander` — CLI argument parsing
 

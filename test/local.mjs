@@ -9760,3 +9760,51 @@ test('isTerminalStatus: terminal vs polling states', async () => {
   assert.equal(isTerminalStatus(null), false);
   assert.equal(isTerminalStatus(''), false);
 });
+
+// ─── CodeGraph built-in MCP integration ─────────────────────────────────────
+
+test('getCodegraphServerConfig: pins serve --mcp to the workDir', async () => {
+  const { getCodegraphServerConfig } = await import('../dist/mcp/codegraph.js');
+  const workDir = '/tmp/some-project';
+  const cfg = getCodegraphServerConfig(workDir);
+  assert.ok(cfg, 'config present when codegraph dependency is installed');
+  assert.equal(cfg.transport, 'stdio');
+  // Launched via the user's own node against the shim (never a global binary).
+  assert.equal(cfg.command, process.execPath);
+  assert.ok(cfg.args.some(a => a.endsWith('npm-shim.js')), 'runs the codegraph shim');
+  assert.deepEqual(cfg.args.slice(-4), ['serve', '--mcp', '--path', workDir],
+    'serve --mcp pinned to the workDir (Franklin advertises no roots capability)');
+});
+
+test('getCodegraphServerConfig: FRANKLIN_CODEGRAPH=0 disables it', async () => {
+  const { getCodegraphServerConfig, isCodegraphEnabled } = await import('../dist/mcp/codegraph.js');
+  const prev = process.env.FRANKLIN_CODEGRAPH;
+  try {
+    process.env.FRANKLIN_CODEGRAPH = '0';
+    assert.equal(isCodegraphEnabled(), false);
+    assert.equal(getCodegraphServerConfig('/tmp/x'), null, 'opt-out returns null config');
+  } finally {
+    if (prev === undefined) delete process.env.FRANKLIN_CODEGRAPH;
+    else process.env.FRANKLIN_CODEGRAPH = prev;
+  }
+});
+
+test('loadMcpConfig: includes the built-in codegraph server', async () => {
+  const { loadMcpConfig } = await import('../dist/mcp/config.js');
+  const cfg = loadMcpConfig(process.cwd());
+  assert.ok(cfg.mcpServers.codegraph, 'codegraph registered as a built-in server');
+  assert.equal(cfg.mcpServers.codegraph.disabled, undefined,
+    'codegraph is not auto-disabled by the credential check (it needs none)');
+});
+
+test('ensureCodegraphIndex: no-op when an index already exists', async () => {
+  const { ensureCodegraphIndex } = await import('../dist/mcp/codegraph.js');
+  const dir = mkdtempSync('/tmp/cg-test-');
+  try {
+    mkdirSync(`${dir}/.codegraph`, { recursive: true });
+    // Should return immediately without spawning anything (index dir present).
+    assert.doesNotThrow(() => ensureCodegraphIndex(dir));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
