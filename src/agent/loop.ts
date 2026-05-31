@@ -1758,6 +1758,10 @@ export async function interactiveSession(
             config.model = nextFree;
             config.onModelChange?.(nextFree, 'system');
             const reason = `gateway rejected payment [${classified.label}] — will retry ${oldModel} next turn`;
+            // Reset retry counter — the transient path above already burned
+            // this turn's budget on the rejected model; the free fallback
+            // model gets its own (mirrors the rate_limit fallback below).
+            recoveryAttempts = 0;
             onEvent({
               kind: 'text_delta',
               text: `\n*${formatModelSwitch(oldModel, resolvedModel, reason, nextFree)}*\n`,
