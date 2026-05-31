@@ -2677,20 +2677,28 @@ test('streamCompletion: 429 response with Retry-After header tags the error mess
 // Verified 2026-05-04 in a screenshot: ExaSearch failed with
 // `(402): {"error":"Payment verification failed","details":"Ver…}`. Same
 // HTTP status as a "payment required" challenge but a different remedy:
-// the user's signed payment was rejected, not absent. Same retry won't
-// help — must fix clock skew / chain / nonce.
+// the user's signed payment was rejected, not absent.
+//
+// Audited 2026-05-28: empirically intermittent — telemetry showed 28/468
+// PaymentRejected with identical prompts succeeding 5s later. Most
+// plausible root cause is a nonce-cache race in the gateway's replay
+// protection under burst load. Each retry re-signs with a fresh nonce
+// (llm.ts derives a new nonce per request), so a retry is NOT a replay.
+// Hence transient with a small retry budget. Deterministic failure
+// modes (clock skew, wrong chain) exhaust the budget quickly and fall
+// through to the same fallback path.
 
-test('classifier: Payment verification failed → payment_rejected with chain/clock-skew tip', async () => {
+test('classifier: Payment verification failed → payment_rejected, transient with small retry budget', async () => {
   const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
 
   // Gateway-shape body, exact match for the live failure.
   const live = classifyAgentError('Exa /v1/exa/search failed (402): {"error":"Payment verification failed","details":"Ver..."}');
   assert.equal(live.category, 'payment_rejected');
   assert.equal(live.label, 'PaymentRejected');
-  assert.equal(live.maxRetries, 0, 'must not auto-retry — same signature stays rejected');
+  assert.equal(live.isTransient, true, 'must auto-retry — gateway nonce-race blips need a fresh-nonce retry');
+  assert.equal(live.maxRetries, 3, 'small budget — enough to ride out a burst-load blip, not enough to thrash on a real misconfig');
   assert.match(live.suggestion ?? '', /clock skew/i, 'suggestion should mention clock skew');
   assert.match(live.suggestion ?? '', /chain/i, 'suggestion should mention chain');
-  assert.match(live.suggestion ?? '', /\/model free/i, 'suggestion should offer free-model escape');
 
   // Other variant phrasings the gateway might use.
   for (const msg of ['signature mismatch', 'invalid x-payment header', 'nonce reuse detected']) {

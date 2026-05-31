@@ -1710,13 +1710,21 @@ export async function interactiveSession(
         }
 
         // ── Payment failure: auto-fallback to free models ──
-        // Track payment-failed models for the entire session — unlike transient errors,
-        // 402s will keep failing until the user adds funds. Also handles
-        // payment_rejected (signature verified-and-rejected by gateway):
-        // same fallback path, but the suggestion text in classifier guides
-        // the user toward clock-skew / chain-mismatch fixes rather than
-        // "add funds."
-        if (classified.category === 'payment' || classified.category === 'payment_rejected') {
+        // 'payment' (insufficient funds / 402): session-permanent blacklist —
+        // the wallet won't refill mid-session, so retrying the same model
+        // just wastes a turn. Record to elo so the router learns to avoid it.
+        //
+        // 'payment_rejected' (signed payment rejected by gateway): only
+        // fall back FOR THIS TURN — do NOT add to paymentFailedModels and
+        // do NOT record to elo. The retry budget from the transient path
+        // above (3 attempts) has already been exhausted at this point;
+        // this fallback just lets the user keep working. The next user
+        // turn resets to baseModel (see top of outer loop) so a single
+        // gateway nonce-race blip can't permanently demote the user to
+        // free models for the whole session — that's the bug audited
+        // 2026-05-28 from telemetry showing 28/468 PaymentRejected with
+        // identical prompts succeeding 5s apart.
+        if (classified.category === 'payment') {
           turnFailedModels.add(config.model);
           paymentFailedModels.set(config.model, Date.now());
           // Bound the Map so long sessions don't leak. LRU-evict oldest by timestamp.
@@ -1734,6 +1742,26 @@ export async function interactiveSession(
             config.model = nextFree;
             config.onModelChange?.(nextFree, 'system');
             const reason = `failed [${classified.label}]`;
+            onEvent({
+              kind: 'text_delta',
+              text: `\n*${formatModelSwitch(oldModel, resolvedModel, reason, nextFree)}*\n`,
+            });
+            continue; // Retry with next model
+          }
+        }
+
+        if (classified.category === 'payment_rejected') {
+          turnFailedModels.add(config.model);
+          const nextFree = pickFreeFallback(lastRoutedCategory, turnFailedModels);
+          if (nextFree) {
+            const oldModel = config.model;
+            config.model = nextFree;
+            config.onModelChange?.(nextFree, 'system');
+            const reason = `gateway rejected payment [${classified.label}] — will retry ${oldModel} next turn`;
+            // Reset retry counter — the transient path above already burned
+            // this turn's budget on the rejected model; the free fallback
+            // model gets its own (mirrors the rate_limit fallback below).
+            recoveryAttempts = 0;
             onEvent({
               kind: 'text_delta',
               text: `\n*${formatModelSwitch(oldModel, resolvedModel, reason, nextFree)}*\n`,
