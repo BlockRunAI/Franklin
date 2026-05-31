@@ -576,7 +576,15 @@ async function runWithInkUI(
     runExitBackgroundTasks(sessionHistory, agentConfig).catch(() => {});
   }
 
-  disconnectMcpServers().catch(() => {});
+  // Await MCP shutdown with a bounded timeout — previously fire-and-forget,
+  // which left stdio child processes alive and (combined with no explicit
+  // process.exit() below) was the root cause of the "I quit but the
+  // process is still running" report (audited 2026-05-28). A misbehaving
+  // MCP server must not be able to pin shutdown, so cap the wait at 2s.
+  await Promise.race([
+    disconnectMcpServers().catch(() => {}),
+    new Promise<void>((r) => setTimeout(r, 2000)),
+  ]);
 
   // Session summary — delta vs. snapshot at session start
   try {
@@ -607,6 +615,15 @@ async function runWithInkUI(
   }
 
   console.log(chalk.dim('\nGoodbye.\n'));
+
+  // Explicit exit. Without this, lingering keep-alive sockets (bootstrap
+  // learnings importer, panel HTTP server, gateway client agents) and any
+  // FRANKLIN_EXTRACT_ON_EXIT background promise can hold the event loop
+  // open for seconds-to-minutes after the UI tears down — the user sees
+  // "Goodbye." but `ps` still shows the process, and a subsequent
+  // `franklin` invocation races with the zombie. Force a clean exit. Any
+  // explicit error paths above set process.exitCode = 1 — preserve it.
+  process.exit(process.exitCode ?? 0);
 }
 
 async function runExitBackgroundTasks(
@@ -703,6 +720,14 @@ async function runWithBasicUI(
 
   ui.printGoodbye();
   flushStats();
+
+  // Same explicit-exit reasoning as runWithInkUI — bounded MCP shutdown
+  // then hard exit so background promises can't pin the process alive.
+  await Promise.race([
+    disconnectMcpServers().catch(() => {}),
+    new Promise<void>((r) => setTimeout(r, 2000)),
+  ]);
+  process.exit(process.exitCode ?? 0);
 }
 
 // ─── Panel auto-start ──────────────────────────────────────────────────────

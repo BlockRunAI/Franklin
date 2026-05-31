@@ -65,6 +65,17 @@ export function classifyAgentError(message: string): AgentErrorInfo {
   // `Exa /v1/exa/search failed (402): {"error":"Payment verification failed",...}`.
   // Classify BEFORE the generic 'payment' branch below since the body
   // contains both 'payment' and 'verification failed'.
+  //
+  // Treated as transient with a small retry budget: real-world telemetry
+  // (2026-05-28 audit) shows the gateway intermittently rejects valid
+  // signed payments under burst load — identical prompts succeed 5s
+  // later. Most plausible root cause is a nonce-cache race in the
+  // gateway's replay protection. Retrying re-signs with a fresh nonce on
+  // each attempt (llm.ts derives a new nonce per request), so a retry
+  // is NOT a replay. Three attempts is enough to ride out the blip
+  // without burning tokens on a model whose wallet is genuinely
+  // misconfigured (clock skew, wrong chain) — those failure modes are
+  // deterministic and will exhaust the budget quickly.
   if (includesAny(err, [
     'verification failed',
     'payment verification',
@@ -75,8 +86,8 @@ export function classifyAgentError(message: string): AgentErrorInfo {
     'replay protection',
   ])) {
     return {
-      category: 'payment_rejected', label: 'PaymentRejected', isTransient: false, maxRetries: 0,
-      suggestion: 'The gateway rejected your signed payment. Run `franklin balance` to confirm funds + chain. Common causes: clock skew (resync system clock), wrong chain selected (use `/chain` to switch), or stale nonce (the same retry will fail). Switch to a free model with `/model free` to keep working.',
+      category: 'payment_rejected', label: 'PaymentRejected', isTransient: true, maxRetries: 3,
+      suggestion: 'The gateway rejected your signed payment. If this keeps happening: run `franklin balance` to confirm funds + chain. Common causes: clock skew (resync system clock), wrong chain selected (use `/chain` to switch). Transient blips are auto-retried.',
     };
   }
 
