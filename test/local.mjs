@@ -3287,6 +3287,107 @@ test('ModelClient: request timeout surfaces before waiting on a hung response fo
   }
 });
 
+test('ModelClient: slow first token (headers flushed early) honors the request budget, not the stream-idle budget', async () => {
+  // Regression for #74: the gateway flushes SSE headers before the first
+  // content chunk, so the wait for the first token falls under parseSSEStream's
+  // per-read timeout. With a 100ms idle budget but a 3s request budget, a first
+  // token that arrives at ~300ms must NOT be aborted at 100ms.
+  const originalRequest = process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS;
+  const originalStream = process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS;
+  const server = createServer(async (_req, res) => {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+    const send = (event, data) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+    // Headers are already flushed; stall well past the 100ms idle budget before
+    // the first frame, but inside the 3s request budget.
+    await new Promise((r) => setTimeout(r, 300));
+    send('message_start', { message: { usage: { input_tokens: 5, output_tokens: 0 } } });
+    send('content_block_start', { content_block: { type: 'text', text: '' } });
+    send('content_block_delta', { delta: { type: 'text_delta', text: 'late but ok' } });
+    send('content_block_stop', {});
+    send('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 3 } });
+    send('message_stop', {});
+    res.end('data: [DONE]\n\n');
+  });
+
+  const port = await listenOnRandomPort(server);
+  process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS = '100';
+  process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS = '3000';
+
+  try {
+    const client = new ModelClient({ apiUrl: `http://127.0.0.1:${port}`, chain: 'base' });
+    const result = await client.complete({
+      model: 'zai/glm-5.1',
+      messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 128,
+      stream: true,
+    });
+    const text = result.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('');
+    assert.match(text, /late but ok/, 'first-token wait should be honored, not aborted at 100ms');
+  } finally {
+    if (originalRequest === undefined) delete process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS;
+    else process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS = originalRequest;
+    if (originalStream === undefined) delete process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS;
+    else process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS = originalStream;
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
+test('ModelClient: a >idle-timeout gap between later chunks still aborts (mid-stream stall)', async () => {
+  // The flip side of #74: once the first token has arrived, a genuinely stalled
+  // mid-stream must still be aborted at the tighter idle budget.
+  const originalRequest = process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS;
+  const originalStream = process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS;
+  const server = createServer(async (_req, res) => {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+    const send = (event, data) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+    // First token arrives promptly...
+    send('message_start', { message: { usage: { input_tokens: 5, output_tokens: 0 } } });
+    send('content_block_start', { content_block: { type: 'text', text: '' } });
+    send('content_block_delta', { delta: { type: 'text_delta', text: 'partial' } });
+    // ...then the stream stalls past the 100ms idle budget and never resumes.
+  });
+
+  const port = await listenOnRandomPort(server);
+  process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS = '100';
+  process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS = '3000';
+
+  try {
+    const client = new ModelClient({ apiUrl: `http://127.0.0.1:${port}`, chain: 'base' });
+    await assert.rejects(
+      () => client.complete({
+        model: 'zai/glm-5.1',
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 128,
+        stream: true,
+      }),
+      /stream timed out after 100ms/i,
+    );
+  } finally {
+    if (originalRequest === undefined) delete process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS;
+    else process.env.FRANKLIN_MODEL_REQUEST_TIMEOUT_MS = originalRequest;
+    if (originalStream === undefined) delete process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS;
+    else process.env.FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS = originalStream;
+    await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+});
+
 // ─── Image generation → Content cost tracking ────────────────────────────
 
 test('checkImageBudget: greenlights when content exists and projected cost fits', async () => {

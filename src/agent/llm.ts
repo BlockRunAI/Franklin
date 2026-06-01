@@ -165,6 +165,11 @@ function getModelRequestTimeoutMs(): number {
 }
 
 function getModelStreamIdleTimeoutMs(): number {
+  // Inter-chunk idle budget: the max gap allowed *between* SSE chunks once the
+  // stream is flowing. It does NOT cover time-to-first-token — that first read
+  // uses the larger request budget (see getModelRequestTimeoutMs + the
+  // firstRead branch in parseSSEStream). Conflating the two regressed #74:
+  // reasoning models taking 60–120s to first token aborted at this 90s wall.
   return (
     parseTimeoutEnv('FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS') ??
     parseTimeoutEnv('FRANKLIN_MODEL_IDLE_TIMEOUT_MS') ??
@@ -759,8 +764,11 @@ export class ModelClient {
         return;
       }
 
-      // Parse SSE stream
-      yield* this.parseSSEStream(response, requestController, streamTimeoutMs, request.model);
+      // Parse SSE stream. The first read waits for time-to-first-token (which
+      // the gateway does *not* cover with the request timeout — it flushes SSE
+      // headers before the first content chunk), so it gets the larger request
+      // budget; subsequent reads use the tighter stream-idle budget.
+      yield* this.parseSSEStream(response, requestController, streamTimeoutMs, request.model, requestTimeoutMs);
     } finally {
       unlinkAbort();
     }
@@ -1296,6 +1304,7 @@ export class ModelClient {
     controller: AbortController,
     timeoutMs: number,
     model: string,
+    firstReadTimeoutMs: number = timeoutMs,
   ): AsyncGenerator<StreamChunk> {
     const reader = response.body?.getReader();
     if (!reader) {
@@ -1307,17 +1316,22 @@ export class ModelClient {
     let buffer = '';
     // Persist across read() calls — event: and data: may arrive in separate chunks
     let currentEvent = '';
+    // The first read waits for time-to-first-token (60–120s for reasoning
+    // models on cache-cold prompts); only later reads measure inter-chunk idle.
+    let firstRead = true;
 
     const MAX_BUFFER = 1_000_000; // 1MB buffer cap
     try {
       while (true) {
         if (controller.signal.aborted) break;
 
+        const budgetMs = firstRead ? firstReadTimeoutMs : timeoutMs;
+        firstRead = false;
         const { done, value } = await withAbortableTimeout(
           () => reader.read(),
           controller,
-          createModelTimeoutError('stream', model, timeoutMs),
-          timeoutMs,
+          createModelTimeoutError('stream', model, budgetMs),
+          budgetMs,
         );
         if (done) break;
 
