@@ -1,5 +1,25 @@
 # Changelog
 
+## Franklin Agent 3.24.1 — slow first tokens from reasoning models no longer time out at 90s
+
+Point Franklin at a big, cache-cold prompt — "synthesize a long document from
+everything in context" — and a reasoning model can take 60–120s just to emit its
+first token. Until now Franklin gave up at 90s with a stream timeout, and
+`/retry` replayed the same prompt straight into the same wall, so the planning
+turn looped without ever producing output. The 180s budget meant to cover slow
+first tokens never applied: the gateway flushes the SSE response headers *before*
+the first token, so the wait fell under the shorter stream-idle timer instead of
+the request timer.
+
+- **First-token wait now gets the full request budget.** The SSE reader splits
+  two clocks that were tangled into one: time-to-first-token uses the 180s
+  request budget, while the gap *between* later chunks keeps the tighter 90s
+  idle budget. Slow first tokens are honored; a genuinely stalled mid-stream
+  still aborts fast. Tune each independently with
+  `FRANKLIN_MODEL_REQUEST_TIMEOUT_MS` and `FRANKLIN_MODEL_STREAM_IDLE_TIMEOUT_MS`.
+
+Fixes #74. 441/441 local tests pass.
+
 ## Franklin Agent 3.24.0 — built-in CodeGraph: answer code questions from an index, not a grep loop
 
 Every grep and Read the agent runs to understand a codebase is a paid LLM
