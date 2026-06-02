@@ -4,6 +4,10 @@
  */
 
 import chalk from 'chalk';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
@@ -30,6 +34,16 @@ const DISABLE_BRACKETED_PASTE = '\x1b[?2004l';
 const USER_PROMPT_COLOR = '#FFD700';
 const PASTE_BLOCK_START = '\uE000PASTE:';
 const PASTE_BLOCK_END = ':PASTE\uE001';
+// Image attachments work the same way as text paste blocks: the input string
+// carries an encoded token, renderInputValue shows a placeholder, decodePromptValue
+// replaces with the absolute file path when the prompt is submitted. The downstream
+// flow already understands paths \u2014 messageNeedsVision routes to a vision model and
+// the Read tool inlines the bytes \u2014 so an image paste just needs the path injected.
+const IMG_BLOCK_START = '\uE000IMG:';
+const IMG_BLOCK_END = ':IMG\uE001';
+// Clipboard images bigger than this are rejected upfront so a 12MB retina
+// screenshot doesn't sit in /tmp and then fail at Read time. Matches read.ts's cap.
+const MAX_CLIPBOARD_IMG_BYTES = 3_750_000;
 // Only collapse pastes of >= this many lines into a [Pasted ~N lines] block.
 // Short pastes (one-liners, 2-4 line snippets) inline as plain text so the
 // model sees them verbatim and the user can read what they pasted in the
@@ -54,16 +68,23 @@ function normalizeInputNewlines(input: string): string {
 interface PasteBlock {
   start: number;
   end: number;
+  /** Decoded content. For text blocks this is the original text; for image
+   * blocks it is the absolute path to the saved clipboard image. */
   content: string;
+  kind: 'text' | 'image';
 }
 
 function encodePasteBlock(content: string): string {
   return `${PASTE_BLOCK_START}${Buffer.from(content, 'utf8').toString('base64')}${PASTE_BLOCK_END}`;
 }
 
-function decodePasteBlock(token: string): string {
-  if (!token.startsWith(PASTE_BLOCK_START) || !token.endsWith(PASTE_BLOCK_END)) return token;
-  const payload = token.slice(PASTE_BLOCK_START.length, -PASTE_BLOCK_END.length);
+function encodeImageBlock(absolutePath: string): string {
+  return `${IMG_BLOCK_START}${Buffer.from(absolutePath, 'utf8').toString('base64')}${IMG_BLOCK_END}`;
+}
+
+function decodeBlockPayload(token: string, startMarker: string, endMarker: string): string {
+  if (!token.startsWith(startMarker) || !token.endsWith(endMarker)) return token;
+  const payload = token.slice(startMarker.length, -endMarker.length);
   try {
     return Buffer.from(payload, 'base64').toString('utf8');
   } catch {
@@ -75,13 +96,36 @@ function findPasteBlocks(value: string): PasteBlock[] {
   const blocks: PasteBlock[] = [];
   let searchFrom = 0;
 
+  // Scan for both text and image blocks in a single pass, taking whichever
+  // starts earlier so they can be interleaved in any order in the input.
   while (searchFrom < value.length) {
-    const start = value.indexOf(PASTE_BLOCK_START, searchFrom);
-    if (start < 0) break;
-    const endMarker = value.indexOf(PASTE_BLOCK_END, start + PASTE_BLOCK_START.length);
-    if (endMarker < 0) break;
-    const end = endMarker + PASTE_BLOCK_END.length;
-    blocks.push({ start, end, content: decodePasteBlock(value.slice(start, end)) });
+    const textStart = value.indexOf(PASTE_BLOCK_START, searchFrom);
+    const imgStart = value.indexOf(IMG_BLOCK_START, searchFrom);
+    let kind: 'text' | 'image';
+    let start: number;
+    let startMarker: string;
+    let endMarker: string;
+    if (textStart < 0 && imgStart < 0) break;
+    if (textStart < 0 || (imgStart >= 0 && imgStart < textStart)) {
+      kind = 'image';
+      start = imgStart;
+      startMarker = IMG_BLOCK_START;
+      endMarker = IMG_BLOCK_END;
+    } else {
+      kind = 'text';
+      start = textStart;
+      startMarker = PASTE_BLOCK_START;
+      endMarker = PASTE_BLOCK_END;
+    }
+    const endIdx = value.indexOf(endMarker, start + startMarker.length);
+    if (endIdx < 0) break;
+    const end = endIdx + endMarker.length;
+    blocks.push({
+      start,
+      end,
+      kind,
+      content: decodeBlockPayload(value.slice(start, end), startMarker, endMarker),
+    });
     searchFrom = end;
   }
 
@@ -100,8 +144,101 @@ function decodePromptValue(value: string): string {
   return decoded + value.slice(cursor);
 }
 
-function pasteSummary(content: string): string {
-  const lines = content.length === 0 ? 0 : content.split('\n').length;
+/**
+ * Read the system clipboard, and if it currently holds an image, save it to
+ * a temp file and return the absolute path. Otherwise return null.
+ *
+ * Probed synchronously because it's only called on a paste event where the
+ * user is actively waiting — the 30-100 ms shell-out is imperceptible. Bound
+ * by a short timeout so a hung clipboard tool can never block the input loop.
+ *
+ * macOS: `pbpaste -Prefer image` writes the clipboard image to stdout (PNG
+ * if available, otherwise nothing/text). Empty stdout means no image.
+ * Linux: tries `wl-paste --type image/png` (Wayland) then `xclip -selection
+ * clipboard -t image/png -o` (X11). The first one that returns non-empty
+ * bytes wins.
+ *
+ * Files land in $TMPDIR/franklin-clip-<ts>.png. macOS scrubs /tmp on reboot
+ * and most Linux distros sweep entries older than 10 days via tmpfiles.d, so
+ * we deliberately do NOT add our own cleanup — the OS handles it.
+ */
+function tryReadClipboardImage(): { path: string; bytes: number } | { error: string } | null {
+  const filename = `franklin-clip-${Date.now()}-${Math.floor(Math.random() * 1e6)}.png`;
+  const out = path.join(os.tmpdir(), filename);
+
+  if (process.platform === 'darwin') {
+    // pbpaste does NOT stream image bytes (its -Prefer only takes txt/rtf/ps);
+    // the supported path on macOS is AppleScript reading the clipboard as the
+    // PNGf class and writing the bytes itself. Returns "ok" / "no" so we can
+    // tell the difference between "no image on the clipboard" and "actual error".
+    let result: string;
+    try {
+      result = execFileSync('osascript', [
+        '-e', 'try',
+        '-e', `set the_data to the clipboard as «class PNGf»`,
+        '-e', `set fp to (open for access POSIX file "${out}" with write permission)`,
+        '-e', 'write the_data to fp',
+        '-e', 'close access fp',
+        '-e', 'return "ok"',
+        '-e', 'on error',
+        '-e', 'return "no"',
+        '-e', 'end try',
+      ], { timeout: 1500, encoding: 'utf8' }).trim();
+    } catch { return null; /* osascript missing or hung */ }
+    if (result !== 'ok') return null;
+  } else if (process.platform === 'linux') {
+    // wl-paste / xclip both stream image bytes to stdout. Try Wayland first
+    // (more common on modern distros), fall back to X11. Either may not be
+    // installed — that's fine, we just fall through to the text paste path.
+    let buf: Buffer | null = null;
+    try {
+      buf = execFileSync('wl-paste', ['--type', 'image/png'], { timeout: 1500, maxBuffer: 16 * 1024 * 1024 });
+    } catch { /* try xclip next */ }
+    if (!buf || buf.length === 0) {
+      try {
+        buf = execFileSync('xclip', ['-selection', 'clipboard', '-t', 'image/png', '-o'], { timeout: 1500, maxBuffer: 16 * 1024 * 1024 });
+      } catch { return null; }
+    }
+    if (!buf || buf.length === 0) return null;
+    try { fs.writeFileSync(out, buf); } catch (err) { return { error: `Failed to save clipboard image: ${(err as Error).message}` }; }
+  } else {
+    return null; // Windows / others not supported yet.
+  }
+
+  // Stat + magic-byte check. Cleans up the file if it's not a real image —
+  // belt-and-suspenders against osascript writing a weird non-PNG payload, or
+  // the clipboard tool returning something that isn't actually an image.
+  let stat: fs.Stats;
+  try { stat = fs.statSync(out); } catch { return null; }
+  if (stat.size === 0) { try { fs.unlinkSync(out); } catch { /* ok */ } return null; }
+  if (stat.size > MAX_CLIPBOARD_IMG_BYTES) {
+    try { fs.unlinkSync(out); } catch { /* ok */ }
+    return { error: `Image too large (${(stat.size / 1_000_000).toFixed(1)}MB > ${(MAX_CLIPBOARD_IMG_BYTES / 1_000_000).toFixed(1)}MB). Resize first.` };
+  }
+  try {
+    const head = fs.readFileSync(out, { encoding: null }).subarray(0, 4);
+    const isPng = head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+    const isJpeg = head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+    if (!isPng && !isJpeg) { try { fs.unlinkSync(out); } catch { /* ok */ } return null; }
+  } catch { return null; }
+
+  return { path: out, bytes: stat.size };
+}
+
+function pasteSummary(block: { content: string; kind: 'text' | 'image' }): string {
+  if (block.kind === 'image') {
+    // content is the absolute path; show the basename + size hint so the user
+    // can tell which image they pasted when they have several.
+    let sizeLabel = '';
+    try {
+      const stat = fs.statSync(block.content);
+      sizeLabel = stat.size >= 1024
+        ? ` ${(stat.size / 1024).toFixed(0)}KB`
+        : ` ${stat.size}B`;
+    } catch { /* file gone? show without size */ }
+    return `[Image${sizeLabel}]`;
+  }
+  const lines = block.content.length === 0 ? 0 : block.content.split('\n').length;
   const lineLabel = lines > 1 ? `~${lines} lines` : '~1 line';
   return `[Pasted ${lineLabel}]`;
 }
@@ -115,7 +252,7 @@ function renderInputValue(value: string, cursorOffset: number, focused: boolean)
     for (const block of blocks) {
       rendered += renderPlainInputSegment(value.slice(cursor, block.start), cursorOffset - cursor, focused && cursorOffset >= cursor && cursorOffset <= block.start);
       if (focused && cursorOffset === block.start) rendered += chalk.inverse(' ');
-      rendered += chalk.hex(USER_PROMPT_COLOR).bold(pasteSummary(block.content));
+      rendered += chalk.hex(USER_PROMPT_COLOR).bold(pasteSummary(block));
       if (focused && cursorOffset === block.end) rendered += chalk.inverse(' ');
       cursor = block.end;
     }
@@ -250,12 +387,39 @@ function PromptTextInput({ value, onChange, onSubmit, placeholder = '', focus = 
       if (!hasPasteEnd) return;
 
       const buffered = pasteBufferRef.current;
-      const lineCount = buffered.length === 0 ? 0 : buffered.split('\n').length;
-      text = lineCount >= PASTE_COLLAPSE_LINE_THRESHOLD
-        ? encodePasteBlock(buffered)
-        : buffered;
-      pasteBufferRef.current = '';
-      pasteActiveRef.current = false;
+      // Image-paste detection: terminals deliver Cmd+V as a bracketed paste,
+      // but image bytes don't ride that stream — Terminal/iTerm2 just fire an
+      // empty (or whitespace-only) bracketed paste, while the actual image
+      // sits in the system clipboard. So when the buffered text is empty we
+      // probe the clipboard before falling through to plain text handling.
+      // (No race vs. real paste content: pasted text always populates the
+      // buffer before END arrives, so non-empty buffer = certainly text.)
+      if (buffered.trim().length === 0) {
+        const img = tryReadClipboardImage();
+        if (img && 'path' in img) {
+          text = encodeImageBlock(img.path);
+          pasteBufferRef.current = '';
+          pasteActiveRef.current = false;
+        } else if (img && 'error' in img) {
+          // Surface the rejection (too large / write failed) inline so the
+          // user knows why nothing appeared — better than silently dropping.
+          text = `[Image rejected: ${img.error}] `;
+          pasteBufferRef.current = '';
+          pasteActiveRef.current = false;
+        } else {
+          // No image either — just inject whatever was in the buffer (likely empty).
+          text = buffered;
+          pasteBufferRef.current = '';
+          pasteActiveRef.current = false;
+        }
+      } else {
+        const lineCount = buffered.split('\n').length;
+        text = lineCount >= PASTE_COLLAPSE_LINE_THRESHOLD
+          ? encodePasteBlock(buffered)
+          : buffered;
+        pasteBufferRef.current = '';
+        pasteActiveRef.current = false;
+      }
     }
 
     if (!text) {
