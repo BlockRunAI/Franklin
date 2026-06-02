@@ -268,20 +268,6 @@ export function extractApiErrorMessage(errorBody: string): string {
 // ─── Anthropic Prompt Caching ─────────────────────────────────────────────
 
 /**
- * Apply Anthropic prompt caching using the `system_and_3` strategy.
- * Pattern from nousresearch/hermes-agent `agent/prompt_caching.py`.
- *
- * Places 4 cache_control breakpoints (Anthropic's max):
- *   1. System prompt (stable across all turns)
- *   2-4. Last 3 non-system messages (rolling window)
- *
- * Also caches the last tool definition (tools are stable across turns).
- *
- * This keeps the cache warm: each new turn extends the cached prefix rather
- * than invalidating it. Multi-turn conversations see ~75% input token savings
- * on Anthropic models.
- */
-/**
  * True if the given Anthropic model accepts the `thinking: { type: 'enabled' }`
  * API flag (so-called *extended thinking*). Models using *adaptive thinking*
  * (Opus 4.7 and later) reject that flag — the behavior is built in and not
@@ -358,6 +344,23 @@ export function isRoleplayedJsonToolCallText(text: string): boolean {
   }
 }
 
+/**
+ * Apply Anthropic prompt caching, budgeted to Anthropic's hard limit of 4
+ * `cache_control` breakpoints counted across system + tools + messages COMBINED.
+ * Adapted from the `system_and_3` pattern (nousresearch/hermes-agent
+ * `agent/prompt_caching.py`), with the budget made explicit so the tool
+ * breakpoint can't push the total to 5 (see issue #73).
+ *
+ * Breakpoints are spent in priority order:
+ *   1. System prompt   — 1, if present (stable across all turns)
+ *   2. Last tool def    — 1, if any tools (stable across all turns)
+ *   3. Last N messages  — the remaining budget, capped at a rolling window of 3
+ *
+ * So a session with a system prompt + tools + ≥3 messages spends 1 + 1 + 2 = 4,
+ * not 5. This keeps the cache warm: each new turn extends the cached prefix
+ * rather than invalidating it. Multi-turn conversations see ~75% input token
+ * savings on Anthropic models.
+ */
 function applyAnthropicPromptCaching(
   payload: Record<string, unknown>,
   request: ModelRequest
