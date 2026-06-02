@@ -162,7 +162,51 @@ function decodePromptValue(value: string): string {
  * and most Linux distros sweep entries older than 10 days via tmpfiles.d, so
  * we deliberately do NOT add our own cleanup — the OS handles it.
  */
-function tryReadClipboardImage(): { path: string; bytes: number } | { error: string } | null {
+/**
+ * Down-scale an oversize clipboard image so it fits under MAX_CLIPBOARD_IMG_BYTES
+ * instead of being rejected. Reuses the same strategy as Read on a .png file
+ * (`src/tools/read.ts`): long edge → 1280 px, JPEG q85 (mozjpeg), preserving
+ * PNG when there's real transparency. Overwrites the original file in place.
+ *
+ * Best-effort: if sharp is missing or chokes, we return null and the caller
+ * surfaces the original-size rejection rather than silently shipping a 12 MB
+ * paste downstream.
+ */
+async function shrinkImageInPlace(filePath: string): Promise<{ from: number; to: number } | null> {
+  try {
+    const before = fs.statSync(filePath).size;
+    const raw = fs.readFileSync(filePath);
+    const sharpMod = await import('sharp');
+    const sharp = (sharpMod as { default: typeof import('sharp') }).default;
+    const meta = await sharp(raw, { failOn: 'none' }).metadata();
+    let hasAlpha = false;
+    if (meta.hasAlpha) {
+      const stats = await sharp(raw, { failOn: 'none' }).stats();
+      const alpha = stats.channels[stats.channels.length - 1];
+      hasAlpha = alpha?.min !== undefined && alpha.min < 255;
+    }
+    const MAX_LONG_EDGE = 1280;
+    const longEdge = Math.max(meta.width ?? 0, meta.height ?? 0);
+    let pipeline = sharp(raw, { failOn: 'none' });
+    if (longEdge > MAX_LONG_EDGE) {
+      pipeline = pipeline.resize({
+        width: meta.width && meta.width >= (meta.height ?? 0) ? MAX_LONG_EDGE : undefined,
+        height: meta.height && meta.height > (meta.width ?? 0) ? MAX_LONG_EDGE : undefined,
+        fit: 'inside',
+        withoutEnlargement: true,
+      });
+    }
+    const out = hasAlpha
+      ? await pipeline.png({ compressionLevel: 9 }).toBuffer()
+      : await pipeline.jpeg({ quality: 85, mozjpeg: true }).toBuffer();
+    fs.writeFileSync(filePath, out);
+    return { from: before, to: out.length };
+  } catch {
+    return null;
+  }
+}
+
+async function tryReadClipboardImage(): Promise<{ path: string; bytes: number; resizedFrom?: number } | { error: string } | null> {
   const filename = `franklin-clip-${Date.now()}-${Math.floor(Math.random() * 1e6)}.png`;
   const out = path.join(os.tmpdir(), filename);
 
@@ -211,9 +255,24 @@ function tryReadClipboardImage(): { path: string; bytes: number } | { error: str
   let stat: fs.Stats;
   try { stat = fs.statSync(out); } catch { return null; }
   if (stat.size === 0) { try { fs.unlinkSync(out); } catch { /* ok */ } return null; }
+  let resizedFrom: number | undefined;
   if (stat.size > MAX_CLIPBOARD_IMG_BYTES) {
-    try { fs.unlinkSync(out); } catch { /* ok */ }
-    return { error: `Image too large (${(stat.size / 1_000_000).toFixed(1)}MB > ${(MAX_CLIPBOARD_IMG_BYTES / 1_000_000).toFixed(1)}MB). Resize first.` };
+    // Auto-shrink instead of hard-rejecting — Claude Code went through the
+    // same iteration after users hit "Image too large" on retina screenshots.
+    const r = await shrinkImageInPlace(out);
+    if (!r) {
+      try { fs.unlinkSync(out); } catch { /* ok */ }
+      return { error: `Image too large (${(stat.size / 1_000_000).toFixed(1)}MB) and could not be resized. Crop or re-save smaller.` };
+    }
+    resizedFrom = r.from;
+    // Re-stat for the post-resize size we'll show in the placeholder.
+    try { stat = fs.statSync(out); } catch { return null; }
+    if (stat.size > MAX_CLIPBOARD_IMG_BYTES) {
+      // Defensive: if the resize somehow didn't bring it under the cap (highly
+      // unusual at 1280px JPEG q85), bail rather than ship an oversize payload.
+      try { fs.unlinkSync(out); } catch { /* ok */ }
+      return { error: `Image still ${(stat.size / 1_000_000).toFixed(1)}MB after resize. Crop manually.` };
+    }
   }
   try {
     const head = fs.readFileSync(out, { encoding: null }).subarray(0, 4);
@@ -222,7 +281,7 @@ function tryReadClipboardImage(): { path: string; bytes: number } | { error: str
     if (!isPng && !isJpeg) { try { fs.unlinkSync(out); } catch { /* ok */ } return null; }
   } catch { return null; }
 
-  return { path: out, bytes: stat.size };
+  return { path: out, bytes: stat.size, resizedFrom };
 }
 
 function pasteSummary(block: { content: string; kind: 'text' | 'image' }): string {
@@ -387,6 +446,9 @@ function PromptTextInput({ value, onChange, onSubmit, placeholder = '', focus = 
       if (!hasPasteEnd) return;
 
       const buffered = pasteBufferRef.current;
+      pasteBufferRef.current = '';
+      pasteActiveRef.current = false;
+
       // Image-paste detection: terminals deliver Cmd+V as a bracketed paste,
       // but image bytes don't ride that stream — Terminal/iTerm2 just fire an
       // empty (or whitespace-only) bracketed paste, while the actual image
@@ -395,31 +457,27 @@ function PromptTextInput({ value, onChange, onSubmit, placeholder = '', focus = 
       // (No race vs. real paste content: pasted text always populates the
       // buffer before END arrives, so non-empty buffer = certainly text.)
       if (buffered.trim().length === 0) {
-        const img = tryReadClipboardImage();
-        if (img && 'path' in img) {
-          text = encodeImageBlock(img.path);
-          pasteBufferRef.current = '';
-          pasteActiveRef.current = false;
-        } else if (img && 'error' in img) {
-          // Surface the rejection (too large / write failed) inline so the
-          // user knows why nothing appeared — better than silently dropping.
-          text = `[Image rejected: ${img.error}] `;
-          pasteBufferRef.current = '';
-          pasteActiveRef.current = false;
-        } else {
-          // No image either — just inject whatever was in the buffer (likely empty).
-          text = buffered;
-          pasteBufferRef.current = '';
-          pasteActiveRef.current = false;
-        }
-      } else {
-        const lineCount = buffered.split('\n').length;
-        text = lineCount >= PASTE_COLLAPSE_LINE_THRESHOLD
-          ? encodePasteBlock(buffered)
-          : buffered;
-        pasteBufferRef.current = '';
-        pasteActiveRef.current = false;
+        // Clipboard probe + optional resize are async; the input handler
+        // returns now and updateValue happens once the Promise resolves.
+        // Capture the cursor offset so the block goes where the user pasted,
+        // even if they moved the cursor in the meantime.
+        const insertAt = currentCursorOffset;
+        tryReadClipboardImage().then((img) => {
+          let injected: string;
+          if (img && 'path' in img) injected = encodeImageBlock(img.path);
+          else if (img && 'error' in img) injected = `[Image rejected: ${img.error}] `;
+          else return; // no image on clipboard — nothing to do
+          const cur = valueRef.current;
+          const at = Math.min(insertAt, cur.length);
+          updateValue(cur.slice(0, at) + injected + cur.slice(at), at + injected.length);
+        }).catch(() => { /* best-effort, errors already mapped to inline text above */ });
+        return;
       }
+
+      const lineCount = buffered.split('\n').length;
+      text = lineCount >= PASTE_COLLAPSE_LINE_THRESHOLD
+        ? encodePasteBlock(buffered)
+        : buffered;
     }
 
     if (!text) {
