@@ -1,5 +1,17 @@
 # Changelog
 
+## Franklin Agent 3.24.4 — correct the cache_control docstring left behind by the #73 fix
+
+Docs-only follow-up to 3.24.3. The JSDoc describing `applyAnthropicPromptCaching`
+had drifted above the wrong function (`modelHasExtendedThinking`) and still
+claimed "4 breakpoints: system + last 3 messages" while omitting the tool
+breakpoint — the exact 5-vs-4 miscount that caused #73 in the first place.
+
+- **Reattached a corrected docstring to the caching function**, spelling out the
+  real budget order: system (1) + last tool (1) + remaining message window
+  (capped at 4 combined). No runtime change — the breakpoint cap shipped in
+  3.24.3.
+
 ## Franklin Agent 3.24.3 — Anthropic multi-turn sessions no longer hard-400 on cache_control overflow
 
 Run more than a couple of turns on an Anthropic model with tools registered and
