@@ -137,7 +137,12 @@ function decodePromptValue(value: string): string {
   let cursor = 0;
 
   for (const block of findPasteBlocks(value)) {
-    decoded += value.slice(cursor, block.start) + block.content;
+    // Image blocks decode to a bare filesystem path. Pad it with spaces so the
+    // path stays a standalone token even when the user typed text flush against
+    // the placeholder — otherwise `foo[Image]bar` → `foo/tmp/x.pngbar`, which
+    // breaks both the vision-routing regex and the model's path parsing.
+    const piece = block.kind === 'image' ? ` ${block.content} ` : block.content;
+    decoded += value.slice(cursor, block.start) + piece;
     cursor = block.end;
   }
 
