@@ -1,5 +1,34 @@
 # Changelog
 
+## Franklin Agent 3.25.0 — paste images straight into the prompt with Cmd+V
+
+Users coming from other coding agents expected Cmd+V on a screenshot to attach
+the image; Franklin silently dropped it because terminals only ship the
+bracketed-paste **text** channel — the image bytes sit in the system clipboard,
+untouched. Reported via Telegram: *"I can't paste an image to it."*
+
+- **Cmd+V on a clipboard image now inserts an `[Image NNKB]` placeholder** that
+  decodes to the saved temp-file path on submit, reusing the existing paste-block
+  plumbing — `messageNeedsVision` routes the turn to a vision model and the Read
+  tool inlines the bytes, unchanged. macOS reads the clipboard via `osascript`
+  («class PNGf»); Linux via `wl-paste` → `xclip` fallback. PNG/JPEG magic-byte
+  validated; non-images are dropped.
+- **The clipboard probe runs off the input thread.** It shells out
+  asynchronously, so a slow or hung clipboard tool can never freeze Ink's
+  keypress/render loop — the placeholder is spliced in at the cursor when the
+  probe resolves.
+- **Oversize pastes auto-shrink instead of hard-rejecting.** A full-screen
+  retina screenshot (routinely 5–15 MB raw) is downscaled with the same pipeline
+  Read uses on a `.png` — long edge → 1280 px, JPEG q85 (mozjpeg), preserving
+  PNG when there's real transparency — so it lands well under the inline cap. If
+  `sharp` is missing or the resize can't get under the cap, the original
+  too-large rejection still fires.
+- **Decoded image paths are space-padded** so vision routing survives text typed
+  flush against the placeholder — `foo[Image]bar` decodes to a standalone path
+  token rather than `foo/tmp/x.pngbar`, which the routing regex couldn't match.
+
+Not yet wired for Windows. 443/443 local tests pass.
+
 ## Franklin Agent 3.24.4 — correct the cache_control docstring left behind by the #73 fix
 
 Docs-only follow-up to 3.24.3. The JSDoc describing `applyAnthropicPromptCaching`
