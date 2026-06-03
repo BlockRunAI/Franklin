@@ -1,5 +1,31 @@
 # Changelog
 
+## Franklin Agent 3.25.3 — restore GPT-5 / Grok families, surface real errors
+
+Two regressions silently broke whole model families in headless (`-p`) mode —
+both were gateway HTTP 400s, but the one-shot runner never printed the error,
+so they looked like network failures.
+
+- **GPT-5 / Codex models work again.** A model-specific rewrite was converting
+  the `system` field into a `developer`-role entry in `messages[]`. The BlockRun
+  gateway speaks the Anthropic Messages protocol, which only accepts
+  `user`/`assistant` roles, so it rejected every GPT-5 request with
+  `messages.0.role: Invalid option`. Dropped the rewrite — `system` stays a
+  top-level field and the gateway translates it for the upstream model. All
+  GPT-5 variants (mini/nano/5.4/5.5) restored.
+- **Grok / xAI models work again.** xAI's schema validator rejects any `enum`
+  string containing `/`, and the Surf tools added endpoint enums where every
+  value does (`market/ranking`, …). For `xai/*` models we now strip slash-bearing
+  enums from the tool schemas before dispatch (the values are still listed in
+  each tool's description). Grok 3 / 4 variants restored.
+- **Headless mode now surfaces failures.** `franklin -p` only wrote streamed
+  text to stdout and swallowed the error on a failed `turn_done`, exiting 1 with
+  an empty stderr. It now prints the classified error + tip to stderr before the
+  non-zero exit — which is how the two 400s above stayed hidden for so long.
+- **Network errors are no longer opaque.** undici wraps every fetch failure as
+  `TypeError: fetch failed`; the real cause now rides along in the message
+  (e.g. `fetch failed (UND_ERR_SOCKET)`) across all request/retry paths.
+
 ## Franklin Agent 3.25.2 — keep text pastes instant
 
 3.25.1's "always probe the clipboard" fix made **every** paste wait on the async
