@@ -1,5 +1,20 @@
 # Changelog
 
+## Franklin Agent 3.25.1 — fix image paste on Linux terminals
+
+3.25.0 only probed the system clipboard for an image when the bracketed-paste
+buffer arrived **empty**. That holds for macOS Terminal/iTerm2 but breaks on
+several Linux terminals (reported on Kali): they send a filename, a `file://`
+URI, or a raw image header alongside the paste, so the non-empty buffer made the
+gate skip the probe and the image was silently dropped.
+
+- **The clipboard is now always probed on paste-end**, regardless of buffer
+  contents. If an image is found it wins and the bracketed-paste stub is
+  dropped; otherwise the existing text-paste path (collapse-to-block or inline)
+  runs unchanged. Verified in a Lima Ubuntu VM with a real PNG on the X11
+  clipboard — all buffer shapes (empty / filename / URI / header) now attach the
+  image. (#77)
+
 ## Franklin Agent 3.25.0 — paste images straight into the prompt with Cmd+V
 
 Users coming from other coding agents expected Cmd+V on a screenshot to attach
