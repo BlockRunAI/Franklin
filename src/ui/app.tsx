@@ -460,9 +460,10 @@ function PromptTextInput({ value, onChange, onSubmit, placeholder = '', focus = 
       // assumption holds for macOS Terminal/iTerm2 but NOT for several Linux
       // terminals — some send a filename, a `file://` URI, or a short binary
       // header alongside the image, which made the gate skip the probe and
-      // the image silently dropped (user-reported on Kali: clipboard had the
-      // image, opencode could paste it, Franklin couldn't). Verified in a
-      // Lima Ubuntu VM with xclip — non-empty buffer triggered the skip.
+      // the image silently dropped (user-reported on Kali: the clipboard
+      // image was readable by other tools but Franklin couldn't paste it).
+      // Verified in a Lima Ubuntu VM with xclip — non-empty buffer triggered
+      // the skip.
       //
       // Fix: ALWAYS probe the clipboard on a paste-end. If an image is there,
       // it wins; the bracketed-paste buffer text is treated as terminal noise
