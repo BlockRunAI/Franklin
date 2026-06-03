@@ -454,35 +454,52 @@ function PromptTextInput({ value, onChange, onSubmit, placeholder = '', focus = 
       pasteBufferRef.current = '';
       pasteActiveRef.current = false;
 
-      // Image-paste detection: terminals deliver Cmd+V as a bracketed paste,
-      // but image bytes don't ride that stream — Terminal/iTerm2 just fire an
-      // empty (or whitespace-only) bracketed paste, while the actual image
-      // sits in the system clipboard. So when the buffered text is empty we
-      // probe the clipboard before falling through to plain text handling.
-      // (No race vs. real paste content: pasted text always populates the
-      // buffer before END arrives, so non-empty buffer = certainly text.)
-      if (buffered.trim().length === 0) {
-        // Clipboard probe + optional resize are async; the input handler
-        // returns now and updateValue happens once the Promise resolves.
-        // Capture the cursor offset so the block goes where the user pasted,
-        // even if they moved the cursor in the meantime.
-        const insertAt = currentCursorOffset;
-        tryReadClipboardImage().then((img) => {
-          let injected: string;
-          if (img && 'path' in img) injected = encodeImageBlock(img.path);
-          else if (img && 'error' in img) injected = `[Image rejected: ${img.error}] `;
-          else return; // no image on clipboard — nothing to do
+      // Image-paste detection. Original heuristic (3.25.0) only probed the
+      // clipboard when the bracketed-paste buffer was empty, assuming Cmd+V
+      // on an image-only clipboard always arrived as an empty paste. That
+      // assumption holds for macOS Terminal/iTerm2 but NOT for several Linux
+      // terminals — some send a filename, a `file://` URI, or a short binary
+      // header alongside the image, which made the gate skip the probe and
+      // the image silently dropped (user-reported on Kali: clipboard had the
+      // image, opencode could paste it, Franklin couldn't). Verified in a
+      // Lima Ubuntu VM with xclip — non-empty buffer triggered the skip.
+      //
+      // Fix: ALWAYS probe the clipboard on a paste-end. If an image is there,
+      // it wins; the bracketed-paste buffer text is treated as terminal noise
+      // and dropped. If no image, fall through to the normal text-paste path
+      // (collapse-to-block or inline) so text pastes are unaffected. The
+      // probe is async (osascript / xclip / wl-paste shell-out, 30-100 ms),
+      // so the handler returns immediately and updateValue happens when the
+      // Promise resolves.
+      const insertAt = currentCursorOffset;
+      tryReadClipboardImage().then((img) => {
+        if (img && 'path' in img) {
+          // Image wins — drop the bracketed-paste buffer (likely a stub the
+          // terminal sent for the image).
+          const injected = encodeImageBlock(img.path);
           const cur = valueRef.current;
           const at = Math.min(insertAt, cur.length);
           updateValue(cur.slice(0, at) + injected + cur.slice(at), at + injected.length);
-        }).catch(() => { /* best-effort, errors already mapped to inline text above */ });
-        return;
-      }
-
-      const lineCount = buffered.split('\n').length;
-      text = lineCount >= PASTE_COLLAPSE_LINE_THRESHOLD
-        ? encodePasteBlock(buffered)
-        : buffered;
+          return;
+        }
+        if (img && 'error' in img) {
+          const injected = `[Image rejected: ${img.error}] `;
+          const cur = valueRef.current;
+          const at = Math.min(insertAt, cur.length);
+          updateValue(cur.slice(0, at) + injected + cur.slice(at), at + injected.length);
+          return;
+        }
+        // No image on the clipboard — treat as a normal text paste.
+        if (buffered.length === 0) return;
+        const lineCount = buffered.split('\n').length;
+        const textToInsert = lineCount >= PASTE_COLLAPSE_LINE_THRESHOLD
+          ? encodePasteBlock(buffered)
+          : buffered;
+        const cur = valueRef.current;
+        const at = Math.min(insertAt, cur.length);
+        updateValue(cur.slice(0, at) + textToInsert + cur.slice(at), at + textToInsert.length);
+      }).catch(() => { /* best-effort */ });
+      return;
     }
 
     if (!text) {
