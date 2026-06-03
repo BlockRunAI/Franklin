@@ -1,5 +1,18 @@
 # Changelog
 
+## Franklin Agent 3.25.2 — keep text pastes instant
+
+3.25.1's "always probe the clipboard" fix made **every** paste wait on the async
+`osascript` / `xclip` / `wl-paste` shell-out before the text appeared, adding a
+process-spawn delay to the common path (pasting code, URLs, prose).
+
+- **Text pastes are inserted synchronously again.** The clipboard is now probed
+  only when the bracketed-paste buffer *looks like* a terminal's image stub —
+  empty (macOS image paste), or a single-line filename / `file://` URI / raw
+  image header (the Linux shapes from #77). Genuine text skips the probe
+  entirely, so it lands instantly. The Linux image-paste fix from 3.25.1 is
+  fully preserved. The stub heuristic is covered by unit tests.
+
 ## Franklin Agent 3.25.1 — fix image paste on Linux terminals
 
 3.25.0 only probed the system clipboard for an image when the bracketed-paste
