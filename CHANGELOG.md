@@ -1,5 +1,33 @@
 # Changelog
 
+## Franklin Agent 3.25.2 — keep text pastes instant
+
+3.25.1's "always probe the clipboard" fix made **every** paste wait on the async
+`osascript` / `xclip` / `wl-paste` shell-out before the text appeared, adding a
+process-spawn delay to the common path (pasting code, URLs, prose).
+
+- **Text pastes are inserted synchronously again.** The clipboard is now probed
+  only when the bracketed-paste buffer *looks like* a terminal's image stub —
+  empty (macOS image paste), or a single-line filename / `file://` URI / raw
+  image header (the Linux shapes from #77). Genuine text skips the probe
+  entirely, so it lands instantly. The Linux image-paste fix from 3.25.1 is
+  fully preserved. The stub heuristic is covered by unit tests.
+
+## Franklin Agent 3.25.1 — fix image paste on Linux terminals
+
+3.25.0 only probed the system clipboard for an image when the bracketed-paste
+buffer arrived **empty**. That holds for macOS Terminal/iTerm2 but breaks on
+several Linux terminals (reported on Kali): they send a filename, a `file://`
+URI, or a raw image header alongside the paste, so the non-empty buffer made the
+gate skip the probe and the image was silently dropped.
+
+- **The clipboard is now always probed on paste-end**, regardless of buffer
+  contents. If an image is found it wins and the bracketed-paste stub is
+  dropped; otherwise the existing text-paste path (collapse-to-block or inline)
+  runs unchanged. Verified in a Lima Ubuntu VM with a real PNG on the X11
+  clipboard — all buffer shapes (empty / filename / URI / header) now attach the
+  image. (#77)
+
 ## Franklin Agent 3.25.0 — paste images straight into the prompt with Cmd+V
 
 Users coming from other coding agents expected Cmd+V on a screenshot to attach

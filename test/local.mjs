@@ -10002,3 +10002,26 @@ test('ensureCodegraphIndex: no-op when an index already exists', async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('looksLikeImagePasteStub: empty / whitespace buffer warrants a clipboard probe (macOS image paste)', async () => {
+  const { looksLikeImagePasteStub } = await import('../dist/ui/paste-heuristics.js');
+  assert.equal(looksLikeImagePasteStub(''), true);
+  assert.equal(looksLikeImagePasteStub('   \n\t '), true);
+});
+
+test('looksLikeImagePasteStub: Linux terminal image stubs (filename / file URI / raw header) warrant a probe', async () => {
+  const { looksLikeImagePasteStub } = await import('../dist/ui/paste-heuristics.js');
+  assert.equal(looksLikeImagePasteStub('image.png'), true);
+  assert.equal(looksLikeImagePasteStub('/home/user/Pictures/shot.JPEG'), true);
+  assert.equal(looksLikeImagePasteStub('file:///tmp/x.png'), true);
+  assert.equal(looksLikeImagePasteStub('\x89PNG\r\n\x1a\n'), true); // raw PNG header
+  assert.equal(looksLikeImagePasteStub('���JFIF'), true); // mangled JPEG bytes
+});
+
+test('looksLikeImagePasteStub: genuine text pastes skip the probe (fast synchronous path)', async () => {
+  const { looksLikeImagePasteStub } = await import('../dist/ui/paste-heuristics.js');
+  assert.equal(looksLikeImagePasteStub('hello world'), false);
+  assert.equal(looksLikeImagePasteStub('const x = 1;\nconst y = 2;\nfoo();'), false);
+  assert.equal(looksLikeImagePasteStub('https://example.com/page'), false);
+  assert.equal(looksLikeImagePasteStub('see notes.png for the diagram and rerun'), false); // .png mid-text, not a bare filename
+});
