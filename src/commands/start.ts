@@ -456,6 +456,12 @@ async function runOneShot(agentConfig: AgentConfig, prompt: string): Promise<num
       process.stdout.write(event.text);
     } else if (event.kind === 'turn_done') {
       exitCode = oneShotExitCodeForTurnReason(event.reason);
+      // Without this, headless callers see exit 1 + zero stderr — impossible
+      // to triage. Verified 2026-06-03: GPT-5 family failing with HTTP 400
+      // from the gateway looked identical to a network timeout in `-p` mode.
+      if (event.reason !== 'completed' && event.error) {
+        process.stderr.write(`\n${event.error}\n`);
+      }
       process.stdout.write('\n');
     }
   });

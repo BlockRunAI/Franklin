@@ -192,6 +192,62 @@ function createModelTimeoutError(stage: 'request' | 'stream', model: string, tim
   return new Error(`Model ${stage} timed out after ${timeoutMs}ms on ${model}`);
 }
 
+/**
+ * Walk a tool-schema object and drop any `enum` whose entries are strings
+ * containing "/". Grok's request validator rejects such enums outright (see
+ * the call site for the verbatim upstream error). The model still sees the
+ * intended values via the tool's description text, so dropping the schema-
+ * level constraint is purely a compatibility shim — no behavioral loss.
+ */
+function stripSlashEnumsForGrok(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripSlashEnumsForGrok);
+  if (!node || typeof node !== 'object') return node;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+    if (
+      k === 'enum' &&
+      Array.isArray(v) &&
+      v.some((x) => typeof x === 'string' && x.includes('/'))
+    ) {
+      continue; // drop the constraint entirely
+    }
+    out[k] = stripSlashEnumsForGrok(v);
+  }
+  return out;
+}
+
+/**
+ * Wrap `fetch()` so that undici's opaque `TypeError: fetch failed` is
+ * replaced with the underlying network reason (ECONNRESET, UND_ERR_*,
+ * certificate, DNS, etc.). Without this, every transient connection blip
+ * surfaces to the user as "Network: fetch failed" with no way to tell
+ * whether it's their network, the gateway, or the upstream provider.
+ *
+ * Verified 2026-06-03: stress-testing claude-sonnet-4.6 reproduces
+ * intermittent "fetch failed" (cheetah's report on 3.25.0). With this
+ * helper the message becomes e.g. "fetch failed (UND_ERR_SOCKET: other
+ * side closed)" which is actionable.
+ */
+async function fetchWithUnwrappedCause(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'fetch failed' && err.cause) {
+      const cause = err.cause as { code?: string; message?: string; errno?: string };
+      const detail = cause.code || cause.errno || cause.message;
+      if (detail) {
+        const enriched = new Error(`fetch failed (${detail})`);
+        (enriched as Error & { cause?: unknown }).cause = err.cause;
+        throw enriched;
+      }
+    }
+    throw err;
+  }
+}
+
 async function withAbortableTimeout<T>(
   work: () => Promise<T>,
   controller: AbortController,
@@ -543,6 +599,21 @@ export class ModelClient {
       delete requestPayload['tool_choice'];
     }
 
+    // ── Grok: strip enum constraints containing "/" from tool schemas ────────
+    // Verified 2026-06-03 via Franklin repro: xAI's request validator hard-
+    // rejects any tool-schema enum string containing "/", e.g.
+    //   "[engine_imposed] /properties/endpoint/enum/0: '/' in 'enum' string
+    //    value is currently not supported"
+    // The Surf tools (and a few others) use endpoint paths like
+    // "market/ranking" as enum values to constrain the model's choice. The
+    // path list is also enumerated in each tool's description text, so the
+    // model still sees the legal values — only the schema-level constraint
+    // gets dropped. Other providers keep the enum unchanged.
+    if (request.model.startsWith('xai/') && Array.isArray(requestPayload['tools'])) {
+      const tools = requestPayload['tools'] as Record<string, unknown>[];
+      requestPayload['tools'] = tools.map((tool) => stripSlashEnumsForGrok(tool));
+    }
+
     // ── GLM-specific optimizations ───────────────────────────────────────────
     // GLM models work best with temperature=0.8 per official zai spec.
     // Enable thinking mode only for explicit reasoning variants (-thinking-).
@@ -611,20 +682,20 @@ export class ModelClient {
       requestPayload = applyAnthropicPromptCaching(requestPayload, request);
     }
 
-    // ── GPT-5 / Codex: use "developer" role for system prompt ──────────────
-    // OpenAI GPT models give stronger instruction-following weight to the
-    // "developer" role. Move the top-level system prompt into messages[0]
-    // with role "developer" instead of the default "system".
-    const isGPT5OrCodex = request.model.includes('gpt-5') || request.model.includes('codex');
-    if (isGPT5OrCodex && typeof request.system === 'string' && request.system.length > 0) {
-      const systemRole = 'developer';
-      const existingMessages = (requestPayload['messages'] as unknown[]) || [];
-      requestPayload['messages'] = [
-        { role: systemRole, content: request.system },
-        ...existingMessages,
-      ];
-      delete requestPayload['system'];
-    }
+    // ── No client-side system → developer role rewrite for GPT-5/Codex ─────
+    // We used to move the top-level `system` field into `messages[0]` with
+    // role "developer" for GPT-5/Codex (OpenAI docs say that role gets
+    // stronger instruction-following weight). But the BlockRun gateway
+    // speaks Anthropic Messages, which only accepts user|assistant in
+    // messages[] — the developer-role payload returns HTTP 400 from the
+    // gateway's protocol validator BEFORE it ever reaches OpenAI:
+    //   {"error":{"message":"messages.0.role: Invalid option: expected
+    //    one of \"user\"|\"assistant\""}}
+    // Verified 2026-06-03 via direct curl + Franklin repro: all GPT-5
+    // family models (mini/nano/5.4/5.5) were silently failing under
+    // headless -p mode. Keep `system` as a top-level field and let the
+    // gateway translate to whatever the upstream needs (it already knows
+    // gpt-5 expects developer role internally).
 
     const body = JSON.stringify(requestPayload);
 
@@ -652,7 +723,7 @@ export class ModelClient {
 
     try {
       let response = await withAbortableTimeout(
-        () => fetch(endpoint, {
+        () => fetchWithUnwrappedCause(endpoint, {
           method: 'POST',
           headers,
           body,
@@ -673,7 +744,7 @@ export class ModelClient {
         }
 
         response = await withAbortableTimeout(
-          () => fetch(endpoint, {
+          () => fetchWithUnwrappedCause(endpoint, {
             method: 'POST',
             headers: { ...headers, ...paymentHeader },
             body,
@@ -733,7 +804,7 @@ export class ModelClient {
             console.error(`[franklin] tool_choice rejected by upstream; retrying without it (model=${request.model})`);
           }
           response = await withAbortableTimeout(
-            () => fetch(endpoint, {
+            () => fetchWithUnwrappedCause(endpoint, {
               method: 'POST',
               headers,
               body: retryBody,
@@ -750,7 +821,7 @@ export class ModelClient {
               return;
             }
             response = await withAbortableTimeout(
-              () => fetch(endpoint, {
+              () => fetchWithUnwrappedCause(endpoint, {
                 method: 'POST',
                 headers: { ...headers, ...paymentHeader },
                 body: retryBody,
