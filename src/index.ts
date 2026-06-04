@@ -387,5 +387,10 @@ if (firstArg === 'solana' || firstArg === 'base') {
   await startCommand(startOpts as Parameters<typeof startCommand>[0]);
   process.exit(process.exitCode ?? 0);
 } else {
-  program.parse();
+  // Force node-style argv slicing. When the CLI is embedded and run via
+  // Electron-as-node (ELECTRON_RUN_AS_NODE=1, e.g. the desktop app spawning
+  // `franklin serve`), commander otherwise detects `process.versions.electron`
+  // + no defaultApp and slices argv as a packaged-electron app — treating the
+  // script path as the command. `from: 'node'` keeps [exec, script, ...args].
+  program.parse(process.argv, { from: 'node' });
 }
