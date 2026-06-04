@@ -116,6 +116,17 @@ program
   });
 
 program
+  .command('webui')
+  .description('Run the local WebUI/desktop agent server (WebSocket on localhost:3737)')
+  .option('-p, --port <port>', 'Agent server port', '3737')
+  .option('--work-dir <dir>', 'Working directory for tools (default: cwd)')
+  .option('--debug', 'Verbose logging')
+  .action(async (options: { port?: string; workDir?: string; debug?: boolean }) => {
+    const { webuiCommand } = await import('./commands/webui.js');
+    await webuiCommand(options);
+  });
+
+program
   .command('models')
   .description('List available models and pricing')
   .action(modelsCommand);
