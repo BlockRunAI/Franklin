@@ -1,5 +1,5 @@
 /**
- * Franklin WebUI agent server.
+ * Franklin agent server (local WebSocket — drives the desktop app & browser UI).
  *
  * Serves the local React WebUI (franklin-webui / the desktop app) over a single
  * WebSocket using the envelope wire protocol the UI already speaks:
@@ -78,7 +78,7 @@ function dialogueText(content: Dialogue['content']): string {
     .join('');
 }
 
-export async function startWebuiServer(opts: ServerOptions): Promise<void> {
+export async function startServer(opts: ServerOptions): Promise<void> {
   const { port, workDir, debug } = opts;
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
@@ -356,7 +356,7 @@ export async function startWebuiServer(opts: ServerOptions): Promise<void> {
   await new Promise<void>((resolve) => {
     httpServer.listen(port, '127.0.0.1', () => {
       // eslint-disable-next-line no-console
-      console.log(`Franklin WebUI agent server on ws://127.0.0.1:${port}/agent  (chain: ${chain}, workdir: ${workDir})`);
+      console.log(`Franklin agent server on ws://127.0.0.1:${port}/agent  (chain: ${chain}, workdir: ${workDir})`);
       resolve();
     });
   });
