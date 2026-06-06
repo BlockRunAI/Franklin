@@ -53,8 +53,11 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   flash: 'google/gemini-2.5-flash',
   'gemini-3': 'google/gemini-3.1-pro',
   'gemini-3.1': 'google/gemini-3.1-pro',
-  // xAI
-  grok: 'xai/grok-3',
+  // xAI — grok-4.3 is the public flagship since 2026-06-04 (grok-3 and the
+  // fast families are hidden on the gateway; explicit IDs still resolve).
+  grok: 'xai/grok-4.3',
+  'grok-4.3': 'xai/grok-4.3',
+  'grok-build': 'xai/grok-build-0.1',
   'grok-3': 'xai/grok-3',
   'grok-4': 'xai/grok-4-0709',
   'grok-fast': 'xai/grok-4-1-fast-reasoning',
@@ -98,6 +101,7 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'm3': 'minimax/minimax-m3',
   'm2.7': 'minimax/minimax-m2.7',
   glm: 'zai/glm-5.1',
+  'glm-5': 'zai/glm-5',
   'glm-turbo': 'zai/glm-5-turbo',
   'glm5': 'zai/glm-5.1',
   kimi: 'moonshot/kimi-k2.6',
@@ -143,9 +147,12 @@ export interface ModelCategory {
  */
 export const PICKER_CATEGORIES: ModelCategory[] = [
   {
-    category: '🔥 Promo (flat $0.001/call)',
+    // glm-5.1's launch promo ended 2026-06-05 (per-token $1.40/$4.40 now;
+    // shortcut `glm` still resolves to it). glm-5 / glm-5-turbo are permanent
+    // flat-rate SKUs (gateway billingMode: "flat"), not a promo.
+    category: '🔥 Flat rate ($0.001/call)',
     models: [
-      { id: 'zai/glm-5.1',       shortcut: 'glm',       label: 'GLM-5.1',       price: '$0.001/call', highlight: true },
+      { id: 'zai/glm-5',       shortcut: 'glm-5',     label: 'GLM-5',       price: '$0.001/call', highlight: true },
       { id: 'zai/glm-5-turbo', shortcut: 'glm-turbo', label: 'GLM-5 Turbo', price: '$0.001/call', highlight: true },
     ],
   },
@@ -156,7 +163,7 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       // Premium are kept as shortcut aliases (`eco`, `premium`) and resolve
       // through the router for back-compat with older configs/sessions, but
       // they're hidden from new users — Auto already covers the cheap end
-      // (V4 Pro at $0.50/$1.00 for SIMPLE/MEDIUM) and the quality end (Opus
+      // (V4 Pro at $0.435/$0.87 for SIMPLE/MEDIUM) and the quality end (Opus
       // for COMPLEX), so a separate Eco/Premium picker entry just adds
       // choice paralysis without distinct value.
       { id: 'blockrun/auto', shortcut: 'auto', label: 'Auto', price: 'routed' },
@@ -176,7 +183,7 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'openai/gpt-5.5',              shortcut: 'gpt',       label: 'GPT-5.5',           price: '$5/$30', highlight: true },
       { id: 'google/gemini-3.1-pro',       shortcut: 'gemini-3',  label: 'Gemini 3.1 Pro',    price: '$2/$12' },
       { id: 'google/gemini-2.5-pro',       shortcut: 'gemini',    label: 'Gemini 2.5 Pro',    price: '$1.25/$10' },
-      { id: 'xai/grok-4-0709',             shortcut: 'grok-4',    label: 'Grok 4',            price: '$0.2/$1.5' },
+      { id: 'xai/grok-4.3',                shortcut: 'grok',      label: 'Grok 4.3',          price: '$1.5/$4' },
     ],
   },
   {
@@ -184,9 +191,10 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
     models: [
       { id: 'openai/o3',                     shortcut: 'o3',           label: 'O3',                    price: '$2/$8' },
       { id: 'openai/gpt-5.3-codex',          shortcut: 'codex',        label: 'GPT-5.3 Codex',         price: '$1.75/$14' },
-      // V4 Pro on launch promo (75% off through 2026-05-31). 1M context,
-      // 1.6T MoE → punches up to GPT-5.5/Opus on hard tasks at <1/10 the price.
-      { id: 'deepseek/deepseek-v4-pro',      shortcut: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro',    price: '$0.5/$1 (promo)', highlight: true },
+      // V4 Pro: the 75% launch promo became DeepSeek's permanent list price
+      // after 2026-05-31. 1M context, 1.6T MoE → punches up to GPT-5.5/Opus
+      // on hard tasks at <1/10 the price.
+      { id: 'deepseek/deepseek-v4-pro',      shortcut: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro',    price: '$0.435/$0.87', highlight: true },
       { id: 'deepseek/deepseek-reasoner',    shortcut: 'r1',           label: 'DeepSeek V4 Flash R.',  price: '$0.2/$0.4' },
       { id: 'xai/grok-4-1-fast-reasoning',   shortcut: 'grok-fast',    label: 'Grok 4.1 Fast R.',      price: '$0.2/$0.5' },
     ],

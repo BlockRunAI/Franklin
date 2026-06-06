@@ -964,12 +964,13 @@ async function handleBasePayment(
   const paymentRequired = parsePaymentRequired(paymentHeader);
   const details = extractPaymentDetails(paymentRequired);
   const paidUsd = paymentAmountToUsd(details.amount);
-  appendSettlementRow(extractEndpointPath(url), paidUsd, {
+  const endpoint = extractEndpointPath(url);
+  const settlementMeta = {
     model,
     wallet: fromAddress,
     network: details.network || 'base-mainnet',
     client_kind: 'ProxyClient',
-  });
+  };
 
   const paymentPayload = await createPaymentPayload(
     privateKey,
@@ -995,6 +996,8 @@ async function handleBasePayment(
     body: body || undefined,
   }, timeoutMs, `Paid proxy request for ${model}`);
 
+  if (paid.status === 402) return { response: paid, paidUsd: 0 };
+  appendSettlementRow(endpoint, paidUsd, settlementMeta);
   return { response: paid, paidUsd };
 }
 
@@ -1021,12 +1024,13 @@ async function handleSolanaPayment(
   const paymentRequired = parsePaymentRequired(paymentHeader);
   const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
   const paidUsd = paymentAmountToUsd(details.amount);
-  appendSettlementRow(extractEndpointPath(url), paidUsd, {
+  const endpoint = extractEndpointPath(url);
+  const settlementMeta = {
     model,
     wallet: fromAddress,
     network: details.network || 'solana-mainnet',
     client_kind: 'ProxyClient',
-  });
+  };
 
   const secretKey = await solanaKeyToBytes(privateKey);
 
@@ -1056,6 +1060,8 @@ async function handleSolanaPayment(
     body: body || undefined,
   }, timeoutMs, `Paid proxy request for ${model}`);
 
+  if (paid.status === 402) return { response: paid, paidUsd: 0 };
+  appendSettlementRow(endpoint, paidUsd, settlementMeta);
   return { response: paid, paidUsd };
 }
 

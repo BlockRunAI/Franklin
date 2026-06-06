@@ -2593,6 +2593,94 @@ test('streamCompletion: retries without tool_choice when upstream rejects it', a
   assert.equal(calls[1].tool_choice, undefined, 'retry must have stripped tool_choice');
 });
 
+test('streamCompletion: signed payment rejected by gateway does not count as paid', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    calls.push({ paid: Boolean(init.headers?.['PAYMENT-SIGNATURE']) });
+    if (calls.length === 1) {
+      return new Response(JSON.stringify({ error: 'payment required' }), {
+        status: 402,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ error: 'Payment verification failed' }), {
+      status: 402,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    client.signPayment = async () => ({
+      headers: { 'PAYMENT-SIGNATURE': 'test-signature' },
+      endpoint: '/v1/messages',
+      amountUsd: 0.123,
+      meta: { model: 'openai/gpt-5.4', wallet: '0xabc', network: 'base-mainnet', client_kind: 'AgentClient' },
+    });
+
+    const gen = client.streamCompletion({
+      model: 'openai/gpt-5.4',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1024,
+    });
+    for await (const _evt of gen) { /* drain */ }
+
+    assert.equal(calls.length, 2, 'must probe once and retry once with payment');
+    assert.equal(calls[1].paid, true, 'second request must carry payment signature');
+    assert.equal(client.getLastPaidUsd(), 0, 'rejected signed payment must not count as settled spend');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('streamCompletion: accepted signed payment increments paid amount after retry returns', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    calls.push({ paid: Boolean(init.headers?.['PAYMENT-SIGNATURE']) });
+    if (calls.length === 1) {
+      return new Response(JSON.stringify({ error: 'payment required' }), {
+        status: 402,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({
+      id: 'msg_paid',
+      type: 'message',
+      role: 'assistant',
+      model: 'google/gemini-3.1-pro',
+      content: [{ type: 'text', text: 'ok' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    client.signPayment = async () => ({
+      headers: { 'PAYMENT-SIGNATURE': 'test-signature' },
+      endpoint: '/v1/messages',
+      amountUsd: 0.123,
+      meta: { model: 'google/gemini-3.1-pro', wallet: '0xabc', network: 'base-mainnet', client_kind: 'AgentClient' },
+    });
+
+    const gen = client.streamCompletion({
+      model: 'google/gemini-3.1-pro',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1024,
+    });
+    for await (const _evt of gen) { /* drain */ }
+
+    assert.equal(calls.length, 2, 'must probe once and retry once with payment');
+    assert.equal(calls[1].paid, true, 'second request must carry payment signature');
+    assert.equal(client.getLastPaidUsd(), 0.123, 'accepted paid retry should be reflected in session cost');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // ─── VideoGen image_url: local paths are inlined as data URIs ──────
 //
 // Verified 2026-05-04 in a live session: the agent passed a local
@@ -6515,12 +6603,15 @@ test('picker trim: shortcuts for hidden models still resolve (muscle-memory pres
   assert.equal(resolveModel('o1'), 'openai/o1');
   assert.equal(resolveModel('o4'), 'openai/o4-mini');
   assert.equal(resolveModel('nano'), 'openai/gpt-5-nano');
-  // grok still maps to grok-3 — explicit user intent, picker hiding doesn't
-  // change the alias contract (same as kimi-k2.5 pattern).
-  assert.equal(resolveModel('grok'), 'xai/grok-3');
+  // grok promoted to the public flagship grok-4.3 (2026-06-04) — same
+  // flagship-promotion pattern as kimi → k2.6. Explicit pins still resolve.
+  assert.equal(resolveModel('grok'), 'xai/grok-4.3');
+  assert.equal(resolveModel('grok-3'), 'xai/grok-3');
+  assert.equal(resolveModel('grok-4'), 'xai/grok-4-0709');
+  assert.equal(resolveModel('grok-build'), 'xai/grok-build-0.1');
 });
 
-test('picker trim: hero shortcuts (opus, sonnet, gpt, gemini-3, grok-4) still in visible list', async () => {
+test('picker trim: hero shortcuts (opus, sonnet, gpt, gemini-3, grok) still in visible list', async () => {
   const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
   const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
   assert.ok(ids.includes('anthropic/claude-opus-4.8'));
@@ -6528,7 +6619,7 @@ test('picker trim: hero shortcuts (opus, sonnet, gpt, gemini-3, grok-4) still in
   assert.ok(ids.includes('openai/gpt-5.5'));
   assert.ok(ids.includes('google/gemini-3.1-pro'));
   assert.ok(ids.includes('google/gemini-2.5-pro'));
-  assert.ok(ids.includes('xai/grok-4-0709'));
+  assert.ok(ids.includes('xai/grok-4.3')); // grok-4-0709 hidden on gateway; 4.3 is the public flagship row
 });
 
 test('picker trim: total visible entries dropped meaningfully', async () => {

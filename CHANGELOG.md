@@ -1,5 +1,14 @@
 # Changelog
 
+## Franklin Agent 3.26.0 — catalog sync: Grok 4.3 flagship, V4 Pro permanent pricing, GLM promo end
+
+Model-catalog alignment with the BlockRun gateway's 2026-06-04/05 drops.
+
+- **Grok 4.3 is the xAI flagship.** New pricing rows `xai/grok-4.3` ($1.50/$4.00, 1M ctx) and `xai/grok-build-0.1` ($1.50/$3.00, 256K, agentic coding) — both resold via BlockRun's OpenRouter credit pool. Bare `grok` shortcut promoted grok-3 → grok-4.3 (same flagship-promotion pattern as kimi → k2.6); new `grok-4.3` / `grok-build` shortcuts; explicit `grok-3` / `grok-4` / `grok-fast` pins unchanged. Picker's Premium row swaps the now-hidden (and mispriced) grok-4-0709 for Grok 4.3; `grok-4-0709` pricing corrected $0.2/$1.5 → $3/$15 for session-cost accuracy.
+- **GLM-5.1 launch promo ended (2026-06-05).** It now bills per-token $1.40/$4.40 — pricing row updated, and the picker's promo section no longer lists it (shortcut `glm` still resolves). The section is renamed "Flat rate ($0.001/call)" and now leads with `zai/glm-5` (new `glm-5` shortcut) — glm-5 / glm-5-turbo are permanent flat-rate SKUs, not a promo.
+- **DeepSeek V4 Pro: the 75% launch promo became DeepSeek's permanent list price** after 2026-05-31 — pricing updated $0.50/$1.00 → $0.435/$0.87 (slightly cheaper), picker label de-promo'd, router comments refreshed. Routing unchanged: V4 Pro stays the SIMPLE/MEDIUM primary, now at a lower rate.
+
+
 ## Franklin Agent 3.25.4 — decode pasted blocks on slash commands, Ctrl+V image paste in vim mode
 
 Two follow-ups to the image-paste work in 3.25.3.

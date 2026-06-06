@@ -15,7 +15,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import { USER_AGENT, type Chain } from '../config.js';
-import { appendSettlementRow } from '../stats/cost-log.js';
+import { appendSettlementRow, type SettlementMeta } from '../stats/cost-log.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import type {
   Dialogue,
@@ -106,6 +106,13 @@ export interface LLMClientOptions {
   apiUrl: string;
   chain: Chain;
   debug?: boolean;
+}
+
+interface SignedPayment {
+  headers: Record<string, string>;
+  endpoint: string;
+  amountUsd: number;
+  meta: SettlementMeta;
 }
 
 function parseTimeoutEnv(name: string): number | null {
@@ -737,8 +744,8 @@ export class ModelClient {
       // Handle x402 payment
       if (response.status === 402) {
         if (this.debug) console.error('[franklin] Payment required — signing...');
-        const paymentHeader = await this.signPayment(response, request.model);
-        if (!paymentHeader) {
+        const signedPayment = await this.signPayment(response, request.model);
+        if (!signedPayment) {
           yield { kind: 'error', payload: { message: 'Payment signing failed' } };
           return;
         }
@@ -746,7 +753,7 @@ export class ModelClient {
         response = await withAbortableTimeout(
           () => fetchWithUnwrappedCause(endpoint, {
             method: 'POST',
-            headers: { ...headers, ...paymentHeader },
+            headers: { ...headers, ...signedPayment.headers },
             body,
             signal: requestController.signal,
           }),
@@ -754,6 +761,7 @@ export class ModelClient {
           createModelTimeoutError('request', request.model, requestTimeoutMs),
           requestTimeoutMs,
         );
+        this.recordSettledPayment(signedPayment, response);
       }
 
       if (!response.ok) {
@@ -815,15 +823,15 @@ export class ModelClient {
             requestTimeoutMs,
           );
           if (response.status === 402) {
-            const paymentHeader = await this.signPayment(response, request.model);
-            if (!paymentHeader) {
+            const signedPayment = await this.signPayment(response, request.model);
+            if (!signedPayment) {
               yield { kind: 'error', payload: { message: 'Payment signing failed' } };
               return;
             }
             response = await withAbortableTimeout(
               () => fetchWithUnwrappedCause(endpoint, {
                 method: 'POST',
-                headers: { ...headers, ...paymentHeader },
+                headers: { ...headers, ...signedPayment.headers },
                 body: retryBody,
                 signal: requestController.signal,
               }),
@@ -831,6 +839,7 @@ export class ModelClient {
               createModelTimeoutError('request', request.model, requestTimeoutMs),
               requestTimeoutMs,
             );
+            this.recordSettledPayment(signedPayment, response);
           }
           if (!response.ok) {
             const retryBodyText = await response.text().catch(() => 'unknown error');
@@ -1262,7 +1271,7 @@ export class ModelClient {
   private async signPayment(
     response: Response,
     model: string,
-  ): Promise<Record<string, string> | null> {
+  ): Promise<SignedPayment | null> {
     try {
       if (this.chain === 'solana') {
         return await this.signSolanaPayment(response, model);
@@ -1281,10 +1290,19 @@ export class ModelClient {
     }
   }
 
+  private recordSettledPayment(payment: SignedPayment, response: Response): void {
+    // A post-signature 402 means the gateway rejected the payment rather than
+    // settling it. Keep both the session cost and cost_log anchored to calls
+    // the gateway accepted after the paid retry returned.
+    if (response.status === 402) return;
+    this.lastPaidUsd += payment.amountUsd;
+    appendSettlementRow(payment.endpoint, payment.amountUsd, payment.meta);
+  }
+
   private async signBasePayment(
     response: Response,
     model: string,
-  ): Promise<Record<string, string>> {
+  ): Promise<SignedPayment> {
     // Refresh wallet cache after TTL to pick up balance/key changes
     if (!this.cachedBaseWallet || (Date.now() - this.walletCacheTime > ModelClient.WALLET_CACHE_TTL)) {
       const w = getOrCreateWallet();
@@ -1300,18 +1318,7 @@ export class ModelClient {
 
     const paymentRequired = parsePaymentRequired(paymentHeader);
     const details = extractPaymentDetails(paymentRequired);
-    this.lastPaidUsd = paymentAmountToUsd(details.amount);
-    // Mirror the SDK's appendCostLog write so cost_log.jsonl becomes a
-    // true wallet-truth ledger covering both SDK helper traffic AND the
-    // agent's main LLM stream (which uses this signer, not the SDK).
-    // Match SDK schema (model/wallet/network/client_kind) so every row
-    // is independently queryable.
-    appendSettlementRow('/v1/messages', this.lastPaidUsd, {
-      model,
-      wallet: wallet.address,
-      network: details.network || 'base-mainnet',
-      client_kind: 'AgentClient',
-    });
+    const amountUsd = paymentAmountToUsd(details.amount);
 
     const payload = await createPaymentPayload(
       wallet.privateKey as `0x${string}`,
@@ -1327,13 +1334,23 @@ export class ModelClient {
       }
     );
 
-    return { 'PAYMENT-SIGNATURE': payload };
+    return {
+      headers: { 'PAYMENT-SIGNATURE': payload },
+      endpoint: '/v1/messages',
+      amountUsd,
+      meta: {
+        model,
+        wallet: wallet.address,
+        network: details.network || 'base-mainnet',
+        client_kind: 'AgentClient',
+      },
+    };
   }
 
   private async signSolanaPayment(
     response: Response,
     model: string,
-  ): Promise<Record<string, string>> {
+  ): Promise<SignedPayment> {
     if (!this.cachedSolanaWallet || (Date.now() - this.walletCacheTime > ModelClient.WALLET_CACHE_TTL)) {
       const w = await getOrCreateSolanaWallet();
       this.walletCacheTime = Date.now();
@@ -1347,13 +1364,7 @@ export class ModelClient {
 
     const paymentRequired = parsePaymentRequired(paymentHeader);
     const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
-    this.lastPaidUsd = paymentAmountToUsd(details.amount);
-    appendSettlementRow('/v1/messages', this.lastPaidUsd, {
-      model,
-      wallet: wallet.address,
-      network: details.network || 'solana-mainnet',
-      client_kind: 'AgentClient',
-    });
+    const amountUsd = paymentAmountToUsd(details.amount);
 
     const secretBytes = await solanaKeyToBytes(wallet.privateKey);
     const feePayer = details.extra?.feePayer || details.recipient;
@@ -1372,7 +1383,17 @@ export class ModelClient {
       }
     );
 
-    return { 'PAYMENT-SIGNATURE': payload };
+    return {
+      headers: { 'PAYMENT-SIGNATURE': payload },
+      endpoint: '/v1/messages',
+      amountUsd,
+      meta: {
+        model,
+        wallet: wallet.address,
+        network: details.network || 'solana-mainnet',
+        client_kind: 'AgentClient',
+      },
+    };
   }
 
   private async extractPaymentReq(response: Response): Promise<string | null> {
