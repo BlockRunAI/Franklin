@@ -128,6 +128,8 @@ export async function runTelegramBot(
     running: true,
     restartRequested: false,
     stoppedBy: undefined as Error | undefined,
+    // One "working" ping per turn — don't spam a message for every tool call.
+    workingNotified: false,
   };
 
   // ── Telegram HTTP helpers ────────────────────────────────────────────
@@ -273,8 +275,9 @@ export async function runTelegramBot(
         }
         break;
       case 'capability_start':
-        // Best-effort signal that the agent is working. Flush any buffered
-        // text first so the user sees the narrative order correctly.
+        // Best-effort "agent is working" signal. Flush buffered text first so
+        // order reads right, then send ONE ping per turn — not one per tool
+        // call (a multi-tool run otherwise floods the chat).
         if (state.currentChatId !== undefined) {
           if (state.responseBuffer.trim()) {
             const chatId = state.currentChatId;
@@ -282,13 +285,17 @@ export async function runTelegramBot(
             state.responseBuffer = '';
             void sendMessage(chatId, text);
           }
-          void sendMessage(state.currentChatId, `⏳ ${event.name}…`);
+          if (!state.workingNotified) {
+            state.workingNotified = true;
+            void sendMessage(state.currentChatId, '⏳ Working…');
+          }
         }
         break;
       case 'turn_done': {
         const chatId = state.currentChatId;
         const text = state.responseBuffer.trim();
         state.responseBuffer = '';
+        state.workingNotified = false; // reset for the next turn
         if (chatId !== undefined && text) void sendChunked(chatId, text);
         if (event.reason === 'error' && event.error && chatId !== undefined) {
           void sendMessage(chatId, `❌ Error: ${event.error}`);
