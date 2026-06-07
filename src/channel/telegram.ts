@@ -38,6 +38,10 @@ export interface TelegramOptions {
   token: string;
   /** Numeric Telegram user id that's allowed to drive the bot. Required. */
   ownerId: number;
+  /** Extra numeric user ids allowed to drive the bot (e.g. other people in a
+   *  group). The owner is always allowed; this widens access without dropping
+   *  the lock. Empty/undefined → owner-only (original behaviour). */
+  allowedUsers?: Set<number>;
   /** Called with each user-facing log line so the CLI can print them. */
   log?: (line: string) => void;
 }
@@ -46,9 +50,10 @@ interface TgUpdate {
   update_id: number;
   message?: {
     message_id: number;
-    chat: { id: number };
+    chat: { id: number; type?: string };
     from?: { id: number; username?: string; first_name?: string };
     text?: string;
+    reply_to_message?: { from?: { id?: number; is_bot?: boolean } };
   };
 }
 
@@ -294,10 +299,21 @@ export async function runTelegramBot(
   };
 
   // ── Long-poll loop (runs concurrently with interactiveSession) ──────
+  // Captured from getMe so the group @mention gate knows the bot's handle/id.
+  let botUsername: string | undefined;
+  let botId: number | undefined;
+
   const pollLoop = async (): Promise<void> => {
     try {
-      const me = await api<{ username?: string }>('getMe', {});
-      log(`[telegram] connected as @${me.username ?? '(unknown)'} — owner=${opts.ownerId}`);
+      const me = await api<{ id?: number; username?: string }>('getMe', {});
+      botUsername = me.username;
+      botId = me.id;
+      log(
+        `[telegram] connected as @${me.username ?? '(unknown)'} — owner=${opts.ownerId}` +
+          (opts.allowedUsers && opts.allowedUsers.size
+            ? ` + ${opts.allowedUsers.size} allowed user(s)`
+            : ''),
+      );
     } catch (err) {
       state.stoppedBy = err as Error;
       state.running = false;
@@ -323,7 +339,27 @@ export async function runTelegramBot(
         state.offset = u.update_id + 1;
         const msg = u.message;
         if (!msg?.text || !msg.from) continue;
-        if (msg.from.id !== opts.ownerId) {
+
+        // In groups, only act when the bot is addressed: @mentioned (incl. the
+        // `/cmd@bot` form) or replied to. Everything else — plain chatter AND
+        // bare slash commands — is ignored SILENTLY. Private chats need no mention.
+        const isGroup = !!msg.chat.type && msg.chat.type !== 'private';
+        let text = msg.text;
+        if (isGroup) {
+          const tag = botUsername ? `@${botUsername}` : '';
+          const mentioned = !!tag && text.toLowerCase().includes(tag.toLowerCase());
+          const repliedToBot = !!botId && msg.reply_to_message?.from?.id === botId;
+          if (!mentioned && !repliedToBot) continue;
+          // Strip the @mention so the agent gets a clean prompt.
+          if (mentioned && tag) {
+            text = text.replace(new RegExp(tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '').trim();
+          }
+        }
+        if (!text) continue; // mention with no actual content
+
+        const isAuthorized =
+          msg.from.id === opts.ownerId || !!opts.allowedUsers?.has(msg.from.id);
+        if (!isAuthorized) {
           void sendMessage(msg.chat.id, 'Not authorized.');
           log(
             `[telegram] rejected unauthorized sender id=${msg.from.id} ` +
@@ -331,18 +367,18 @@ export async function runTelegramBot(
           );
           continue;
         }
-        log(`[telegram] ← ${msg.text.slice(0, 80)}${msg.text.length > 80 ? '…' : ''}`);
+        log(`[telegram] ← ${text.slice(0, 80)}${text.length > 80 ? '…' : ''}`);
 
         // Intercept bot slash commands before handing off to the agent.
-        if (msg.text.trim().startsWith('/')) {
+        if (text.trim().startsWith('/')) {
           state.currentChatId = msg.chat.id;
-          const handled = await handleSlashCommand(msg.chat.id, msg.text);
+          const handled = await handleSlashCommand(msg.chat.id, text);
           if (handled) continue;
           // Unknown slash command: fall through to agent (which has its own
           // slash handling for /retry, /model, /cost, …).
         }
 
-        enqueueInput(msg.chat.id, msg.text);
+        enqueueInput(msg.chat.id, text);
       }
     }
   };

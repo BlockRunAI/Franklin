@@ -23,6 +23,7 @@ import { configCommand } from './commands/config.js';
 import { statsCommand } from './commands/stats.js';
 import { logsCommand } from './commands/logs.js';
 import { daemonCommand } from './commands/daemon.js';
+import { slackCommand } from './commands/slack.js';
 import { initCommand } from './commands/init.js';
 import { uninitCommand } from './commands/uninit.js';
 import { proxyCommand } from './commands/proxy.js';
@@ -105,6 +106,13 @@ program
   .description('Manage franklin background proxy (start|stop|status)')
   .option('-p, --port <port>', 'Proxy port', '8402')
   .action((action, options) => daemonCommand(action, options));
+
+program
+  .command('slack')
+  .description('Run the Slack ingress bot (Socket Mode)')
+  .option('--model <model>', 'Model to use')
+  .option('--debug', 'Verbose Slack/Bolt logging')
+  .action((options) => slackCommand(options));
 
 program
   .command('panel')
