@@ -16,12 +16,27 @@
  * HTTPS endpoint. `node fetch` is the only HTTP dep.
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
 import type { AgentConfig, Dialogue, StreamEvent } from '../agent/types.js';
 import { interactiveSession } from '../agent/loop.js';
 import { ModelClient } from '../agent/llm.js';
 import { extractBrainEntities } from '../brain/extract.js';
 import { extractLearnings } from '../learnings/extractor.js';
+
+// Per-bot prefs (persisted so a restart keeps the user's choice).
+const PREFS_FILE = path.join(os.homedir(), '.blockrun', 'telegram-prefs.json');
+function loadPrefs(): { showTools?: boolean } {
+  try { return JSON.parse(fs.readFileSync(PREFS_FILE, 'utf-8')); } catch { return {}; }
+}
+function savePrefs(prefs: { showTools?: boolean }): void {
+  try {
+    fs.mkdirSync(path.dirname(PREFS_FILE), { recursive: true });
+    fs.writeFileSync(PREFS_FILE, JSON.stringify(prefs, null, 2), { mode: 0o600 });
+  } catch { /* best-effort */ }
+}
 
 const TG_API = 'https://api.telegram.org';
 const POLL_TIMEOUT_SECONDS = 25;
@@ -128,8 +143,10 @@ export async function runTelegramBot(
     running: true,
     restartRequested: false,
     stoppedBy: undefined as Error | undefined,
-    // One "working" ping per turn — don't spam a message for every tool call.
-    workingNotified: false,
+    // Tool names used in the current turn → one summary at turn end (not one
+    // message per call). `showTools` gates whether that summary is sent.
+    toolsUsed: [] as string[],
+    showTools: loadPrefs().showTools ?? true,
   };
 
   // ── Telegram HTTP helpers ────────────────────────────────────────────
@@ -175,6 +192,16 @@ export async function runTelegramBot(
   // ── Slash commands (handled by the bot, not the agent) ──────────────
   const handleSlashCommand = async (chatId: number, text: string): Promise<boolean> => {
     const cmd = text.trim().toLowerCase();
+
+    // `/tools` toggles the per-turn tool summary (takes on/off, or bare = flip).
+    if (cmd === '/tools' || cmd.startsWith('/tools ')) {
+      const arg = cmd.slice('/tools'.length).trim();
+      state.showTools = arg === 'on' ? true : arg === 'off' ? false : !state.showTools;
+      savePrefs({ showTools: state.showTools });
+      await sendMessage(chatId, `🔧 工具调用汇总:${state.showTools ? '开启 ✅' : '关闭'}`);
+      return true;
+    }
+
     switch (cmd) {
       case '/start':
       case '/help':
@@ -182,6 +209,7 @@ export async function runTelegramBot(
           chatId,
           'Franklin bot\n\n' +
             '/new — start a fresh conversation (clears history)\n' +
+            '/tools [on|off] — toggle the per-turn tool-usage summary\n' +
             '/balance — show wallet USDC balance\n' +
             '/status — show chain, model, and session stats\n' +
             '/help — this message\n\n' +
@@ -275,28 +303,28 @@ export async function runTelegramBot(
         }
         break;
       case 'capability_start':
-        // Best-effort "agent is working" signal. Flush buffered text first so
-        // order reads right, then send ONE ping per turn — not one per tool
-        // call (a multi-tool run otherwise floods the chat).
-        if (state.currentChatId !== undefined) {
-          if (state.responseBuffer.trim()) {
-            const chatId = state.currentChatId;
-            const text = state.responseBuffer.trim();
-            state.responseBuffer = '';
-            void sendMessage(chatId, text);
-          }
-          if (!state.workingNotified) {
-            state.workingNotified = true;
-            void sendMessage(state.currentChatId, '⏳ Working…');
-          }
+        // Record the tool (for the turn-end summary) and flush buffered text so
+        // narrative order reads right. No per-tool message — a multi-tool run
+        // otherwise floods the chat.
+        if (event.name) state.toolsUsed.push(event.name);
+        if (state.currentChatId !== undefined && state.responseBuffer.trim()) {
+          const chatId = state.currentChatId;
+          const text = state.responseBuffer.trim();
+          state.responseBuffer = '';
+          void sendMessage(chatId, text);
         }
         break;
       case 'turn_done': {
         const chatId = state.currentChatId;
         const text = state.responseBuffer.trim();
         state.responseBuffer = '';
-        state.workingNotified = false; // reset for the next turn
         if (chatId !== undefined && text) void sendChunked(chatId, text);
+        // One tool summary per turn (toggle with /tools).
+        if (chatId !== undefined && state.showTools && state.toolsUsed.length) {
+          const uniq = [...new Set(state.toolsUsed)];
+          void sendMessage(chatId, `🔧 用了 ${state.toolsUsed.length} 个工具:${uniq.join(' · ')}`);
+        }
+        state.toolsUsed = [];
         if (event.reason === 'error' && event.error && chatId !== undefined) {
           void sendMessage(chatId, `❌ Error: ${event.error}`);
         }
