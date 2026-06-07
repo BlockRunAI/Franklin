@@ -1,5 +1,19 @@
 # Changelog
 
+## Franklin Agent 3.27.0 — desktop agent server, Slack channel, Telegram groups
+
+The Franklin Desktop backend lands (#80, #81), reviewed and hardened.
+
+- **`franklin serve`** — local WebSocket agent server (`ws://127.0.0.1:3737/agent`) that powers the Franklin Desktop app and browser UI: provider-grouped model list, cost-saver settings, wallet spend / token holdings / swap RPCs, cloud-first conversation history, per-tool activity detail. One long-lived session per server process (MVP).
+- **SIWE cloud sync** — the local Base wallet signs in to franklin.run and proxies conversation load/save/delete to the per-wallet conversations API, so desktop and web share one history. Best-effort: any failure falls back to the local file. Sync passes are serialized to keep the reconcile state consistent.
+- **Hardened the loopback server.** Loopback binding is not an auth boundary — any web page can reach 127.0.0.1. WS upgrades and `/file` requests are now gated by an Origin allowlist (non-browser clients, `file://`/`app://` renderers, localhost, franklin.run, plus `FRANKLIN_SERVE_ALLOWED_ORIGINS`); the literal `null` origin is refused by default (sandboxed-iframe vector, opt back in with `FRANKLIN_SERVE_ALLOW_NULL_ORIGIN=1`); optional `FRANKLIN_SERVE_TOKEN` adds a handshake token. `/file` is confined to media files under the work dir (symlink-resolved, extension allowlist) and reflects vetted origins instead of `Access-Control-Allow-Origin: *`.
+- **Slack channel** (`franklin slack`) — Socket Mode bot with a user-id allowlist (`SLACK_ALLOWED_USERS`, empty = deny all): DMs and channel @-mentions, threaded replies, progressive chunked streaming, one tool summary per turn.
+- **Telegram: groups + allowlist.** `TELEGRAM_ALLOWED_USERS` admits users beyond the owner; in group chats the bot only acts when @-mentioned or replied to (plain chatter is ignored silently). `/tools [on|off]` toggles a per-turn tool-usage summary (persisted).
+- **Swap history** — successful 0x swaps (standard + gasless) append to `~/.blockrun/swaps.jsonl` for the desktop wallet view. Standard swaps now wait for the tx receipt and record only on confirmed success — a reverted swap reports an error instead of "✓ executed".
+- **Cost-saver gate** — the desktop toggle (`cost-saver` config) can disable bloat compaction; the ≥20% projected-savings ROI floor stops wasted summarizer round-trips on small histories, while the $1.00 emergency compact stays unconditional (it exists to stop runaway turns).
+- **Fixes**: model fallback guards against a missing `request.model`; generic per-tool input previews (`endpoint · param`) in the activity log; Electron-as-Node argv parsing for `franklin serve`; `@slack/bolt` declared as a dependency.
+
+
 ## Franklin Agent 3.26.1 — GLM flat pricing fully retired
 
 - **Z.AI ended its remaining flat $0.001/call promos on 2026-06-06** (backend d840de7): `zai/glm-5` now bills per-token at $0.60/$1.92 and `zai/glm-5-turbo` at $1.20/$4.00 (glm-5.1 stays $1.40/$4.40). Pricing rows updated for accurate session-cost records.
