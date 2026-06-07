@@ -329,8 +329,33 @@ export class StreamingExecutor {
       case 'WebFetch':
       case 'WebSearch':
         return ((input.url ?? input.query) as string) || undefined;
-      default:
-        return undefined;
+      default: {
+        // Generic fallback so EVERY tool shows what it's doing. For enum/router
+        // tools (e.g. Surf*) the `endpoint` is the real action — show it, paired
+        // with the most relevant param, e.g. "market/etf · BTC". Otherwise pick
+        // the single most meaningful argument.
+        const PARAM_KEYS = [
+          'query', 'q', 'search', 'prompt', 'question', 'text',
+          'symbol', 'pair', 'metric', 'indicator', 'ticker', 'coin', 'asset', 'market',
+          'protocol', 'handle', 'chain', 'address', 'addresses', 'hash', 'conditionId',
+          'url', 'id', 'slug', 'name', 'path', 'pattern', 'to', 'number',
+        ];
+        const firstParam = (): string => {
+          for (const k of PARAM_KEYS) {
+            const v = input[k];
+            if (typeof v === 'string' && v.trim()) return v.trim();
+          }
+          return '';
+        };
+        // The "action" field (endpoint / action) is the real verb — show it even
+        // when there's no param (e.g. PredictionMarket `leaderboard`).
+        const action =
+          (typeof input.endpoint === 'string' && input.endpoint.trim()) ||
+          (typeof input.action === 'string' && input.action.trim()) || '';
+        const combined = [action, firstParam()].filter(Boolean).join(' · ');
+        if (!combined) return undefined;
+        return combined.length > 80 ? combined.slice(0, 80) + '…' : combined;
+      }
     }
   }
 }

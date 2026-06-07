@@ -19,19 +19,104 @@
 
 import http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
 import WebSocket from 'ws';
-import { loadChain, API_URLS } from '../config.js';
-import { loadConfig } from '../commands/config.js';
+import { loadChain, API_URLS, BLOCKRUN_DIR } from '../config.js';
+import { loadConfig, setConfigValue } from '../commands/config.js';
 import { assembleInstructions } from '../agent/context.js';
 import { interactiveSession } from '../agent/loop.js';
 import { allCapabilities, createSubAgentCapability } from '../tools/index.js';
 import { getModelsByCategory } from '../gateway-models.js';
 import { listSessions, loadSessionHistory } from '../session/storage.js';
+import { loadSdkSettlements } from '../stats/cost-log.js';
+import { readSwaps } from '../stats/swap-log.js';
+import { isCloudSyncEnabled, cloudList, cloudSync, type CloudConversation } from './cloud-sync.js';
 import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
 import { retryFetchBalance } from '../commands/balance-retry.js';
 import type { AgentConfig, StreamEvent, Dialogue, ContentPart, UserContentPart } from '../agent/types.js';
 
 const FREE_DEFAULT_MODEL = 'nvidia/deepseek-v4-flash';
+
+// Curated Base (chainId 8453) tokens for the wallet "holdings" view. Plain RPC
+// can't enumerate every token an address holds (no on-chain "list all"), so we
+// balanceOf a known set and show the non-zero ones. `stable` → USD ≈ amount.
+const BASE_PUBLIC_RPCS = ['https://base.publicnode.com', 'https://mainnet.base.org', 'https://base.meowrpc.com'];
+const BASE_TOKENS: Array<{ symbol: string; address: string; decimals: number; stable?: boolean; cg?: string }> = [
+  { symbol: 'USDC', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6, stable: true },
+  { symbol: 'USDbC', address: '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA', decimals: 6, stable: true },
+  { symbol: 'USDT', address: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', decimals: 6, stable: true },
+  { symbol: 'DAI', address: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', decimals: 18, stable: true },
+  { symbol: 'WETH', address: '0x4200000000000000000000000000000000000006', decimals: 18, cg: 'ethereum' },
+  { symbol: 'cbBTC', address: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', decimals: 8, cg: 'bitcoin' },
+  { symbol: 'cbETH', address: '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22', decimals: 18, cg: 'ethereum' },
+  { symbol: 'AERO', address: '0x940181a94A35A4569E4529A3CDfB74e38FD98631', decimals: 18, cg: 'aerodrome-finance' },
+  { symbol: 'DEGEN', address: '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed', decimals: 18, cg: 'degen-base' },
+];
+
+// USD prices via CoinGecko (free, no key). Best-effort: on failure, tokens just
+// show without a USD value rather than blocking the holdings list.
+async function fetchCgPrices(ids: string[]): Promise<Record<string, number>> {
+  if (ids.length === 0) return {};
+  try {
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent([...new Set(ids)].join(','))}&vs_currencies=usd`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const j = await r.json() as Record<string, { usd?: number }>;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(j)) if (typeof v?.usd === 'number') out[k] = v.usd;
+    return out;
+  } catch { return {}; }
+}
+
+async function baseRpc(method: string, params: unknown[]): Promise<string | null> {
+  for (const url of BASE_PUBLIC_RPCS) {
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        signal: AbortSignal.timeout(6000),
+      });
+      const j = await r.json() as { result?: string };
+      if (j && typeof j.result === 'string') return j.result;
+    } catch { /* try next rpc */ }
+  }
+  return null;
+}
+
+function hexToAmount(hex: string | null, decimals: number): number {
+  if (!hex || hex === '0x') return 0;
+  try {
+    const v = BigInt(hex);
+    if (v === 0n) return 0;
+    // Scale down with enough precision for display.
+    return Number(v) / 10 ** decimals;
+  } catch { return 0; }
+}
+
+/** Best-effort list of an address's holdings (native ETH + curated ERC-20s). */
+async function listBaseHoldings(address: string): Promise<Array<{ symbol: string; amount: number; usd?: number }>> {
+  const out: Array<{ symbol: string; amount: number; usd?: number }> = [];
+  const addr = address.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+  const DUST = 1e-6; // hide negligible dust (e.g. post-swap leftovers) that'd render as "0"
+  // Collect raw balances (amount + which coingecko id to price it with).
+  const raw: Array<{ symbol: string; amount: number; stable?: boolean; cg?: string }> = [];
+  const ethHex = await baseRpc('eth_getBalance', [address, 'latest']);
+  const eth = hexToAmount(ethHex, 18);
+  if (eth >= DUST) raw.push({ symbol: 'ETH', amount: eth, cg: 'ethereum' });
+  await Promise.all(BASE_TOKENS.map(async (t) => {
+    const data = '0x70a08231' + addr; // balanceOf(address)
+    const hex = await baseRpc('eth_call', [{ to: t.address, data }, 'latest']);
+    const amt = hexToAmount(hex, t.decimals);
+    if (amt >= DUST) raw.push({ symbol: t.symbol, amount: amt, stable: t.stable, cg: t.cg });
+  }));
+  // Price the non-stable holdings (stable ≈ $1) and compute USD value per token.
+  const prices = await fetchCgPrices(raw.filter((r) => !r.stable && r.cg).map((r) => r.cg!));
+  for (const r of raw) {
+    const usd = r.stable ? r.amount : (r.cg && prices[r.cg] != null ? r.amount * prices[r.cg] : undefined);
+    out.push({ symbol: r.symbol, amount: r.amount, ...(usd != null ? { usd } : {}) });
+  }
+  return out.sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0) || b.amount - a.amount);
+}
 
 // Friendly, provider-tagged labels for the activity log (mirrors franklin-run),
 // so a finished step reads "Checking prediction markets · Predexon" instead of
@@ -45,6 +130,22 @@ const TOOL_LABELS: Record<string, string> = {
 };
 function labelFor(name: string): string {
   return TOOL_LABELS[name] ?? name;
+}
+
+// Model list grouping — by provider (company), like OpenRouter/Together. The
+// provider is the id's vendor prefix (e.g. "anthropic/claude-…"); PROVIDER_ORDER
+// puts the most-wanted vendors first, the rest fall in alphabetically.
+const PROVIDER_LABEL: Record<string, string> = {
+  anthropic: 'Anthropic', openai: 'OpenAI', azure: 'OpenAI', google: 'Google', 'google-vertex': 'Google',
+  xai: 'xAI', deepseek: 'DeepSeek', meta: 'Meta', 'meta-llama': 'Meta', nvidia: 'NVIDIA',
+  moonshot: 'Moonshot', moonshotai: 'Moonshot', qwen: 'Qwen', alibaba: 'Qwen', mistral: 'Mistral',
+  mistralai: 'Mistral', minimax: 'MiniMax', zhipu: 'Zhipu', bytedance: 'ByteDance', cohere: 'Cohere',
+  perplexity: 'Perplexity', amazon: 'Amazon', microsoft: 'Microsoft', '01-ai': 'Yi', ai21: 'AI21',
+};
+const PROVIDER_ORDER = ['Anthropic', 'OpenAI', 'Google', 'xAI', 'DeepSeek', 'Qwen', 'Moonshot', 'Meta', 'Mistral', 'MiniMax', 'NVIDIA'];
+function providerLabel(id: string, ownedBy?: string): string {
+  const p = (id.split('/')[0] || ownedBy || '').toLowerCase();
+  return PROVIDER_LABEL[p] || (p ? p.charAt(0).toUpperCase() + p.slice(1) : 'Other');
 }
 
 interface ServerOptions {
@@ -89,6 +190,10 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   // fan its StreamEvents out to the connected socket.
   let sessionStarted = false;
   let currentModel: string | null = null;
+  // Live config ref + the cost-saver (research-bloat compaction) toggle. The UI
+  // flips this; we mutate the running config so the loop picks it up next turn.
+  let agentConfig: AgentConfig | null = null;
+  let costSaver = userConfig['cost-saver'] !== 'false';
   let inputQueue: string[] = [];
   let inputResolver: ((v: string | null) => void) | null = null;
   let abortFn: (() => void) | null = null;
@@ -96,8 +201,20 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   // The socket + correlation id for the in-flight turn (single-window).
   let activeWs: WebSocket | null = null;
   let activeTurnId: string | null = null;
+  // We sometimes inject helper commands (`/model …`, `/clear`) as their own
+  // turns ahead of the real prompt. Each ends with its own turn_done — which
+  // would emit agent.done and clear activeTurnId, killing the real prompt's
+  // stream. This counter swallows each injected turn's events (text + turn_done)
+  // so the real prompt streams next under the same activeTurnId. It's a counter,
+  // not a bool, because a single send can inject more than one command.
+  let suppressTurns = 0;
+  // The client conversation id the running agent history belongs to. When a turn
+  // arrives for a different conversation we /clear the history so separate
+  // sidebar chats don't bleed context (the server runs one long-lived session).
+  let currentConvId: string | null = null;
   const stepIds = new Map<string, number>();
   const stepLabels = new Map<string, string>();
+  const stepDetails = new Map<string, string>();
   let stepSeq = 0;
 
   function getUserInput(): Promise<string | null> {
@@ -123,9 +240,45 @@ export async function startServer(opts: ServerOptions): Promise<void> {
     if (activeWs && activeTurnId) send(activeWs, activeTurnId, kind, payload);
   }
 
+  // ── Wallet balance (cached client) + post-turn broadcast ──
+  let walletClient: Awaited<ReturnType<typeof setupAgentSolanaWallet>> | ReturnType<typeof setupAgentWallet> | null = null;
+  async function getWallet() {
+    if (walletClient) return walletClient;
+    const c = chain === 'solana'
+      ? await setupAgentSolanaWallet({ silent: true })
+      : setupAgentWallet({ silent: true });
+    walletClient = c;
+    return c;
+  }
+  async function fetchBalanceUsd(): Promise<number | undefined> {
+    try {
+      const client = await getWallet();
+      return await retryFetchBalance(() => client.getBalance());
+    } catch { return undefined; }
+  }
+  // After each turn, push the fresh balance to the UI (settlement may have
+  // changed it) so the sidebar pill + wallet page update live and stay in sync.
+  // Broadcast with a non-turn id so it reaches the client's global listeners.
+  function broadcastWalletAfterTurn(): void {
+    const ws = activeWs;
+    if (!ws) return;
+    void fetchBalanceUsd().then((balanceUsd) => {
+      if (balanceUsd != null) send(ws, 'wallet', 'wallet.event', { balanceUsd });
+    });
+  }
+
   function onEvent(event: StreamEvent): void {
+    // Injected helper turn (/model, /clear): drop its output and end-of-turn so
+    // it neither shows in the chat nor closes the real prompt's stream.
+    if (suppressTurns > 0) {
+      if (event.kind === 'turn_done') suppressTurns--;
+      return;
+    }
     switch (event.kind) {
       case 'text_delta':
+        // Drop internal compaction status lines (🗜 …) — they're CLI ops noise,
+        // not part of the answer, and shouldn't render in the desktop chat.
+        if (/^\s*\*?🗜/.test(event.text)) break;
         emit('agent.text', { sessionId: '', text: event.text });
         break;
       case 'capability_start': {
@@ -133,14 +286,18 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         if (sid == null) { sid = ++stepSeq; stepIds.set(event.id, sid); }
         const label = labelFor(event.name);
         stepLabels.set(event.id, label);
-        emit('agent.step', { sessionId: '', stepId: sid, label, state: 'run' });
+        // The per-call detail (the tool's key argument — query, prompt, symbol…)
+        // shown as small text next to the tool so you see WHAT it's doing.
+        const detail = event.preview?.trim() || '';
+        if (detail) stepDetails.set(event.id, detail);
+        emit('agent.step', { sessionId: '', stepId: sid, label, detail, state: 'run' });
         break;
       }
       case 'capability_done': {
         const sid = stepIds.get(event.id) ?? ++stepSeq;
         // Keep the original label on completion — sending '' here is what made
         // finished steps render as a bare checkmark with no text.
-        emit('agent.step', { sessionId: '', stepId: sid, label: stepLabels.get(event.id) ?? '', state: 'done' });
+        emit('agent.step', { sessionId: '', stepId: sid, label: stepLabels.get(event.id) ?? '', detail: stepDetails.get(event.id) ?? '', state: 'done' });
         const images = event.result?.images;
         if (images && images.length) {
           emit('agent.tool_result', {
@@ -186,6 +343,8 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         activeTurnId = null;
         stepIds.clear();
         stepLabels.clear();
+        stepDetails.clear();
+        broadcastWalletAfterTurn();
         break;
       // thinking_delta / capability_input_delta / capability_progress / usage:
       // not surfaced to the UI yet.
@@ -217,7 +376,9 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       permissionMode: 'trust', // the desktop UI has no permission prompt yet
       debug: !!debug,
       showPrefetchStatus: false,
+      costSaver,
     };
+    agentConfig = config;
 
     interactiveSession(config, getUserInput, onEvent, (abort) => { abortFn = abort; })
       .catch((err) => {
@@ -258,31 +419,135 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       }
       case 'wallet.info': {
         try {
-          const client = chain === 'solana'
-            ? await setupAgentSolanaWallet({ silent: true })
-            : setupAgentWallet({ silent: true });
+          const client = await getWallet();
           const address = client.getWalletAddress();
-          let balanceUsd: number | undefined;
-          try {
-            balanceUsd = await retryFetchBalance(() => client.getBalance());
-          } catch { /* balance best-effort — still return the address */ }
+          const balanceUsd = await fetchBalanceUsd(); // best-effort; undefined on failure
           send(ws, id, 'response', { address, chain, balanceUsd });
         } catch (err) {
           send(ws, id, 'error', { message: err instanceof Error ? err.message : 'wallet error' });
         }
         break;
       }
+      case 'wallet.tokens': {
+        // Holdings: native ETH + curated Base ERC-20s with a non-zero balance.
+        // Public RPC can't enumerate ALL tokens, so this is a known-token sweep.
+        try {
+          if (chain !== 'base') { send(ws, id, 'response', { tokens: [] }); break; }
+          const client = await getWallet();
+          const address = await client.getWalletAddress();
+          const tokens = await listBaseHoldings(address);
+          send(ws, id, 'response', { tokens });
+        } catch (err) {
+          send(ws, id, 'error', { message: err instanceof Error ? err.message : 'tokens error' });
+        }
+        break;
+      }
+      case 'history.load': {
+        // History is wallet-synced to the cloud (franklin.run, same as the web)
+        // with a local file (~/.blockrun) as cache + offline fallback. Cloud is
+        // the source of truth when reachable; otherwise we serve the local file.
+        const file = path.join(BLOCKRUN_DIR, 'franklin-desktop-history.json');
+        const readLocal = (): unknown[] => {
+          try {
+            if (fs.existsSync(file)) { const p2 = JSON.parse(fs.readFileSync(file, 'utf-8')); if (Array.isArray(p2)) return p2; }
+          } catch { /* ignore */ }
+          return [];
+        };
+        const writeLocal = (c: unknown[]) => {
+          try { fs.mkdirSync(BLOCKRUN_DIR, { recursive: true }); fs.writeFileSync(file, JSON.stringify(c), { mode: 0o600 }); } catch { /* ignore */ }
+        };
+        try {
+          const local = readLocal();
+          if (isCloudSyncEnabled()) {
+            try {
+              const cloud = await cloudList();
+              if (cloud.length > 0) {
+                writeLocal(cloud);            // refresh local cache
+                send(ws, id, 'response', { conversations: cloud });
+                break;
+              }
+              // Cloud empty but we have local history → migrate it up.
+              if (local.length > 0) void cloudSync(local as CloudConversation[]).catch(() => {});
+            } catch { /* offline / not-deployed → fall back to local */ }
+          }
+          send(ws, id, 'response', { conversations: local });
+        } catch (err) {
+          send(ws, id, 'error', { message: err instanceof Error ? err.message : 'history load error' });
+        }
+        break;
+      }
+      case 'history.save': {
+        try {
+          const conversations = Array.isArray(p.conversations) ? p.conversations : [];
+          // Local file = instant durable cache; cloud = best-effort wallet sync.
+          fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+          fs.writeFileSync(path.join(BLOCKRUN_DIR, 'franklin-desktop-history.json'), JSON.stringify(conversations), { mode: 0o600 });
+          if (isCloudSyncEnabled()) void cloudSync(conversations as CloudConversation[]).catch(() => {});
+          send(ws, id, 'response', { ok: true });
+        } catch (err) {
+          send(ws, id, 'error', { message: err instanceof Error ? err.message : 'history save error' });
+        }
+        break;
+      }
+      case 'wallet.swaps': {
+        try {
+          send(ws, id, 'response', { swaps: readSwaps(100) });
+        } catch (err) {
+          send(ws, id, 'error', { message: err instanceof Error ? err.message : 'swaps error' });
+        }
+        break;
+      }
+      case 'wallet.spend': {
+        // Real spend, sourced from the x402 settlement ledger (cost_log.jsonl) —
+        // the same truth the CLI dashboard uses. Covers BOTH model calls and
+        // paid tools (web search, image gen, …), not a token estimate.
+        try {
+          const rows = loadSdkSettlements();
+          const byModel: Record<string, { usd: number; count: number }> = {};
+          let totalUsd = 0;
+          for (const r of rows) {
+            const key = r.model || r.endpoint || 'unknown';
+            const b = byModel[key] ?? { usd: 0, count: 0 };
+            b.usd += r.costUsd;
+            b.count += 1;
+            byModel[key] = b;
+            totalUsd += r.costUsd;
+          }
+          const receipts = [...rows]
+            .sort((a, b) => b.ts - a.ts)
+            .slice(0, 100)
+            .map((r) => ({ ts: r.ts, model: r.model || r.endpoint || 'unknown', usd: r.costUsd }));
+          send(ws, id, 'response', { totalUsd, requests: rows.length, byModel, receipts });
+        } catch (err) {
+          send(ws, id, 'error', { message: err instanceof Error ? err.message : 'spend error' });
+        }
+        break;
+      }
       case 'models.list': {
         try {
           const models = await getModelsByCategory('chat');
-          send(ws, id, 'response', {
-            models: models.map((m) => ({
+          const mapped = models.map((m) => {
+            const provider = providerLabel(m.id, m.owned_by);
+            return {
               id: m.id,
               label: m.name,
               free: m.billing_mode === 'free',
-              group: m.billing_mode === 'free' ? 'Free' : 'Paid',
-            })),
+              group: provider,
+              provider,
+              contextWindow: m.context_window,
+            };
           });
+          // Group by provider (PROVIDER_ORDER first, then alphabetical); free
+          // models surface first within each provider. The picker renders
+          // consecutive same-`group` items as one section, so sort accordingly.
+          const rank = (g: string) => { const i = PROVIDER_ORDER.indexOf(g); return i < 0 ? 999 : i; };
+          mapped.sort((a, b) =>
+            rank(a.group) - rank(b.group) ||
+            a.group.localeCompare(b.group) ||
+            (a.free === b.free ? 0 : a.free ? -1 : 1) ||
+            a.label.localeCompare(b.label),
+          );
+          send(ws, id, 'response', { models: mapped });
         } catch (err) {
           send(ws, id, 'error', { message: err instanceof Error ? err.message : 'models error' });
         }
@@ -299,12 +564,34 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         // prompt, NOT the chat model — switching the chat model to an image
         // model breaks the turn), so we keep the current chat model for them.
         const desiredModel = p.model ? String(p.model) : null;
+        const clientConvId = p.convId ? String(p.convId) : null;
         await ensureSession(desiredModel || userConfig['default-model'] || FREE_DEFAULT_MODEL);
+        // Conversation switch → wipe the agent's history so a new/other chat
+        // doesn't inherit the previous one's context. Only when we already had a
+        // different conversation loaded (not on the very first turn).
+        if (clientConvId && currentConvId && clientConvId !== currentConvId) {
+          suppressTurns++; // swallow the injected /clear turn (see onEvent)
+          pushInput('/clear');
+        }
+        if (clientConvId) currentConvId = clientConvId;
         if (desiredModel && currentModel && desiredModel !== currentModel) {
+          suppressTurns++; // swallow the injected /model turn (see onEvent)
           pushInput(`/model ${desiredModel}`);
           currentModel = desiredModel;
         }
         pushInput(text);
+        break;
+      }
+      case 'settings.get':
+        send(ws, id, 'response', { costSaver });
+        break;
+      case 'settings.set': {
+        if (typeof p.costSaver === 'boolean') {
+          costSaver = p.costSaver;
+          if (agentConfig) agentConfig.costSaver = costSaver; // live-update the running session
+          setConfigValue('cost-saver', costSaver ? 'true' : 'false'); // persist across restarts
+        }
+        send(ws, id, 'response', { costSaver });
         break;
       }
       case 'agent.cancel':

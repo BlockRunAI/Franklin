@@ -15,6 +15,7 @@ const VALID_KEYS = [
   'permission-mode',
   'max-turns',
   'auto-compact',
+  'cost-saver',
   'session-save',
   'debug',
   'zerox-api-key',
@@ -32,6 +33,8 @@ export interface AppConfig {
   'permission-mode'?: string;
   'max-turns'?: string;
   'auto-compact'?: string;
+  /** Research-bloat compaction toggle for the desktop ("false" disables). */
+  'cost-saver'?: string;
   'session-save'?: string;
   'debug'?: string;
   /** 0x V2 Swap API key for Base swaps. Free at https://dashboard.0x.org. Each user supplies their own; the on-chain affiliate fee routes to BlockRun regardless. */
@@ -68,6 +71,13 @@ function saveConfig(config: AppConfig): void {
 
 function isValidKey(key: string): key is ConfigKey {
   return VALID_KEYS.includes(key as ConfigKey);
+}
+
+/** Persist a single config key (used by the desktop server for live toggles). */
+export function setConfigValue(key: ConfigKey, value: string): void {
+  const config = loadConfig();
+  config[key] = value;
+  saveConfig(config);
 }
 
 export function configCommand(

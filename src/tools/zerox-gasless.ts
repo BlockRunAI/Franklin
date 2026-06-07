@@ -32,6 +32,7 @@ import { getOrCreateWallet } from '@blockrun/llm';
 
 import { loadConfig } from '../commands/config.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
+import { appendSwap } from '../stats/swap-log.js';
 import { logger } from '../logger.js';
 import type { CapabilityHandler, ExecutionScope } from '../agent/types.js';
 
@@ -536,6 +537,22 @@ async function executeBase0xGaslessSwap(
       : final.status === 'failed'
         ? `✗ Swap failed: ${final.reason ?? 'unknown reason'}`
         : `⏳ Still pending after ${MAX_STATUS_POLL_MS / 1000}s — relayer is backlogged. Check status later via /v1/zerox/gasless/status/${submitRes.tradeHash}.`;
+
+  if ((final.status === 'confirmed' || final.status === 'succeeded') && onChainHash) {
+    try {
+      appendSwap({
+        ts: Date.now(),
+        chain: 'base',
+        dex: '0x',
+        sellSym: symbolFor(quote.sellToken),
+        sellAmount: Number(formatUnits(BigInt(quote.sellAmount), decimalsFor(quote.sellToken))),
+        buySym: symbolFor(quote.buyToken),
+        buyAmount: Number(formatUnits(BigInt(quote.buyAmount), decimalsFor(quote.buyToken))),
+        txHash: onChainHash,
+        explorer: explorer ?? undefined,
+      });
+    } catch { /* best-effort */ }
+  }
 
   const lines: string[] = [
     statusLine,

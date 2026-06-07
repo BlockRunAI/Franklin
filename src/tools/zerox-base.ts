@@ -43,6 +43,7 @@ import { getOrCreateWallet } from '@blockrun/llm';
 
 import { loadConfig } from '../commands/config.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
+import { appendSwap } from '../stats/swap-log.js';
 import type { CapabilityHandler, ExecutionScope } from '../agent/types.js';
 
 // ─── BlockRun affiliate identity on Base ─────────────────────────────────
@@ -549,6 +550,20 @@ async function executeBase0xSwap(
 
   liveSwapCount += 1;
   const explorer = `https://basescan.org/tx/${txHash}`;
+  // Record the swap so the desktop wallet can show a history (best-effort).
+  try {
+    appendSwap({
+      ts: Date.now(),
+      chain: 'base',
+      dex: '0x',
+      sellSym: symbolFor(quote.sellToken),
+      sellAmount: Number(formatUnits(BigInt(quote.sellAmount), decimalsFor(quote.sellToken))),
+      buySym: symbolFor(quote.buyToken),
+      buyAmount: Number(formatUnits(BigInt(quote.buyAmount), decimalsFor(quote.buyToken))),
+      txHash,
+      explorer,
+    });
+  } catch { /* best-effort */ }
   return {
     output: [
       '✓ Swap executed on Base.',

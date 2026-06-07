@@ -520,7 +520,7 @@ export class ModelClient {
    * default model.
    */
   private resolveVirtualModel(model: string): string {
-    if (!model.startsWith('blockrun/')) return model;
+    if (!model || !model.startsWith('blockrun/')) return model;
 
     try {
       const profile = parseRoutingProfile(model);
@@ -563,6 +563,14 @@ export class ModelClient {
     // Reset the per-call charge tracker. signBasePayment / signSolanaPayment
     // will set it when the gateway demands a 402 settlement.
     this.lastPaidUsd = 0;
+    // Guard: a missing/non-string model (e.g. a flaky-gateway fallback that
+    // produced undefined) must not hard-crash with a cryptic
+    // "reading 'startsWith'". Normalize to the routing profile, which resolves
+    // to a concrete model below.
+    if (!request.model || typeof request.model !== 'string') {
+      console.error('[franklin] request.model was missing — defaulting to blockrun/auto');
+      request = { ...request, model: 'blockrun/auto' };
+    }
     // Resolve virtual models before any API call
     const resolvedModel = this.resolveVirtualModel(request.model);
     if (resolvedModel !== request.model) {

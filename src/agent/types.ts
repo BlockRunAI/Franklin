@@ -217,4 +217,8 @@ export interface AgentConfig {
   maxSpendUsd?: number;
   /** Show user-visible harness prefetch status lines (interactive UX only). */
   showPrefetchStatus?: boolean;
+  /** Mid-turn "research-bloat" compaction — summarizes history when a turn
+   *  racks up many tool calls + spend, to cut input-replay cost. Default on;
+   *  set false to disable (the desktop exposes this as a toggle). */
+  costSaver?: boolean;
 }
