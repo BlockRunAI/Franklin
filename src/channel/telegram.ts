@@ -16,12 +16,27 @@
  * HTTPS endpoint. `node fetch` is the only HTTP dep.
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
 import type { AgentConfig, Dialogue, StreamEvent } from '../agent/types.js';
 import { interactiveSession } from '../agent/loop.js';
 import { ModelClient } from '../agent/llm.js';
 import { extractBrainEntities } from '../brain/extract.js';
 import { extractLearnings } from '../learnings/extractor.js';
+
+// Per-bot prefs (persisted so a restart keeps the user's choice).
+const PREFS_FILE = path.join(os.homedir(), '.blockrun', 'telegram-prefs.json');
+function loadPrefs(): { showTools?: boolean } {
+  try { return JSON.parse(fs.readFileSync(PREFS_FILE, 'utf-8')); } catch { return {}; }
+}
+function savePrefs(prefs: { showTools?: boolean }): void {
+  try {
+    fs.mkdirSync(path.dirname(PREFS_FILE), { recursive: true });
+    fs.writeFileSync(PREFS_FILE, JSON.stringify(prefs, null, 2), { mode: 0o600 });
+  } catch { /* best-effort */ }
+}
 
 const TG_API = 'https://api.telegram.org';
 const POLL_TIMEOUT_SECONDS = 25;
@@ -38,6 +53,10 @@ export interface TelegramOptions {
   token: string;
   /** Numeric Telegram user id that's allowed to drive the bot. Required. */
   ownerId: number;
+  /** Extra numeric user ids allowed to drive the bot (e.g. other people in a
+   *  group). The owner is always allowed; this widens access without dropping
+   *  the lock. Empty/undefined → owner-only (original behaviour). */
+  allowedUsers?: Set<number>;
   /** Called with each user-facing log line so the CLI can print them. */
   log?: (line: string) => void;
 }
@@ -46,9 +65,10 @@ interface TgUpdate {
   update_id: number;
   message?: {
     message_id: number;
-    chat: { id: number };
+    chat: { id: number; type?: string };
     from?: { id: number; username?: string; first_name?: string };
     text?: string;
+    reply_to_message?: { from?: { id?: number; is_bot?: boolean } };
   };
 }
 
@@ -123,6 +143,10 @@ export async function runTelegramBot(
     running: true,
     restartRequested: false,
     stoppedBy: undefined as Error | undefined,
+    // Tool names used in the current turn → one summary at turn end (not one
+    // message per call). `showTools` gates whether that summary is sent.
+    toolsUsed: [] as string[],
+    showTools: loadPrefs().showTools ?? true,
   };
 
   // ── Telegram HTTP helpers ────────────────────────────────────────────
@@ -168,6 +192,16 @@ export async function runTelegramBot(
   // ── Slash commands (handled by the bot, not the agent) ──────────────
   const handleSlashCommand = async (chatId: number, text: string): Promise<boolean> => {
     const cmd = text.trim().toLowerCase();
+
+    // `/tools` toggles the per-turn tool summary (takes on/off, or bare = flip).
+    if (cmd === '/tools' || cmd.startsWith('/tools ')) {
+      const arg = cmd.slice('/tools'.length).trim();
+      state.showTools = arg === 'on' ? true : arg === 'off' ? false : !state.showTools;
+      savePrefs({ showTools: state.showTools });
+      await sendMessage(chatId, `🔧 工具调用汇总:${state.showTools ? '开启 ✅' : '关闭'}`);
+      return true;
+    }
+
     switch (cmd) {
       case '/start':
       case '/help':
@@ -175,6 +209,7 @@ export async function runTelegramBot(
           chatId,
           'Franklin bot\n\n' +
             '/new — start a fresh conversation (clears history)\n' +
+            '/tools [on|off] — toggle the per-turn tool-usage summary\n' +
             '/balance — show wallet USDC balance\n' +
             '/status — show chain, model, and session stats\n' +
             '/help — this message\n\n' +
@@ -268,16 +303,15 @@ export async function runTelegramBot(
         }
         break;
       case 'capability_start':
-        // Best-effort signal that the agent is working. Flush any buffered
-        // text first so the user sees the narrative order correctly.
-        if (state.currentChatId !== undefined) {
-          if (state.responseBuffer.trim()) {
-            const chatId = state.currentChatId;
-            const text = state.responseBuffer.trim();
-            state.responseBuffer = '';
-            void sendMessage(chatId, text);
-          }
-          void sendMessage(state.currentChatId, `⏳ ${event.name}…`);
+        // Record the tool (for the turn-end summary) and flush buffered text so
+        // narrative order reads right. No per-tool message — a multi-tool run
+        // otherwise floods the chat.
+        if (event.name) state.toolsUsed.push(event.name);
+        if (state.currentChatId !== undefined && state.responseBuffer.trim()) {
+          const chatId = state.currentChatId;
+          const text = state.responseBuffer.trim();
+          state.responseBuffer = '';
+          void sendMessage(chatId, text);
         }
         break;
       case 'turn_done': {
@@ -285,6 +319,12 @@ export async function runTelegramBot(
         const text = state.responseBuffer.trim();
         state.responseBuffer = '';
         if (chatId !== undefined && text) void sendChunked(chatId, text);
+        // One tool summary per turn (toggle with /tools).
+        if (chatId !== undefined && state.showTools && state.toolsUsed.length) {
+          const uniq = [...new Set(state.toolsUsed)];
+          void sendMessage(chatId, `🔧 用了 ${state.toolsUsed.length} 个工具:${uniq.join(' · ')}`);
+        }
+        state.toolsUsed = [];
         if (event.reason === 'error' && event.error && chatId !== undefined) {
           void sendMessage(chatId, `❌ Error: ${event.error}`);
         }
@@ -294,10 +334,21 @@ export async function runTelegramBot(
   };
 
   // ── Long-poll loop (runs concurrently with interactiveSession) ──────
+  // Captured from getMe so the group @mention gate knows the bot's handle/id.
+  let botUsername: string | undefined;
+  let botId: number | undefined;
+
   const pollLoop = async (): Promise<void> => {
     try {
-      const me = await api<{ username?: string }>('getMe', {});
-      log(`[telegram] connected as @${me.username ?? '(unknown)'} — owner=${opts.ownerId}`);
+      const me = await api<{ id?: number; username?: string }>('getMe', {});
+      botUsername = me.username;
+      botId = me.id;
+      log(
+        `[telegram] connected as @${me.username ?? '(unknown)'} — owner=${opts.ownerId}` +
+          (opts.allowedUsers && opts.allowedUsers.size
+            ? ` + ${opts.allowedUsers.size} allowed user(s)`
+            : ''),
+      );
     } catch (err) {
       state.stoppedBy = err as Error;
       state.running = false;
@@ -323,7 +374,27 @@ export async function runTelegramBot(
         state.offset = u.update_id + 1;
         const msg = u.message;
         if (!msg?.text || !msg.from) continue;
-        if (msg.from.id !== opts.ownerId) {
+
+        // In groups, only act when the bot is addressed: @mentioned (incl. the
+        // `/cmd@bot` form) or replied to. Everything else — plain chatter AND
+        // bare slash commands — is ignored SILENTLY. Private chats need no mention.
+        const isGroup = !!msg.chat.type && msg.chat.type !== 'private';
+        let text = msg.text;
+        if (isGroup) {
+          const tag = botUsername ? `@${botUsername}` : '';
+          const mentioned = !!tag && text.toLowerCase().includes(tag.toLowerCase());
+          const repliedToBot = !!botId && msg.reply_to_message?.from?.id === botId;
+          if (!mentioned && !repliedToBot) continue;
+          // Strip the @mention so the agent gets a clean prompt.
+          if (mentioned && tag) {
+            text = text.replace(new RegExp(tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '').trim();
+          }
+        }
+        if (!text) continue; // mention with no actual content
+
+        const isAuthorized =
+          msg.from.id === opts.ownerId || !!opts.allowedUsers?.has(msg.from.id);
+        if (!isAuthorized) {
           void sendMessage(msg.chat.id, 'Not authorized.');
           log(
             `[telegram] rejected unauthorized sender id=${msg.from.id} ` +
@@ -331,18 +402,18 @@ export async function runTelegramBot(
           );
           continue;
         }
-        log(`[telegram] ← ${msg.text.slice(0, 80)}${msg.text.length > 80 ? '…' : ''}`);
+        log(`[telegram] ← ${text.slice(0, 80)}${text.length > 80 ? '…' : ''}`);
 
         // Intercept bot slash commands before handing off to the agent.
-        if (msg.text.trim().startsWith('/')) {
+        if (text.trim().startsWith('/')) {
           state.currentChatId = msg.chat.id;
-          const handled = await handleSlashCommand(msg.chat.id, msg.text);
+          const handled = await handleSlashCommand(msg.chat.id, text);
           if (handled) continue;
           // Unknown slash command: fall through to agent (which has its own
           // slash handling for /retry, /model, /cost, …).
         }
 
-        enqueueInput(msg.chat.id, msg.text);
+        enqueueInput(msg.chat.id, text);
       }
     }
   };
