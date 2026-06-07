@@ -135,6 +135,9 @@ export async function runSlackBot(
     running: true,
     restartRequested: false,
     botUserId: undefined as string | undefined,
+    // Tools the current turn has called — posted as ONE summary on turn_done,
+    // mirroring the Telegram channel (a per-tool message floods the thread).
+    toolsUsed: [] as string[],
   };
 
   const app = new App({
@@ -195,6 +198,9 @@ export async function runSlackBot(
       case '/new':
         state.restartRequested = true;
         state.inputQueue.length = 0;
+        // Drop tools recorded by a turn this reset interrupts, so they don't
+        // leak into the new conversation's first summary.
+        state.toolsUsed = [];
         {
           const waiters = state.inputWaiters.splice(0);
           for (const w of waiters) w(null);
@@ -272,14 +278,15 @@ export async function runSlackBot(
         }
         break;
       case 'capability_start':
-        if (state.currentTarget) {
-          if (state.responseBuffer.trim()) {
-            const target = state.currentTarget;
-            const text = state.responseBuffer.trim();
-            state.responseBuffer = '';
-            void postMessage(target, text);
-          }
-          void postMessage(state.currentTarget, `⏳ ${event.name}…`);
+        // Record the tool (for the turn-end summary) and flush buffered text so
+        // narrative order reads right. No per-tool message — a multi-tool run
+        // otherwise floods the thread (same fix as the Telegram channel).
+        if (event.name) state.toolsUsed.push(event.name);
+        if (state.currentTarget && state.responseBuffer.trim()) {
+          const target = state.currentTarget;
+          const text = state.responseBuffer.trim();
+          state.responseBuffer = '';
+          void postMessage(target, text);
         }
         break;
       case 'turn_done': {
@@ -287,6 +294,12 @@ export async function runSlackBot(
         const text = state.responseBuffer.trim();
         state.responseBuffer = '';
         if (target && text) void postChunked(target, text);
+        // One tool summary per turn, mirroring Telegram.
+        if (target && state.toolsUsed.length) {
+          const uniq = [...new Set(state.toolsUsed)];
+          void postMessage(target, `🔧 Used ${state.toolsUsed.length} tool${state.toolsUsed.length === 1 ? '' : 's'}: ${uniq.join(' · ')}`);
+        }
+        state.toolsUsed = [];
         if (event.reason === 'error' && event.error && target) {
           void postMessage(target, `❌ Error: ${event.error}`);
         }

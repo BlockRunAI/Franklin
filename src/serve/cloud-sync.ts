@@ -99,8 +99,21 @@ async function cloudDelete(id: string): Promise<void> {
   try { await authed(`/api/try/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* ignore */ }
 }
 
+// Sync passes are serialized: cloudSync is called fire-and-forget from both
+// history.load (migration) and history.save, and a pass reads + rewrites the
+// module-level `lastSynced` map across awaited network calls. Two interleaved
+// passes corrupt that shared state — worst case the delete sweep walks a stale
+// snapshot and removes a conversation a concurrent pass just uploaded.
+let syncQueue: Promise<void> = Promise.resolve();
+
 /** Reconcile cloud to match the given local list: upsert changed, delete removed. */
-export async function cloudSync(conversations: CloudConversation[]): Promise<void> {
+export function cloudSync(conversations: CloudConversation[]): Promise<void> {
+  const run = syncQueue.then(() => doCloudSync(conversations));
+  syncQueue = run.catch(() => {}); // keep the chain alive after a failed pass
+  return run;
+}
+
+async function doCloudSync(conversations: CloudConversation[]): Promise<void> {
   const current = new Map(conversations.map((c) => [c.id, c.updatedAt]));
   for (const c of conversations) {
     if (lastSynced.get(c.id) !== c.updatedAt) await cloudPut(c);

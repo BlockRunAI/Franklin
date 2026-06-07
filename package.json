@@ -69,6 +69,7 @@
     "@blockrun/llm": "^2.0.0",
     "@colbymchenry/codegraph": "^0.9.7",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@slack/bolt": "^4.7.3",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@types/react": "^19.2.14",

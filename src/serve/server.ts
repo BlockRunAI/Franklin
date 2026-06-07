@@ -148,6 +148,39 @@ function providerLabel(id: string, ownedBy?: string): string {
   return PROVIDER_LABEL[p] || (p ? p.charAt(0).toUpperCase() + p.slice(1) : 'Other');
 }
 
+// ─── Browser-attack surface gate ────────────────────────────────────────────
+// Loopback binding alone is NOT an auth boundary: any web page the user has
+// open can reach 127.0.0.1 (the browser attaches an Origin header but happily
+// completes the request — WS handshakes aren't blocked by CORS, and a wallet-
+// bearing agent in trust mode must not be drivable by a drive-by page).
+//
+// Policy: requests WITHOUT an Origin header are local processes (Electron main,
+// curl, native clients — browsers can't strip Origin) → allowed. Browser
+// origins are allowed only for Electron renderers (file:// / app://), local
+// UIs (localhost / 127.0.0.1), the hosted web UI, and anything listed in
+// FRANKLIN_SERVE_ALLOWED_ORIGINS (comma-separated). The literal "null" origin
+// is REJECTED by default — sandboxed iframes on hostile pages also serialize
+// to "null" — set FRANKLIN_SERVE_ALLOW_NULL_ORIGIN=1 if a renderer needs it.
+// Defense-in-depth: when FRANKLIN_SERVE_TOKEN is set, every WS upgrade and
+// /file request must also carry it (?token=…).
+const DEFAULT_ALLOWED_ORIGINS = ['https://franklin.run'];
+function isOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) return true; // non-browser local client
+  if (origin === 'null') return process.env.FRANKLIN_SERVE_ALLOW_NULL_ORIGIN === '1';
+  if (origin.startsWith('file://') || origin.startsWith('app://')) return true; // Electron renderer
+  let host = '';
+  try { host = new URL(origin).hostname; } catch { return false; }
+  if (host === '127.0.0.1' || host === 'localhost' || host === '[::1]' || host === '::1') return true;
+  const extra = (process.env.FRANKLIN_SERVE_ALLOWED_ORIGINS || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  return [...DEFAULT_ALLOWED_ORIGINS, ...extra].includes(origin);
+}
+function tokenOk(url: URL): boolean {
+  const required = process.env.FRANKLIN_SERVE_TOKEN;
+  if (!required) return true;
+  return url.searchParams.get('token') === required;
+}
+
 interface ServerOptions {
   port: number;
   workDir: string;
@@ -607,28 +640,59 @@ export async function startServer(opts: ServerOptions): Promise<void> {
 
   // ── HTTP + WS ──
   // HTTP: a /file route streams a generated media file (audio/video/image) so
-  // the renderer can play it. Loopback-only server, so a path param is fine.
+  // the renderer can play it. The path param is confined to media files under
+  // the session work dir (plus FRANKLIN_SERVE_FILE_ROOTS extras) — NOT the
+  // whole filesystem — and the request must pass the Origin gate. Otherwise a
+  // hostile page could fetch wallet/key files off the loopback port.
+  const fileRoots = [
+    workDir,
+    path.join(BLOCKRUN_DIR, 'content'),
+    ...(process.env.FRANKLIN_SERVE_FILE_ROOTS || '').split(',').map((s) => s.trim()).filter(Boolean),
+  ].map((r) => { try { return fs.realpathSync(r); } catch { return null; } }).filter((r): r is string => !!r);
+  const MEDIA_MIME: Record<string, string> = {
+    mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg', flac: 'audio/flac',
+    mp4: 'video/mp4', webm: 'video/webm',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
+  };
   const httpServer = http.createServer((req, res) => {
     try {
       const url = new URL(req.url || '/', 'http://127.0.0.1');
+      const origin = req.headers.origin;
       if (url.pathname === '/file') {
+        if (!isOriginAllowed(origin) || !tokenOk(url)) { res.writeHead(403); res.end(); return; }
         const p = url.searchParams.get('path') || '';
         if (!p || !fs.existsSync(p) || !fs.statSync(p).isFile()) { res.writeHead(404); res.end(); return; }
-        const ext = p.toLowerCase().split('.').pop() || '';
-        const mime =
-          ext === 'mp3' ? 'audio/mpeg' : ext === 'wav' ? 'audio/wav' : ext === 'm4a' ? 'audio/mp4' :
-          ext === 'ogg' ? 'audio/ogg' : ext === 'flac' ? 'audio/flac' :
-          ext === 'mp4' ? 'video/mp4' : ext === 'webm' ? 'video/webm' :
-          /^(png|jpe?g|webp|gif)$/.test(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/octet-stream';
-        res.writeHead(200, { 'Content-Type': mime, 'Access-Control-Allow-Origin': '*' });
-        fs.createReadStream(p).pipe(res);
+        // Resolve symlinks before the prefix check so a link can't escape a root.
+        const real = fs.realpathSync(p);
+        const inRoot = fileRoots.some((root) => real === root || real.startsWith(root + path.sep));
+        const ext = real.toLowerCase().split('.').pop() || '';
+        const mime = MEDIA_MIME[ext];
+        if (!inRoot || !mime) { res.writeHead(403); res.end(); return; }
+        res.writeHead(200, {
+          'Content-Type': mime,
+          // Reflect the (already vetted) origin instead of `*` so arbitrary
+          // sites can't read the bytes cross-origin.
+          ...(origin && origin !== 'null' ? { 'Access-Control-Allow-Origin': origin } : {}),
+        });
+        fs.createReadStream(real).pipe(res);
         return;
       }
     } catch { /* fall through to 404 */ }
     res.writeHead(404);
     res.end();
   });
-  const wss = new WebSocket.Server({ server: httpServer, path: '/agent' });
+  const wss = new WebSocket.Server({
+    server: httpServer,
+    path: '/agent',
+    // Same gate as /file: refuse upgrades from non-allowlisted browser origins
+    // (and require the token when one is configured). See isOriginAllowed.
+    verifyClient: (info: { origin?: string; req: http.IncomingMessage }) => {
+      const url = new URL(info.req.url || '/', 'http://127.0.0.1');
+      const allowed = isOriginAllowed(info.origin || info.req.headers.origin) && tokenOk(url);
+      if (!allowed && debug) console.log(`[serve] rejected WS upgrade from origin=${info.origin ?? 'n/a'}`);
+      return allowed;
+    },
+  });
 
   wss.on('connection', (ws: WebSocket) => {
     ws.on('message', (raw: Buffer) => {

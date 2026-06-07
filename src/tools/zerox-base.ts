@@ -550,23 +550,42 @@ async function executeBase0xSwap(
 
   liveSwapCount += 1;
   const explorer = `https://basescan.org/tx/${txHash}`;
-  // Record the swap so the desktop wallet can show a history (best-effort).
+  // Confirm on-chain before recording: a submitted tx can still revert (e.g.
+  // slippage floor exceeded), and the swap log feeds the desktop wallet
+  // history — same confirmed-only gating as the gasless tool. Base blocks land
+  // in ~2s, so the wait is cheap.
+  let confirmed = false;
   try {
-    appendSwap({
-      ts: Date.now(),
-      chain: 'base',
-      dex: '0x',
-      sellSym: symbolFor(quote.sellToken),
-      sellAmount: Number(formatUnits(BigInt(quote.sellAmount), decimalsFor(quote.sellToken))),
-      buySym: symbolFor(quote.buyToken),
-      buyAmount: Number(formatUnits(BigInt(quote.buyAmount), decimalsFor(quote.buyToken))),
-      txHash,
-      explorer,
-    });
-  } catch { /* best-effort */ }
+    const receipt = await client.waitForTransactionReceipt({ hash: txHash, timeout: 60_000 });
+    if (receipt.status !== 'success') {
+      return {
+        output:
+          `Swap reverted on-chain (likely the slippage floor was exceeded — no tokens moved, only gas was spent).\n` +
+          `Tx hash: ${txHash}\n${explorer}`,
+        isError: true,
+      };
+    }
+    confirmed = true;
+  } catch { /* receipt wait timed out / RPC hiccup — report submitted, don't record */ }
+  if (confirmed) {
+    // Record the swap so the desktop wallet can show a history (best-effort).
+    try {
+      appendSwap({
+        ts: Date.now(),
+        chain: 'base',
+        dex: '0x',
+        sellSym: symbolFor(quote.sellToken),
+        sellAmount: Number(formatUnits(BigInt(quote.sellAmount), decimalsFor(quote.sellToken))),
+        buySym: symbolFor(quote.buyToken),
+        buyAmount: Number(formatUnits(BigInt(quote.buyAmount), decimalsFor(quote.buyToken))),
+        txHash,
+        explorer,
+      });
+    } catch { /* best-effort */ }
+  }
   return {
     output: [
-      '✓ Swap executed on Base.',
+      confirmed ? '✓ Swap executed on Base.' : '✓ Swap submitted on Base (confirmation pending — check the explorer).',
       formatQuoteText(quote),
       `Tx hash: ${txHash}`,
       explorer,

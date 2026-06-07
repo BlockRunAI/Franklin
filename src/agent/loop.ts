@@ -1157,15 +1157,18 @@ export async function interactiveSession(
       // without this it fires even on a tiny history and reports "saved 1%" —
       // a wasted summarizer round-trip. Only compact when the projected savings
       // clear the floor (≥20%), which a small history can never do.
+      // The ROI gate applies ONLY to the call-count trigger: the $1.00 cost cap
+      // is an emergency brake (see the 2026-05-11 note above) and must fire
+      // even when projected savings are low — gating it would reintroduce the
+      // $9.45 runaway it was added to stop.
       const bloatTriggered =
-        (turnToolCalls > 15 && turnCostUsd > 0.03) ||
+        (turnToolCalls > 15 && turnCostUsd > 0.03 && projectCompactionSavings(history).worthIt) ||
         turnCostUsd > TURN_COST_CAP_FOR_EARLY_COMPACT;
       if (
         config.costSaver !== false &&
         !bloatCompactedThisTurn &&
         compactFailures < 3 &&
-        bloatTriggered &&
-        projectCompactionSavings(history).worthIt
+        bloatTriggered
       ) {
         try {
           const beforeTokens = estimateHistoryTokens(history);

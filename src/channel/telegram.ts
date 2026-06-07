@@ -198,7 +198,7 @@ export async function runTelegramBot(
       const arg = cmd.slice('/tools'.length).trim();
       state.showTools = arg === 'on' ? true : arg === 'off' ? false : !state.showTools;
       savePrefs({ showTools: state.showTools });
-      await sendMessage(chatId, `🔧 工具调用汇总:${state.showTools ? '开启 ✅' : '关闭'}`);
+      await sendMessage(chatId, `🔧 Tool summary: ${state.showTools ? 'on ✅' : 'off'}`);
       return true;
     }
 
@@ -220,6 +220,9 @@ export async function runTelegramBot(
         state.restartRequested = true;
         // Drain any pending input and wake the session so it unwinds.
         state.inputQueue.length = 0;
+        // Drop tools recorded by a turn this reset interrupts, so they don't
+        // leak into the new conversation's first summary.
+        state.toolsUsed = [];
         {
           const waiters = state.inputWaiters.splice(0);
           for (const w of waiters) w(null);
@@ -322,7 +325,7 @@ export async function runTelegramBot(
         // One tool summary per turn (toggle with /tools).
         if (chatId !== undefined && state.showTools && state.toolsUsed.length) {
           const uniq = [...new Set(state.toolsUsed)];
-          void sendMessage(chatId, `🔧 用了 ${state.toolsUsed.length} 个工具:${uniq.join(' · ')}`);
+          void sendMessage(chatId, `🔧 Used ${state.toolsUsed.length} tool${state.toolsUsed.length === 1 ? '' : 's'}: ${uniq.join(' · ')}`);
         }
         state.toolsUsed = [];
         if (event.reason === 'error' && event.error && chatId !== undefined) {
