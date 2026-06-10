@@ -309,6 +309,34 @@ export function createPanelServer(port: number): http.Server {
         return;
       }
 
+      // ─── Wallet onramp (loopback only) ──────────────────────────────────
+      // Mints a one-time Coinbase Onramp link to fund the wallet with a card.
+      // Spends nothing locally, but it talks to the gateway with this wallet's
+      // identity and opens a payment flow, so it gets the same loopback +
+      // same-origin posture as the wallet-mutating routes. Base only — the
+      // gateway mints a session token scoped to the Base address.
+      if (p === '/api/wallet/onramp' && req.method === 'POST') {
+        if (!isLocalPanelRequest(req)) {
+          json(res, { error: 'forbidden' }, 403);
+          return;
+        }
+        try {
+          const chain = loadChain();
+          if (chain !== 'base') {
+            json(res, { error: 'Onramp currently supports Base only — switch to Base to buy USDC with a card.' }, 400);
+            return;
+          }
+          const { setupAgentWallet } = await import('@blockrun/llm');
+          const address = setupAgentWallet({ silent: true }).getWalletAddress();
+          const { getOnrampUrl } = await import('../onramp/client.js');
+          const { url } = await getOnrampUrl(address);
+          json(res, { url });
+        } catch (err) {
+          json(res, { error: (err as Error).message }, 500);
+        }
+        return;
+      }
+
       // ─── Wallet secret (loopback only) ──────────────────────────────────
       // Returns the private key so the user can back it up / move it.
       // Hardened: loopback-only (belt-and-suspenders on the 127.0.0.1 bind),

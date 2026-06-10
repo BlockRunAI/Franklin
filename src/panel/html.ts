@@ -410,6 +410,15 @@ a:hover { text-decoration:underline; }
 .btn-warn:hover { background:oklch(0.78 0.14 85 / 30%); }
 .btn-danger { background:oklch(0.65 0.20 25 / 18%); color:var(--danger); border-color:oklch(0.65 0.20 25 / 35%); }
 .btn-danger:hover { background:oklch(0.65 0.20 25 / 30%); }
+.btn-onramp {
+  display:block; width:100%; text-align:center;
+  font-size:14px; font-weight:700; letter-spacing:0.01em;
+  padding:13px 18px; border-radius:10px;
+  background:oklch(0.55 0.19 256); color:#fff; border:1px solid oklch(0.55 0.19 256);
+  box-shadow:0 1px 0 oklch(0 0 0 / 12%);
+}
+.btn-onramp:hover { background:oklch(0.50 0.19 256); border-color:oklch(0.50 0.19 256); }
+.btn-onramp:disabled { opacity:0.55; cursor:default; }
 
 .nav-badge {
   margin-left:auto; font-size:10px; font-weight:700; letter-spacing:0.3px;
@@ -643,6 +652,11 @@ a:hover { text-decoration:underline; }
         <div class="wallet-balance-big" id="wallet-balance-big">—</div>
         <div class="wallet-qr" id="wallet-qr"></div>
         <p class="wallet-hint" id="wallet-qr-hint">Scan to send USDC to this wallet.</p>
+        <div class="wallet-actions" id="wallet-onramp-actions" style="margin-top:16px;flex-direction:column;align-items:stretch;gap:6px">
+          <button class="btn btn-onramp" id="wallet-onramp-btn">&#128179;&nbsp; Buy USDC with card</button>
+          <span class="wallet-import-status" id="wallet-onramp-status"></span>
+        </div>
+        <p class="wallet-hint" id="wallet-onramp-hint">Powered by Coinbase Onramp &middot; Base only &middot; 60+ fiat currencies</p>
       </div>
 
       <div class="card">
@@ -1136,6 +1150,13 @@ async function loadWallet() {
     solanaBtn.classList.toggle('active', w.chain === 'solana');
   }
 
+  // Coinbase Onramp is Base-only — hide the buy button + hint on Solana.
+  const onrampActions = document.getElementById('wallet-onramp-actions');
+  const onrampHint = document.getElementById('wallet-onramp-hint');
+  const onBase = w.chain === 'base';
+  if (onrampActions) onrampActions.style.display = onBase ? '' : 'none';
+  if (onrampHint) onrampHint.style.display = onBase ? '' : 'none';
+
   // QR via server — never leak address to third parties.
   // Encode chain + USDC token in the QR payload so wallet apps land
   // directly on the right network/token instead of a bare address:
@@ -1212,6 +1233,27 @@ document.getElementById('wallet-copy-btn').addEventListener('click', async () =>
     btn.textContent = 'Copied ✓';
     setTimeout(() => { btn.textContent = orig; }, 1400);
   } catch { /* clipboard may be blocked — user can select manually */ }
+});
+
+// Buy USDC with card — mint a one-time Coinbase Onramp link and open it.
+// The session token is single-use and expires in ~5 min, so we mint it at
+// click time and never cache it.
+document.getElementById('wallet-onramp-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('wallet-onramp-btn');
+  const status = document.getElementById('wallet-onramp-status');
+  btn.disabled = true;
+  status.textContent = 'Opening Coinbase…';
+  try {
+    const r = await fetch('/api/wallet/onramp', { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.url) throw new Error(data.error || r.statusText || 'failed');
+    window.open(data.url, '_blank', 'noopener');
+    status.textContent = '';
+  } catch (err) {
+    status.textContent = err && err.message ? err.message : 'Failed to open Coinbase';
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 // Reveal private key
