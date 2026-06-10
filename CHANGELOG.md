@@ -1,5 +1,15 @@
 # Changelog
 
+## Franklin Agent 3.28.0 — Coinbase Onramp: buy USDC with a card
+
+Fund your wallet without already holding crypto. The Wallet tab in the panel gains a **"Buy USDC with card"** button that opens Coinbase Onramp prefilled for your Base wallet — fiat → USDC lands directly in your self-custody address.
+
+- **Coinbase Onramp (Base USDC).** Clicking the button mints a one-time Coinbase session link and opens it. Coinbase requires server-minted session tokens (Secure Init), so the panel calls a loopback endpoint (`POST /api/wallet/onramp`, same-origin only) that fetches the link from the BlockRun gateway. The funding destination is the user's own wallet; the link is single-use and minted per click.
+- **Wallet-signature auth, zero fee.** The gateway authenticates the request with an EIP-712 wallet signature (verified locally — no settlement, no charge) and binds the funding address to the signing wallet, so a link can only ever fund the wallet you control. A user funding an empty wallet is never asked to pay a fee to get the link.
+- **Shared x402 helper.** The x402 POST handshake is factored out of the phone client into `src/payments/post-with-payment.ts`, now reused by phone + onramp.
+- Base only for now; the button hides on Solana.
+
+
 ## Franklin Agent 3.27.0 — desktop agent server, Slack channel, Telegram groups
 
 The Franklin Desktop backend lands (#80, #81), reviewed and hardened.
