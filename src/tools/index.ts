@@ -234,4 +234,31 @@ export {
   detachCapability,
 };
 
+/**
+ * "Franklin prediction mode" toolset.
+ *
+ * A deliberately tight, research-only capability set for forecasting a single
+ * real-world event the way a careful bettor would: gather current facts, read
+ * sources, check live prediction-market odds and a little market data — then
+ * decide. Everything else (filesystem, shell, media generation, swaps/trade
+ * execution, phone/voice, GPU sandbox, posting) is intentionally excluded:
+ * a forecaster looks things up, it does not act on the world or spend beyond
+ * the cheap read calls these tools make.
+ *
+ * Used by the `franklin predict` command and reusable by any headless caller
+ * (e.g. franklin.bet) that wants a grounded prediction.
+ */
+export const predictionCapabilities: CapabilityHandler[] = [
+  webSearchCapability,        // web_search — current news & facts
+  webFetchCapability,         // webfetch — read a specific source URL
+  exaSearchCapability,        // exa search — higher-quality web research
+  exaAnswerCapability,        // exa answer — direct sourced answers
+  exaReadUrlsCapability,      // exa read — pull full text of found URLs
+  searchXCapability,          // search X — live sentiment / breaking signal
+  predictionMarketCapability, // search_prediction_markets — live implied odds
+  tradingSignalCapability,    // market signal/indicators (for market-type events)
+  tradingMarketCapability,    // market snapshot data
+  defiLlamaPriceCapability,   // token price lookup (crypto-type events)
+];
+
 export { createSubAgentCapability } from './subagent.js';
