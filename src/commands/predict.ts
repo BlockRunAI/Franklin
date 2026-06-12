@@ -24,6 +24,7 @@ export interface PredictOptions {
   model?: string;
   question?: string;
   maxTurns?: string;
+  maxToolCalls?: string;
   maxSpend?: string;
   json?: boolean;
   debug?: boolean;
@@ -35,7 +36,7 @@ const PREDICTION_SYSTEM: string[] = [
   "1. Use web_search (and webfetch / exa tools) for the most CURRENT facts and news — today's real-world state matters far more than your training data.",
   '2. Use search_prediction_markets to read the CURRENT market-implied odds (Polymarket, Kalshi, etc.) for this or a closely related question.',
   '3. Weigh it: where is the consensus, where might the market be mispriced, what is your edge.',
-  'Keep tool use focused — a handful of targeted calls, not dozens. When you have enough to decide, STOP researching and answer.',
+  'Budget your research: make AT MOST 4-5 focused tool calls in total. As soon as you have enough to decide, STOP calling tools and output the JSON. Do not keep researching — an answer with light research beats no answer.',
   'Your FINAL message must end with EXACTLY ONE single-line minified JSON object and NOTHING after it:',
   '{"pick": string, "confidence": number, "rationale": string, "analysis": string, "marketOdds": string}',
   '- pick: one option from the question (a short label, e.g. a country, party, bucket, or Yes/No).',
@@ -79,10 +80,18 @@ export async function predictCommand(options: PredictOptions): Promise<void> {
     chain,
     systemInstructions: PREDICTION_SYSTEM,
     capabilities: predictionCapabilities,
-    maxTurns: options.maxTurns != null ? Number(options.maxTurns) : 12,
+    maxTurns: options.maxTurns != null ? Number(options.maxTurns) : 8,
     permissionMode: 'trust',
     debug: !!options.debug,
     showPrefetchStatus: false,
+    // Governance for one-shot forecasting: bound research by tool-call count and
+    // force an answer; don't silently switch models or fight a grounding retry.
+    // Tool budget (5) is the real research limiter; maxTurns (8) is just slack
+    // above it for a thinking turn + the forced-answer turn.
+    forceAnswerOnFinalTurn: true,
+    maxToolCalls: options.maxToolCalls != null ? Number(options.maxToolCalls) : 6,
+    disableModelFallback: true,
+    disableGroundingRetry: true,
     ...(options.maxSpend != null ? { maxSpendUsd: Number(options.maxSpend) } : {}),
   };
 
