@@ -41,6 +41,9 @@ const CATALOG = {
 let server;
 let base;
 let mod;
+let tool;             // agent_talent CapabilityHandler
+let handleSlashCommand;
+let lastLimit;        // the ?limit= the discovery GET last received (clamp check)
 const paidCalls = []; // records the decoded x-payment on each paid retry
 
 before(async () => {
@@ -52,6 +55,7 @@ before(async () => {
     };
 
     if (req.method === 'GET' && url.startsWith('/api/v1/skills')) {
+      lastLimit = new URL(url, base).searchParams.get('limit');
       return json(200, CATALOG);
     }
 
@@ -98,9 +102,25 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
   process.env.BLOCKRUN_MARKET_URL = base;
   mod = await import('../dist/market/client.js');
+  tool = (await import('../dist/tools/agent-talent.js')).agentTalentCapability;
+  ({ handleSlashCommand } = await import('../dist/agent/commands.js'));
 });
 
 after(() => server?.close());
+
+// Minimal ExecutionScope for the tool.
+const toolCtx = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+
+// Drive a slash command and capture the text it emits.
+async function runCommand(input) {
+  let text = '';
+  const ctx = {
+    history: [], sessionId: 't', config: {}, client: {},
+    onEvent: (e) => { if (e.kind === 'text_delta') text += e.text; },
+  };
+  const r = await handleSlashCommand(input, ctx);
+  return { r, text };
+}
 
 test('fetchCatalog parses the public catalog', async () => {
   const skills = await mod.fetchCatalog();
@@ -153,4 +173,125 @@ test('runMarketSkill fails closed with no charge on a non-2xx run', async () => 
   assert.equal(outcome.status, 502);
   assert.equal(outcome.paidUsd, 0);
   assert.match(outcome.error, /upstream boom/);
+});
+
+test('fetchCatalog clamps the limit to 200 and passes it through', async () => {
+  await mod.fetchCatalog({ limit: 500 });
+  assert.equal(lastLimit, '200');
+  await mod.fetchCatalog({ limit: 5 });
+  assert.equal(lastLimit, '5');
+});
+
+test('formatSkillCard shows price, model, type badge, sample and a run hint', async () => {
+  const skills = await mod.fetchCatalog();
+  const card = mod.formatSkillCard(skills.find((s) => s.slug === 'yield-radar'));
+  assert.match(card, /Yield Radar/);
+  assert.match(card, /\$0\.02\/run/);
+  assert.match(card, /anthropic\/claude-haiku-4\.5/);
+  assert.match(card, /live:api\.barker\.money/);
+  assert.match(card, /@barker/);
+  assert.match(card, /\/market run yield-radar/);
+});
+
+// ─── agent_talent tool ──────────────────────────────────────────────────────
+
+test('agent_talent list returns the catalog with slug + price + type', async () => {
+  const r = await tool.execute({ action: 'list' }, toolCtx);
+  assert.equal(r.isError, undefined);
+  assert.match(r.output, /yield-radar/);
+  assert.match(r.output, /\$0\.02\/run/);
+  assert.match(r.output, /live-data\(api\.barker\.money\)/);
+  assert.match(r.output, /action: "run"/);
+});
+
+test('agent_talent list filters by query', async () => {
+  const r = await tool.execute({ action: 'list', query: 'summarize' }, toolCtx);
+  assert.match(r.output, /summarize/);
+  assert.doesNotMatch(r.output, /yield-radar/);
+});
+
+test('agent_talent list reports cleanly when nothing matches', async () => {
+  const r = await tool.execute({ action: 'list', query: 'no-such-skill-zzz' }, toolCtx);
+  assert.match(r.output, /No marketplace skills match/);
+});
+
+test('agent_talent run hires a skill and reports the amount paid', async () => {
+  const r = await tool.execute({ action: 'run', slug: 'yield-radar', input: 'best yields' }, toolCtx);
+  assert.equal(r.isError, undefined);
+  assert.match(r.output, /Hired yield-radar/);
+  assert.match(r.output, /paid \$0\.02/);
+  assert.match(r.output, /ran yield-radar on: best yields/);
+});
+
+test('agent_talent run requires slug and input', async () => {
+  const noSlug = await tool.execute({ action: 'run', input: 'x' }, toolCtx);
+  assert.equal(noSlug.isError, true);
+  assert.match(noSlug.output, /slug` is required/);
+  const noInput = await tool.execute({ action: 'run', slug: 'yield-radar' }, toolCtx);
+  assert.equal(noInput.isError, true);
+  assert.match(noInput.output, /input` is required/);
+});
+
+test('agent_talent run surfaces a failed hire as no-charge', async () => {
+  const r = await tool.execute({ action: 'run', slug: 'always-fail', input: 'x' }, toolCtx);
+  assert.equal(r.isError, true);
+  assert.match(r.output, /failed/);
+  assert.match(r.output, /No charge/);
+});
+
+test('agent_talent rejects an unknown action', async () => {
+  const r = await tool.execute({ action: 'frobnicate' }, toolCtx);
+  assert.equal(r.isError, true);
+  assert.match(r.output, /unknown action/);
+});
+
+test('agent_talent marks only list (not run) concurrency-safe', () => {
+  assert.equal(tool.isConcurrentSafe({ action: 'list' }), true);
+  assert.equal(tool.isConcurrentSafe({ action: 'run' }), false);
+});
+
+// ─── /market slash command ──────────────────────────────────────────────────
+
+test('/market browses the catalog', async () => {
+  const { r, text } = await runCommand('/market');
+  assert.equal(r.handled, true);
+  assert.match(text, /Agent marketplace/);
+  assert.match(text, /yield-radar/);
+  assert.match(text, /summarize/);
+});
+
+test('/market <keyword> searches', async () => {
+  const { text } = await runCommand('/market summarize');
+  assert.match(text, /matching "summarize"/);
+  assert.match(text, /summarize/);
+  assert.doesNotMatch(text, /yield-radar/);
+});
+
+test('/market info <slug> shows the detail card', async () => {
+  const { text } = await runCommand('/market info yield-radar');
+  assert.match(text, /Yield Radar/);
+  assert.match(text, /\$0\.02\/run/);
+  assert.match(text, /live:api\.barker\.money/);
+});
+
+test('/market info without a slug prints usage', async () => {
+  const { text } = await runCommand('/market info');
+  assert.match(text, /Usage: \/market info <slug>/);
+});
+
+test('/market run <slug> <input> pays and prints the result', async () => {
+  const { text } = await runCommand('/market run yield-radar best yields now');
+  assert.match(text, /Paid \$0\.02/);
+  assert.match(text, /ran yield-radar on: best yields now/);
+});
+
+test('/market run with bad args prints usage', async () => {
+  const { text } = await runCommand('/market run');
+  assert.match(text, /Usage: \/market run <slug> <input>/);
+});
+
+test('/market run on a failing skill reports no charge', async () => {
+  const { text } = await runCommand('/market run always-fail something');
+  assert.match(text, /Could not run always-fail/);
+  assert.match(text, /No charge/);
 });
