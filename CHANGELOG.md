@@ -1,5 +1,14 @@
 # Changelog
 
+## Franklin Agent 3.28.2 — install reliability: clearer Node floor + EACCES escape hatch
+
+Reduces global-install failures reported by new users. No runtime code changes.
+
+- **Honest Node engine floor.** `engines.node` raised `>=20` → `>=20.18.0` to match what bundled dependencies (`@solana/kit`, `@noble/*`) actually require. Users on older Node now see one clear warning about Franklin instead of ~40 cryptic `EBADENGINE` lines about Solana internals.
+- **`npx` install path documented.** The most common new-user failure is `EACCES` on `npm install -g` when the global npm prefix is root-owned (typical of the macOS Node `.pkg` installer). The README now leads users to `npx @blockrun/franklin`, which needs no global write and sidesteps the trap entirely.
+- **Install troubleshooting section.** New README table maps `EACCES` and `EBADENGINE` to fixes, with the permanent cure (user-owned Node via nvm/fnm) and an explicit "don't use `sudo`" warning.
+
+
 ## Franklin Agent 3.28.1 — onramp hardening from end-to-end review
 
 Fixes from a full-system review of the 3.28.0 onramp flow.
