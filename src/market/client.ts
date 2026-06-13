@@ -69,6 +69,12 @@ export async function fetchCatalog(
     if (!res.ok) throw new Error(`marketplace returned HTTP ${res.status}`);
     const body = (await res.json()) as CatalogResponse;
     const skills = Array.isArray(body.skills) ? body.skills : [];
+    // Rank by call volume, highest first — the catalog's ordering contract for
+    // every surface (the /market list, the agent_talent tool, the web panel).
+    // The discovery API already sorts this way; enforce it here too so the
+    // top-N slice is correct regardless. Stable sort keeps the API's recency
+    // tiebreak within an equal call count.
+    skills.sort((a, b) => (b.run_count ?? 0) - (a.run_count ?? 0));
     return opts.query ? filterCatalog(skills, opts.query) : skills;
   } finally {
     clearTimeout(timer);

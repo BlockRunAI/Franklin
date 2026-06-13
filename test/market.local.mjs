@@ -125,9 +125,18 @@ async function runCommand(input) {
 test('fetchCatalog parses the public catalog', async () => {
   const skills = await mod.fetchCatalog();
   assert.equal(skills.length, 2);
-  assert.equal(skills[0].slug, 'yield-radar');
-  assert.equal(skills[0].price_usd, 0.02);
-  assert.deepEqual(skills[0].data_sources, ['api.barker.money']);
+  const yr = skills.find((s) => s.slug === 'yield-radar');
+  assert.equal(yr.price_usd, 0.02);
+  assert.deepEqual(yr.data_sources, ['api.barker.money']);
+});
+
+test('fetchCatalog ranks skills by call volume, highest first', async () => {
+  // The mock returns yield-radar (7 runs) before summarize (42 runs); the
+  // client must reorder so the most-called skill leads, on every surface.
+  const skills = await mod.fetchCatalog();
+  assert.equal(skills[0].slug, 'summarize'); // 42 > 7
+  const counts = skills.map((s) => s.run_count);
+  assert.deepEqual(counts, [...counts].sort((a, b) => b - a)); // non-increasing
 });
 
 test('filterCatalog matches on name, description, and data source', async () => {
