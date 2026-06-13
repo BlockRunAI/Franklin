@@ -39,8 +39,9 @@ export const agentTalentCapability: CapabilityHandler = {
   spec: {
     name: 'agent_talent',
     description:
-      'Browse and hire paid AI skills from the BlockRun agent marketplace (other creators\' specialized agents). ' +
-      'action="list" returns the catalog for free — use it to find talent for a sub-task you cannot do well yourself, e.g. live market/on-chain data, a domain-specific analysis, or a niche transform; optionally pass a `query` to filter. ' +
+      'Browse and hire paid AI skills ("talents") from the BlockRun agent marketplace — specialized agents other creators published. ' +
+      'action="list" returns the catalog for free. Use it whenever the user asks you to find, search, browse, or recommend an agent / skill / talent for some domain or task (pass their topic as `query`), OR when you yourself need talent for a sub-task you cannot do well (live market/on-chain data, a domain-specific analysis, a niche transform). ' +
+      '`query` filters by name, description, and data source; the match is semantic on your part — map the user\'s intent (e.g. "track gas prices" -> "gas", a request in any language) to a sensible keyword. Omit `query` to list the most popular. ' +
       'action="run" hires one skill by `slug` with your `input`: it signs ONE standard USDC x402 payment from the user wallet on Base and returns the skill\'s output. ' +
       'The wallet is charged automatically and ONLY on a successful run (the response reports the USD paid); a failed run is free. ' +
       'Prefer listing first to get the exact slug and price before running.',
