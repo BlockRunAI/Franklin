@@ -1,0 +1,156 @@
+/**
+ * Deterministic tests for the BlockRun agent-market client (src/market/client.ts),
+ * the shared engine behind the `/market` command and the agent_talent tool.
+ *
+ * A mock marketplace stands in for business.blockrun.ai: it serves the public
+ * catalog and answers a run POST with a standard x402 402 challenge, then 200
+ * on the paid retry. No network, no real wallet — a throwaway key signs the
+ * payment so we can assert Franklin authorizes the EXACT advertised price (the
+ * invariant the live route enforces with `signedValueMicro === totalMicro`).
+ */
+
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+
+// Anvil account #1 — a throwaway signing key (address 0x7099…79C8). Set before
+// importing the client so getOrCreateWallet() never touches ~/.blockrun.
+process.env.BLOCKRUN_WALLET_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
+const WALLET_ADDR = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
+
+const PRICE_MICRO = '20000'; // $0.02
+const PAY_TO = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
+const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+const CATALOG = {
+  skills: [
+    {
+      slug: 'yield-radar', name: 'Yield Radar', description: 'Live stablecoin yields across chains',
+      price_usd: 0.02, backing_model: 'anthropic/claude-haiku-4.5', run_count: 7, execution_type: 'agent',
+      data_sources: ['api.barker.money'], sample_input: 'best yields', sample_output: 'Vectis 4.24%',
+      creator: { wallet: '0xabc0000000000000000000000000000000000abc', x: 'barker' }, run_url: '',
+    },
+    {
+      slug: 'summarize', name: 'Summarizer', description: 'Summarize any text',
+      price_usd: 0.01, backing_model: 'anthropic/claude-haiku-4.5', run_count: 42, execution_type: 'prompt',
+      data_sources: [], sample_input: 'long text', sample_output: 'short', creator: { wallet: '0xdef', x: null }, run_url: '',
+    },
+  ],
+};
+
+let server;
+let base;
+let mod;
+const paidCalls = []; // records the decoded x-payment on each paid retry
+
+before(async () => {
+  server = createServer(async (req, res) => {
+    const url = req.url || '';
+    const json = (code, body, extra) => {
+      res.writeHead(code, { 'Content-Type': 'application/json', ...(extra || {}) });
+      res.end(JSON.stringify(body));
+    };
+
+    if (req.method === 'GET' && url.startsWith('/api/v1/skills')) {
+      return json(200, CATALOG);
+    }
+
+    const runMatch = url.match(/^\/api\/v1\/skills\/([^/]+)\/run$/);
+    if (req.method === 'POST' && runMatch) {
+      const slug = runMatch[1];
+      let bodyStr = '';
+      for await (const chunk of req) bodyStr += chunk;
+      const reqBody = JSON.parse(bodyStr || '{}');
+
+      if (slug === 'always-fail') {
+        return json(502, { error: 'upstream boom', code: 'UPSTREAM_ERROR' });
+      }
+
+      const xpay = req.headers['x-payment'];
+      if (!xpay) {
+        // Standard x402 challenge — same body shape the live route returns.
+        return json(402, {
+          x402Version: 2,
+          accepts: [{
+            scheme: 'exact', network: 'eip155:8453', amount: PRICE_MICRO, asset: USDC,
+            payTo: PAY_TO, maxTimeoutSeconds: 300, extra: { name: 'USD Coin', version: '2' },
+          }],
+          resource: { url: `${base}/api/v1/skills/${slug}/run`, description: `Run — ${slug}`, mimeType: 'application/json' },
+        });
+      }
+
+      const decoded = JSON.parse(Buffer.from(xpay, 'base64').toString());
+      paidCalls.push({
+        slug,
+        input: reqBody.input,
+        value: decoded.payload?.authorization?.value,
+        from: decoded.payload?.authorization?.from,
+        to: decoded.payload?.authorization?.to,
+      });
+      return json(200, { result: `ran ${slug} on: ${reqBody.input}` }, { 'X-Payment-Receipt': '0xdeadbeefcafe0000' });
+    }
+
+    res.writeHead(404);
+    res.end();
+  });
+
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  base = `http://127.0.0.1:${server.address().port}`;
+  process.env.BLOCKRUN_MARKET_URL = base;
+  mod = await import('../dist/market/client.js');
+});
+
+after(() => server?.close());
+
+test('fetchCatalog parses the public catalog', async () => {
+  const skills = await mod.fetchCatalog();
+  assert.equal(skills.length, 2);
+  assert.equal(skills[0].slug, 'yield-radar');
+  assert.equal(skills[0].price_usd, 0.02);
+  assert.deepEqual(skills[0].data_sources, ['api.barker.money']);
+});
+
+test('filterCatalog matches on name, description, and data source', async () => {
+  const skills = await mod.fetchCatalog();
+  assert.deepEqual(mod.filterCatalog(skills, 'barker').map((s) => s.slug), ['yield-radar']);
+  assert.deepEqual(mod.filterCatalog(skills, 'summarize').map((s) => s.slug), ['summarize']);
+  assert.deepEqual(mod.filterCatalog(skills, 'yields').map((s) => s.slug), ['yield-radar']);
+  assert.equal(mod.filterCatalog(skills, 'nonexistent-zzz').length, 0);
+});
+
+test('formatCatalogList renders a numbered row with slug + price', async () => {
+  const skills = await mod.fetchCatalog();
+  const out = mod.formatCatalogList(skills, { heading: 'Marketplace:' });
+  assert.match(out, /Marketplace:/);
+  assert.match(out, /yield-radar/);
+  assert.match(out, /\$0\.02/);
+  assert.match(out, /\/market run <slug>/);
+});
+
+test('runMarketSkill answers the 402 and authorizes the EXACT advertised price', async () => {
+  paidCalls.length = 0;
+  const outcome = await mod.runMarketSkill('yield-radar', 'best yields right now');
+
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.status, 200);
+  assert.equal(outcome.result, 'ran yield-radar on: best yields right now');
+  assert.equal(outcome.paidUsd, 0.02);
+  assert.equal(outcome.txHash, '0xdeadbeefcafe0000');
+
+  // The signed authorization must carry the exact price the route requires
+  // (the live route rejects any other value), be paid by our wallet, and pay
+  // the advertised recipient.
+  assert.equal(paidCalls.length, 1);
+  assert.equal(paidCalls[0].value, PRICE_MICRO);
+  assert.equal(paidCalls[0].from.toLowerCase(), WALLET_ADDR.toLowerCase());
+  assert.equal(paidCalls[0].to.toLowerCase(), PAY_TO.toLowerCase());
+  assert.equal(paidCalls[0].input, 'best yields right now');
+});
+
+test('runMarketSkill fails closed with no charge on a non-2xx run', async () => {
+  const outcome = await mod.runMarketSkill('always-fail', 'whatever');
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.status, 502);
+  assert.equal(outcome.paidUsd, 0);
+  assert.match(outcome.error, /upstream boom/);
+});
