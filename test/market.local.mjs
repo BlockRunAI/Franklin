@@ -295,3 +295,16 @@ test('/market run on a failing skill reports no charge', async () => {
   assert.match(text, /Could not run always-fail/);
   assert.match(text, /No charge/);
 });
+
+// ─── permission policy: free to browse, asks before it spends ───────────────
+
+test('agent_talent browsing auto-allows but hiring asks for confirmation', async () => {
+  const { PermissionManager } = await import('../dist/agent/permissions.js');
+  const pm = new PermissionManager('default');
+
+  const list = await pm.check('agent_talent', { action: 'list', query: 'yields' });
+  assert.equal(list.behavior, 'allow'); // free read — no prompt
+
+  const run = await pm.check('agent_talent', { action: 'run', slug: 'yield-radar', input: 'x' });
+  assert.equal(run.behavior, 'ask'); // spends USDC — must confirm
+});
