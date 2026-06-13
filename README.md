@@ -56,7 +56,7 @@ Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships
 
 ## Quick start
 
-> **Requires Node.js 20.18+ (Node 22 LTS recommended).** Check with `node -v`.
+> **Requires Node.js 20.19+ (Node 22 LTS recommended).** Check with `node -v`. Older Node crashes at startup with `ERR_REQUIRE_ESM`.
 
 ```bash
 # 1. Install
@@ -83,7 +83,8 @@ npx @blockrun/franklin
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
 | `npm error EACCES … mkdir '/usr/local/lib/node_modules'` | Your global npm folder is owned by root (common when Node was installed from the macOS `.pkg`). | Don't use `sudo`. Either run `npx @blockrun/franklin` (no global install needed), or switch to a user-owned Node via a version manager — see below. |
-| `npm warn EBADENGINE … required: { node: '>=20.x' }` | Node is older than 20.18. | Upgrade to Node 20.18+ or 22 LTS. The warning alone is harmless, but upgrading clears it. |
+| `Error [ERR_REQUIRE_ESM] … rpc-websockets … require() of ES Module … uuid` | Node is older than 20.19. Franklin's Solana deps need the `require(esm)` support added in Node 20.19.0. | Upgrade to Node 20.19+ or 22 LTS (see below). This is the #1 cause of a crash on first run. |
+| `npm warn EBADENGINE … required: { node: '>=20.x' }` | Node is older than 20.19. | Upgrade to Node 20.19+ or 22 LTS. The warning alone is harmless, but on old Node the run will also crash — upgrade. |
 
 The clean, permanent fix for both is a **user-owned Node** so global installs never touch root-owned system folders:
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Node version guard — MUST be first so it runs before the Solana stack loads on old Node.
+import './preflight.js';
+
 // Global error handlers — catch unhandled rejections/exceptions before they crash silently
 process.on('unhandledRejection', (reason) => {
   console.error(`\x1b[31mUnhandled error: ${reason instanceof Error ? reason.message : String(reason)}\x1b[0m`);

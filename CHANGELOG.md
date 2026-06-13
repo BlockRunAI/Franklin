@@ -1,5 +1,14 @@
 # Changelog
 
+## Franklin Agent 3.28.3 — Node version guard: friendly message instead of ERR_REQUIRE_ESM crash
+
+Old Node (< 20.19) crashed at startup with an opaque `ERR_REQUIRE_ESM` stack trace from deep inside `rpc-websockets`/`uuid`. The real requirement was always Node 20.19+ (the `require(esm)` capability the Solana stack relies on). 3.28.2's `>=20.18.0` floor was one patch too low to actually run.
+
+- **Runtime preflight guard.** New dependency-free `src/preflight.ts`, imported before any other module, checks the Node version and — on Node < 20.19.0 — prints a clear "Franklin requires Node.js 20.19.0 or newer" message with nvm/fnm upgrade commands and exits cleanly, instead of dumping a node_modules stack trace.
+- **Correct engine floor.** `engines.node` `>=20.18.0` → `>=20.19.0`, matching what `@noble/*` and the `require(esm)` deps actually need.
+- **README** updated to Node 20.19+ and the troubleshooting table now maps the `ERR_REQUIRE_ESM` crash to "your Node is too old."
+
+
 ## Franklin Agent 3.28.2 — install reliability: clearer Node floor + EACCES escape hatch
 
 Reduces global-install failures reported by new users. No runtime code changes.
