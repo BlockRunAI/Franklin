@@ -44,6 +44,7 @@ import { multiChainRpcCapability } from './rpc.js';
 import { predictionMarketCapability } from './prediction.js';
 import { modalCapabilities } from './modal.js';
 import { blockrunCapability } from './blockrun.js';
+import { agentTalentCapability } from './agent-talent.js';
 import { surfCapabilities } from './surf.js';
 import { realFaceCapability } from './realface.js';
 import {
@@ -200,6 +201,7 @@ export const allCapabilities: CapabilityHandler[] = [
   multiChainRpcCapability, // read-only JSON-RPC across 40+ chains ($0.002/call)
   predictionMarketCapability, // Polymarket / Kalshi / matching / smart money via Predexon
   blockrunCapability, // Generic x402-paid gateway primitive — future partners + long-tail Surf paths
+  agentTalentCapability, // Hire paid skills from the BlockRun agent marketplace (business.blockrun.ai)
   ...surfCapabilities, // SurfMarket / SurfChain / SurfSocial — endpoint-enum function tools (no path guessing, auto x402)
   // Phone & Voice — typed surface so the agent pattern-matches on the user
   // intent ("buy a number", "make a call") without needing to consult the

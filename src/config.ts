@@ -26,6 +26,13 @@ export const API_URLS: Record<Chain, string> = {
 
 export const DEFAULT_PROXY_PORT = 8402;
 
+// BlockRun agent-market (the paid skill marketplace Franklin browses with
+// `/market` and hires with the agent_talent tool). It speaks standard
+// single-leg `exact` x402 on Base, so Franklin pays it with the same EVM
+// wallet it uses for the gateway. Overridable via env for local end-to-end
+// testing against a dev server.
+export const MARKET_URL = (process.env.BLOCKRUN_MARKET_URL || 'https://business.blockrun.ai').replace(/\/+$/, '');
+
 export function saveChain(chain: Chain): void {
   fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
   fs.writeFileSync(CHAIN_FILE, chain + '\n', { mode: 0o600 });
