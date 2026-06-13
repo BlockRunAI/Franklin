@@ -716,13 +716,14 @@ export async function handleSlashCommand(
       return { handled: true };
     }
 
-    // (no arg) browse top skills, or <keyword> to search — both free.
+    // (no arg) browse the top skills, or <keyword> to search — both free.
     try {
-      const skills = await fetchCatalog({ limit: arg ? 200 : 12, query: arg || undefined });
-      const shown = arg ? skills : skills.slice(0, 12);
+      const TOP = 12;
+      const skills = await fetchCatalog({ limit: 200, query: arg || undefined });
+      const shown = arg ? skills : skills.slice(0, TOP);
       const heading = arg
-        ? `Agent marketplace — ${shown.length} skill(s) matching "${arg}":`
-        : 'Agent marketplace — top skills:';
+        ? `Agent talents — ${shown.length} skill(s) matching "${arg}":`
+        : `Agent talents — top ${shown.length}${skills.length > TOP ? ` of ${skills.length}` : ''}:`;
       ctx.onEvent({ kind: 'text_delta', text: formatCatalogList(shown, { heading }) });
     } catch (err) {
       ctx.onEvent({ kind: 'text_delta', text: `Could not reach the marketplace: ${(err as Error).message}\n` });

@@ -91,8 +91,8 @@ export const agentTalentCapability: CapabilityHandler = {
           return { output: raw.query ? `No marketplace skills match "${raw.query}".` : 'The marketplace has no runnable skills right now.' };
         }
         const head = raw.query
-          ? `BlockRun agent marketplace — ${skills.length} skill(s) matching "${raw.query}":`
-          : `BlockRun agent marketplace — ${skills.length} skill(s):`;
+          ? `BlockRun agent talents — ${skills.length} skill(s) matching "${raw.query}":`
+          : `BlockRun agent talents — ${skills.length} skill(s):`;
         const body = skills.map(listLine).join('\n');
         const out = `${head}\n${body}\n\nTo hire one: agent_talent { action: "run", slug: "<slug>", input: "<input>" }.`;
         return { output: out, fullOutput: out };
