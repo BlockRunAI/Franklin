@@ -255,7 +255,7 @@ test('agent_talent marks only list (not run) concurrency-safe', () => {
 test('/market browses the catalog', async () => {
   const { r, text } = await runCommand('/market');
   assert.equal(r.handled, true);
-  assert.match(text, /Agent marketplace/);
+  assert.match(text, /Agent talents/);
   assert.match(text, /yield-radar/);
   assert.match(text, /summarize/);
 });
