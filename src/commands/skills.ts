@@ -5,7 +5,7 @@
 
 import chalk from 'chalk';
 
-import { loadBundledSkills } from '../skills/bootstrap.js';
+import { loadAllSkills } from '../skills/bootstrap.js';
 
 export interface SkillsCommandOptions {
   json?: boolean;
@@ -33,7 +33,7 @@ export async function skillsCommand(
 }
 
 function runList(opts: SkillsCommandOptions): void {
-  const { registry, errors } = loadBundledSkills();
+  const { registry, errors } = loadAllSkills(process.cwd());
   const skills = registry.list();
 
   if (opts.json) {
@@ -108,7 +108,7 @@ function runWhich(name: string | undefined): void {
     console.log(chalk.red('Usage: franklin skills which <name>'));
     process.exit(1);
   }
-  const { registry } = loadBundledSkills();
+  const { registry } = loadAllSkills(process.cwd());
   const skill = registry.lookup(name);
   if (!skill) {
     console.log(chalk.red(`Skill not found: ${name}`));

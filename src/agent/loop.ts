@@ -7,7 +7,8 @@ import { ModelClient } from './llm.js';
 import { autoCompactIfNeeded, forceCompact, microCompact, projectCompactionSavings } from './compact.js';
 import { estimateHistoryTokens, updateActualTokens, resetTokenAnchor, getAnchoredTokenCount, getContextWindow, setEstimationModel } from './tokens.js';
 import { handleSlashCommand } from './commands.js';
-import { loadBundledSkills, getSkillVars } from '../skills/bootstrap.js';
+import { loadAllSkills, getSkillVars } from '../skills/bootstrap.js';
+import { matchSkillTriggers, formatSkillHints } from '../skills/triggers.js';
 import { reduceTokens } from './reduce.js';
 import { redactSecrets, stashSecretsToEnv, formatRedactionWarning } from './secret-redact.js';
 import { PermissionManager } from './permissions.js';
@@ -629,10 +630,12 @@ export async function interactiveSession(
   let turnFailedModels = new Set<string>(); // Models that failed this turn (cleared each new turn)
 
   // ── Skills (file-loaded SKILL.md prompt-rewrite slash commands) ──
-  // Bundled-only in Phase 1 of the skills MVP. User-global and project-local
-  // discovery + the budget-cap-usd / cost-receipt enforcement contract land
-  // in Phase 2 — see docs/plans/2026-04-29-franklin-skills-mvp-design.md.
-  const skillBoot = loadBundledSkills();
+  // Loaded from four sources, precedence project > user > learned > bundled,
+  // in a single Registry that handles name conflicts. Learned skills are
+  // written by the learnings extractor under ~/.blockrun/skills/learned/
+  // and join the same Registry — they show up via trigger matching but are
+  // hidden from /help unless the user explicitly lists them.
+  const skillBoot = loadAllSkills(workDir);
   if (skillBoot.errors.length > 0 && config.debug) {
     for (const err of skillBoot.errors) {
       onEvent({ kind: 'text_delta', text: `[skills] ${err.path}: ${err.error}\n` });
@@ -813,6 +816,27 @@ export async function interactiveSession(
     }
 
     lastUserInput = input;
+
+    // ── Skill trigger auto-invoke ──
+    // Match the user message against every skill's `triggers:` list. Strong
+    // matches surface as a soft hint appended to this turn's system prompt
+    // so the model treats the skill's procedure as guidance rather than
+    // mandatory rewriting (which would surprise the user). The skill body
+    // is NEVER substituted into the visible user message — that breaks the
+    // session transcript and the user's intent representation. See
+    // src/skills/triggers.ts for the matching algorithm.
+    let turnSkillHints = '';
+    try {
+      const matches = matchSkillTriggers(input, skillRegistry.list());
+      if (matches.length > 0) {
+        turnSkillHints = formatSkillHints(matches);
+        if (config.debug && matches.length > 0) {
+          const summary = matches.map(m => `${m.skill.skill.name}(${m.score.toFixed(1)})`).join(', ');
+          onEvent({ kind: 'text_delta', text: `*[skill triggers] ${summary}*\n` });
+        }
+      }
+    } catch { /* trigger matching is best-effort */ }
+
     // Push the user's clean message; any harness-injected annotations
     // (pushback SYSTEM NOTE, prefetch context block) are applied AFTER
     // the turn analyzer runs so they get driven by model-decided flags
@@ -1381,6 +1405,11 @@ export async function interactiveSession(
         callToolDefs = [];  // No tools during planning
         callMaxTokens = 2048;  // Short plan output
         callSystemPrompt = systemPrompt + '\n\n' + getPlanningPrompt();
+      }
+      // Skill-trigger hints from this turn — see the trigger-match block
+      // above, computed once per user message.
+      if (turnSkillHints) {
+        callSystemPrompt = callSystemPrompt + '\n\n' + turnSkillHints;
       }
 
       // ── Hallucination guard for weak models ──

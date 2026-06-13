@@ -176,28 +176,56 @@ export function formatForPrompt(learnings: Learning[]): string {
 }
 
 // ─── Skills (procedural memory) ──────────────────────────────────────────
-// Stored as individual markdown files in ~/.blockrun/skills/
-// Larger than learnings, conditionally injected based on trigger matching.
+//
+// Auto-extracted "skills" from sessions are now stored under
+// `~/.blockrun/skills/learned/<name>/SKILL.md` in the unified Anthropic
+// SKILL.md format. The skills/ directory layout looks like:
+//
+//   ~/.blockrun/skills/
+//   ├── my-handwritten/SKILL.md            (user-authored)
+//   └── learned/
+//       ├── refactor-step-flow/SKILL.md    (extracted by Franklin)
+//       └── pricing-quote-flow/SKILL.md
+//
+// The runtime registry (src/skills/bootstrap.loadAllSkills) discovers all
+// three sources (bundled / learned / user / project) in one pass and
+// trigger matching (src/skills/triggers.matchSkillTriggers) handles
+// auto-invoke. The legacy `loadSkills`/`matchSkills`/`formatSkillsForPrompt`
+// exports below are kept as compat shims (delegating to the new disk layout)
+// so older callers don't break; new code should import from src/skills/.
 
-const SKILLS_DIR = path.join(BLOCKRUN_DIR, 'skills');
-const MAX_SKILLS_IN_PROMPT = 5;
-const MAX_SKILL_CHARS = 1500;
+const LEARNED_SKILLS_DIR = path.join(BLOCKRUN_DIR, 'skills', 'learned');
 
-function ensureSkillsDir() {
-  if (!fs.existsSync(SKILLS_DIR)) {
-    fs.mkdirSync(SKILLS_DIR, { recursive: true });
+function ensureLearnedSkillsDir() {
+  if (!fs.existsSync(LEARNED_SKILLS_DIR)) {
+    fs.mkdirSync(LEARNED_SKILLS_DIR, { recursive: true });
   }
 }
 
-/** Load all skills from disk. */
+function safeDirName(name: string): string {
+  return name.replace(/[^a-z0-9-]/gi, '-').toLowerCase() || 'skill';
+}
+
+function escapeYamlValue(v: string): string {
+  if (/[:#'"\n]/.test(v)) {
+    return JSON.stringify(v);
+  }
+  return v;
+}
+
+/** Load all learned skills from `~/.blockrun/skills/learned/`. */
 export function loadSkills(): Skill[] {
-  ensureSkillsDir();
+  ensureLearnedSkillsDir();
   const skills: Skill[] = [];
   try {
-    for (const file of fs.readdirSync(SKILLS_DIR).filter(f => f.endsWith('.md'))) {
+    for (const entry of fs.readdirSync(LEARNED_SKILLS_DIR)) {
+      const dirPath = path.join(LEARNED_SKILLS_DIR, entry);
       try {
-        const raw = fs.readFileSync(path.join(SKILLS_DIR, file), 'utf-8');
-        const skill = parseSkillFile(raw);
+        if (!fs.statSync(dirPath).isDirectory()) continue;
+        const filePath = path.join(dirPath, 'SKILL.md');
+        if (!fs.existsSync(filePath)) continue;
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        const skill = parseSkillFile(raw, entry);
         if (skill) skills.push(skill);
       } catch { /* skip corrupt */ }
     }
@@ -205,49 +233,78 @@ export function loadSkills(): Skill[] {
   return skills;
 }
 
-function parseSkillFile(raw: string): Skill | null {
-  const m = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+function parseSkillFile(raw: string, fallbackName: string): Skill | null {
+  const m = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!m) return null;
   const fm = m[1];
-  const name = fm.match(/^name:\s*(.+)$/m)?.[1]?.trim() || '';
+  const name = fm.match(/^name:\s*(.+)$/m)?.[1]?.trim() || fallbackName;
   const description = fm.match(/^description:\s*(.+)$/m)?.[1]?.trim() || '';
-  const triggersRaw = fm.match(/^triggers:\s*\[([^\]]*)\]/m)?.[1] || '';
-  const triggers = triggersRaw.split(',').map(t => t.trim()).filter(Boolean);
+  // Triggers may be a YAML list (- "foo") OR a legacy inline form ([a, b]).
+  let triggers: string[] = [];
+  const inline = fm.match(/^triggers:\s*\[([^\]]*)\]/m)?.[1];
+  if (inline !== undefined) {
+    triggers = inline.split(',').map(t => t.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+  } else {
+    const lines = fm.split('\n');
+    const triggersIdx = lines.findIndex(l => /^triggers:\s*$/.test(l));
+    if (triggersIdx >= 0) {
+      for (let i = triggersIdx + 1; i < lines.length; i++) {
+        const m = lines[i].match(/^\s+-\s+(.+)$/);
+        if (!m) break;
+        triggers.push(m[1].trim().replace(/^["']|["']$/g, ''));
+      }
+    }
+  }
   const created = fm.match(/^created:\s*(.+)$/m)?.[1]?.trim() || '';
   const uses = parseInt(fm.match(/^uses:\s*(\d+)$/m)?.[1] || '0');
-  const source = fm.match(/^source_session:\s*(.+)$/m)?.[1]?.trim() || '';
+  const source = fm.match(/^source(?:[-_]session):\s*(.+)$/m)?.[1]?.trim() || '';
   if (!name) return null;
   return { name, description, triggers, steps: m[2].trim(), created, uses, source_session: source };
 }
 
-/** Save a new skill to disk. */
+/** Save a new auto-extracted skill to disk in unified SKILL.md format. */
 export function saveSkill(skill: Skill): void {
-  ensureSkillsDir();
-  const filename = skill.name.replace(/[^a-z0-9-]/gi, '-').toLowerCase() + '.md';
-  const fm = [
-    '---',
-    `name: ${skill.name}`,
-    `description: ${skill.description}`,
-    `triggers: [${skill.triggers.join(', ')}]`,
-    `created: ${skill.created}`,
-    `uses: ${skill.uses}`,
-    `source_session: ${skill.source_session}`,
-    '---',
-  ].join('\n');
-  fs.writeFileSync(path.join(SKILLS_DIR, filename), `${fm}\n${skill.steps}\n`);
+  ensureLearnedSkillsDir();
+  const dir = path.join(LEARNED_SKILLS_DIR, safeDirName(skill.name));
+  fs.mkdirSync(dir, { recursive: true });
+
+  const fmLines: string[] = ['---'];
+  fmLines.push(`name: ${escapeYamlValue(skill.name)}`);
+  fmLines.push(`description: ${escapeYamlValue(skill.description)}`);
+  if (skill.triggers.length > 0) {
+    fmLines.push(`triggers:`);
+    for (const t of skill.triggers) {
+      fmLines.push(`  - ${escapeYamlValue(t)}`);
+    }
+  }
+  fmLines.push(`hidden: true`);
+  fmLines.push(`auto-generated: true`);
+  if (skill.created) fmLines.push(`created: ${skill.created}`);
+  fmLines.push(`uses: ${skill.uses}`);
+  if (skill.source_session) {
+    fmLines.push(`source-session: ${escapeYamlValue(skill.source_session)}`);
+  }
+  fmLines.push('---');
+  fmLines.push('');
+  fmLines.push(skill.steps);
+
+  fs.writeFileSync(path.join(dir, 'SKILL.md'), fmLines.join('\n') + '\n');
 }
 
 /** Bump use count for a skill. */
 export function bumpSkillUse(skill: Skill): void {
-  const filename = skill.name.replace(/[^a-z0-9-]/gi, '-').toLowerCase() + '.md';
-  const fp = path.join(SKILLS_DIR, filename);
+  const filePath = path.join(LEARNED_SKILLS_DIR, safeDirName(skill.name), 'SKILL.md');
   try {
-    const raw = fs.readFileSync(fp, 'utf-8');
-    fs.writeFileSync(fp, raw.replace(/^uses:\s*\d+$/m, `uses: ${skill.uses + 1}`));
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    fs.writeFileSync(filePath, raw.replace(/^uses:\s*\d+$/m, `uses: ${skill.uses + 1}`));
   } catch { /* non-critical */ }
 }
 
-/** Find skills relevant to a user message, by trigger matching. */
+/**
+ * Compat shim retained so older callers keep working while the rest of the
+ * codebase migrates to `src/skills/triggers.ts`. New code should NOT depend
+ * on this — it ignores `hidden` and `disableModelInvocation` flags.
+ */
 export function matchSkills(input: string, skills: Skill[]): Skill[] {
   const lower = input.toLowerCase();
   const scored: Array<{ skill: Skill; score: number }> = [];
@@ -260,12 +317,17 @@ export function matchSkills(input: string, skills: Skill[]): Skill[] {
     score += Math.min(s.uses * 0.5, 3);
     if (score > 0) scored.push({ skill: s, score });
   }
-  return scored.sort((a, b) => b.score - a.score).slice(0, MAX_SKILLS_IN_PROMPT).map(m => m.skill);
+  return scored.sort((a, b) => b.score - a.score).slice(0, 5).map(m => m.skill);
 }
 
-/** Format matched skills for system prompt injection. */
+/**
+ * Compat shim. The new code path injects skills per-turn via
+ * `formatSkillHints` rather than baking them into the boot-time system
+ * prompt, so callers should not need this any more.
+ */
 export function formatSkillsForPrompt(skills: Skill[]): string {
   if (skills.length === 0) return '';
+  const MAX_SKILL_CHARS = 1500;
   const parts = ['# Learned Skills\nProcedures from previous experience — use when relevant:\n'];
   for (const s of skills) {
     const body = s.steps.length > MAX_SKILL_CHARS ? s.steps.slice(0, MAX_SKILL_CHARS) + '\n…' : s.steps;

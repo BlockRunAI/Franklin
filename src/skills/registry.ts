@@ -15,8 +15,9 @@
 import type { LoadedSkill, SkillSource } from './types.js';
 
 const SOURCE_PRIORITY: Record<SkillSource, number> = {
-  project: 3,
-  user: 2,
+  project: 4,
+  user: 3,
+  learned: 2,
   bundled: 1,
 };
 
