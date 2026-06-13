@@ -213,14 +213,27 @@ function typeBadge(s: MarketSkill): string {
   return s.execution_type === 'agent' ? 'live' : 'prompt';
 }
 
+// Truncate to a column width at a word boundary, with an ellipsis when cut —
+// so a row never shows a half-word like "across cha".
+function truncate(text: string, max: number): string {
+  const t = (text || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1).replace(/\s+$/, '');
+  const sp = cut.lastIndexOf(' ');
+  const base = sp >= Math.floor(max * 0.6) ? cut.slice(0, sp) : cut; // word boundary, unless that loses too much
+  return `${base}…`;
+}
+
 /** A compact numbered list for the terminal (one row per skill). */
 export function formatCatalogList(skills: MarketSkill[], opts: { heading?: string } = {}): string {
   if (skills.length === 0) return 'No matching skills in the marketplace.\n';
   const lines = skills.map((s, i) => {
     const n = String(i + 1).padStart(2, ' ');
-    const slug = s.slug.padEnd(18).slice(0, 18);
+    // Never truncate the slug — it's the identifier the user types into
+    // `/market run <slug>`; pad short ones, let a rare long one overflow.
+    const slug = s.slug.padEnd(18);
     const price = fmtUsd(s.price_usd).padStart(7);
-    const desc = (s.description || '').replace(/\s+/g, ' ').slice(0, 40).padEnd(40);
+    const desc = truncate(s.description || '', 40).padEnd(40);
     const runs = `${s.run_count} run${s.run_count === 1 ? '' : 's'}`;
     const by = s.creator?.x ? ` @${s.creator.x}` : '';
     return `  ${n}. ${slug} ${price}  ${desc} ${runs}${by}`;

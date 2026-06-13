@@ -147,6 +147,27 @@ test('formatCatalogList renders a numbered row with slug + price', async () => {
   assert.match(out, /\/market run <slug>/);
 });
 
+test('formatCatalogList truncates long descriptions at a word boundary', () => {
+  const src = 'Live stablecoin yields ranked across many chains and protocols';
+  const out = mod.formatCatalogList([{
+    slug: 'x', name: 'X', description: src, price_usd: 0.02, backing_model: 'm',
+    run_count: 1, execution_type: 'prompt', data_sources: [], creator: { wallet: '0x', x: null }, run_url: '',
+  }]);
+  assert.match(out, /…/); // it was truncated
+  // the word right before the ellipsis must be a COMPLETE source word, not a fragment
+  const lastWord = out.split('…')[0].trim().split(' ').pop();
+  assert.ok(src.split(' ').includes(lastWord), `"${lastWord}" should be a whole word, not a mid-word cut`);
+});
+
+test('formatCatalogList never truncates the slug (it is the run identifier)', () => {
+  const slug = 'a-very-long-skill-slug-past-eighteen';
+  const out = mod.formatCatalogList([{
+    slug, name: 'X', description: 'short', price_usd: 0.01, backing_model: 'm',
+    run_count: 1, execution_type: 'prompt', data_sources: [], creator: { wallet: '0x', x: null }, run_url: '',
+  }]);
+  assert.match(out, new RegExp(slug.replace(/[-]/g, '\\-'))); // full slug present, uncut
+});
+
 test('runMarketSkill answers the 402 and authorizes the EXACT advertised price', async () => {
   paidCalls.length = 0;
   const outcome = await mod.runMarketSkill('yield-radar', 'best yields right now');
