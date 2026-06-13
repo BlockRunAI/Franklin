@@ -234,9 +234,8 @@ export function formatCatalogList(skills: MarketSkill[], opts: { heading?: strin
     const slug = s.slug.padEnd(18);
     const price = fmtUsd(s.price_usd).padStart(7);
     const desc = truncate(s.description || '', 40).padEnd(40);
-    const runs = `${s.run_count} run${s.run_count === 1 ? '' : 's'}`;
     const by = s.creator?.x ? ` @${s.creator.x}` : '';
-    return `  ${n}. ${slug} ${price}  ${desc} ${runs}${by}`;
+    return `  ${n}. ${slug} ${price}  ${desc}${by}`.replace(/\s+$/, '');
   });
   const head = opts.heading ? `${opts.heading}\n` : '';
   const foot = '\n  > /market <keyword> to search  .  /market info <slug>  .  /market run <slug> <input>\n';
@@ -250,7 +249,7 @@ export function formatSkillCard(s: MarketSkill): string {
     ? `  e.g.  ${JSON.stringify(s.sample_input)}${s.sample_output ? `  ->  ${JSON.stringify(s.sample_output)}` : ''}\n`
     : '';
   return (
-    `  ${s.name}  .  ${fmtUsd(s.price_usd)}/run  .  ${s.backing_model}  .  ${s.run_count} runs\n` +
+    `  ${s.name}  .  ${fmtUsd(s.price_usd)}/run  .  ${s.backing_model}\n` +
     `  ${s.description}\n` +
     `  [${typeBadge(s)}]${by}\n` +
     sample +

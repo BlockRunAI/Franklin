@@ -32,7 +32,7 @@ function listLine(s: MarketSkill): string {
     : s.execution_type;
   const sample = s.sample_input ? ` | e.g. ${JSON.stringify(s.sample_input)}` : '';
   const by = s.creator?.x ? ` | by @${s.creator.x}` : '';
-  return `- ${s.slug} — ${s.name} [${type}] ${fmtUsd(s.price_usd)}/run, ${s.run_count} runs${by}\n  ${s.description}${sample}`;
+  return `- ${s.slug} — ${s.name} [${type}] ${fmtUsd(s.price_usd)}/run${by}\n  ${s.description}${sample}`;
 }
 
 export const agentTalentCapability: CapabilityHandler = {
