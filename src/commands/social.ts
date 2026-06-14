@@ -196,7 +196,7 @@ async function runCommand(options: SocialCommandOptions): Promise<void> {
   const apiUrl = API_URLS[chain];
   const appConfig = loadAppConfig();
   const model =
-    options.model || appConfig['default-model'] || 'nvidia/qwen3-coder-480b';
+    options.model || appConfig['default-model'] || 'nvidia/llama-4-maverick';
 
   console.log(chalk.dim(`  Model: ${model}`));
   console.log('');

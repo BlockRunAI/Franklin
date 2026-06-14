@@ -80,22 +80,22 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'deepseek-v3.2': 'nvidia/deepseek-v4-flash',
   'deepseek-v3': 'nvidia/deepseek-v4-flash',
   // Free (agent-tested BlockRun gateway free tier — refreshed 2026-04)
-  free: 'nvidia/qwen3-coder-480b',
-  glm4: 'nvidia/qwen3-coder-480b',
-  'deepseek-free': 'nvidia/qwen3-coder-480b',
-  'qwen-coder': 'nvidia/qwen3-coder-480b',
-  'qwen-think': 'nvidia/qwen3-coder-480b',
+  free: 'nvidia/llama-4-maverick',
+  glm4: 'nvidia/llama-4-maverick',
+  'deepseek-free': 'nvidia/llama-4-maverick',
+  'qwen-coder': 'nvidia/llama-4-maverick',
+  'qwen-think': 'nvidia/llama-4-maverick',
   maverick: 'nvidia/llama-4-maverick',
-  'gpt-oss': 'nvidia/qwen3-coder-480b',
-  'gpt-oss-small': 'nvidia/qwen3-coder-480b',
+  'gpt-oss': 'nvidia/llama-4-maverick',
+  'gpt-oss-small': 'nvidia/llama-4-maverick',
   'mistral-small': 'nvidia/llama-4-maverick',
   // Backward-compatibility aliases for models the gateway retired or exposes
   // unreliably on /v1/messages. Map to agent-tested free models so shortcuts
   // keep working without silent paid fallback or empty tool-use turns.
   // Map to the closest current free model so old session records + user
   // muscle memory keep working.
-  nemotron: 'nvidia/qwen3-coder-480b',
-  devstral: 'nvidia/qwen3-coder-480b',
+  nemotron: 'nvidia/llama-4-maverick',
+  devstral: 'nvidia/llama-4-maverick',
   // Others
   minimax: 'minimax/minimax-m3',
   'm3': 'minimax/minimax-m3',
@@ -209,13 +209,13 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
   {
     category: '🆓 Free (no USDC needed)',
     models: [
-      // V4 Flash leads the section: newest gateway addition, general-purpose,
-      // fast — better default for most users than the coder-specialized Qwen.
-      // V3.2 hidden (shortcut `deepseek-v3` still works) since V4 Flash
-      // supersedes it; keeping the picker tight.
-      { id: 'nvidia/deepseek-v4-flash', shortcut: 'deepseek-v4', label: 'DeepSeek V4 Flash', price: 'FREE', highlight: true },
-      { id: 'nvidia/qwen3-coder-480b',  shortcut: 'free',        label: 'Qwen3 Coder 480B', price: 'FREE' },
-      { id: 'nvidia/llama-4-maverick',  shortcut: 'maverick',    label: 'Llama 4 Maverick', price: 'FREE' },
+      // Maverick leads the section: the only reliably-healthy free model, and
+      // the default the `free` shortcut + free routing profile resolve to.
+      // V4 Flash (1M ctx) is the secondary — strong but occasionally times out
+      // on the NVIDIA NIM upstream. (Qwen3 Coder 480B removed 2026-06-11: its
+      // upstream reached EOL and the gateway 410s on it.)
+      { id: 'nvidia/llama-4-maverick',  shortcut: 'maverick',    label: 'Llama 4 Maverick', price: 'FREE', highlight: true },
+      { id: 'nvidia/deepseek-v4-flash', shortcut: 'deepseek-v4', label: 'DeepSeek V4 Flash', price: 'FREE' },
     ],
   },
 ];

@@ -15,14 +15,14 @@ export type ModelTier = 'free' | 'cheap' | 'premium' | 'none';
 
 /** Maps tier names to actual model identifiers */
 export interface ModelTierConfig {
-  free: string;      // e.g. "nvidia/qwen3-coder-480b"
+  free: string;      // e.g. "nvidia/llama-4-maverick"
   cheap: string;     // e.g. "zai/glm-5.1"
   premium: string;   // e.g. "anthropic/claude-sonnet-4.6"
 }
 
 export const DEFAULT_MODEL_TIERS: ModelTierConfig = {
-  free: 'nvidia/qwen3-coder-480b',
-  cheap: 'nvidia/qwen3-coder-480b', // Free by default; opt-in to paid flat-rate via 'zai/glm-5.1'.
+  free: 'nvidia/llama-4-maverick',
+  cheap: 'nvidia/llama-4-maverick', // Free by default; opt-in to paid flat-rate via 'zai/glm-5.1'.
   premium: 'anthropic/claude-sonnet-4.6',
 };
 

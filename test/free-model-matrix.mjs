@@ -34,8 +34,8 @@ const requestedModels = (process.env.FREE_MODEL_MATRIX || '')
   .map(resolveModel);
 
 const defaultMatrixModels = new Set([
-  'nvidia/qwen3-coder-480b',
   'nvidia/llama-4-maverick',
+  'nvidia/deepseek-v4-flash',
 ]);
 
 const selectedModels = process.env.FREE_MODEL_MATRIX === 'all'

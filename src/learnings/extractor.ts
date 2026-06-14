@@ -15,9 +15,8 @@ import type { Skill } from './types.js';
 // Free models for learning extraction — JSON extraction is simple enough.
 // Ordered by reliability: try the best free model first, fall back to others.
 const EXTRACTION_MODELS = [
-  'nvidia/qwen3-coder-480b',     // Agent-tested free model; strong at JSON tasks
-  'nvidia/llama-4-maverick',     // Agent-tested fallback
-  'nvidia/deepseek-v4-flash',    // 1M-ctx fallback (was glm-4.7 — NVIDIA NIM hung 2026-06-07)
+  'nvidia/llama-4-maverick',     // Agent-tested free model; reliable for JSON tasks
+  'nvidia/deepseek-v4-flash',    // 1M-ctx fallback (qwen3-coder-480b EOL 2026-06-11)
 ];
 
 const VALID_CATEGORIES = new Set<LearningCategory>([
