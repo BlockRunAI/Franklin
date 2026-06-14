@@ -87,8 +87,17 @@ async function openBrowser(url: string): Promise<void> {
 /**
  * Bind a one-shot HTTP listener on the redirect URL's port and resolve when
  * the authorization-code callback arrives. Returns the parsed `code`.
+ *
+ * `expectedState` is the `state` value the SDK embedded in the authorization
+ * URL. When present, the callback's `state` must match it — this is the OAuth
+ * 2.0 CSRF defense (RFC 6749 §10.12): a forged callback that doesn't echo our
+ * one-time state is rejected before the code is ever exchanged.
  */
-function waitForCallback(redirectUrl: URL, timeoutMs = 5 * 60_000): Promise<{ code: string; state?: string }> {
+function waitForCallback(
+  redirectUrl: URL,
+  expectedState?: string,
+  timeoutMs = 5 * 60_000,
+): Promise<{ code: string; state?: string }> {
   return new Promise((resolve, reject) => {
     const port = redirectUrl.port ? Number(redirectUrl.port) : 80;
     const expectedPath = redirectUrl.pathname || '/';
@@ -108,6 +117,14 @@ function waitForCallback(redirectUrl: URL, timeoutMs = 5 * 60_000): Promise<{ co
           res.end(`Authorization failed: ${error}`);
           server.close();
           reject(new Error(`OAuth callback returned error=${error}`));
+          return;
+        }
+        if (expectedState !== undefined && state !== expectedState) {
+          // CSRF guard: ignore (don't close) so the genuine callback can still
+          // arrive; only the real redirect carries our one-time state.
+          res.statusCode = 400;
+          res.end('State mismatch');
+          logger.warn('[mcp:oauth] rejected callback with mismatched state (possible CSRF)');
           return;
         }
         if (!code) {
@@ -140,8 +157,9 @@ export interface FranklinOAuthProvider {
   provider: OAuthClientProvider;
   /** Cheap signal for `/mcp` to show "authorized" without re-validating tokens. */
   isAuthorized(): boolean;
-  /** Pending callback promise — populated when SDK requests redirect, awaited
-   *  to get the code back. The SDK calls `finishAuth(code)` afterwards. */
+  /** Pending callback promise — populated when the SDK requests a redirect,
+   *  awaited to get the code back. The caller (connectRemoteWithOAuth in
+   *  client.ts) then calls `transport.finishAuth(code)` to complete the flow. */
   pendingCallback?: Promise<{ code: string; state?: string }>;
 }
 
@@ -208,7 +226,8 @@ export async function createOAuthProvider(
       // (which we expose via `handle.pendingCallback`) to actually finish.
       logger.info(`[mcp:oauth:${serverName}] authorization required — opening browser to ${authorizationUrl.host}`);
       console.error(`\n[Franklin MCP] '${serverName}' needs authorization. Opening browser to:\n  ${authorizationUrl.toString()}\nIf the browser does not open, copy the URL manually.\n`);
-      handle.pendingCallback = waitForCallback(new URL(redirectUrl));
+      const expectedState = authorizationUrl.searchParams.get('state') ?? undefined;
+      handle.pendingCallback = waitForCallback(new URL(redirectUrl), expectedState);
       void openBrowser(authorizationUrl.toString());
     },
   };

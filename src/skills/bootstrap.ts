@@ -30,6 +30,7 @@ import { loadSkillsFromDir } from './loader.js';
 import { Registry } from './registry.js';
 import type { LoadError, LoadedSkill } from './types.js';
 import { BLOCKRUN_DIR } from '../config.js';
+import { migrateLegacyLearnedSkills } from '../learnings/store.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Built form lives at dist/skills/bootstrap.js, so dist/skills-bundled/
@@ -71,6 +72,11 @@ export function loadAllSkills(workDir: string): AllSkillsLoad {
   const errors: LoadError[] = [];
   const all: LoadedSkill[] = [];
   const counts: Record<string, number> = {};
+
+  // Fold any pre-unified-registry flat learned-skill files
+  // (`~/.blockrun/skills/<name>.md`) into the new `learned/<name>/SKILL.md`
+  // layout so upgrading users don't lose accumulated skills. No-op once done.
+  try { migrateLegacyLearnedSkills(); } catch { /* migration is best-effort */ }
 
   const sources: Array<{ dir: string; source: 'bundled' | 'user' | 'project' | 'learned' }> = [
     { dir: BUNDLED_DIR, source: 'bundled' },

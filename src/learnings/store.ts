@@ -194,12 +194,55 @@ export function formatForPrompt(learnings: Learning[]): string {
 // exports below are kept as compat shims (delegating to the new disk layout)
 // so older callers don't break; new code should import from src/skills/.
 
-const LEARNED_SKILLS_DIR = path.join(BLOCKRUN_DIR, 'skills', 'learned');
+const SKILLS_DIR = path.join(BLOCKRUN_DIR, 'skills');
+const LEARNED_SKILLS_DIR = path.join(SKILLS_DIR, 'learned');
 
 function ensureLearnedSkillsDir() {
   if (!fs.existsSync(LEARNED_SKILLS_DIR)) {
     fs.mkdirSync(LEARNED_SKILLS_DIR, { recursive: true });
   }
+}
+
+/**
+ * One-time migration of legacy auto-extracted skills.
+ *
+ * Before the unified registry, learned skills were flat markdown files at
+ * `~/.blockrun/skills/<name>.md`. The new layout expects
+ * `~/.blockrun/skills/learned/<name>/SKILL.md`, and the user-source loader
+ * only reads `<dir>/SKILL.md` — so the old flat files would be silently
+ * orphaned on upgrade. This moves each one into the new layout (normalizing
+ * it through `saveSkill`, which adds `hidden`/`auto-generated`) and deletes
+ * the old file. Idempotent and cheap: returns immediately when there are no
+ * flat `.md` files left to migrate.
+ */
+export function migrateLegacyLearnedSkills(): number {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(SKILLS_DIR);
+  } catch {
+    return 0; // no skills dir yet — nothing to migrate
+  }
+  const flatFiles = entries.filter((f) => f.endsWith('.md'));
+  if (flatFiles.length === 0) return 0;
+
+  let migrated = 0;
+  for (const file of flatFiles) {
+    const oldPath = path.join(SKILLS_DIR, file);
+    try {
+      if (!fs.statSync(oldPath).isFile()) continue;
+      const raw = fs.readFileSync(oldPath, 'utf-8');
+      const skill = parseSkillFile(raw, file.replace(/\.md$/, ''));
+      if (!skill) continue;
+      const destDir = path.join(LEARNED_SKILLS_DIR, safeDirName(skill.name));
+      // Don't clobber a skill already present in the new layout.
+      if (!fs.existsSync(path.join(destDir, 'SKILL.md'))) {
+        saveSkill(skill);
+      }
+      fs.rmSync(oldPath);
+      migrated++;
+    } catch { /* skip unreadable/locked file */ }
+  }
+  return migrated;
 }
 
 function safeDirName(name: string): string {

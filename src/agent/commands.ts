@@ -241,7 +241,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
     if (ctx.skillRegistry) {
       const visible = ctx.skillRegistry
         .list()
-        .filter((l) => !l.skill.disableModelInvocation);
+        .filter((l) => !l.skill.disableModelInvocation && !l.skill.hidden);
       if (visible.length > 0) {
         skillsBlock =
           `\n  **Skills:**\n` +

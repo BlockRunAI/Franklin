@@ -3,7 +3,7 @@
  * lookup, list, and shadow-set queries for `/help` and
  * `franklin skills list`.
  *
- * Precedence: project > user > bundled. Within the same source, the first
+ * Precedence: project > user > learned > bundled. Within the same source, the first
  * loaded skill wins so that the order returned by the loader (which is
  * filesystem-ordered) is the deterministic tiebreaker the user can rely on.
  *
