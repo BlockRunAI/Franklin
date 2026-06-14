@@ -154,7 +154,7 @@ export async function runVerification(
   config.onEvent?.({ kind: 'text_delta', text: '\n*Verifying...*\n' });
 
   // Use agent-tested free model for verification.
-  const verificationModel = 'nvidia/qwen3-coder-480b';
+  const verificationModel = 'nvidia/llama-4-maverick';
 
   try {
     // Simple single-turn verification call

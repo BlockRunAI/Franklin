@@ -152,7 +152,7 @@ test('flags-only start options still honor --version without launching the agent
 
 test('--prompt one-shot mode skips interactive startup chatter', async () => {
   const result = await runCli('', {
-    args: [DIST, '--model', 'nvidia/qwen3-coder-480b', '--prompt', '/exit'],
+    args: [DIST, '--model', 'nvidia/llama-4-maverick', '--prompt', '/exit'],
   });
 
   assert.equal(result.code, 0, `CLI exited non-zero.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
@@ -164,7 +164,7 @@ test('--prompt one-shot mode skips interactive startup chatter', async () => {
 
 test('--prompt preserves non-zero exit code through the CLI entrypoint', async () => {
   const result = await runCli('', {
-    args: [DIST, '--model', 'nvidia/qwen3-coder-480b', '--prompt', 'hello', '--resume'],
+    args: [DIST, '--model', 'nvidia/llama-4-maverick', '--prompt', 'hello', '--resume'],
   });
 
   assert.equal(result.code, 1, `Expected exit 1 when --prompt is paired with picker-style --resume.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
@@ -379,17 +379,17 @@ test('proxy server handles OPTIONS and local model switching without backend cal
     );
 
     const freeSwitches = {
-      free: 'nvidia/qwen3-coder-480b',
-      glm4: 'nvidia/qwen3-coder-480b',
-      'qwen-think': 'nvidia/qwen3-coder-480b',
-      'qwen-coder': 'nvidia/qwen3-coder-480b',
+      free: 'nvidia/llama-4-maverick',
+      glm4: 'nvidia/llama-4-maverick',
+      'qwen-think': 'nvidia/llama-4-maverick',
+      'qwen-coder': 'nvidia/llama-4-maverick',
       maverick: 'nvidia/llama-4-maverick',
-      'deepseek-free': 'nvidia/qwen3-coder-480b',
-      'gpt-oss': 'nvidia/qwen3-coder-480b',
-      'gpt-oss-small': 'nvidia/qwen3-coder-480b',
+      'deepseek-free': 'nvidia/llama-4-maverick',
+      'gpt-oss': 'nvidia/llama-4-maverick',
+      'gpt-oss-small': 'nvidia/llama-4-maverick',
       'mistral-small': 'nvidia/llama-4-maverick',
-      nemotron: 'nvidia/qwen3-coder-480b',
-      devstral: 'nvidia/qwen3-coder-480b',
+      nemotron: 'nvidia/llama-4-maverick',
+      devstral: 'nvidia/llama-4-maverick',
     };
     for (const [shortcut, expectedModel] of Object.entries(freeSwitches)) {
       const freeSwitchRes = await fetch(`http://127.0.0.1:${port}/api/messages`, {
@@ -5672,17 +5672,17 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
   }
 
   const freeAliases = {
-    free: 'nvidia/qwen3-coder-480b',
-    glm4: 'nvidia/qwen3-coder-480b',
-    'qwen-think': 'nvidia/qwen3-coder-480b',
-    'qwen-coder': 'nvidia/qwen3-coder-480b',
+    free: 'nvidia/llama-4-maverick',
+    glm4: 'nvidia/llama-4-maverick',
+    'qwen-think': 'nvidia/llama-4-maverick',
+    'qwen-coder': 'nvidia/llama-4-maverick',
     maverick: 'nvidia/llama-4-maverick',
-    'deepseek-free': 'nvidia/qwen3-coder-480b',
-    'gpt-oss': 'nvidia/qwen3-coder-480b',
-    'gpt-oss-small': 'nvidia/qwen3-coder-480b',
+    'deepseek-free': 'nvidia/llama-4-maverick',
+    'gpt-oss': 'nvidia/llama-4-maverick',
+    'gpt-oss-small': 'nvidia/llama-4-maverick',
     'mistral-small': 'nvidia/llama-4-maverick',
-    nemotron: 'nvidia/qwen3-coder-480b',
-    devstral: 'nvidia/qwen3-coder-480b',
+    nemotron: 'nvidia/llama-4-maverick',
+    devstral: 'nvidia/llama-4-maverick',
   };
 
   for (const [shortcut, expectedModel] of Object.entries(freeAliases)) {
@@ -5713,7 +5713,7 @@ test('free routing profile stays free across router entry points', async () => {
 
   for (const prompt of prompts) {
     const routed = routeRequest(prompt, 'free');
-    assert.equal(routed.model, 'nvidia/qwen3-coder-480b', `routeRequest free drifted for prompt: ${prompt}`);
+    assert.equal(routed.model, 'nvidia/llama-4-maverick', `routeRequest free drifted for prompt: ${prompt}`);
     assert.equal(routed.tier, 'SIMPLE');
     assert.deepEqual(routed.signals, ['free-profile']);
   }
@@ -5724,7 +5724,7 @@ test('free routing profile stays free across router entry points', async () => {
     return 'REASONING';
   });
   assert.equal(classifierCalled, false, 'free profile should not spend a classifier call');
-  assert.equal(asyncRouted.model, 'nvidia/qwen3-coder-480b');
+  assert.equal(asyncRouted.model, 'nvidia/llama-4-maverick');
   assert.deepEqual(asyncRouted.signals, ['free-profile']);
 
   // Free chain expanded 2026-05-03: was a single-element chain that just
@@ -5743,7 +5743,7 @@ test('free routing profile stays free across router entry points', async () => {
   ]);
   for (const tier of ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING']) {
     const resolved = resolveTierToModel(tier, 'free');
-    assert.equal(resolved.model, 'nvidia/qwen3-coder-480b', `resolveTierToModel free drifted for ${tier}`);
+    assert.equal(resolved.model, 'nvidia/llama-4-maverick', `resolveTierToModel free drifted for ${tier}`);
     const chain = getFallbackChain(tier, 'free');
     assert.ok(Array.isArray(chain) && chain.length > 0, `free fallback chain empty for ${tier}`);
     for (const m of chain) {
@@ -6378,11 +6378,14 @@ test('collapseRepetitiveTools leaves image-bearing tool_results alone', async ()
   assert.match(trB.content, /\[xxxx.+\.\.\.\]/);
 });
 
-test('kimi: K2.5 picker shortcuts now resolve to K2.6 (gateway retired K2.5)', async () => {
+test('kimi: shortcuts resolve to K2.7 flagship; k2.6 pin still works', async () => {
+  // K2.7 became the gateway Kimi flagship 2026-06 (K2.6 demoted but still
+  // routes). `kimi` + retired K2.5 aliases follow the flagship; `k2.6` pins K2.6.
   const { resolveModel } = await import('../dist/ui/model-picker.js');
-  assert.equal(resolveModel('kimi-k2.5'), 'moonshot/kimi-k2.6');
-  assert.equal(resolveModel('k2.5'), 'moonshot/kimi-k2.6');
-  assert.equal(resolveModel('kimi'), 'moonshot/kimi-k2.6');
+  assert.equal(resolveModel('kimi'), 'moonshot/kimi-k2.7');
+  assert.equal(resolveModel('k2.7'), 'moonshot/kimi-k2.7');
+  assert.equal(resolveModel('kimi-k2.5'), 'moonshot/kimi-k2.7');
+  assert.equal(resolveModel('k2.5'), 'moonshot/kimi-k2.7');
   assert.equal(resolveModel('k2.6'), 'moonshot/kimi-k2.6');
 });
 
@@ -6560,22 +6563,24 @@ test('getToolAnomalies: math is deterministic on synthetic on-disk fixture', asy
   }
 });
 
-test('kimi: picker no longer lists the retired K2.5 entry', async () => {
+test('kimi: picker lists the K2.7 flagship, not retired/demoted entries', async () => {
   const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
   const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
   assert.ok(!ids.includes('moonshot/kimi-k2.5'),
     'moonshot/kimi-k2.5 should be removed from the picker (retired by the gateway)');
-  assert.ok(ids.includes('moonshot/kimi-k2.6'),
-    'moonshot/kimi-k2.6 must remain in the picker');
+  assert.ok(ids.includes('moonshot/kimi-k2.7'),
+    'moonshot/kimi-k2.7 (the current flagship) must be in the picker');
 });
 
-test('kimi: pricing keeps K2.5 entries for legacy session-cost records', async () => {
+test('kimi: pricing keeps legacy entries for session-cost records', async () => {
   const { MODEL_PRICING } = await import('../dist/pricing.js');
-  // Keeping retired model pricing is the same pattern used for nvidia/gpt-oss-120b
-  // and similar — old session-cost records reference these IDs and must not crash.
+  // Keeping retired/demoted model pricing is the same pattern used for
+  // nvidia/gpt-oss-120b and similar — old session-cost records reference these
+  // IDs and must not crash. K2.7 is the current flagship.
+  assert.ok(MODEL_PRICING['moonshot/kimi-k2.7']);
+  assert.ok(MODEL_PRICING['moonshot/kimi-k2.6']);
   assert.ok(MODEL_PRICING['moonshot/kimi-k2.5']);
   assert.ok(MODEL_PRICING['nvidia/kimi-k2.5']);
-  assert.ok(MODEL_PRICING['moonshot/kimi-k2.6']);
 });
 
 // ─── picker trim (v3.9.3) ─────────────────────────────────────────────────
@@ -6604,7 +6609,7 @@ test('picker trim: shortcuts for hidden models still resolve (muscle-memory pres
   assert.equal(resolveModel('o4'), 'openai/o4-mini');
   assert.equal(resolveModel('nano'), 'openai/gpt-5-nano');
   // grok promoted to the public flagship grok-4.3 (2026-06-04) — same
-  // flagship-promotion pattern as kimi → k2.6. Explicit pins still resolve.
+  // flagship-promotion pattern as kimi → k2.7. Explicit pins still resolve.
   assert.equal(resolveModel('grok'), 'xai/grok-4.3');
   assert.equal(resolveModel('grok-3'), 'xai/grok-3');
   assert.equal(resolveModel('grok-4'), 'xai/grok-4-0709');
@@ -7965,10 +7970,12 @@ test('enforceRetention is a no-op when audit log is small', async () => {
 // category. pickFreeFallback selects from per-category chains so trading /
 // research / chat get general-purpose free models first.
 
-test('pickFreeFallback: coding category prefers qwen3-coder first', async () => {
+test('pickFreeFallback: coding category prefers maverick first', async () => {
+  // qwen3-coder-480b was the coder lead until its upstream reached EOL
+  // (2026-06-11, gateway 410s). llama-4-maverick now leads every category.
   const { pickFreeFallback } = await import('../dist/router/index.js');
   const pick = pickFreeFallback('coding', new Set());
-  assert.equal(pick, 'nvidia/qwen3-coder-480b');
+  assert.equal(pick, 'nvidia/llama-4-maverick');
 });
 
 test('pickFreeFallback: trading category skips coder, picks the general workhorse', async () => {
@@ -7991,12 +7998,12 @@ test('pickFreeFallback: research / chat / creative also skip coder first', async
 
 test('pickFreeFallback: respects alreadyFailed set', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
-  // Coding starts with qwen3-coder. After it fails, next should not be qwen3-coder.
-  const failed = new Set(['nvidia/qwen3-coder-480b']);
+  // Coding starts with maverick. After it fails, next is the deepseek secondary.
+  const failed = new Set(['nvidia/llama-4-maverick']);
   const pick = pickFreeFallback('coding', failed);
-  assert.notEqual(pick, 'nvidia/qwen3-coder-480b');
-  assert.equal(pick, 'nvidia/llama-4-maverick',
-    `after qwen3-coder fails, coding should fall to llama-4-maverick, got ${pick}`);
+  assert.notEqual(pick, 'nvidia/llama-4-maverick');
+  assert.equal(pick, 'nvidia/deepseek-v4-flash',
+    `after maverick fails, coding should fall to deepseek-v4-flash, got ${pick}`);
 });
 
 test('pickFreeFallback: unknown category uses default chain (general model first)', async () => {
@@ -8013,6 +8020,7 @@ test('pickFreeFallback: returns undefined when every candidate failed', async ()
     'nvidia/qwen3-coder-480b',
     'nvidia/glm-4.7',
     'nvidia/llama-4-maverick',
+    'nvidia/deepseek-v4-flash',
   ]);
   const pick = pickFreeFallback('trading', failed);
   assert.equal(pick, undefined);

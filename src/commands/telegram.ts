@@ -59,7 +59,7 @@ export async function telegramCommand(opts: TelegramCommandOptions): Promise<voi
   const model =
     opts.model ||
     config['default-model'] ||
-    'nvidia/qwen3-coder-480b';
+    'nvidia/llama-4-maverick';
 
   const workingDir = process.cwd();
   const systemInstructions = assembleInstructions(workingDir, model);

@@ -82,10 +82,12 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'minimax/minimax-m3': { input: 0.3, output: 1.2 },
   'minimax/minimax-m2.7': { input: 0.3, output: 1.2 },
   'minimax/minimax-m2.5': { input: 0.3, output: 1.2 },
-  // Moonshot
+  // Moonshot — K2.7 is the gateway flagship (2026-06); K2.6 demoted but still
+  // routes, kept for the `k2.6` pin + legacy session-cost records.
+  'moonshot/kimi-k2.7': { input: 0.95, output: 4.0 },
   'moonshot/kimi-k2.6': { input: 0.95, output: 4.0 },
   // Retired (kept for legacy session-cost records; the gateway no longer
-  // serves these and the picker shortcuts now resolve to K2.6).
+  // serves these and the picker shortcuts now resolve to the current flagship).
   'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
   'nvidia/kimi-k2.5': { input: 0.55, output: 2.5 },
   // PROMOTION (active ~2026-04): flat $0.001/call for all GLM models

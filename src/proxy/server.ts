@@ -189,18 +189,18 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   deepseek: 'deepseek/deepseek-chat',
   r1: 'deepseek/deepseek-reasoner',
   // Free models (agent-tested gateway free tier — refreshed 2026-04)
-  free: 'nvidia/qwen3-coder-480b',
-  glm4: 'nvidia/qwen3-coder-480b',
-  'deepseek-free': 'nvidia/qwen3-coder-480b',
-  'qwen-coder': 'nvidia/qwen3-coder-480b',
-  'qwen-think': 'nvidia/qwen3-coder-480b',
+  free: 'nvidia/llama-4-maverick',
+  glm4: 'nvidia/llama-4-maverick',
+  'deepseek-free': 'nvidia/llama-4-maverick',
+  'qwen-coder': 'nvidia/llama-4-maverick',
+  'qwen-think': 'nvidia/llama-4-maverick',
   maverick: 'nvidia/llama-4-maverick',
-  'gpt-oss': 'nvidia/qwen3-coder-480b',
-  'gpt-oss-small': 'nvidia/qwen3-coder-480b',
+  'gpt-oss': 'nvidia/llama-4-maverick',
+  'gpt-oss-small': 'nvidia/llama-4-maverick',
   'mistral-small': 'nvidia/llama-4-maverick',
   // Retired/unreliable gateway-model aliases (map to closest agent-tested current).
-  nemotron: 'nvidia/qwen3-coder-480b',
-  devstral: 'nvidia/qwen3-coder-480b',
+  nemotron: 'nvidia/llama-4-maverick',
+  devstral: 'nvidia/llama-4-maverick',
   // Minimax
   minimax: 'minimax/minimax-m3',
   'm3': 'minimax/minimax-m3',
@@ -209,11 +209,13 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   glm: 'zai/glm-5.1',
   'glm-turbo': 'zai/glm-5-turbo',
   'glm5': 'zai/glm-5.1',
-  kimi: 'moonshot/kimi-k2.6',
+  kimi: 'moonshot/kimi-k2.7',
+  'k2.7': 'moonshot/kimi-k2.7',
+  // K2.6 demoted 2026-06 (flagship is K2.7) but still routes — `k2.6` pins it.
   'k2.6': 'moonshot/kimi-k2.6',
-  // K2.5 retired by the gateway — aliases resolve to K2.6 for muscle memory.
-  'kimi-k2.5': 'moonshot/kimi-k2.6',
-  'k2.5': 'moonshot/kimi-k2.6',
+  // K2.5 retired — aliases resolve to the current flagship for muscle memory.
+  'kimi-k2.5': 'moonshot/kimi-k2.7',
+  'k2.5': 'moonshot/kimi-k2.7',
 };
 
 // Model pricing now uses shared source from src/pricing.ts

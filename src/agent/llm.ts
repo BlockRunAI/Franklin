@@ -547,10 +547,10 @@ export class ModelClient {
     // strings (now retired routing profiles) end up at the same place
     // without needing dedicated entries.
     const FALLBACKS: Record<string, string> = {
-      'blockrun/auto': 'nvidia/qwen3-coder-480b',
-      'blockrun/free': 'nvidia/qwen3-coder-480b',
+      'blockrun/auto': 'nvidia/llama-4-maverick',
+      'blockrun/free': 'nvidia/llama-4-maverick',
     };
-    return FALLBACKS[model] || 'nvidia/qwen3-coder-480b';
+    return FALLBACKS[model] || 'nvidia/llama-4-maverick';
   }
 
   /**

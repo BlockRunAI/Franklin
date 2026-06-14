@@ -1519,7 +1519,7 @@ export async function interactiveSession(
         const hasTools = responseParts.some(p => p.type === 'tool_use');
         const hasThinking = responseParts.some(p => p.type === 'thinking');
         if (!hasText && !hasTools && !hasThinking) {
-          const EMPTY_FALLBACK_MODELS = ['nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick', 'zai/glm-5.1'];
+          const EMPTY_FALLBACK_MODELS = ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash', 'zai/glm-5.1'];
           const nextModel = EMPTY_FALLBACK_MODELS.find(m => m !== config.model && !turnFailedModels.has(m));
           if (nextModel && recoveryAttempts < 2) {
             recoveryAttempts++;
@@ -1562,7 +1562,7 @@ export async function interactiveSession(
             // Excludes nvidia/* and *-coder-* — they're the source population.
             const TOOL_USE_FALLBACK_MODELS = [
               'anthropic/claude-haiku-4.5',
-              'moonshot/kimi-k2.6',
+              'moonshot/kimi-k2.7',
               'openai/gpt-5',
               'anthropic/claude-sonnet-4.6',
             ];

@@ -1,5 +1,23 @@
 # Changelog
 
+## Franklin Agent 3.28.5 — Kimi flagship → K2.7; Fable 5 confirmed offline
+
+Catalog alignment with the BlockRun gateway after its Kimi K2.7 launch (K2.6 demoted) and Claude Fable 5 takedown.
+
+- **Kimi flagship promoted K2.6 → K2.7.** The `kimi` shortcut, the `/model` picker row, the router SIMPLE-tier fallback, the tool-use recovery fallback, and the vision-capable list now point to `moonshot/kimi-k2.7` (same $0.95/$4 pricing, 256K context, multimodal). K2.6 is demoted on the gateway but still routes, so the explicit `k2.6` pin and its capability-table entries are kept; `kimi-k2.5`/`k2.5` aliases now resolve to the current flagship.
+- **Fable 5 is offline — no franklin changes.** Verified `anthropic/claude-fable-5` now returns `404 not_found` ("use Opus 4.8") at the gateway; franklin never referenced it, so nothing to add or remove. Opus 4.8 remains the top flagship in the picker.
+- **Free tier already aligned.** The gateway's free-tier overhaul (wall-clock budget on the free cascade, truncation fixes, per-IP rate limits, EOL purges) is server-side; franklin's free model set (`llama-4-maverick` primary, `deepseek-v4-flash` secondary, `nemotron-3-nano-omni` for vision) already matches. The EOL'd `qwen3-coder-480b` pricing entry is kept for legacy session-cost records (same pattern as retired Kimi K2.5).
+
+## Franklin Agent 3.28.4 — free tier restored: replace EOL'd Qwen3 Coder 480B everywhere
+
+The free default model `nvidia/qwen3-coder-480b` died: its upstream (`qwen/qwen3-coder-480b-a35b-instruct`) reached end-of-life on **2026-06-11** and the gateway now returns `410 Gone` for it. Because that id was the free-tier default *and* the internal fallback for nearly every subsystem, free-tier users and several internal paths were hard-broken.
+
+- **New free leader: `nvidia/llama-4-maverick`.** The only reliably-healthy free model (chat + coding + reasoning). It replaces qwen3-coder as the default in the router free profile, the `/model` picker, every `MODEL_SHORTCUTS` free alias (`free`, `glm4`, `qwen-coder`, `qwen-think`, `gpt-oss`, `nemotron`, `devstral`, …), the proxy shortcut map, MoA aggregator + reference set, subagent default, compaction, verification, learnings extractor, and the social/slack/telegram defaults.
+- **Secondary free fallback: `nvidia/deepseek-v4-flash`.** 1M-context, added behind maverick in every free fallback chain (`FREE_MODELS_BY_CATEGORY`, `DEFAULT_FREE_CHAIN`, empty-response recovery). It occasionally times out on the NVIDIA NIM upstream, so it sits second rather than leading.
+- **Removed the dead Qwen3 Coder 480B row** from the `/model` picker; the `free` shortcut now resolves to maverick.
+- **Tests updated** to the new free defaults; the stale GLM-5.1 "$0.001 flat" e2e assertion now expects per-token pricing (the launch promo ended 2026-06-05).
+- **Dependency audit.** `npm audit fix` patched transitive `hono`/`qs`/`fast-uri`/`ip-address` advisories from the MCP SDK (16 → 9; remainder are Solana-stack deps with no non-breaking fix).
+
 ## Franklin Agent 3.28.3 — Node version guard: friendly message instead of ERR_REQUIRE_ESM crash
 
 Old Node (< 20.19) crashed at startup with an opaque `ERR_REQUIRE_ESM` stack trace from deep inside `rpc-websockets`/`uuid`. The real requirement was always Node 20.19+ (the `require(esm)` capability the Solana stack relies on). 3.28.2's `>=20.18.0` floor was one patch too low to actually run.

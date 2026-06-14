@@ -42,7 +42,8 @@ const VISION_MODELS = new Set<string>([
   // xAI — only Grok 4 base supports vision; grok-4-1-fast-reasoning is text-only
   'xai/grok-4-0709',
   'xai/grok-3',
-  // Moonshot — K2.6 added vision + reasoning when it replaced K2.5
+  // Moonshot — K2.7 (flagship) + K2.6 are multimodal (image + video input)
+  'moonshot/kimi-k2.7',
   'moonshot/kimi-k2.6',
   // NVIDIA inference — Llama 4 Maverick is multimodal; deepseek/qwen-coder are not
   'nvidia/llama-4-maverick',

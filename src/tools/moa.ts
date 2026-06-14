@@ -18,15 +18,14 @@ import { ModelClient } from '../agent/llm.js';
 
 /** Reference models — diverse, cheap/free models for parallel queries. */
 const REFERENCE_MODELS = [
-  'nvidia/qwen3-coder-480b',                // Free, agent-tested coding
   'nvidia/llama-4-maverick',                // Free, agent-tested general chat
-  'nvidia/deepseek-v4-flash',               // Free, 1M ctx (was glm-4.7 — NVIDIA NIM hung 2026-06-07)
+  'nvidia/deepseek-v4-flash',               // Free, 1M ctx (qwen3-coder-480b EOL 2026-06-11)
   'google/gemini-2.5-flash',                // Fast, cheap
   'deepseek/deepseek-chat',                 // Cheap, good reasoning
 ];
 
 /** Aggregator model — free by default. Users explicitly pass `aggregator` to upgrade. */
-const AGGREGATOR_MODEL = 'nvidia/qwen3-coder-480b';
+const AGGREGATOR_MODEL = 'nvidia/llama-4-maverick';
 
 /** Max tokens per reference response. */
 const REFERENCE_MAX_TOKENS = 4096;

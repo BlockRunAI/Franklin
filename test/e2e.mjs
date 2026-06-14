@@ -348,7 +348,7 @@ test('polish: weak model respects instruction without leaking <think> or [TOOLCA
   async (t) => {
     const result = await franklin(
       'reply with exactly and only this token: POLISH_PROBE_OK',
-      { model: 'nvidia/qwen3-coder-480b', timeoutMs: 80_000 },
+      { model: 'nvidia/llama-4-maverick', timeoutMs: 80_000 },
     );
     if (skipIfRateLimited(t, result)) return;
     assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
@@ -567,13 +567,14 @@ test('PredictionMarket searchAll: live /markets/search returns multi-platform re
 test('session cost: estimateCost returns non-negative value for known model', { timeout: 5_000 }, async () => {
   const { estimateCost } = await import('../dist/pricing.js');
 
-  // GLM-5.1: $0.001 per call (flat pricing)
+  // GLM-5.1: per-token now ($1.40 in / $4.40 out per 1M) — the flat $0.001/call
+  // launch promo ended 2026-06-05. 1M in + 1M out → $1.40 + $4.40 = $5.80.
   const cost = estimateCost('zai/glm-5.1', 1_000_000, 1_000_000, 1);
   assert.ok(cost > 0, `Expected non-zero cost for GLM-5.1, got ${cost}`);
-  assert.ok(cost <= 0.001, `GLM-5.1 is flat $0.001/call, got ${cost}`);
+  assert.ok(Math.abs(cost - 5.80) < 1e-6, `GLM-5.1 is per-token $1.40/$4.40 = $5.80 at 1M/1M, got ${cost}`);
 
   // Free model should cost $0
-  const freeCost = estimateCost('nvidia/qwen3-coder-480b', 1_000_000, 1_000_000);
+  const freeCost = estimateCost('nvidia/llama-4-maverick', 1_000_000, 1_000_000);
   assert.equal(freeCost, 0, `Expected $0 for free model, got ${freeCost}`);
 
   // Unknown model should return > 0 (falls back to $2/$10 per 1M)

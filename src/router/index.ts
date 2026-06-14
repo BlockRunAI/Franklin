@@ -69,7 +69,7 @@ export interface RoutingResult {
 const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
     primary: 'deepseek/deepseek-v4-pro',
-    fallback: ['google/gemini-2.5-flash', 'moonshot/kimi-k2.6', 'deepseek/deepseek-chat'],
+    fallback: ['google/gemini-2.5-flash', 'moonshot/kimi-k2.7', 'deepseek/deepseek-chat'],
   },
   MEDIUM: {
     primary: 'deepseek/deepseek-v4-pro',
@@ -511,14 +511,14 @@ export function resolveTierToModel(
   needsVision = false,
 ): RoutingResult {
   // Free profile short-circuits — everything routes to a single free model.
-  // qwen3-coder-480b is text-only; on a vision turn the free profile can't
+  // llama-4-maverick is text-only; on a vision turn the free profile can't
   // help us. Caller should detect this and warn the user that Free won't
   // handle images — for now we just return the free pick and let the model
-  // fail gracefully. (Open question: should we hard-fall to nvidia/llama-4-
-  // maverick here? Skipped until we see a real user hit this path.)
+  // fail gracefully. (The only vision-capable free model is the Nemotron Omni
+  // line; revisit hard-falling to it if a real user hits this path.)
   if (profile === 'free') {
     return {
-      model: 'nvidia/qwen3-coder-480b',
+      model: 'nvidia/llama-4-maverick',
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: needsVision ? ['free-profile', 'vision-unsupported'] : ['free-profile'],
@@ -555,7 +555,7 @@ export function routeRequest(
   // Free profile — always use free model
   if (profile === 'free') {
     return {
-      model: 'nvidia/qwen3-coder-480b',
+      model: 'nvidia/llama-4-maverick',
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: needsVision ? ['free-profile', 'vision-unsupported'] : ['free-profile'],
@@ -657,28 +657,27 @@ export function getFallbackChain(
 // to keep the user moving without waiting for funding.
 //
 // The lists are ordered: best-fit free model first, then degraded fallbacks.
-// Coding goes to qwen3-coder; everything else (chat / trading / research /
-// reasoning / creative) prefers general-purpose free models that aren't
-// coder-tuned. Without this split, a BTC question that exhausted paid
-// models was being handed to qwen3-coder-480b — a coder model trying to
-// do technical analysis. Reported 2026-05-03 with a markets question
-// routed to a coder model on Sonnet failure.
+// llama-4-maverick leads every category — it's the only reliably-healthy free
+// model and covers chat / coding / reasoning. deepseek-v4-flash (1M ctx) is the
+// secondary; it occasionally times out on the NVIDIA NIM upstream, so it sits
+// behind maverick rather than leading.
 // 2026-06-07: nvidia/glm-4.7 dropped from every chain — NVIDIA NIM hung, the
-// gateway redirects it to qwen3-coder-480b (already present here), so routing to
-// it just wasted a slot and mislabeled the model. qwen3-coder-480b + llama-4-
-// maverick are both healthy and cover all categories.
+// gateway redirected it to a now-dead model, so routing to it just wasted a slot.
+// 2026-06-11: nvidia/qwen3-coder-480b removed — its upstream
+// (qwen/qwen3-coder-480b-a35b-instruct) reached end-of-life and the gateway now
+// 410s on it. maverick + deepseek-v4-flash cover all categories.
 const FREE_MODELS_BY_CATEGORY: Record<Category, string[]> = {
-  coding:    ['nvidia/qwen3-coder-480b', 'nvidia/llama-4-maverick'],
-  trading:   ['nvidia/llama-4-maverick', 'nvidia/qwen3-coder-480b'],
-  research:  ['nvidia/llama-4-maverick', 'nvidia/qwen3-coder-480b'],
-  reasoning: ['nvidia/llama-4-maverick', 'nvidia/qwen3-coder-480b'],
-  chat:      ['nvidia/llama-4-maverick', 'nvidia/qwen3-coder-480b'],
-  creative:  ['nvidia/llama-4-maverick', 'nvidia/qwen3-coder-480b'],
+  coding:    ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
+  trading:   ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
+  research:  ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
+  reasoning: ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
+  chat:      ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
+  creative:  ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
 };
 
 const DEFAULT_FREE_CHAIN: string[] = [
   'nvidia/llama-4-maverick',
-  'nvidia/qwen3-coder-480b',
+  'nvidia/deepseek-v4-flash',
 ];
 
 /**
