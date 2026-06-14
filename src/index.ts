@@ -198,10 +198,11 @@ program
   .command('skills [action] [arg]')
   .description('Manage Franklin skills — list | which <name>')
   .option('--json', 'Output the skill list as JSON')
+  .option('--all', 'Include hidden (auto-generated) skills in the list')
   .action(async (
     action: string | undefined,
     arg: string | undefined,
-    opts: { json?: boolean }
+    opts: { json?: boolean; all?: boolean }
   ) => {
     const { skillsCommand } = await import('./commands/skills.js');
     await skillsCommand(action, arg, opts);

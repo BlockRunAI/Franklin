@@ -108,6 +108,10 @@ export function loadMcpConfig(workDir: string): McpConfig {
   // the user provides the credentials.
   for (const [name, config] of Object.entries(servers)) {
     if (config.disabled) continue;
+    // Remote transports manage their own auth via the OAuth flow (`oauth: true`
+    // in the server config). Don't apply the file-existence heuristic to them.
+    if (config.transport === 'http' || config.transport === 'sse') continue;
+
     const env = (config.env || {}) as Record<string, string>;
     const args = (config.args || []) as string[];
     const configStr = JSON.stringify(config).toLowerCase();

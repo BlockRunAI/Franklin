@@ -1,5 +1,17 @@
 # Changelog
 
+## Franklin Agent 3.29.0 — remote MCP (HTTP/OAuth), per-server tool filtering, unified skill registry
+
+Five long-standing gaps in the MCP and Skills layers, closed in one refactor. All changes are additive — existing stdio MCP configs and bundled skills keep working.
+
+- **Remote MCP transports.** `transport: "http"` (StreamableHTTP) and `sse` now connect alongside `stdio`, so hosted MCP servers are reachable via the standard config shape. Previously `http` was declared in the type but rejected at connect time.
+- **MCP OAuth.** Implements the SDK's `OAuthClientProvider` against an on-disk store at `~/.blockrun/mcp/oauth/<server>.json` (`0600`/`0700`), PKCE via SDK helpers, a one-shot loopback callback listener, and token auto-refresh. The callback now validates the OAuth `state` parameter against the authorization request (RFC 6749 CSRF defense) before exchanging the code.
+- **Per-server tool filtering.** `enabled_tools` / `disabled_tools` allow/deny lists are applied at discovery time, so filtered tools never reach the model; `/mcp` reports how many each server hid.
+- **Unified skill registry.** Bundled, learned, user, and project skills load in one pass with precedence (project > user > learned > bundled). Legacy flat `~/.blockrun/skills/<name>.md` learned files are migrated into the new `learned/<name>/SKILL.md` layout on upgrade so accumulated skills aren't orphaned.
+- **Trigger auto-invoke.** `triggers:` frontmatter is consumed per turn to append a soft skill-hint block to the system prompt (a hint, not a message rewrite). `hidden` skills now stay out of `/help` and `franklin skills list` (use `--all` to reveal) while remaining active for triggers and direct invocation.
+- **Hardening.** Learned/auto-generated skill bodies and MCP tool-call output are framed as `UNTRUSTED` so server- or session-derived content can't hijack the prompt via injection. `/mcp` surfaces transport kind, tool/filter counts, OAuth state, and a tail of server stderr (no longer swallowed) for diagnosing misconfigured servers.
+
+
 ## Franklin Agent 3.28.5 — Kimi flagship → K2.7; Fable 5 confirmed offline
 
 Catalog alignment with the BlockRun gateway after its Kimi K2.7 launch (K2.6 demoted) and Claude Fable 5 takedown.

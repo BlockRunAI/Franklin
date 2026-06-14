@@ -241,7 +241,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
     if (ctx.skillRegistry) {
       const visible = ctx.skillRegistry
         .list()
-        .filter((l) => !l.skill.disableModelInvocation);
+        .filter((l) => !l.skill.disableModelInvocation && !l.skill.hidden);
       if (visible.length > 0) {
         skillsBlock =
           `\n  **Skills:**\n` +
@@ -338,18 +338,47 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
     emitDone(ctx);
   },
   '/mcp': async (ctx) => {
-    const { listMcpServers } = await import('../mcp/client.js');
+    const { listMcpServers, listMcpFailures, getMcpStderrTail } = await import('../mcp/client.js');
     const servers = listMcpServers();
-    if (servers.length === 0) {
-      ctx.onEvent({ kind: 'text_delta', text: 'No MCP servers connected.\nAdd servers to `~/.blockrun/mcp.json` or `.mcp.json` in your project.\n' });
+    const failures = listMcpFailures();
+    let text = '';
+
+    if (servers.length === 0 && failures.length === 0) {
+      text = 'No MCP servers connected.\nAdd servers to `~/.blockrun/mcp.json` or `.mcp.json` in your project.\n';
     } else {
-      let text = `**${servers.length} MCP server(s) connected:**\n\n`;
-      for (const s of servers) {
-        text += `  **${s.name}** — ${s.toolCount} tools\n`;
-        for (const t of s.tools) text += `    · ${t}\n`;
+      if (servers.length > 0) {
+        text += `**${servers.length} MCP server(s) connected:**\n\n`;
+        for (const s of servers) {
+          const oauthFlag = s.hasOAuth ? (s.oauthAuthorized ? ' · oauth ✓' : ' · oauth ✗') : '';
+          const filterNote = s.filtered > 0 ? ` (+${s.filtered} hidden by enabled_tools/disabled_tools)` : '';
+          text += `  **${s.name}** [${s.transport}] — ${s.toolCount} tools${filterNote}${oauthFlag}\n`;
+          for (const t of s.tools) text += `    · ${t}\n`;
+        }
       }
-      ctx.onEvent({ kind: 'text_delta', text });
+      if (failures.length > 0) {
+        text += `\n**${failures.length} MCP server(s) failed to connect:**\n\n`;
+        for (const f of failures) {
+          text += `  **${f.name}** [${f.transport}] — ${f.reason}\n`;
+          if (f.stderrTail.length > 0) {
+            text += `    stderr (last ${f.stderrTail.length} lines):\n`;
+            for (const line of f.stderrTail.slice(-10)) {
+              text += `      | ${line.slice(0, 200)}\n`;
+            }
+          }
+        }
+      }
+      // Surface live stderr from running stdio servers (debug helper).
+      for (const s of servers) {
+        const tail = getMcpStderrTail(s.name);
+        if (tail.length > 0 && s.transport === 'stdio') {
+          text += `\n  ${s.name} recent stderr (${tail.length} lines):\n`;
+          for (const line of tail.slice(-5)) {
+            text += `    | ${line.slice(0, 200)}\n`;
+          }
+        }
+      }
     }
+    ctx.onEvent({ kind: 'text_delta', text });
     emitDone(ctx);
   },
   '/context': async (ctx) => {

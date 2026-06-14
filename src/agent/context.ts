@@ -10,7 +10,7 @@ import { BLOCKRUN_DIR } from '../config.js';
 import { getWalletAddress as getBaseWalletAddress } from '@blockrun/llm';
 import { Keypair } from '@solana/web3.js';
 import bs58 from 'bs58';
-import { loadLearnings, decayLearnings, saveLearnings, formatForPrompt, loadSkills, matchSkills, formatSkillsForPrompt } from '../learnings/store.js';
+import { loadLearnings, decayLearnings, saveLearnings, formatForPrompt } from '../learnings/store.js';
 
 // ─── System Instructions Assembly ──────────────────────────────────────────
 // Composable prompt sections — each independently maintainable and conditionally includable.
@@ -525,16 +525,12 @@ export function assembleInstructions(workingDir: string, model?: string): string
     }
   } catch { /* learnings are optional — never block startup */ }
 
-  // Inject relevant skills (procedural memory from past complex tasks)
-  try {
-    const allSkills = loadSkills();
-    if (allSkills.length > 0) {
-      // Skills are matched lazily on first user message — for now inject top skills by use count
-      const topSkills = allSkills.sort((a, b) => b.uses - a.uses).slice(0, 5);
-      const skillsSection = formatSkillsForPrompt(topSkills);
-      if (skillsSection) parts.push(skillsSection);
-    }
-  } catch { /* skills are optional */ }
+  // Procedural skills (bundled + learned + user + project) used to be
+  // injected here at session boot. They now flow through the unified
+  // src/skills/ Registry and are matched per-turn against the user's
+  // message in src/skills/triggers.ts, so we no longer pre-inject all
+  // top-by-use skills into every system prompt — the per-turn hint is both
+  // more relevant and cheaper.
 
   // Model-specific execution guidance
   if (model) {
