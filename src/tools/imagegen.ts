@@ -19,8 +19,6 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import type { ContentLibrary } from '../content/library.js';
 import { checkImageBudget, recordImageAsset } from '../content/record-image.js';
-import { ModelClient } from '../agent/llm.js';
-import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
 import { recordUsage } from '../stats/tracker.js';
 import { findModel, estimateCostUsd } from '../gateway-models.js';
 import { logger } from '../logger.js';
@@ -221,22 +219,9 @@ function buildExecute(deps: ImageGenDeps) {
       };
     }
 
-    // One-shot refinement opt-out: leading `///` tells Franklin "don't
-    // refine this prompt, I wrote it the way I want it." Strip the prefix
-    // and pass skipRefine through to the router.
-    let prompt = rawInput.prompt;
-    let skipRefine = false;
-    if (prompt.trimStart().startsWith('///')) {
-      prompt = prompt.replace(/^\s*\/\/\/\s?/, '');
-      skipRefine = true;
-    }
+    // Pure tool: use exactly the prompt the caller gave — no LLM rewriting.
+    const prompt = rawInput.prompt;
 
-    // ── Media router + AskUser flow ────────────────────────────────────
-    // If the caller explicitly named a model, or the env auto-approves, or
-    // no AskUser bridge exists (batch / --prompt mode), skip the proposal
-    // step and use the old default. Otherwise: classifier picks a fitting
-    // model + rewrites the prompt, the preview goes to AskUser, user
-    // chooses or cancels.
     // Reference-image mode forces an edit-capable model. If the caller named
     // an unsupported one, fail loudly so we don't silently downgrade their
     // request to text-only generation.
@@ -249,9 +234,9 @@ function buildExecute(deps: ImageGenDeps) {
       };
     }
 
-    let imageModel = model || (editMode ? 'openai/gpt-image-2' : 'openai/gpt-image-1');
+    const imageModel = model || (editMode ? 'openai/gpt-image-2' : 'openai/gpt-image-1');
     let imageSize = size || '1024x1024';
-    let chosenPrompt = prompt;
+    const chosenPrompt = prompt;
 
     // ── Edit-mode constraint checks (mirror the gateway, fail before paying) ──
     if (editMode) {
@@ -287,55 +272,6 @@ function buildExecute(deps: ImageGenDeps) {
       }
     }
 
-    // Skip the proposal flow when a reference image is set: the media router
-    // doesn't know which models support image-to-image, so its suggestions
-    // would frequently be unusable (text-only models). Default to gpt-image-1
-    // for now; a future router upgrade can pick between the four edit-capable
-    // models based on the prompt.
-    const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
-    if (!model && !autoApprove && ctx.onAskUser && !editMode) {
-      try {
-        const chain = loadChain();
-        const client = new ModelClient({ apiUrl: API_URLS[chain], chain });
-        const proposal = await analyzeMediaRequest({
-          kind: 'image',
-          prompt,
-          quantity: n,
-          client,
-          signal: ctx.abortSignal,
-          skipRefine,
-        });
-        if (proposal) {
-          const { question, options } = renderProposalForAskUser(proposal, prompt);
-          const labels = options.map(o => o.label);
-          const answer = await ctx.onAskUser(question, labels);
-          // Map the user's returned label back to an option id
-          const chosen = options.find(o => o.label === answer) ?? { id: 'cancel' };
-          switch (chosen.id) {
-            case 'cheaper':
-              imageModel = proposal.cheaper?.model ?? proposal.recommended.model;
-              break;
-            case 'premium':
-              imageModel = proposal.premium?.model ?? proposal.recommended.model;
-              break;
-            case 'cancel':
-              return {
-                output: `## Image generation cancelled\n\nNo USDC was spent. Ask again when ready, or pass an explicit \`model\` to skip the confirmation step.`,
-              };
-            case 'use-raw':
-              imageModel = proposal.recommended.model;
-              // chosenPrompt stays as the raw input
-              break;
-            case 'recommended':
-            default:
-              imageModel = proposal.recommended.model;
-              if (proposal.refinedPrompt) chosenPrompt = proposal.refinedPrompt;
-          }
-        }
-      } catch {
-        // Router / AskUser failed — fall back to default model silently.
-      }
-    }
 
     // gpt-image-2 reliably serves 1024x1024 only — other sizes time out at
     // the gateway. Force the supported size regardless of caller / router

@@ -36,8 +36,6 @@ import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
 import { resolveReferenceImage } from './imagegen.js';
-import { ModelClient } from '../agent/llm.js';
-import { analyzeMediaRequest, renderProposalForAskUser } from '../agent/media-router.js';
 import { recordUsage } from '../stats/tracker.js';
 import { findModel, estimateCostUsd } from '../gateway-models.js';
 
@@ -137,64 +135,28 @@ function buildExecute(deps: VideoGenDeps) {
       }
     }
 
-    // One-shot refinement opt-out: leading `///` tells Franklin "don't
-    // refine this prompt." Strip the prefix and pass skipRefine through.
-    let prompt = rawInput.prompt;
-    let skipRefine = false;
-    if (prompt.trimStart().startsWith('///')) {
-      prompt = prompt.replace(/^\s*\/\/\/\s?/, '');
-      skipRefine = true;
-    }
+    // Pure tool: use exactly the model + prompt + duration the caller gave.
+    // No LLM prompt-rewriting or model "routing" — the UI / agent decides those
+    // upstream. (This removes a second, flaky free-model call that used to time
+    // out and made "video generation" appear broken.)
+    const prompt = rawInput.prompt;
+    const videoModel = model || DEFAULT_MODEL;
+    const duration = duration_seconds ?? DEFAULT_DURATION;
+    const chosenPrompt = prompt;
 
-    let videoModel = model || DEFAULT_MODEL;
-    let duration = duration_seconds ?? DEFAULT_DURATION;
-    let chosenPrompt = prompt;
-
-    // ── Media router + AskUser flow (video bills per second, always ask) ──
+    // Video bills per second — confirm the cost before spending. This is pure
+    // price math (no LLM). Interactive callers (CLI / agent) get a prompt via
+    // onAskUser; direct callers (e.g. the desktop media path) pass no onAskUser
+    // and generate straight away — the explicit "generate" action is consent.
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
-    if (!model && !autoApprove && ctx.onAskUser) {
-      try {
-        const chain = loadChain();
-        const client = new ModelClient({ apiUrl: API_URLS[chain], chain });
-        const proposal = await analyzeMediaRequest({
-          kind: 'video',
-          prompt,
-          durationSeconds: duration_seconds,
-          client,
-          signal: ctx.abortSignal,
-          skipRefine,
-        });
-        if (proposal) {
-          const { question, options } = renderProposalForAskUser(proposal, prompt);
-          const labels = options.map(o => o.label);
-          const answer = await ctx.onAskUser(question, labels);
-          const chosen = options.find(o => o.label === answer) ?? { id: 'cancel' };
-          switch (chosen.id) {
-            case 'cheaper':
-              videoModel = proposal.cheaper?.model ?? proposal.recommended.model;
-              break;
-            case 'premium':
-              videoModel = proposal.premium?.model ?? proposal.recommended.model;
-              break;
-            case 'cancel':
-              return {
-                output: `## Video generation cancelled\n\nNo USDC was spent.`,
-              };
-            case 'use-raw':
-              videoModel = proposal.recommended.model;
-              // chosenPrompt stays as the raw input
-              break;
-            case 'recommended':
-            default:
-              videoModel = proposal.recommended.model;
-              if (proposal.refinedPrompt) chosenPrompt = proposal.refinedPrompt;
-          }
-          // Use the proposal's duration — the router honored the user's
-          // duration_seconds or filled in the model's default.
-          if (proposal.durationSeconds) duration = proposal.durationSeconds;
-        }
-      } catch {
-        // Router / AskUser failed — fall through to legacy default.
+    if (!autoApprove && ctx.onAskUser) {
+      const est = estimateVideoCostUsd(duration);
+      const answer = await ctx.onAskUser(
+        `Generate a ${duration}s video with ${videoModel} for ~$${est.toFixed(2)}? No USDC is spent if you cancel.`,
+        ['Generate', 'Cancel'],
+      );
+      if (answer !== 'Generate') {
+        return { output: `## Video generation cancelled\n\nNo USDC was spent.` };
       }
     }
 

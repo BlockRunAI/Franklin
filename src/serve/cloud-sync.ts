@@ -28,7 +28,11 @@ export interface CloudConversation {
 }
 
 export function isCloudSyncEnabled(): boolean {
-  return process.env.FRANKLIN_CLOUD_SYNC !== 'off';
+  // Local-first by default (matches Claude Code / Codex): conversation history
+  // stays on disk and is NOT uploaded to franklin.run unless the user opts in
+  // with FRANKLIN_CLOUD_SYNC=on. Cross-device sync is a deliberate choice, not
+  // the default.
+  return process.env.FRANKLIN_CLOUD_SYNC === 'on';
 }
 
 let sessionCookie: string | null = null;
