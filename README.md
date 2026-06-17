@@ -500,6 +500,10 @@ Same wallet. Same tools. From your phone.
 
 ## Documentation
 
+Full BlockRun docs: **https://blockrun.ai/docs**
+
+- [Agent developer guide](https://blockrun.ai/docs/getting-started/agent-developers) — building agents on BlockRun
+- [Models, SDKs & APIs](https://blockrun.ai/docs) — the full gateway reference
 - [Plugin SDK guide](docs/plugin-sdk.md) — build your own workflow vertical
 - [Changelog](CHANGELOG.md) — every release explained
 - [Roadmap](docs/ROADMAP.md) — what's coming next
