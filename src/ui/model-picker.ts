@@ -100,10 +100,14 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   minimax: 'minimax/minimax-m3',
   'm3': 'minimax/minimax-m3',
   'm2.7': 'minimax/minimax-m2.7',
-  glm: 'zai/glm-5.1',
+  glm: 'zai/glm-5.2',
   'glm-5': 'zai/glm-5',
+  'glm-5.2': 'zai/glm-5.2',
+  // GLM-5.1 demoted to a back-compat pin 2026-06 (flagship is 5.2) — still
+  // routes for anyone who wants the 200K-context build explicitly.
+  'glm-5.1': 'zai/glm-5.1',
   'glm-turbo': 'zai/glm-5-turbo',
-  'glm5': 'zai/glm-5.1',
+  'glm5': 'zai/glm-5.2',
   kimi: 'moonshot/kimi-k2.7',
   'k2.7': 'moonshot/kimi-k2.7',
   // K2.6 demoted 2026-06 (gateway flagship is K2.7) but still routes — the
@@ -189,6 +193,9 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'deepseek/deepseek-v4-pro',      shortcut: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro',    price: '$0.435/$0.87', highlight: true },
       { id: 'deepseek/deepseek-reasoner',    shortcut: 'r1',           label: 'DeepSeek V4 Flash R.',  price: '$0.2/$0.4' },
       { id: 'xai/grok-4-1-fast-reasoning',   shortcut: 'grok-fast',    label: 'Grok 4.1 Fast R.',      price: '$0.2/$0.5' },
+      // GLM-5.2: Z.AI's new flagship — 1M context, top open-source on
+      // long-horizon coding. `glm`/`glm5` shortcuts pin it.
+      { id: 'zai/glm-5.2',                   shortcut: 'glm',          label: 'GLM-5.2',               price: '$1.4/$4.4' },
     ],
   },
   {
@@ -201,7 +208,8 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V4 Flash Chat', price: '$0.2/$0.4' },
       { id: 'moonshot/kimi-k2.7',                  shortcut: 'kimi',     label: 'Kimi K2.7',           price: '$0.95/$4' },
       // GLM flat-rate promos fully ended 2026-06-06 — whole family per-token
-      // now (glm-5 $0.60/$1.92; `glm` shortcut still pins flagship glm-5.1).
+      // now (glm-5 $0.60/$1.92; `glm` shortcut pins flagship glm-5.2, listed
+      // in Reasoning above).
       { id: 'zai/glm-5',                           shortcut: 'glm-5',    label: 'GLM-5',               price: '$0.6/$1.92' },
       // Minimax M2.7 hidden to make room for V4 Pro in Reasoning + V4 Flash
       // (free) without exceeding the picker's 24-entry cap. Shortcut `minimax`

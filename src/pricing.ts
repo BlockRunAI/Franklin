@@ -93,6 +93,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   // PROMOTION (active ~2026-04): flat $0.001/call for all GLM models
   'zai/glm-5': { input: 0.6, output: 1.92 }, // flat promo ended 2026-06-06 — per-token now
   'zai/glm-5.1': { input: 1.40, output: 4.40 }, // launch promo ended 2026-06-05 — per-token now
+  'zai/glm-5.2': { input: 1.40, output: 4.40 }, // new flagship 2026-06 — 1M context, same per-token price as 5.1
   'zai/glm-5-turbo': { input: 1.2, output: 4.0 }, // flat promo ended 2026-06-06 — per-token now
   'zai/glm-5.1-turbo': { input: 1.2, output: 4.0 },  // client alias for zai/glm-5-turbo
 };

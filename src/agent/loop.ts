@@ -1530,7 +1530,7 @@ export async function interactiveSession(
         const hasTools = responseParts.some(p => p.type === 'tool_use');
         const hasThinking = responseParts.some(p => p.type === 'thinking');
         if (!hasText && !hasTools && !hasThinking) {
-          const EMPTY_FALLBACK_MODELS = ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash', 'zai/glm-5.1'];
+          const EMPTY_FALLBACK_MODELS = ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash', 'zai/glm-5.2'];
           const nextModel = EMPTY_FALLBACK_MODELS.find(m => m !== config.model && !turnFailedModels.has(m));
           if (nextModel && recoveryAttempts < 2) {
             recoveryAttempts++;

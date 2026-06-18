@@ -206,9 +206,12 @@ const MODEL_SHORTCUTS: Record<string, string> = {
   'm3': 'minimax/minimax-m3',
   'm2.7': 'minimax/minimax-m2.7',
   // Others
-  glm: 'zai/glm-5.1',
+  glm: 'zai/glm-5.2',
+  'glm-5.2': 'zai/glm-5.2',
+  // glm-5.1 demoted to back-compat pin 2026-06 (flagship is 5.2) — still routes.
+  'glm-5.1': 'zai/glm-5.1',
   'glm-turbo': 'zai/glm-5-turbo',
-  'glm5': 'zai/glm-5.1',
+  'glm5': 'zai/glm-5.2',
   kimi: 'moonshot/kimi-k2.7',
   'k2.7': 'moonshot/kimi-k2.7',
   // K2.6 demoted 2026-06 (flagship is K2.7) but still routes — `k2.6` pins it.

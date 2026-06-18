@@ -1,5 +1,14 @@
 # Changelog
 
+## Franklin Agent 3.29.3 — promote GLM flagship 5.1 → 5.2 (1M context)
+
+Z.AI shipped GLM-5.2 and the gateway now serves it (verified live on `GET /v1/models`). 5.2 is the new flagship: 1M-token context (up from 200K on 5.1), top open-source on long-horizon coding, same per-token price as 5.1 ($1.4/$4.4).
+
+- **`glm` / `glm5` shortcuts now pin `zai/glm-5.2`** in both the model picker and the proxy server. GLM-5.2 is surfaced as a visible Reasoning-tier row in the `/model` picker.
+- **5.1 demoted to a back-compat pin.** `glm-5.1` still resolves to `zai/glm-5.1` (the 200K build) for anyone who wants it explicitly; it stays in the pricing/token-window tables.
+- **Pricing + context window registered.** `zai/glm-5.2` = $1.4/$4.4, 1M-token context window.
+- **Empty-turn recovery + gateway doc example** bumped to `zai/glm-5.2`.
+
 ## Franklin Agent 3.29.2 — execute (not just hide) leaked tool calls; cover more leak shapes
 
 Follow-up to 3.29.1 after an end-to-end adversarial pass over the tool-call leak path. 3.29.1 made the scavenger *recognize* the free-DeepSeek leak shape, but a separate streaming-layer guard was silently dropping the most common case before the scavenger ever ran.

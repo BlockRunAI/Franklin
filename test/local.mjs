@@ -2942,7 +2942,7 @@ test('agent context: chat-completions example uses real model names (no fictiona
     'anthropic/claude-sonnet-4.6',
     'anthropic/claude-opus-4.8',
     'deepseek/deepseek-v4-pro',
-    'zai/glm-5.1',
+    'zai/glm-5.2',
   ]) {
     assert.ok(src.includes(real), `chat-completions example list must include real model "${real}"`);
   }
