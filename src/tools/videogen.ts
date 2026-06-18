@@ -150,7 +150,10 @@ function buildExecute(deps: VideoGenDeps) {
     // and generate straight away — the explicit "generate" action is consent.
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
     if (!autoApprove && ctx.onAskUser) {
-      const est = estimateVideoCostUsd(duration);
+      // Model-aware estimate so the quoted price matches the model we name in
+      // the prompt (flat per-second fallback only when the model is unknown).
+      const m = await findModel(videoModel);
+      const est = m ? estimateCostUsd(m, { duration_seconds: duration }) : estimateVideoCostUsd(duration);
       const answer = await ctx.onAskUser(
         `Generate a ${duration}s video with ${videoModel} for ~$${est.toFixed(2)}? No USDC is spent if you cancel.`,
         ['Generate', 'Cancel'],
