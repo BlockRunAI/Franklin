@@ -259,6 +259,7 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
       `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /session-search /context /tasks /history /transcript\n` +
       `  **Power:** /ultrathink [query] /ultraplan /noplan /moa [query] /dump\n` +
       `  **Info:** /model /auto /wallet /cost /tokens /learnings /brain /mcp /doctor /version /bug /help\n` +
+      `  **Market:** /market [keyword] · /market info <slug> · /market run <slug> <input>\n` +
       `  **UI:** /clear /exit\n` +
       skillsBlock +
       (ultrathinkOn ? `\n  Ultrathink: ON\n` : '')
@@ -663,6 +664,70 @@ export async function handleSlashCommand(
     const { searchSessions, formatSearchResults } = await import('../session/search.js');
     const matches = searchSessions(query, { limit: 10 });
     ctx.onEvent({ kind: 'text_delta', text: formatSearchResults(matches, query) });
+    emitDone(ctx);
+    return { handled: true };
+  }
+
+  // /market [keyword | info <slug> | run <slug> <input>] — browse + hire paid
+  // skills from the BlockRun agent marketplace (business.blockrun.ai). Browsing
+  // and search are free GETs; `run` pays ONE standard x402 from the wallet.
+  if (input === '/market' || input.startsWith('/market ')) {
+    const arg = input.slice('/market'.length).trim();
+    const { fetchCatalog, runMarketSkill, formatCatalogList, formatSkillCard, fmtUsd } =
+      await import('../market/client.js');
+
+    // run <slug> <input> — the only paid path.
+    if (/^run(\s|$)/.test(arg)) {
+      const runMatch = arg.match(/^run\s+(\S+)\s+([\s\S]+)$/);
+      if (!runMatch) {
+        ctx.onEvent({ kind: 'text_delta', text: 'Usage: /market run <slug> <input>\n' });
+        emitDone(ctx);
+        return { handled: true };
+      }
+      const [, slug, skillInput] = runMatch;
+      ctx.onEvent({ kind: 'text_delta', text: `Hiring ${slug}…\n` });
+      const outcome = await runMarketSkill(slug, skillInput);
+      if (!outcome.ok) {
+        ctx.onEvent({ kind: 'text_delta', text: `Could not run ${slug}: ${outcome.error}. No charge.\n` });
+      } else {
+        const tx = outcome.txHash ? `  .  tx ${outcome.txHash.slice(0, 12)}…` : '';
+        ctx.onEvent({ kind: 'text_delta', text: `Paid ${fmtUsd(outcome.paidUsd)}${tx}\n\n${outcome.result ?? ''}\n` });
+      }
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    // info <slug> — detail card.
+    if (/^info(\s|$)/.test(arg)) {
+      const slug = arg.slice('info'.length).trim();
+      if (!slug) {
+        ctx.onEvent({ kind: 'text_delta', text: 'Usage: /market info <slug>\n' });
+        emitDone(ctx);
+        return { handled: true };
+      }
+      try {
+        const skills = await fetchCatalog({ limit: 200 });
+        const skill = skills.find((s) => s.slug === slug);
+        ctx.onEvent({ kind: 'text_delta', text: skill ? formatSkillCard(skill) : `No skill "${slug}" in the marketplace.\n` });
+      } catch (err) {
+        ctx.onEvent({ kind: 'text_delta', text: `Could not reach the marketplace: ${(err as Error).message}\n` });
+      }
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    // (no arg) browse the top skills, or <keyword> to search — both free.
+    try {
+      const TOP = 12;
+      const skills = await fetchCatalog({ limit: 200, query: arg || undefined });
+      const shown = arg ? skills : skills.slice(0, TOP);
+      const heading = arg
+        ? `Agent talents — ${shown.length} skill(s) matching "${arg}":`
+        : `Agent talents — top ${shown.length}${skills.length > TOP ? ` of ${skills.length}` : ''}:`;
+      ctx.onEvent({ kind: 'text_delta', text: formatCatalogList(shown, { heading }) });
+    } catch (err) {
+      ctx.onEvent({ kind: 'text_delta', text: `Could not reach the marketplace: ${(err as Error).message}\n` });
+    }
     emitDone(ctx);
     return { handled: true };
   }
@@ -1079,7 +1144,7 @@ export async function handleSlashCommand(
     ...Object.keys(REWRITE_COMMANDS),
     ...ARG_COMMANDS.map(c => c.prefix.trim()),
     ...skillNames,
-    '/branch', '/resume', '/model', '/auto', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures',
+    '/branch', '/resume', '/model', '/auto', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures', '/market',
   ];
   const cmd = input.split(/\s/)[0];
   const close = allCommands.filter(c => {

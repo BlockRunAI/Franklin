@@ -172,6 +172,17 @@ export class PermissionManager {
       return { behavior: 'ask' };
     }
 
+    // agent_talent: browsing the marketplace is a free read (auto-allow);
+    // hiring (action="run") spends USDC from the wallet and has no refund, so
+    // it asks — same policy as the other paid, irreversible tools (VoiceCall,
+    // BuyPhoneNumber). describeAction spells out the spend in the prompt.
+    if (toolName === 'agent_talent') {
+      const action = typeof input.action === 'string' ? input.action.toLowerCase() : '';
+      return action === 'run'
+        ? { behavior: 'ask' }
+        : { behavior: 'allow', reason: 'free marketplace browse' };
+    }
+
     // Default: read-only tools are auto-allowed, others ask
     if (READ_ONLY_TOOLS.has(toolName)) {
       return { behavior: 'allow', reason: 'read-only default' };
@@ -390,6 +401,13 @@ export class PermissionManager {
       }
       case 'Agent':
         return `Launch sub-agent: ${(input.description as string) || (input.prompt as string)?.slice(0, 80) || 'task'}`;
+      case 'agent_talent': {
+        if (((input.action as string) || '').toLowerCase() === 'run') {
+          const slug = (input.slug as string) || 'a skill';
+          return `Hire '${slug}' from the agent marketplace — pays from your wallet (USDC on Base), charged only on a successful run.`;
+        }
+        return 'Browse the agent marketplace (free).';
+      }
       default:
         return JSON.stringify(input).slice(0, 120);
     }
