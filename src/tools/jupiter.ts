@@ -125,11 +125,32 @@ function symbolFor(mint: string): string {
 }
 
 function toAtomicUnits(amount: number, decimals: number): string {
-  // BigInt math — JavaScript number can lose precision for large lamport counts.
-  const scale = BigInt(10) ** BigInt(decimals);
-  const whole = BigInt(Math.floor(amount));
-  const fractional = BigInt(Math.round((amount - Math.floor(amount)) * Number(scale)));
-  return (whole * scale + fractional).toString();
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('amount must be a positive finite number');
+  }
+
+  if (!Number.isSafeInteger(decimals) || decimals < 0) {
+    throw new Error('decimals must be a nonnegative safe integer');
+  }
+
+  const amountText = amount.toString().includes('e')
+    ? amount.toFixed(decimals + 1)
+    : amount.toString();
+  const [wholePart, fractionalPart = ''] = amountText.split('.');
+  const normalizedFraction = fractionalPart.padEnd(decimals, '0').slice(0, decimals);
+  const roundedAwayFraction = fractionalPart.slice(decimals);
+  const hasRoundedAwayValue = /[1-9]/.test(roundedAwayFraction);
+
+  const whole = BigInt(wholePart);
+  const fraction = normalizedFraction === '' ? 0n : BigInt(normalizedFraction);
+  const scale = 10n ** BigInt(decimals);
+  const atomic = whole * scale + fraction;
+
+  if (atomic === 0n || hasRoundedAwayValue) {
+    throw new Error(`amount is below the token precision (${decimals} decimals)`);
+  }
+
+  return atomic.toString();
 }
 
 function fromAtomicUnits(atomic: string | number, decimals: number): number {
@@ -263,7 +284,15 @@ async function executeJupiterQuote(input: QuoteInput): Promise<{ output: string;
   const inputMint = resolveMint(input.input_mint);
   const outputMint = resolveMint(input.output_mint);
   const inDec = decimalsFor(inputMint);
-  const amountAtomic = toAtomicUnits(input.amount, inDec);
+  let amountAtomic: string;
+  try {
+    amountAtomic = toAtomicUnits(input.amount, inDec);
+  } catch (err) {
+    return {
+      output: `Invalid Jupiter amount: ${err instanceof Error ? err.message : String(err)}`,
+      isError: true,
+    };
+  }
 
   try {
     const order = await ultraOrder({ inputMint, outputMint, amount: amountAtomic });
@@ -298,7 +327,15 @@ async function executeJupiterSwap(
   const inputMint = resolveMint(input.input_mint);
   const outputMint = resolveMint(input.output_mint);
   const inDec = decimalsFor(inputMint);
-  const amountAtomic = toAtomicUnits(input.amount, inDec);
+  let amountAtomic: string;
+  try {
+    amountAtomic = toAtomicUnits(input.amount, inDec);
+  } catch (err) {
+    return {
+      output: `Invalid Jupiter amount: ${err instanceof Error ? err.message : String(err)}`,
+      isError: true,
+    };
+  }
 
   // Load wallet — `getOrCreateSolanaWallet` auto-creates on first run, so this
   // path firing means the file is corrupt or the .blockrun dir is unreadable.
