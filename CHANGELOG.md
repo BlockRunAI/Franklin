@@ -1,5 +1,14 @@
 # Changelog
 
+## Franklin Agent 3.29.4 — pure media tools, image spend confirm, local-first by default
+
+ImageGen and VideoGen no longer make a second LLM call to a free "media router" that rewrote the prompt and picked a model — that call ran on a free NVIDIA model and hit the gateway's 120s provider timeout, which is why *video generation appeared broken* to customers (the Seedance → token360 pipeline itself was fine). The tools now use exactly the model + prompt the caller gives.
+
+- **Pure image/video tools.** Deleted `src/agent/media-router.ts` and its tests. No more LLM prompt-rewriting or model "routing" inside the tools — the UI / agent decides those upstream.
+- **VideoGen keeps a pure price-math cost confirm** (no LLM) when an `onAskUser` bridge exists (CLI / agent); direct callers (desktop) generate immediately. The estimate is now **model-aware** (`findModel` + `estimateCostUsd`) so the quoted price matches the model named in the prompt, falling back to the flat per-second rate only for unknown models.
+- **ImageGen now confirms spend too.** Same pure price-math, model-aware Generate/Cancel confirm (parity with video): interactive callers see the model + estimated cost before any USDC is spent; direct callers generate straight away (the explicit "generate" action is consent).
+- **Cloud sync is now opt-in** (`FRANKLIN_CLOUD_SYNC=on`) instead of default-on, so the desktop is local-first like Claude Code / Codex — conversation history stays on disk and is not uploaded to franklin.run unless you opt in. **Upgrade note:** users who relied on cross-device sync must set `FRANKLIN_CLOUD_SYNC=on` to keep it; `=off` is no longer needed to stay local.
+
 ## Franklin Agent 3.29.3 — promote GLM flagship 5.1 → 5.2 (1M context)
 
 Z.AI shipped GLM-5.2 and the gateway now serves it (verified live on `GET /v1/models`). 5.2 is the new flagship: 1M-token context (up from 200K on 5.1), top open-source on long-horizon coding, same per-token price as 5.1 ($1.4/$4.4).

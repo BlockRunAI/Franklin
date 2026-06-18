@@ -309,6 +309,25 @@ function buildExecute(deps: ImageGenDeps) {
       }
     }
 
+    // Confirm the spend before the paid call (parity with VideoGen). Pure price
+    // math — no LLM. Interactive callers (CLI / agent) get a prompt via
+    // onAskUser; direct callers (e.g. the desktop media path) pass no onAskUser
+    // and generate straight away — the explicit "generate" action is consent.
+    const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
+    if (!autoApprove && ctx.onAskUser) {
+      const m = await findModel(imageModel);
+      const est = m ? estimateCostUsd(m, { quantity: n }) : 0;
+      const priceNote = est > 0 ? ` for ~$${est.toFixed(2)}` : '';
+      const countNote = n > 1 ? `${n} images` : 'an image';
+      const answer = await ctx.onAskUser(
+        `Generate ${countNote} with ${imageModel}${priceNote}? No USDC is spent if you cancel.`,
+        ['Generate', 'Cancel'],
+      );
+      if (answer !== 'Generate') {
+        return { output: `## Image generation cancelled\n\nNo USDC was spent.` };
+      }
+    }
+
     // Resolve all reference images + the mask into base64 data URIs now, right
     // before the paid call. Done after the cheap validations so bad paths /
     // oversize attachments / unsupported combinations fail without any network
