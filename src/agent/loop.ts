@@ -2053,19 +2053,39 @@ export async function interactiveSession(
       }
 
       // ── Gateway error masquerading as text (BlockRun → Anthropic TPM) ──
-      // Some upstreams swallow rate-limit / quota errors and emit them as a
-      // single bracketed text block on a 200 OK. Persisting that as a real
-      // assistant reply poisons history (the next turn sees an "answer" that
-      // is actually a transport error) and triggers grounding-check retries
-      // that hit the same wall. We deliberately surface it as a terminal turn
-      // error and break — rather than re-feeding it through the retry/fallback
-      // flow — so a transport-error string is never written into history as an
-      // answer. (A real HTTP 429 still auto-falls-back via classifyAgentError.)
+      // Some upstreams swallow rate-limit / quota / overload errors and emit
+      // them as a single bracketed text block on a 200 OK. responseParts has
+      // NOT been appended to history yet, so we never persist the transport
+      // error as a real assistant reply (which would poison the next turn and
+      // trigger grounding-check retries against the same wall). When the leaked
+      // error is a rate-limit or overload — the same condition that auto-falls
+      // back when it arrives as a real HTTP 429/529 — switch to a different free
+      // provider and retry the turn, mirroring the classifier's HTTP-error path.
+      // Otherwise surface it as a terminal turn error and break.
       const gatewayErr = looksLikeGatewayErrorAsText(responseParts);
       if (gatewayErr.match) {
         logger.error(
           `[franklin] Gateway returned an error text in lieu of an answer (${resolvedModel}): ${gatewayErr.message}`
         );
+        const leaked = classifyAgentError(gatewayErr.message);
+        if (leaked.category === 'rate_limit' || leaked.category === 'overloaded') {
+          turnFailedModels.add(config.model);
+          if (leaked.category === 'rate_limit' && lastRoutedCategory) {
+            recordOutcome(lastRoutedCategory, config.model, 'rate_limit');
+          }
+          const nextFree = pickFreeFallback(lastRoutedCategory, turnFailedModels);
+          if (nextFree) {
+            const oldModel = config.model;
+            config.model = nextFree;
+            config.onModelChange?.(nextFree, 'system');
+            recoveryAttempts = 0; // new model gets its own retry budget
+            onEvent({
+              kind: 'text_delta',
+              text: `\n*${formatModelSwitch(oldModel, resolvedModel, leaked.category === 'overloaded' ? 'overloaded' : 'rate-limited', nextFree)}*\n`,
+            });
+            continue; // Retry the turn on a different provider
+          }
+        }
         lastSessionActivity = Date.now();
         persistSessionMeta();
         onEvent({

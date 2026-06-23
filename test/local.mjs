@@ -9919,6 +9919,28 @@ test('VoiceCall: exposes and forwards interruption/model controls', async () => 
   });
 });
 
+test('VoiceCall: a 200 with no call_id surfaces isError (no silent "initiated" after the $0.54 charge)', async () => {
+  const { voiceCallCapability } = await import('../dist/tools/voice.js');
+  const original = globalThis.fetch;
+  // Stub a 200 carrying an empty body — no call_id / id. postWithPayment only
+  // reads headers in the 402 branch (not taken on a direct 200), so a minimal
+  // Response-like object suffices and no wallet / network is touched.
+  globalThis.fetch = async () => ({
+    status: 200, ok: true,
+    headers: { get: () => null },
+    json: async () => ({}),
+    text: async () => '{}',
+  });
+  try {
+    const res = await voiceCallCapability.execute(
+      { to: '+14155552671', from: '+15705550123', task: 'Confirm the appointment time and end the call politely.' },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.equal(res.isError, true, 'a 200 with no call_id must be an error, not a "initiated" success');
+    assert.match(res.output, /no call_id/, 'output should explain the missing call_id');
+  } finally { globalThis.fetch = original; }
+});
+
 test('CallLog: append + read round-trip preserves all fields', async () => {
   const { CallLog } = await import('../dist/phone/call-log.js');
   const tmpFile = join(mkdtempSync(join(tmpdir(), 'franklin-calls-')), 'calls.jsonl');

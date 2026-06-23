@@ -49,7 +49,10 @@ function franklin(prompt, { cwd, timeoutMs = TIMEOUT_MS, model: modelOverride } 
     const model = modelOverride || process.env.E2E_MODEL || 'zai/glm-5.1';
     const proc = spawn('node', [DIST, '--model', model, '--trust'], {
       cwd: workDir,
-      env: { ...process.env },
+      // Emit full tool output (to stderr) so assertions can key on tool-rendered
+      // markers that prove the live payload parsed — not the model's narrative,
+      // which it can fabricate. See src/ui/terminal.ts.
+      env: { ...process.env, FRANKLIN_E2E_FULL_TOOL_OUTPUT: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -400,6 +403,12 @@ test('ExaSearch tool: returns results via BlockRun /v1/exa/search',
     assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
     const combined = result.stdout + result.stderr;
     assert.ok(/ExaSearch/.test(combined), `ExaSearch tool call not evident.\n${combined}`);
+    // Tool-only markers that ONLY appear when the live payload parsed — the
+    // broken wire read returned "No Exa results" with no header/cost, so a model
+    // narrating a plausible URL from memory can no longer green this test.
+    assert.ok(!/No Exa results/.test(combined), `Tool returned no results (paid but empty?).\n${combined}`);
+    assert.ok(/## Exa search —/.test(combined), `No tool-rendered results header — data not parsed.\n${combined}`);
+    assert.ok(/_Cost: \$/.test(combined), `No tool-rendered cost footer — costDollars not parsed.\n${combined}`);
     assert.ok(/https?:\/\/\S+/.test(combined), `No URL surfaced.\n${combined}`);
   },
 );
@@ -416,6 +425,9 @@ test('ExaAnswer tool: cited answer via BlockRun /v1/exa/answer',
     assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
     const combined = result.stdout + result.stderr;
     assert.ok(/ExaAnswer/.test(combined), `ExaAnswer tool call not evident.\n${combined}`);
+    // Tool-only cost footer proves body.answer/costDollars actually parsed —
+    // the model mentioning "x402" from training data is not enough.
+    assert.ok(/_Cost: \$/.test(combined), `No tool-rendered cost footer — answer payload not parsed.\n${combined}`);
     // Grounded answer should mention the concept — x402 / payment / HTTP 402
     assert.ok(/x402|payment|HTTP 402/i.test(result.stdout),
       `Answer doesn't mention x402/payment — not grounded.\n${result.stdout}`);
@@ -435,6 +447,11 @@ test('ExaReadUrls tool: batch markdown fetch via BlockRun /v1/exa/contents',
     assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
     const combined = result.stdout + result.stderr;
     assert.ok(/ExaReadUrls/.test(combined), `ExaReadUrls tool call not evident.\n${combined}`);
+    // Tool-only markers prove the fetched contents parsed — the `_Source:` line
+    // and `_Cost: $` footer are rendered only on a successful payload read.
+    assert.ok(!/No readable content/.test(combined), `Tool fetched no content (paid but empty?).\n${combined}`);
+    assert.ok(/_Source: /.test(combined) && /_Cost: \$/.test(combined),
+      `No tool-rendered source/cost markers — contents not parsed.\n${combined}`);
     // HTTP 402 Wikipedia page must mention status code or payment concept
     assert.ok(/402|payment|status code|HTTP/i.test(result.stdout),
       `Fetched content doesn't mention HTTP 402 / payment.\n${result.stdout}`);
@@ -465,6 +482,35 @@ test('VideoGen tool: generates an MP4 via BlockRun /v1/videos/generations',
       // ftyp box, followed by the literal "ftyp" atom at offset 4.
       const head = readFileSync(outFile).subarray(4, 8).toString('ascii');
       assert.equal(head, 'ftyp', `File at ${outFile} doesn't start with an ftyp atom — not a valid MP4. Header: ${head}`);
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test('ImageGen tool: generates a PNG via BlockRun /v1/images/generations',
+  { timeout: 180_000, skip: process.env.RUN_PAID_E2E !== '1' ? 'RUN_PAID_E2E=1 to enable (costs ~$0.02 USDC per run)' : false },
+  async (t) => {
+    const testDir = join(tmpdir(), `rc-e2e-imagegen-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const outFile = join(testDir, 'probe.png');
+
+    try {
+      const result = await franklin(
+        `Use the ImageGen tool with these exact arguments: ` +
+        `prompt="a single red apple on a plain wooden table, soft daylight", ` +
+        `output_path="${outFile}". ` +
+        `After it finishes, tell me the final file path and the cost.`,
+        { cwd: testDir, timeoutMs: 170_000 },
+      );
+      if (skipIfRateLimited(t, result)) return;
+      assert.equal(result.exitCode, 0, `Non-zero exit.\nstderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
+      assert.ok(existsSync(outFile), `PNG file was not created at ${outFile}.\nstdout:\n${result.stdout}`);
+      const bytes = readFileSync(outFile);
+      assert.ok(bytes.byteLength > 10_000, `PNG suspiciously small (${bytes.byteLength} bytes) — expected > 10KB.`);
+      // PNG signature: bytes 1–3 spell "PNG" after the 0x89 magic byte.
+      assert.equal(bytes.subarray(1, 4).toString('ascii'), 'PNG',
+        `File at ${outFile} is not a valid PNG (bad signature: ${bytes.subarray(0, 8).toString('hex')}).`);
     } finally {
       rmSync(testDir, { recursive: true, force: true });
     }

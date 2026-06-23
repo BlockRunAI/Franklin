@@ -307,9 +307,17 @@ export class TerminalUI {
               console.error(chalk.dim(`    ⎿  ... ${outLines.length - 5} more lines`));
             }
           } else if (output.trim()) {
-            // Other tools: show first line as preview
-            const preview = truncateOutput(output, 120);
-            console.error(chalk.dim(`    ⎿  ${preview}`));
+            if (process.env.FRANKLIN_E2E_FULL_TOOL_OUTPUT === '1') {
+              // e2e: emit the full tool output so tests can assert on
+              // tool-rendered markers (e.g. Exa's `_Cost: $` footer) that prove
+              // the live payload actually parsed — not just the model's
+              // narrative, which it can fabricate from training data.
+              for (const line of output.split('\n')) console.error(chalk.dim(`    ⎿  ${line}`));
+            } else {
+              // Other tools: show first line as preview
+              const preview = truncateOutput(output, 120);
+              console.error(chalk.dim(`    ⎿  ${preview}`));
+            }
           }
         }
         break;
