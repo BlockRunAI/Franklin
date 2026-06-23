@@ -1,5 +1,15 @@
 # Changelog
 
+## Franklin Agent 3.29.5 — fix silently-broken Exa research tools (paid, returned nothing)
+
+All three Exa tools (`ExaSearch`, `ExaAnswer`, `ExaReadUrls`) paid $0.01–$0.002 USDC per call, received a valid `200` from the gateway, then **discarded the data and reported "no results."** The live gateway returns Exa payloads at the top level (`{ results }`, `{ answer }`), but the tool read them under a `data` wrapper (`res.data.results`) — matching the published docs, which disagree with the live API — so every field came back `undefined`. Users paid and got empty results.
+
+- **`src/tools/exa.ts` now reads `res.data ?? res`** for all three endpoints, so it parses the live top-level shape and still tolerates a legacy `data`-wrapped envelope (the documented contract). Cost footers are surfaced again.
+- **Un-broke the paid Exa e2e tests.** `skipIfRateLimited` in `test/e2e.mjs` skipped any run whose output contained bare payment vocabulary (`payment required`, `verification failed`, `insufficient`). Franklin is a payment agent and x402 == HTTP 402 "Payment Required", so the *correct* Exa answer tripped the heuristic — the three Exa tests were structurally un-passable and always skipped as "environment unavailable," which is exactly why this regression shipped undetected. The heuristic now matches real failure signatures only (the agent loop's `[Payment]`/`[PaymentRejected]` labels, paid-tool HTTP failures like `failed (402)`, and `insufficient balance/usdc`).
+- **New no-spend regression tests** (`test/exa.local.mjs`, wired into `npm test`) stub the live top-level wire shape for all three tools, plus a legacy-envelope backward-compat case.
+
+Verified: 4/4 new unit tests, full local suite 458/458, and a live paid Exa e2e now 3/3 (previously 3 skipped). The media endpoints (`/v1/images`, `/v1/videos`, `/v1/audio`) use the OpenAI `{ data: [...] }` convention and are unaffected (VideoGen e2e still green).
+
 ## Franklin Agent 3.29.4 — pure media tools, image spend confirm, local-first by default
 
 ImageGen and VideoGen no longer make a second LLM call to a free "media router" that rewrote the prompt and picked a model — that call ran on a free NVIDIA model and hit the gateway's 120s provider timeout, which is why *video generation appeared broken* to customers (the Seedance → token360 pipeline itself was fine). The tools now use exactly the model + prompt the caller gives.

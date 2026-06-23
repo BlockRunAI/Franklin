@@ -113,11 +113,23 @@ function skipIfRateLimited(t, result) {
     t.skip('Upstream unreachable from this environment (DNS/network) — skipping live model call');
     return true;
   }
+  // Match REAL payment-failure signatures only — NOT bare payment
+  // vocabulary. Franklin is a payment agent and x402 == HTTP 402 "Payment
+  // Required", so its successful output legitimately contains "payment
+  // required" / "verification" / "insufficient". The old content match
+  // made the paid Exa tests skip forever (they query x402/HTTP 402) and
+  // hid a real wire-format regression where the tool dropped every result
+  // (2026-06-22). Real failures surface as the agent loop's structured
+  // error label ([Payment]/[PaymentRejected], src/agent/loop.ts) or an
+  // HTTP failure from a paid tool ("... failed (402): ...").
   if (
-    lower.includes('insufficient') ||
-    lower.includes('payment required') ||
-    lower.includes('verification failed') ||
-    lower.includes('[payment]')
+    lower.includes('[payment]') ||
+    lower.includes('[paymentrejected]') ||
+    /failed \((?:402|429)\)/.test(lower) ||
+    lower.includes('payment signing failed') ||
+    lower.includes('payment required — wallet') ||
+    lower.includes('insufficient usdc') ||
+    lower.includes('insufficient balance')
   ) {
     t.skip('Model unavailable due to payment/balance constraints — retry with E2E_MODEL or funded wallet');
     return true;

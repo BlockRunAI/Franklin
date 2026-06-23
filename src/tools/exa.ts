@@ -164,17 +164,20 @@ interface ExaSearchInput {
   excludeDomains?: string[];
 }
 
-interface ExaSearchResponse {
-  data: {
-    results: Array<{
-      id: string;
-      title: string;
-      url: string;
-      publishedDate?: string;
-      score?: number;
-    }>;
-    costDollars?: { total: number };
-  };
+interface ExaSearchData {
+  results?: Array<{
+    id: string;
+    title: string;
+    url: string;
+    publishedDate?: string;
+    score?: number;
+  }>;
+  costDollars?: { total: number };
+}
+// The live gateway returns these fields at the TOP level; older/proxied
+// deployments nested them under `data`. Read through both (see execute()).
+interface ExaSearchResponse extends ExaSearchData {
+  data?: ExaSearchData;
 }
 
 export const exaSearchCapability: CapabilityHandler = {
@@ -212,7 +215,8 @@ export const exaSearchCapability: CapabilityHandler = {
 
     try {
       const res = await postWithPayment<ExaSearchResponse>('/v1/exa/search', params, ctx);
-      const hits = res.data?.results ?? [];
+      const body = res.data ?? res;
+      const hits = body.results ?? [];
       if (hits.length === 0) {
         return { output: `No Exa results for "${params.query}".` };
       }
@@ -222,7 +226,7 @@ export const exaSearchCapability: CapabilityHandler = {
         const score = h.score ? ` · score ${h.score.toFixed(2)}` : '';
         lines.push(`\n**${h.title}**${date}${score}\n${h.url}`);
       }
-      const cost = res.data?.costDollars?.total;
+      const cost = body.costDollars?.total;
       if (cost) lines.push(`\n_Cost: $${cost.toFixed(4)}_`);
       return { output: lines.join('\n') };
     } catch (err) {
@@ -238,12 +242,14 @@ interface ExaAnswerInput {
   query: string;
 }
 
-interface ExaAnswerResponse {
-  data: {
-    answer: string;
-    citations?: Array<{ id: string; title: string; url: string }>;
-    costDollars?: { total: number };
-  };
+interface ExaAnswerData {
+  answer?: string;
+  citations?: Array<{ id: string; title: string; url: string }>;
+  costDollars?: { total: number };
+}
+// Top-level on the live gateway; legacy deployments nest under `data`.
+interface ExaAnswerResponse extends ExaAnswerData {
+  data?: ExaAnswerData;
 }
 
 export const exaAnswerCapability: CapabilityHandler = {
@@ -270,14 +276,15 @@ export const exaAnswerCapability: CapabilityHandler = {
 
     try {
       const res = await postWithPayment<ExaAnswerResponse>('/v1/exa/answer', params, ctx);
-      const ans = res.data?.answer ?? '';
-      const cites = res.data?.citations ?? [];
+      const body = res.data ?? res;
+      const ans = body.answer ?? '';
+      const cites = body.citations ?? [];
       const lines: string[] = [ans];
       if (cites.length > 0) {
         lines.push('\n**Sources**');
         for (const c of cites) lines.push(`- [${c.title}](${c.url})`);
       }
-      const cost = res.data?.costDollars?.total;
+      const cost = body.costDollars?.total;
       if (cost) lines.push(`\n_Cost: $${cost.toFixed(4)}_`);
       return { output: lines.join('\n') };
     } catch (err) {
@@ -293,17 +300,19 @@ interface ExaContentsInput {
   urls: string[];
 }
 
-interface ExaContentsResponse {
-  data: {
-    results: Array<{
-      id: string;
-      url: string;
-      title?: string;
-      text: string;
-      author?: string | null;
-    }>;
-    costDollars?: { total: number };
-  };
+interface ExaContentsData {
+  results?: Array<{
+    id: string;
+    url: string;
+    title?: string;
+    text: string;
+    author?: string | null;
+  }>;
+  costDollars?: { total: number };
+}
+// Top-level on the live gateway; legacy deployments nest under `data`.
+interface ExaContentsResponse extends ExaContentsData {
+  data?: ExaContentsData;
 }
 
 export const exaReadUrlsCapability: CapabilityHandler = {
@@ -338,7 +347,8 @@ export const exaReadUrlsCapability: CapabilityHandler = {
 
     try {
       const res = await postWithPayment<ExaContentsResponse>('/v1/exa/contents', params, ctx);
-      const results = res.data?.results ?? [];
+      const body = res.data ?? res;
+      const results = body.results ?? [];
       if (results.length === 0) {
         return { output: `No readable content returned for the ${params.urls.length} URL(s).` };
       }
@@ -346,7 +356,7 @@ export const exaReadUrlsCapability: CapabilityHandler = {
       for (const r of results) {
         lines.push(`\n### ${r.title ?? r.url}\n_Source: ${r.url}_\n\n${r.text}`);
       }
-      const cost = res.data?.costDollars?.total;
+      const cost = body.costDollars?.total;
       if (cost) lines.push(`\n_Cost: $${cost.toFixed(4)}_`);
       return { output: lines.join('\n') };
     } catch (err) {
