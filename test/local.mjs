@@ -5843,6 +5843,14 @@ test('version-check: getAvailableUpdate reflects cache vs installed version', as
   const cacheFile = join(BLOCKRUN_DIR, 'version-check.json');
   const backup = fs.existsSync(cacheFile) ? fs.readFileSync(cacheFile, 'utf-8') : null;
 
+  // getAvailableUpdate() opts out under CI signals (CI / GITHUB_ACTIONS / …)
+  // and FRANKLIN_NO_UPDATE_CHECK. Neutralize them so the cache-vs-installed
+  // logic is exercised deterministically wherever the suite runs — without
+  // this the test passes locally but returns null (→ fails) in CI.
+  const OPT_OUT_VARS = ['CI', 'GITHUB_ACTIONS', 'GITLAB_CI', 'BUILDKITE', 'CIRCLECI', 'FRANKLIN_NO_UPDATE_CHECK'];
+  const savedEnv = {};
+  for (const k of OPT_OUT_VARS) { savedEnv[k] = process.env[k]; delete process.env[k]; }
+
   try {
     // Cache ahead of installed → surfaces update
     const bumped = VERSION.replace(/(\d+)$/, (_, n) => String(parseInt(n, 10) + 1));
@@ -5865,6 +5873,10 @@ test('version-check: getAvailableUpdate reflects cache vs installed version', as
       else process.env.FRANKLIN_NO_UPDATE_CHECK = prev;
     }
   } finally {
+    for (const k of OPT_OUT_VARS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
     if (backup !== null) fs.writeFileSync(cacheFile, backup);
     else if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile);
   }
