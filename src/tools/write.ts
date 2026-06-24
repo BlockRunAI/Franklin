@@ -7,6 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { partiallyReadFiles, fileReadTracker, invalidateFileCache } from './read.js';
+import { isWalletKeyPath } from './sensitive-paths.js';
 
 interface WriteInput {
   file_path: string;
@@ -53,6 +54,11 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   }
 
   const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.workingDir, filePath);
+
+  // Never let the model overwrite/substitute the wallet private key.
+  if (isWalletKeyPath(resolved)) {
+    return { output: `Error: refusing to write to the wallet key store: ${resolved}`, isError: true };
+  }
 
   // Safety: block system paths and sensitive home directories
   // Resolve symlinks to prevent traversal attacks

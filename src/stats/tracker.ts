@@ -9,6 +9,7 @@ import os from 'node:os';
 import { OPUS_PRICING } from '../pricing.js';
 import { BLOCKRUN_DIR } from '../config.js';
 import { isTestFixtureModel } from './test-fixture.js';
+import { atomicWriteFileSync } from '../storage/atomic.js';
 
 let resolvedStatsFile: string | null = null;
 
@@ -113,32 +114,42 @@ const EMPTY_STATS: Stats = {
   history: [],
 };
 
-export function loadStats(): Stats {
+function parseStatsFile(file: string): Stats | null {
   try {
-    const statsFile = getStatsFilePath();
-    if (fs.existsSync(statsFile)) {
-      const data = JSON.parse(fs.readFileSync(statsFile, 'utf-8'));
-      // Migration: add missing fields
-      return {
-        ...EMPTY_STATS,
-        ...data,
-        version: 1,
-      };
+    if (!fs.existsSync(file)) return null;
+    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const merged = { ...EMPTY_STATS, ...data, version: 1 } as Stats;
+    // Coerce shape: a valid-JSON-but-wrong-shape file must NOT crash the hot
+    // recordUsage path. The spread-merge above does not coerce a wrong-typed
+    // field (`{...{history:[]}, ...{history:null}}` → `{history:null}`), so
+    // every downstream `history.push` / `Object.values(byModel)` would throw.
+    if (!Array.isArray(merged.history)) merged.history = [];
+    if (!merged.byModel || typeof merged.byModel !== 'object') merged.byModel = {};
+    const numKeys = ['totalRequests', 'totalCostUsd', 'totalInputTokens', 'totalOutputTokens', 'totalFallbacks'] as const;
+    for (const k of numKeys) {
+      if (!Number.isFinite(merged[k])) merged[k] = 0;
     }
+    return merged;
   } catch {
-    /* ignore parse errors, return empty */
+    return null;
   }
+}
 
-  return { ...EMPTY_STATS };
+export function loadStats(): Stats {
+  const statsFile = getStatsFilePath();
+  // Primary, then the atomic `.bak` snapshot: a torn write leaves an invalid
+  // primary but a valid previous `.bak` (mirrors loadPortfolio/loadLibrary).
+  return parseStatsFile(statsFile) ?? parseStatsFile(`${statsFile}.bak`) ?? { ...EMPTY_STATS };
 }
 
 export function saveStats(stats: Stats): void {
   try {
     withWritableStatsFile((statsFile) => {
-      fs.mkdirSync(path.dirname(statsFile), { recursive: true });
       // Keep only last 1000 history records
       stats.history = stats.history.slice(-1000);
-      fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
+      // Atomic (tmp+fsync+rename) + a `.bak` snapshot — a crash/kill mid-write
+      // can no longer truncate the file and silently discard all usage history.
+      atomicWriteFileSync(statsFile, JSON.stringify(stats, null, 2));
     });
   } catch (err) {
     // Surface write failures (disk full, permission) to stderr so users

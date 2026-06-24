@@ -4,6 +4,7 @@
 
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { VERSION } from '../config.js';
+import { frameUntrusted } from './untrusted.js';
 
 interface WebSearchInput {
   query: string;
@@ -67,7 +68,7 @@ async function execute(input: Record<string, unknown>, _ctx: ExecutionScope): Pr
       totalChars += block.length + 2;
     }
 
-    return { output: `Search results for "${query}":\n\n${lines.join('\n\n')}` };
+    return { output: frameUntrusted('Web search results', `Search results for "${query}":\n\n${lines.join('\n\n')}`) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('abort')) {

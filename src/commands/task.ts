@@ -9,11 +9,34 @@
  */
 
 import fs from 'node:fs';
+import { execSync } from 'node:child_process';
 import { Command } from 'commander';
 import { listTasks, readTaskMeta } from '../tasks/store.js';
 import { reconcileLostTasks } from '../tasks/lost-detection.js';
 import { taskLogPath } from '../tasks/paths.js';
 import { isTerminalTaskStatus } from '../tasks/types.js';
+
+/**
+ * Best-effort: confirm a pid still belongs to a Franklin task runner before
+ * signaling it (mirrors daemon.ts's recycled-PID guard). When the OS can't be
+ * queried (no /proc, no ps), fall back to "true" — the kill-0 status already
+ * confirmed the pid is alive; we just couldn't verify its identity.
+ */
+function pidIsFranklinRunner(pid: number): boolean {
+  try {
+    const procCmdline = `/proc/${pid}/cmdline`;
+    if (fs.existsSync(procCmdline)) {
+      const raw = fs.readFileSync(procCmdline, 'utf-8').replace(/\0/g, ' ').trim();
+      return /franklin|runcode|node.*dist\/index/.test(raw);
+    }
+  } catch { /* fall through to ps */ }
+  try {
+    const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+    return /franklin|runcode|node.*dist\/index/.test(cmd);
+  } catch {
+    return true;
+  }
+}
 
 function fmtAge(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -160,6 +183,13 @@ export function buildTaskCommand(): Command {
       }
       if (typeof meta.pid !== 'number') {
         console.error('Task has no recorded pid (likely still queued).');
+        process.exit(1);
+      }
+      // PIDs get recycled: if the runner already exited ungracefully and the OS
+      // reassigned its pid, blindly SIGTERM-ing it would kill an unrelated
+      // process. Verify the pid still looks like a Franklin runner first.
+      if (!pidIsFranklinRunner(meta.pid)) {
+        console.error(`pid ${meta.pid} no longer looks like a Franklin task runner (likely recycled) — refusing to signal it.`);
         process.exit(1);
       }
       try {

@@ -1,5 +1,27 @@
 # Changelog
 
+## Franklin Agent 3.29.9 — security hardening (round-5: correctness, security, data integrity)
+
+A fifth review round took a fresh, non-money angle and found 13 adversarially-verified issues — four HIGH security holes around the wallet. All fixed.
+
+**Security — wallet exposure (HIGH)**
+- **`franklin proxy` now binds loopback only.** It was bound to `0.0.0.0`, exposing the x402 payment proxy (which signs USDC from your wallet on every request) to the entire LAN. Now `127.0.0.1`, matching every other Franklin server.
+- **The wallet key store is now protected from the agent's own file tools.** `~/.blockrun/.session` / `.solana-session` / `solana-wallet.json` were missing from the file-tool blocklist — a steered model could overwrite or *substitute* the private key. Write/Edit/Read now refuse the key files.
+- **`bash-guard` no longer auto-approves wallet-key reads or `xargs`.** `cat ~/.blockrun/.solana-session` (dumps the key into context) and `… | xargs rm -f` (arbitrary exec) were classified "safe" and ran with no prompt; both now prompt. Added a labeled-base58 key pattern to the secret redactor.
+- **`gh api` mutations now prompt.** `gh api -X DELETE/POST/PUT …` (delete repo, merge PRs) was auto-approved as a read-only GET; only a plain GET stays safe now.
+
+**Security — defense in depth**
+- Web/search tool output (WebFetch, WebSearch, Exa, Surf, BrowserX) is now framed as **UNTRUSTED data, not instructions** — the same prompt-injection containment MCP results and learned skills already had.
+- **SSRF guard** on WebFetch + reference-image fetch: refuses loopback/private/link-local/cloud-metadata hosts (opt out with `FRANKLIN_ALLOW_PRIVATE_FETCH=1` for local dev servers).
+
+**Correctness & data integrity**
+- `sanitizeHistory` fixes are now adopted whenever they differ (not only when message *count* changes) — orphaned synthetic `guardrail-*` tool_results no longer reach the wire (a 400 on strict Anthropic/proxy mode).
+- Stats writer is now **atomic** (`tmp+fsync+rename` + `.bak` fallback) and `loadStats` coerces a wrong-shape file — a crash mid-write no longer wipes usage history, and a malformed file no longer crashes the paid agent turn.
+- `franklin migrate` now carries over the `url`/`headers`/`oauth` fields for http/sse MCP servers (were silently dropped → dead configs).
+- MCP connect-timeout now tears down the late-resolving connection (no leaked subprocess / inconsistent `/mcp` state); `task cancel` verifies the pid still belongs to a Franklin runner before SIGTERM (recycled-PID guard); brain extraction merges concurrent writes before its full-file save.
+
+New no-spend security regression tests (key-path guard, bash-guard, SSRF, untrusted frame, redactor). Verified: local suite 484/484.
+
 ## Franklin Agent 3.29.8 — wallet spend-ceiling + paid-tool accounting (round-4 money audit)
 
 A fourth review round swept the paid-tool surface beyond the changed files. Headline: the `--max-spend` hard cap and several paid tools were blind to real USDC spend. All adversarially verified.
