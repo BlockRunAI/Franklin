@@ -7,18 +7,42 @@
  * it does NOT resolve DNS or re-validate each redirect hop, so it stops the
  * common direct-IP/localhost cases, not a DNS-rebinding or redirect attack.
  */
+// Named cloud-metadata endpoints that aren't `*.internal` (AWS legacy alias,
+// GCP short form). They resolve to 169.254.169.254 / a link-local address.
+const METADATA_HOSTS = new Set([
+  'metadata', 'metadata.goog', 'instance-data', 'instance-data.ec2.internal',
+]);
+
 export function isBlockedSsrfHost(hostname: string): boolean {
   // Normalize: lowercase, strip IPv6 brackets, strip a single trailing dot
   // (`localhost.` / `127.0.0.1.` resolve the same as without it).
   const h = hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, '');
   if (!h) return true;
   if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local')) return true;
+  // Cloud-metadata hostnames resolve (at the OS/fetch layer, AFTER this literal
+  // check) to 169.254.169.254 / a NAT address, so blocking only the IP misses the
+  // named form. `.internal` is the ICANN-reserved private TLD (GCE
+  // metadata.google.internal, EC2 *.ec2.internal) — denied wholesale.
+  if (h.endsWith('.internal')) return true;
+  if (METADATA_HOSTS.has(h)) return true;
 
   // IPv6 literal (only IPv6 hosts contain a colon — so the fc/fd/fe80 ULA checks
   // can't false-positive on public DNS names like fda.gov / fcc.gov).
   if (h.includes(':')) {
     if (h === '::1' || h === '::') return true;                          // loopback / unspecified
     if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true; // link-local / ULA
+    // NAT64 (`64:ff9b::a.b.c.d` / `64:ff9b::hhhh:hhhh`) embeds an IPv4 that a NAT64
+    // gateway routes to — decode and recheck it like the IPv4-mapped form below.
+    const nat64 = h.match(/^64:ff9b::(.+)$/);
+    if (nat64) {
+      const t = nat64[1];
+      if (t.includes('.')) return isBlockedSsrfHost(t);
+      const seg = t.split(':');
+      if (seg.length === 2) {
+        const n = ((parseInt(seg[0], 16) << 16) | parseInt(seg[1], 16)) >>> 0;
+        return isBlockedSsrfHost(`${(n >>> 24) & 255}.${(n >>> 16) & 255}.${(n >>> 8) & 255}.${n & 255}`);
+      }
+    }
     // IPv4-mapped IPv6 (`::ffff:a.b.c.d` or `::ffff:hhhh:hhhh`) → recheck the embedded v4.
     const mapped = h.match(/::ffff:(.+)$/);
     if (mapped) {

@@ -126,6 +126,14 @@ const SAFE_CARGO_SUBCOMMANDS = new Set([
   'fmt', 'tree', 'metadata', 'verify-project',
 ]);
 
+// Env vars that may be stripped as a benign command PREFIX (`LANG=C ls`). These
+// only affect locale/display — none change code loading, library injection, or
+// interpreter behavior. Anything NOT on this list (BASH_ENV, LD_PRELOAD,
+// DYLD_INSERT_LIBRARIES, PERL5OPT, NODE_OPTIONS, PATH, IFS, a custom var, …) is
+// treated as an execution-hijack risk and forces a prompt.
+const BENIGN_ENV_PREFIXES =
+  /^(?:LANG|LANGUAGE|LC_[A-Z]+|TZ|TERM|COLUMNS|LINES|NO_COLOR|FORCE_COLOR|CLICOLOR|CLICOLOR_FORCE|GREP_COLOR|GREP_COLORS)$/;
+
 // ─── Classifier ──────────────────────────────────────────────────────────
 
 export function classifyBashRisk(command: string): BashRiskResult {
@@ -178,9 +186,18 @@ function isSegmentSafe(segment: string): boolean {
   if (/(?<![\w-])(?:\.solana-session(?:-key2)?|\.session|[\w-]*wallet[\w-]*\.(?:json|key))(?![\w-])/i.test(segment)) {
     return false;
   }
-  // Command/process substitution runs an arbitrary INNER command that the
-  // classifier can't see (`echo $(node evil)`, `cat <(touch x)`) — never safe.
+  // Command/process substitution runs an arbitrary INNER command the classifier
+  // can't see (`echo $(node evil)`, `cat <(touch x)`) — never safe.
   if (/\$\(|`|<\(|>\(/.test(segment)) {
+    return false;
+  }
+  // Parameter expansion (`$VAR`, `${VAR}`) expands to text the classifier also
+  // can't see, so a bare `$HOME` glob can reach the wallet store exactly like
+  // `$(...)` — `cat $HOME/.bl*/.s*` evaded the rooted-glob guard below because it
+  // starts with `$`, not `~`/`.`/`/`. Treat any `$NAME` / `${NAME}` as opaque.
+  // (`$` followed by a non-name char — e.g. a `grep 'foo$'` regex anchor, `$?`,
+  // `$5` — is left alone so common read commands still auto-approve.)
+  if (/\$\{?[A-Za-z_]/.test(segment)) {
     return false;
   }
   // A glob/brace in an explicit PATH (a token rooted at ~, ., or /) expands AFTER
@@ -189,9 +206,39 @@ function isSegmentSafe(segment: string): boolean {
   if (/(?:^|\s)(?:~|\.|\/)\S*[*?[{]/.test(segment)) {
     return false;
   }
+  // Output redirection to a FILE target is a write — block it for EVERY segment,
+  // not just SAFE_COMMANDS ones. git/npm/cargo/bun resolve through their own
+  // branches below and used to skip the redirect check, so `git status > ~/.bashrc`
+  // (overwrite a shell rc → RCE on next shell) and `npm test > attack.sh`
+  // auto-approved. Allows numeric fd dups (`2>&1`, `>&2` — a digit follows `>`).
+  if (/>[>|&]?\s*[^\s&|0-9]/.test(segment)) {
+    return false;
+  }
+  // Reading host credential stores should PROMPT — mirror the Write tool's
+  // dangerous-path block so `cat ~/.ssh/id_rsa`, `cat ~/.aws/credentials`,
+  // `cat ~/.gnupg/secring.gpg`, gcloud tokens, `.npmrc`/`.pgpass`/`.netrc`, and
+  // docker registry creds don't auto-approve secrets into model context.
+  if (/(?:^|[\s/~'"=])\.(?:ssh|aws|gnupg|kube)(?:\/|$|['"\s])/i.test(segment)) return false;
+  if (/\bid_(?:rsa|dsa|ecdsa|ed25519)\b/i.test(segment)) return false;
+  if (/(?:^|[\s/~'"=])\.(?:npmrc|pgpass|netrc)(?:$|['"\s])/i.test(segment)) return false;
+  if (/gcloud\/(?:credentials|access_tokens|application_default)|\.docker\/config/i.test(segment)) return false;
 
-  // Parse: strip env vars, extract command and args
-  const words = segment.split(/\s+/).filter(w => !w.includes('='));
+  // Parse into words. An env-assignment PREFIX (`FOO=bar cmd …`) is a real
+  // assignment only in the LEADING run before the command word — a later `x=y`
+  // is just an argument (`grep x=y file`). Walk the leading run: reject the
+  // segment if any assignment names a code-loading / execution-hijack var, so a
+  // benign-looking base command can't smuggle one (`BASH_ENV=./rc ls`,
+  // `LD_PRELOAD=/x.so cat f`). Only locale/display vars strip silently.
+  const rawWords = segment.split(/\s+/).filter(Boolean);
+  let envPrefixCount = 0;
+  for (const w of rawWords) {
+    const eq = w.indexOf('=');
+    // Stop at the first token that isn't a `NAME=value` assignment — that's the command.
+    if (eq <= 0 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(w.slice(0, eq))) break;
+    if (!BENIGN_ENV_PREFIXES.test(w.slice(0, eq).toUpperCase())) return false;
+    envPrefixCount++;
+  }
+  const words = rawWords.slice(envPrefixCount);
   let idx = 0;
   let cmd = words[idx] || '';
 
@@ -209,7 +256,26 @@ function isSegmentSafe(segment: string): boolean {
 
   // git
   if (baseName === 'git') {
-    return SAFE_GIT_SUBCOMMANDS.has(subCmd);
+    if (!SAFE_GIT_SUBCOMMANDS.has(subCmd)) return false;
+    // `config` is read-only ONLY in get/list form. A bare `git config key value`
+    // WRITES — and `--global` escapes the repo to plant an exec hook via
+    // core.pager/core.editor/alias.x (`git config core.pager "node evil.js"`).
+    // Count positional args after `config`: 2+ (key + value) is a write; explicit
+    // write flags (--add/--unset/…) also force a prompt.
+    if (subCmd === 'config') {
+      const cfgPositionals = segment
+        .replace(/^[^]*?\bconfig\b/, '')
+        .split(/\s+/)
+        .filter((w) => w && !w.startsWith('-'));
+      const writeFlag = /(?:^|\s)--(?:add|unset(?:-all)?|replace-all|remove-section|rename-section|edit|set)\b/.test(segment);
+      if (cfgPositionals.length >= 2 || writeFlag) return false;
+    }
+    // `git remote add/set-url/remove/rename/…` mutate remotes (can point at an
+    // attacker repo). Only the read forms (`git remote`, `git remote -v`) are safe.
+    if (subCmd === 'remote' && /(?:^|\s)(?:add|set-url|set-head|set-branches|remove|rm|rename|prune|update)\b/.test(segment)) {
+      return false;
+    }
+    return true;
   }
 
   // npm / yarn / pnpm / bun / npx
@@ -238,9 +304,8 @@ function isSegmentSafe(segment: string): boolean {
   if (SAFE_COMMANDS.has(baseName)) {
     // sed -i is not read-only
     if (baseName === 'sed' && segment.includes(' -i')) return false;
-    // Output redirection means writing — not safe. Covers `>`, `>>`, `>|`, and
-    // `>&FILE` (a path target), while still allowing numeric fd dups (`2>&1`, `>&2`).
-    if (/>[>|&]?\s*[^\s&|0-9]/.test(segment)) return false;
+    // (Output redirection is now blocked for every segment near the top of this
+    // function, so the per-command redirect check that used to live here is gone.)
     // Coreutils with a hidden write mode the redirect check can't see:
     if ((baseName === 'sort' || baseName === 'uniq' || baseName === 'tree') && /(?:^|\s)(?:-o(?:[=\s]|$)|--output\b)/.test(segment)) return false;
     // `uniq IN OUT` overwrites the 2nd positional file.

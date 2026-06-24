@@ -10343,3 +10343,125 @@ test('media output_path cannot overwrite the wallet key store (guard wired)', as
   assert.equal(isWalletKeyPath(WALLET_KEY_PATHS[0]), true, 'media tools refuse writing to the key path');
   assert.equal(isWalletKeyPath('/tmp/out.png'), false, 'a normal output path is allowed');
 });
+
+// ─── Round-7: the 6 single-command bypasses found in the 3.29.11 convergence ──
+// verify. Each was adversarially confirmed to auto-approve (level 'safe') before
+// the fix; all must now prompt, with the benign control still auto-safe.
+test('bash-guard: env-var prefix exec/loader hijacks prompt (BASH_ENV/LD_PRELOAD/DYLD_*/NODE_OPTIONS/PATH/IFS)', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  for (const c of [
+    'BASH_ENV=./evilrc ls',                       // sourced by every non-interactive bash -c → RCE
+    'ENV=./evilrc ls',
+    'DYLD_INSERT_LIBRARIES=/tmp/x.dylib ls',      // macOS loader injection
+    'LD_PRELOAD=/tmp/x.so cat README',            // Linux loader injection
+    'LD_LIBRARY_PATH=/tmp ls',
+    'PERL5OPT=-Mevil grep x f',
+    'NODE_OPTIONS=--require=/tmp/x.js npm test',
+    'PYTHONSTARTUP=/tmp/x.py ls',
+    'GIT_SSH_COMMAND=evil git status',
+    'PATH=/tmp ls',                               // PATH override → which binary runs is unknown
+    'IFS=. ls',
+    'PROMPT_COMMAND=evil ls',
+    'FOO=bar ls',                                 // custom (non-allowlisted) var → prompt to be safe
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  // Benign locale/display prefixes still strip and auto-approve.
+  assert.equal(safe('LANG=C ls'), true, 'LANG prefix is benign');
+  assert.equal(safe('LC_ALL=C sort file.txt'), true, 'LC_ALL prefix is benign');
+  assert.equal(safe('TZ=UTC date'), true, 'TZ prefix is benign');
+  assert.equal(safe('TERM=xterm ls'), true, 'TERM prefix is benign');
+  // A `x=y` token that is an ARGUMENT (not a leading assignment) does not block.
+  assert.equal(safe('grep foo=bar file.txt'), true, 'a later x=y is an arg, not an env prefix');
+});
+
+test('bash-guard: $VAR/${VAR} parameter expansion is opaque → wallet-glob read prompts', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  for (const c of [
+    'cat $HOME/.bl*/.s*',                          // evaded the ~/./ rooted-glob guard (starts with $)
+    'cat "$HOME"/.bl*/.s*',
+    'head ${HOME}/.bl*/.s*',
+    'wc -l $HOME/.blockrun/.session',
+    'cat $XDG_CONFIG_HOME/secret',
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  // A `$` that is NOT a parameter expansion (regex end-anchor, special params)
+  // must NOT over-block common read commands.
+  assert.equal(safe("grep 'foo$' file.txt"), true, 'a regex end-anchor $ stays safe');
+  assert.equal(safe('grep "price: $5" notes.txt'), true, '$ before a digit is not an expansion');
+});
+
+test('bash-guard: output redirection on git/npm/cargo (not just SAFE_COMMANDS) prompts', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  for (const c of [
+    'git status > ~/.bashrc',                      // overwrite shell rc → RCE on next shell
+    'git log --oneline > attack.sh',
+    'git diff > package.json',
+    'npm test > ~/.bashrc',
+    'npm run build > ~/.zshrc',
+    'cargo build > out',
+    'pnpm run x > ~/.bashrc',
+    'git status 2>~/.bashrc',                       // stderr redirect to a file is still a write
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  // The plain read forms stay auto-safe.
+  assert.equal(safe('git status'), true);
+  assert.equal(safe('npm test'), true);
+  assert.equal(safe('cargo build'), true);
+  assert.equal(safe('git log --oneline'), true);
+});
+
+test('bash-guard: reads of host credential stores (~/.ssh, ~/.aws, ~/.gnupg, gcloud, .npmrc) prompt', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  for (const c of [
+    'cat ~/.ssh/id_rsa',
+    'cat ~/.ssh/id_ed25519',
+    'head ~/.aws/credentials',
+    'cat ~/.gnupg/secring.gpg',
+    'cat ~/.kube/config',
+    'head ~/.config/gcloud/credentials.db',
+    'cat ~/.npmrc',
+    'cat ~/.pgpass',
+    'cat ~/.netrc',
+    'cat .ssh/id_rsa',                             // relative form
+    'cat ~/.docker/config.json',
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  // A normal project file that merely contains a sensitive substring stays safe.
+  assert.equal(safe('cat README.md'), true);
+  assert.equal(safe('cat src/aws-client.ts'), true, 'a non-dotfile "aws" path is not a credential store');
+});
+
+test('bash-guard: git config/remote WRITE forms prompt; read forms stay safe', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  for (const c of [
+    'git config core.pager "node evil.js"',        // plants an exec hook fired on next git
+    'git config --global core.editor "node evil.js"',
+    'git config alias.x "!sh evil.sh"',
+    'git config --add safe.directory /',
+    'git config --unset user.name',
+    'git remote add evil https://attacker.example/r',
+    'git remote set-url origin https://attacker.example/r',
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  // Read forms remain auto-safe.
+  assert.equal(safe('git config --get core.pager'), true);
+  assert.equal(safe('git config --list'), true);
+  assert.equal(safe('git config -l'), true);
+  assert.equal(safe('git remote'), true);
+  assert.equal(safe('git remote -v'), true);
+});
+
+test('isBlockedSsrfHost blocks cloud-metadata HOSTNAMES + NAT64, allows public', async () => {
+  const { isBlockedSsrfHost } = await import('../dist/tools/ssrf.js');
+  for (const h of [
+    'metadata.google.internal',                    // GCE — resolves to 169.254.169.254
+    'metadata.goog',
+    'metadata',
+    'instance-data',                               // AWS legacy alias
+    'foo.ec2.internal',                            // any *.internal
+    '64:ff9b::a9fe:a9fe',                          // NAT64-embedded 169.254.169.254
+    '[64:ff9b::169.254.169.254]',
+  ]) assert.equal(isBlockedSsrfHost(h), true, `${h} must be blocked`);
+  for (const h of ['example.com', 'api.github.com', 'metadata-service.example.com'])
+    assert.equal(isBlockedSsrfHost(h), false, `${h} (public) must be allowed`);
+});
