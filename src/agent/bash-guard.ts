@@ -158,19 +158,19 @@ export function classifyBashRisk(command: string): BashRiskResult {
 }
 
 function isSegmentSafe(segment: string): boolean {
-  // Never auto-approve a command that touches the wallet private key — a bare
-  // `cat ~/.blockrun/.solana-session` would dump the key into model context with
-  // no prompt. Match the key BASENAME (not a `.blockrun/...` path prefix), which
-  // can't be evaded with `//`, `\.`, a relative path after `cd`, or a case
-  // variant on macOS/Windows. Case-insensitive; over-prompting on a same-named
-  // file elsewhere is acceptable (it prompts, never silently blocks).
-  if (/(?<![\w-])(?:\.solana-session-key2|\.solana-session|\.session|solana-wallet\.json)(?![\w-])/i.test(segment)) {
+  // Never auto-approve a command that touches the wallet key store. Matching the
+  // FILENAME is hopeless — it's trivially obfuscated (`.solana""-session`,
+  // `.\solana-session`, a glob, or an unlisted key file like
+  // solana-wallet-key2.json). So match the DIRECTORY: any reference to
+  // ~/.blockrun forces a prompt. (The file Read/Write/Edit tools have a separate
+  // canonicalized guard; this is the best-effort net for the shell. Over-
+  // prompting on a stray `.blockrun` path is fine — it prompts, never blocks.)
+  if (/\.blockrun/i.test(segment)) {
     return false;
   }
-  // A glob/brace under the wallet dir could expand to a key file AFTER this
-  // guard runs (the shell expands post-approval), so the literal match above
-  // can't see it — force a prompt for any `*?[{` anywhere near ~/.blockrun.
-  if (/\.blockrun/i.test(segment) && /[*?{[]/.test(segment)) {
+  // Relative reads with no `.blockrun` in the text (e.g. the cwd is the wallet
+  // dir): match the known key/secret basenames broadly (any *wallet*.json/.key).
+  if (/(?<![\w-])(?:\.solana-session(?:-key2)?|\.session|[\w-]*wallet[\w-]*\.(?:json|key))(?![\w-])/i.test(segment)) {
     return false;
   }
 
@@ -222,8 +222,15 @@ function isSegmentSafe(segment: string): boolean {
   if (SAFE_COMMANDS.has(baseName)) {
     // sed -i is not read-only
     if (baseName === 'sed' && segment.includes(' -i')) return false;
-    // Output redirection means writing — not safe
-    if (/>\s*[^&|]/.test(segment)) return false;
+    // Output redirection means writing — not safe. Covers `>`, `>>`, `>|`, and
+    // `>&FILE` (a path target), while still allowing numeric fd dups (`2>&1`, `>&2`).
+    if (/>[>|&]?\s*[^\s&|0-9]/.test(segment)) return false;
+    // Coreutils with a hidden write mode the redirect check can't see:
+    if ((baseName === 'sort' || baseName === 'uniq' || baseName === 'tree') && /(?:^|\s)(?:-o(?:[=\s]|$)|--output\b)/.test(segment)) return false;
+    // `uniq IN OUT` overwrites the 2nd positional file.
+    if (baseName === 'uniq' && words.slice(argIdx).filter((w) => w && !w.startsWith('-')).length >= 2) return false;
+    // `yq -i` / `jq` in-place edits.
+    if ((baseName === 'yq' || baseName === 'jq') && /(?:^|\s)(?:-i\b|--in-?place\b)/.test(segment)) return false;
     return true;
   }
 

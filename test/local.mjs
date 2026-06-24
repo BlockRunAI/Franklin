@@ -10249,25 +10249,44 @@ test('bash-guard: find action predicates and tee are not auto-safe', async () =>
   assert.equal(safe('find . -print'), true, 'read-only -print stays safe');
 });
 
-test('bash-guard: wallet-key read bypasses (//, backslash, relative, case) prompt', async () => {
+test('bash-guard: wallet-store reads prompt via the directory rule + all obfuscations', async () => {
   const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
   const safe = (c) => classifyBashRisk(c).level === 'safe';
   for (const c of [
-    'cat ~/.blockrun//.solana-session',   // double slash
-    'cat ~/.blockrun/\\.solana-session',  // backslash-escaped dot
-    'cat .solana-session',                // relative basename
-    'cat ~/.blockrun/.SOLANA-SESSION',    // case variant
+    'cat ~/.blockrun/.solana-session',
+    'cat ~/.blockrun//.solana-session',          // double slash
+    'cat ~/.blockrun/\\.solana-session',         // backslash-escaped dot
+    'cat ~/.blockrun/.SOLANA-SESSION',           // case variant
+    'cat ~/.blockrun/.solana""-session',         // empty-quote split
+    'cat ~/.blockrun/.\\solana-session',         // backslash before non-special
+    'cat ~/.blockrun/.solana-sessio?',           // glob
+    'cat ~/.blockrun/.solana-{session}',         // brace
+    'cat ~/.blockrun/*',                          // dir glob
+    'cat ~/.blockrun/solana-wallet-key2.json',   // key file NOT in any basename list
+    'cat ~/.blockrun/franklin-stats.json',       // directory rule: any .blockrun read prompts
+    'cat .solana-session',                        // relative key basename (no .blockrun)
     'cat solana-wallet.json',
     'head -c 200 .session',
-    // shell glob/brace under the wallet dir (expands to the key AFTER the guard):
-    'cat ~/.blockrun/.solana-sessio?',
-    'cat ~/.blockrun/.solana-s*',
-    'cat ~/.blockrun/.solana-{session}',
-    'cat ~/.blockrun/*',
   ]) assert.equal(safe(c), false, `${c} must prompt`);
   assert.equal(safe('cat README.md'), true);
   assert.equal(safe('cat config.session.log'), true, 'a non-key file containing "session" stays safe');
-  assert.equal(safe('cat ~/.blockrun/franklin-stats.json'), true, 'a non-glob read of a non-key file in the dir stays safe');
+});
+
+test('bash-guard: coreutil writers (sort -o, uniq OUT, >&FILE, >|, yq -i) prompt', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  for (const c of [
+    'sort -o ~/.zshrc payload.txt',
+    'sort --output=~/.zshrc payload.txt',
+    'uniq payload.txt ~/.zshrc',
+    'cat payload.txt >&~/.zshrc',
+    'echo x >| ~/.zshrc',
+    'yq -i ".a=1" config.yaml',
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  assert.equal(safe('sort file.txt'), true, 'plain sort read stays safe');
+  assert.equal(safe('uniq file.txt'), true, 'single-file uniq read stays safe');
+  assert.equal(safe('echo ok 2>&1'), true, 'numeric fd dup (2>&1) stays safe');
+  assert.equal(safe('jq .name pkg.json'), true, 'plain jq read stays safe');
 });
 
 test('isBlockedSsrfHost: IPv4-mapped IPv6 + trailing-dot blocked; fc/fd public hosts allowed', async () => {
