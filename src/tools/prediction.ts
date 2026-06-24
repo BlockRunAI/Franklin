@@ -47,6 +47,7 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
 import { recordFetch } from '../trading/providers/telemetry.js';
+import { recordUsage } from '../stats/tracker.js';
 
 const TIMEOUT_MS = 30_000;
 const DEFAULT_LIMIT = 20;
@@ -130,6 +131,10 @@ async function getWithPayment<T>(path: string, query: Record<string, string | nu
       latencyMs: Date.now() - startedAt,
       costUsd: costRecorded > 0 ? costRecorded : undefined,
     });
+    // ALSO persist to franklin-stats (recordFetch is in-memory only, lost on
+    // restart). Without this, Predexon spend is absent from `franklin stats`
+    // and invisible to the --max-spend ceiling (parity with surf.ts).
+    try { recordUsage(`PredictionMarket:${path}`, 0, 0, costRecorded, Date.now() - startedAt); } catch { /* best-effort */ }
     return (await response.json()) as T;
   } finally {
     clearTimeout(timeout);

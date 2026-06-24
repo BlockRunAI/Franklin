@@ -193,6 +193,24 @@ export function flushStats(): void {
   if (cachedStats) saveStats(cachedStats);
 }
 
+// ── Live spend accumulator (process-lifetime) ──────────────────────────────
+// Sum of every positive costUsd passed to recordUsage, counted BEFORE the
+// test/audit gates below so it reflects REAL USDC spend regardless of whether
+// the row is persisted to history. The agent loop diffs this around tool
+// execution to fold paid-tool spend into the --max-spend session ceiling, which
+// would otherwise only see LLM token cost. See src/agent/loop.ts.
+let liveSpendUsd = 0;
+
+/** Cumulative USDC recorded via recordUsage this process. */
+export function getLiveSpendUsd(): number {
+  return liveSpendUsd;
+}
+
+/** Test helper: reset the live-spend accumulator. */
+export function resetLiveSpend(): void {
+  liveSpendUsd = 0;
+}
+
 /**
  * Record a completed request for stats tracking
  */
@@ -204,6 +222,10 @@ export function recordUsage(
   latencyMs: number,
   fallback: boolean = false
 ): void {
+  // Count real spend BEFORE the test/audit gates — the --max-spend ceiling must
+  // see every paid tool call even when history persistence is suppressed.
+  if (Number.isFinite(costUsd) && costUsd > 0) liveSpendUsd += costUsd;
+
   // Same rationale as appendAudit — tests run in-process with
   // local/test* models and would otherwise mix into franklin-stats.json
   // history (verified: 8.4% of a real user's 1000-entry history was

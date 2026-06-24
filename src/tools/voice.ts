@@ -125,7 +125,7 @@ async function postWithPayment<T>(
   }
 }
 
-async function getNoPayment<T>(path: string, ctx: ExecutionScope, meta: PaidCallMeta): Promise<T> {
+async function getNoPayment<T>(path: string, ctx: ExecutionScope, meta: PaidCallMeta, record = true): Promise<T> {
   const startMs = Date.now();
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
@@ -146,9 +146,13 @@ async function getNoPayment<T>(path: string, ctx: ExecutionScope, meta: PaidCall
     }
     const data = (await resp.json()) as T;
     // Record even free calls so the audit tab shows the activity (cost 0).
-    try {
-      recordUsage(meta.tool, 0, 0, meta.priceUsd, Date.now() - startMs);
-    } catch { /* telemetry best-effort */ }
+    // `record: false` for internal poll loops — recording one row PER poll (up to
+    // 420 for VoiceStatus) would evict real spend history (capped at 1000 rows).
+    if (record) {
+      try {
+        recordUsage(meta.tool, 0, 0, meta.priceUsd, Date.now() - startMs);
+      } catch { /* telemetry best-effort */ }
+    }
     return data;
   } finally {
     clearTimeout(timeout);
@@ -479,6 +483,11 @@ export const voiceStatusCapability: CapabilityHandler = {
     }
     const callId = input.call_id;
     const deadline = Date.now() + VOICE_POLL_MAX_WAIT_MS;
+    const statusStartedAt = Date.now();
+    // Record ONE telemetry row per VoiceStatus invocation, not one per poll.
+    const recordStatusOnce = () => {
+      try { recordUsage('VoiceStatus', 0, 0, 0, Date.now() - statusStartedAt); } catch { /* best-effort */ }
+    };
 
     // Internal poll-until-terminal loop — mirrors videogen.ts pollUntilReady
     // and imagegen.ts pollImageJob. The agent emits one VoiceStatus tool_use
@@ -495,6 +504,7 @@ export const voiceStatusCapability: CapabilityHandler = {
           `/v1/voice/call/${encodeURIComponent(callId)}`,
           ctx,
           { tool: 'VoiceStatus', priceUsd: 0 },
+          false, // don't record per-poll — record once when this VoiceStatus returns
         );
       } catch (err) {
         return { output: `VoiceStatus failed: ${(err as Error).message}`, isError: true };
@@ -502,6 +512,7 @@ export const voiceStatusCapability: CapabilityHandler = {
       patchCallJournal(callId, lastRes);
       const status = String(lastRes.status ?? lastRes.queue_status ?? '').toLowerCase();
       if (VOICE_TERMINAL_STATUSES.has(status)) {
+        recordStatusOnce();
         return {
           output:
             `## Voice call status (terminal: ${status})\n\n` +
@@ -517,6 +528,7 @@ export const voiceStatusCapability: CapabilityHandler = {
     // Hit the 35-min ceiling without seeing a terminal state — return the
     // latest snapshot we have so the agent + journal still have partial
     // context, but flag it as still in progress.
+    recordStatusOnce();
     return {
       output:
         `## Voice call status (still in progress after ${Math.round(VOICE_POLL_MAX_WAIT_MS / 60_000)} min)\n\n` +

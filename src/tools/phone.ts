@@ -211,6 +211,19 @@ export const buyPhoneNumberCapability: CapabilityHandler = {
     const body: Record<string, string> = {};
     if (typeof input.country === 'string') body.country = input.country;
     if (typeof input.area_code === 'string') body.areaCode = input.area_code;
+    // Confirm the $5 spend before charging — this is the most expensive single
+    // autonomous action, so it gets the same gate as a $0.05 ModalCreate. Direct
+    // callers (FRANKLIN_MEDIA_AUTO_APPROVE_ALL=1 or no onAskUser bridge) proceed.
+    const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
+    if (!autoApprove && ctx.onAskUser) {
+      const answer = await ctx.onAskUser(
+        `Buy a new ${body.country || 'US'} phone number for $5.00 USDC? No USDC is spent if you cancel.`,
+        ['Buy', 'Cancel'],
+      );
+      if (answer !== 'Buy') {
+        return { output: `## Phone number purchase cancelled\n\nNo USDC was spent.` };
+      }
+    }
     try {
       const res = await postWithPayment<Record<string, unknown>>(
         '/v1/phone/numbers/buy', body, ctx, { tool: 'BuyPhoneNumber', priceUsd: 5.0 },
@@ -244,6 +257,17 @@ export const renewPhoneNumberCapability: CapabilityHandler = {
   execute: async (input, ctx): Promise<CapabilityResult> => {
     if (typeof input.phone_number !== 'string') {
       return { output: 'phone_number (E.164) required', isError: true };
+    }
+    // Confirm the $5 spend before charging (parity with BuyPhoneNumber / ModalCreate).
+    const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
+    if (!autoApprove && ctx.onAskUser) {
+      const answer = await ctx.onAskUser(
+        `Renew ${input.phone_number} for 30 days at $5.00 USDC? No USDC is spent if you cancel.`,
+        ['Renew', 'Cancel'],
+      );
+      if (answer !== 'Renew') {
+        return { output: `## Renewal cancelled\n\nNo USDC was spent.` };
+      }
     }
     try {
       const res = await postWithPayment<Record<string, unknown>>(
