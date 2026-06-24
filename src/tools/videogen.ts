@@ -36,6 +36,7 @@ import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
 import { resolveReferenceImage } from './imagegen.js';
+import { isWalletKeyPath } from './sensitive-paths.js';
 import { recordUsage } from '../stats/tracker.js';
 import { findModel, estimateCostUsd, GATEWAY_MARGIN, type GatewayModel } from '../gateway-models.js';
 
@@ -211,6 +212,10 @@ function buildExecute(deps: VideoGenDeps) {
     const outPath = output_path
       ? (path.isAbsolute(output_path) ? output_path : path.resolve(ctx.workingDir, output_path))
       : path.resolve(ctx.workingDir, `generated-${Date.now()}.mp4`);
+    // Don't let a caller-controlled output_path overwrite the wallet key store.
+    if (isWalletKeyPath(outPath)) {
+      return { output: `Error: refusing to write to the wallet key store: ${outPath}`, isError: true };
+    }
 
     const body = JSON.stringify({
       model: videoModel,

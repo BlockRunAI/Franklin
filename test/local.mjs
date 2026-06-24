@@ -10304,3 +10304,42 @@ test('isWalletKeyPath is case-insensitive on case-insensitive filesystems', asyn
     assert.equal(isWalletKeyPath(variant), true, 'case-variant of the key path must still be protected');
   }
 });
+
+// ─── Round-6 follow-up: bypasses the re-reviews of the guards then found ────
+test('bash-guard: command separators (newline, &, $(), backtick, <()) gate the injected command', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  assert.equal(safe('pwd\nnpm install evil'), false, 'newline-separated 2nd command must be classified');
+  assert.equal(safe('pwd & node evil.js'), false, 'backgrounded & command must be classified');
+  assert.equal(safe('echo $(node evil.js)'), false, 'command substitution must prompt');
+  assert.equal(safe('echo `touch x`'), false, 'backtick substitution must prompt');
+  assert.equal(safe('cat <(node evil.js)'), false, 'process substitution must prompt');
+  assert.equal(safe('echo ok 2>&1'), true, 'fd dup 2>&1 stays safe (not split on the & in >&)');
+  assert.equal(safe('ls && pwd'), true, 'two genuinely-safe commands stay safe');
+});
+
+test('bash-guard: path globs that could reach the wallet prompt; bare cwd globs stay safe', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  assert.equal(safe('cat ~/.b*/.s*'), false, 'glob expanding into ~/.blockrun must prompt');
+  assert.equal(safe('cat ~/.blockrun/.solana-s*'), false);
+  assert.equal(safe('cat /etc/*'), false, 'absolute-path glob prompts');
+  assert.equal(safe('cat *.md'), true, 'a bare cwd glob stays safe');
+  assert.equal(safe('cat src/*.ts'), true, 'a relative subdir glob (not rooted at ~/./) stays safe');
+});
+
+test('isBlockedSsrfHost blocks Alibaba/Oracle metadata + CGNAT literals', async () => {
+  const { isBlockedSsrfHost } = await import('../dist/tools/ssrf.js');
+  for (const h of ['100.100.100.200', '192.0.0.192', '100.64.0.1'])
+    assert.equal(isBlockedSsrfHost(h), true, `${h} must be blocked`);
+  assert.equal(isBlockedSsrfHost('100.200.0.1'), false, 'a non-metadata 100.x stays allowed');
+});
+
+test('media output_path cannot overwrite the wallet key store (guard wired)', async () => {
+  // The guard is `if (isWalletKeyPath(outPath)) return isError` immediately after
+  // outPath is resolved, before any network/write — so a wallet-key output_path
+  // is refused. We assert the underlying check the three media tools rely on.
+  const { isWalletKeyPath, WALLET_KEY_PATHS } = await import('../dist/tools/sensitive-paths.js');
+  assert.equal(isWalletKeyPath(WALLET_KEY_PATHS[0]), true, 'media tools refuse writing to the key path');
+  assert.equal(isWalletKeyPath('/tmp/out.png'), false, 'a normal output path is allowed');
+});

@@ -19,6 +19,7 @@ import os from 'node:os';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { browserPool } from '../social/browser-pool.js';
 import { frameUntrusted } from './untrusted.js';
+import { isWalletKeyPath } from './sensitive-paths.js';
 
 type BrowserAction = 'open' | 'snapshot' | 'click' | 'scroll' | 'screenshot' | 'getUrl' | 'wait';
 
@@ -107,6 +108,9 @@ async function execute(
         const finalPath = outPath
           ? outPath
           : path.join(os.homedir(), '.blockrun', 'screenshots', `browsex-${Date.now()}.png`);
+        if (isWalletKeyPath(path.resolve(finalPath))) {
+          return { output: `Error: refusing to write to the wallet key store: ${finalPath}`, isError: true };
+        }
         try {
           const fs = await import('node:fs');
           fs.mkdirSync(path.dirname(finalPath), { recursive: true });

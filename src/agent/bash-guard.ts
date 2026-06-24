@@ -136,8 +136,13 @@ export function classifyBashRisk(command: string): BashRiskResult {
     }
   }
 
-  // 2. Check if every segment is a known-safe command
-  const segments = command.split(/\s*(?:&&|\|\||[;|])\s*/);
+  // 2. Check if every segment is a known-safe command. Split on ALL bash
+  // command separators — &&, ||, ;, |, a lone & (background), and newline/CR —
+  // so an injected second command (`pwd\nnpm install evil`, `pwd & node x`) is
+  // classified on its own rather than hiding behind a benign first word. (`&&`
+  // is matched before the lone `&`; numeric fd dups like `2>&1` have no
+  // standalone `&` and are handled per-segment by the redirect check.)
+  const segments = command.split(/\s*(?:&&|\|\||[;|]|(?<![>&])&(?![&>])|[\n\r])\s*/);
   let allSafe = true;
 
   for (const segment of segments) {
@@ -171,6 +176,17 @@ function isSegmentSafe(segment: string): boolean {
   // Relative reads with no `.blockrun` in the text (e.g. the cwd is the wallet
   // dir): match the known key/secret basenames broadly (any *wallet*.json/.key).
   if (/(?<![\w-])(?:\.solana-session(?:-key2)?|\.session|[\w-]*wallet[\w-]*\.(?:json|key))(?![\w-])/i.test(segment)) {
+    return false;
+  }
+  // Command/process substitution runs an arbitrary INNER command that the
+  // classifier can't see (`echo $(node evil)`, `cat <(touch x)`) — never safe.
+  if (/\$\(|`|<\(|>\(/.test(segment)) {
+    return false;
+  }
+  // A glob/brace in an explicit PATH (a token rooted at ~, ., or /) expands AFTER
+  // this guard and can reach the wallet store (`cat ~/.b*/.s*`) or a sensitive
+  // file. Bare cwd globs (`*.md`, `src/*.ts`) have no such prefix and stay safe.
+  if (/(?:^|\s)(?:~|\.|\/)\S*[*?[{]/.test(segment)) {
     return false;
   }
 

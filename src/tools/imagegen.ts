@@ -24,6 +24,7 @@ import { recordUsage } from '../stats/tracker.js';
 import { findModel, estimateCostUsd, GATEWAY_MARGIN, type GatewayModel } from '../gateway-models.js';
 import { logger } from '../logger.js';
 import { ssrfSafeFetch } from './ssrf.js';
+import { isWalletKeyPath } from './sensitive-paths.js';
 
 interface ImageGenInput {
   prompt: string;
@@ -403,6 +404,11 @@ function buildExecute(deps: ImageGenDeps) {
   const outPath = output_path
     ? (path.isAbsolute(output_path) ? output_path : path.resolve(ctx.workingDir, output_path))
     : path.resolve(ctx.workingDir, `generated-${Date.now()}.png`);
+  // A caller-controlled output_path must not be allowed to overwrite the wallet
+  // key store (e.g. output_path="~/.blockrun/.session" would brick the wallet).
+  if (isWalletKeyPath(outPath)) {
+    return { output: `Error: refusing to write to the wallet key store: ${outPath}`, isError: true };
+  }
 
   const body = JSON.stringify(
     editMode

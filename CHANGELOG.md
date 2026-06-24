@@ -1,5 +1,16 @@
 # Changelog
 
+## Franklin Agent 3.29.11 — close the remaining guard bypasses + media-write hole (final sweep)
+
+A final comprehensive sweep of the 3.29.10 guards found 7 more single-command holes (and a new class the prior rounds missed). Fixed at the architectural level rather than by patching more strings:
+
+- **Media tools could overwrite the wallet key (HIGH, new class).** `ImageGen`/`VideoGen`/`MusicGen` (and BrowserX screenshots) write to a caller-controlled `output_path` with **no** wallet-key guard — `output_path: "~/.blockrun/.session"` would brick the wallet. They now apply the same `isWalletKeyPath` guard the Read/Write/Edit tools use.
+- **bash-guard: separators.** Newline, CR, and a lone `&` (background) were not segment separators, so `pwd\nnpm install evil` / `pwd & node evil.js` auto-approved the injected command. All bash separators now split (fd-dups like `2>&1` unaffected).
+- **bash-guard: substitution & path-globs (the wallet-key class, finally).** `$(...)`, backticks, and `<(...)` run an inner command the classifier can't see, and a glob in a `~`/`.`/`/`-rooted path (`cat ~/.b*/.s*`) expands into `~/.blockrun` after the guard runs. Both now force a prompt — "fail toward prompting" for anything the classifier can't statically resolve. Bare cwd globs (`*.md`, `src/*.ts`) stay auto-safe.
+- **SSRF:** also block the Alibaba (`100.100.100.200`) and Oracle (`192.0.0.192`) cloud-metadata literals and CGNAT (`100.64.0.0/10`).
+
+The file Read/Write/Edit/media tools' canonicalized `isWalletKeyPath` guard is the primary protection; the bash-guard is the best-effort shell net and now prompts on anything it can't reason about. New regression tests pin every bypass. Verified: local suite 494/494.
+
 ## Franklin Agent 3.29.10 — close the 3.29.9 guard bypasses (round-6: adversarial re-review)
 
 An adversarial bypass-hunt of the 3.29.9 security guards found **16 holes in the guards themselves** — the recurring root cause was matching shell text / exact strings instead of canonicalizing. All fixed.

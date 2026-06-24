@@ -30,6 +30,7 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
+import { isWalletKeyPath } from './sensitive-paths.js';
 import { findModel, estimateCostUsd, type GatewayModel } from '../gateway-models.js';
 import { recordUsage } from '../stats/tracker.js';
 
@@ -119,6 +120,10 @@ function buildExecute(deps: MusicGenDeps) {
     const outPath = output_path
       ? (path.isAbsolute(output_path) ? output_path : path.resolve(ctx.workingDir, output_path))
       : path.resolve(ctx.workingDir, `generated-${Date.now()}.mp3`);
+    // Don't let a caller-controlled output_path overwrite the wallet key store.
+    if (isWalletKeyPath(outPath)) {
+      return { output: `Error: refusing to write to the wallet key store: ${outPath}`, isError: true };
+    }
 
     const body = JSON.stringify({
       model: musicModel,
