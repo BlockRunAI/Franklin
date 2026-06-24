@@ -130,3 +130,17 @@ test('readExaAnswer counts a paid-but-empty answer so spend is never under-repor
   assert.equal(unpaid.text, null);
   assert.equal(unpaid.costUsd, 0, 'no payment → no cost booked');
 });
+
+test('readExaAnswer degrades (does not throw) on a malformed non-string answer, preserving paid-cost counting', async () => {
+  const { readExaAnswer } = await import('../dist/agent/intent-prefetch.js');
+  // A drifted wire shape (number/object/array answer) must NOT throw — a throw
+  // would be swallowed and mis-book a settled paid call as $0.
+  for (const bad of [12345, { foo: 1 }, ['x'], true]) {
+    const r = readExaAnswer({ answer: bad, costDollars: { total: 0.01 } }, true);
+    assert.equal(r.text, null, `non-string answer ${JSON.stringify(bad)} must yield null text`);
+    assert.equal(r.costUsd, 0.01, 'the settled charge is still counted');
+  }
+  // Non-object body / nested non-object data also degrade cleanly.
+  assert.deepEqual(readExaAnswer(null, true), { text: null, costUsd: 0.01 });
+  assert.deepEqual(readExaAnswer('not json', false), { text: null, costUsd: 0 });
+});

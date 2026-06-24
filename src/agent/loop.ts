@@ -2058,23 +2058,30 @@ export async function interactiveSession(
       // NOT been appended to history yet, so we never persist the transport
       // error as a real assistant reply (which would poison the next turn and
       // trigger grounding-check retries against the same wall). When the leaked
-      // error is a rate-limit or overload — the same condition that auto-falls
-      // back when it arrives as a real HTTP 429/529 — switch to a different free
-      // provider and retry the turn, mirroring the classifier's HTTP-error path.
-      // Otherwise surface it as a terminal turn error and break.
+      // error is recoverable by switching providers, retry the turn on a free
+      // model — mirroring the classifier's HTTP-error path: rate_limit always
+      // falls back; overloaded only under a routing profile, so a user-pinned
+      // concrete model is respected (matching the 529 streak-guard) rather than
+      // silently demoted. Otherwise surface a terminal turn error and break.
       const gatewayErr = looksLikeGatewayErrorAsText(responseParts);
       if (gatewayErr.match) {
         logger.error(
           `[franklin] Gateway returned an error text in lieu of an answer (${resolvedModel}): ${gatewayErr.message}`
         );
         const leaked = classifyAgentError(gatewayErr.message);
-        if (leaked.category === 'rate_limit' || leaked.category === 'overloaded') {
+        const canFallback = leaked.category === 'rate_limit'
+          || (leaked.category === 'overloaded' && !!parseRoutingProfile(config.model));
+        if (canFallback) {
+          // Exclude BOTH the alias (config.model may be a profile like
+          // "blockrun/free") AND the concrete model that actually leaked, so
+          // pickFreeFallback can't hand back the same model and waste a retry.
           turnFailedModels.add(config.model);
+          turnFailedModels.add(resolvedModel);
           if (leaked.category === 'rate_limit' && lastRoutedCategory) {
-            recordOutcome(lastRoutedCategory, config.model, 'rate_limit');
+            recordOutcome(lastRoutedCategory, resolvedModel, 'rate_limit');
           }
           const nextFree = pickFreeFallback(lastRoutedCategory, turnFailedModels);
-          if (nextFree) {
+          if (nextFree && nextFree !== resolvedModel) {
             const oldModel = config.model;
             config.model = nextFree;
             config.onModelChange?.(nextFree, 'system');
@@ -2088,10 +2095,15 @@ export async function interactiveSession(
         }
         lastSessionActivity = Date.now();
         persistSessionMeta();
+        // Mirror the real-429 terminal path: if free models were exhausted this
+        // turn, point a funded-wallet user at paid models as the escape hatch.
+        const exhaustedHint = turnFailedModels.size > 0
+          ? `\nTip: All free models tried this turn are rate-limited. Switch to a paid model with /model anthropic/claude-sonnet-4.6 and retry — your wallet handles it.`
+          : '';
         onEvent({
           kind: 'turn_done',
           reason: 'error',
-          error: gatewayErr.message,
+          error: `${gatewayErr.message}${exhaustedHint}`,
         });
         break;
       }

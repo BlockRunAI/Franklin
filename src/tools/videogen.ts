@@ -37,7 +37,7 @@ import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
 import { resolveReferenceImage } from './imagegen.js';
 import { recordUsage } from '../stats/tracker.js';
-import { findModel, estimateCostUsd } from '../gateway-models.js';
+import { findModel, estimateCostUsd, GATEWAY_MARGIN, type GatewayModel } from '../gateway-models.js';
 
 interface VideoGenInput {
   prompt: string;
@@ -76,6 +76,21 @@ const DOWNLOAD_TIMEOUT_MS = 60_000;
 
 function estimateVideoCostUsd(durationSeconds = DEFAULT_DURATION): number {
   return Math.max(1, durationSeconds) * PRICE_PER_SECOND_USD;
+}
+
+/**
+ * Resolve the per-clip USD cost used for the spend confirm, budget check, usage
+ * stats, AND the content-budget asset record — one value so they can never
+ * disagree. The flat $0.05/s estimate is the fallback for an unknown model, but
+ * a catalog-priced per-second model (e.g. Seedance at $0.15/s) costs far more,
+ * so take the HIGHER of the catalog price and the (margin-adjusted) flat
+ * estimate. Without this the budget check + asset record undercount the cap ~3x
+ * for Seedance. Mirrors ImageGen's resolveImageUnitCost. Exported for tests.
+ */
+export function resolveVideoUnitCost(catalogModel: GatewayModel | null, durationSeconds: number): number {
+  const catalogUsd = catalogModel ? estimateCostUsd(catalogModel, { duration_seconds: durationSeconds }) : 0;
+  const flatUsd = +(estimateVideoCostUsd(durationSeconds) * GATEWAY_MARGIN).toFixed(6);
+  return Math.max(catalogUsd, flatUsd);
 }
 
 function buildExecute(deps: VideoGenDeps) {
@@ -148,12 +163,20 @@ function buildExecute(deps: VideoGenDeps) {
     // price math (no LLM). Interactive callers (CLI / agent) get a prompt via
     // onAskUser; direct callers (e.g. the desktop media path) pass no onAskUser
     // and generate straight away — the explicit "generate" action is consent.
+    // Resolve the per-clip cost ONCE — reused below by the confirm quote, the
+    // budget pre-check, usage stats, and the asset record so none can disagree
+    // or undercount a catalog-priced model. Best-effort catalog lookup: a cold
+    // fetch failure degrades to the flat estimate, never aborts a generation.
+    let videoCatalogModel: GatewayModel | null = null;
+    try {
+      videoCatalogModel = await findModel(videoModel);
+    } catch { /* catalog unreachable — resolveVideoUnitCost falls back to the estimate */ }
+
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
     if (!autoApprove && ctx.onAskUser) {
       // Model-aware estimate so the quoted price matches the model we name in
       // the prompt (flat per-second fallback only when the model is unknown).
-      const m = await findModel(videoModel);
-      const est = m ? estimateCostUsd(m, { duration_seconds: duration }) : estimateVideoCostUsd(duration);
+      const est = resolveVideoUnitCost(videoCatalogModel, duration);
       const answer = await ctx.onAskUser(
         `Generate a ${duration}s video with ${videoModel} for ~$${est.toFixed(2)}? No USDC is spent if you cancel.`,
         ['Generate', 'Cancel'],
@@ -163,7 +186,7 @@ function buildExecute(deps: VideoGenDeps) {
       }
     }
 
-    const estCost = estimateVideoCostUsd(duration);
+    const estCost = resolveVideoUnitCost(videoCatalogModel, duration);
 
     if (contentId && deps.library) {
       const content = deps.library.get(contentId);
@@ -347,29 +370,23 @@ function buildExecute(deps: VideoGenDeps) {
       const fileSize = fs.statSync(outPath).size;
       const sizeMB = (fileSize / 1_048_576).toFixed(1);
       const dur = videoData.duration_seconds ?? duration;
+      // Single authoritative cost for the actual generated duration — same
+      // value for stats and the content-budget record (no undercount).
+      const recCostUsd = resolveVideoUnitCost(videoCatalogModel, dur);
 
       // Stats: record this generation so it shows up in `franklin insights`
       // alongside chat spend. Before this, media generations bypassed
       // recordUsage entirely, so the insights panel under-reported total
       // spend and never surfaced video models in its "top models" list.
-      // Prefer the live gateway price when the model is in the catalog;
-      // fall back to the legacy $0.05/s estimate otherwise. Fire-and-
-      // forget — stats write must not fail a user-visible generation.
       const latencyMs = Date.now() - callStartedAt;
-      void (async () => {
-        try {
-          const m = await findModel(videoModel);
-          const estCost = m ? estimateCostUsd(m, { duration_seconds: dur }) : estimateVideoCostUsd(dur);
-          recordUsage(videoModel, 0, 0, estCost, latencyMs);
-        } catch { /* ignore stats errors */ }
-      })();
+      try { recordUsage(videoModel, 0, 0, recCostUsd, latencyMs); } catch { /* ignore stats errors */ }
 
       let contentSummary = '';
       if (contentId && deps.library) {
         const rec = deps.library.addAsset(contentId, {
           kind: 'video',
           source: videoModel,
-          costUsd: estimateVideoCostUsd(dur),
+          costUsd: recCostUsd,
           data: outPath,
         });
         if (rec.ok) {
@@ -377,7 +394,7 @@ function buildExecute(deps: VideoGenDeps) {
           const c = deps.library.get(contentId);
           contentSummary =
             `\n\n## Content updated\n` +
-            `- Attached to \`${contentId}\` at est. $${estimateVideoCostUsd(dur).toFixed(2)}\n` +
+            `- Attached to \`${contentId}\` at est. $${recCostUsd.toFixed(2)}\n` +
             (c
               ? `- Spent: $${c.spentUsd.toFixed(2)} / $${c.budgetUsd.toFixed(2)} cap ` +
                 `(remaining $${(c.budgetUsd - c.spentUsd).toFixed(2)})`

@@ -21,7 +21,7 @@ import type { ContentLibrary } from '../content/library.js';
 import { checkImageBudget, recordImageAsset } from '../content/record-image.js';
 import { estimateImageCostUsd } from '../content/image-pricing.js';
 import { recordUsage } from '../stats/tracker.js';
-import { findModel, estimateCostUsd, type GatewayModel } from '../gateway-models.js';
+import { findModel, estimateCostUsd, GATEWAY_MARGIN, type GatewayModel } from '../gateway-models.js';
 import { logger } from '../logger.js';
 
 interface ImageGenInput {
@@ -126,7 +126,11 @@ export const REFERENCE_IMAGE_MAX_BYTES = 4_000_000;
  *   - the static table is SIZE-AWARE (e.g. gpt-image-1 is $0.02 at 1024x1024 but
  *     $0.04 at 1536x1024) but only covers a handful of models.
  * Take the HIGHER of the two so none of the three consumers ever undercounts the
- * real charge for a large, non-1024 size. Exported for regression tests.
+ * real charge for a large, non-1024 size. The static figures are base prices with
+ * NO gateway margin, whereas estimateCostUsd already applies GATEWAY_MARGIN — so
+ * we margin-adjust the static operand before the Math.max, keeping both on the
+ * realized-charge basis (otherwise the size-aware path would undercount by ~5%).
+ * Exported for regression tests.
  */
 export function resolveImageUnitCost(
   catalogModel: GatewayModel | null,
@@ -134,7 +138,7 @@ export function resolveImageUnitCost(
   size: string,
 ): number {
   const catalogUsd = catalogModel ? estimateCostUsd(catalogModel, { quantity: 1 }) : 0;
-  const staticUsd = estimateImageCostUsd(model, size, 1);
+  const staticUsd = +(estimateImageCostUsd(model, size, 1) * GATEWAY_MARGIN).toFixed(6);
   return Math.max(catalogUsd, staticUsd);
 }
 

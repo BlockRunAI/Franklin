@@ -30,6 +30,7 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
+import { findModel, estimateCostUsd, type GatewayModel } from '../gateway-models.js';
 
 interface MusicGenInput {
   prompt: string;
@@ -47,7 +48,22 @@ export interface MusicGenDeps {
 }
 
 const DEFAULT_MODEL = 'minimax/music-2.5+';
+// Flat per-track price for the default model — already margin-inclusive
+// ($0.15/track × 1.05 gateway margin). Fallback when the catalog is unavailable.
 const PRICE_USD = 0.1575;
+
+/**
+ * Resolve the per-track USD cost for the budget check + asset record. The `model`
+ * param is caller-selectable, so a pricier non-default music model would be
+ * charged its real price by the gateway but counted at the flat default
+ * otherwise — the same undercount class the ImageGen/VideoGen fixes close. Take
+ * the higher of the live catalog price (already margin-inclusive via
+ * estimateCostUsd) and the flat PRICE_USD. Exported for tests.
+ */
+export function resolveMusicUnitCost(catalogModel: GatewayModel | null): number {
+  const catalogUsd = catalogModel ? estimateCostUsd(catalogModel, {}) : 0;
+  return Math.max(catalogUsd, PRICE_USD);
+}
 // MiniMax generation is 1-3 minutes + small buffer for payment + download.
 const GEN_TIMEOUT_MS = 240_000;
 const DOWNLOAD_TIMEOUT_MS = 60_000;
@@ -70,17 +86,26 @@ function buildExecute(deps: MusicGenDeps) {
 
     const musicModel = model || DEFAULT_MODEL;
 
+    // Resolve the per-track cost ONCE (catalog price if available, else the flat
+    // default) — reused by the budget check and the asset record so a pricier
+    // non-default model can't undercount the content budget. Best-effort lookup.
+    let musicCatalogModel: GatewayModel | null = null;
+    try {
+      musicCatalogModel = await findModel(musicModel);
+    } catch { /* catalog unreachable — resolveMusicUnitCost falls back to PRICE_USD */ }
+    const trackCostUsd = resolveMusicUnitCost(musicCatalogModel);
+
     if (contentId && deps.library) {
       const content = deps.library.get(contentId);
       if (!content) {
         return { output: `Content ${contentId} not found. No USDC was spent.` };
       }
-      if (content.spentUsd + PRICE_USD > content.budgetUsd + 1e-9) {
+      if (content.spentUsd + trackCostUsd > content.budgetUsd + 1e-9) {
         return {
           output:
             `## Music generation skipped\n` +
             `- Would exceed budget: spent $${content.spentUsd.toFixed(2)} + fixed ` +
-            `$${PRICE_USD.toFixed(2)} > cap $${content.budgetUsd.toFixed(2)}\n\n` +
+            `$${trackCostUsd.toFixed(2)} > cap $${content.budgetUsd.toFixed(2)}\n\n` +
             `No USDC was spent.`,
         };
       }
@@ -176,7 +201,7 @@ function buildExecute(deps: MusicGenDeps) {
         const rec = deps.library.addAsset(contentId, {
           kind: 'audio',
           source: musicModel,
-          costUsd: PRICE_USD,
+          costUsd: trackCostUsd,
           data: outPath,
         });
         if (rec.ok) {
@@ -184,7 +209,7 @@ function buildExecute(deps: MusicGenDeps) {
           const c = deps.library.get(contentId);
           contentSummary =
             `\n\n## Content updated\n` +
-            `- Attached to \`${contentId}\` at est. $${PRICE_USD.toFixed(2)}\n` +
+            `- Attached to \`${contentId}\` at est. $${trackCostUsd.toFixed(2)}\n` +
             (c
               ? `- Spent: $${c.spentUsd.toFixed(2)} / $${c.budgetUsd.toFixed(2)} cap ` +
                 `(remaining $${(c.budgetUsd - c.spentUsd).toFixed(2)})`

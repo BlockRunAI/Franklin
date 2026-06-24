@@ -3098,9 +3098,9 @@ test('paid media and Modal tools pass measured latency to recordUsage', async ()
     'videogen must capture the paid-call start time');
   assert.match(videogen, /latencyMs = Date\.now\(\) - callStartedAt/,
     'videogen must compute latency from the paid-call start time');
-  assert.match(videogen, /recordUsage\(videoModel, 0, 0, estCost, latencyMs\)/,
+  assert.match(videogen, /recordUsage\(videoModel, 0, 0, recCostUsd, latencyMs\)/,
     'videogen recordUsage must receive latencyMs');
-  assert.doesNotMatch(videogen, /recordUsage\(videoModel, 0, 0, estCost, 0\)/,
+  assert.doesNotMatch(videogen, /recordUsage\(videoModel, 0, 0, recCostUsd, 0\)/,
     'videogen must not hardcode zero latency');
 
   const modal = readDist('modal.js');

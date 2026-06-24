@@ -181,9 +181,13 @@ interface ExaAnswerWire {
  * charge settled, so a paid-but-empty answer still counts against spend.
  */
 export function readExaAnswer(raw: unknown, paid: boolean): { text: string | null; costUsd: number } {
-  const body = (raw ?? {}) as ExaAnswerWire;
-  const b = body.data ?? body;
-  const text = (b.answer || '').slice(0, 600).trim() || null;
+  // Defensive against a drifted/malformed wire shape: a non-object body or a
+  // non-string `answer` must degrade to null text (NOT throw), otherwise the
+  // throw is swallowed by exaAnswerTry's catch and a settled paid call is
+  // mis-booked as $0 — the exact under-report this function exists to prevent.
+  const body = (raw && typeof raw === 'object' ? raw : {}) as ExaAnswerWire;
+  const b = (body.data && typeof body.data === 'object' ? body.data : body);
+  const text = (typeof b.answer === 'string' ? b.answer : '').slice(0, 600).trim() || null;
   const reported = typeof b.costDollars?.total === 'number' ? b.costDollars.total : undefined;
   const costUsd = reported ?? (paid ? EXA_ANSWER_EST_USD : 0);
   return { text, costUsd };

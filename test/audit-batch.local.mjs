@@ -114,9 +114,10 @@ test('resolveImageUnitCost prefers the size-aware price over a size-blind catalo
   const catalog = { id: 'openai/gpt-image-1', billing_mode: 'per_image', pricing: { per_image: 0.02 } };
   // Default 1024 size: catalog (with margin) wins.
   assert.equal(resolveImageUnitCost(catalog, 'openai/gpt-image-1', '1024x1024'), 0.021);
-  // Large size really costs $0.04 — the size-blind catalog $0.021 must NOT win.
-  assert.equal(resolveImageUnitCost(catalog, 'openai/gpt-image-1', '1536x1024'), 0.04,
-    'large-tier charge must not be undercounted to the 1024 catalog price');
+  // Large size really costs $0.04 base → $0.042 with the 5% gateway margin; the
+  // size-blind catalog $0.021 must NOT win, and the static operand must carry margin.
+  assert.equal(resolveImageUnitCost(catalog, 'openai/gpt-image-1', '1536x1024'), 0.042,
+    'large-tier charge must not be undercounted to the 1024 catalog price (margin included)');
 });
 
 test('resolveImageUnitCost keeps the catalog price for a model absent from the static table', async () => {
@@ -130,5 +131,26 @@ test('resolveImageUnitCost keeps the catalog price for a model absent from the s
 test('resolveImageUnitCost falls back to the size-aware static estimate when the catalog is unavailable', async () => {
   const { resolveImageUnitCost } = await import('../dist/tools/imagegen.js');
   // catalogModel null simulates a cold-cache catalog fetch failure.
-  assert.equal(resolveImageUnitCost(null, 'openai/gpt-image-1', '1536x1024'), 0.04);
+  assert.equal(resolveImageUnitCost(null, 'openai/gpt-image-1', '1536x1024'), 0.042);
+});
+
+// ── video / music cost resolution: same unify-and-never-undercount contract ──
+test('resolveVideoUnitCost prefers the per-second catalog price over the flat $0.05/s fallback', async () => {
+  const { resolveVideoUnitCost } = await import('../dist/tools/videogen.js');
+  // Seedance: real $0.15/s. An 8s clip really costs 8×0.15×1.05 = $1.26, NOT 8×0.05.
+  const seedance = { id: 'token360/seedance-2.0-fast', billing_mode: 'per_second', pricing: { per_second: 0.15 } };
+  assert.equal(resolveVideoUnitCost(seedance, 8), 1.26,
+    'catalog per-second price must win — flat $0.40 would ~3x-undercount the budget');
+  // Cold catalog (null): degrade to the flat estimate, margin-included.
+  assert.equal(resolveVideoUnitCost(null, 8), +(8 * 0.05 * 1.05).toFixed(6));
+});
+
+test('resolveMusicUnitCost prefers the per-track catalog price over the flat PRICE_USD fallback', async () => {
+  const { resolveMusicUnitCost } = await import('../dist/tools/musicgen.js');
+  // A pricier non-default music model: real $0.30/track → $0.315 with margin.
+  const pricey = { id: 'some/pricey-music', billing_mode: 'per_track', pricing: { per_track: 0.30 } };
+  assert.equal(resolveMusicUnitCost(pricey), 0.315,
+    'catalog per-track price must win over the flat default-model PRICE_USD');
+  // Default model / cold catalog: the flat PRICE_USD (already margin-inclusive) holds.
+  assert.equal(resolveMusicUnitCost(null), 0.1575);
 });
