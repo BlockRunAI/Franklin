@@ -15,6 +15,7 @@
 
 import { API_URLS, loadChain, type Chain } from '../config.js';
 import { postWithPayment } from '../payments/post-with-payment.js';
+import { recordUsage } from '../stats/tracker.js';
 import { writeCache, type PhoneNumberRecord } from './cache.js';
 
 function phoneEndpoint(chain: Chain, path: string): string {
@@ -36,6 +37,7 @@ export interface ListNumbersResult {
  */
 export async function listNumbers(opts: { walletAddress: string }): Promise<ListNumbersResult> {
   const chain = loadChain();
+  const startedAt = Date.now();
   const result = await postWithPayment(
     phoneEndpoint(chain, 'numbers/list'),
     {},
@@ -53,6 +55,11 @@ export async function listNumbers(opts: { walletAddress: string }): Promise<List
 
   writeCache({ wallet: opts.walletAddress, chain, numbers });
 
+  // Record the $0.001 x402 spend so panel/background list calls land in
+  // franklin stats — same label the agent's ListPhoneNumbers tool uses so the
+  // two aggregate (panel-initiated spend was previously dropped entirely).
+  try { recordUsage('ListPhoneNumbers', 0, 0, 0.001, Date.now() - startedAt); } catch { /* best-effort */ }
+
   return { numbers, count: numbers.length, paid: 0.001 };
 }
 
@@ -64,6 +71,7 @@ export interface RenewResult {
 
 export async function renewNumber(phoneNumber: string): Promise<RenewResult> {
   const chain = loadChain();
+  const startedAt = Date.now();
   const result = await postWithPayment(
     phoneEndpoint(chain, 'numbers/renew'),
     { phoneNumber },
@@ -73,6 +81,8 @@ export async function renewNumber(phoneNumber: string): Promise<RenewResult> {
     const message = typeof result.body.error === 'string' ? result.body.error : `gateway ${result.status}`;
     throw new Error(message);
   }
+  // Record the $5 x402 spend (parity with the agent's RenewPhoneNumber tool).
+  try { recordUsage('RenewPhoneNumber', 0, 0, 5.0, Date.now() - startedAt); } catch { /* best-effort */ }
   return {
     phone_number: String(result.body.phone_number ?? phoneNumber),
     expires_at: String(result.body.expires_at ?? ''),
@@ -92,6 +102,7 @@ export async function buyNumber(opts: {
   areaCode?: string;
 }): Promise<BuyResult> {
   const chain = loadChain();
+  const startedAt = Date.now();
   const body: Record<string, unknown> = { country: opts.country || 'US' };
   if (opts.areaCode) body.areaCode = opts.areaCode;
   const result = await postWithPayment(
@@ -103,6 +114,9 @@ export async function buyNumber(opts: {
     const message = typeof result.body.error === 'string' ? result.body.error : `gateway ${result.status}`;
     throw new Error(message);
   }
+  // Record the $5 x402 spend (parity with the agent's BuyPhoneNumber tool) so a
+  // panel-initiated buy is no longer invisible to franklin stats / the ledger.
+  try { recordUsage('BuyPhoneNumber', 0, 0, 5.0, Date.now() - startedAt); } catch { /* best-effort */ }
   return {
     phone_number: String(result.body.phone_number ?? ''),
     expires_at: String(result.body.expires_at ?? ''),

@@ -30,6 +30,7 @@ import {
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
+import { recordUsage } from '../stats/tracker.js';
 
 const TIMEOUT_MS = 30_000;
 
@@ -89,6 +90,8 @@ async function postRpcWithPayment(
   const onAbort = () => controller.abort();
   ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
 
+  const startedAt = Date.now();
+  let paidUsd = 0;
   try {
     let response = await fetch(endpoint, {
       method: 'POST',
@@ -98,14 +101,15 @@ async function postRpcWithPayment(
     });
 
     if (response.status === 402) {
-      const paymentHeaders = await signPayment(response, chain, endpoint);
-      if (!paymentHeaders) {
+      const signed = await signPayment(response, chain, endpoint);
+      if (!signed) {
         throw new Error('Payment signing failed — check wallet balance');
       }
+      paidUsd = signed.amountUsd;
       response = await fetch(endpoint, {
         method: 'POST',
         signal: controller.signal,
-        headers: { ...headers, ...paymentHeaders },
+        headers: { ...headers, ...signed.headers },
         body: bodyStr,
       });
     }
@@ -115,6 +119,9 @@ async function postRpcWithPayment(
       throw new Error(`RPC ${network} failed (${response.status}): ${errText.slice(0, 200)}`);
     }
 
+    // Record the settled x402 spend so RPC calls show up in franklin stats /
+    // audit AND count against the --max-spend ceiling (parity with surf.ts).
+    try { recordUsage(`MultiChainRPC:${network}`, 0, 0, paidUsd, Date.now() - startedAt); } catch { /* best-effort */ }
     return {
       body: await response.json(),
       network: response.headers.get('x-network') || network,
@@ -131,7 +138,7 @@ async function signPayment(
   response: Response,
   chain: 'base' | 'solana',
   endpoint: string,
-): Promise<Record<string, string> | null> {
+): Promise<{ headers: Record<string, string>; amountUsd: number } | null> {
   try {
     const paymentHeader = await extractPaymentReq(response);
     if (!paymentHeader) return null;
@@ -155,7 +162,7 @@ async function signPayment(
           extra: details.extra as Record<string, unknown> | undefined,
         },
       );
-      return { 'PAYMENT-SIGNATURE': payload };
+      return { headers: { 'PAYMENT-SIGNATURE': payload }, amountUsd: Number(details.amount) / 1_000_000 };
     }
     const wallet = await getOrCreateWallet();
     const paymentRequired = parsePaymentRequired(paymentHeader);
@@ -173,7 +180,7 @@ async function signPayment(
         extra: details.extra as Record<string, unknown> | undefined,
       },
     );
-    return { 'PAYMENT-SIGNATURE': payload };
+    return { headers: { 'PAYMENT-SIGNATURE': payload }, amountUsd: Number(details.amount) / 1_000_000 };
   } catch (err) {
     logger.warn(`[franklin] RPC payment error: ${(err as Error).message}`);
     return null;

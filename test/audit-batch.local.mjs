@@ -181,3 +181,20 @@ test('blockrun spend diff counts a fresh paid fetch but $0 on a cache hit (no ov
   assert.equal(Math.max(0, blockrunSpendUsdToday() - before), 0, 'cache hit books $0 — no phantom spend');
   assert.equal(paidCalls, 1, 'the paid fetch ran exactly once');
 });
+
+// ── --max-spend ceiling basis: getLiveSpendUsd counts paid-tool USDC ──
+// The agent loop diffs getLiveSpendUsd() around tool execution to fold paid-tool
+// spend into the session cost ceiling. recordUsage feeds it BEFORE the test/audit
+// gates, so the ceiling sees real spend even when history persistence is off.
+test('getLiveSpendUsd counts paid-tool spend even when history persistence is suppressed', async () => {
+  const { recordUsage, getLiveSpendUsd, resetLiveSpend } = await import('../dist/stats/tracker.js');
+  resetLiveSpend();
+  const before = getLiveSpendUsd();
+  // FRANKLIN_NO_AUDIT=1 (set at file top) suppresses the history rows below, but
+  // the --max-spend ceiling must still see the real USDC these paid tools spent.
+  recordUsage('DeFiLlama:/v1/defi/protocols', 0, 0, 0.005, 12);
+  recordUsage('MultiChainRPC:base', 0, 0, 0.002, 8);
+  recordUsage('free/model', 0, 0, 0, 5); // a free call adds nothing
+  assert.equal(+(getLiveSpendUsd() - before).toFixed(6), 0.007,
+    'live spend = $0.005 + $0.002; the free call is ignored');
+});

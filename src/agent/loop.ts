@@ -20,7 +20,7 @@ import { ToolCallRepair } from './repair/index.js';
 import { resetToolSessionState } from '../tools/index.js';
 import { CORE_TOOL_NAMES, dynamicToolsEnabled } from '../tools/tool-categories.js';
 import { createActivateToolCapability } from '../tools/activate.js';
-import { recordUsage } from '../stats/tracker.js';
+import { recordUsage, getLiveSpendUsd } from '../stats/tracker.js';
 import { loadConfig } from '../commands/config.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
@@ -1453,6 +1453,14 @@ export async function interactiveSession(
       // "this model is consistently slow" or "fallback was faster" until
       // this was fixed.
       const llmCallStartedAt = Date.now();
+      // Snapshot live spend BEFORE the stream starts. Concurrent paid tools
+      // (DeFiLlama/RPC/Prediction/...) are kicked off mid-stream via
+      // onToolReceived and can settle their x402 charge before collectResults —
+      // a snapshot taken AFTER the stream would miss them and let them slip the
+      // --max-spend cap. We subtract the LLM's own callCost from the post-tool
+      // delta below (it is added to sessionCostUsd separately), leaving a clean
+      // paid-tool-only total that captures concurrent and sequential tools alike.
+      const turnSpendBefore = getLiveSpendUsd();
       try {
         const result = await client.complete(
           {
@@ -1599,6 +1607,20 @@ export async function interactiveSession(
           }
         }
       } catch (err) {
+        // ── Count a paid-but-dropped LLM charge before any retry resets it ──
+        // recordSettledPayment debits the wallet BEFORE the SSE stream is parsed;
+        // if the stream then fails (idle timeout, mid-stream error, or Esc), that
+        // USDC is real but the success-path accounting (which reads
+        // getLastPaidUsd) never ran, and the next attempt resets the accumulator.
+        // Fold it into the session total NOW so --max-spend and the running cost
+        // stay honest. The on-chain charge is already in cost_log via the SDK;
+        // this fixes the in-session view / ceiling, not the wire ledger.
+        const droppedPaidUsd = client.getLastPaidUsd();
+        if (droppedPaidUsd > 0) {
+          sessionCostUsd += droppedPaidUsd;
+          turnCostUsd += droppedPaidUsd;
+        }
+
         // ── User abort (Esc key) ──
         if ((err as Error).name === 'AbortError' || abort.signal.aborted) {
           // Save any partial response that was streamed before abort
@@ -1611,6 +1633,21 @@ export async function interactiveSession(
           persistSessionMeta();
           onEvent({ kind: 'turn_done', reason: 'aborted' });
           break;
+        }
+
+        // If the dropped charge pushed us over the hard cap, stop rather than
+        // retry (a retry would spend more). Abort already returned above.
+        const capAfterDrop = (config as { maxSpendUsd?: number }).maxSpendUsd;
+        if (droppedPaidUsd > 0 && typeof capAfterDrop === 'number' && Number.isFinite(capAfterDrop) &&
+            capAfterDrop > 0 && sessionCostUsd >= capAfterDrop) {
+          onEvent({
+            kind: 'text_delta',
+            text: `\n\n_Max-spend reached: $${sessionCostUsd.toFixed(4)} ≥ cap $${capAfterDrop.toFixed(2)} ` +
+              `(incl. a charged-but-failed call). Stopping session._\n`,
+          });
+          persistSessionMeta();
+          onEvent({ kind: 'turn_done', reason: 'budget' });
+          return history;
         }
 
         const errMsg = (err as Error).message || '';
@@ -2285,6 +2322,32 @@ export async function interactiveSession(
 
       for (const [inv, result] of results) {
         onEvent({ kind: 'capability_done', id: inv.id, result });
+      }
+
+      // ── Fold paid-TOOL spend into the session cost ceiling ──
+      // sessionCostUsd above only tracks LLM token cost; paid tools (ImageGen,
+      // VideoGen, MusicGen, Exa, Surf, RealFace, Voice, Phone, Modal, DeFiLlama,
+      // RPC, Prediction) settle USDC through their own x402 paths and report it
+      // via recordUsage. Diff the live-spend accumulator across the WHOLE turn
+      // (snapshot taken before the stream, so mid-stream concurrent tools are
+      // captured too) and subtract the LLM's own callCost — which recordUsage at
+      // line ~1948 already added to liveSpendUsd and which sessionCostUsd counts
+      // separately — leaving paid-tool-only spend so --max-spend bounds total USDC.
+      const toolSpendUsd = Math.max(0, getLiveSpendUsd() - turnSpendBefore - callCost);
+      if (toolSpendUsd > 0) {
+        sessionCostUsd += toolSpendUsd;
+        turnCostUsd += toolSpendUsd;
+        const cap = (config as { maxSpendUsd?: number }).maxSpendUsd;
+        if (typeof cap === 'number' && Number.isFinite(cap) && cap > 0 && sessionCostUsd >= cap) {
+          onEvent({
+            kind: 'text_delta',
+            text: `\n\n_Max-spend reached: $${sessionCostUsd.toFixed(4)} ≥ cap $${cap.toFixed(2)} (incl. paid-tool spend). ` +
+              `Stopping session — further calls would exceed the budget._\n`,
+          });
+          persistSessionMeta();
+          onEvent({ kind: 'turn_done', reason: 'budget' });
+          return history;
+        }
       }
 
       // ── Tool call guardrails ──

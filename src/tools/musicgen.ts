@@ -31,6 +31,7 @@ import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
 import { findModel, estimateCostUsd, type GatewayModel } from '../gateway-models.js';
+import { recordUsage } from '../stats/tracker.js';
 
 interface MusicGenInput {
   prompt: string;
@@ -137,6 +138,7 @@ function buildExecute(deps: MusicGenDeps) {
     const onAbort = () => controller.abort();
     ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
 
+    const callStartedAt = Date.now();
     try {
       let response = await fetch(endpoint, {
         method: 'POST',
@@ -173,6 +175,11 @@ function buildExecute(deps: MusicGenDeps) {
       if (!track?.url) {
         return { output: 'No track URL returned from API', isError: true };
       }
+
+      // Record the settled x402 spend so MusicGen lands in franklin stats /
+      // insights AND counts against the --max-spend ceiling — image/video gen
+      // already do this; music was the lone media tool that bypassed recordUsage.
+      try { recordUsage(musicModel, 0, 0, trackCostUsd, Date.now() - callStartedAt); } catch { /* best-effort */ }
 
       // CDN URLs expire in ~24h — download NOW.
       const dlCtrl = new AbortController();

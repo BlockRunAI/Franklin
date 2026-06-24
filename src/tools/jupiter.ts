@@ -124,7 +124,7 @@ function symbolFor(mint: string): string {
   return mint.slice(0, 4) + '…';
 }
 
-function toAtomicUnits(amount: number, decimals: number): string {
+export function toAtomicUnits(amount: number, decimals: number): string {
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error('amount must be a positive finite number');
   }
@@ -133,21 +133,33 @@ function toAtomicUnits(amount: number, decimals: number): string {
     throw new Error('decimals must be a nonnegative safe integer');
   }
 
-  const amountText = amount.toString().includes('e')
-    ? amount.toFixed(decimals + 1)
-    : amount.toString();
+  // Parse the decimal string directly — no `float * scale`, which loses
+  // precision on high-decimal tokens (the original bug #89 fixed). Excess
+  // precision beyond the token's `decimals` is FLOORED to the atomic unit
+  // (slice keeps the leading `decimals` digits), so an agent-computed amount —
+  // ⅓ of a balance, or float noise like 0.1 + 0.2 = 0.30000000000000004 — still
+  // swaps its representable part instead of being rejected. The original
+  // Math.round approach instead rounded a sub-unit amount UP to one atomic unit.
+  // Plain-decimal string (never exponential form, so BigInt(wholePart) can't
+  // throw on large amounts like 1e21). toLocaleString keeps the exact value to
+  // 20 fraction digits — more than any token's decimals — and the slice() below
+  // FLOORS by truncation, so sub-precision dust is never rounded UP to one unit
+  // (unlike the old toFixed path, which rounded 9.999e-10 up to 1).
+  const amountText = amount.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 20 });
   const [wholePart, fractionalPart = ''] = amountText.split('.');
   const normalizedFraction = fractionalPart.padEnd(decimals, '0').slice(0, decimals);
-  const roundedAwayFraction = fractionalPart.slice(decimals);
-  const hasRoundedAwayValue = /[1-9]/.test(roundedAwayFraction);
 
   const whole = BigInt(wholePart);
   const fraction = normalizedFraction === '' ? 0n : BigInt(normalizedFraction);
   const scale = 10n ** BigInt(decimals);
   const atomic = whole * scale + fraction;
 
-  if (atomic === 0n || hasRoundedAwayValue) {
-    throw new Error(`amount is below the token precision (${decimals} decimals)`);
+  // Reject only TRUE dust: an amount so small it floors to zero atomic units,
+  // which Jupiter can't swap. (The old code rounded this UP to 1 unit instead.)
+  if (atomic === 0n) {
+    throw new Error(
+      `amount ${amount} is below the minimum atomic unit for a ${decimals}-decimal token — too small to swap`,
+    );
   }
 
   return atomic.toString();

@@ -56,9 +56,12 @@ export class RiskEngine {
       };
     }
 
-    // Projected position value after fill.
+    // Projected position value after fill. Value the existing holding at its
+    // cost basis (avgPriceUsd), consistent with the total-exposure loop below —
+    // valuing it at the incoming order price let a buy slip the cap after a
+    // price drop (and over-block after a rise).
     const existing = portfolio.getPosition(order.symbol);
-    const projectedPositionUsd = (existing ? existing.qty * order.priceUsd : 0) + notional;
+    const projectedPositionUsd = (existing ? existing.qty * existing.avgPriceUsd : 0) + notional;
     if (projectedPositionUsd > this.config.maxPositionUsd) {
       return {
         allowed: false,

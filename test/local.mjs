@@ -4012,6 +4012,38 @@ test('RiskEngine: sell is allowed even when caps are exceeded, as long as positi
   assert.equal(decision.allowed, true, 'exits should not be blocked by exposure caps');
 });
 
+test('RiskEngine: per-position cap values the existing holding at cost basis, not the order price', async () => {
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const pf = new Portfolio({ startingCashUsd: 10_000 });
+  pf.applyFill({ symbol: 'BTC', side: 'buy', qty: 0.005, priceUsd: 70_000 }); // cost basis $350
+  const risk = new RiskEngine({ maxPositionUsd: 400, maxTotalExposureUsd: 100_000 });
+  // Price dropped to $30k. Buying 0.005 more (notional $150) → true cost-basis
+  // exposure $350 + $150 = $500 > $400 cap. The old code valued the holding at
+  // the $30k order price ($150 + $150 = $300) and wrongly ALLOWED the buy.
+  const decision = risk.check(pf, { symbol: 'BTC', side: 'buy', qty: 0.005, priceUsd: 30_000 });
+  assert.equal(decision.allowed, false, 'cost-basis exposure ($500) must exceed the $400 cap');
+  assert.match(decision.reason ?? '', /position cap/i);
+});
+
+test('TradingEngine.closePosition clamps an over-sized close to the held qty (flattens, no throw)', async () => {
+  const { TradingEngine } = await import('../dist/trading/engine.js');
+  const { Portfolio } = await import('../dist/trading/portfolio.js');
+  const { RiskEngine } = await import('../dist/trading/risk.js');
+  const { MockExchange } = await import('../dist/trading/mock-exchange.js');
+  const portfolio = new Portfolio({ startingCashUsd: 10_000 });
+  const risk = new RiskEngine({ maxPositionUsd: 100_000, maxTotalExposureUsd: 100_000 });
+  const exchange = new MockExchange({ prices: { BTC: 70_000 }, feeBps: 0 });
+  const engine = new TradingEngine({ portfolio, risk, exchange });
+  portfolio.applyFill({ symbol: 'BTC', side: 'buy', qty: 0.01, priceUsd: 70_000 });
+  // Ask to close MORE than held (0.05 vs 0.01) — should flatten to 0.01, not
+  // throw 'only 0.01 held' (which the tool layer surfaced as a generic error).
+  const outcome = await engine.closePosition({ symbol: 'BTC', qty: 0.05 });
+  assert.equal(outcome.status, 'filled', `expected filled, got ${outcome.status}: ${outcome.reason ?? ''}`);
+  assert.equal(outcome.fill.qty, 0.01, 'over-sized close flattens to the held qty');
+  assert.equal(portfolio.getPosition('BTC'), undefined, 'position fully closed');
+});
+
 test('createTradingCapabilities: TradingHistory reports last N trades and windowed realized P&L', async () => {
   const { createTradingCapabilities } = await import('../dist/tools/trading-execute.js');
   const { TradingEngine } = await import('../dist/trading/engine.js');
@@ -9939,6 +9971,30 @@ test('VoiceCall: a 200 with no call_id surfaces isError (no silent "initiated" a
     assert.equal(res.isError, true, 'a 200 with no call_id must be an error, not a "initiated" success');
     assert.match(res.output, /no call_id/, 'output should explain the missing call_id');
   } finally { globalThis.fetch = original; }
+});
+
+// jupiter.ts toAtomicUnits — PR #89 (reject sub-precision) + follow-up (floor
+// excess precision instead of rejecting it; reject only true dust).
+test('toAtomicUnits floors excess precision and rejects only true dust', async () => {
+  const { toAtomicUnits } = await import('../dist/tools/jupiter.js');
+  // Clean amounts at/under token precision convert exactly.
+  assert.equal(toAtomicUnits(1.5, 6), '1500000');
+  assert.equal(toAtomicUnits(2, 9), '2000000000');
+  // Excess precision is FLOORED to the atomic unit, not rejected (the follow-up).
+  assert.equal(toAtomicUnits(33.333333333333, 9), '33333333333', 'computed ⅓-style amount floors, not rejects');
+  assert.equal(toAtomicUnits(0.1 + 0.2, 9), '300000000', 'float noise 0.30000000000000004 floors to 0.3');
+  // True dust (floors to 0 atomic units) is rejected — the round-UP bug #89 fixed.
+  assert.throws(() => toAtomicUnits(0.0000005, 6), /too small to swap/, '0.0000005 < 1e-6 unit → reject, not round up to 1');
+  assert.throws(() => toAtomicUnits(1e-12, 6), /too small to swap/);
+  // Exponential-form boundary: must FLOOR, not round up (toFixed used to round
+  // 9.999e-10 up to 1 atomic unit — exactly the dust round-up bug #89 killed).
+  assert.throws(() => toAtomicUnits(9.999e-10, 9), /too small to swap/, '9.999e-10 floors to 0 → reject, not round to 1');
+  assert.equal(toAtomicUnits(1.9999e-9, 9), '1', '1.9999e-9 floors to 1 unit, not rounds to 2');
+  // Large amount in exponential form must not throw a raw BigInt error.
+  assert.equal(toAtomicUnits(1e21, 6), '1' + '0'.repeat(27), '1e21 tokens (6 dec) = 1e27 atomic units, no throw');
+  // Input validation.
+  assert.throws(() => toAtomicUnits(-1, 6), /positive finite/);
+  assert.throws(() => toAtomicUnits(Number.NaN, 6), /positive finite/);
 });
 
 test('CallLog: append + read round-trip preserves all fields', async () => {

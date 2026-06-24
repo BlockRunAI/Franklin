@@ -1,5 +1,19 @@
 # Changelog
 
+## Franklin Agent 3.29.8 — wallet spend-ceiling + paid-tool accounting (round-4 money audit)
+
+A fourth review round swept the paid-tool surface beyond the changed files. Headline: the `--max-spend` hard cap and several paid tools were blind to real USDC spend. All adversarially verified.
+
+- **`--max-spend` now bounds TOTAL USDC, not just LLM tokens.** The session cap only counted LLM token cost; every paid tool (ImageGen/VideoGen/MusicGen, Exa, Surf, RealFace, Voice, Phone, Modal, DeFiLlama, RPC, Prediction) settled USDC through its own x402 path and counted **$0** against the cap — so `franklin -p "generate 30 images" --max-spend 0.50` could spend multiples of the cap with the guard never firing. A new live-spend accumulator (`getLiveSpendUsd`) is diffed across the whole turn — snapshotted **before the stream** (so mid-stream concurrent paid tools like DeFiLlama/RPC are captured, not raced past) and netted against the LLM's own `callCost` — then folded into the session total, with the ceiling re-checked after every tool batch.
+- **Charged-but-failed LLM calls are now counted.** A paid LLM call whose stream then failed (idle timeout, mid-stream error, or Esc) debited USDC but was never folded into the session cost / cap — and the drift compounded across `--resume`. The loop's error path now captures `getLastPaidUsd()` before the next attempt resets it.
+- **Paid-but-invisible tools now record spend.** DeFiLlama (5 tools), MultiChainRPC, PredictionMarket (now persisted to stats, not just in-memory telemetry), MusicGen, and panel-initiated phone Buy/Renew/List all settled real USDC but never called `recordUsage` — so `franklin stats` under-reported and its reconciliation couldn't even detect the gap. All now record the settled amount (parity with `surf.ts`).
+- **$5 phone Buy/Renew now confirm the spend.** The two most expensive autonomous actions had no spend-confirm while a $0.05 Modal create did; both now gate on `onAskUser` (skipped under `FRANKLIN_MEDIA_AUTO_APPROVE_ALL`).
+- **VoiceStatus no longer floods stats.** Its internal poll loop recorded one telemetry row per 5s poll (up to 420/call), evicting real spend history (1000-row cap); it now records once per invocation.
+- **Trading guardrails.** The per-position risk cap now values the held position at cost basis (not the incoming order price), so a buy can't slip the cap after a price drop; an over-sized close now flattens to the held qty instead of throwing a confusing `only X held` error.
+- **Merged + refined PR #89** (thanks @samsamtrum): Jupiter swaps no longer round a sub-precision amount **up** to one atomic unit. Follow-up on top: floor excess precision to the atomic unit (so agent-computed amounts and float noise like `0.1 + 0.2` still swap) and reject only true dust, with a clearer message + unit test.
+
+New no-spend regression tests cover the live-spend ceiling basis, the risk cost-basis cap, the over-sized close clamp, and the Jupiter atomic-unit math. Verified: local suite 479/479.
+
 ## Franklin Agent 3.29.7 — finish the Exa wire-format fix (twin prefetch path) + budget-safety follow-ups
 
 A second multi-agent review of the 3.29.5/3.29.6 branch found that both the Exa wire-format fix and the image-budget fix each missed a path. This lands the adversarially-verified fixes:

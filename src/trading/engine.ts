@@ -77,7 +77,11 @@ export class TradingEngine {
     if (!existing) {
       return { status: 'noop', reason: `No open ${req.symbol} position` };
     }
-    const qty = req.qty ?? existing.qty;
+    // Clamp to the held size: an over-sized partial close just flattens the
+    // position rather than throwing 'only X held' out of applyFill (which the
+    // tool layer surfaced as a confusing generic error). You can never sell more
+    // than you hold, so flatten-on-over-size is the sensible interpretation.
+    const qty = Math.min(req.qty ?? existing.qty, existing.qty);
     const price = (await exchange.getPrice(req.symbol));
     if (price == null) {
       return { status: 'blocked', reason: `Exchange returned no price for ${req.symbol}` };
