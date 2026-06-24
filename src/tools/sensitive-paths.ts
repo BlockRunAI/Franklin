@@ -22,8 +22,17 @@ const WALLET_KEY_FILES = [
   path.join(BLOCKRUN_DIR, 'solana-wallet.json'),  // legacy { address, private_key }
 ];
 
+// macOS (APFS) and Windows are case-INSENSITIVE by default, and fs.realpathSync
+// does NOT canonicalize case — so `.SOLANA-SESSION` opens the real
+// `.solana-session` while an exact compare would miss it. Compare accordingly.
+const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
+
 function matchesKeyFile(p: string): boolean {
   const norm = p.endsWith(path.sep) ? p.slice(0, -1) : p;
+  if (CASE_INSENSITIVE_FS) {
+    const lower = norm.toLowerCase();
+    return WALLET_KEY_FILES.some((f) => f.toLowerCase() === lower);
+  }
   return WALLET_KEY_FILES.includes(norm);
 }
 

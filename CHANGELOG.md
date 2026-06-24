@@ -1,5 +1,18 @@
 # Changelog
 
+## Franklin Agent 3.29.10 — close the 3.29.9 guard bypasses (round-6: adversarial re-review)
+
+An adversarial bypass-hunt of the 3.29.9 security guards found **16 holes in the guards themselves** — the recurring root cause was matching shell text / exact strings instead of canonicalizing. All fixed.
+
+- **SSRF — redirect bypass (critical).** The guard checked only the *initial* host, but `fetch` follows redirects, so a public URL that 302-redirects to `169.254.169.254` (cloud metadata) or `127.0.0.1` (the proxy) sailed through. WebFetch + reference-image fetch now follow redirects **manually**, re-validating the host on **every hop** (`ssrfSafeFetch`). Also closed: IPv4-mapped IPv6 (`[::ffff:127.0.0.1]`), trailing-dot hosts (`localhost.`), and a false-positive that blocked public `fc*/fd*` hostnames (fda.gov, fcc.gov).
+- **Wallet-key file guard — case bypass.** `.SOLANA-SESSION` defeated the exact-match guard on macOS/Windows (case-insensitive FS, but `realpath` doesn't canonicalize case). Now compares case-insensitively on those platforms.
+- **bash-guard `gh api`** — `--method=POST`, `-XDELETE`, `-ftitle=v` (equals/glued forms) bypassed the space-requiring regex; now matched in every form.
+- **bash-guard wallet-key read** — `//`, `\.`, a relative path, and case variants defeated the path regex; now matches the key **basename** (case-insensitive), which those tricks can't evade.
+- **bash-guard** — `find -exec/-delete` (arbitrary exec/delete) and `tee` (arbitrary file write) were still auto-"safe"; both now prompt.
+- Minor: `byModel` array coercion, `clearStats` now removes the `.bak`/`.tmp` siblings, and `task cancel`'s runner-identity check matches the invariant `_task-runner` arg.
+
+New regression tests pin every one of the bypasses. Verified: local suite 489/489.
+
 ## Franklin Agent 3.29.9 — security hardening (round-5: correctness, security, data integrity)
 
 A fifth review round took a fresh, non-money angle and found 13 adversarially-verified issues — four HIGH security holes around the wallet. All fixed.

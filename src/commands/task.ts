@@ -27,12 +27,12 @@ function pidIsFranklinRunner(pid: number): boolean {
     const procCmdline = `/proc/${pid}/cmdline`;
     if (fs.existsSync(procCmdline)) {
       const raw = fs.readFileSync(procCmdline, 'utf-8').replace(/\0/g, ' ').trim();
-      return /franklin|runcode|node.*dist\/index/.test(raw);
+      return /_task-runner|franklin|runcode|node.*dist\/index/.test(raw);
     }
   } catch { /* fall through to ps */ }
   try {
     const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
-    return /franklin|runcode|node.*dist\/index/.test(cmd);
+    return /_task-runner|franklin|runcode|node.*dist\/index/.test(cmd);
   } catch {
     return true;
   }

@@ -124,7 +124,7 @@ function parseStatsFile(file: string): Stats | null {
     // field (`{...{history:[]}, ...{history:null}}` → `{history:null}`), so
     // every downstream `history.push` / `Object.values(byModel)` would throw.
     if (!Array.isArray(merged.history)) merged.history = [];
-    if (!merged.byModel || typeof merged.byModel !== 'object') merged.byModel = {};
+    if (!merged.byModel || typeof merged.byModel !== 'object' || Array.isArray(merged.byModel)) merged.byModel = {};
     const numKeys = ['totalRequests', 'totalCostUsd', 'totalInputTokens', 'totalOutputTokens', 'totalFallbacks'] as const;
     for (const k of numKeys) {
       if (!Number.isFinite(merged[k])) merged[k] = 0;
@@ -163,12 +163,14 @@ export function clearStats(): void {
   if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
   resolvedStatsFile = null;
   for (const statsFile of new Set([preferredStatsFile(), fallbackStatsFile()])) {
-    try {
-      if (fs.existsSync(statsFile)) {
-        fs.unlinkSync(statsFile);
+    // Remove the .bak/.tmp siblings too — else loadStats's new .bak fallback
+    // could resurrect the pre-reset stats from a stale snapshot.
+    for (const f of [statsFile, `${statsFile}.bak`, `${statsFile}.tmp`]) {
+      try {
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
     }
   }
   saveStats({ ...EMPTY_STATS, resetAt: Date.now() });

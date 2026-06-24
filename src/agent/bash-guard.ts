@@ -103,9 +103,10 @@ const SAFE_COMMANDS = new Set([
   'pwd', 'realpath', 'dirname', 'basename',
   // Text processing (read-only when not redirecting)
   'jq', 'yq', 'sort', 'uniq', 'cut', 'tr', 'diff', 'comm', 'less', 'more',
-  'wc', 'tee',
-  // NB: `xargs` is intentionally NOT here — it executes an arbitrary wrapped
-  // command (`... | xargs rm -f`), so it must never auto-approve as "safe".
+  'wc',
+  // NB: `xargs` and `tee` are intentionally NOT here — xargs executes an
+  // arbitrary wrapped command (`... | xargs rm -f`) and tee WRITES files
+  // (`echo evil | tee ~/.zshrc`), so neither may auto-approve as "safe".
 ]);
 
 const SAFE_GIT_SUBCOMMANDS = new Set([
@@ -159,8 +160,11 @@ export function classifyBashRisk(command: string): BashRiskResult {
 function isSegmentSafe(segment: string): boolean {
   // Never auto-approve a command that touches the wallet private key — a bare
   // `cat ~/.blockrun/.solana-session` would dump the key into model context with
-  // no prompt. Force a permission prompt (>= normal) for any key-file reference.
-  if (/\.blockrun[/\\](?:\.session|\.solana-session|\.solana-session-key2|solana-wallet\.json)\b/.test(segment)) {
+  // no prompt. Match the key BASENAME (not a `.blockrun/...` path prefix), which
+  // can't be evaded with `//`, `\.`, a relative path after `cd`, or a case
+  // variant on macOS/Windows. Case-insensitive; over-prompting on a same-named
+  // file elsewhere is acceptable (it prompts, never silently blocks).
+  if (/(?<![\w-])(?:\.solana-session-key2|\.solana-session|\.session|solana-wallet\.json)(?![\w-])/i.test(segment)) {
     return false;
   }
 
@@ -201,6 +205,13 @@ function isSegmentSafe(segment: string): boolean {
   // rtk (RTK wrapper — safe, it's a proxy)
   if (baseName === 'rtk') return true;
 
+  // `find` is read-only EXCEPT its action predicates, which execute arbitrary
+  // commands or delete files (`find / -name id_rsa -exec cat {} +`, `find . -delete`).
+  // Same arbitrary-exec hazard that excludes xargs — force a prompt.
+  if (baseName === 'find' && /(?:^|\s)-(?:exec|execdir|ok|okdir|delete)\b/.test(segment)) {
+    return false;
+  }
+
   // Known safe base command
   if (SAFE_COMMANDS.has(baseName)) {
     // sed -i is not read-only
@@ -220,10 +231,16 @@ function isSegmentSafe(segment: string): boolean {
     if (/^(pr|issue|repo|release|run)\s+(view|list|status|diff|checks|comments)/.test(ghAction)) return true;
     // `gh api` DEFAULTS to GET (read-only) but `-X/--method` and write-body
     // flags (-f/-F/--field/--input) make it a mutation (delete repo, merge PR,
-    // etc.). Only auto-approve a plain GET; anything else must prompt.
+    // etc.). Match the flag in EVERY form gh accepts — `-X POST`, `-XDELETE`,
+    // `--method=POST`, `-ftitle=v`, `-f k=v` — and auto-approve only when none
+    // is present (a plain GET). The space-only regex was bypassable with `=` /
+    // glued forms.
     if (subCmd === 'api') {
-      if (/(?:^|\s)(?:-X|--method)\s+(?!GET\b)\S+/i.test(segment)) return false;
-      if (/(?:^|\s)(?:-f|-F|--field|--raw-field|--input)\b/.test(segment)) return false;
+      if (/(?:^|\s)-X/.test(segment)) return false;                       // -X POST / -XPOST / -XDELETE
+      if (/(?:^|\s)--method\b/i.test(segment)) return false;             // --method POST / --method=POST
+      if (/(?:^|\s)-[fF][A-Za-z0-9_]*=/.test(segment)) return false;     // -ffield=val (glued)
+      if (/(?:^|\s)-[fF](?:\s|$)/.test(segment)) return false;          // -f / -F (spaced value)
+      if (/(?:^|\s)--(?:field|raw-field|input)\b/.test(segment)) return false;
       return true;
     }
     if (subCmd === 'auth' && words[argIdx + 1] === 'status') return true;

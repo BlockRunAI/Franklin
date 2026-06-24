@@ -5,7 +5,7 @@
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { USER_AGENT } from '../config.js';
 import { frameUntrusted } from './untrusted.js';
-import { isBlockedSsrfHost } from './ssrf.js';
+import { isBlockedSsrfHost, ssrfSafeFetch } from './ssrf.js';
 
 interface WebFetchInput {
   url: string;
@@ -152,13 +152,16 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
 
   try {
-    const response = await fetch(url, {
+    // ssrfSafeFetch follows redirects MANUALLY and re-checks the host on every
+    // hop — a plain redirect:'follow' would let a public URL 302 to a
+    // loopback/metadata address, defeating the guard above.
+    const response = await ssrfSafeFetch(url, {
       signal: controller.signal,
       headers: {
         'User-Agent': USER_AGENT,
         'Accept': 'text/html,application/json,text/plain,*/*',
       },
-      redirect: 'follow',
+      allowPrivate: process.env.FRANKLIN_ALLOW_PRIVATE_FETCH === '1',
     });
 
     if (!response.ok) {

@@ -23,7 +23,7 @@ import { estimateImageCostUsd } from '../content/image-pricing.js';
 import { recordUsage } from '../stats/tracker.js';
 import { findModel, estimateCostUsd, GATEWAY_MARGIN, type GatewayModel } from '../gateway-models.js';
 import { logger } from '../logger.js';
-import { isBlockedSsrfHost } from './ssrf.js';
+import { ssrfSafeFetch } from './ssrf.js';
 
 interface ImageGenInput {
   prompt: string;
@@ -153,18 +153,16 @@ export async function resolveReferenceImage(input: string, workingDir: string): 
   if (input.startsWith('data:image/')) return input;
 
   if (/^https?:\/\//i.test(input)) {
-    // SSRF guard: a reference-image URL is model/attacker-controllable.
-    try {
-      if (isBlockedSsrfHost(new URL(input).hostname) && process.env.FRANKLIN_ALLOW_PRIVATE_FETCH !== '1') {
-        throw new Error(`refusing to fetch a private/loopback/metadata address: ${new URL(input).hostname}`);
-      }
-    } catch (e) {
-      throw e instanceof Error && e.message.startsWith('refusing') ? e : new Error(`invalid reference image URL: ${input}`);
-    }
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 30_000);
     try {
-      const resp = await fetch(input, { signal: ctrl.signal });
+      // SSRF guard with per-redirect re-validation (a reference-image URL is
+      // model/attacker-controllable, and a 302 to a loopback/metadata host
+      // would otherwise slip a host-only check).
+      const resp = await ssrfSafeFetch(input, {
+        signal: ctrl.signal,
+        allowPrivate: process.env.FRANKLIN_ALLOW_PRIVATE_FETCH === '1',
+      });
       if (!resp.ok) {
         throw new Error(`Reference image fetch failed: ${resp.status} ${resp.statusText}`);
       }

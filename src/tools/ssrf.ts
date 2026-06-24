@@ -8,13 +8,30 @@
  * common direct-IP/localhost cases, not a DNS-rebinding or redirect attack.
  */
 export function isBlockedSsrfHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, ''); // strip IPv6 brackets
+  // Normalize: lowercase, strip IPv6 brackets, strip a single trailing dot
+  // (`localhost.` / `127.0.0.1.` resolve the same as without it).
+  const h = hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, '');
   if (!h) return true;
   if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local')) return true;
 
-  // IPv6 loopback / unspecified / link-local (fe80::/10) / unique-local (fc00::/7)
-  if (h === '::1' || h === '::') return true;
-  if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true;
+  // IPv6 literal (only IPv6 hosts contain a colon — so the fc/fd/fe80 ULA checks
+  // can't false-positive on public DNS names like fda.gov / fcc.gov).
+  if (h.includes(':')) {
+    if (h === '::1' || h === '::') return true;                          // loopback / unspecified
+    if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true; // link-local / ULA
+    // IPv4-mapped IPv6 (`::ffff:a.b.c.d` or `::ffff:hhhh:hhhh`) → recheck the embedded v4.
+    const mapped = h.match(/::ffff:(.+)$/);
+    if (mapped) {
+      const tail = mapped[1];
+      if (tail.includes('.')) return isBlockedSsrfHost(tail);
+      const hx = tail.split(':');
+      if (hx.length === 2) {
+        const n = ((parseInt(hx[0], 16) << 16) | parseInt(hx[1], 16)) >>> 0;
+        return isBlockedSsrfHost(`${(n >>> 24) & 255}.${(n >>> 16) & 255}.${(n >>> 8) & 255}.${n & 255}`);
+      }
+    }
+    return false;
+  }
 
   // IPv4 literal
   const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -26,4 +43,35 @@ export function isBlockedSsrfHost(hostname: string): boolean {
     if (a === 192 && b === 168) return true;                 // private
   }
   return false;
+}
+
+/**
+ * Fetch with per-redirect-hop SSRF re-validation. Node's `fetch` follows
+ * redirects automatically, so a public URL can 302 to 169.254.169.254 / a
+ * loopback service — checking only the initial host is useless. This follows
+ * redirects MANUALLY, re-running isBlockedSsrfHost on every hop. `allow=true`
+ * (FRANKLIN_ALLOW_PRIVATE_FETCH) skips the check for local dev servers.
+ */
+export async function ssrfSafeFetch(
+  url: string,
+  init: RequestInit & { allowPrivate?: boolean } = {},
+  maxHops = 5,
+): Promise<Response> {
+  const { allowPrivate, ...fetchInit } = init;
+  let current = url;
+  for (let hop = 0; hop <= maxHops; hop++) {
+    const host = new URL(current).hostname;
+    if (!allowPrivate && isBlockedSsrfHost(host)) {
+      throw new Error(`SSRF: refusing to fetch a private/loopback/metadata address: ${host}`);
+    }
+    const res = await fetch(current, { ...fetchInit, redirect: 'manual' });
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location');
+      if (!loc) return res;
+      current = new URL(loc, current).href; // resolve relative redirects
+      continue;
+    }
+    return res;
+  }
+  throw new Error('SSRF: too many redirects');
 }
