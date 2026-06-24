@@ -10241,7 +10241,12 @@ test('bash-guard: find action predicates and tee are not auto-safe', async () =>
   assert.equal(safe('find / -name id_rsa -exec cat {} +'), false);
   assert.equal(safe('find . -delete'), false);
   assert.equal(safe('echo evil | tee ~/.zshrc'), false);
+  // find's file-WRITING predicates (-fprint/-fprintf/-fls) must also prompt.
+  assert.equal(safe('find / -name id_rsa -fprint /tmp/leak'), false);
+  assert.equal(safe('find . -fls /tmp/leak'), false);
+  assert.equal(safe('find . -fprintf /tmp/leak %p'), false);
   assert.equal(safe('find . -name "*.ts"'), true, 'a plain find stays safe');
+  assert.equal(safe('find . -print'), true, 'read-only -print stays safe');
 });
 
 test('bash-guard: wallet-key read bypasses (//, backslash, relative, case) prompt', async () => {
@@ -10254,9 +10259,15 @@ test('bash-guard: wallet-key read bypasses (//, backslash, relative, case) promp
     'cat ~/.blockrun/.SOLANA-SESSION',    // case variant
     'cat solana-wallet.json',
     'head -c 200 .session',
+    // shell glob/brace under the wallet dir (expands to the key AFTER the guard):
+    'cat ~/.blockrun/.solana-sessio?',
+    'cat ~/.blockrun/.solana-s*',
+    'cat ~/.blockrun/.solana-{session}',
+    'cat ~/.blockrun/*',
   ]) assert.equal(safe(c), false, `${c} must prompt`);
   assert.equal(safe('cat README.md'), true);
   assert.equal(safe('cat config.session.log'), true, 'a non-key file containing "session" stays safe');
+  assert.equal(safe('cat ~/.blockrun/franklin-stats.json'), true, 'a non-glob read of a non-key file in the dir stays safe');
 });
 
 test('isBlockedSsrfHost: IPv4-mapped IPv6 + trailing-dot blocked; fc/fd public hosts allowed', async () => {

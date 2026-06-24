@@ -167,6 +167,12 @@ function isSegmentSafe(segment: string): boolean {
   if (/(?<![\w-])(?:\.solana-session-key2|\.solana-session|\.session|solana-wallet\.json)(?![\w-])/i.test(segment)) {
     return false;
   }
+  // A glob/brace under the wallet dir could expand to a key file AFTER this
+  // guard runs (the shell expands post-approval), so the literal match above
+  // can't see it — force a prompt for any `*?[{` anywhere near ~/.blockrun.
+  if (/\.blockrun/i.test(segment) && /[*?{[]/.test(segment)) {
+    return false;
+  }
 
   // Parse: strip env vars, extract command and args
   const words = segment.split(/\s+/).filter(w => !w.includes('='));
@@ -208,7 +214,7 @@ function isSegmentSafe(segment: string): boolean {
   // `find` is read-only EXCEPT its action predicates, which execute arbitrary
   // commands or delete files (`find / -name id_rsa -exec cat {} +`, `find . -delete`).
   // Same arbitrary-exec hazard that excludes xargs — force a prompt.
-  if (baseName === 'find' && /(?:^|\s)-(?:exec|execdir|ok|okdir|delete)\b/.test(segment)) {
+  if (baseName === 'find' && /(?:^|\s)-(?:exec|execdir|ok|okdir|delete|fprint|fprintf|fls)\b/.test(segment)) {
     return false;
   }
 
