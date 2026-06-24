@@ -171,24 +171,38 @@ export function classifyBashRisk(command: string): BashRiskResult {
 }
 
 function isSegmentSafe(segment: string): boolean {
+  // The shell strips quotes and backslash-escapes BEFORE opening a path, so a
+  // sensitive filename can be spliced to dodge a literal regex: `.block''run`,
+  // `.block"run"`, `'.blockrun'`, `.\blockrun` all resolve to `.blockrun` at the
+  // OS but read as non-contiguous text to a regex. Match the DENY patterns below
+  // against a normalized copy that mimics the shell's quote/escape removal, so no
+  // quoting arrangement of a wallet/secret path can reach 'safe'. (Over-matching
+  // here only ever prompts — it never blocks.)
+  const norm = segment.replace(/\\(.)/g, '$1').replace(/['"]/g, '');
+
   // Never auto-approve a command that touches the wallet key store. Matching the
-  // FILENAME is hopeless — it's trivially obfuscated (`.solana""-session`,
-  // `.\solana-session`, a glob, or an unlisted key file like
-  // solana-wallet-key2.json). So match the DIRECTORY: any reference to
-  // ~/.blockrun forces a prompt. (The file Read/Write/Edit tools have a separate
-  // canonicalized guard; this is the best-effort net for the shell. Over-
-  // prompting on a stray `.blockrun` path is fine — it prompts, never blocks.)
-  if (/\.blockrun/i.test(segment)) {
+  // FILENAME is hopeless — it's trivially obfuscated. So match the DIRECTORY: any
+  // reference to ~/.blockrun forces a prompt. (The file Read/Write/Edit tools
+  // have a separate canonicalized guard; this is the best-effort net for the shell.)
+  if (/\.blockrun/i.test(norm)) {
     return false;
   }
   // Relative reads with no `.blockrun` in the text (e.g. the cwd is the wallet
   // dir): match the known key/secret basenames broadly (any *wallet*.json/.key).
-  if (/(?<![\w-])(?:\.solana-session(?:-key2)?|\.session|[\w-]*wallet[\w-]*\.(?:json|key))(?![\w-])/i.test(segment)) {
+  if (/(?<![\w-])(?:\.solana-session(?:-key2)?|\.session|[\w-]*wallet[\w-]*\.(?:json|key))(?![\w-])/i.test(norm)) {
     return false;
   }
   // Command/process substitution runs an arbitrary INNER command the classifier
   // can't see (`echo $(node evil)`, `cat <(touch x)`) — never safe.
   if (/\$\(|`|<\(|>\(/.test(segment)) {
+    return false;
+  }
+  // ANSI-C (`$'\x6e'`) and locale (`$"..."`) quoting decode/expand to text the
+  // classifier can't resolve — and which the dequote pass above can't statically
+  // evaluate (`~/.blockru$'\x6e'/.session` → `~/.blockrun/.session`). Match it as
+  // an OPENING quote (at a token boundary) or by its tell-tale escape (`$'\`), so
+  // a `grep 'foo$'` regex anchor — a `$` before a CLOSING quote — is left safe.
+  if (/(?:^|[\s=(:,])\$['"]|\$['"]\\/.test(segment)) {
     return false;
   }
   // Parameter expansion (`$VAR`, `${VAR}`) expands to text the classifier also
@@ -203,7 +217,7 @@ function isSegmentSafe(segment: string): boolean {
   // A glob/brace in an explicit PATH (a token rooted at ~, ., or /) expands AFTER
   // this guard and can reach the wallet store (`cat ~/.b*/.s*`) or a sensitive
   // file. Bare cwd globs (`*.md`, `src/*.ts`) have no such prefix and stay safe.
-  if (/(?:^|\s)(?:~|\.|\/)\S*[*?[{]/.test(segment)) {
+  if (/(?:^|\s)(?:~|\.|\/)\S*[*?[{]/.test(norm)) {
     return false;
   }
   // Output redirection to a FILE target is a write — block it for EVERY segment,
@@ -218,10 +232,19 @@ function isSegmentSafe(segment: string): boolean {
   // dangerous-path block so `cat ~/.ssh/id_rsa`, `cat ~/.aws/credentials`,
   // `cat ~/.gnupg/secring.gpg`, gcloud tokens, `.npmrc`/`.pgpass`/`.netrc`, and
   // docker registry creds don't auto-approve secrets into model context.
-  if (/(?:^|[\s/~'"=])\.(?:ssh|aws|gnupg|kube)(?:\/|$|['"\s])/i.test(segment)) return false;
-  if (/\bid_(?:rsa|dsa|ecdsa|ed25519)\b/i.test(segment)) return false;
-  if (/(?:^|[\s/~'"=])\.(?:npmrc|pgpass|netrc)(?:$|['"\s])/i.test(segment)) return false;
-  if (/gcloud\/(?:credentials|access_tokens|application_default)|\.docker\/config/i.test(segment)) return false;
+  if (/(?:^|[\s/~=])\.(?:ssh|aws|gnupg|kube)(?:\/|$|\s)/i.test(norm)) return false;
+  if (/\bid_(?:rsa|dsa|ecdsa|ed25519)\b/i.test(norm)) return false;
+  if (/(?:^|[\s/~=])\.(?:npmrc|pgpass|netrc)(?:$|\s)/i.test(norm)) return false;
+  if (/gcloud\/(?:credentials|access_tokens|application_default)|\.docker\/config/i.test(norm)) return false;
+  // Other plaintext credential / key stores a bare `cat` would dump into context.
+  // Denylists lag the real set of secret files, so be generous — over-prompting
+  // is safe. Includes the Solana CLI default keypair (`~/.config/solana/id.json`),
+  // a SPENDABLE wallet that lives outside Franklin's own ~/.blockrun store.
+  if (/(?:^|[\s/~=])\.git-credentials(?:$|\s)/i.test(norm)) return false;
+  if (/(?:^|[\s/~=])\.(?:bash|zsh|sh|python|node_repl|mysql|psql|irb)_history(?:$|\s)/i.test(norm)) return false;
+  if (/(?:git|gh)\/(?:credentials|hosts\.ya?ml|hosts\.json)\b/i.test(norm)) return false;
+  if (/\.cargo\/credentials|rclone\/rclone\.conf|(?:^|[\s/~=])\.config\/solana(?:\/|\b)|solana\/id\.json/i.test(norm)) return false;
+  if (/(?:keychain(?:-db)?|\.keychain)\b|\bKeychains\/|\blogins\.json\b/i.test(norm)) return false;
 
   // Parse into words. An env-assignment PREFIX (`FOO=bar cmd …`) is a real
   // assignment only in the LEADING run before the command word — a later `x=y`
@@ -275,6 +298,16 @@ function isSegmentSafe(segment: string): boolean {
     if (subCmd === 'remote' && /(?:^|\s)(?:add|set-url|set-head|set-branches|remove|rm|rename|prune|update)\b/.test(segment)) {
       return false;
     }
+    // `branch`/`tag` read by default, but their delete/rename/copy/force flags
+    // silently mutate refs (lose local commits). `branch -D` is already a
+    // dangerous-pattern; gate the rest (incl. lowercase `-d`, `-m`, `-f`) here.
+    // Creating a branch/tag (a bare positional) stays safe — only ref destruction prompts.
+    if (subCmd === 'branch' && /(?:^|\s)-(?:d|D|m|M|c|C|f)\b|(?:^|\s)--(?:delete|move|copy|force|unset-upstream)\b/.test(segment)) {
+      return false;
+    }
+    if (subCmd === 'tag' && /(?:^|\s)-(?:d|f)\b|(?:^|\s)--(?:delete|force)\b/.test(segment)) {
+      return false;
+    }
     return true;
   }
 
@@ -290,8 +323,20 @@ function isSegmentSafe(segment: string): boolean {
     return SAFE_CARGO_SUBCOMMANDS.has(subCmd);
   }
 
-  // rtk (RTK wrapper — safe, it's a proxy)
-  if (baseName === 'rtk') return true;
+  // rtk is a command REWRITER/executor, not a leaf command: `rtk <cmd>` runs
+  // <cmd> (e.g. `rtk git status`), and `rtk proxy <cmd>` runs it unfiltered. So
+  // its safety equals the WRAPPED command's — a blanket allow turned it into a
+  // wildcard exec hole (`rtk node evil.js` auto-approved RCE). Strip the `rtk`
+  // token (and a `proxy` passthrough) and recurse, like the time/nice prefix.
+  // Read-only meta-subcommands (gain/discover/version) stay safe.
+  if (baseName === 'rtk') {
+    const next = words[argIdx] || '';
+    if (next === '' || next === 'gain' || next === 'discover' || /^-/.test(next)) return true;
+    const restWords = words.slice(next === 'proxy' ? argIdx + 1 : argIdx);
+    const rest = restWords.join(' ').trim();
+    if (!rest) return true;
+    return isSegmentSafe(rest);
+  }
 
   // `find` is read-only EXCEPT its action predicates, which execute arbitrary
   // commands or delete files (`find / -name id_rsa -exec cat {} +`, `find . -delete`).
