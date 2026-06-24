@@ -140,9 +140,12 @@ export function toAtomicUnits(amount: number, decimals: number): string {
   // ⅓ of a balance, or float noise like 0.1 + 0.2 = 0.30000000000000004 — still
   // swaps its representable part instead of being rejected. The original
   // Math.round approach instead rounded a sub-unit amount UP to one atomic unit.
-  const amountText = amount.toString().includes('e')
-    ? amount.toFixed(decimals + 1)
-    : amount.toString();
+  // Plain-decimal string (never exponential form, so BigInt(wholePart) can't
+  // throw on large amounts like 1e21). toLocaleString keeps the exact value to
+  // 20 fraction digits — more than any token's decimals — and the slice() below
+  // FLOORS by truncation, so sub-precision dust is never rounded UP to one unit
+  // (unlike the old toFixed path, which rounded 9.999e-10 up to 1).
+  const amountText = amount.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 20 });
   const [wholePart, fractionalPart = ''] = amountText.split('.');
   const normalizedFraction = fractionalPart.padEnd(decimals, '0').slice(0, decimals);
 

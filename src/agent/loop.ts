@@ -1453,6 +1453,14 @@ export async function interactiveSession(
       // "this model is consistently slow" or "fallback was faster" until
       // this was fixed.
       const llmCallStartedAt = Date.now();
+      // Snapshot live spend BEFORE the stream starts. Concurrent paid tools
+      // (DeFiLlama/RPC/Prediction/...) are kicked off mid-stream via
+      // onToolReceived and can settle their x402 charge before collectResults —
+      // a snapshot taken AFTER the stream would miss them and let them slip the
+      // --max-spend cap. We subtract the LLM's own callCost from the post-tool
+      // delta below (it is added to sessionCostUsd separately), leaving a clean
+      // paid-tool-only total that captures concurrent and sequential tools alike.
+      const turnSpendBefore = getLiveSpendUsd();
       try {
         const result = await client.complete(
           {
@@ -2310,7 +2318,6 @@ export async function interactiveSession(
       }
 
       // Collect results — concurrent tools may already be running from streaming
-      const toolSpendBefore = getLiveSpendUsd();
       const results = await streamExec.collectResults(invocations);
 
       for (const [inv, result] of results) {
@@ -2321,9 +2328,12 @@ export async function interactiveSession(
       // sessionCostUsd above only tracks LLM token cost; paid tools (ImageGen,
       // VideoGen, MusicGen, Exa, Surf, RealFace, Voice, Phone, Modal, DeFiLlama,
       // RPC, Prediction) settle USDC through their own x402 paths and report it
-      // via recordUsage. Diff the live-spend accumulator across tool execution so
-      // a --max-spend cap actually bounds total USDC, not just LLM tokens.
-      const toolSpendUsd = getLiveSpendUsd() - toolSpendBefore;
+      // via recordUsage. Diff the live-spend accumulator across the WHOLE turn
+      // (snapshot taken before the stream, so mid-stream concurrent tools are
+      // captured too) and subtract the LLM's own callCost — which recordUsage at
+      // line ~1948 already added to liveSpendUsd and which sessionCostUsd counts
+      // separately — leaving paid-tool-only spend so --max-spend bounds total USDC.
+      const toolSpendUsd = Math.max(0, getLiveSpendUsd() - turnSpendBefore - callCost);
       if (toolSpendUsd > 0) {
         sessionCostUsd += toolSpendUsd;
         turnCostUsd += toolSpendUsd;

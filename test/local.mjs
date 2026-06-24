@@ -9986,6 +9986,12 @@ test('toAtomicUnits floors excess precision and rejects only true dust', async (
   // True dust (floors to 0 atomic units) is rejected — the round-UP bug #89 fixed.
   assert.throws(() => toAtomicUnits(0.0000005, 6), /too small to swap/, '0.0000005 < 1e-6 unit → reject, not round up to 1');
   assert.throws(() => toAtomicUnits(1e-12, 6), /too small to swap/);
+  // Exponential-form boundary: must FLOOR, not round up (toFixed used to round
+  // 9.999e-10 up to 1 atomic unit — exactly the dust round-up bug #89 killed).
+  assert.throws(() => toAtomicUnits(9.999e-10, 9), /too small to swap/, '9.999e-10 floors to 0 → reject, not round to 1');
+  assert.equal(toAtomicUnits(1.9999e-9, 9), '1', '1.9999e-9 floors to 1 unit, not rounds to 2');
+  // Large amount in exponential form must not throw a raw BigInt error.
+  assert.equal(toAtomicUnits(1e21, 6), '1' + '0'.repeat(27), '1e21 tokens (6 dec) = 1e27 atomic units, no throw');
   // Input validation.
   assert.throws(() => toAtomicUnits(-1, 6), /positive finite/);
   assert.throws(() => toAtomicUnits(Number.NaN, 6), /positive finite/);
