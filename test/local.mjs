@@ -10465,3 +10465,83 @@ test('isBlockedSsrfHost blocks cloud-metadata HOSTNAMES + NAT64, allows public',
   for (const h of ['example.com', 'api.github.com', 'metadata-service.example.com'])
     assert.equal(isBlockedSsrfHost(h), false, `${h} (public) must be allowed`);
 });
+
+// ─── Round-8: the 5 NEW classes from the 3.29.12 convergence verify ──────────
+test('bash-guard: rtk is a command wrapper — safety equals the WRAPPED command', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  // `rtk <cmd>` runs <cmd>; a blanket allow was a wildcard exec hole. Recurse instead.
+  for (const c of [
+    'rtk node evil.js',                            // arbitrary RCE (was auto-approved)
+    'rtk python3 evil.py',
+    'rtk bash evil.sh',
+    'rtk proxy bash evil.sh',                      // proxy = unfiltered exec passthrough
+    'rtk git config core.pager "node evil.js"',    // re-opened the git-config-write hole when wrapped
+    "rtk cat ~/.blockrun/.session",                // wallet read through the wrapper
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  // Wrapping a genuinely-safe command stays safe; rtk meta-commands stay safe.
+  assert.equal(safe('rtk git status'), true);
+  assert.equal(safe('rtk git log --oneline'), true);
+  assert.equal(safe('rtk gain'), true);
+  assert.equal(safe('rtk discover'), true);
+  assert.equal(safe('rtk --version'), true);
+});
+
+test('bash-guard: empty-quote-splice + ANSI-C cannot smuggle a wallet-key read past the guard', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  // The shell strips '' / "" / backslash before opening the file; the classifier
+  // now normalizes the same way so the spliced path still matches .blockrun/basenames.
+  for (const c of [
+    "cat ~/.block''run/.sess''ion",                // EVM key (critical)
+    'cat ~/.block""run/.sess""ion',                // double-quote variant
+    "cat ~/.block''run/.solana''-session",         // Solana key
+    "cat ~/.block''run/.solana''-session-key2",
+    "cat ~/.block''run/solana-w''allet.json",      // legacy wallet file
+    "head -c 99 ~/.bl\\ockrun/.session",           // backslash-escape splice
+    "cat ~/.blockru$'\\x6e'/.session",             // ANSI-C hex → 'n' mid-path
+    "cat '.blockrun'/.solana-session",             // whole-token quoting
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  // A non-key file whose name merely contains a fragment stays safe.
+  assert.equal(safe('cat config.session.log'), true);
+  assert.equal(safe('cat README.md'), true);
+});
+
+test('bash-guard: broadened credential stores (git-credentials, gh hosts, cargo/rclone/Solana CLI, keychain, history) prompt', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  for (const c of [
+    'cat ~/.git-credentials',                      // plaintext git push tokens
+    'cat ~/.config/git/credentials',
+    'cat ~/.config/gh/hosts.yml',                  // GitHub OAuth token
+    'cat ~/.cargo/credentials.toml',               // crates.io token
+    'cat ~/.config/rclone/rclone.conf',            // cloud-storage secrets
+    'cat ~/.config/solana/id.json',                // Solana CLI keypair (spendable wallet)
+    'cat ~/.zsh_history',                           // pasted secrets
+    'cat ~/.bash_history',
+    'cat ~/Library/Keychains/login.keychain-db',
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  assert.equal(safe('cat package.json'), true, 'a normal json read stays safe');
+  assert.equal(safe('cat src/config/solana-helper.ts'), true, 'a project source file (no dot-config/solana path) is unaffected');
+});
+
+test('bash-guard: git branch/tag ref destruction prompts; read + create forms stay safe', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  for (const c of [
+    'git branch -d feature-x',
+    'git branch -D feature-x',
+    'git branch -m old new',                        // rename (can clobber main)
+    'git branch -f main origin/main',               // force-move ref (loses local commits)
+    'git tag -d v1.0.0',
+    'git tag -f v1 HEAD',                           // force-clobber tag
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  // Read + create forms stay auto-safe (creation is not destructive).
+  assert.equal(safe('git branch'), true);
+  assert.equal(safe('git branch -a'), true);
+  assert.equal(safe('git branch --show-current'), true);
+  assert.equal(safe('git branch newfeature'), true, 'creating a branch is safe');
+  assert.equal(safe('git tag'), true);
+  assert.equal(safe('git tag -l'), true);
+  assert.equal(safe('git tag v1.2.3'), true, 'creating a tag is safe');
+});

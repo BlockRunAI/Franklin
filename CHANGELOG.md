@@ -1,5 +1,16 @@
 # Changelog
 
+## Franklin Agent 3.29.13 — close 5 more single-command bypasses from the 3.29.12 convergence verify (round-8)
+
+A second 13-agent convergence verify confirmed **5 NEW single-command bypass classes** the round-7 fixes didn't anticipate — one critical (a fresh evasion of the wallet directory rule itself). All fixed; benign controls preserved.
+
+- **`rtk <cmd>` wildcard exec (HIGH).** The guard blanket-allowed `rtk` (a CLI proxy) as a leaf command, so `rtk node evil.js` auto-approved arbitrary code execution and `rtk git config core.pager …` re-opened the round-7 git-config hole when wrapped. rtk is a command *rewriter* — its safety equals the **wrapped** command's. The guard now strips the `rtk`/`rtk proxy` prefix and recurses (like `time`/`nice`); read-only meta-commands (`gain`/`discover`/`--version`) stay safe.
+- **Empty-quote / backslash / ANSI-C splice on the wallet key (CRITICAL).** `cat ~/.block''run/.sess''ion` read the EVM private key: the shell strips `''`/`""`/`\` before opening the file, but the literal `.blockrun`/basename regexes saw non-contiguous text. The guard now matches every deny pattern against a **normalized copy** that mimics the shell's quote/escape removal, and treats ANSI-C (`$'\x6e'`) / locale (`$"…"`) quoting as opaque. Closes the same splice on all four wallet-key basenames (`.session`, `.solana-session`, `.solana-session-key2`, `solana-wallet.json`).
+- **Broadened credential-store reads (HIGH).** Round-7's denylist missed many plaintext secret stores that a bare `cat` would dump into context: `~/.git-credentials`, `~/.config/gh/hosts.yml`, `~/.cargo/credentials.toml`, `~/.config/rclone/rclone.conf`, **`~/.config/solana/id.json`** (a spendable Solana CLI keypair), macOS keychain, and shell-history files. All now prompt.
+- **`git branch -d` / `git tag -d` ref destruction (LOW).** Delete/rename/copy/force-move forms of `branch`/`tag` auto-approved via the read-only subcommand allowlist (only `branch -D` was caught). Their ref-destroying flags now prompt; read and **create** forms stay safe.
+
+The recurring lesson stands: text-classifying shell commands for auto-approval is a denylist treadmill. The canonicalized `isWalletKeyPath` guard on the file/media tools remains the primary wallet protection; the bash-guard is the best-effort shell net and now fails toward prompting on quoting, expansion, wrappers, and anything else it can't statically resolve. New regression tests pin all five classes plus the benign controls. Verified: local suite 504/504.
+
 ## Franklin Agent 3.29.12 — close the 6 single-command bypasses from the 3.29.11 convergence verify (round-7)
 
 An 8-agent adversarial convergence verify of the 3.29.11 guards confirmed **6 more single-command holes** — two critical. Each was traced through the real classifier and reproduced before fixing. The unifying principle this round: a bash segment is only auto-approved ("safe") when its **full effect is statically visible** — any runtime indirection the classifier can't see now forces a prompt.
