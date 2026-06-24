@@ -31,6 +31,14 @@ export function isBlockedSsrfHost(hostname: string): boolean {
   if (h.includes(':')) {
     if (h === '::1' || h === '::') return true;                          // loopback / unspecified
     if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true; // link-local / ULA
+    // 6to4 (`2002:WWXX:YYZZ::/16`) embeds an IPv4 (W.X.Y.Z) in the first two
+    // hextets; a 6to4 relay routes to it (e.g. 2002:7f00:1:: → 127.0.0.1,
+    // 2002:a9fe:a9fe:: → 169.254.169.254). Decode and recheck the embedded v4.
+    const sixToFour = h.match(/^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4}):/);
+    if (sixToFour) {
+      const hi = parseInt(sixToFour[1], 16), lo = parseInt(sixToFour[2], 16);
+      return isBlockedSsrfHost(`${(hi >>> 8) & 255}.${hi & 255}.${(lo >>> 8) & 255}.${lo & 255}`);
+    }
     // NAT64 (`64:ff9b::a.b.c.d` / `64:ff9b::hhhh:hhhh`) embeds an IPv4 that a NAT64
     // gateway routes to — decode and recheck it like the IPv4-mapped form below.
     const nat64 = h.match(/^64:ff9b::(.+)$/);

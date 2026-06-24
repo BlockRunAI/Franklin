@@ -1,5 +1,14 @@
 # Changelog
 
+## Franklin Agent 3.29.14 — close brace-expansion wallet read + 6to4 SSRF (round-9)
+
+A third convergence verify (re-attacking the round-8 quote-normalization and rtk-recursion fixes) confirmed **2 NEW classes** — the find count is converging (7→6→5→2) and the survivors are increasingly exotic, but one is still a critical wallet read.
+
+- **Brace-expansion wallet-key read (CRITICAL).** `cat {~,}/.bloc{k,}run/.{session,}` read the EVM private key: brace expansion is a 4th shell primitive the round-8 quote/escape normalizer didn't model. The leading `{~,}` tilde-expands while `.bloc{k,}run` / `.{session,}` brace-split the literal `.blockrun`/`.session` — defeating the directory rule, the basename rule, AND the rooted-glob anchor (the token starts with `{`, not `~`/`.`/`/`) simultaneously. Now any comma-list / `..`-range brace group is treated as opaque (forces a prompt, like `$VAR`/`$(...)`), and the wallet/secret deny patterns also run against a brace-collapsed copy of the command. Reader-agnostic (`grep`/`cut`/`cat`) — the brace mechanism was the defect.
+- **6to4 IPv6 SSRF (MEDIUM).** `http://[2002:a9fe:a9fe::]/` survived WHATWG-URL normalization and reached the fetch path; the 6to4 range `2002::/16` embeds an IPv4 (`2002:a9fe:a9fe::` → `169.254.169.254`, `2002:7f00:1::` → `127.0.0.1`). Now decoded and re-checked like the existing NAT64 / IPv4-mapped handlers. (Exploiting the embedded target needs a 6to4 relay route, but the guard gap was unconditional.)
+
+New regression tests pin both classes plus benign controls (public IPv6, brace commands). Verified: local suite 506/506.
+
 ## Franklin Agent 3.29.13 — close 5 more single-command bypasses from the 3.29.12 convergence verify (round-8)
 
 A second 13-agent convergence verify confirmed **5 NEW single-command bypass classes** the round-7 fixes didn't anticipate — one critical (a fresh evasion of the wallet directory rule itself). All fixed; benign controls preserved.
