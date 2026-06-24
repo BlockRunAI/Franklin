@@ -108,7 +108,10 @@ function launchProxy(
     process.exit(1);
   });
 
-  server.listen(port, () => {
+  // Bind to loopback ONLY — this proxy signs x402 USDC payments from the local
+  // wallet on every request, so it must never be reachable from the LAN. Every
+  // other Franklin server binds 127.0.0.1; the banner below says "localhost".
+  server.listen(port, '127.0.0.1', () => {
     console.log(chalk.green(`✓ Proxy running on port ${port}`));
     console.log(chalk.dim(`  Usage tracking: ~/.blockrun/franklin-stats.json`));
     if (debug) console.log(chalk.dim(`  Debug log:      ~/.blockrun/franklin-debug.log`));

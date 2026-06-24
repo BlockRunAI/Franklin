@@ -18,6 +18,7 @@ import path from 'node:path';
 import os from 'node:os';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { browserPool } from '../social/browser-pool.js';
+import { frameUntrusted } from './untrusted.js';
 
 type BrowserAction = 'open' | 'snapshot' | 'click' | 'scroll' | 'screenshot' | 'getUrl' | 'wait';
 
@@ -68,7 +69,7 @@ async function execute(
           const tree = await browser.snapshot();
           const out = `Page snapshot (${tree.length} chars):\n\n${summariseTree(tree)}\n\n` +
             `Refs are valid until the next snapshot. Use action="click" with a ref to navigate.`;
-          return { output: out };
+          return { output: frameUntrusted('Browser page snapshot', out) };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return { output: `BrowserX snapshot failed: ${msg.slice(0, 200)}`, isError: true };

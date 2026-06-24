@@ -1432,9 +1432,15 @@ export async function interactiveSession(
 
       // Safety net: handled in llm.ts resolveVirtualModel()
 
-      // Sanitize: remove orphaned tool results that could confuse the API
+      // Sanitize: remove orphaned tool results that could confuse the API.
+      // Adopt the fix whenever it DIFFERS — not only when message COUNT changes:
+      // sanitizeHistory can strip an orphan (e.g. a synthetic `guardrail-*`
+      // tool_result) from a message that still has valid content, leaving the
+      // count unchanged. sanitizeHistory returns the SAME reference when nothing
+      // changed, so reference inequality is the correct, cheap signal (matches
+      // the unconditional adoption on the --resume path).
       const sanitized = sanitizeHistory(history);
-      if (sanitized.length !== history.length) {
+      if (sanitized !== history) {
         replaceHistory(history, sanitized);
       }
 

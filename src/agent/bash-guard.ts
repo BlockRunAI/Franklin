@@ -103,7 +103,9 @@ const SAFE_COMMANDS = new Set([
   'pwd', 'realpath', 'dirname', 'basename',
   // Text processing (read-only when not redirecting)
   'jq', 'yq', 'sort', 'uniq', 'cut', 'tr', 'diff', 'comm', 'less', 'more',
-  'wc', 'tee', 'xargs',
+  'wc', 'tee',
+  // NB: `xargs` is intentionally NOT here — it executes an arbitrary wrapped
+  // command (`... | xargs rm -f`), so it must never auto-approve as "safe".
 ]);
 
 const SAFE_GIT_SUBCOMMANDS = new Set([
@@ -155,6 +157,13 @@ export function classifyBashRisk(command: string): BashRiskResult {
 }
 
 function isSegmentSafe(segment: string): boolean {
+  // Never auto-approve a command that touches the wallet private key — a bare
+  // `cat ~/.blockrun/.solana-session` would dump the key into model context with
+  // no prompt. Force a permission prompt (>= normal) for any key-file reference.
+  if (/\.blockrun[/\\](?:\.session|\.solana-session|\.solana-session-key2|solana-wallet\.json)\b/.test(segment)) {
+    return false;
+  }
+
   // Parse: strip env vars, extract command and args
   const words = segment.split(/\s+/).filter(w => !w.includes('='));
   let idx = 0;
@@ -209,7 +218,14 @@ function isSegmentSafe(segment: string): boolean {
   if (baseName === 'gh') {
     const ghAction = words.slice(argIdx, argIdx + 2).join(' ');
     if (/^(pr|issue|repo|release|run)\s+(view|list|status|diff|checks|comments)/.test(ghAction)) return true;
-    if (subCmd === 'api') return true; // gh api is read-only (GET)
+    // `gh api` DEFAULTS to GET (read-only) but `-X/--method` and write-body
+    // flags (-f/-F/--field/--input) make it a mutation (delete repo, merge PR,
+    // etc.). Only auto-approve a plain GET; anything else must prompt.
+    if (subCmd === 'api') {
+      if (/(?:^|\s)(?:-X|--method)\s+(?!GET\b)\S+/i.test(segment)) return false;
+      if (/(?:^|\s)(?:-f|-F|--field|--raw-field|--input)\b/.test(segment)) return false;
+      return true;
+    }
     if (subCmd === 'auth' && words[argIdx + 1] === 'status') return true;
     return false;
   }

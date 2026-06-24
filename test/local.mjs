@@ -22,6 +22,10 @@ process.env.FRANKLIN_NO_ANALYZER = '1';
 // controlled separately via setSessionPersistenceDisabled and stays on
 // for the resume tests at 489/609.
 process.env.FRANKLIN_NO_AUDIT = '1';
+// Many tests fetch from a local 127.0.0.1 server; the new SSRF guard blocks
+// loopback by default, so opt in here. (The guard's own logic is covered by the
+// pure-helper test `isBlockedSsrfHost ...`, which is independent of this env.)
+process.env.FRANKLIN_ALLOW_PRIVATE_FETCH = '1';
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -5945,6 +5949,9 @@ test('imagegen: resolveReferenceImage fetches http(s) URLs and inlines them as d
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
+  // The SSRF guard blocks 127.0.0.1 by default; opt in for this local test server.
+  const prevAllow = process.env.FRANKLIN_ALLOW_PRIVATE_FETCH;
+  process.env.FRANKLIN_ALLOW_PRIVATE_FETCH = '1';
   try {
     const out = await resolveReferenceImage(`http://127.0.0.1:${port}/img.png`, '/tmp');
     assert.match(out, /^data:image\/png;base64,/, 'url should round-trip into a data URI');
@@ -5963,6 +5970,8 @@ test('imagegen: resolveReferenceImage fetches http(s) URLs and inlines them as d
       /Reference image fetch failed: 404/,
     );
   } finally {
+    if (prevAllow === undefined) delete process.env.FRANKLIN_ALLOW_PRIVATE_FETCH;
+    else process.env.FRANKLIN_ALLOW_PRIVATE_FETCH = prevAllow;
     await new Promise(resolve => server.close(resolve));
   }
 });
@@ -10160,4 +10169,53 @@ test('looksLikeImagePasteStub: genuine text pastes skip the probe (fast synchron
   assert.equal(looksLikeImagePasteStub('const x = 1;\nconst y = 2;\nfoo();'), false);
   assert.equal(looksLikeImagePasteStub('https://example.com/page'), false);
   assert.equal(looksLikeImagePasteStub('see notes.png for the diagram and rerun'), false); // .png mid-text, not a bare filename
+});
+
+// ─── Round-5 security hardening (3.29.9) ───────────────────────────────────
+test('isWalletKeyPath protects the wallet key store, allows other files', async () => {
+  const { isWalletKeyPath, WALLET_KEY_PATHS } = await import('../dist/tools/sensitive-paths.js');
+  for (const p of WALLET_KEY_PATHS) assert.equal(isWalletKeyPath(p), true, `${p} must be protected`);
+  assert.equal(isWalletKeyPath('/tmp/notes.txt'), false);
+  assert.equal(isWalletKeyPath(WALLET_KEY_PATHS[0] + '.bak'), false, 'only the exact key files, not siblings');
+});
+
+test('bash-guard: wallet-key read, xargs, and gh api mutations are NOT auto-safe', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  // Reading the wallet key must prompt (was auto-approved via `cat`).
+  assert.equal(safe('cat ~/.blockrun/.solana-session'), false);
+  assert.equal(safe('cat /Users/x/.blockrun/solana-wallet.json'), false);
+  // xargs wraps an arbitrary command — never auto-safe (`... | xargs rm -f`).
+  assert.equal(safe('grep -rl foo . | xargs rm -f'), false);
+  // gh api mutations must prompt; a plain GET stays safe.
+  assert.equal(safe('gh api -X DELETE /repos/o/r'), false);
+  assert.equal(safe('gh api --method POST /x -f a=b'), false);
+  assert.equal(safe('gh api /repos/o/r'), true);
+  // control: an actual read-only command is still auto-safe.
+  assert.equal(safe('cat README.md'), true);
+});
+
+test('isBlockedSsrfHost blocks loopback/private/metadata, allows public hosts', async () => {
+  const { isBlockedSsrfHost } = await import('../dist/tools/ssrf.js');
+  for (const h of ['localhost', '127.0.0.1', '169.254.169.254', '10.0.0.5', '192.168.1.1', '172.16.0.1', '::1', '[::1]', '0.0.0.0'])
+    assert.equal(isBlockedSsrfHost(h), true, `${h} must be blocked`);
+  for (const h of ['example.com', '8.8.8.8', 'api.openai.com', '1.1.1.1'])
+    assert.equal(isBlockedSsrfHost(h), false, `${h} must be allowed`);
+});
+
+test('frameUntrusted wraps external content as data-not-instructions', async () => {
+  const { frameUntrusted } = await import('../dist/tools/untrusted.js');
+  const out = frameUntrusted('Fetched web page', 'hello world');
+  assert.match(out, /UNTRUSTED CONTENT/);
+  assert.ok(out.endsWith('hello world'));
+});
+
+test('secret-redact masks a labeled Solana base58 private key without touching plain text', async () => {
+  const { redactSecrets } = await import('../dist/agent/secret-redact.js');
+  const key = '5'.repeat(80); // 80-char base58 value
+  const r = redactSecrets(`"private_key": "${key}"`);
+  assert.ok(r.matches.length >= 1, 'a labeled base58 key should be detected');
+  assert.ok(!r.redactedText.includes(key), 'the key value must be masked');
+  // A bare base58 (no label) is intentionally NOT masked — ambiguous with a signature.
+  assert.equal(redactSecrets(key).matches.length, 0);
 });

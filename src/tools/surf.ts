@@ -28,6 +28,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, API_URLS, USER_AGENT } from '../config.js';
+import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
 
@@ -253,7 +254,7 @@ async function callSurf(
       };
     }
     const head = `Surf /v1/surf/${entry.path} → $${paidUsd.toFixed(4)} · ${Date.now() - start}ms`;
-    return { output: `${head}\n\n\`\`\`json\n${raw}\n\`\`\`` };
+    return { output: frameUntrusted('Surf web/API result', `${head}\n\n\`\`\`json\n${raw}\n\`\`\``) };
   } catch (err) {
     return { output: `${toolName} ${endpoint} error: ${(err as Error).message}`, isError: true };
   } finally {

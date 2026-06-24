@@ -447,8 +447,22 @@ export async function connectMcpServers(config: McpConfig, debug?: boolean): Pro
         : Promise.reject(new Error(`Unknown transport: ${kind}`))
       );
 
+      let timedOut = false;
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`connection timeout (${timeout / 1000}s)`)), timeout),
+        setTimeout(() => { timedOut = true; reject(new Error(`connection timeout (${timeout / 1000}s)`)); }, timeout),
+      );
+      // If the connect loses the race, tear down the late-resolving connection —
+      // otherwise finalizeConnection registers a live transport (and, for stdio,
+      // a leaked subprocess) whose tools were already dropped, leaving /mcp
+      // showing the server as both "connected" and "failed".
+      void connectPromise.then(
+        (c) => {
+          if (timedOut) {
+            connections.delete(name);
+            void Promise.resolve(c.client.close()).catch(() => { /* best-effort */ });
+          }
+        },
+        () => { /* connect failed — nothing to tear down */ },
       );
       const connected = await Promise.race([connectPromise, timeoutPromise]);
       allTools.push(...connected.tools);

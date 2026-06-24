@@ -157,6 +157,16 @@ export async function extractBrainEntities(
     }
   }
 
+  // Merge in any entities a CONCURRENT extractor wrote while our (multi-second)
+  // extraction ran, so this full-file save doesn't silently clobber them — a
+  // real loss for users running a channel daemon alongside the CLI. Best-effort:
+  // the brain is a recall cache and a same-entity observation race can still
+  // drop an observation, but brand-new entities are preserved and self-heal.
+  const haveIds = new Set(entities.map((e) => e.id));
+  for (const onDisk of loadEntities()) {
+    if (!haveIds.has(onDisk.id)) entities.push(onDisk);
+  }
+
   saveEntities(entities);
 
   // Store relations

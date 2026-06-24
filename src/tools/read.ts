@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
+import { isWalletKeyPath } from './sensitive-paths.js';
 
 interface ReadInput {
   file_path: string;
@@ -74,6 +75,11 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   }
 
   const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.workingDir, filePath);
+
+  // Never let the model read the wallet private key into context.
+  if (isWalletKeyPath(resolved)) {
+    return { output: `Error: refusing to read the wallet key store: ${resolved}`, isError: true };
+  }
 
   try {
     const stat = fs.statSync(resolved);

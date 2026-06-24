@@ -196,6 +196,12 @@ function migrateMcp(source: string): void {
         args: config.args || [],
         label: name,
         ...(config.env ? { env: config.env } : {}),
+        // Carry over remote-transport fields — without `url` an http/sse server
+        // is dead on arrival (connectHttp throws "missing url"), yet the import
+        // reports success. (oauth/token servers are already skipped above.)
+        ...(config.url ? { url: config.url } : {}),
+        ...(config.headers ? { headers: config.headers } : {}),
+        ...(config.oauth ? { oauth: config.oauth } : {}),
       };
     }
   }

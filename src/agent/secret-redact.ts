@@ -164,6 +164,15 @@ const SECRET_PATTERNS: SecretPattern[] = [
     description: 'Ethereum-style private key',
     envVar: 'WALLET_PRIVATE_KEY',
   },
+  {
+    // Solana secret keys are base58 (~88 chars). Label-gated + length-gated
+    // (>=64 excludes 32-44 char PUBLIC addresses) so we never mask a bare hash
+    // or signature — e.g. solana-wallet.json's `"private_key": "<base58>"`.
+    label: 'solana_private_key',
+    pattern: /(?:private[_\s-]?key|priv[_\s-]?key|secret[_\s-]?key)"?\s*[:=]\s*"?[1-9A-HJ-NP-Za-km-z]{64,128}/gi,
+    description: 'Solana-style base58 private key',
+    envVar: 'WALLET_PRIVATE_KEY',
+  },
 ];
 
 export interface RedactionMatch {
