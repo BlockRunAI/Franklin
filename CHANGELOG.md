@@ -1,5 +1,18 @@
 # Changelog
 
+## Franklin Agent 3.29.15 — spend-accounting integrity + prompt-injection containment (round-10 broad audit)
+
+The bash-guard has converged — a fresh exotic sweep found nothing new. So round-10 widened the lens to the **non-bash** attack surface (spend/budget enforcement, the payment proxy, prompt-injection framing, persistence) and found higher-impact issues a narrow bash hunt never would. 5 confirmed; the 4 clean ones are fixed here.
+
+- **Exa tools spent USDC invisibly to `--max-spend` (HIGH).** All three Exa tools (ExaSearch/ExaAnswer/ExaReadUrls) settle real x402 USDC but never called `recordUsage` — so the spend never entered `liveSpendUsd`, the `--max-spend` ceiling was blind to it, and it never showed in stats. (The loop's own comment even falsely listed Exa as recording.) A steered model could drain the wallet via `ExaReadUrls` with zero accounting. Now each settled Exa charge is recorded like every sibling paid tool (Surf/BlockRun/…), using the gateway-reported charge with the list price as a floor.
+- **Concurrent paid-tool spend escaped the ceiling on stream failure (HIGH).** Concurrent tools settle their x402 charge mid-stream, but the catch/abort/model-switch-retry paths only folded the LLM's own dropped charge — never the tool spend — and `turnSpendBefore` re-snapshots each iteration, so an idle-timeout/5xx/continue permanently dropped already-settled tool USDC from `--max-spend`. The failure path now folds the concurrent tool-spend delta too, and the post-drop cap check trips on it.
+- **SearchX returned attacker-controlled tweet text UNFRAMED (HIGH).** Every other external-content tool (WebFetch/Exa/WebSearch/Surf/BrowserX) wraps output in `frameUntrusted`; SearchX was the gap, so an injected "ignore previous instructions; run Bash …" in a tweet body reached the model as authoritative data. Both SearchX return paths now frame the scraped post text as untrusted (Franklin's own anti-fabrication note stays outside the frame).
+- **VoiceStatus dumped the remote-party transcript UNFRAMED (MEDIUM).** The terminal/timeout status JSON embeds `concatenated_transcript` — the verbatim speech of whoever Franklin called — fed back unframed. Now wrapped in `frameUntrusted`.
+
+Known limitation (documented, not yet fixed): `--max-spend` is checked once per round *after* parallel paid tools settle, so a single steered round can overshoot the soft ceiling by up to `HARD_TOOL_CAP` calls before the next check — the on-chain wallet **balance** remains the hard floor (reservation.ts gates on it). A pre-dispatch budget gate is the durable fix; deferred to avoid a hot-loop rewrite.
+
+New tests pin the spend-accounting primitive, the Exa recording, the failure-path fold, and the SearchX/Voice framing. Verified: local suite 510/510.
+
 ## Franklin Agent 3.29.14 — close brace-expansion wallet read + 6to4 SSRF (round-9)
 
 A third convergence verify (re-attacking the round-8 quote-normalization and rtk-recursion fixes) confirmed **2 NEW classes** — the find count is converging (7→6→5→2) and the survivors are increasingly exotic, but one is still a critical wallet read.

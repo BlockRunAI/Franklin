@@ -1627,6 +1627,21 @@ export async function interactiveSession(
           turnCostUsd += droppedPaidUsd;
         }
 
+        // ── Count concurrent paid-TOOL spend that settled before the stream failed ──
+        // Concurrent tools (Exa/Surf/Blockrun/DeFiLlama/RPC/Prediction) are kicked
+        // off mid-stream and settle their x402 charge into liveSpendUsd BEFORE this
+        // catch runs. The success-path fold (~line 2342) is skipped on a throw, and
+        // every `continue` re-snapshots turnSpendBefore at the top of the next
+        // iteration — so without folding here, that already-spent USDC permanently
+        // escapes --max-spend on any stream error / abort / model-switch retry. The
+        // LLM's own recordUsage (~line 1948) has NOT run on the failure path, so the
+        // live-spend delta is pure tool spend — fold it whole (no callCost subtract).
+        const droppedToolUsd = Math.max(0, getLiveSpendUsd() - turnSpendBefore);
+        if (droppedToolUsd > 0) {
+          sessionCostUsd += droppedToolUsd;
+          turnCostUsd += droppedToolUsd;
+        }
+
         // ── User abort (Esc key) ──
         if ((err as Error).name === 'AbortError' || abort.signal.aborted) {
           // Save any partial response that was streamed before abort
@@ -1641,10 +1656,10 @@ export async function interactiveSession(
           break;
         }
 
-        // If the dropped charge pushed us over the hard cap, stop rather than
-        // retry (a retry would spend more). Abort already returned above.
+        // If the dropped charge (LLM or concurrent tool) pushed us over the hard
+        // cap, stop rather than retry (a retry would spend more). Abort returned above.
         const capAfterDrop = (config as { maxSpendUsd?: number }).maxSpendUsd;
-        if (droppedPaidUsd > 0 && typeof capAfterDrop === 'number' && Number.isFinite(capAfterDrop) &&
+        if ((droppedPaidUsd > 0 || droppedToolUsd > 0) && typeof capAfterDrop === 'number' && Number.isFinite(capAfterDrop) &&
             capAfterDrop > 0 && sessionCostUsd >= capAfterDrop) {
           onEvent({
             kind: 'text_delta',
