@@ -179,17 +179,23 @@ function isSegmentSafe(segment: string): boolean {
   // quoting arrangement of a wallet/secret path can reach 'safe'. (Over-matching
   // here only ever prompts — it never blocks.)
   const norm = segment.replace(/\\(.)/g, '$1').replace(/['"]/g, '');
+  // Brace expansion (`.bloc{k,}run`, `{~,}/...`, `.bloc{j..l}run`) is a 4th
+  // obfuscation primitive — the shell rewrites it to other words before opening
+  // the path, so `.blockrun`/basename literals read as non-contiguous text. Drop
+  // the brace metachars so the deny regexes below see the collapsed first word.
+  const debraced = norm.replace(/[{},]/g, '');
 
   // Never auto-approve a command that touches the wallet key store. Matching the
   // FILENAME is hopeless — it's trivially obfuscated. So match the DIRECTORY: any
   // reference to ~/.blockrun forces a prompt. (The file Read/Write/Edit tools
   // have a separate canonicalized guard; this is the best-effort net for the shell.)
-  if (/\.blockrun/i.test(norm)) {
+  if (/\.blockrun/i.test(norm) || /\.blockrun/i.test(debraced)) {
     return false;
   }
   // Relative reads with no `.blockrun` in the text (e.g. the cwd is the wallet
   // dir): match the known key/secret basenames broadly (any *wallet*.json/.key).
-  if (/(?<![\w-])(?:\.solana-session(?:-key2)?|\.session|[\w-]*wallet[\w-]*\.(?:json|key))(?![\w-])/i.test(norm)) {
+  const keyBasename = /(?<![\w-])(?:\.solana-session(?:-key2)?|\.session|[\w-]*wallet[\w-]*\.(?:json|key))(?![\w-])/i;
+  if (keyBasename.test(norm) || keyBasename.test(debraced)) {
     return false;
   }
   // Command/process substitution runs an arbitrary INNER command the classifier
@@ -212,6 +218,14 @@ function isSegmentSafe(segment: string): boolean {
   // (`$` followed by a non-name char — e.g. a `grep 'foo$'` regex anchor, `$?`,
   // `$5` — is left alone so common read commands still auto-approve.)
   if (/\$\{?[A-Za-z_]/.test(segment)) {
+    return false;
+  }
+  // Brace expansion with a comma list (`{a,b}`) or `..` range (`{0..9}`) fabricates
+  // words/paths the classifier can't statically follow — `cat {~,}/.bloc{k,}run/...`
+  // reaches the wallet store while every char-literal guard misses. Treat any such
+  // group as opaque, like `$VAR`/`$(...)`. (A brace with NO comma/`..` — `{x}`, or
+  // an fd-dup `2>&1` — does not expand, so it stays safe.)
+  if (/\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(segment)) {
     return false;
   }
   // A glob/brace in an explicit PATH (a token rooted at ~, ., or /) expands AFTER

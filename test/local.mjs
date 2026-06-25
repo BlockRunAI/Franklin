@@ -10545,3 +10545,35 @@ test('bash-guard: git branch/tag ref destruction prompts; read + create forms st
   assert.equal(safe('git tag -l'), true);
   assert.equal(safe('git tag v1.2.3'), true, 'creating a tag is safe');
 });
+
+// ─── Round-9: the 2 NEW classes from the 3.29.13 convergence verify ──────────
+test('bash-guard: brace expansion cannot smuggle a wallet-key read (4th obfuscation primitive)', async () => {
+  const { classifyBashRisk } = await import('../dist/agent/bash-guard.js');
+  const safe = (c) => classifyBashRisk(c).level === 'safe';
+  // `{~,}` tilde-expands while brace-splitting `.bloc{k,}run` / `.{session,}` so
+  // no char-literal `.blockrun`/`.session` survives — defeated all 3 guards at once.
+  for (const c of [
+    'cat {~,}/.bloc{k,}run/.{session,}',            // EVM key (critical)
+    'cat {~,}/.bloc{k,}run/.{solana-session,}',     // Solana key
+    'cat {~,}/.bloc{k,}run/.{solana-session-key2,}',
+    'grep -a . {~,}/.bloc{k,}run/.{session,}',      // reader-agnostic
+    'cut -c1-99 {~,}/.bloc{k,}run/.{session,}',
+    'cat ~/.bloc{j..l}run/.session',                // `..` range variant
+  ]) assert.equal(safe(c), false, `${c} must prompt`);
+  // A brace with no comma/range does not expand, and benign reads stay safe.
+  assert.equal(safe('cat README.md'), true);
+  assert.equal(safe('cat package.json'), true);
+});
+
+test('isBlockedSsrfHost blocks 6to4 IPv6 (2002::/16) embedding loopback/metadata', async () => {
+  const { isBlockedSsrfHost } = await import('../dist/tools/ssrf.js');
+  for (const h of [
+    '2002:7f00:1::',                                // → 127.0.0.1
+    '2002:a9fe:a9fe::',                             // → 169.254.169.254 (metadata)
+    '[2002:a9fe:a9fe::]',
+    '2002:c0a8:101::',                              // → 192.168.1.1
+  ]) assert.equal(isBlockedSsrfHost(h), true, `${h} must be blocked`);
+  // A genuinely public IPv6 (Cloudflare) and a 2002.* hostname stay allowed.
+  assert.equal(isBlockedSsrfHost('2606:4700::1111'), false);
+  assert.equal(isBlockedSsrfHost('2002:808:808::'), false, '2002:0808:0808 → 8.8.8.8 (public) allowed');
+});
