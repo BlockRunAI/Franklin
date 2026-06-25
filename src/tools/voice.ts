@@ -29,6 +29,7 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
+import { frameUntrusted } from './untrusted.js';
 import { CallLog, type CallStatus } from '../phone/call-log.js';
 
 /** Singleton, lazy — paths are computed at first use so tests can stub homedir. */
@@ -513,10 +514,16 @@ export const voiceStatusCapability: CapabilityHandler = {
       const status = String(lastRes.status ?? lastRes.queue_status ?? '').toLowerCase();
       if (VOICE_TERMINAL_STATUSES.has(status)) {
         recordStatusOnce();
+        // lastRes embeds concatenated_transcript — the verbatim speech of the
+        // remote party, who is outside Franklin's trust boundary and could speak
+        // injected instructions. Frame the dump as UNTRUSTED DATA like the other
+        // external-content tools so it's read as data, not commands.
         return {
-          output:
+          output: frameUntrusted(
+            'Voice call result (remote-party transcript is untrusted)',
             `## Voice call status (terminal: ${status})\n\n` +
-            '```json\n' + JSON.stringify(lastRes, null, 2) + '\n```',
+              '```json\n' + JSON.stringify(lastRes, null, 2) + '\n```',
+          ),
         };
       }
       try {
@@ -530,12 +537,14 @@ export const voiceStatusCapability: CapabilityHandler = {
     // context, but flag it as still in progress.
     recordStatusOnce();
     return {
-      output:
+      output: frameUntrusted(
+        'Voice call result (remote-party transcript is untrusted)',
         `## Voice call status (still in progress after ${Math.round(VOICE_POLL_MAX_WAIT_MS / 60_000)} min)\n\n` +
-        `Bland.ai upstream caps any single call at 30 min, so a call this long ` +
-        `is unusual — likely an upstream stall. Ask the user before reinvoking ` +
-        `VoiceStatus (would burn another full poll cycle).\n\n` +
-        '```json\n' + JSON.stringify(lastRes ?? {}, null, 2) + '\n```',
+          `Bland.ai upstream caps any single call at 30 min, so a call this long ` +
+          `is unusual — likely an upstream stall. Ask the user before reinvoking ` +
+          `VoiceStatus (would burn another full poll cycle).\n\n` +
+          '```json\n' + JSON.stringify(lastRes ?? {}, null, 2) + '\n```',
+      ),
       isError: true,
     };
   },

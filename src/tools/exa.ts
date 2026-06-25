@@ -31,17 +31,24 @@ import {
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import { frameUntrusted } from './untrusted.js';
+import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
 
 const GEN_TIMEOUT_MS = 30_000;
 
 // ─── Shared payment flow ─────────────────────────────────────────────
 
+interface PaidResponse<T> {
+  data: T;
+  settled: boolean;  // true when a 402 payment was signed AND the retry succeeded
+  latencyMs: number;
+}
+
 async function postWithPayment<T>(
   path: string,
   body: unknown,
   ctx: ExecutionScope,
-): Promise<T> {
+): Promise<PaidResponse<T>> {
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
   const endpoint = `${apiUrl}${path}`;
@@ -55,6 +62,7 @@ async function postWithPayment<T>(
   const timeout = setTimeout(() => controller.abort(), GEN_TIMEOUT_MS);
   const onAbort = () => controller.abort();
   ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
+  const start = Date.now();
 
   try {
     let response = await fetch(endpoint, {
@@ -64,6 +72,7 @@ async function postWithPayment<T>(
       body: bodyStr,
     });
 
+    let settled = false;
     if (response.status === 402) {
       const paymentHeaders = await signPayment(response, chain, endpoint);
       if (!paymentHeaders) {
@@ -75,6 +84,8 @@ async function postWithPayment<T>(
         headers: { ...headers, ...paymentHeaders },
         body: bodyStr,
       });
+      // A real USDC transfer was signed; if the retry is ok the charge landed.
+      settled = true;
     }
 
     if (!response.ok) {
@@ -82,11 +93,21 @@ async function postWithPayment<T>(
       throw new Error(`Exa ${path} failed (${response.status}): ${errText.slice(0, 200)}`);
     }
 
-    return (await response.json()) as T;
+    return { data: (await response.json()) as T, settled, latencyMs: Date.now() - start };
   } finally {
     clearTimeout(timeout);
     ctx.abortSignal.removeEventListener('abort', onAbort);
   }
+}
+
+// Fold a settled Exa charge into the live-spend accumulator so it counts against
+// --max-spend and shows in stats — exactly like surf.ts / blockrun.ts. Without
+// this, every Exa tool spent real USDC invisibly to the budget ceiling. Use the
+// gateway-reported charge when present, else the tool's list price as a floor.
+function recordExaSpend(path: string, settled: boolean, reportedUsd: number | undefined, fallbackUsd: number, latencyMs: number): void {
+  if (!settled) return; // free/already-paid (200-first) path — no charge to record
+  const usd = typeof reportedUsd === 'number' && reportedUsd > 0 ? reportedUsd : fallbackUsd;
+  try { recordUsage(`Exa:${path}`, 0, 0, usd, latencyMs); } catch { /* best-effort accounting */ }
 }
 
 async function signPayment(
@@ -215,8 +236,10 @@ export const exaSearchCapability: CapabilityHandler = {
     if (!params.query) return { output: 'Error: query is required', isError: true };
 
     try {
-      const res = await postWithPayment<ExaSearchResponse>('/v1/exa/search', params, ctx);
+      const { data: res, settled, latencyMs } = await postWithPayment<ExaSearchResponse>('/v1/exa/search', params, ctx);
       const body = res.data ?? res;
+      const cost = body.costDollars?.total;
+      recordExaSpend('/v1/exa/search', settled, cost, 0.01, latencyMs);
       const hits = body.results ?? [];
       if (hits.length === 0) {
         return { output: `No Exa results for "${params.query}".` };
@@ -227,7 +250,6 @@ export const exaSearchCapability: CapabilityHandler = {
         const score = h.score ? ` · score ${h.score.toFixed(2)}` : '';
         lines.push(`\n**${h.title}**${date}${score}\n${h.url}`);
       }
-      const cost = body.costDollars?.total;
       if (cost) lines.push(`\n_Cost: $${cost.toFixed(4)}_`);
       return { output: frameUntrusted('Exa web result', lines.join('\n')) };
     } catch (err) {
@@ -276,8 +298,10 @@ export const exaAnswerCapability: CapabilityHandler = {
     if (!params.query) return { output: 'Error: query is required', isError: true };
 
     try {
-      const res = await postWithPayment<ExaAnswerResponse>('/v1/exa/answer', params, ctx);
+      const { data: res, settled, latencyMs } = await postWithPayment<ExaAnswerResponse>('/v1/exa/answer', params, ctx);
       const body = res.data ?? res;
+      const cost = body.costDollars?.total;
+      recordExaSpend('/v1/exa/answer', settled, cost, 0.01, latencyMs);
       const ans = body.answer ?? '';
       const cites = body.citations ?? [];
       const lines: string[] = [ans];
@@ -285,7 +309,6 @@ export const exaAnswerCapability: CapabilityHandler = {
         lines.push('\n**Sources**');
         for (const c of cites) lines.push(`- [${c.title}](${c.url})`);
       }
-      const cost = body.costDollars?.total;
       if (cost) lines.push(`\n_Cost: $${cost.toFixed(4)}_`);
       return { output: frameUntrusted('Exa web result', lines.join('\n')) };
     } catch (err) {
@@ -347,8 +370,11 @@ export const exaReadUrlsCapability: CapabilityHandler = {
     }
 
     try {
-      const res = await postWithPayment<ExaContentsResponse>('/v1/exa/contents', params, ctx);
+      const { data: res, settled, latencyMs } = await postWithPayment<ExaContentsResponse>('/v1/exa/contents', params, ctx);
       const body = res.data ?? res;
+      const cost = body.costDollars?.total;
+      // $0.002/URL list price as the floor when the gateway omits costDollars.
+      recordExaSpend('/v1/exa/contents', settled, cost, 0.002 * params.urls.length, latencyMs);
       const results = body.results ?? [];
       if (results.length === 0) {
         return { output: `No readable content returned for the ${params.urls.length} URL(s).` };
@@ -357,7 +383,6 @@ export const exaReadUrlsCapability: CapabilityHandler = {
       for (const r of results) {
         lines.push(`\n### ${r.title ?? r.url}\n_Source: ${r.url}_\n\n${r.text}`);
       }
-      const cost = body.costDollars?.total;
       if (cost) lines.push(`\n_Cost: $${cost.toFixed(4)}_`);
       return { output: frameUntrusted('Exa web result', lines.join('\n')) };
     } catch (err) {
