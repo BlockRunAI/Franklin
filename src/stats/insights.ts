@@ -13,7 +13,7 @@
 
 import { loadStats } from './tracker.js';
 import type { UsageRecord } from './tracker.js';
-import { OPUS_PRICING, MODEL_PRICING } from '../pricing.js';
+import { OPUS_PRICING } from '../pricing.js';
 import { formatTokens, formatUsd, shortModelName } from './format.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -284,6 +284,3 @@ export function formatInsights(report: InsightsReport, days: number): string {
 
   return lines.join('\n');
 }
-
-// Silence unused import warning
-void MODEL_PRICING;

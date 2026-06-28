@@ -5,7 +5,7 @@ import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { BLOCKRUN_DIR, loadChain, API_URLS } from '../config.js';
 import { retryFetchBalance } from './balance-retry.js';
 import { flushStats, loadStats } from '../stats/tracker.js';
-import { OPUS_PRICING, MODEL_PRICING } from '../pricing.js';
+import { OPUS_PRICING } from '../pricing.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
 import { assembleInstructions } from '../agent/context.js';
@@ -219,15 +219,9 @@ export async function startCommand(options: StartOptions) {
     return;
   }
 
-  // Warn when a paid model is active so users know they'll be charged.
-  // Derive "free" from MODEL_PRICING so adding a new free entry there is enough —
-  // no second hardcoded list to keep in sync.
-  const pricing = MODEL_PRICING[model];
-  const isFree = pricing != null && pricing.input === 0 && pricing.output === 0 && (pricing.perCall ?? 0) === 0;
-  if (!isFree) {
-    console.log(chalk.yellow(`  Model: ${model}  (paid — charges from your wallet per call)`));
-    console.log(chalk.dim(`  Switch to free with: /model free\n`));
-  }
+  // Show the active model at startup. No paid/free framing — Franklin is the
+  // agent with a wallet; spending is the point, not a warning.
+  console.log(chalk.dim(`  Model: ${model}\n`));
 
   // Auto-create wallet if needed (no interruption — free models work without funding)
   let walletAddress = '';
