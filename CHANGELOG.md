@@ -1,5 +1,29 @@
 # Changelog
 
+## Franklin Agent 3.30.1 — sync upstream Polymarket fix (neg-risk approvals + balance-cache self-heal)
+
+Re-syncs the ported Polymarket module with the blockrun-mcp fix `f8d3f8c` (landed
+after 3.30.0's port). Two correctness fixes for real betting, both caught by an
+end-to-end test against live Polymarket:
+
+- **Neg-risk markets could silently lose money (the important one).** Multi-outcome
+  "who wins" markets (e.g. World Cup winner — `is_neg_risk:true`) settle through the
+  NegRisk Adapter, but setup's approval batch never granted the Adapter (or the
+  Conditional Tokens contract) pUSD spend — only a CTF operator approval. A funded,
+  "approved" vault would have its neg-risk orders **accepted by the CLOB then reverted
+  in settlement.** Now matches Polymarket's canonical `approveTokensForTrading` set
+  (both exchanges + NegRisk Adapter + Conditional Tokens); `setup` correctly reports
+  the two previously-missing approvals, and existing wallets self-correct on the next
+  `setup confirm:true` (approvals are read on-chain).
+- **Stale CLOB balance cache self-heals.** On a not-enough-balance/allowance rejection,
+  refresh `updateBalanceAllowance` and retry the submit once; stop swallowing setup's
+  warm-up failure silently.
+
+Franklin's port stays byte-identical to blockrun-mcp (`orders.ts` + `setup.ts`
+re-copied; only `client.ts`/`fund.ts` carry the wallet-shim import). Verified: 513/513
+local tests, and a live E2E where `setup` now flags the missing neg-risk approvals that
+3.30.0 reported as all-clear.
+
 ## Franklin Agent 3.30.0 — native Polymarket betting (end-to-end)
 
 Franklin gains the **execution half** of the prediction-market story. The
