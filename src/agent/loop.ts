@@ -1544,7 +1544,10 @@ export async function interactiveSession(
         const hasTools = responseParts.some(p => p.type === 'tool_use');
         const hasThinking = responseParts.some(p => p.type === 'thinking');
         if (!hasText && !hasTools && !hasThinking) {
-          const EMPTY_FALLBACK_MODELS = ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash', 'zai/glm-5.2'];
+          // Free-only recovery chain — a free/empty-response session must NEVER
+          // fall back to a paid model (would silently charge the wallet). Both
+          // entries are $0 nvidia models.
+          const EMPTY_FALLBACK_MODELS = ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'];
           const nextModel = EMPTY_FALLBACK_MODELS.find(m => m !== config.model && !turnFailedModels.has(m));
           if (nextModel && recoveryAttempts < 2) {
             recoveryAttempts++;

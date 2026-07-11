@@ -21,9 +21,9 @@ export interface ModelTierConfig {
 }
 
 export const DEFAULT_MODEL_TIERS: ModelTierConfig = {
-  free: 'nvidia/llama-4-maverick',
-  cheap: 'nvidia/llama-4-maverick', // Free by default; opt-in to paid flat-rate via 'zai/glm-5.1'.
-  premium: 'anthropic/claude-sonnet-4.6',
+  free: 'nvidia/qwen3-next-80b-a3b-instruct',
+  cheap: 'nvidia/qwen3-next-80b-a3b-instruct', // Free by default; opt-in to paid flat-rate via 'zai/glm-5.1'.
+  premium: 'anthropic/claude-sonnet-5',
 };
 
 // ─── Workflow Steps ───────────────────────────────────────────────────────

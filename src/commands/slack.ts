@@ -58,7 +58,7 @@ export async function slackCommand(opts: SlackCommandOptions): Promise<void> {
   const model =
     opts.model ||
     config['default-model'] ||
-    'nvidia/llama-4-maverick';
+    'nvidia/qwen3-next-80b-a3b-instruct';
 
   const workingDir = process.cwd();
   const systemInstructions = assembleInstructions(workingDir, model);

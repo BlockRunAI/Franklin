@@ -39,7 +39,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   }
 
   // Resolve which model the sub-agent will actually run on
-  const subModel = model || registeredParentModel || 'nvidia/llama-4-maverick';
+  const subModel = model || registeredParentModel || 'nvidia/qwen3-next-80b-a3b-instruct';
 
   // Cost gate: if parent is free but sub-agent wants paid, ask user first.
   // Prevents silent charges when the agent decides to spawn a more capable sub-agent.

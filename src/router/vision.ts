@@ -21,22 +21,32 @@
 
 const VISION_MODELS = new Set<string>([
   // Anthropic — native vision across the line
+  'anthropic/claude-fable-5',
   'anthropic/claude-opus-4.8',
   'anthropic/claude-opus-4.7',
   'anthropic/claude-opus-4.6',
+  'anthropic/claude-opus-4.5',
+  'anthropic/claude-sonnet-5',
   'anthropic/claude-sonnet-4.6',
+  'anthropic/claude-sonnet-4.5',
   'anthropic/claude-haiku-4.5-20251001',
-  // OpenAI — multimodal flagships + o3 (Codex 5.3 is text-only, excluded)
+  // OpenAI — multimodal flagships + o3 (Codex 5.3 is text-only, excluded).
+  // GPT-5.6 family + 5.4-mini are vision; 5.4-nano is text-only.
+  'openai/gpt-5.6-sol',
+  'openai/gpt-5.6-terra',
+  'openai/gpt-5.6-luna',
   'openai/gpt-5.5',
   'openai/gpt-5.4',
   'openai/gpt-5.4-pro',
+  'openai/gpt-5.4-mini',
   'openai/gpt-5.2',
   'openai/gpt-5.2-pro',
   'openai/gpt-5-mini',
   'openai/gpt-4.1',
   'openai/o3',
-  // Google — vision baked into every Gemini SKU we surface
+  // Google — vision baked into every Gemini SKU we surface (flash-lite excepted)
   'google/gemini-3.1-pro',
+  'google/gemini-3.5-flash',
   'google/gemini-2.5-pro',
   'google/gemini-2.5-flash',
   // xAI — only Grok 4 base supports vision; grok-4-1-fast-reasoning is text-only
@@ -45,8 +55,10 @@ const VISION_MODELS = new Set<string>([
   // Moonshot — K2.7 (flagship) + K2.6 are multimodal (image + video input)
   'moonshot/kimi-k2.7',
   'moonshot/kimi-k2.6',
-  // NVIDIA inference — Llama 4 Maverick is multimodal; deepseek/qwen-coder are not
+  // NVIDIA inference — Llama 4 Maverick + Nemotron Nano VL are multimodal;
+  // deepseek/qwen-coder are not.
   'nvidia/llama-4-maverick',
+  'nvidia/nemotron-nano-12b-v2-vl',
 ]);
 
 /** Does this concrete gateway model accept image input? */

@@ -375,7 +375,7 @@ function classicRouteRequest(
 // llama-4-maverick: clean one-word classification output. glm-4.7 + qwen-
 // thinking emit reasoning into thinking blocks and leave text empty under
 // tight max_tokens — fine for chat, wrong shape for single-word dispatch.
-const CLASSIFIER_MODEL = process.env.FRANKLIN_ROUTER_MODEL || 'nvidia/llama-4-maverick';
+const CLASSIFIER_MODEL = process.env.FRANKLIN_ROUTER_MODEL || 'nvidia/qwen3-next-80b-a3b-instruct';
 const CLASSIFIER_TIMEOUT_MS = 2_500;
 
 const CLASSIFIER_SYSTEM = `You classify a user's message into ONE routing tier for a CLI agent. Reply with EXACTLY ONE WORD from the allowed set. No explanation, no punctuation, no quotes.
@@ -518,7 +518,7 @@ export function resolveTierToModel(
   // line; revisit hard-falling to it if a real user hits this path.)
   if (profile === 'free') {
     return {
-      model: 'nvidia/llama-4-maverick',
+      model: 'nvidia/qwen3-next-80b-a3b-instruct',
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: needsVision ? ['free-profile', 'vision-unsupported'] : ['free-profile'],
@@ -555,7 +555,7 @@ export function routeRequest(
   // Free profile — always use free model
   if (profile === 'free') {
     return {
-      model: 'nvidia/llama-4-maverick',
+      model: 'nvidia/qwen3-next-80b-a3b-instruct',
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: needsVision ? ['free-profile', 'vision-unsupported'] : ['free-profile'],
@@ -663,21 +663,22 @@ export function getFallbackChain(
 // behind maverick rather than leading.
 // 2026-06-07: nvidia/glm-4.7 dropped from every chain — NVIDIA NIM hung, the
 // gateway redirected it to a now-dead model, so routing to it just wasted a slot.
-// 2026-06-11: nvidia/qwen3-coder-480b removed — its upstream
-// (qwen/qwen3-coder-480b-a35b-instruct) reached end-of-life and the gateway now
-// 410s on it. maverick + deepseek-v4-flash cover all categories.
+// 2026-07-11: nvidia/deepseek-v4-flash removed — the gateway no longer serves
+// it (410). Free tier is now led by nvidia/qwen3-next-80b-a3b-instruct (cleanest
+// free instruction-follower — no thinking leak / markdown fences, verified live),
+// with nvidia/llama-4-maverick kept as a DIFFERENT-family fallback for resilience.
 const FREE_MODELS_BY_CATEGORY: Record<Category, string[]> = {
-  coding:    ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
-  trading:   ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
-  research:  ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
-  reasoning: ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
-  chat:      ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
-  creative:  ['nvidia/llama-4-maverick', 'nvidia/deepseek-v4-flash'],
+  coding:    ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
+  trading:   ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
+  research:  ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
+  reasoning: ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
+  chat:      ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
+  creative:  ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
 };
 
 const DEFAULT_FREE_CHAIN: string[] = [
+  'nvidia/qwen3-next-80b-a3b-instruct',
   'nvidia/llama-4-maverick',
-  'nvidia/deepseek-v4-flash',
 ];
 
 /**

@@ -11,6 +11,9 @@ import {
 } from '@blockrun/llm';
 import type { Chain } from '../config.js';
 import { recordUsage } from '../stats/tracker.js';
+// Single source of truth for shortcuts — shared with the /model picker so the
+// proxy can never drift from the interactive UI (it did before: grok→grok-3).
+import { MODEL_SHORTCUTS } from '../ui/model-picker.js';
 import { appendSettlementRow } from '../stats/cost-log.js';
 import { appendAudit } from '../stats/audit.js';
 import {
@@ -135,93 +138,9 @@ function trackOutputTokens(model: string, tokens: number) {
   lastOutputByModel.set(model, tokens);
 }
 
-// Model shortcuts for quick switching
-const MODEL_SHORTCUTS: Record<string, string> = {
-  // Routing profiles — Auto-only since 2026-05-03 (Eco/Premium retired).
-  // `eco` / `premium` aliases retained for back-compat with proxy clients;
-  // they parse to Auto downstream.
-  auto: 'blockrun/auto',
-  smart: 'blockrun/auto',
-  eco: 'blockrun/auto',
-  premium: 'blockrun/auto',
-  // Anthropic
-  sonnet: 'anthropic/claude-sonnet-4.6',
-  claude: 'anthropic/claude-sonnet-4.6',
-  'sonnet-4.6': 'anthropic/claude-sonnet-4.6',
-  opus: 'anthropic/claude-opus-4.8',
-  'opus-4.8': 'anthropic/claude-opus-4.8',
-  'opus-4.7': 'anthropic/claude-opus-4.7',
-  'opus-4.6': 'anthropic/claude-opus-4.6',
-  haiku: 'anthropic/claude-haiku-4.5-20251001',
-  'haiku-4.5': 'anthropic/claude-haiku-4.5-20251001',
-  // OpenAI
-  // `gpt` / `gpt5` / `gpt-5` follow the gateway's flagship — currently 5.5.
-  gpt: 'openai/gpt-5.5',
-  gpt5: 'openai/gpt-5.5',
-  'gpt-5': 'openai/gpt-5.5',
-  'gpt-5.5': 'openai/gpt-5.5',
-  'gpt-5.4': 'openai/gpt-5.4',
-  'gpt-5.4-pro': 'openai/gpt-5.4-pro',
-  'gpt-5.3': 'openai/gpt-5.3',
-  'gpt-5.2': 'openai/gpt-5.2',
-  'gpt-5.2-pro': 'openai/gpt-5.2-pro',
-  'gpt-4.1': 'openai/gpt-4.1',
-  codex: 'openai/gpt-5.3-codex',
-  nano: 'openai/gpt-5-nano',
-  mini: 'openai/gpt-5-mini',
-  o3: 'openai/o3',
-  o4: 'openai/o4-mini',
-  'o4-mini': 'openai/o4-mini',
-  o1: 'openai/o1',
-  // Google
-  gemini: 'google/gemini-2.5-pro',
-  'gemini-2.5': 'google/gemini-2.5-pro',
-  flash: 'google/gemini-2.5-flash',
-  'gemini-3': 'google/gemini-3.1-pro',
-  'gemini-3.1': 'google/gemini-3.1-pro',
-  // xAI
-  grok: 'xai/grok-3',
-  'grok-3': 'xai/grok-3',
-  'grok-4': 'xai/grok-4-0709',
-  'grok-fast': 'xai/grok-4-1-fast-reasoning',
-  'grok-4.1': 'xai/grok-4-1-fast-reasoning',
-  // DeepSeek
-  deepseek: 'deepseek/deepseek-chat',
-  r1: 'deepseek/deepseek-reasoner',
-  // Free models (agent-tested gateway free tier — refreshed 2026-04)
-  free: 'nvidia/llama-4-maverick',
-  glm4: 'nvidia/llama-4-maverick',
-  'deepseek-free': 'nvidia/llama-4-maverick',
-  'qwen-coder': 'nvidia/llama-4-maverick',
-  'qwen-think': 'nvidia/llama-4-maverick',
-  maverick: 'nvidia/llama-4-maverick',
-  'gpt-oss': 'nvidia/llama-4-maverick',
-  'gpt-oss-small': 'nvidia/llama-4-maverick',
-  'mistral-small': 'nvidia/llama-4-maverick',
-  // Retired/unreliable gateway-model aliases (map to closest agent-tested current).
-  nemotron: 'nvidia/llama-4-maverick',
-  devstral: 'nvidia/llama-4-maverick',
-  // Minimax
-  minimax: 'minimax/minimax-m3',
-  'm3': 'minimax/minimax-m3',
-  'm2.7': 'minimax/minimax-m2.7',
-  // Others
-  glm: 'zai/glm-5.2',
-  'glm-5.2': 'zai/glm-5.2',
-  // glm-5.1 demoted to back-compat pin 2026-06 (flagship is 5.2) — still routes.
-  'glm-5.1': 'zai/glm-5.1',
-  'glm-turbo': 'zai/glm-5-turbo',
-  'glm5': 'zai/glm-5.2',
-  kimi: 'moonshot/kimi-k2.7',
-  'k2.7': 'moonshot/kimi-k2.7',
-  // K2.6 demoted 2026-06 (flagship is K2.7) but still routes — `k2.6` pins it.
-  'k2.6': 'moonshot/kimi-k2.6',
-  // K2.5 retired — aliases resolve to the current flagship for muscle memory.
-  'kimi-k2.5': 'moonshot/kimi-k2.7',
-  'k2.5': 'moonshot/kimi-k2.7',
-};
-
-// Model pricing now uses shared source from src/pricing.ts
+// Model shortcuts for quick switching — imported from ui/model-picker.ts (the
+// single source of truth) so the proxy and the interactive /model picker can
+// never drift apart. Model pricing likewise comes from src/pricing.ts.
 
 function detectModelSwitch(parsed: {
   messages?: Array<{ role: string; content: string | unknown[] | unknown }>;
