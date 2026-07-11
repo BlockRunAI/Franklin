@@ -18,24 +18,36 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   smart: 'blockrun/auto',
   eco: 'blockrun/auto',
   premium: 'blockrun/auto',
-  // Anthropic
-  sonnet: 'anthropic/claude-sonnet-4.6',
-  claude: 'anthropic/claude-sonnet-4.6',
+  // Anthropic — `sonnet`/`claude` follow the newest Sonnet (5); `fable` is the
+  // Mythos-class tier above Opus.
+  fable: 'anthropic/claude-fable-5',
+  'fable-5': 'anthropic/claude-fable-5',
+  sonnet: 'anthropic/claude-sonnet-5',
+  claude: 'anthropic/claude-sonnet-5',
+  'sonnet-5': 'anthropic/claude-sonnet-5',
   'sonnet-4.6': 'anthropic/claude-sonnet-4.6',
+  'sonnet-4.5': 'anthropic/claude-sonnet-4.5',
   opus: 'anthropic/claude-opus-4.8',
   'opus-4.8': 'anthropic/claude-opus-4.8',
   'opus-4.7': 'anthropic/claude-opus-4.7',
   'opus-4.6': 'anthropic/claude-opus-4.6',
+  'opus-4.5': 'anthropic/claude-opus-4.5',
   haiku: 'anthropic/claude-haiku-4.5-20251001',
   'haiku-4.5': 'anthropic/claude-haiku-4.5-20251001',
   // OpenAI
-  // `gpt` / `gpt5` / `gpt-5` follow the gateway's flagship — currently 5.5.
-  gpt: 'openai/gpt-5.5',
-  gpt5: 'openai/gpt-5.5',
-  'gpt-5': 'openai/gpt-5.5',
+  // `gpt` / `gpt5` / `gpt-5` follow the gateway's flagship — currently 5.6 Sol.
+  gpt: 'openai/gpt-5.6-sol',
+  gpt5: 'openai/gpt-5.6-sol',
+  'gpt-5': 'openai/gpt-5.6-sol',
+  'gpt-5.6': 'openai/gpt-5.6-sol',
+  'gpt-5.6-sol': 'openai/gpt-5.6-sol',
+  'gpt-5.6-terra': 'openai/gpt-5.6-terra',
+  'gpt-5.6-luna': 'openai/gpt-5.6-luna',
   'gpt-5.5': 'openai/gpt-5.5',
   'gpt-5.4': 'openai/gpt-5.4',
   'gpt-5.4-pro': 'openai/gpt-5.4-pro',
+  'gpt-5.4-mini': 'openai/gpt-5.4-mini',
+  'gpt-5.4-nano': 'openai/gpt-5.4-nano',
   'gpt-5.3': 'openai/gpt-5.3',
   'gpt-5.2': 'openai/gpt-5.2',
   'gpt-5.2-pro': 'openai/gpt-5.2-pro',
@@ -50,7 +62,9 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   // Google
   gemini: 'google/gemini-2.5-pro',
   'gemini-2.5': 'google/gemini-2.5-pro',
-  flash: 'google/gemini-2.5-flash',
+  flash: 'google/gemini-3.5-flash',
+  'gemini-flash': 'google/gemini-3.5-flash',
+  'gemini-3.5-flash': 'google/gemini-3.5-flash',
   'gemini-3': 'google/gemini-3.1-pro',
   'gemini-3.1': 'google/gemini-3.1-pro',
   // xAI — grok-4.3 is the public flagship since 2026-06-04 (grok-3 and the
@@ -70,25 +84,32 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'deepseek-v4-pro': 'deepseek/deepseek-v4-pro',
   'dsv4-pro': 'deepseek/deepseek-v4-pro',
   'v4-pro': 'deepseek/deepseek-v4-pro',
-  // V4 Flash: free on NVIDIA inference. Bare `deepseek-v4` resolves here
-  // since the paid V4 Flash SKU was dropped (overlapped with this free one).
-  'deepseek-v4': 'nvidia/deepseek-v4-flash',
-  'deepseek-v4-flash': 'nvidia/deepseek-v4-flash',
-  dsv4: 'nvidia/deepseek-v4-flash',
-  // V3.2 NVIDIA NIM hung (server redirects to V4 Flash) — point the aliases
-  // straight at the live V4 Flash so the picker doesn't hand back a dead id.
-  'deepseek-v3.2': 'nvidia/deepseek-v4-flash',
-  'deepseek-v3': 'nvidia/deepseek-v4-flash',
-  // Free (agent-tested BlockRun gateway free tier — refreshed 2026-04)
-  free: 'nvidia/llama-4-maverick',
-  glm4: 'nvidia/llama-4-maverick',
-  'deepseek-free': 'nvidia/llama-4-maverick',
-  'qwen-coder': 'nvidia/llama-4-maverick',
-  'qwen-think': 'nvidia/llama-4-maverick',
+  // The free nvidia/deepseek-v4-flash SKU was EOL'd by the gateway (410).
+  // Point the deepseek-free aliases at the current free default so muscle
+  // memory keeps working without handing back a dead id.
+  'deepseek-v4': 'nvidia/qwen3-next-80b-a3b-instruct',
+  'deepseek-v4-flash': 'nvidia/qwen3-next-80b-a3b-instruct',
+  dsv4: 'nvidia/qwen3-next-80b-a3b-instruct',
+  'deepseek-v3.2': 'nvidia/qwen3-next-80b-a3b-instruct',
+  'deepseek-v3': 'nvidia/qwen3-next-80b-a3b-instruct',
+  // Free (agent-tested BlockRun gateway free tier — refreshed 2026-07-11).
+  // `free` follows the current free default (qwen3-next-instruct: cleanest
+  // free instruction-follower). NOTE: every free alias resolves to a $0 nvidia
+  // model — the free tier NEVER falls back to a paid model.
+  free: 'nvidia/qwen3-next-80b-a3b-instruct',
+  qwen: 'nvidia/qwen3-next-80b-a3b-instruct',
+  qwen3: 'nvidia/qwen3-next-80b-a3b-instruct',
+  'qwen3-next': 'nvidia/qwen3-next-80b-a3b-instruct',
+  'qwen3.5': 'nvidia/qwen3.5-122b-a10b',
   maverick: 'nvidia/llama-4-maverick',
-  'gpt-oss': 'nvidia/llama-4-maverick',
-  'gpt-oss-small': 'nvidia/llama-4-maverick',
-  'mistral-small': 'nvidia/llama-4-maverick',
+  glm4: 'nvidia/qwen3-next-80b-a3b-instruct',
+  'deepseek-free': 'nvidia/qwen3-next-80b-a3b-instruct',
+  'qwen-coder': 'nvidia/qwen3-next-80b-a3b-instruct',
+  'qwen-think': 'nvidia/qwen3-next-80b-a3b-instruct',
+  'gpt-oss': 'nvidia/qwen3-next-80b-a3b-instruct',
+  'gpt-oss-small': 'nvidia/qwen3-next-80b-a3b-instruct',
+  'mistral-small': 'nvidia/qwen3-next-80b-a3b-instruct',
+  'mistral-nemotron': 'nvidia/mistral-nemotron',
   // Backward-compatibility aliases for models the gateway retired or exposes
   // unreliably on /v1/messages. Map to agent-tested free models so shortcuts
   // keep working without silent paid fallback or empty tool-use turns.
@@ -174,9 +195,10 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
     // free-tier entries and v3.9.2 used to retire Kimi K2.5.
     category: '✨ Premium frontier',
     models: [
+      { id: 'anthropic/claude-fable-5',    shortcut: 'fable',     label: 'Claude Fable 5',    price: '$10/$50' },
       { id: 'anthropic/claude-opus-4.8',   shortcut: 'opus',      label: 'Claude Opus 4.8',   price: '$5/$25', highlight: true },
-      { id: 'anthropic/claude-sonnet-4.6', shortcut: 'sonnet',    label: 'Claude Sonnet 4.6', price: '$3/$15' },
-      { id: 'openai/gpt-5.5',              shortcut: 'gpt',       label: 'GPT-5.5',           price: '$5/$30', highlight: true },
+      { id: 'anthropic/claude-sonnet-5',   shortcut: 'sonnet',    label: 'Claude Sonnet 5',   price: '$3/$15' },
+      { id: 'openai/gpt-5.6-sol',          shortcut: 'gpt',       label: 'GPT-5.6 Sol',       price: '$5/$30', highlight: true },
       { id: 'google/gemini-3.1-pro',       shortcut: 'gemini-3',  label: 'Gemini 3.1 Pro',    price: '$2/$12' },
       { id: 'google/gemini-2.5-pro',       shortcut: 'gemini',    label: 'Gemini 2.5 Pro',    price: '$1.25/$10' },
       { id: 'xai/grok-4.3',                shortcut: 'grok',      label: 'Grok 4.3',          price: '$1.5/$4' },
@@ -219,13 +241,14 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
   {
     category: '🆓 Free (no USDC needed)',
     models: [
-      // Maverick leads the section: the only reliably-healthy free model, and
-      // the default the `free` shortcut + free routing profile resolve to.
-      // V4 Flash (1M ctx) is the secondary — strong but occasionally times out
-      // on the NVIDIA NIM upstream. (Qwen3 Coder 480B removed 2026-06-11: its
-      // upstream reached EOL and the gateway 410s on it.)
-      { id: 'nvidia/llama-4-maverick',  shortcut: 'maverick',    label: 'Llama 4 Maverick', price: 'FREE', highlight: true },
-      { id: 'nvidia/deepseek-v4-flash', shortcut: 'deepseek-v4', label: 'DeepSeek V4 Flash', price: 'FREE' },
+      // Qwen3-Next 80B leads: cleanest free instruction-follower (no thinking
+      // leak / markdown fences — verified live 2026-07-11) and the default the
+      // `free` shortcut + free routing profile resolve to. Llama 4 Maverick is
+      // the diverse-family secondary. (nvidia/deepseek-v4-flash removed
+      // 2026-07-11: the gateway 410s on it.) Both are $0 — the free tier never
+      // falls back to a paid model.
+      { id: 'nvidia/qwen3-next-80b-a3b-instruct', shortcut: 'free',     label: 'Qwen3-Next 80B',   price: 'FREE', highlight: true },
+      { id: 'nvidia/llama-4-maverick',            shortcut: 'maverick', label: 'Llama 4 Maverick', price: 'FREE' },
     ],
   },
 ];

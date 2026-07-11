@@ -9,36 +9,53 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   // their parser mapping promotes them to Auto upstream of cost estimation.
   'blockrun/auto': { input: 0.8, output: 4.0 },
   'blockrun/free': { input: 0, output: 0 },
-  // FREE — BlockRun gateway free tier (refreshed 2026-04-29 with V4 Flash + Omni launch)
-  'nvidia/deepseek-v4-flash': { input: 0, output: 0 },
+  // FREE — BlockRun gateway free tier (refreshed 2026-07-11 to match live /v1/models).
+  // qwen3-next-80b-a3b-instruct is the current free default (cleanest instruction-
+  // following — verified live: no thinking leak, no markdown fences, reliable).
+  'nvidia/qwen3-next-80b-a3b-instruct': { input: 0, output: 0 },
+  'nvidia/qwen3.5-122b-a10b': { input: 0, output: 0 },
   'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': { input: 0, output: 0 },
+  'nvidia/mistral-nemotron': { input: 0, output: 0 },
+  'nvidia/step-3.7-flash': { input: 0, output: 0 },
+  'nvidia/seed-oss-36b': { input: 0, output: 0 },
+  'nvidia/nemotron-nano-9b-v2': { input: 0, output: 0 },
+  'nvidia/nemotron-nano-12b-v2-vl': { input: 0, output: 0 },
+  'nvidia/llama-4-maverick': { input: 0, output: 0 },
+  'nvidia/mistral-large-3-675b': { input: 0, output: 0 },
+  // Retired free models (kept at 0 for legacy session-cost records; gateway no
+  // longer serves these — do NOT route to them).
+  'nvidia/deepseek-v4-flash': { input: 0, output: 0 },
   'nvidia/glm-4.7': { input: 0, output: 0 },
   'nvidia/qwen3-next-80b-a3b-thinking': { input: 0, output: 0 },
   'nvidia/qwen3-coder-480b': { input: 0, output: 0 },
   'nvidia/mistral-small-4-119b': { input: 0, output: 0 },
-  'nvidia/llama-4-maverick': { input: 0, output: 0 },
   'nvidia/deepseek-v3.2': { input: 0, output: 0 },
-  // Retired (kept at 0 for legacy session-cost records; gateway no longer serves these).
   'nvidia/gpt-oss-120b': { input: 0, output: 0 },
   'nvidia/gpt-oss-20b': { input: 0, output: 0 },
   'nvidia/nemotron-ultra-253b': { input: 0, output: 0 },
   'nvidia/devstral-2-123b': { input: 0, output: 0 },
   'nvidia/nemotron-3-super-120b': { input: 0, output: 0 },
   'nvidia/nemotron-super-49b': { input: 0, output: 0 },
-  'nvidia/mistral-large-3-675b': { input: 0, output: 0 },
   // Anthropic
-  'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
+  'anthropic/claude-fable-5': { input: 10.0, output: 50.0 }, // Mythos-class tier above Opus, 1M ctx
   'anthropic/claude-opus-4.8': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.7': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.6': { input: 5.0, output: 25.0 },
+  'anthropic/claude-opus-4.5': { input: 5.0, output: 25.0 },
+  'anthropic/claude-sonnet-5': { input: 3.0, output: 15.0 }, // near-Opus at Sonnet cost, 1M ctx
+  'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
+  'anthropic/claude-sonnet-4.5': { input: 3.0, output: 15.0 },
   'anthropic/claude-haiku-4.5': { input: 1.0, output: 5.0 },
   'anthropic/claude-haiku-4.5-20251001': { input: 1.0, output: 5.0 },
   // OpenAI
   'openai/gpt-5-nano': { input: 0.05, output: 0.4 },
   'openai/gpt-4.1-nano': { input: 0.1, output: 0.4 },
   'openai/gpt-4o-mini': { input: 0.15, output: 0.6 },
+  'openai/gpt-5.4-nano': { input: 0.2, output: 1.25 },
   'openai/gpt-5-mini': { input: 0.25, output: 2.0 },
   'openai/gpt-4.1-mini': { input: 0.4, output: 1.6 },
+  'openai/gpt-5.4-mini': { input: 0.75, output: 4.5 },
+  'openai/gpt-5.6-luna': { input: 1.0, output: 6.0 }, // cost-efficient GPT-5.6 tier, 1M ctx
   'openai/gpt-5.2': { input: 1.75, output: 14.0 },
   'openai/gpt-5.3': { input: 1.75, output: 14.0 },
   'openai/gpt-5.3-codex': { input: 1.75, output: 14.0 },
@@ -46,17 +63,21 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'openai/o3': { input: 2.0, output: 8.0 },
   'openai/gpt-4o': { input: 2.5, output: 10.0 },
   'openai/gpt-5.4': { input: 2.5, output: 15.0 },
+  'openai/gpt-5.6-terra': { input: 2.5, output: 15.0 }, // balanced GPT-5.6 tier, 1M ctx
   'openai/o1-mini': { input: 1.1, output: 4.4 },
   'openai/o3-mini': { input: 1.1, output: 4.4 },
   'openai/o4-mini': { input: 1.1, output: 4.4 },
   'openai/o1': { input: 15.0, output: 60.0 },
   'openai/gpt-5.5': { input: 5.0, output: 30.0 },
+  'openai/gpt-5.6-sol': { input: 5.0, output: 30.0 }, // GPT-5.6 flagship, deepest reasoning, 1M ctx
   'openai/gpt-5.2-pro': { input: 21.0, output: 168.0 },
   'openai/gpt-5.4-pro': { input: 30.0, output: 180.0 },
   // Google
   'google/gemini-2.5-flash-lite': { input: 0.1, output: 0.4 },
+  'google/gemini-3.1-flash-lite': { input: 0.25, output: 1.5 },
   'google/gemini-2.5-flash': { input: 0.3, output: 2.5 },
   'google/gemini-3-flash-preview': { input: 0.5, output: 3.0 },
+  'google/gemini-3.5-flash': { input: 0.5, output: 3.0 }, // latest Flash w/ thinking, 1M ctx
   'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
   'google/gemini-3-pro-preview': { input: 2.0, output: 12.0 },
   'google/gemini-3.1-pro': { input: 2.0, output: 12.0 },

@@ -215,10 +215,16 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // edge yet — sending more than 200k without it 413s. Keep 200k as the
   // safe Franklin baseline; bump to 1_000_000 in a separate commit once
   // a real >200k call has been verified end-to-end.
+  // Fable 5 / Sonnet 5 advertise 1M at the gateway; keep the 200k safe baseline
+  // (same rationale as Opus above) until a real >200k call is verified.
+  'anthropic/claude-fable-5': 200_000,
   'anthropic/claude-opus-4.8': 200_000,
   'anthropic/claude-opus-4.7': 200_000,
   'anthropic/claude-opus-4.6': 200_000,
+  'anthropic/claude-opus-4.5': 200_000,
+  'anthropic/claude-sonnet-5': 200_000,
   'anthropic/claude-sonnet-4.6': 200_000,
+  'anthropic/claude-sonnet-4.5': 200_000,
   'anthropic/claude-sonnet-4': 200_000,
   'anthropic/claude-haiku-4.5': 200_000,
   'anthropic/claude-haiku-4.5-20251001': 200_000,
@@ -226,9 +232,14 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // gpt-5.5 advertises 1.05M context at the gateway, but Franklin keeps the
   // conservative 128k baseline matching every other gpt-5.x line — bump in
   // a separate change once a real >128k call has been verified end-to-end.
+  'openai/gpt-5.6-sol': 128_000,
+  'openai/gpt-5.6-terra': 128_000,
+  'openai/gpt-5.6-luna': 128_000,
   'openai/gpt-5.5': 128_000,
   'openai/gpt-5.4': 128_000,
   'openai/gpt-5.4-pro': 128_000,
+  'openai/gpt-5.4-mini': 128_000,
+  'openai/gpt-5.4-nano': 128_000,
   'openai/gpt-5.3': 128_000,
   'openai/gpt-5.3-codex': 128_000,
   'openai/gpt-5.2': 128_000,
@@ -242,6 +253,8 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'google/gemini-2.5-flash': 1_000_000,
   'google/gemini-2.5-flash-lite': 1_000_000,
   'google/gemini-3.1-pro': 1_000_000,
+  'google/gemini-3.5-flash': 1_000_000,
+  'google/gemini-3.1-flash-lite': 1_000_000,
   // DeepSeek (V4 family — gateway aliased deepseek-chat / -reasoner to V4
   // Flash on 2026-05-03; context bumped 128K → 1M for both, 65K out)
   'deepseek/deepseek-chat': 1_000_000,
@@ -259,9 +272,17 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'moonshot/kimi-k2.5': 128_000,
   'minimax/minimax-m3': 1_000_000,
   'minimax/minimax-m2.7': 128_000,
-  // NVIDIA-hosted free tier (2026-04-29 V4 Flash + Omni launch)
-  'nvidia/deepseek-v4-flash': 1_000_000,
+  // NVIDIA-hosted free tier (refreshed 2026-07-11 to match live /v1/models).
+  'nvidia/qwen3-next-80b-a3b-instruct': 262_144, // current free default
+  'nvidia/qwen3.5-122b-a10b': 131_072,
   'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': 256_000,
+  'nvidia/mistral-nemotron': 131_072,
+  'nvidia/step-3.7-flash': 131_072,
+  'nvidia/seed-oss-36b': 131_072,
+  'nvidia/nemotron-nano-9b-v2': 131_072,
+  'nvidia/nemotron-nano-12b-v2-vl': 131_072,
+  'nvidia/llama-4-maverick': 131_072,
+  'nvidia/mistral-large-3-675b': 131_072,
 };
 
 /**

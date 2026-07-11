@@ -361,9 +361,9 @@ test('proxy server handles OPTIONS and local model switching without backend cal
     });
     assert.equal(switchRes.status, 200, `Expected switch response 200, got ${switchRes.status}`);
     const payload = await switchRes.json();
-    assert.equal(payload.model, 'anthropic/claude-sonnet-4.6');
+    assert.equal(payload.model, 'anthropic/claude-sonnet-5');
     assert.ok(
-      payload.content?.[0]?.text?.includes('Switched to **anthropic/claude-sonnet-4.6**'),
+      payload.content?.[0]?.text?.includes('Switched to **anthropic/claude-sonnet-5**'),
       `Unexpected switch payload: ${JSON.stringify(payload)}`
     );
 
@@ -383,15 +383,15 @@ test('proxy server handles OPTIONS and local model switching without backend cal
     );
 
     const freeSwitches = {
-      free: 'nvidia/llama-4-maverick',
-      glm4: 'nvidia/llama-4-maverick',
-      'qwen-think': 'nvidia/llama-4-maverick',
-      'qwen-coder': 'nvidia/llama-4-maverick',
+      free: 'nvidia/qwen3-next-80b-a3b-instruct',
+      glm4: 'nvidia/qwen3-next-80b-a3b-instruct',
+      'qwen-think': 'nvidia/qwen3-next-80b-a3b-instruct',
+      'qwen-coder': 'nvidia/qwen3-next-80b-a3b-instruct',
       maverick: 'nvidia/llama-4-maverick',
-      'deepseek-free': 'nvidia/llama-4-maverick',
-      'gpt-oss': 'nvidia/llama-4-maverick',
-      'gpt-oss-small': 'nvidia/llama-4-maverick',
-      'mistral-small': 'nvidia/llama-4-maverick',
+      'deepseek-free': 'nvidia/qwen3-next-80b-a3b-instruct',
+      'gpt-oss': 'nvidia/qwen3-next-80b-a3b-instruct',
+      'gpt-oss-small': 'nvidia/qwen3-next-80b-a3b-instruct',
+      'mistral-small': 'nvidia/qwen3-next-80b-a3b-instruct',
       nemotron: 'nvidia/llama-4-maverick',
       devstral: 'nvidia/llama-4-maverick',
     };
@@ -5652,16 +5652,21 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
     assert.equal(isWeakModel(entry.id), true, `${entry.id} should receive weak/free-model guardrails`);
   }
 
+  // Refreshed 2026-07-11: `free` + most legacy free aliases now resolve to the
+  // current free default (qwen3-next-80b-a3b-instruct). Every target is a $0
+  // nvidia model — the final estimateCost assertion enforces free-only.
   const freeAliases = {
-    free: 'nvidia/llama-4-maverick',
-    glm4: 'nvidia/llama-4-maverick',
-    'qwen-think': 'nvidia/llama-4-maverick',
-    'qwen-coder': 'nvidia/llama-4-maverick',
+    free: 'nvidia/qwen3-next-80b-a3b-instruct',
+    qwen: 'nvidia/qwen3-next-80b-a3b-instruct',
+    qwen3: 'nvidia/qwen3-next-80b-a3b-instruct',
+    glm4: 'nvidia/qwen3-next-80b-a3b-instruct',
+    'qwen-think': 'nvidia/qwen3-next-80b-a3b-instruct',
+    'qwen-coder': 'nvidia/qwen3-next-80b-a3b-instruct',
     maverick: 'nvidia/llama-4-maverick',
-    'deepseek-free': 'nvidia/llama-4-maverick',
-    'gpt-oss': 'nvidia/llama-4-maverick',
-    'gpt-oss-small': 'nvidia/llama-4-maverick',
-    'mistral-small': 'nvidia/llama-4-maverick',
+    'deepseek-free': 'nvidia/qwen3-next-80b-a3b-instruct',
+    'gpt-oss': 'nvidia/qwen3-next-80b-a3b-instruct',
+    'gpt-oss-small': 'nvidia/qwen3-next-80b-a3b-instruct',
+    'mistral-small': 'nvidia/qwen3-next-80b-a3b-instruct',
     nemotron: 'nvidia/llama-4-maverick',
     devstral: 'nvidia/llama-4-maverick',
   };
@@ -5694,7 +5699,7 @@ test('free routing profile stays free across router entry points', async () => {
 
   for (const prompt of prompts) {
     const routed = routeRequest(prompt, 'free');
-    assert.equal(routed.model, 'nvidia/llama-4-maverick', `routeRequest free drifted for prompt: ${prompt}`);
+    assert.equal(routed.model, 'nvidia/qwen3-next-80b-a3b-instruct', `routeRequest free drifted for prompt: ${prompt}`);
     assert.equal(routed.tier, 'SIMPLE');
     assert.deepEqual(routed.signals, ['free-profile']);
   }
@@ -5705,7 +5710,7 @@ test('free routing profile stays free across router entry points', async () => {
     return 'REASONING';
   });
   assert.equal(classifierCalled, false, 'free profile should not spend a classifier call');
-  assert.equal(asyncRouted.model, 'nvidia/llama-4-maverick');
+  assert.equal(asyncRouted.model, 'nvidia/qwen3-next-80b-a3b-instruct');
   assert.deepEqual(asyncRouted.signals, ['free-profile']);
 
   // Free chain expanded 2026-05-03: was a single-element chain that just
@@ -5714,17 +5719,18 @@ test('free routing profile stays free across router entry points', async () => {
   // gets a real switch instead of thrashing on the same model. Assertion
   // is intentionally membership-based — the exact ordering is tuned in
   // FREE_MODELS_BY_CATEGORY and shouldn't break this test on every tweak.
+  // Every entry is a $0 nvidia model — the free profile must NEVER resolve to
+  // a paid model (a free/empty session silently charging the wallet). This set
+  // membership is the guard; keep it all-free.
   const FREE_GATEWAY_MODELS = new Set([
-    'nvidia/qwen3-coder-480b',
-    'nvidia/glm-4.7',
+    'nvidia/qwen3-next-80b-a3b-instruct',
+    'nvidia/qwen3.5-122b-a10b',
     'nvidia/llama-4-maverick',
-    'nvidia/deepseek-v4-flash',
-    'nvidia/nemotron-3-super-120b',
     'nvidia/mistral-large-3-675b',
   ]);
   for (const tier of ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING']) {
     const resolved = resolveTierToModel(tier, 'free');
-    assert.equal(resolved.model, 'nvidia/llama-4-maverick', `resolveTierToModel free drifted for ${tier}`);
+    assert.equal(resolved.model, 'nvidia/qwen3-next-80b-a3b-instruct', `resolveTierToModel free drifted for ${tier}`);
     const chain = getFallbackChain(tier, 'free');
     assert.ok(Array.isArray(chain) && chain.length > 0, `free fallback chain empty for ${tier}`);
     for (const m of chain) {
@@ -6618,8 +6624,8 @@ test('picker trim: hero shortcuts (opus, sonnet, gpt, gemini-3, grok) still in v
   const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
   const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
   assert.ok(ids.includes('anthropic/claude-opus-4.8'));
-  assert.ok(ids.includes('anthropic/claude-sonnet-4.6'));
-  assert.ok(ids.includes('openai/gpt-5.5'));
+  assert.ok(ids.includes('anthropic/claude-sonnet-5'));
+  assert.ok(ids.includes('openai/gpt-5.6-sol'));
   assert.ok(ids.includes('google/gemini-3.1-pro'));
   assert.ok(ids.includes('google/gemini-2.5-pro'));
   assert.ok(ids.includes('xai/grok-4.3')); // grok-4-0709 hidden on gateway; 4.3 is the public flagship row
@@ -7968,20 +7974,19 @@ test('enforceRetention is a no-op when audit log is small', async () => {
 // category. pickFreeFallback selects from per-category chains so trading /
 // research / chat get general-purpose free models first.
 
-test('pickFreeFallback: coding category prefers maverick first', async () => {
-  // qwen3-coder-480b was the coder lead until its upstream reached EOL
-  // (2026-06-11, gateway 410s). llama-4-maverick now leads every category.
+test('pickFreeFallback: coding category prefers qwen3-next first', async () => {
+  // Refreshed 2026-07-11: qwen3-next-80b-a3b-instruct leads every category
+  // (cleanest free instruction-follower); llama-4-maverick is the diverse
+  // secondary. deepseek-v4-flash was EOL'd (gateway 410s).
   const { pickFreeFallback } = await import('../dist/router/index.js');
   const pick = pickFreeFallback('coding', new Set());
-  assert.equal(pick, 'nvidia/llama-4-maverick');
+  assert.equal(pick, 'nvidia/qwen3-next-80b-a3b-instruct');
 });
 
 test('pickFreeFallback: trading category skips coder, picks the general workhorse', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
   const pick = pickFreeFallback('trading', new Set());
-  // glm-4.7 dropped 2026-06-07 (NVIDIA NIM hung) — llama-4-maverick is now the
-  // general-purpose lead for non-coding categories.
-  assert.equal(pick, 'nvidia/llama-4-maverick', 'trading should not start with a coder model');
+  assert.equal(pick, 'nvidia/qwen3-next-80b-a3b-instruct', 'trading should not start with a coder model');
   assert.notEqual(pick, 'nvidia/qwen3-coder-480b');
 });
 
@@ -7996,12 +8001,12 @@ test('pickFreeFallback: research / chat / creative also skip coder first', async
 
 test('pickFreeFallback: respects alreadyFailed set', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
-  // Coding starts with maverick. After it fails, next is the deepseek secondary.
-  const failed = new Set(['nvidia/llama-4-maverick']);
+  // Coding starts with qwen3-next. After it fails, next is the maverick secondary.
+  const failed = new Set(['nvidia/qwen3-next-80b-a3b-instruct']);
   const pick = pickFreeFallback('coding', failed);
-  assert.notEqual(pick, 'nvidia/llama-4-maverick');
-  assert.equal(pick, 'nvidia/deepseek-v4-flash',
-    `after maverick fails, coding should fall to deepseek-v4-flash, got ${pick}`);
+  assert.notEqual(pick, 'nvidia/qwen3-next-80b-a3b-instruct');
+  assert.equal(pick, 'nvidia/llama-4-maverick',
+    `after qwen3-next fails, coding should fall to maverick, got ${pick}`);
 });
 
 test('pickFreeFallback: unknown category uses default chain (general model first)', async () => {
@@ -8015,10 +8020,8 @@ test('pickFreeFallback: unknown category uses default chain (general model first
 test('pickFreeFallback: returns undefined when every candidate failed', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
   const failed = new Set([
-    'nvidia/qwen3-coder-480b',
-    'nvidia/glm-4.7',
+    'nvidia/qwen3-next-80b-a3b-instruct',
     'nvidia/llama-4-maverick',
-    'nvidia/deepseek-v4-flash',
   ]);
   const pick = pickFreeFallback('trading', failed);
   assert.equal(pick, undefined);

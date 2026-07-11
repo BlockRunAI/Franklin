@@ -342,10 +342,12 @@ export function extractApiErrorMessage(errorBody: string): string {
  */
 export function modelHasExtendedThinking(model: string): boolean {
   const m = model.toLowerCase();
-  // Excluded: Opus 4.7+ uses adaptive thinking; sending `thinking: enabled`
-  // causes the API to 400.
+  // Excluded: Opus 4.7+, Sonnet 5, and Fable 5 use adaptive / always-on
+  // thinking; sending an explicit `thinking: enabled` causes the API to 400.
   if (m.includes('opus-4.8') || m.includes('opus-4-8')) return false;
   if (m.includes('opus-4.7') || m.includes('opus-4-7')) return false;
+  if (m.includes('fable-5') || m.includes('fable5')) return false;
+  if (m.includes('sonnet-5') || m.includes('sonnet5')) return false;
   return (
     m.includes('opus-4.6') || m.includes('opus-4-6') ||
     m.includes('opus-4.5') || m.includes('opus-4-5') ||
@@ -547,10 +549,10 @@ export class ModelClient {
     // strings (now retired routing profiles) end up at the same place
     // without needing dedicated entries.
     const FALLBACKS: Record<string, string> = {
-      'blockrun/auto': 'nvidia/llama-4-maverick',
-      'blockrun/free': 'nvidia/llama-4-maverick',
+      'blockrun/auto': 'nvidia/qwen3-next-80b-a3b-instruct',
+      'blockrun/free': 'nvidia/qwen3-next-80b-a3b-instruct',
     };
-    return FALLBACKS[model] || 'nvidia/llama-4-maverick';
+    return FALLBACKS[model] || 'nvidia/qwen3-next-80b-a3b-instruct';
   }
 
   /**

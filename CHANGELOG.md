@@ -1,5 +1,39 @@
 # Changelog
 
+## Franklin Agent 3.31.0 — model catalog aligned to the gateway (new frontier models + free-tier fix)
+
+Re-aligns Franklin's static model tables with the live BlockRun gateway (`/v1/models`),
+which added 18 models since the last sync. Also fixes a live breakage: the free
+default pointed at an EOL'd model.
+
+- **18 new models wired end-to-end** — added to pricing, context-window, max-output,
+  vision, the `/model` picker, and shortcuts: OpenAI **GPT-5.6** (`sol`/`terra`/`luna`)
+  + GPT-5.4 `mini`/`nano`; Anthropic **Claude Fable 5**, **Sonnet 5**, **Opus 4.5**,
+  Sonnet 4.5; Google **Gemini 3.5 Flash** + 3.1 Flash Lite; and 7 new NVIDIA **free**
+  models (Qwen3-Next 80B, Qwen3.5 122B, Mistral-Nemotron, Step 3.7 Flash, Seed-OSS 36B,
+  Nemotron Nano 9B / 12B-VL). Flagship shortcuts now follow the newest tier: `gpt`→GPT-5.6
+  Sol, `sonnet`/`claude`→Sonnet 5, `fable`→Fable 5.
+- **Free default was dead — fixed.** `nvidia/deepseek-v4-flash` (the free default in the
+  local server + free routing chains) was EOL'd by the gateway (410). Replaced with
+  **`nvidia/qwen3-next-80b-a3b-instruct`** — chosen by live testing: it was the cleanest
+  free instruction-follower (no thinking-leak, no markdown fences, reliable), where the
+  old maverick default was flaky and leaked reasoning into structured outputs. qwen3-next
+  now leads every free chain + the clean-JSON utility roles (classifier, evaluator,
+  analyzer, verification, compaction, extraction); llama-4-maverick stays as a
+  different-family secondary fallback for resilience.
+- **Free tier never falls back to paid.** Removed the paid `zai/glm-5.2` from the
+  empty-response recovery chain — a free/empty session must never silently switch to a
+  wallet-charging model. All free chains are now $0-only, enforced by an updated guard test.
+- **Killed proxy shortcut drift.** The proxy kept a *duplicate* `MODEL_SHORTCUTS` that had
+  already drifted from the picker (`grok`→grok-3 vs grok-4.3). It now imports the picker's
+  single source of truth, so the two can't diverge again.
+- **Adaptive-thinking guard.** Sonnet 5 + Fable 5 use adaptive/always-on thinking; excluded
+  from the explicit `thinking: enabled` flag (which 400s on that model generation).
+
+Verified: local suite 513/513, `tsc` clean, and live gateway calls to pick the free default.
+The `franklin models` CLI + media tools were already dynamic (fetch `/v1/models`) and needed
+no change.
+
 ## Franklin Agent 3.30.1 — sync upstream Polymarket fix (neg-risk approvals + balance-cache self-heal)
 
 Re-syncs the ported Polymarket module with the blockrun-mcp fix `f8d3f8c` (landed

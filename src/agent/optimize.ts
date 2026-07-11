@@ -35,16 +35,26 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   // (anthropic/claude-opus-4.8 maxOutput: 128000). Bumping from 32k to
   // 128k unlocks the full headroom — runaway generations are gated
   // separately by CAPPED_MAX_TOKENS / ESCALATED_MAX_TOKENS budgets.
+  'anthropic/claude-fable-5': 128_000,
   'anthropic/claude-opus-4.8': 128_000,
   'anthropic/claude-opus-4.7': 128_000,
   'anthropic/claude-opus-4.6': 32_000,
+  'anthropic/claude-opus-4.5': 32_000,
+  'anthropic/claude-sonnet-5': 128_000,
   'anthropic/claude-sonnet-4.6': 64_000,
+  'anthropic/claude-sonnet-4.5': 64_000,
   'anthropic/claude-haiku-4.5-20251001': 16_384,
+  'openai/gpt-5.6-sol': 128_000,
+  'openai/gpt-5.6-terra': 128_000,
+  'openai/gpt-5.6-luna': 128_000,
   'openai/gpt-5.5': 32_768,
   'openai/gpt-5.4': 32_768,
+  'openai/gpt-5.4-mini': 128_000,
+  'openai/gpt-5.4-nano': 32_768,
   'openai/gpt-5-mini': 16_384,
   'google/gemini-2.5-pro': 65_536,
   'google/gemini-2.5-flash': 65_536,
+  'google/gemini-3.5-flash': 65_536,
   // DeepSeek V4 family — upstream max_output is 65K on V4 Flash + V4 Pro;
   // gateway re-aliased deepseek-chat/-reasoner to V4 Flash modes 2026-05-03.
   'deepseek/deepseek-chat': 65_536,

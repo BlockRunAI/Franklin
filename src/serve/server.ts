@@ -35,7 +35,10 @@ import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
 import { retryFetchBalance } from '../commands/balance-retry.js';
 import type { AgentConfig, StreamEvent, Dialogue, ContentPart, UserContentPart } from '../agent/types.js';
 
-const FREE_DEFAULT_MODEL = 'nvidia/deepseek-v4-flash';
+// qwen3-next-80b-a3b-instruct: cleanest free instruction-follower (no thinking
+// leak / markdown fences — verified live 2026-07-11). Replaces the EOL'd
+// nvidia/deepseek-v4-flash the gateway no longer serves.
+const FREE_DEFAULT_MODEL = 'nvidia/qwen3-next-80b-a3b-instruct';
 
 // Curated Base (chainId 8453) tokens for the wallet "holdings" view. Plain RPC
 // can't enumerate every token an address holds (no on-chain "list all"), so we
