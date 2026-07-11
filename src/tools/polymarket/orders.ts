@@ -8,7 +8,7 @@
 //   - per-order notional capped by POLYMARKET_MAX_BET_USD (default $25).
 //   - optional POLYMARKET_MAX_SESSION_USD cumulative cap, tracked in-memory
 //     with per-agent attribution (agent_id).
-import { OrderType, Side, type ClobClient, type OrderBookSummary } from "@polymarket/clob-client-v2";
+import { AssetType, OrderType, Side, type ClobClient, type OrderBookSummary } from "@polymarket/clob-client-v2";
 import { checkGeoblock, getClobClient, getPolymarketAccount, resetClobClient } from "./client.js";
 import { getMaxBetUsd, getMaxSessionUsd, getSigType } from "./constants.js";
 import { invalidateL2Creds, loadState } from "./creds.js";
@@ -136,6 +136,23 @@ function isCredsMismatchError(err: { message?: string; status?: number; data?: u
   if (`${msg} ${dataText}`.includes("order signer address has to be the address of the api key")) return true;
   if (err.status === 401) return true;
   return msg.includes("unauthorized") || msg.includes("api key not found") || msg.includes("invalid api key");
+}
+
+/**
+ * True when a CLOB submit failed because the EXCHANGE thinks the funds wallet
+ * lacks balance/allowance. On-chain the deposit wallet may be fully funded and
+ * approved (setup verifies both) yet the CLOB's SERVER-SIDE balance cache lags —
+ * refreshing that cache (updateBalanceAllowance) and retrying clears it. Matched
+ * in the human message OR the response data body. Deliberately narrow: only
+ * these phrases, so a genuine unrelated error is never silently retried.
+ */
+function isBalanceAllowanceError(err: unknown): boolean {
+  const e = err as { message?: string; data?: unknown };
+  const msg = (e?.message ?? "").toLowerCase();
+  const dataText = typeof e?.data === "string" ? e.data.toLowerCase()
+    : e?.data ? JSON.stringify(e.data).toLowerCase() : "";
+  const text = `${msg} ${dataText}`;
+  return text.includes("not enough balance") || text.includes("insufficient") || text.includes("allowance");
 }
 
 /** Map CLOB errors to actionable guidance. Exported for unit tests. */
@@ -360,13 +377,11 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
 
       const options = { tickSize: tickSize as never, negRisk };
 
-      // Reserve now (before the await) so a concurrent order sees this spend;
-      // roll back if the submit throws so a failed order doesn't consume budget.
-      reserveBet(notional, input.agent_id);
-      let response: unknown;
-      try {
-        response = isLimit
-          ? await clob.createAndPostOrder(
+      // The signed submit, factored out so it can be retried after a CLOB
+      // balance-cache refresh (below) without rebuilding/re-signing anything else.
+      const submitOrder = (): Promise<unknown> =>
+        isLimit
+          ? clob.createAndPostOrder(
               {
                 tokenID: token.tokenId,
                 price: price as number,
@@ -378,7 +393,7 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
               orderKind === "GTD" ? OrderType.GTD : OrderType.GTC,
               input.post_only ?? false,
             )
-          : await clob.createAndPostMarketOrder(
+          : clob.createAndPostMarketOrder(
               {
                 tokenID: token.tokenId,
                 amount: input.action === "buy" ? (input.amount_usd as number) : (size as number),
@@ -388,6 +403,29 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
               options,
               orderKind === "FAK" ? OrderType.FAK : OrderType.FOK,
             );
+
+      // Reserve now (before the await) so a concurrent order sees this spend;
+      // roll back if the submit throws so a failed order doesn't consume budget.
+      reserveBet(notional, input.agent_id);
+      let response: unknown;
+      try {
+        try {
+          response = await submitOrder();
+        } catch (submitErr) {
+          // Funded + approved on-chain, but the CLOB's server-side balance cache
+          // can lag reality — setup's warm-up refresh is best-effort and freshly
+          // bridged pUSD takes a moment to register — so the exchange rejects a
+          // fully-funded wallet with "not enough balance/allowance". Refresh the
+          // cache for the traded asset and retry the submit ONCE before giving up
+          // (COLLATERAL for buys, the specific outcome token for sells).
+          if (!isBalanceAllowanceError(submitErr)) throw submitErr;
+          await clob.updateBalanceAllowance(
+            input.action === "buy"
+              ? { asset_type: AssetType.COLLATERAL }
+              : { asset_type: AssetType.CONDITIONAL, token_id: token.tokenId },
+          );
+          response = await submitOrder();
+        }
       } catch (submitErr) {
         releaseBet(notional, input.agent_id);
         throw submitErr;

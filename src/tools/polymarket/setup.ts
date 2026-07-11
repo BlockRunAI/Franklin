@@ -105,15 +105,26 @@ function pusdApprovalTarget(): bigint {
 }
 
 /**
- * The approval set Polymarket V2 trading needs from the funds-holding wallet:
- * pUSD spend for buys (both exchanges), CTF operator for sells (both exchanges)
- * plus the NegRisk adapter (negRisk redeem/convert path).
+ * The approval set Polymarket V2 trading needs from the funds-holding wallet,
+ * mirroring Polymarket's own canonical approveTokensForTrading.ts (proxy/safe
+ * wallet): pUSD spend for ALL FOUR collateral spenders — both exchanges, the
+ * Conditional Tokens contract (direct split/merge), AND the NegRisk Adapter
+ * (negRisk order settlement / convert / redeem pulls collateral through it) —
+ * plus the CTF operator for both exchanges and the adapter.
+ *
+ * The NegRisk Adapter pUSD approval is REQUIRED to trade neg-risk markets (e.g.
+ * multi-outcome "winner" markets): without it the CLOB accepts the order but
+ * settlement through the adapter reverts. It was previously missing while the
+ * adapter's CTF (ERC1155) operator approval was granted — an asymmetry that let
+ * setup report "ready" yet neg-risk buys fail.
  */
 async function readApprovals(owner: Hex): Promise<ApprovalItem[]> {
   const pc = getPublicClient();
   const erc20Spenders: Array<[string, Hex]> = [
     ["pUSD → CTF Exchange V2", CTF_EXCHANGE_V2 as Hex],
     ["pUSD → NegRisk Exchange V2", NEG_RISK_CTF_EXCHANGE_V2 as Hex],
+    ["pUSD → NegRisk Adapter", NEG_RISK_ADAPTER as Hex],
+    ["pUSD → Conditional Tokens", CONDITIONAL_TOKENS as Hex],
   ];
   const erc1155Operators: Array<[string, Hex]> = [
     ["CTF → CTF Exchange V2", CTF_EXCHANGE_V2 as Hex],
@@ -268,10 +279,20 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
   //    which is guaranteed above). Non-fatal: report instead of failing setup.
   let credsReady = false;
   let credsNote = "";
+  let balanceCacheWarned = "";
   try {
     const clob = await getClobClient();
     credsReady = true;
-    await clob.updateBalanceAllowance({ asset_type: AssetType.COLLATERAL }).catch(() => undefined);
+    // Warm the CLOB's server-side balance cache so the first buy sees the funds.
+    // Best-effort — but do NOT swallow silently: if it fails, setup used to still
+    // print "ready" while the exchange thought the wallet was empty, so the first
+    // buy failed with "not enough balance". Surface it instead; the buy path also
+    // refreshes on demand now (see orders.ts), so this is a note, not a blocker.
+    try {
+      await clob.updateBalanceAllowance({ asset_type: AssetType.COLLATERAL });
+    } catch (refreshErr) {
+      balanceCacheWarned = refreshErr instanceof Error ? refreshErr.message.split("\n")[0] : String(refreshErr);
+    }
   } catch (err) {
     credsNote = ` (${err instanceof Error ? err.message.split("\n")[0] : String(err)})`;
   }
@@ -306,6 +327,9 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
         ]
       : []),
     `${credsReady ? "✅" : "❌"} CLOB API credentials${credsNote}`,
+    ...(balanceCacheWarned
+      ? [`   ⚠️ Balance cache not pre-warmed (${balanceCacheWarned}) — your first buy refreshes it automatically.`]
+      : []),
     geo,
     ``,
     ready ? `🎯 Ready to trade. Discover markets with blockrun_markets, then action:"buy".` : `Re-run action:"setup" after completing the ❌ items.`,
