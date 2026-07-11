@@ -50,6 +50,10 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   // category. Cross-platform pair lookup is unique to the gateway and
   // is the kind of data a non-wallet agent fundamentally cannot reach.
   'PredictionMarket',
+  // Real-money Polymarket betting — the execution half of the prediction-market
+  // story: setup wallet, fund, buy/sell, positions, redeem, withdraw. Core so
+  // the agent reaches for it the moment "place the bet" follows the research.
+  'PolymarketBet',
   // Crypto market data — fear/greed, token rankings, ETF flows, options,
   // liquidations, technical & on-chain indicators. The "what's the crypto
   // mood / which coins are pumping / BTC's RSI" category. Core so the agent
