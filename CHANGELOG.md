@@ -1,5 +1,42 @@
 # Changelog
 
+## Franklin Agent 3.30.0 — native Polymarket betting (end-to-end)
+
+Franklin gains the **execution half** of the prediction-market story. The
+read-only `PredictionMarket` tool already answered "what are the odds / should I
+bet on X" via Predexon; the new `PolymarketBet` tool actually **places, manages,
+and settles the bet** — the purest expression of "the agent with a wallet that
+spends." This ports blockrun-mcp's proven Polymarket module natively so Franklin,
+the reference client, holds the wallet and signs orders itself rather than
+delegating to an external process.
+
+- **New `PolymarketBet` capability (core tool).** Full lifecycle parity: `setup`
+  (gasless CREATE2 deposit wallet + approvals), `fund` (top up from your own Base
+  USDC, gasless, $0.01 fee), `buy`/`sell` (limit or market orders), `orders`,
+  `cancel`, `positions`, `redeem` (claim resolved winnings), `withdraw` (cash out
+  pUSD → USDC on Base). Orders are EIP-712 signed **locally** with the same
+  `~/.blockrun/.session` key that pays x402 fees on Base — one identity pays for AI
+  on Base and bets on Polygon. Discovery (token_id, condition_id, prices) stays with
+  `PredictionMarket`; this tool only executes.
+- **Real-money safety model.** Dry-run unless `confirm:true`; and when the agent
+  does ask to sign, the **actual dry-run preview is shown to the user through an
+  interactive Confirm/Cancel prompt** before anything is signed on-chain (bypass
+  with `auto_approve:true` / `FRANKLIN_POLYMARKET_AUTO_APPROVE=1` for headless
+  runs). Hard per-order + session caps (`POLYMARKET_MAX_BET_USD` default $25,
+  `POLYMARKET_MAX_SESSION_USD`) are enforced independently of the x402 budget: bet
+  stakes are your own pUSD on Polygon and do **not** draw from `--max-spend`. Only
+  the $0.01 `fund` fee is metered as x402 spend.
+- **Ported byte-faithfully.** The 11-file module (incl. the ERC-7739 L1-auth
+  workaround for clob-client-v2 issue #65) is byte-identical to blockrun-mcp except
+  two import lines re-pointed at a Franklin wallet shim. Pinned against
+  `@polymarket/clob-client-v2@1.0.8`; a golden-vector test locks the signing
+  envelope so a dependency bump can't silently corrupt it. Betting is Polymarket-only
+  (only venue with a client-side execution path); other venues stay research-only.
+
+Verified: local suite 513/513 (510 + 3 new golden-vector tests), `tsc` clean, and a
+functional smoke test driving the capability through its wallet shim to the ported
+handlers. Design: `docs/plans/2026-07-10-franklin-native-polymarket-betting-design.md`.
+
 ## Franklin Agent 3.29.16 — startup framing + dead-code cleanup
 
 Small polish release, no behavior change to the agent loop or payment surface.
