@@ -404,7 +404,7 @@ export class PermissionManager {
       case 'agent_talent': {
         if (((input.action as string) || '').toLowerCase() === 'run') {
           const slug = (input.slug as string) || 'a skill';
-          return `Hire '${slug}' from the agent marketplace — pays from your wallet (USDC on Base), charged only on a successful run.`;
+          return `Hire '${slug}' from the agent marketplace — pays from your wallet (USDC on Base, up to $5/hire), charged only on a successful run.`;
         }
         return 'Browse the agent marketplace (free).';
       }

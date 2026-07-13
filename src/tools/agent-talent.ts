@@ -15,6 +15,7 @@
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { fetchCatalog, runMarketSkill, fmtUsd, type MarketSkill } from '../market/client.js';
 import { recordUsage } from '../stats/tracker.js';
+import { frameUntrusted } from './untrusted.js';
 import { logger } from '../logger.js';
 
 interface AgentTalentInput {
@@ -94,7 +95,7 @@ export const agentTalentCapability: CapabilityHandler = {
         const head = raw.query
           ? `BlockRun agent talents — ${skills.length} skill(s) matching "${raw.query}":`
           : `BlockRun agent talents — ${skills.length} skill(s):`;
-        const body = skills.map(listLine).join('\n');
+        const body = frameUntrusted('BlockRun marketplace catalog (untrusted, creator-authored)', skills.map(listLine).join('\n'));
         const out = `${head}\n${body}\n\nTo hire one: agent_talent { action: "run", slug: "<slug>", input: "<input>" }.`;
         return { output: out, fullOutput: out };
       } catch (err) {
@@ -123,7 +124,7 @@ export const agentTalentCapability: CapabilityHandler = {
       }
 
       const receipt = `Hired ${slug} — paid ${fmtUsd(outcome.paidUsd)}${outcome.txHash ? ` (tx ${outcome.txHash.slice(0, 10)}…)` : ''}`;
-      const out = `${receipt}\n\n${outcome.result ?? ''}`;
+      const out = `${receipt}\n\n${frameUntrusted('BlockRun marketplace skill output (untrusted, third-party)', outcome.result ?? '')}`;
       return { output: out, fullOutput: out };
     }
 

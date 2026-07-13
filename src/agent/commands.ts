@@ -13,7 +13,7 @@ import { execSync } from 'node:child_process';
 import { BLOCKRUN_DIR, VERSION } from '../config.js';
 import { estimateHistoryTokens, getAnchoredTokenCount, getContextWindow, resetTokenAnchor } from './tokens.js';
 import { forceCompact } from './compact.js';
-import { getStatsSummary } from '../stats/tracker.js';
+import { getStatsSummary, recordUsage } from '../stats/tracker.js';
 import { resolveModel } from '../ui/model-picker.js';
 import type { ModelClient } from './llm.js';
 import type { AgentConfig, Dialogue, StreamEvent } from './types.js';
@@ -687,6 +687,10 @@ export async function handleSlashCommand(
       const [, slug, skillInput] = runMatch;
       ctx.onEvent({ kind: 'text_delta', text: `Hiring ${slug}…\n` });
       const outcome = await runMarketSkill(slug, skillInput);
+      // Record the on-chain spend so the human /market run path is visible to
+      // the audit ledger, /cost, and the --max-spend accumulator (parity with
+      // the agent_talent tool path).
+      try { recordUsage(`market:run:${slug}`, 0, 0, outcome.paidUsd, 0); } catch { /* best-effort */ }
       if (!outcome.ok) {
         ctx.onEvent({ kind: 'text_delta', text: `Could not run ${slug}: ${outcome.error}. No charge.\n` });
       } else {

@@ -25,6 +25,16 @@ import { MARKET_URL, USER_AGENT } from '../config.js';
 const DEFAULT_TIMEOUT_MS = 45_000;
 const MAX_TIMEOUT_MS = 120_000;
 
+// Absolute backstop on a single hire. The 402 amount is only known after the
+// permission gate has already been passed, so nothing downstream re-confirms
+// it with the user — a compromised or misconfigured marketplace could answer a
+// $0.02 listing with a $500 challenge. Cap the blast radius here; callers that
+// know the catalog price pass `maxUsd` to tighten it further.
+const HARD_MAX_HIRE_USD = 5;
+// Small slack over the catalog price so an honest sub-cent rounding difference
+// between the listing and the live 402 doesn't reject a legitimate hire.
+const PRICE_TOLERANCE_USD = 0.001;
+
 // extractPaymentDetails accepts a parsed PaymentRequired; that interface is
 // not exported, so borrow the function's own parameter type for the cast.
 type PaymentRequiredLike = Parameters<typeof extractPaymentDetails>[0];
@@ -134,7 +144,17 @@ async function signMarketPayment(
       extra: details.extra as { name?: string; version?: string } | undefined,
     },
   );
-  return { header, amountUsd: Number(details.amount) / 1_000_000 };
+  const amountUsd = Number(details.amount) / 1_000_000;
+  return { header, amountUsd: Number.isFinite(amountUsd) ? amountUsd : 0 };
+}
+
+/** Read the demanded USD amount from a 402 challenge without signing it. */
+function challengeAmountUsd(challenge: PaymentRequiredLike): number {
+  try {
+    return Number(extractPaymentDetails(challenge).amount) / 1_000_000;
+  } catch {
+    return NaN;
+  }
 }
 
 /**
@@ -145,7 +165,7 @@ async function signMarketPayment(
 export async function runMarketSkill(
   slug: string,
   input: string,
-  opts: { signal?: AbortSignal; timeoutMs?: number; runUrl?: string } = {},
+  opts: { signal?: AbortSignal; timeoutMs?: number; runUrl?: string; maxUsd?: number } = {},
 ): Promise<RunOutcome> {
   const runUrl = opts.runUrl || `${MARKET_URL}/api/v1/skills/${encodeURIComponent(slug)}/run`;
   const timeoutMs = Math.min(Math.max(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, 1_000), MAX_TIMEOUT_MS);
@@ -172,6 +192,26 @@ export async function runMarketSkill(
         | null;
       if (!challenge?.accepts?.length) {
         return { ok: false, status: 402, paidUsd: 0, txHash: null, error: 'could not read payment requirements from the marketplace' };
+      }
+      // Bound the amount BEFORE signing. The user already cleared the permission
+      // gate blind to the price (it isn't known until this 402), so this is the
+      // only place that can stop a runaway charge.
+      const demandedUsd = challengeAmountUsd(challenge);
+      const ceilingUsd = Math.min(
+        HARD_MAX_HIRE_USD,
+        opts.maxUsd != null ? opts.maxUsd + PRICE_TOLERANCE_USD : Infinity,
+      );
+      if (!Number.isFinite(demandedUsd) || demandedUsd < 0) {
+        return { ok: false, status: 402, paidUsd: 0, txHash: null, error: 'marketplace sent an unreadable payment amount' };
+      }
+      if (demandedUsd > ceilingUsd) {
+        return {
+          ok: false,
+          status: 402,
+          paidUsd: 0,
+          txHash: null,
+          error: `marketplace demanded ${fmtUsd(demandedUsd)}, over the ${fmtUsd(ceilingUsd)} ceiling — refusing to pay`,
+        };
       }
       let signed: { header: string; amountUsd: number };
       try {
