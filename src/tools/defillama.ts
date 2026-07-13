@@ -30,6 +30,7 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
+import { frameUntrusted } from './untrusted.js';
 
 const TIMEOUT_MS = 30_000;
 
@@ -242,7 +243,7 @@ export const defiLlamaProtocolsCapability: CapabilityHandler = {
           `${i + 1}. **${p.name}** (${p.slug}) — ${formatUsd(Number(p.tvl))}${cat}${change}\n   chains: ${chains}${more}`,
         );
       });
-      return { output: lines.join('\n') };
+      return { output: frameUntrusted('DefiLlama data (untrusted)', lines.join('\n')) };
     } catch (err) {
       return { output: `Error: ${(err as Error).message}`, isError: true };
     }
@@ -322,7 +323,7 @@ export const defiLlamaProtocolCapability: CapabilityHandler = {
       if (p.twitter) lines.push(`Twitter: @${p.twitter}`);
       if (p.audits) lines.push(`Audits: ${p.audits}`);
       if (p.description) lines.push('', p.description);
-      return { output: lines.join('\n') };
+      return { output: frameUntrusted('DefiLlama data (untrusted)', lines.join('\n')) };
     } catch (err) {
       return { output: `Error: ${(err as Error).message}`, isError: true };
     }
@@ -368,7 +369,7 @@ export const defiLlamaChainsCapability: CapabilityHandler = {
         const sym = c.tokenSymbol ? ` (${c.tokenSymbol})` : '';
         lines.push(`${i + 1}. **${c.name}**${sym} — ${formatUsd(Number(c.tvl))}`);
       });
-      return { output: lines.join('\n') };
+      return { output: frameUntrusted('DefiLlama data (untrusted)', lines.join('\n')) };
     } catch (err) {
       return { output: `Error: ${(err as Error).message}`, isError: true };
     }
@@ -479,7 +480,7 @@ export const defiLlamaYieldsCapability: CapabilityHandler = {
           `${i + 1}. **${p.project}** / ${p.chain} / ${p.symbol} — ${(p.apy ?? 0).toFixed(2)}% APY${breakdown}\n   TVL: ${formatUsd(p.tvlUsd)}${il} · pool: ${p.pool}`,
         );
       });
-      return { output: lines.join('\n') };
+      return { output: frameUntrusted('DefiLlama data (untrusted)', lines.join('\n')) };
     } catch (err) {
       return { output: `Error: ${(err as Error).message}`, isError: true };
     }
@@ -552,7 +553,7 @@ export const defiLlamaPriceCapability: CapabilityHandler = {
         const ts = entry.timestamp ? ` · ${new Date(entry.timestamp * 1000).toISOString().slice(0, 19)}Z` : '';
         lines.push(`- **${id}**${sym}: $${entry.price.toFixed(entry.price < 0.01 ? 8 : 4)}${conf}${ts}`);
       }
-      return { output: lines.join('\n') };
+      return { output: frameUntrusted('DefiLlama data (untrusted)', lines.join('\n')) };
     } catch (err) {
       return { output: `Error: ${(err as Error).message}`, isError: true };
     }

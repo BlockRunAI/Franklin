@@ -16,6 +16,7 @@ const SUPPORTED_STOCK_MARKETS: MarketCode[] = [
 ];
 import { rsi, macd, bollingerBands, volatility } from '../trading/metrics.js';
 import { bus } from '../events/bus.js';
+import { frameUntrusted } from './untrusted.js';
 import { makeEvent } from '../events/types.js';
 
 function formatUsd(n: number): string {
@@ -337,7 +338,7 @@ async function executeMarket(input: Record<string, unknown>, _ctx: ExecutionScop
       const lines = result.map(
         (c, i) => `${i + 1}. ${c.name} (${c.symbol.toUpperCase()})${c.marketCapRank ? ` — #${c.marketCapRank}` : ''}`,
       );
-      return { output: `Trending coins:\n${lines.join('\n')}` };
+      return { output: frameUntrusted('Trending coins (untrusted)', lines.join('\n')) };
     }
 
     case 'overview': {
@@ -351,7 +352,7 @@ async function executeMarket(input: Record<string, unknown>, _ctx: ExecutionScop
         (c, i) =>
           `${i + 1} | ${c.name} (${c.symbol.toUpperCase()}) | $${c.price.toLocaleString()} | ${c.change24h > 0 ? '+' : ''}${c.change24h.toFixed(2)}% | ${formatUsd(c.marketCap)}`,
       );
-      return { output: `Top 20 by Market Cap:\n${header}\n${sep}\n${rows.join('\n')}` };
+      return { output: frameUntrusted('Top coins by market cap (untrusted)', `${header}\n${sep}\n${rows.join('\n')}`) };
     }
 
     default:

@@ -135,8 +135,10 @@ export async function predictCommand(options: PredictOptions): Promise<void> {
         break;
       }
       case 'usage':
-        inputTokens = event.inputTokens;
-        outputTokens = event.outputTokens;
+        // Fires once per LLM call; accumulate across research turns so the
+        // --json envelope reports total spend, not just the final turn.
+        inputTokens += event.inputTokens;
+        outputTokens += event.outputTokens;
         break;
       case 'turn_done':
         turnReason = event.reason;

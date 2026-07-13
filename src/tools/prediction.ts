@@ -48,6 +48,7 @@ import { loadChain, API_URLS, VERSION } from '../config.js';
 import { logger } from '../logger.js';
 import { recordFetch } from '../trading/providers/telemetry.js';
 import { recordUsage } from '../stats/tracker.js';
+import { frameUntrusted } from './untrusted.js';
 
 const TIMEOUT_MS = 30_000;
 const DEFAULT_LIMIT = 20;
@@ -539,7 +540,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           });
         }
         lines.push(`_$0.005 paid via x402._`);
-        return { output: lines.join('\n') };
+        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
       }
 
       case 'leaderboard': {
@@ -585,7 +586,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           lines.push(`${i + 1}. \`${w}\`${handle}` + (parts.length > 0 ? ` — ${parts.join(' · ')}` : ''));
         });
         lines.push('', `_$0.001 paid via x402._`);
-        return { output: lines.join('\n') };
+        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
       }
 
       case 'walletProfile': {
@@ -696,7 +697,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           if (recent.length > 0) lines.push(`   ${recent.join(' · ')}`);
         });
         lines.push('', `_$0.005 paid via x402._`);
-        return { output: lines.join('\n') };
+        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
       }
 
       case 'walletPnl': {
@@ -772,7 +773,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           }
         }
         lines.push('', `_$0.005 paid via x402._`);
-        return { output: lines.join('\n') };
+        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
       }
 
       case 'walletPositions': {
@@ -841,7 +842,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           lines.push(`${i + 1}. **${title}** — ${parts.join(' · ')}`);
         });
         lines.push('', `_$0.005 paid via x402._`);
-        return { output: lines.join('\n') };
+        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
       }
 
       case 'smartActivity': {
@@ -880,7 +881,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           lines.push(`${i + 1}. **${title}**${cidTag}` + (stats.length > 0 ? `\n   ${stats.join(' · ')}` : ''));
         });
         lines.push('', `_$0.005 paid via x402._`);
-        return { output: lines.join('\n') };
+        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
       }
 
       case 'smartMoney': {
@@ -924,7 +925,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           lines.push(`**Smart performance:** ${perf.join(' · ')}`);
         }
         lines.push('', `_$0.005 paid via x402._`);
-        return { output: lines.join('\n') };
+        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
       }
 
       case 'searchPolymarket': {
@@ -972,7 +973,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           );
         });
         lines.push('', `_$0.001 paid via x402._`);
-        return { output: lines.join('\n') };
+        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
       }
 
       case 'searchKalshi': {
@@ -1010,7 +1011,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           );
         });
         lines.push('', `_$0.001 paid via x402._`);
-        return { output: lines.join('\n') };
+        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
       }
 
       case 'crossPlatform': {
@@ -1050,7 +1051,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
           }
         });
         lines.push('', `_$0.005 paid via x402._`);
-        return { output: lines.join('\n') };
+        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
       }
 
       default:
