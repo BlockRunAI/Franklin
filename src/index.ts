@@ -32,6 +32,7 @@ import { uninitCommand } from './commands/uninit.js';
 import { proxyCommand } from './commands/proxy.js';
 import { buildTaskCommand } from './commands/task.js';
 import { buildContentCommand } from './commands/content.js';
+import { predictCommand } from './commands/predict.js';
 
 import { VERSION as version } from './config.js';
 
@@ -92,6 +93,18 @@ program
   .option('--no-fallback', 'Disable automatic fallback to backup models')
   .option('--debug', 'Enable debug logging')
   .action((options) => proxyCommand({ ...options, version }));
+
+program
+  .command('predict')
+  .description('Prediction mode — forecast one real-world event with a research-only toolset (web/markets), headless')
+  .requiredOption('-m, --model <model>', 'Model to use (e.g. anthropic/claude-opus-4.8, openai/gpt-5.5)')
+  .requiredOption('-q, --question <text>', 'The event question to forecast (include the allowed options)')
+  .option('--max-turns <n>', 'Max agent turns before forcing an answer', '8')
+  .option('--max-tool-calls <n>', 'Max tool calls before forcing an answer', '6')
+  .option('--max-spend <usd>', 'Hard USD cap on this prediction run')
+  .option('--no-json', 'Human-readable streaming instead of a JSON envelope')
+  .option('--debug', 'Enable debug logging')
+  .action((options) => predictCommand(options));
 
 program
   .command('init')

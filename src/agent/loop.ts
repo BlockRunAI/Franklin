@@ -1411,6 +1411,22 @@ export async function interactiveSession(
       if (turnSkillHints) {
         callSystemPrompt = callSystemPrompt + '\n\n' + turnSkillHints;
       }
+      // Force a final answer: withhold tools so the model must commit to text,
+      // either on the last turn or once the tool-call budget is spent. Without
+      // this, models that keep calling tools every turn hit maxTurns with no
+      // answer (and waste the spend). Opt-in per config. Ordered last so a
+      // forced turn intentionally rebuilds the prompt from the base (dropping
+      // the skill hints above); normal turns keep them.
+      const onFinalTurn = config.forceAnswerOnFinalTurn && loopCount === maxTurns;
+      const toolBudgetSpent = config.maxToolCalls != null && turnToolCalls >= config.maxToolCalls;
+      if ((onFinalTurn || toolBudgetSpent) && callToolDefs.length > 0) {
+        callToolDefs = [];
+        callSystemPrompt = systemPrompt + '\n\n' +
+          (toolBudgetSpent
+            ? `You have used your research budget (${config.maxToolCalls} tool calls) — no more tools are available.`
+            : 'This is your FINAL turn — no more tools are available.') +
+          ' Based on the research so far, output ONLY the final answer now, in the exact format requested.';
+      }
 
       // ── Hallucination guard for weak models ──
       // Weak / free models (nemotron-ultra, GLM-4, qwen coder, free-profile
@@ -1549,7 +1565,7 @@ export async function interactiveSession(
           // entries are $0 nvidia models.
           const EMPTY_FALLBACK_MODELS = ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'];
           const nextModel = EMPTY_FALLBACK_MODELS.find(m => m !== config.model && !turnFailedModels.has(m));
-          if (nextModel && recoveryAttempts < 2) {
+          if (nextModel && recoveryAttempts < 2 && !config.disableModelFallback) {
             recoveryAttempts++;
             turnFailedModels.add(config.model);
             const oldModel = config.model;
@@ -1597,7 +1613,7 @@ export async function interactiveSession(
             const nextModel = TOOL_USE_FALLBACK_MODELS.find(
               m => m !== config.model && !turnFailedModels.has(m),
             );
-            if (nextModel && recoveryAttempts < 2) {
+            if (nextModel && recoveryAttempts < 2 && !config.disableModelFallback) {
               recoveryAttempts++;
               turnFailedModels.add(config.model);
               const oldModel = config.model;
@@ -2264,7 +2280,7 @@ export async function interactiveSession(
             .filter(p => p.type === 'text' && typeof (p as { text?: string }).text === 'string')
             .map(p => (p as { text: string }).text)
             .join('');
-          if (shouldCheckGrounding(lastUserInput || '', assistantText)) {
+          if (!config.disableGroundingRetry && shouldCheckGrounding(lastUserInput || '', assistantText)) {
             const gResult = await checkGrounding(lastUserInput, history, assistantText, client, {
               abortSignal: abort.signal,
             });

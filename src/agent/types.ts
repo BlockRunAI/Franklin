@@ -217,6 +217,30 @@ export interface AgentConfig {
   maxSpendUsd?: number;
   /** Show user-visible harness prefetch status lines (interactive UX only). */
   showPrefetchStatus?: boolean;
+  /**
+   * On the final turn, withhold tools so the model must commit to a text answer
+   * instead of researching until cut off. For one-shot forecasting/extraction
+   * callers (e.g. `franklin predict`) where some models never stop calling tools
+   * and would otherwise hit maxTurns with no answer.
+   */
+  forceAnswerOnFinalTurn?: boolean;
+  /**
+   * Hard cap on total tool calls for the turn. Once reached, tools are withheld
+   * and the model is forced to answer from what it has. Bounds research/cost
+   * deterministically (a turn budget alone doesn't — a turn may have no tool).
+   */
+  maxToolCalls?: number;
+  /**
+   * Disable Franklin's automatic model-switching (empty-response / stalled-intent
+   * fallbacks). One-shot callers want a clean abstain from the requested model,
+   * not a silent switch to a different one.
+   */
+  disableModelFallback?: boolean;
+  /**
+   * Disable the post-response "ungrounded claims → force a tool-use retry" guard.
+   * It fights the forced-answer path and pollutes one-shot structured output.
+   */
+  disableGroundingRetry?: boolean;
   /** Mid-turn "research-bloat" compaction — summarizes history when a turn
    *  racks up many tool calls + spend, to cut input-replay cost. Default on;
    *  set false to disable (the desktop exposes this as a toggle). */
