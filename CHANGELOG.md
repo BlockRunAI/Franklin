@@ -1,5 +1,61 @@
 # Changelog
 
+## Franklin Agent 3.32.0 — three new surfaces: prediction mode, the agent marketplace, and hardened free-model tool calls
+
+Lands the open PR queue — a headless forecaster, a buyer surface for the BlockRun
+agent marketplace, and broader tool-call recovery for free models — each reviewed
+and hardened against Franklin's spend-accounting and untrusted-input invariants
+before merge.
+
+- **`franklin predict` — a headless prediction mode (#82).** A non-interactive
+  command that runs one model as a disciplined bettor: it researches, then commits
+  to a single-line answer. `franklin predict --model M --question Q --json` emits a
+  stable envelope for machine callers. It runs on a tight **research-only capability
+  profile** (`predictionCapabilities`) — web search, webfetch, Exa, search X,
+  prediction markets, a little market data — with filesystem, shell, media
+  generation, trade execution, phone/voice and the GPU sandbox all excluded. A
+  forecaster looks things up; it doesn't act on the world.
+  - *Review hardening:* prediction-market, DefiLlama, and trading list outputs are
+    now wrapped with `frameUntrusted` — a research agent reading third-party market
+    text is a prompt-injection surface, and the forecaster's whole job is
+    read-then-decide. The `--json` envelope now accumulates token usage across
+    research turns instead of reporting only the final turn.
+
+- **The agent marketplace — `/market` + `agent_talent` (#99, rebase of #83).** A
+  buyer surface for BlockRun's marketplace of paid AI skills, each runnable for one
+  standard single-leg `exact` x402 USDC payment on Base. Two surfaces over one
+  shared payment path: the **`/market`** command for a human at the terminal
+  (browse / search / info / run) and the **`agent_talent`** tool for the agent
+  hiring talent autonomously mid-task. Browsing is a free public GET; hiring asks
+  first and settles only on success.
+  - *Review hardening:* marketplace catalog listings and skill run output are
+    framed as untrusted (third-party creator content, and browsing is auto-allowed,
+    so it reached the model with no gate). The 402 amount is now **bounded before
+    signing** — an absolute \$5/hire backstop plus an optional catalog-price cap —
+    because the permission gate clears before the price is known; a compromised
+    marketplace can no longer answer a \$0.02 listing with an unbounded charge. The
+    human `/market run` path now records its spend (parity with the tool), so it's
+    visible to the ledger, `/cost`, and `--max-spend`.
+
+- **Free-model tool-call recovery + llama aliases (#101).** Broadens detection of
+  roleplayed tool calls so free models can recover bare JSON, OpenAI envelopes,
+  Hermes envelopes, and `<tool_call>` XML wrappers instead of leaking them to the
+  user; adds `llama` / `llama-4` / `llama-4-maverick` shortcuts and rejects unknown
+  bare aliases with a local error.
+  - *Merge resolution:* kept main's free-default migration (`free` → qwen3-next)
+    and added only the new llama aliases (→ the still-live maverick model), rather
+    than regressing the free tier. *Review hardening:* the broadened bare-envelope
+    detector now only holds a `{name, …}` object when `name` is a **registered
+    tool**, so ordinary JSON a user asked for isn't suppressed from display or fed
+    to the scavenger.
+
+- **Renovate onboarding (#98).** Enables the shared org Renovate preset
+  (`github>blockrunai/renovate-config`). Inert until the Mend app is installed on
+  the org.
+
+Verified: local suite **554/554**, `tsc` clean. PR #83 closed as superseded by its
+rebased twin #99.
+
 ## Franklin Agent 3.31.0 — model catalog aligned to the gateway (new frontier models + free-tier fix)
 
 Re-aligns Franklin's static model tables with the live BlockRun gateway (`/v1/models`),
