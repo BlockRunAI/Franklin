@@ -1,5 +1,26 @@
 # Changelog
 
+## Franklin Agent 3.32.1 — fix fresh-install startup crash (decouple the router from the LLM SDK)
+
+A fresh `npm install` of 3.32.0 (and every earlier version) crashed on startup —
+not from Franklin's own code, but from a broken transitive dependency:
+`@blockrun/llm` → `@blockrun/clawrouter`. The router's latest publish
+(`@blockrun/clawrouter@0.12.220`) shipped a malformed ESM bundle
+(`SyntaxError: Identifier '__cjs_createRequire' has already been declared`), and
+because the SDK imported the router at module top level, that broken bundle
+crashed `franklin` at launch even though Franklin has its own router and never
+calls the SDK's `smartChat()`.
+
+- **Bump `@blockrun/llm` to `^3.5.2`**, which decouples the router: it is now
+  loaded lazily inside `smartChat()` (the only method that needs it) and moved
+  to `optionalDependencies`, so importing the SDK no longer depends on the
+  router's health. Franklin — which uses the SDK only for wallet/payment
+  helpers — never loads the router at all.
+
+Verified: fresh install imports cleanly with the broken
+`@blockrun/clawrouter@0.12.220` present; local suite 554/554; `tsc` clean;
+`franklin --version` starts. No functional change to Franklin itself.
+
 ## Franklin Agent 3.32.0 — three new surfaces: prediction mode, the agent marketplace, and hardened free-model tool calls
 
 Lands the open PR queue — a headless forecaster, a buyer surface for the BlockRun
