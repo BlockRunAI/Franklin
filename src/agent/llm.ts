@@ -390,23 +390,54 @@ export function classifyToolCallFailure(
     `this is usually a model output bug; try \`/model <other>\` or retry.]`;
 }
 
-export function isRoleplayedJsonToolCallText(text: string): boolean {
+export function isRoleplayedJsonToolCallText(text: string, knownToolNames?: ReadonlySet<string>): boolean {
   const trimmed = text.trim();
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return false;
+  if (!trimmed) return false;
+
+  // Cheap pre-check: every shape we accept either starts with `{` or begins
+  // with a known XML wrapper. Avoid JSON.parse on long prose.
+  const looksJson = trimmed.startsWith('{') && trimmed.endsWith('}');
+  const looksXml = /^<tool_call(s)?>/i.test(trimmed);
+  if (!looksJson && !looksXml) return false;
+
+  if (looksXml) {
+    // Match `<tool_call>{...}</tool_call>`, including the multi-call variant.
+    return /<tool_call(s)?>[\s\S]*?<\/tool_call(s)?>/i.test(trimmed);
+  }
 
   try {
-    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    return (
-      parsed !== null &&
-      typeof parsed === 'object' &&
-      !Array.isArray(parsed) &&
-      parsed.type === 'function' &&
-      typeof parsed.name === 'string' &&
-      ('parameters' in parsed || 'arguments' in parsed)
-    );
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const obj = parsed as Record<string, unknown>;
+
+    // OpenAI envelope: assistant message that forgot to use the tool_calls
+    // channel and dumped the whole message JSON into the text stream.
+    if (Array.isArray(obj.tool_calls)) return true;
+
+    // Hermes/Claude roleplay envelope (`type: "function"` + name + arguments).
+    if (
+      obj.type === 'function' &&
+      typeof obj.name === 'string' &&
+      ('parameters' in obj || 'arguments' in obj)
+    ) {
+      return true;
+    }
+
+    // Bare Hermes envelope (no `type`): what nvidia/llama-4-maverick,
+    // nvidia/qwen3-next, and similar small models emit. The matching
+    // `name` + `parameters|arguments` pair is enough for the scavenger — but
+    // only when `name` is a real registered tool. Otherwise ordinary JSON a
+    // user asked for (an object that happens to have a `name` and
+    // `parameters`/`arguments` field) would be suppressed from display and
+    // handed to the scavenger. When no tool set is supplied (e.g. unit tests),
+    // fall back to the permissive shape match.
+    if (typeof obj.name === 'string' && ('parameters' in obj || 'arguments' in obj)) {
+      return knownToolNames ? knownToolNames.has(obj.name) : true;
+    }
   } catch {
-    return false;
+    // Fall through to false; not roleplayed tool-call JSON.
   }
+  return false;
 }
 
 /**
@@ -957,6 +988,13 @@ export class ModelClient {
     let currentToolName = '';
     let currentToolInput = '';
     const textEmission: { mode: 'undecided' | 'stream' | 'hold' } = { mode: 'undecided' };
+    // Registered tool names for this request — used to distinguish a roleplayed
+    // bare tool-call envelope from ordinary JSON the user asked the model for.
+    const knownToolNames: ReadonlySet<string> = new Set(
+      (request.tools ?? [])
+        .map((t) => (t as { name?: unknown }).name)
+        .filter((n): n is string => typeof n === 'string'),
+    );
     const isNemotronProse = isNemotronProseModel(request.model);
     // Split inline <think>…</think> emitted by reasoning models (nemotron,
     // deepseek-r1, qwq, etc.) that use the text field instead of the native
@@ -987,9 +1025,16 @@ export class ModelClient {
         const trimmed = currentText.trimStart();
         if (!trimmed) return;
 
-        // Nemotron Omni leaks reasoning prose into the text channel without
-        // <think> tags. Hold the buffer for end-of-stream stripping.
-        textEmission.mode = isNemotronProse || trimmed.startsWith('{') ? 'hold' : 'stream';
+        // Hold the buffer when the model is roleplaying a tool call as text
+        // (free-tier llama/qwen/nemotron variants frequently do this) so
+        // the loop's scavenger can recover it instead of streaming junk
+        // to the user. Three shapes we recognize:
+        //   1. {…} roleplay JSON envelope
+        //   2. <tool_call>…</tool_call> XML
+        //   3. Nemotron Omni prose (handled separately below)
+        const looksLikeRoleplayJson = trimmed.startsWith('{');
+        const looksLikeRoleplayXml = /^<tool_call(s)?>/i.test(trimmed);
+        textEmission.mode = isNemotronProse || looksLikeRoleplayJson || looksLikeRoleplayXml ? 'hold' : 'stream';
         if (textEmission.mode === 'stream') {
           onStreamDelta?.({ type: 'text', text: currentText });
         }
@@ -1137,7 +1182,7 @@ export class ModelClient {
               }
             }
             if (currentText) {
-              if (textEmission.mode === 'hold' && isRoleplayedJsonToolCallText(currentText)) {
+              if (textEmission.mode === 'hold' && isRoleplayedJsonToolCallText(currentText, knownToolNames)) {
                 // A roleplayed JSON tool call. Do NOT stream it to the UI,
                 // but DO keep it in `collected` so the loop's scavenge pass
                 // (src/agent/repair/scavenge.ts) can turn it into a real
@@ -1232,7 +1277,7 @@ export class ModelClient {
       }
     }
     if (currentText) {
-      if (textEmission.mode === 'hold' && isRoleplayedJsonToolCallText(currentText)) {
+      if (textEmission.mode === 'hold' && isRoleplayedJsonToolCallText(currentText, knownToolNames)) {
         // See the matching branch in content_block_stop: keep it for the
         // loop's scavenge pass instead of dropping it.
         collected.push({ type: 'text', text: currentText });

@@ -325,3 +325,42 @@ test('ToolCallRepair: scans both reasoning and content channels', () => {
   assert.equal(calls.length, 2);
   assert.equal(report.scavenged, 2);
 });
+
+// ─── isRoleplayedJsonToolCallText detector (loop gating) ─────────────────
+
+const { isRoleplayedJsonToolCallText } = await import('../dist/agent/llm.js');
+
+test('isRoleplayedJsonToolCallText: rejects empty / non-JSON prose', () => {
+  assert.equal(isRoleplayedJsonToolCallText(''), false);
+  assert.equal(isRoleplayedJsonToolCallText('hi there'), false);
+  assert.equal(isRoleplayedJsonToolCallText('{"foo":1'), false);
+});
+
+test('isRoleplayedJsonToolCallText: rejects non-tool-call JSON', () => {
+  assert.equal(isRoleplayedJsonToolCallText('{"hello":"world"}'), false);
+  assert.equal(isRoleplayedJsonToolCallText('{"name":42,"parameters":{}}'), false);
+});
+
+test('isRoleplayedJsonToolCallText: accepts Hermes roleplay envelope', () => {
+  const text = '{"type":"function","name":"Glob","parameters":{"pattern":"*"}}';
+  assert.equal(isRoleplayedJsonToolCallText(text), true);
+});
+
+test('isRoleplayedJsonToolCallText: accepts bare {name,parameters} (free-tier llama/qwen)', () => {
+  const text = '{"name":"Glob","parameters":{"pattern":"*","path":"/home/TheCheetah11/Blockrun/Franklin"}}';
+  assert.equal(isRoleplayedJsonToolCallText(text), true);
+});
+
+test('isRoleplayedJsonToolCallText: accepts OpenAI {tool_calls:[…]} envelope', () => {
+  const text = '{"tool_calls":[{"function":{"name":"Glob","arguments":"{\\"pattern\\":\\"*\\"}"}}]}';
+  assert.equal(isRoleplayedJsonToolCallText(text), true);
+});
+
+test('isRoleplayedJsonToolCallText: accepts <tool_call> XML wrapper', () => {
+  const text = '<tool_call>{"name":"Glob","parameters":{"pattern":"*"}}</tool_call>';
+  assert.equal(isRoleplayedJsonToolCallText(text), true);
+});
+
+test('isRoleplayedJsonToolCallText: rejects XML that is not a tool-call wrapper', () => {
+  assert.equal(isRoleplayedJsonToolCallText('<note>hello</note>'), false);
+});

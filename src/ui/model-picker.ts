@@ -110,6 +110,12 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'gpt-oss-small': 'nvidia/qwen3-next-80b-a3b-instruct',
   'mistral-small': 'nvidia/qwen3-next-80b-a3b-instruct',
   'mistral-nemotron': 'nvidia/mistral-nemotron',
+  // llama shortcuts point at the still-live free maverick model (not the free
+  // default — that's qwen3-next above). Kept as explicit aliases so the name
+  // resolves for users who type it.
+  llama: 'nvidia/llama-4-maverick',
+  'llama-4': 'nvidia/llama-4-maverick',
+  'llama-4-maverick': 'nvidia/llama-4-maverick',
   // Backward-compatibility aliases for models the gateway retired or exposes
   // unreliably on /v1/messages. Map to agent-tested free models so shortcuts
   // keep working without silent paid fallback or empty tool-use turns.
@@ -141,11 +147,54 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
 };
 
 /**
- * Resolve a model name — supports shortcuts.
+ * Resolve a model name — supports shortcuts. Returns the canonical model id.
+ *
+ * If the input matches a shortcut, the shortcut's target is returned. If the
+ * input is already a fully-qualified `provider/model` id (contains a `/`), it
+ * is returned verbatim so the gateway can validate it. Bare, unknown aliases
+ * (e.g. `llama3`, `foo`) resolve to themselves too, but the gateway will
+ * reject them — callers that care about a clean error should branch on
+ * {@link resolveModelStrict} instead.
  */
 export function resolveModel(input: string): string {
-  const lower = input.trim().toLowerCase();
-  return MODEL_SHORTCUTS[lower] || input.trim();
+  const trimmed = input.trim();
+  if (!trimmed) return trimmed;
+  const lower = trimmed.toLowerCase();
+  return MODEL_SHORTCUTS[lower] || trimmed;
+}
+
+/**
+ * Strict variant of {@link resolveModel} — used by the `/model` handler so
+ * an unknown bare alias surfaces a clean error in the UI instead of
+ * forwarding `llama` to the gateway and getting back `HTTP 400: Unknown
+ * model: llama` two turns later.
+ *
+ * Recognised:
+ *   - Any entry in {@link MODEL_SHORTCUTS} (case-insensitive).
+ *   - Any id of the form `provider/model` (e.g. `anthropic/claude-sonnet-4.6`).
+ */
+export function resolveModelStrict(
+  input: string,
+): { ok: true; id: string; viaShortcut: boolean } | { ok: false; suggestion: string } {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { ok: false, suggestion: 'Empty model name. Try /model sonnet or /model free.' };
+  }
+  const lower = trimmed.toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(MODEL_SHORTCUTS, lower)) {
+    return { ok: true, id: MODEL_SHORTCUTS[lower]!, viaShortcut: true };
+  }
+  if (trimmed.includes('/')) {
+    return { ok: true, id: trimmed, viaShortcut: false };
+  }
+  const known = Object.keys(MODEL_SHORTCUTS).sort();
+  const head = known.slice(0, 6).join(', ');
+  return {
+    ok: false,
+    suggestion:
+      `Unknown model alias: "${trimmed}". Use a shortcut like ${head}, ` +
+      `or a full id like anthropic/claude-sonnet-4.6.`,
+  };
 }
 
 // ─── Curated Model List for Picker ─────────────────────────────────────────

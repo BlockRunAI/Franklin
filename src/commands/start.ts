@@ -13,7 +13,7 @@ import { interactiveSession } from '../agent/loop.js';
 import { allCapabilities, createSubAgentCapability } from '../tools/index.js';
 import { validateToolDescriptions } from '../tools/validate.js';
 import { launchInkUI } from '../ui/app.js';
-import { pickModel, resolveModel } from '../ui/model-picker.js';
+import { pickModel, resolveModel, resolveModelStrict } from '../ui/model-picker.js';
 import { loadMcpConfig } from '../mcp/config.js';
 import { connectMcpServers, disconnectMcpServers, getMcpServerInstructions } from '../mcp/client.js';
 import { ensureCodegraphIndex } from '../mcp/codegraph.js';
@@ -692,9 +692,16 @@ async function runWithBasicUI(
             continue;
           }
           if (input.startsWith('/model ')) {
-            const newModel = resolveModel(input.slice(7).trim());
-            agentConfig.model = newModel;
-            console.error(chalk.green(`  Model → ${newModel}`));
+            const resolved = resolveModelStrict(input.slice(7).trim());
+            if (!resolved.ok) {
+              console.error(chalk.yellow(`  ${resolved.suggestion}`));
+              continue;
+            }
+            agentConfig.model = resolved.id;
+            console.error(chalk.green(`  Model → ${resolved.id}`));
+            if (resolved.viaShortcut) {
+              console.error(chalk.dim(`  (alias ${input.slice(7).trim()} → ${resolved.id})`));
+            }
             continue;
           }
           // /retry — resend last prompt
@@ -837,9 +844,18 @@ async function handleSlashCommand(
     case '/model': {
       const newModel = parts[1];
       if (newModel) {
-        config.model = resolveModel(newModel);
-        config.baseModel = config.model;
-        console.error(chalk.green(`  Model → ${config.model}`));
+        const resolved = resolveModelStrict(newModel);
+        if (!resolved.ok) {
+          console.error(chalk.yellow(`  ${resolved.suggestion}`));
+          return null;
+        }
+        config.model = resolved.id;
+        config.baseModel = resolved.id;
+        const suffix = resolved.viaShortcut
+          ? chalk.dim(`  (alias ${newModel} → ${resolved.id})`)
+          : '';
+        console.error(chalk.green(`  Model → ${resolved.id}`));
+        if (suffix) console.error(suffix);
         return null;
       }
       const picked = await pickModel(config.model);
