@@ -45,6 +45,7 @@ import { predictionMarketCapability } from './prediction.js';
 import { polymarketBetCapability } from './polymarket-bet.js';
 import { modalCapabilities } from './modal.js';
 import { blockrunCapability } from './blockrun.js';
+import { agentTalentCapability } from './agent-talent.js';
 import { surfCapabilities } from './surf.js';
 import { realFaceCapability } from './realface.js';
 import {
@@ -202,6 +203,7 @@ export const allCapabilities: CapabilityHandler[] = [
   predictionMarketCapability, // Polymarket / Kalshi / matching / smart money via Predexon (read-only research)
   polymarketBetCapability, // PolymarketBet — real-money betting execution: setup/fund/buy/sell/redeem/withdraw (CLOB V2)
   blockrunCapability, // Generic x402-paid gateway primitive — future partners + long-tail Surf paths
+  agentTalentCapability, // Hire paid skills from the BlockRun agent marketplace (business.blockrun.ai)
   ...surfCapabilities, // SurfMarket / SurfChain / SurfSocial — endpoint-enum function tools (no path guessing, auto x402)
   // Phone & Voice — typed surface so the agent pattern-matches on the user
   // intent ("buy a number", "make a call") without needing to consult the
