@@ -1,5 +1,62 @@
 # Changelog
 
+## Franklin Agent 3.33.0 — the model list stops going stale
+
+Reported as *"Franklin models still list old models."* It was structural, and it
+turned out to be two separate bugs.
+
+### The picker never talked to the gateway
+
+The in-session `/model` picker rendered a hand-maintained array, so it drifted
+every time the gateway moved. (`franklin models`, the CLI subcommand, *was*
+live-fetching — two surfaces, one stale.) It now reconciles against the live
+catalog: rows the gateway stopped listing drop themselves, prices refresh, the
+curated labels and ordering stay, and it falls back to the static list when
+you're offline.
+
+- **Two model ids were dead** (HTTP 400 Unknown model).
+  `anthropic/claude-haiku-4.5-20251001` was the worse one: it wasn't cosmetic,
+  it was selected for compaction on *every* Sonnet / GPT-5.4 / GPT-5.5 /
+  Gemini-2.5-Pro session, so any long session was compacting against a model
+  that 400s. Now the undated `anthropic/claude-haiku-4.5`. Also fixed
+  `openai/gpt-5` in the tool-use fallback chain.
+- **`nvidia/llama-4-maverick` retired.** It doesn't 410 — it answers 200 while
+  the free pool silently serves a *different* model. That made the free
+  "diverse-family" fallback chains fake: the primary and the fallback resolved
+  to the same backend, so the fallback could never rescue a turn the primary had
+  failed. Replaced with `nvidia/mistral-nemotron`, verified to serve itself. It
+  was also removed from the vision allowlist, where it contradicted the router's
+  own "maverick is text-only" note — free vision turns were being routed to a
+  text-only model.
+- **Grok 4.5 added** — the gap that prompted the report. `grok` now follows it
+  (the gateway calls it xAI's flagship, and the bare alias tracks the flagship).
+  **Note it's pricier than the 4.3 it replaces ($2.5/$9 vs $1.5/$4).** `grok-4.3`
+  stays pinned — it's cheaper and carries 1M context to 4.5's 500K, so it's still
+  the better pick for long-context work.
+
+### `franklin models` priced the entire media catalog at $0.00
+
+The command modelled every model as `{ input, output }` and printed `$0.00/M`
+for anything not token-metered — so all 22 paid image / video / music / speech
+models rendered as free, under a **"Paid Models"** heading. The gateway bills
+seven different ways; each now renders in its own unit, with real per-image /
+per-second / per-1K-character prices and duration-aware estimates.
+
+- Same root cause, caught before it could bite: `per_character` and
+  `per_generation` are real gateway billing modes but were missing from
+  `BillingMode`, so `estimateCostUsd` silently returned **$0** for ElevenLabs
+  speech and sound effects. No tool calls those modes today — fixed before one
+  does.
+- The Context column had a header but was never populated, and the sort keyed
+  off token price, floating every media model to the top of the list.
+
+### Note for anyone auditing model ids
+
+The `/api/v1/models` listing is **not** authoritative for what resolves — it
+hides working models (`grok-3`, `gpt-5-nano`, `opus-4.6`, `kimi-k2.6` are all
+absent from it yet fully alive). The cheap authoritative check is an unpaid POST
+to `/api/v1/chat/completions`: **402 = exists**, **400 = unknown**.
+
 ## Franklin Agent 3.32.1 — fix fresh-install startup crash (decouple the router from the LLM SDK)
 
 A fresh `npm install` of 3.32.0 (and every earlier version) crashed on startup —
