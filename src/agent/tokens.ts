@@ -227,6 +227,8 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'anthropic/claude-sonnet-4.5': 200_000,
   'anthropic/claude-sonnet-4': 200_000,
   'anthropic/claude-haiku-4.5': 200_000,
+  // Retired 2026-07-14 (gateway 400s on it) — kept so replayed sessions that
+  // recorded the dated id still resolve a context window.
   'anthropic/claude-haiku-4.5-20251001': 200_000,
   // OpenAI
   // gpt-5.5 advertises 1.05M context at the gateway, but Franklin keeps the

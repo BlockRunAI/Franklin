@@ -665,20 +665,26 @@ export function getFallbackChain(
 // gateway redirected it to a now-dead model, so routing to it just wasted a slot.
 // 2026-07-11: nvidia/deepseek-v4-flash removed — the gateway no longer serves
 // it (410). Free tier is now led by nvidia/qwen3-next-80b-a3b-instruct (cleanest
-// free instruction-follower — no thinking leak / markdown fences, verified live),
-// with nvidia/llama-4-maverick kept as a DIFFERENT-family fallback for resilience.
+// free instruction-follower — no thinking leak / markdown fences, verified live).
+// 2026-07-14: nvidia/llama-4-maverick replaced by nvidia/mistral-nemotron as the
+// different-family fallback. Maverick left the gateway catalog, and the free
+// pool silently substitutes for it — a live probe showed both maverick and
+// qwen3-next answering as `nvidia/nemotron-3-super-120b-a12b-free`. Two chain
+// entries backed by the same pooled model is fake resilience: the fallback
+// couldn't rescue a turn the primary had already failed. mistral-nemotron
+// verifiably serves itself, so the chain is genuinely two families again.
 const FREE_MODELS_BY_CATEGORY: Record<Category, string[]> = {
-  coding:    ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
-  trading:   ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
-  research:  ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
-  reasoning: ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
-  chat:      ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
-  creative:  ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/llama-4-maverick'],
+  coding:    ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
+  trading:   ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
+  research:  ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
+  reasoning: ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
+  chat:      ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
+  creative:  ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
 };
 
 const DEFAULT_FREE_CHAIN: string[] = [
   'nvidia/qwen3-next-80b-a3b-instruct',
-  'nvidia/llama-4-maverick',
+  'nvidia/mistral-nemotron',
 ];
 
 /**

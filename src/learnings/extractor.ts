@@ -16,7 +16,7 @@ import type { Skill } from './types.js';
 // Ordered by reliability: try the best free model first, fall back to others.
 const EXTRACTION_MODELS = [
   'nvidia/qwen3-next-80b-a3b-instruct', // Clean JSON output, no thinking leak (verified live)
-  'nvidia/llama-4-maverick',            // Diverse-family free fallback
+  'nvidia/mistral-nemotron',            // Diverse-family free fallback (serves itself; maverick is pooled)
 ];
 
 const VALID_CATEGORIES = new Set<LearningCategory>([

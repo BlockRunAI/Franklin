@@ -552,7 +552,7 @@ function pickCompactionModel(primaryModel: string): string {
     return 'anthropic/claude-sonnet-4.6';
   }
   if (primaryModel.includes('sonnet') || primaryModel.includes('gpt-5.4') || primaryModel.includes('gpt-5.5') || primaryModel.includes('gemini-2.5-pro')) {
-    return 'anthropic/claude-haiku-4.5-20251001';
+    return 'anthropic/claude-haiku-4.5';
   }
   if (primaryModel.includes('haiku') || primaryModel.includes('mini') || primaryModel.includes('nano')) {
     return 'google/gemini-2.5-flash'; // Cheapest capable model

@@ -13,8 +13,12 @@ test('resolveModel: shortcut maps to canonical id', () => {
   assert.equal(resolveModel('sonnet'), 'anthropic/claude-sonnet-5');
   assert.equal(resolveModel('  SONNET  '), 'anthropic/claude-sonnet-5');
   assert.equal(resolveModel('free'), 'nvidia/qwen3-next-80b-a3b-instruct');
-  assert.equal(resolveModel('llama'), 'nvidia/llama-4-maverick');
-  assert.equal(resolveModel('llama-4-maverick'), 'nvidia/llama-4-maverick');
+  // Maverick left the gateway catalog 2026-07-14 — its aliases now follow the
+  // retired-free-id pattern and resolve to the current free default.
+  assert.equal(resolveModel('llama'), 'nvidia/qwen3-next-80b-a3b-instruct');
+  assert.equal(resolveModel('llama-4-maverick'), 'nvidia/qwen3-next-80b-a3b-instruct');
+  assert.equal(resolveModel('maverick'), 'nvidia/qwen3-next-80b-a3b-instruct');
+  assert.equal(resolveModel('nemotron'), 'nvidia/mistral-nemotron');
 });
 
 test('resolveModel: full provider/model id is passed through', () => {
@@ -36,7 +40,7 @@ test('resolveModelStrict: shortcut maps to canonical id and flags viaShortcut', 
   const r = resolveModelStrict('llama');
   assert.equal(r.ok, true);
   if (r.ok) {
-    assert.equal(r.id, 'nvidia/llama-4-maverick');
+    assert.equal(r.id, 'nvidia/qwen3-next-80b-a3b-instruct');
     assert.equal(r.viaShortcut, true);
   }
 });

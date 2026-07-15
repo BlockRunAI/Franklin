@@ -387,13 +387,13 @@ test('proxy server handles OPTIONS and local model switching without backend cal
       glm4: 'nvidia/qwen3-next-80b-a3b-instruct',
       'qwen-think': 'nvidia/qwen3-next-80b-a3b-instruct',
       'qwen-coder': 'nvidia/qwen3-next-80b-a3b-instruct',
-      maverick: 'nvidia/llama-4-maverick',
+      maverick: 'nvidia/qwen3-next-80b-a3b-instruct',
       'deepseek-free': 'nvidia/qwen3-next-80b-a3b-instruct',
       'gpt-oss': 'nvidia/qwen3-next-80b-a3b-instruct',
       'gpt-oss-small': 'nvidia/qwen3-next-80b-a3b-instruct',
       'mistral-small': 'nvidia/qwen3-next-80b-a3b-instruct',
-      nemotron: 'nvidia/llama-4-maverick',
-      devstral: 'nvidia/llama-4-maverick',
+      nemotron: 'nvidia/mistral-nemotron',
+      devstral: 'nvidia/qwen3-next-80b-a3b-instruct',
     };
     for (const [shortcut, expectedModel] of Object.entries(freeSwitches)) {
       const freeSwitchRes = await fetch(`http://127.0.0.1:${port}/api/messages`, {
@@ -2941,12 +2941,15 @@ test('agent context: chat-completions example uses real model names (no fictiona
     path.join(process.cwd(), 'dist', 'agent', 'context.js'),
     'utf-8',
   );
-  // Real names that should appear as illustrative examples.
+  // Real names that should appear as illustrative examples. Refreshed
+  // 2026-07-14: every id below returned 402 (exists, needs payment) rather
+  // than 400 on a live POST /api/v1/chat/completions probe.
   for (const real of [
-    'anthropic/claude-sonnet-4.6',
+    'anthropic/claude-sonnet-5',
     'anthropic/claude-opus-4.8',
     'deepseek/deepseek-v4-pro',
     'zai/glm-5.2',
+    'xai/grok-4.5',
   ]) {
     assert.ok(src.includes(real), `chat-completions example list must include real model "${real}"`);
   }
@@ -5667,8 +5670,10 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
     'gpt-oss': 'nvidia/qwen3-next-80b-a3b-instruct',
     'gpt-oss-small': 'nvidia/qwen3-next-80b-a3b-instruct',
     'mistral-small': 'nvidia/qwen3-next-80b-a3b-instruct',
-    nemotron: 'nvidia/llama-4-maverick',
-    devstral: 'nvidia/llama-4-maverick',
+    nemotron: 'nvidia/mistral-nemotron',
+    devstral: 'nvidia/qwen3-next-80b-a3b-instruct',
+    maverick: 'nvidia/qwen3-next-80b-a3b-instruct',
+    llama: 'nvidia/qwen3-next-80b-a3b-instruct',
   };
 
   for (const [shortcut, expectedModel] of Object.entries(freeAliases)) {
@@ -5725,7 +5730,7 @@ test('free routing profile stays free across router entry points', async () => {
   const FREE_GATEWAY_MODELS = new Set([
     'nvidia/qwen3-next-80b-a3b-instruct',
     'nvidia/qwen3.5-122b-a10b',
-    'nvidia/llama-4-maverick',
+    'nvidia/mistral-nemotron',
     'nvidia/mistral-large-3-675b',
   ]);
   for (const tier of ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING']) {
@@ -6612,9 +6617,10 @@ test('picker trim: shortcuts for hidden models still resolve (muscle-memory pres
   assert.equal(resolveModel('o1'), 'openai/o1');
   assert.equal(resolveModel('o4'), 'openai/o4-mini');
   assert.equal(resolveModel('nano'), 'openai/gpt-5-nano');
-  // grok promoted to the public flagship grok-4.3 (2026-06-04) — same
+  // grok promoted to the public flagship grok-4.5 (2026-07-14) — same
   // flagship-promotion pattern as kimi → k2.7. Explicit pins still resolve.
-  assert.equal(resolveModel('grok'), 'xai/grok-4.3');
+  assert.equal(resolveModel('grok'), 'xai/grok-4.5');
+  assert.equal(resolveModel('grok-4.3'), 'xai/grok-4.3');
   assert.equal(resolveModel('grok-3'), 'xai/grok-3');
   assert.equal(resolveModel('grok-4'), 'xai/grok-4-0709');
   assert.equal(resolveModel('grok-build'), 'xai/grok-build-0.1');
@@ -6628,7 +6634,7 @@ test('picker trim: hero shortcuts (opus, sonnet, gpt, gemini-3, grok) still in v
   assert.ok(ids.includes('openai/gpt-5.6-sol'));
   assert.ok(ids.includes('google/gemini-3.1-pro'));
   assert.ok(ids.includes('google/gemini-2.5-pro'));
-  assert.ok(ids.includes('xai/grok-4.3')); // grok-4-0709 hidden on gateway; 4.3 is the public flagship row
+  assert.ok(ids.includes('xai/grok-4.5')); // grok-4-0709 hidden on gateway; 4.5 is the public flagship row
 });
 
 test('picker trim: total visible entries dropped meaningfully', async () => {
@@ -6639,6 +6645,88 @@ test('picker trim: total visible entries dropped meaningfully', async () => {
   // + 5 reasoning + 6 budget + 3 free = 21.
   assert.ok(total >= 20, `expected >= 20 visible entries, got ${total}`);
   assert.ok(total <= 24, `expected <= 24 visible entries (33 → ~21), got ${total}`);
+});
+
+// ─── picker ↔ gateway reconciliation ──────────────────────────────────────
+//
+// These drive reconcilePicker() with a synthetic catalog so the rules are
+// pinned without a network call. The live counterpart is `franklin models`.
+
+/** Minimal gateway record shaped like GET /api/v1/models returns. */
+function gwModel(id, pricing, extra = {}) {
+  return {
+    id,
+    name: `${id} (gateway name)`,
+    billing_mode: pricing.input !== undefined ? 'paid' : 'free',
+    categories: ['chat'],
+    pricing,
+    ...extra,
+  };
+}
+
+test('reconcilePicker: drops curated rows the gateway no longer lists', async () => {
+  const { reconcilePicker, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
+  const staticIds = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
+  const realIds = staticIds.filter((id) => !id.startsWith('blockrun/'));
+  // Catalog carrying every curated model except the first real one.
+  const dropped = realIds[0];
+  const catalog = realIds.slice(1).map((id) => gwModel(id, { input: 1, output: 2 }));
+
+  const { categories, live } = reconcilePicker(catalog);
+  const ids = categories.flatMap((c) => c.models.map((m) => m.id));
+  assert.equal(live, true);
+  assert.ok(!ids.includes(dropped), `${dropped} left the catalog and must not be offered`);
+  for (const id of realIds.slice(1)) {
+    assert.ok(ids.includes(id), `${id} is still in the catalog and must survive`);
+  }
+});
+
+test('reconcilePicker: every offered row exists in the catalog (the haiku-4.5-20251001 class)', async () => {
+  const { reconcilePicker, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
+  const realIds = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id))
+    .filter((id) => !id.startsWith('blockrun/'));
+  const catalog = realIds.map((id) => gwModel(id, { input: 1, output: 2 }));
+  const { categories } = reconcilePicker(catalog);
+  const known = new Set(catalog.map((m) => m.id));
+  for (const m of categories.flatMap((c) => c.models)) {
+    if (m.id.startsWith('blockrun/')) continue;
+    assert.ok(known.has(m.id), `picker offered ${m.id}, which the gateway doesn't serve`);
+  }
+});
+
+test('reconcilePicker: keeps synthetic routing profiles that are not gateway models', async () => {
+  const { reconcilePicker } = await import('../dist/ui/model-picker.js');
+  // blockrun/auto is resolved client-side and never appears in the catalog —
+  // an empty catalog must not delete it.
+  const { categories } = reconcilePicker([]);
+  const ids = categories.flatMap((c) => c.models.map((m) => m.id));
+  assert.deepEqual(ids, ['blockrun/auto']);
+});
+
+test('reconcilePicker: refreshes price from the gateway but keeps the curated label', async () => {
+  const { reconcilePicker, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
+  const opus = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.shortcut === 'opus');
+  // Gateway reports a price that disagrees with the hardcoded display string.
+  const catalog = [gwModel(opus.id, { input: 99, output: 123 })];
+  const { categories } = reconcilePicker(catalog);
+  const row = categories.flatMap((c) => c.models).find((m) => m.id === opus.id);
+  assert.equal(row.price, '$99/$123', 'price must track the gateway, not the hardcoded string');
+  assert.equal(row.label, opus.label, 'label stays curated — gateway names overflow the column');
+});
+
+test('reconcilePicker: free models render FREE, and moreCount counts uncurated chat models', async () => {
+  const { reconcilePicker, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
+  const free = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.shortcut === 'free');
+  const catalog = [
+    gwModel(free.id, {}),
+    gwModel('someprovider/brand-new-flagship', { input: 5, output: 25 }),
+    gwModel('someprovider/an-image-model', { per_image: 0.02 }, { categories: ['image'] }),
+  ];
+  const { categories, moreCount } = reconcilePicker(catalog);
+  const row = categories.flatMap((c) => c.models).find((m) => m.id === free.id);
+  assert.equal(row.price, 'FREE');
+  // Only the uncurated *chat* model counts — the image model isn't picker material.
+  assert.equal(moreCount, 1, 'moreCount should count uncurated chat models only');
 });
 
 // ─── nemotron prose stripper ──────────────────────────────────────────────
@@ -8001,12 +8089,13 @@ test('pickFreeFallback: research / chat / creative also skip coder first', async
 
 test('pickFreeFallback: respects alreadyFailed set', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
-  // Coding starts with qwen3-next. After it fails, next is the maverick secondary.
+  // Coding starts with qwen3-next. After it fails, next is the mistral-nemotron
+  // secondary (replaced maverick 2026-07-14 — it left the gateway catalog).
   const failed = new Set(['nvidia/qwen3-next-80b-a3b-instruct']);
   const pick = pickFreeFallback('coding', failed);
   assert.notEqual(pick, 'nvidia/qwen3-next-80b-a3b-instruct');
-  assert.equal(pick, 'nvidia/llama-4-maverick',
-    `after qwen3-next fails, coding should fall to maverick, got ${pick}`);
+  assert.equal(pick, 'nvidia/mistral-nemotron',
+    `after qwen3-next fails, coding should fall to mistral-nemotron, got ${pick}`);
 });
 
 test('pickFreeFallback: unknown category uses default chain (general model first)', async () => {
@@ -8021,7 +8110,7 @@ test('pickFreeFallback: returns undefined when every candidate failed', async ()
   const { pickFreeFallback } = await import('../dist/router/index.js');
   const failed = new Set([
     'nvidia/qwen3-next-80b-a3b-instruct',
-    'nvidia/llama-4-maverick',
+    'nvidia/mistral-nemotron',
   ]);
   const pick = pickFreeFallback('trading', failed);
   assert.equal(pick, undefined);
@@ -9644,7 +9733,7 @@ test('vision helpers: isVisionModel allowlist matches curated set', async () => 
   for (const m of [
     'anthropic/claude-opus-4.7',
     'anthropic/claude-sonnet-4.6',
-    'anthropic/claude-haiku-4.5-20251001',
+    'anthropic/claude-haiku-4.5',
     'openai/gpt-5.5',
     'openai/gpt-5-mini',
     'openai/o3',
@@ -9652,14 +9741,16 @@ test('vision helpers: isVisionModel allowlist matches curated set', async () => 
     'google/gemini-2.5-flash',
     'xai/grok-4-0709',
     'moonshot/kimi-k2.6',
-    'nvidia/llama-4-maverick',
+    'nvidia/nemotron-nano-12b-v2-vl',
   ]) {
     assert.equal(isVisionModel(m), true, `${m} should be vision-capable`);
   }
 
   // Text-only — should all return false. Includes the failure modes the
   // user reported: deepseek family is entirely text-only; grok-4.1 fast
-  // reasoning dropped vision; codex 5.3 is text-only.
+  // reasoning dropped vision; codex 5.3 is text-only. maverick joined this
+  // list 2026-07-14 — routeRequest() always treated it as text-only, so the
+  // old vision entry was the side that was wrong.
   for (const m of [
     'deepseek/deepseek-v4-pro',
     'deepseek/deepseek-chat',
@@ -9668,6 +9759,7 @@ test('vision helpers: isVisionModel allowlist matches curated set', async () => 
     'xai/grok-4-1-fast-reasoning',
     'openai/gpt-5.3-codex',
     'nvidia/qwen3-coder-480b',
+    'nvidia/llama-4-maverick',
   ]) {
     assert.equal(isVisionModel(m), false, `${m} should be text-only`);
   }
