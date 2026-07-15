@@ -6729,6 +6729,69 @@ test('reconcilePicker: free models render FREE, and moreCount counts uncurated c
   assert.equal(moreCount, 1, 'moreCount should count uncurated chat models only');
 });
 
+// ─── franklin models: per-billing-mode rendering ──────────────────────────
+//
+// Regression net for the "$0.00/M" bug: the command modelled every model as
+// { input, output }, so the whole image/video/music/speech catalog printed as
+// $0.00/M under a "Paid Models" heading — i.e. the paid media catalog looked
+// free. Nothing tested this file, which is why it survived.
+
+test('models money(): sub-cent prices keep their precision (no $0.00)', async () => {
+  const { money } = await import('../dist/commands/models.js');
+  assert.equal(money(0), '$0');
+  assert.equal(money(5), '$5');
+  assert.equal(money(2.5), '$2.5');
+  assert.equal(money(0.435), '$0.435', 'V4 Pro input must not round to $0.44');
+  assert.equal(money(0.098), '$0.098', 'seedance per-second must not round to $0.10');
+  assert.equal(money(0.015), '$0.015', 'cogview per-image must not render as $0.02');
+  // The actual old-bug shape: a real per-image price must never print as $0.00.
+  for (const p of [0.02, 0.045, 0.05, 0.06, 0.1]) {
+    assert.notEqual(money(p), '$0.00', `${p} must not render as $0.00`);
+    assert.notEqual(money(p), '$0', `${p} must not render as $0`);
+  }
+});
+
+test('models formatContext(): 1000000 and 1048576 both read as 1M', async () => {
+  const { formatContext } = await import('../dist/commands/models.js');
+  assert.equal(formatContext(undefined), '');
+  assert.equal(formatContext(0), '');
+  assert.equal(formatContext(131_072), '131K');
+  assert.equal(formatContext(262_144), '262K');
+  assert.equal(formatContext(200_000), '200K');
+  // Same column must not mix "1M" and "1.0M".
+  assert.equal(formatContext(1_000_000), '1M');
+  assert.equal(formatContext(1_048_576), '1M');
+  assert.equal(formatContext(1_050_000), '1.1M');
+});
+
+test('estimateCostUsd: per_character and per_generation are priced, not silently $0', async () => {
+  const { estimateCostUsd, GATEWAY_MARGIN } = await import('../dist/gateway-models.js');
+  // Both modes are live on the gateway (elevenlabs speech + sound effects) but
+  // were missing from BillingMode, so the switch fell through and returned 0 —
+  // a paid call estimated as free.
+  const speech = {
+    id: 'elevenlabs/flash-v2.5',
+    name: 'Flash v2.5',
+    billing_mode: 'per_character',
+    categories: ['speech'],
+    pricing: { per_1k_chars: 0.05, max_input_chars: 40000 },
+  };
+  // 2000 chars × $0.05/1K = $0.10 base, +5% gateway margin.
+  assert.equal(estimateCostUsd(speech, { characters: 2000 }), +(0.1 * GATEWAY_MARGIN).toFixed(6));
+  // No length given → no meaningful estimate rather than an invented one.
+  assert.equal(estimateCostUsd(speech, {}), 0);
+
+  const sfx = {
+    id: 'elevenlabs/sound-effects',
+    name: 'Sound Effects',
+    billing_mode: 'per_generation',
+    categories: ['sound_effect'],
+    pricing: { per_generation: 0.05, max_duration_seconds: 22 },
+  };
+  assert.equal(estimateCostUsd(sfx, {}), +(0.05 * GATEWAY_MARGIN).toFixed(6));
+  assert.ok(estimateCostUsd(sfx, {}) > 0, 'a paid sound-effect call must not estimate as free');
+});
+
 // ─── nemotron prose stripper ──────────────────────────────────────────────
 
 test('nemotron prose stripper: only matches Nemotron Omni model id', async () => {

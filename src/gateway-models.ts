@@ -18,7 +18,15 @@ import { loadChain, API_URLS, USER_AGENT } from './config.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
-export type BillingMode = 'paid' | 'free' | 'flat' | 'per_image' | 'per_second' | 'per_track';
+export type BillingMode =
+  | 'paid'
+  | 'free'
+  | 'flat'
+  | 'per_image'
+  | 'per_second'
+  | 'per_track'
+  | 'per_character'
+  | 'per_generation';
 
 export interface PaidPricing { input: number; output: number; }
 export interface FlatPricing { flat: number; }
@@ -29,13 +37,25 @@ export interface PerSecondPricing {
   max_duration_seconds?: number;
 }
 export interface PerTrackPricing { per_track: number; }
+/** ElevenLabs / ByteDance speech — billed per 1K characters of input text. */
+export interface PerCharacterPricing {
+  per_1k_chars: number;
+  max_input_chars?: number;
+}
+/** ElevenLabs sound effects — flat charge per generation. */
+export interface PerGenerationPricing {
+  per_generation: number;
+  max_duration_seconds?: number;
+}
 
 export type ModelPricing =
   | PaidPricing
   | FlatPricing
   | PerImagePricing
   | PerSecondPricing
-  | PerTrackPricing;
+  | PerTrackPricing
+  | PerCharacterPricing
+  | PerGenerationPricing;
 
 export interface GatewayModel {
   id: string;
@@ -135,6 +155,8 @@ export interface EstimateContext {
   quantity?: number;
   /** Clip length in seconds (per_second). Falls back to model's default_duration_seconds, then 8. */
   duration_seconds?: number;
+  /** Input text length (per_character). Required for a meaningful speech estimate. */
+  characters?: number;
 }
 
 /**
@@ -156,6 +178,14 @@ export function estimateCostUsd(model: GatewayModel, ctx: EstimateContext = {}):
     }
     case 'per_track':
       base = p.per_track ?? 0;
+      break;
+    case 'per_character':
+      // Priced per 1K characters of input text. Without a length there's no
+      // meaningful estimate, so fall through to 0 rather than invent one.
+      base = ((p.per_1k_chars ?? 0) * (ctx.characters ?? 0)) / 1000;
+      break;
+    case 'per_generation':
+      base = p.per_generation ?? 0;
       break;
     case 'flat':
       base = p.flat ?? 0;
