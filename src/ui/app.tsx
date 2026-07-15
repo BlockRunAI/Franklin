@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { render, Static, Box, Text, useApp, useInput, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
@@ -17,8 +17,10 @@ import type { StreamEvent } from '../agent/types.js';
 import { renderMarkdown, renderMarkdownStreaming } from './markdown.js';
 import {
   resolveModel,
+  getPickerCategories,
   PICKER_CATEGORIES,
   PICKER_MODELS_FLAT,
+  type ModelCategory,
 } from './model-picker.js';
 import { estimateCost } from '../pricing.js';
 import { formatTokens, shortModelName } from '../stats/format.js';
@@ -786,9 +788,13 @@ function formatAgentErrorForDisplay(error: string): string {
   return out.join('\n');
 }
 
-// Picker model list is imported from ./model-picker.js (single source of truth).
-// PICKER_CATEGORIES provides grouped data for rendering; PICKER_MODELS_FLAT
-// provides a flat array for pickerIdx navigation.
+// Picker model list is imported from ./model-picker.js (single source of truth
+// for curation). PICKER_CATEGORIES is the static editorial list, used as the
+// initial paint and the offline fallback; getPickerCategories() reconciles it
+// against the live gateway catalog (fresh labels/prices, retired rows dropped)
+// and the result lands in `pickerCats` state. Render and pickerIdx navigation
+// both read `pickerCats` / `pickerFlat` — never the static consts — so the
+// cursor and the visible rows can't disagree after hydration.
 
 interface ToolStatus {
   name: string;
@@ -869,6 +875,16 @@ function RunCodeApp({
   // Short preview of latest response shown in dynamic area (last ~5 lines, cleared on next turn)
   const [responsePreview, setResponsePreview] = useState('');
   const [currentModel, setCurrentModel] = useState(initialModel || PICKER_MODELS_FLAT[0].id);
+  // Gateway-reconciled picker list. Seeded with the static curation so the
+  // first paint is instant and an offline session still gets a usable picker;
+  // replaced by the hydrated list once the catalog fetch lands.
+  const [pickerCats, setPickerCats] = useState<ModelCategory[]>(PICKER_CATEGORIES);
+  const [pickerMoreCount, setPickerMoreCount] = useState(0);
+  const pickerFlat = useMemo(() => pickerCats.flatMap(c => c.models), [pickerCats]);
+  // Track the live model without re-firing the hydration effect on every model
+  // change — the effect should run when the picker opens, not when the model
+  // switches, but it still needs the current id to re-anchor the cursor.
+  const currentModelRef = useRef(initialModel);
   const [ready, setReady] = useState(!startWithPicker);
   const [mode, setMode] = useState<UIMode>(startWithPicker ? 'model-picker' : 'input');
   const [pickerIdx, setPickerIdx] = useState(0);
@@ -905,6 +921,35 @@ function RunCodeApp({
   // tab and the agent stops to ask for approval — verified 2026-05-04
   // from a real screenshot where the user missed the dialog because the
   // input box still read "Working...". Opt-out via FRANKLIN_NO_BELL=1.
+  // Single sync point for currentModelRef — cheaper to keep correct than
+  // updating the ref at every setCurrentModel call site.
+  useEffect(() => { currentModelRef.current = currentModel; }, [currentModel]);
+
+  // Reconcile the picker against the live gateway catalog whenever it opens —
+  // covers both /model with no args and --model-picker startup. Runs in the
+  // background: the picker has already painted from the static curation (or the
+  // 5-min cached catalog), so a slow gateway delays nothing. gateway-models.ts
+  // dedupes concurrent fetches and serves stale-on-error, so re-opening the
+  // picker is cheap and an offline session simply keeps the static list.
+  useEffect(() => {
+    if (mode !== 'model-picker') return;
+    let cancelled = false;
+    void getPickerCategories()
+      .then(({ categories, moreCount, live }) => {
+        if (cancelled || !live) return;
+        setPickerCats(categories);
+        setPickerMoreCount(moreCount);
+        // Rows may have dropped out from under the cursor — re-anchor on the
+        // model actually in use rather than leaving the highlight on whatever
+        // slid into that index.
+        const flat = categories.flatMap(c => c.models);
+        const at = flat.findIndex(m => m.id === currentModelRef.current);
+        setPickerIdx(at >= 0 ? at : 0);
+      })
+      .catch(() => { /* keep the static list — the picker must stay usable */ });
+    return () => { cancelled = true; };
+  }, [mode]);
+
   const bellPlayedRef = useRef(false);
   useEffect(() => {
     const dialogActive = !!permissionRequest || !!askUserRequest;
@@ -1101,9 +1146,12 @@ function RunCodeApp({
     // Arrow key navigation for model picker
     if (mode !== 'model-picker') return;
     if (key.upArrow) setPickerIdx(i => Math.max(0, i - 1));
-    else if (key.downArrow) setPickerIdx(i => Math.min(PICKER_MODELS_FLAT.length - 1, i + 1));
+    else if (key.downArrow) setPickerIdx(i => Math.min(pickerFlat.length - 1, i + 1));
     else if (key.return) {
-      const selected = PICKER_MODELS_FLAT[pickerIdx];
+      // Hydration can shrink the list under the cursor (a retired row drops
+      // out), so treat the index as untrusted rather than assuming a hit.
+      const selected = pickerFlat[pickerIdx] ?? pickerFlat[0];
+      if (!selected) return;
       setCurrentModel(selected.id);
       onModelChange(selected.id, 'user');
       showStatus(`Model → ${selected.label}`, 'success', 3000);
@@ -1192,8 +1240,10 @@ function RunCodeApp({
             onModelChange(resolved, 'user');
             showStatus(`Model → ${resolved}`, 'success', 3000);
           } else {
-            const idx = PICKER_MODELS_FLAT.findIndex(m => m.id === currentModel);
+            const idx = pickerFlat.findIndex(m => m.id === currentModel);
             setPickerIdx(idx >= 0 ? idx : 0);
+            // Gateway reconciliation is kicked off by an effect on picker mode
+            // (see below), so it covers this path and --model-picker startup.
             // Defensive: ensure no draft text survives into the picker —
             // closing handlers clear input too, so both ends are covered.
             setInput('');
@@ -1973,7 +2023,7 @@ function RunCodeApp({
           markers. Same reason as streamText — Ink wipes scrollback the moment
           dynamic output exceeds the terminal height. */}
       {inPicker && (() => {
-        const totalModels = PICKER_MODELS_FLAT.length;
+        const totalModels = pickerFlat.length;
         const maxModels = Math.max(6, termRows - 12);
         let start = Math.max(0, pickerIdx - Math.floor(maxModels / 2));
         let end = Math.min(totalModels, start + maxModels);
@@ -1985,7 +2035,7 @@ function RunCodeApp({
         // Pre-compute each category's base offset into the flat model list so
         // we can map (cat, localIdx) → globalIdx in one pass without re-walking.
         let cursor = 0;
-        const catBases = PICKER_CATEGORIES.map((cat) => {
+        const catBases = pickerCats.map((cat) => {
           const base = cursor;
           cursor += cat.models.length;
           return base;
@@ -2001,7 +2051,7 @@ function RunCodeApp({
                 <Text dimColor>↑ {hiddenAbove} more above</Text>
               </Box>
             )}
-            {PICKER_CATEGORIES.map((cat, catIdx) => {
+            {pickerCats.map((cat, catIdx) => {
               const base = catBases[catIdx];
               const visible = cat.models
                 .map((m, localIdx) => ({ m, globalIdx: base + localIdx }))
@@ -2042,6 +2092,13 @@ function RunCodeApp({
             {hiddenBelow > 0 && (
               <Box marginLeft={2} marginTop={1}>
                 <Text dimColor>↓ {hiddenBelow} more below</Text>
+              </Box>
+            )}
+            {pickerMoreCount > 0 && (
+              <Box marginTop={1} marginLeft={2}>
+                <Text dimColor>
+                  + {pickerMoreCount} more on gateway — `franklin models` to list, or /model &lt;id&gt; to pick one
+                </Text>
               </Box>
             )}
             <Box marginTop={1} marginLeft={2}>

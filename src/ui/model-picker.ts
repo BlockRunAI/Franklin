@@ -5,6 +5,7 @@
 
 import readline from 'node:readline';
 import chalk from 'chalk';
+import { getGatewayModels, type GatewayModel } from '../gateway-models.js';
 
 // ─── Model Shortcuts (same as proxy) ───────────────────────────────────────
 
@@ -32,8 +33,8 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'opus-4.7': 'anthropic/claude-opus-4.7',
   'opus-4.6': 'anthropic/claude-opus-4.6',
   'opus-4.5': 'anthropic/claude-opus-4.5',
-  haiku: 'anthropic/claude-haiku-4.5-20251001',
-  'haiku-4.5': 'anthropic/claude-haiku-4.5-20251001',
+  haiku: 'anthropic/claude-haiku-4.5',
+  'haiku-4.5': 'anthropic/claude-haiku-4.5',
   // OpenAI
   // `gpt` / `gpt5` / `gpt-5` follow the gateway's flagship — currently 5.6 Sol.
   gpt: 'openai/gpt-5.6-sol',
@@ -67,9 +68,13 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'gemini-3.5-flash': 'google/gemini-3.5-flash',
   'gemini-3': 'google/gemini-3.1-pro',
   'gemini-3.1': 'google/gemini-3.1-pro',
-  // xAI — grok-4.3 is the public flagship since 2026-06-04 (grok-3 and the
-  // fast families are hidden on the gateway; explicit IDs still resolve).
-  grok: 'xai/grok-4.3',
+  // xAI — grok-4.5 is the public flagship since 2026-07-14; `grok` follows it
+  // per the bare-alias-tracks-flagship convention. 4.3 stays pinned: it's
+  // cheaper ($1.5/$4 vs $2.5/$9) and carries 1M context to 4.5's 500K, so it's
+  // the better pick for long-context work. (grok-3 and the fast families are
+  // hidden on the gateway; explicit IDs still resolve.)
+  grok: 'xai/grok-4.5',
+  'grok-4.5': 'xai/grok-4.5',
   'grok-4.3': 'xai/grok-4.3',
   'grok-build': 'xai/grok-build-0.1',
   'grok-3': 'xai/grok-3',
@@ -101,7 +106,6 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   qwen3: 'nvidia/qwen3-next-80b-a3b-instruct',
   'qwen3-next': 'nvidia/qwen3-next-80b-a3b-instruct',
   'qwen3.5': 'nvidia/qwen3.5-122b-a10b',
-  maverick: 'nvidia/llama-4-maverick',
   glm4: 'nvidia/qwen3-next-80b-a3b-instruct',
   'deepseek-free': 'nvidia/qwen3-next-80b-a3b-instruct',
   'qwen-coder': 'nvidia/qwen3-next-80b-a3b-instruct',
@@ -110,19 +114,24 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'gpt-oss-small': 'nvidia/qwen3-next-80b-a3b-instruct',
   'mistral-small': 'nvidia/qwen3-next-80b-a3b-instruct',
   'mistral-nemotron': 'nvidia/mistral-nemotron',
-  // llama shortcuts point at the still-live free maverick model (not the free
-  // default — that's qwen3-next above). Kept as explicit aliases so the name
-  // resolves for users who type it.
-  llama: 'nvidia/llama-4-maverick',
-  'llama-4': 'nvidia/llama-4-maverick',
-  'llama-4-maverick': 'nvidia/llama-4-maverick',
+  // Maverick left the gateway catalog on/before 2026-07-14. The id still
+  // answers, but only because the free pool silently substitutes another model
+  // for it — so pointing users at it would be promising a model they don't get.
+  // Follow the established retired-free-id pattern instead: resolve to the
+  // current free default so muscle memory keeps working.
+  llama: 'nvidia/qwen3-next-80b-a3b-instruct',
+  'llama-4': 'nvidia/qwen3-next-80b-a3b-instruct',
+  'llama-4-maverick': 'nvidia/qwen3-next-80b-a3b-instruct',
+  maverick: 'nvidia/qwen3-next-80b-a3b-instruct',
   // Backward-compatibility aliases for models the gateway retired or exposes
   // unreliably on /v1/messages. Map to agent-tested free models so shortcuts
   // keep working without silent paid fallback or empty tool-use turns.
   // Map to the closest current free model so old session records + user
   // muscle memory keep working.
-  nemotron: 'nvidia/llama-4-maverick',
-  devstral: 'nvidia/llama-4-maverick',
+  // `nemotron` now resolves to the real Mistral Nemotron (in-catalog, and one
+  // of the few free ids that verifiably serves itself) rather than to Maverick.
+  nemotron: 'nvidia/mistral-nemotron',
+  devstral: 'nvidia/qwen3-next-80b-a3b-instruct',
   // Others
   minimax: 'minimax/minimax-m3',
   'm3': 'minimax/minimax-m3',
@@ -250,7 +259,7 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'openai/gpt-5.6-sol',          shortcut: 'gpt',       label: 'GPT-5.6 Sol',       price: '$5/$30', highlight: true },
       { id: 'google/gemini-3.1-pro',       shortcut: 'gemini-3',  label: 'Gemini 3.1 Pro',    price: '$2/$12' },
       { id: 'google/gemini-2.5-pro',       shortcut: 'gemini',    label: 'Gemini 2.5 Pro',    price: '$1.25/$10' },
-      { id: 'xai/grok-4.3',                shortcut: 'grok',      label: 'Grok 4.3',          price: '$1.5/$4' },
+      { id: 'xai/grok-4.5',                shortcut: 'grok',      label: 'Grok 4.5',          price: '$2.5/$9' },
     ],
   },
   {
@@ -272,7 +281,7 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
   {
     category: '💰 Budget',
     models: [
-      { id: 'anthropic/claude-haiku-4.5-20251001', shortcut: 'haiku',    label: 'Claude Haiku 4.5',    price: '$1/$5' },
+      { id: 'anthropic/claude-haiku-4.5',          shortcut: 'haiku',    label: 'Claude Haiku 4.5',    price: '$1/$5' },
       { id: 'openai/gpt-5-mini',                   shortcut: 'mini',     label: 'GPT-5 Mini',          price: '$0.25/$2' },
       { id: 'google/gemini-2.5-flash',             shortcut: 'flash',    label: 'Gemini 2.5 Flash',    price: '$0.3/$2.5' },
       // Re-aliased to V4 Flash Chat upstream — context 1M, price 30% lower.
@@ -290,14 +299,20 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
   {
     category: '🆓 Free (no USDC needed)',
     models: [
-      // Qwen3-Next 80B leads: cleanest free instruction-follower (no thinking
-      // leak / markdown fences — verified live 2026-07-11) and the default the
-      // `free` shortcut + free routing profile resolve to. Llama 4 Maverick is
-      // the diverse-family secondary. (nvidia/deepseek-v4-flash removed
-      // 2026-07-11: the gateway 410s on it.) Both are $0 — the free tier never
-      // falls back to a paid model.
-      { id: 'nvidia/qwen3-next-80b-a3b-instruct', shortcut: 'free',     label: 'Qwen3-Next 80B',   price: 'FREE', highlight: true },
-      { id: 'nvidia/llama-4-maverick',            shortcut: 'maverick', label: 'Llama 4 Maverick', price: 'FREE' },
+      // Qwen3-Next 80B leads: it's what the `free` shortcut + free routing
+      // profile resolve to. Mistral Nemotron is the diverse-family secondary,
+      // promoted 2026-07-14 when nvidia/llama-4-maverick fell out of the
+      // gateway catalog. Both are $0 — the free tier never falls back to paid.
+      //
+      // Caveat worth knowing before editing this list: the NVIDIA free pool
+      // silently substitutes. Verified live 2026-07-14 — qwen3-next and
+      // mistral-large-3-675b both came back served by
+      // `nvidia/nemotron-3-super-120b-a12b-free`, so the free id you request
+      // is not necessarily the one you get. mistral-nemotron was picked as the
+      // secondary precisely because it does serve itself, consistently, and
+      // answers without leaking reasoning prose.
+      { id: 'nvidia/qwen3-next-80b-a3b-instruct', shortcut: 'free',     label: 'Qwen3-Next 80B',    price: 'FREE', highlight: true },
+      { id: 'nvidia/mistral-nemotron',            shortcut: 'nemotron', label: 'Mistral Nemotron',  price: 'FREE' },
     ],
   },
 ];
@@ -305,14 +320,121 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
 /** Flat list of all picker models (for index-based navigation). */
 export const PICKER_MODELS_FLAT: ModelEntry[] = PICKER_CATEGORIES.flatMap(c => c.models);
 
-// Kept for backward compatibility with the readline pickModel() below.
-const PICKER_MODELS = PICKER_CATEGORIES;
+// ─── Live hydration against the gateway catalog ────────────────────────────
+
+/**
+ * Synthetic ids that are Franklin concepts, not gateway models (`blockrun/auto`
+ * is a routing profile resolved client-side). They never appear in the catalog,
+ * so they're exempt from the drop-if-absent rule below.
+ */
+function isSyntheticId(id: string): boolean {
+  return id.startsWith('blockrun/');
+}
+
+/** Render a gateway price object into the picker's display format. */
+function formatPrice(m: GatewayModel): string {
+  const p = m.pricing as unknown as Record<string, number | undefined>;
+  switch (m.billing_mode) {
+    case 'free':
+      return 'FREE';
+    case 'paid':
+      return `$${p.input ?? 0}/$${p.output ?? 0}`;
+    case 'flat':
+      return `$${p.flat ?? 0} flat`;
+    default:
+      // Non-chat billing modes (per_image/per_second/…) shouldn't reach the
+      // picker, but don't invent a number if one does.
+      return '—';
+  }
+}
+
+export interface HydratedPicker {
+  categories: ModelCategory[];
+  /** Chat models live on the gateway that aren't curated into the picker. */
+  moreCount: number;
+  /** False when the gateway was unreachable and this is the static fallback. */
+  live: boolean;
+}
+
+/**
+ * The picker list, reconciled against the live gateway catalog.
+ *
+ * {@link PICKER_CATEGORIES} stays the editorial layer — which models are worth
+ * featuring, in what order, under which heading, with which shortcut. The
+ * gateway is the source of truth for everything factual: whether a model still
+ * exists, its display name, and its price. That split is deliberate: the
+ * gateway lists 57 chat models and the picker deliberately shows ~21 (see the
+ * v3.9.3 trim), so we can't just render the catalog.
+ *
+ * Reconciliation rules:
+ *   - Curated row present in the catalog → refresh its label + price from the
+ *     gateway, so a price change upstream can't leave a stale number on screen.
+ *   - Curated row absent → drop it. This is the self-healing half: an id the
+ *     gateway retired (the `claude-haiku-4.5-20251001` case) stops being
+ *     offered without waiting on a Franklin release. Its MODEL_SHORTCUTS alias
+ *     survives, matching the long-standing "hide the row, keep the shortcut"
+ *     pattern.
+ *   - Gateway unreachable → serve the static list verbatim (`live: false`).
+ *     An offline picker showing a slightly stale list beats an empty one.
+ *
+ * Note the catalog hides some models that still resolve (grok-3 and the xAI
+ * fast family, for instance). Hidden-but-working ids are therefore dropped from
+ * the *visible* list while remaining reachable by typing the shortcut — which
+ * is the intended behavior, not a bug.
+ */
+export async function getPickerCategories(): Promise<HydratedPicker> {
+  try {
+    return reconcilePicker(await getGatewayModels());
+  } catch {
+    return { categories: PICKER_CATEGORIES, moreCount: 0, live: false };
+  }
+}
+
+/**
+ * Pure reconciliation step behind {@link getPickerCategories} — exported so the
+ * rules can be tested against a synthetic catalog without touching the network.
+ */
+export function reconcilePicker(catalog: GatewayModel[]): HydratedPicker {
+  const byId = new Map(catalog.map(m => [m.id, m]));
+  const categories: ModelCategory[] = [];
+  const curated = new Set<string>();
+
+  for (const cat of PICKER_CATEGORIES) {
+    const models: ModelEntry[] = [];
+    for (const row of cat.models) {
+      curated.add(row.id);
+      if (isSyntheticId(row.id)) {
+        models.push(row);
+        continue;
+      }
+      const live = byId.get(row.id);
+      if (!live) continue; // retired upstream — drop the row, keep the alias
+      // Price comes from the gateway (it's factual, it drifts, and it's the
+      // user's money). The label stays curated: gateway names are longer than
+      // the picker's tuned columns ("Qwen3-Next 80B Instruct (Free)" is 30
+      // chars against a 26-wide field) and carry redundant "(Free)" suffixes
+      // that the 🆓 heading already says.
+      models.push({ ...row, price: formatPrice(live) });
+    }
+    if (models.length > 0) categories.push({ ...cat, models });
+  }
+
+  const moreCount = catalog.filter(
+    m => m.categories?.includes('chat') && !curated.has(m.id),
+  ).length;
+
+  return { categories, moreCount, live: true };
+}
 
 /**
  * Show interactive model picker. Returns the selected model ID.
  * Falls back to text input if terminal doesn't support raw mode.
  */
 export async function pickModel(currentModel?: string): Promise<string | null> {
+  // Same gateway reconciliation the Ink picker gets — falls back to the static
+  // curation when the catalog is unreachable.
+  const { categories: PICKER_MODELS, moreCount } = await getPickerCategories();
+
   // Flatten for numbering
   const allModels: ModelEntry[] = [];
   for (const cat of PICKER_MODELS) {
@@ -335,6 +457,12 @@ export async function pickModel(currentModel?: string): Promise<string | null> {
       idx++;
     }
     console.error('');
+  }
+
+  if (moreCount > 0) {
+    console.error(
+      chalk.dim(`  + ${moreCount} more on gateway — run \`franklin models\` to list them.\n`)
+    );
   }
 
   console.error(chalk.dim('  Enter number, shortcut, or full model ID:'));

@@ -46,6 +46,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
   'anthropic/claude-sonnet-4.5': { input: 3.0, output: 15.0 },
   'anthropic/claude-haiku-4.5': { input: 1.0, output: 5.0 },
+  // Retired 2026-07-14: the gateway 400s on the dated id (undated is canonical).
+  // Kept for cost lookup on sessions recorded before the switch.
   'anthropic/claude-haiku-4.5-20251001': { input: 1.0, output: 5.0 },
   // OpenAI
   'openai/gpt-5-nano': { input: 0.05, output: 0.4 },
@@ -90,7 +92,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'xai/grok-3-mini': { input: 0.3, output: 0.5 },
   'xai/grok-2-vision': { input: 2.0, output: 10.0 },
   'xai/grok-3': { input: 3.0, output: 15.0 },
-  'xai/grok-4.3': { input: 1.5, output: 4.0 },        // public flagship 2026-06-04, OpenRouter resale
+  'xai/grok-4.3': { input: 1.5, output: 4.0 },        // 1M ctx; demoted from flagship 2026-07-14
+  'xai/grok-4.5': { input: 2.5, output: 9.0 },        // xAI flagship — 500K ctx (note: less than 4.3's 1M)
   'xai/grok-build-0.1': { input: 1.5, output: 3.0 },  // agentic coding, OpenRouter resale
   // DeepSeek (gateway re-aliased these to V4 Flash on 2026-05-03; price
   // dropped from $0.28/$0.42 to $0.20/$0.40, context bumped 128K→1M).

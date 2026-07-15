@@ -254,7 +254,7 @@ You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun
 - \`GET /.well-known/x402\` — x402 resource list with prices
 
 **LLM (POST, x402-paid)**
-- \`POST /v1/chat/completions\` — OpenAI-compatible. Body: \`{ model, messages, stream?, tools?, max_tokens?, temperature? }\`. \`model\` MUST come from \`GET /v1/models\` (real frontier examples on the gateway as of 2026-06: \`anthropic/claude-sonnet-4.6\`, \`anthropic/claude-opus-4.8\`, \`deepseek/deepseek-v4-pro\`, \`zai/glm-5.2\`, \`nvidia/llama-4-maverick\`, \`openai/gpt-5-nano\`). Do NOT invent versions like \`openai/gpt-5.1\` or \`xai/grok-5\` — those don't exist; the gateway 400s with the valid list in the error body, so when in doubt fetch \`GET /v1/models\` first.
+- \`POST /v1/chat/completions\` — OpenAI-compatible. Body: \`{ model, messages, stream?, tools?, max_tokens?, temperature? }\`. \`model\` MUST come from \`GET /v1/models\` (real frontier examples on the gateway, verified live 2026-07-14: \`anthropic/claude-sonnet-5\`, \`anthropic/claude-opus-4.8\`, \`deepseek/deepseek-v4-pro\`, \`zai/glm-5.2\`, \`xai/grok-4.5\`, \`nvidia/qwen3-next-80b-a3b-instruct\` (free)). Do NOT invent versions like \`openai/gpt-5.1\` or \`xai/grok-5\` — those don't exist; the gateway 400s with the valid list in the error body, so when in doubt fetch \`GET /v1/models\` first.
 - \`POST /v1/messages\` — Anthropic-compatible. Body: \`{ model, messages, max_tokens, system?, tools? }\`.
 
 **Media (POST, x402-paid; GET to poll async jobs)**

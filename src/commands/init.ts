@@ -33,7 +33,7 @@ export async function initCommand(options: { port?: string }) {
     ANTHROPIC_MODEL: 'blockrun/auto',
     ANTHROPIC_DEFAULT_SONNET_MODEL: 'anthropic/claude-sonnet-4.6',
     ANTHROPIC_DEFAULT_OPUS_MODEL: 'anthropic/claude-opus-4.8',
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-haiku-4.5-20251001',
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-haiku-4.5',
   };
 
   fs.mkdirSync(path.dirname(CLAUDE_SETTINGS_FILE), { recursive: true });

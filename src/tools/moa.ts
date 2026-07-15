@@ -19,7 +19,7 @@ import { ModelClient } from '../agent/llm.js';
 /** Reference models — diverse, cheap/free models for parallel queries. */
 const REFERENCE_MODELS = [
   'nvidia/qwen3-next-80b-a3b-instruct',     // Free, clean instruction-follower
-  'nvidia/llama-4-maverick',                // Free, agent-tested general chat (diverse family)
+  'nvidia/mistral-nemotron',                // Free, diverse family (maverick left the catalog 2026-07-14)
   'google/gemini-2.5-flash',                // Fast, cheap
   'deepseek/deepseek-chat',                 // Cheap, good reasoning
 ];

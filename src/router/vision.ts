@@ -29,7 +29,7 @@ const VISION_MODELS = new Set<string>([
   'anthropic/claude-sonnet-5',
   'anthropic/claude-sonnet-4.6',
   'anthropic/claude-sonnet-4.5',
-  'anthropic/claude-haiku-4.5-20251001',
+  'anthropic/claude-haiku-4.5',
   // OpenAI — multimodal flagships + o3 (Codex 5.3 is text-only, excluded).
   // GPT-5.6 family + 5.4-mini are vision; 5.4-nano is text-only.
   'openai/gpt-5.6-sol',
@@ -55,9 +55,10 @@ const VISION_MODELS = new Set<string>([
   // Moonshot — K2.7 (flagship) + K2.6 are multimodal (image + video input)
   'moonshot/kimi-k2.7',
   'moonshot/kimi-k2.6',
-  // NVIDIA inference — Llama 4 Maverick + Nemotron Nano VL are multimodal;
-  // deepseek/qwen-coder are not.
-  'nvidia/llama-4-maverick',
+  // NVIDIA inference — Nemotron Nano VL is multimodal; deepseek/qwen-coder are
+  // not. Llama 4 Maverick dropped 2026-07-14: it left the gateway catalog, and
+  // listing it here contradicted routeRequest()'s own "maverick is text-only"
+  // note — the free profile would route a vision turn to a text-only model.
   'nvidia/nemotron-nano-12b-v2-vl',
 ]);
 

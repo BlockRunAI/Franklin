@@ -15,9 +15,9 @@ export type ModelTier = 'free' | 'cheap' | 'premium' | 'none';
 
 /** Maps tier names to actual model identifiers */
 export interface ModelTierConfig {
-  free: string;      // e.g. "nvidia/llama-4-maverick"
+  free: string;      // e.g. "nvidia/qwen3-next-80b-a3b-instruct"
   cheap: string;     // e.g. "zai/glm-5.1"
-  premium: string;   // e.g. "anthropic/claude-sonnet-4.6"
+  premium: string;   // e.g. "anthropic/claude-sonnet-5"
 }
 
 export const DEFAULT_MODEL_TIERS: ModelTierConfig = {
