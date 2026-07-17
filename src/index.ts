@@ -67,6 +67,7 @@ program
   .option('-c, --continue', 'Continue the most recent session in this directory')
   .option('--max-spend <usd>', 'Hard USD cap on total session API spend — session stops when exceeded')
   .option('-p, --prompt <text>', 'Run a single prompt non-interactively (for batch/scripted use)')
+  .option('--approve-trades', 'Non-interactive runs: auto-approve trade plans that fit within --max-spend (default: reject all trades)')
   .action((fromSessionId: string | undefined, options) => startCommand({ ...options, fromSessionId, version }));
 
 program
@@ -337,7 +338,7 @@ const args = process.argv.slice(2);
 const firstArg = args[0];
 const HELP_FLAGS = new Set(['-h', '--help']);
 const VERSION_FLAGS = new Set(['-V', '--version']);
-const START_ONLY_FLAGS = new Set(['--trust', '--debug', '-m', '--model', '--from', '-r', '--resume', '-c', '--continue', '-p', '--prompt', '--max-spend']);
+const START_ONLY_FLAGS = new Set(['--trust', '--debug', '-m', '--model', '--from', '-r', '--resume', '-c', '--continue', '-p', '--prompt', '--max-spend', '--approve-trades']);
 
 function hasAnyFlag(argv: string[], flags: Set<string>): boolean {
   return argv.some(arg => flags.has(arg));
@@ -359,6 +360,8 @@ function parseStartFlags(argv: string[], startIdx = 0): Record<string, unknown> 
       opts.prompt = argv[++i];
     } else if (arg === '--max-spend' && argv[i + 1]) {
       opts.maxSpend = argv[++i];
+    } else if (arg === '--approve-trades') {
+      opts.approveTrades = true;
     } else if (arg === '--from') {
       opts.from = argv[i + 1] && !argv[i + 1].startsWith('-') ? argv[++i] : '';
       const next = argv[i + 1];

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityInvocation, CapabilityResult, ExecutionScope } from './types.js';
+import { checkTradePlanGate, recordTradeExecution } from '../trading/trade-plan.js';
 
 const MAX_WEBSEARCHES_PER_TURN = 8;
 const MAX_SIMILAR_SEARCHES_PER_TURN = 4;
@@ -265,6 +266,11 @@ export class SessionToolGuard {
       };
     }
 
+    // Trade-plan gate: real-money trades require an approved plan with
+    // remaining budget — in every permission mode, trust included.
+    const tradeGate = checkTradePlanGate(invocation);
+    if (tradeGate) return tradeGate;
+
     switch (invocation.name) {
       case 'WebSearch':
       case 'SearchX':
@@ -391,6 +397,12 @@ export class SessionToolGuard {
   }
 
   afterExecute(invocation: CapabilityInvocation, result: CapabilityResult): void {
+    // Draw down the approved trade plan's budget on successful executions
+    // (no-op for non-trade tools).
+    try {
+      recordTradeExecution(invocation, result);
+    } catch { /* budget accounting must never break tool results */ }
+
     // Per-tool circuit breaker: count consecutive tool-class failures, reset on
     // any success. Agent-input errors (e.g. WebFetch 404 on a guessed URL) are
     // not tool failures and must not trip the breaker.

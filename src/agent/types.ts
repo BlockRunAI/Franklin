@@ -94,6 +94,12 @@ export interface ExecutionScope {
   onProgress?: (text: string) => void;
   /** Routes AskUser questions through ink UI input to avoid raw-mode stdin conflict */
   onAskUser?: (question: string, options?: string[]) => Promise<string>;
+  /**
+   * Structured approval surface (trade plans, dashboard-answered prompts).
+   * Wired from AgentConfig.approvalPromptFn. Absent = fail closed for
+   * anything that requires an explicit decision.
+   */
+  onApproval?: import('./approvals.js').ApprovalPromptFn;
   /** Context from parent agent — helps sub-agents avoid duplicate work */
   parentContext?: {
     goal?: string;
@@ -252,4 +258,11 @@ export interface AgentConfig {
    * hooks in tests. FRANKLIN_HOOKS=0 disables hooks regardless.
    */
   hooks?: import('../hooks/runner.js').HookEngine;
+  /**
+   * Structured approval prompt (trade plans and future approvables). The TUI
+   * routes it through the ask-user modal; serve routes it through a broker to
+   * remote clients; headless runs install an auto-policy honoring
+   * --approve-trades + --max-spend. Absent = approvals fail closed.
+   */
+  approvalPromptFn?: import('./approvals.js').ApprovalPromptFn;
 }

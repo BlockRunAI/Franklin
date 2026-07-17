@@ -18,6 +18,7 @@ import { createInputMultiplexer } from './input-queue.js';
 import { startSchedulerService, type SchedulerService } from '../scheduler/service.js';
 import { setSchedulerSessionId } from '../scheduler/store.js';
 import { sweepMonitors } from '../monitors/registry.js';
+import { setTradePlanSessionId } from '../trading/trade-plan.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
 import { classifyAgentError } from './error-classifier.js';
 import { SessionToolGuard } from './tool-guard.js';
@@ -692,6 +693,7 @@ export async function interactiveSession(
   // Durable prompt scheduler: catch up missed firings now, then tick every
   // 30s for the life of the session. Firings arrive via the input mux.
   setSchedulerSessionId(sessionId);
+  setTradePlanSessionId(sessionId);
   schedulerService = startSchedulerService({
     sessionId,
     enqueue: (text) => inputMux.enqueue(text),
@@ -1357,6 +1359,7 @@ export async function interactiveSession(
           workingDir: workDir,
           abortSignal: abort.signal,
           onAskUser: config.onAskUser,
+          onApproval: config.approvalPromptFn,
           parentContext: {
             goal: lastUserInput?.slice(0, 200),
             recentFiles: [...readFileCache].slice(-10),

@@ -54,6 +54,10 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   // story: setup wallet, fund, buy/sell, positions, redeem, withdraw. Core so
   // the agent reaches for it the moment "place the bet" follows the research.
   'PolymarketBet',
+  // Trade-plan approval — the gate in front of every real-money trade. Must
+  // be core: the moment a trade is blocked for lacking a plan, the agent
+  // needs this tool visible to propose one.
+  'TradePlan',
   // Crypto market data — fear/greed, token rankings, ETF flows, options,
   // liquidations, technical & on-chain indicators. The "what's the crypto
   // mood / which coins are pumping / BTC's RSI" category. Core so the agent

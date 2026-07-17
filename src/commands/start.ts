@@ -4,7 +4,7 @@ import path from 'node:path';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { BLOCKRUN_DIR, loadChain, API_URLS } from '../config.js';
 import { retryFetchBalance } from './balance-retry.js';
-import { flushStats, loadStats } from '../stats/tracker.js';
+import { flushStats, loadStats, getLiveSpendUsd } from '../stats/tracker.js';
 import { OPUS_PRICING } from '../pricing.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
@@ -36,6 +36,8 @@ interface StartOptions {
   maxSpend?: string | number;
   /** Run a single prompt non-interactively, then exit. For batch/scripted use. */
   prompt?: string;
+  /** Non-interactive runs: auto-approve trade plans that fit --max-spend. */
+  approveTrades?: boolean;
 }
 
 export async function startCommand(options: StartOptions) {
@@ -410,6 +412,17 @@ export async function startCommand(options: StartOptions) {
       : {}),
   };
 
+  // Non-interactive runs get the headless approval policy: trades fail
+  // closed unless --approve-trades was granted, and even then only within
+  // the remaining --max-spend envelope. Interactive TUI overrides this
+  // below with a real prompt.
+  if (options.prompt || !process.stdin.isTTY) {
+    agentConfig.approvalPromptFn = createHeadlessApprovalFn(
+      options.approveTrades === true,
+      agentConfig.maxSpendUsd
+    );
+  }
+
   // Bootstrap learnings from existing CLAUDE.md on first run (async, non-blocking)
   Promise.all([
     import('../learnings/extractor.js'),
@@ -435,6 +448,38 @@ export async function startCommand(options: StartOptions) {
 // non-completed terminal state.
 export function oneShotExitCodeForTurnReason(reason: StreamTurnDone['reason']): number {
   return reason === 'completed' ? 0 : 1;
+}
+
+/**
+ * Headless approval policy. No human is present, so:
+ *   - without --approve-trades: every trade plan is denied
+ *   - with it: auto-approve only when the plan total fits what's left of the
+ *     --max-spend envelope (no flag combination bypasses --max-spend)
+ */
+export function createHeadlessApprovalFn(
+  approveTrades: boolean,
+  maxSpendUsd?: number
+): NonNullable<AgentConfig['approvalPromptFn']> {
+  return async (req) => {
+    if (req.kind !== 'trade-plan') {
+      return { choice: 'deny', message: 'non-interactive run' };
+    }
+    if (!approveTrades) {
+      return { choice: 'deny', message: 'non-interactive run without --approve-trades' };
+    }
+    const plan = req.payload as { totalSpendUsd?: number } | undefined;
+    const total = typeof plan?.totalSpendUsd === 'number' ? plan.totalSpendUsd : Number.POSITIVE_INFINITY;
+    if (maxSpendUsd != null && maxSpendUsd > 0) {
+      const remaining = maxSpendUsd - getLiveSpendUsd();
+      if (total > remaining) {
+        return {
+          choice: 'deny',
+          message: `plan total $${total.toFixed(2)} exceeds remaining --max-spend envelope $${Math.max(0, remaining).toFixed(2)}`,
+        };
+      }
+    }
+    return { choice: 'approve', message: 'auto' };
+  };
 }
 
 async function runOneShot(agentConfig: AgentConfig, prompt: string): Promise<number> {
@@ -534,6 +579,20 @@ async function runWithInkUI(
     ui.requestPermission(toolName, description);
   agentConfig.onAskUser = (question, options) =>
     ui.requestAskUser(question, options);
+  // Structured approvals (trade plans) render through the ask-user modal:
+  // the full plan card as the question, decision keywords as the options.
+  // A free-text reply that isn't a listed option is treated as a change
+  // request so the user can type feedback directly.
+  agentConfig.approvalPromptFn = async (req) => {
+    const answer = (await ui.requestAskUser(`${req.description}\n\nDecision?`, req.options)).trim();
+    const norm = answer.toLowerCase();
+    if (norm === 'approve' || norm === 'deny') return { choice: norm };
+    if (norm === 'request changes') {
+      const msg = await ui.requestAskUser('What should change about this plan?');
+      return { choice: 'request changes', message: msg };
+    }
+    return { choice: 'request changes', message: answer };
+  };
   agentConfig.onModelChange = (model) => ui.updateModel(model);
   let activeSessionId = agentConfig.resumeSessionId;
   agentConfig.onSessionStart = (sessionId) => { activeSessionId = sessionId; };
