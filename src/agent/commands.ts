@@ -668,6 +668,72 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
+  // /loop — durable recurring prompts. `/loop 5m check BTC price`,
+  // `/loop list`, `/loop cancel <id>`. Fires immediately, then repeats.
+  if (input === '/loop' || input.startsWith('/loop ')) {
+    const arg = input.slice('/loop'.length).trim();
+    const { createScheduledTask, deleteScheduledTask, listScheduledTasks } =
+      await import('../scheduler/store.js');
+    const { parseInterval, formatInterval, MIN_INTERVAL_SEC } = await import('../scheduler/types.js');
+
+    if (!arg || arg === 'list') {
+      const tasks = listScheduledTasks();
+      if (tasks.length === 0) {
+        ctx.onEvent({ kind: 'text_delta', text:
+          'No scheduled loops.\n' +
+          'Usage: /loop <interval> <prompt>   (interval like 90s, 5m, 2h, 1d; min 60s)\n' +
+          '       /loop list · /loop cancel <id>\n'
+        });
+      } else {
+        const lines = tasks.map(t =>
+          `  ${t.id} · every ${formatInterval(t.intervalSec)} · fired ${t.firedCount}× · next ${new Date(t.nextFireAt).toLocaleString()}\n    ${t.prompt.slice(0, 100)}`
+        );
+        ctx.onEvent({ kind: 'text_delta', text: `${tasks.length} scheduled loop(s):\n${lines.join('\n')}\n` });
+      }
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    if (arg.startsWith('cancel')) {
+      const id = arg.slice('cancel'.length).trim();
+      const removed = id ? deleteScheduledTask(id) : false;
+      ctx.onEvent({ kind: 'text_delta', text: removed
+        ? `Cancelled loop ${id}.\n`
+        : `Usage: /loop cancel <id> — see /loop list for ids.\n`
+      });
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    const m = arg.match(/^(\S+)\s+([\s\S]+)$/);
+    const intervalSec = m ? parseInterval(m[1]) : null;
+    if (!m || intervalSec === null) {
+      ctx.onEvent({ kind: 'text_delta', text:
+        `Usage: /loop <interval> <prompt> — interval like 90s, 5m, 2h, 1d (min ${MIN_INTERVAL_SEC}s).\n`
+      });
+      emitDone(ctx);
+      return { handled: true };
+    }
+    const created = createScheduledTask({
+      prompt: m[2].trim(),
+      intervalSec,
+      sessionId: ctx.sessionId,
+      recurring: true,
+      durable: true,
+      fireImmediately: true,
+    });
+    if ('error' in created) {
+      ctx.onEvent({ kind: 'text_delta', text: `Could not schedule: ${created.error}\n` });
+    } else {
+      ctx.onEvent({ kind: 'text_delta', text:
+        `Loop ${created.id} scheduled: every ${formatInterval(created.intervalSec)}, firing now and expiring ` +
+        `${new Date(created.expiresAt).toLocaleDateString()}. Cancel with /loop cancel ${created.id}.\n`
+      });
+    }
+    emitDone(ctx);
+    return { handled: true };
+  }
+
   // /market [keyword | info <slug> | run <slug> <input>] — browse + hire paid
   // skills from the BlockRun agent marketplace (business.blockrun.ai). Browsing
   // and search are free GETs; `run` pays ONE standard x402 from the wallet.
@@ -1148,7 +1214,7 @@ export async function handleSlashCommand(
     ...Object.keys(REWRITE_COMMANDS),
     ...ARG_COMMANDS.map(c => c.prefix.trim()),
     ...skillNames,
-    '/branch', '/resume', '/model', '/auto', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures', '/market',
+    '/branch', '/resume', '/model', '/auto', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures', '/market', '/loop',
   ];
   const cmd = input.split(/\s/)[0];
   const close = allCommands.filter(c => {

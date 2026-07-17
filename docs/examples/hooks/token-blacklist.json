@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "JupiterSwap|Base0xSwap|Base0xGaslessSwap",
+        "hooks": [
+          { "type": "command", "command": "token-blacklist.sh", "timeout": 5, "env": { "TOKEN_BLACKLIST": "BONK,WIF" } }
+        ]
+      }
+    ]
+  }
+}

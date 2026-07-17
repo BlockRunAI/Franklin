@@ -13,6 +13,11 @@ import { reduceTokens } from './reduce.js';
 import { redactSecrets, stashSecretsToEnv, formatRedactionWarning } from './secret-redact.js';
 import { PermissionManager } from './permissions.js';
 import { StreamingExecutor } from './streaming-executor.js';
+import { HookEngine } from '../hooks/runner.js';
+import { createInputMultiplexer } from './input-queue.js';
+import { startSchedulerService, type SchedulerService } from '../scheduler/service.js';
+import { setSchedulerSessionId } from '../scheduler/store.js';
+import { sweepMonitors } from '../monitors/registry.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
 import { classifyAgentError } from './error-classifier.js';
 import { SessionToolGuard } from './tool-guard.js';
@@ -624,6 +629,37 @@ export async function interactiveSession(
     config.permissionMode ?? 'default',
     config.permissionPromptFn
   );
+
+  // ── Lifecycle hooks ──
+  // User-authored guardrails (spend caps, blacklists, audit) loaded once per
+  // session. Built here so every driver (TUI, headless, serve, bots) gets
+  // them without per-driver wiring. FRANKLIN_HOOKS=0 disables entirely.
+  const hookEngine: HookEngine | undefined =
+    process.env.FRANKLIN_HOOKS === '0' ? undefined : (config.hooks ?? new HookEngine({ workDir }));
+  let schedulerService: SchedulerService | undefined;
+  const fireLifecycleHook = (event: 'SessionStart' | 'UserPromptSubmit' | 'Stop' | 'SessionEnd') => {
+    if (event === 'SessionEnd') {
+      schedulerService?.stop();
+      schedulerService = undefined;
+    }
+    if (!hookEngine?.hasHooks(event)) return;
+    void hookEngine
+      .dispatch(event, {
+        hookEventName: event,
+        sessionId,
+        cwd: workDir,
+        timestamp: new Date().toISOString(),
+      })
+      .catch(() => {});
+  };
+
+  // ── Input multiplexer ──
+  // Harness-injected inputs (scheduler firings, goal continuations) merge
+  // with the driver's input source and win the race at turn boundaries —
+  // an idle interactive session still fires its scheduled prompts without
+  // waiting for the user to press enter. The user's pending input is never
+  // dropped (delivered at the next boundary).
+  const inputMux = createInputMultiplexer(getUserInput);
   const history: Dialogue[] = [];
   let lastUserInput = ''; // For /retry
   config.baseModel = config.model; // User's intended model — /model command updates this
@@ -652,6 +688,15 @@ export async function interactiveSession(
   // Session persistence — reuse existing session ID when resuming, else create new
   const sessionId = config.resumeSessionId || createSessionId();
   config.onSessionStart?.(sessionId);
+  fireLifecycleHook('SessionStart');
+  // Durable prompt scheduler: catch up missed firings now, then tick every
+  // 30s for the life of the session. Firings arrive via the input mux.
+  setSchedulerSessionId(sessionId);
+  schedulerService = startSchedulerService({
+    sessionId,
+    enqueue: (text) => inputMux.enqueue(text),
+    notify: (line) => onEvent({ kind: 'text_delta', text: `*${line.trimEnd()}*\n` }),
+  });
   let turnCount = 0;
 
   // Resume: hydrate history from the saved JSONL transcript.
@@ -769,7 +814,7 @@ export async function interactiveSession(
   process.once('SIGTERM', exitFlush);
 
   while (true) {
-    let input = await getUserInput();
+    let input = await inputMux.getUserInput();
     if (input === null) break; // User wants to exit
     if (input === '') continue; // Empty input → re-prompt
 
@@ -816,6 +861,7 @@ export async function interactiveSession(
     }
 
     lastUserInput = input;
+    fireLifecycleHook('UserPromptSubmit');
 
     // ── Skill trigger auto-invoke ──
     // Match the user message against every skill's `triggers:` list. Strong
@@ -836,6 +882,18 @@ export async function interactiveSession(
         }
       }
     } catch { /* trigger matching is best-effort */ }
+
+    // ── Monitor sweep (turn boundary) ──
+    // Fresh lines from active monitors ride into this turn's user content
+    // as bracketed blocks. Appended AFTER lastUserInput capture so /retry
+    // replays the clean message, and after skill-trigger matching so
+    // monitor noise can't fire skills.
+    try {
+      const { blocks: monitorBlocks } = sweepMonitors();
+      if (monitorBlocks.length > 0) {
+        input = `${input}\n\n${monitorBlocks.join('\n\n')}`;
+      }
+    } catch { /* monitors are best-effort */ }
 
     // Push the user's clean message; any harness-injected annotations
     // (pushback SYSTEM NOTE, prefetch context block) are applied AFTER
@@ -1306,6 +1364,7 @@ export async function interactiveSession(
         },
         permissions,
         guard: toolGuard,
+        hooks: hookEngine,
         onStart: (id, name, preview) => onEvent({ kind: 'capability_start', id, name, preview }),
         onProgress: (id, text) => onEvent({ kind: 'capability_progress', id, text }),
         sessionId,
@@ -1687,6 +1746,7 @@ export async function interactiveSession(
           });
           persistSessionMeta();
           onEvent({ kind: 'turn_done', reason: 'budget' });
+          fireLifecycleHook('SessionEnd');
           return history;
         }
 
@@ -2084,6 +2144,7 @@ export async function interactiveSession(
         });
         persistSessionMeta();
         onEvent({ kind: 'turn_done', reason: 'budget' });
+        fireLifecycleHook('SessionEnd');
         return history;
       }
 
@@ -2353,6 +2414,7 @@ export async function interactiveSession(
         if (endedWithQuestion(responseParts)) {
           onEvent({ kind: 'text_delta', text: '\n*▸ awaiting your reply (or type a new message)*\n' });
         }
+        fireLifecycleHook('Stop');
         onEvent({ kind: 'turn_done', reason: 'completed' });
         break;
       }
@@ -2386,6 +2448,7 @@ export async function interactiveSession(
           });
           persistSessionMeta();
           onEvent({ kind: 'turn_done', reason: 'budget' });
+          fireLifecycleHook('SessionEnd');
           return history;
         }
       }
@@ -2628,6 +2691,7 @@ export async function interactiveSession(
     }
   }
 
+  fireLifecycleHook('SessionEnd');
   return history;
 }
 

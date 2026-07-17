@@ -17,6 +17,10 @@ import { webFetchCapability, clearSessionState as clearWebFetchSessionState } fr
 import { webSearchCapability } from './websearch.js';
 import { taskCapability } from './task.js';
 import { detachCapability } from './detach.js';
+import { createMonitorCapability } from './monitor.js';
+import { createSchedulerCapability } from './scheduler.js';
+import { resetMonitors } from '../monitors/registry.js';
+import { getSchedulerSessionId } from '../scheduler/store.js';
 import { createImageGenCapability } from './imagegen.js';
 import { createVideoGenCapability } from './videogen.js';
 import { createMusicGenCapability } from './musicgen.js';
@@ -157,6 +161,7 @@ export function resetToolSessionState(): void {
   clearReadSessionState();
   clearWebFetchSessionState();
   clearBashSessionState();
+  resetMonitors();
 }
 
 /** All capabilities available to the Franklin agent (excluding sub-agent, which needs config). */
@@ -171,6 +176,8 @@ export const allCapabilities: CapabilityHandler[] = [
   webSearchCapability,
   taskCapability,
   detachCapability,
+  createMonitorCapability(),   // Monitor — watch long-running commands, lines delivered at turn boundaries
+  createSchedulerCapability({ sessionId: getSchedulerSessionId }), // Scheduler — durable recurring/one-shot prompts
   defaultImageGenCapability,
   defaultVideoGenCapability,
   defaultMusicGenCapability,

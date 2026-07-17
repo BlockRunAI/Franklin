@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PreSpend": [
+      {
+        "hooks": [
+          { "type": "command", "command": "daily-spend-cap.sh", "timeout": 5, "env": { "DAILY_SPEND_CAP_USD": "25" } }
+        ]
+      }
+    ]
+  }
+}

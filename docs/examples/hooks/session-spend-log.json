@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostSpend": [
+      {
+        "hooks": [
+          { "type": "command", "command": "session-spend-log.sh", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

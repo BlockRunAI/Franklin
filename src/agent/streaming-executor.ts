@@ -15,6 +15,9 @@ import type {
 import type { PermissionManager } from './permissions.js';
 import { recordFailure } from '../stats/failures.js';
 import type { SessionToolGuard } from './tool-guard.js';
+import type { HookEngine } from '../hooks/runner.js';
+import type { HookInput } from '../hooks/types.js';
+import { estimateSpendUsd, isSpendTool } from '../tools/spend-tools.js';
 import { BLOCKRUN_DIR } from '../config.js';
 import { logger } from '../logger.js';
 
@@ -54,6 +57,7 @@ export class StreamingExecutor {
   private scope: ExecutionScope;
   private permissions?: PermissionManager;
   private guard?: SessionToolGuard;
+  private hooks?: HookEngine;
   private onStart: (id: string, name: string, preview?: string) => void;
   private onProgress?: (id: string, text: string) => void;
   private pending: PendingTool[] = [];
@@ -64,6 +68,7 @@ export class StreamingExecutor {
     scope: ExecutionScope;
     permissions?: PermissionManager;
     guard?: SessionToolGuard;
+    hooks?: HookEngine;
     onStart: (id: string, name: string, preview?: string) => void;
     onProgress?: (id: string, text: string) => void;
     sessionId?: string;
@@ -72,9 +77,29 @@ export class StreamingExecutor {
     this.scope = opts.scope;
     this.permissions = opts.permissions;
     this.guard = opts.guard;
+    this.hooks = opts.hooks;
     this.onStart = opts.onStart;
     this.onProgress = opts.onProgress;
     this.sessionId = opts.sessionId || 'default';
+  }
+
+  private hookInput(invocation: CapabilityInvocation, event: HookInput['hookEventName']): HookInput {
+    const base: HookInput = {
+      hookEventName: event,
+      sessionId: this.sessionId,
+      cwd: this.scope.workingDir,
+      timestamp: new Date().toISOString(),
+      toolName: invocation.name,
+      toolInput: invocation.input,
+    };
+    if (event === 'PreSpend' || event === 'PostSpend') {
+      base.spend = {
+        estimatedUsd: estimateSpendUsd(invocation.name, invocation.input),
+        tool: invocation.name,
+        params: invocation.input,
+      };
+    }
+    return base;
   }
 
   /**
@@ -153,6 +178,19 @@ export class StreamingExecutor {
     pendingCount = 1,
     callStart = true  // false for concurrent tools (already called in onToolReceived)
   ): Promise<CapabilityResult> {
+    // User hooks fire first — before built-in policy — so an explicit deny
+    // is reported with the hook's own reason rather than a generic one.
+    if (this.hooks?.hasHooks('PreToolUse')) {
+      const decision = await this.hooks.dispatch('PreToolUse', this.hookInput(invocation, 'PreToolUse'));
+      if (decision.decision === 'deny') {
+        this.guard?.cancelInvocation(invocation.id);
+        return {
+          output: `Blocked by a user hook: ${decision.reason || 'denied'}. Do not retry the same call — explain to the user what you were trying to do and ask how they'd like to proceed.`,
+          isError: true,
+        };
+      }
+    }
+
     const guardResult = this.guard
       ? await this.guard.beforeExecute(invocation, this.scope)
       : null;
@@ -254,9 +292,30 @@ export class StreamingExecutor {
       // yesterday and what did it run". 30s threshold is conservative
       // (Read/Glob/Grep finish in <1s; only network or shell work
       // crosses).
+      // Spend gate: fires only for tools that move real money. Blocking, so a
+      // user hook (spend cap, asset blacklist) can veto before funds move.
+      if (isSpendTool(invocation.name) && this.hooks?.hasHooks('PreSpend')) {
+        const decision = await this.hooks.dispatch('PreSpend', this.hookInput(invocation, 'PreSpend'));
+        if (decision.decision === 'deny') {
+          this.guard?.cancelInvocation(invocation.id);
+          return {
+            output: `Spend blocked by a user hook: ${decision.reason || 'denied'}. Do not retry the same call — explain what you were trying to spend and ask the user how to proceed.`,
+            isError: true,
+          };
+        }
+      }
+
       const execStart = Date.now();
       let result = await handler.execute(invocation.input, progressScope);
       this.guard?.afterExecute(invocation, result);
+
+      // Notify-only hooks — never block, never delay the result.
+      if (this.hooks?.hasHooks('PostToolUse')) {
+        void this.hooks.dispatch('PostToolUse', this.hookInput(invocation, 'PostToolUse')).catch(() => {});
+      }
+      if (!result.isError && isSpendTool(invocation.name) && this.hooks?.hasHooks('PostSpend')) {
+        void this.hooks.dispatch('PostSpend', this.hookInput(invocation, 'PostSpend')).catch(() => {});
+      }
 
       const execElapsed = Date.now() - execStart;
       if (execElapsed >= 30_000) {

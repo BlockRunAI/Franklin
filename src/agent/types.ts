@@ -245,4 +245,11 @@ export interface AgentConfig {
    *  racks up many tool calls + spend, to cut input-replay cost. Default on;
    *  set false to disable (the desktop exposes this as a toggle). */
   costSaver?: boolean;
+  /**
+   * Lifecycle hook engine. When unset, the loop builds one from the working
+   * directory's hook files (~/.blockrun/hooks + trusted project .franklin/hooks).
+   * Callers inject a prebuilt engine to share it across sessions or to stub
+   * hooks in tests. FRANKLIN_HOOKS=0 disables hooks regardless.
+   */
+  hooks?: import('../hooks/runner.js').HookEngine;
 }
