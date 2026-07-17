@@ -264,6 +264,11 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   // The socket + correlation id for the in-flight turn (single-window).
   let activeWs: WebSocket | null = null;
   let activeTurnId: string | null = null;
+  // Pending approval asks for the legacy desktop session (trade plans).
+  // Keyed by askId — the wire contract the desktop UI already declares
+  // (agent.permissionAsk / agent.permissionResponse with askId + decision).
+  let askSeq = 0;
+  const legacyAsks = new Map<string, (decision: { choice: string; message?: string }) => void>();
   // We sometimes inject helper commands (`/model …`, `/clear`) as their own
   // turns ahead of the real prompt. Each ends with its own turn_done — which
   // would emit agent.done and clear activeTurnId, killing the real prompt's
@@ -436,10 +441,39 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       capabilities,
       maxTurns: 100,
       workingDir: workDir,
-      permissionMode: 'trust', // the desktop UI has no permission prompt yet
+      permissionMode: 'trust', // tools auto-run; money still gates via approvalPromptFn below
       debug: !!debug,
       showPrefetchStatus: false,
       costSaver,
+      // Structured approvals (trade plans): surfaced to the desktop over the
+      // in-flight turn stream as agent.permissionAsk; the UI answers with
+      // agent.permissionResponse {askId, decision}. Without a connected
+      // client — or unanswered past the TTL — the approval fails closed,
+      // matching the trade-plan gate's deny-by-default posture.
+      approvalPromptFn: (req) =>
+        new Promise((resolve) => {
+          if (!activeWs || !activeTurnId) {
+            resolve({ choice: 'deny', message: 'no client connected to approve' });
+            return;
+          }
+          const askId = `ask_${++askSeq}_${Date.now().toString(36)}`;
+          const timer = setTimeout(() => {
+            if (legacyAsks.delete(askId)) {
+              resolve({ choice: 'deny', message: 'approval timed out' });
+            }
+          }, req.timeoutMs ?? 15 * 60 * 1000);
+          timer.unref?.();
+          legacyAsks.set(askId, (decision) => {
+            clearTimeout(timer);
+            resolve(decision);
+          });
+          emit('agent.permissionAsk', {
+            sessionId: '',
+            toolName: req.kind === 'trade-plan' ? 'TradePlan' : req.title,
+            description: `${req.title}\n\n${req.description}`,
+            askId,
+          });
+        }),
     };
     agentConfig = config;
 
@@ -661,14 +695,34 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         if (abortFn) abortFn();
         break;
       case 'agent.permissionResponse': {
-        // Hosted agents: resolve the parked approval by (sessionId, requestId).
-        // Legacy desktop path runs in trust mode — nothing to unblock there,
-        // so a payload without ids stays a no-op (byte-compatible).
+        // Two resolution paths:
+        //  - Hosted agents: (sessionId, requestId) → AgentHost broker.
+        //  - Legacy desktop session: (askId, decision y/n/always) → the parked
+        //    approvalPromptFn promise (trade-plan approvals).
+        // A payload with neither stays a no-op (byte-compatible with clients
+        // that predate both).
         const sid = p.sessionId ? String(p.sessionId) : '';
         const rid = p.requestId ? String(p.requestId) : '';
         if (sid && rid) {
           const ok = host.respond(sid, rid, String(p.choice ?? p.decision ?? 'no'), p.message ? String(p.message) : undefined);
           send(ws, id, 'response', { ok });
+          break;
+        }
+        const askId = p.askId ? String(p.askId) : '';
+        if (askId) {
+          const resolver = legacyAsks.get(askId);
+          if (resolver) {
+            legacyAsks.delete(askId);
+            const decision = String(p.decision ?? p.choice ?? 'n').toLowerCase();
+            const approve = decision === 'y' || decision === 'yes' || decision === 'always' || decision === 'approve';
+            resolver({
+              choice: approve ? 'approve' : 'deny',
+              message: p.message ? String(p.message) : undefined,
+            });
+            send(ws, id, 'response', { ok: true });
+          } else {
+            send(ws, id, 'response', { ok: false });
+          }
         }
         break;
       }
