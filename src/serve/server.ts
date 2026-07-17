@@ -33,6 +33,9 @@ import { readSwaps } from '../stats/swap-log.js';
 import { isCloudSyncEnabled, cloudList, cloudSync, type CloudConversation } from './cloud-sync.js';
 import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
 import { retryFetchBalance } from '../commands/balance-retry.js';
+import { AgentHost } from './agent-host.js';
+import { bus } from '../events/bus.js';
+import type { FranklinEvent } from '../events/types.js';
 import type { AgentConfig, StreamEvent, Dialogue, ContentPart, UserContentPart } from '../agent/types.js';
 
 // qwen3-next-80b-a3b-instruct: cleanest free instruction-follower (no thinking
@@ -220,6 +223,30 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
   const userConfig = loadConfig();
+
+  // ── Multi-agent host (dashboard fleet) ──
+  // The legacy single-window path below stays byte-compatible for the
+  // desktop app; hosted agents are additive, run in 'default' permission
+  // mode, and surface approvals to subscribed clients.
+  const host = new AgentHost({
+    workDir,
+    chain,
+    apiUrl,
+    defaultModel: userConfig['default-model'] || FREE_DEFAULT_MODEL,
+    debug,
+  });
+  // Per-socket subscription bookkeeping: sessionId → unsubscribe.
+  const wsSubs = new WeakMap<WebSocket, Map<string, () => void>>();
+  const subscribedSessions = new Map<WebSocket, Set<string>>();
+  // Approval pushes reach every socket subscribed to that agent.
+  bus.on('approval.requested', (ev: FranklinEvent) => {
+    if (ev.type !== 'approval.requested') return;
+    for (const [ws, sessions] of subscribedSessions) {
+      if (sessions.has(ev.data.sessionId)) {
+        send(ws, `agent:${ev.data.sessionId}`, 'approval.request', ev.data);
+      }
+    }
+  });
 
   // ── Single long-lived agent session ──
   // interactiveSession owns the loop; we feed it user turns via a queue and
@@ -633,9 +660,83 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       case 'agent.cancel':
         if (abortFn) abortFn();
         break;
-      case 'agent.permissionResponse':
-        // permissionMode is 'trust' — nothing to unblock.
+      case 'agent.permissionResponse': {
+        // Hosted agents: resolve the parked approval by (sessionId, requestId).
+        // Legacy desktop path runs in trust mode — nothing to unblock there,
+        // so a payload without ids stays a no-op (byte-compatible).
+        const sid = p.sessionId ? String(p.sessionId) : '';
+        const rid = p.requestId ? String(p.requestId) : '';
+        if (sid && rid) {
+          const ok = host.respond(sid, rid, String(p.choice ?? p.decision ?? 'no'), p.message ? String(p.message) : undefined);
+          send(ws, id, 'response', { ok });
+        }
         break;
+      }
+
+      // ── Multi-agent host kinds ──
+      case 'agents.list':
+        send(ws, id, 'response', { agents: host.list() });
+        break;
+      case 'agents.dispatch': {
+        try {
+          const sessionId = await host.dispatch({
+            prompt: String(p.prompt ?? p.text ?? ''),
+            model: p.model ? String(p.model) : undefined,
+            label: p.label ? String(p.label) : undefined,
+            maxSpendUsd: typeof p.maxSpendUsd === 'number' ? p.maxSpendUsd : undefined,
+          });
+          send(ws, id, 'response', { sessionId });
+        } catch (err) {
+          send(ws, id, 'error', { message: err instanceof Error ? err.message : 'dispatch failed' });
+        }
+        break;
+      }
+      case 'agents.reply':
+        send(ws, id, 'response', { ok: host.reply(String(p.sessionId ?? ''), String(p.text ?? '')) });
+        break;
+      case 'agents.cancel':
+        send(ws, id, 'response', { ok: host.cancel(String(p.sessionId ?? '')) });
+        break;
+      case 'agents.subscribe': {
+        const sid = String(p.sessionId ?? '');
+        const unsubscribe = host.subscribe(sid, (ev) =>
+          send(ws, `agent:${sid}`, 'agent.event', { sessionId: sid, ev })
+        );
+        if (unsubscribe) {
+          let subs = wsSubs.get(ws);
+          if (!subs) { subs = new Map(); wsSubs.set(ws, subs); }
+          subs.get(sid)?.(); // replace an existing subscription
+          subs.set(sid, unsubscribe);
+          let sessions = subscribedSessions.get(ws);
+          if (!sessions) { sessions = new Set(); subscribedSessions.set(ws, sessions); }
+          sessions.add(sid);
+          // Surface already-pending approvals immediately on subscribe.
+          for (const req of host.get(sid)?.pendingApprovals ?? []) {
+            send(ws, `agent:${sid}`, 'approval.request', {
+              sessionId: sid,
+              requestId: req.requestId,
+              kind: req.kind,
+              title: req.title,
+              options: req.options,
+              description: req.description,
+            });
+          }
+        }
+        send(ws, id, 'response', { ok: !!unsubscribe });
+        break;
+      }
+      case 'agents.unsubscribe': {
+        const sid = String(p.sessionId ?? '');
+        wsSubs.get(ws)?.get(sid)?.();
+        wsSubs.get(ws)?.delete(sid);
+        subscribedSessions.get(ws)?.delete(sid);
+        send(ws, id, 'response', { ok: true });
+        break;
+      }
+      case 'agent.output.replay':
+        send(ws, id, 'response', { events: host.output(String(p.sessionId ?? '')) });
+        break;
+
       default:
         send(ws, id, 'error', { message: `Unknown kind: ${kind}` });
     }
@@ -705,6 +806,13 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         send(ws, msg.id, 'error', { message: err instanceof Error ? err.message : String(err) });
       });
     });
+    ws.on('close', () => {
+      // Tear down this socket's agent subscriptions; the agents keep running.
+      const subs = wsSubs.get(ws);
+      if (subs) for (const unsubscribe of subs.values()) unsubscribe();
+      wsSubs.delete(ws);
+      subscribedSessions.delete(ws);
+    });
   });
 
   await new Promise<void>((resolve) => {
@@ -714,4 +822,18 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       resolve();
     });
   });
+
+  // Discovery file (mirror of the panel-url pattern): lets `franklin panel`
+  // point its Agents tab at this server without configuration.
+  const serveUrlFile = path.join(BLOCKRUN_DIR, 'serve-url');
+  try {
+    fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+    fs.writeFileSync(serveUrlFile, `ws://127.0.0.1:${port}/agent`);
+  } catch { /* best-effort */ }
+  const cleanup = () => {
+    try { fs.unlinkSync(serveUrlFile); } catch { /* gone */ }
+    host.shutdown();
+  };
+  process.once('SIGINT', () => { cleanup(); process.exit(130); });
+  process.once('SIGTERM', () => { cleanup(); process.exit(143); });
 }

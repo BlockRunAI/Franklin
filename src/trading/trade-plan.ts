@@ -260,17 +260,20 @@ function isGatedInvocation(invocation: CapabilityInvocation): boolean {
  * coverage; null to proceed. On coverage, flags the invocation so the tool
  * skips its redundant per-swap confirm (the plan approval IS the confirm).
  */
-export function checkTradePlanGate(invocation: CapabilityInvocation): CapabilityResult | null {
+export function checkTradePlanGate(
+  invocation: CapabilityInvocation,
+  sessionId: string = gateSessionId
+): CapabilityResult | null {
   if (!isGatedInvocation(invocation)) return null;
 
-  const plan = activeTradePlan();
+  const plan = activeTradePlan(sessionId);
   const venue = VENUE_BY_TOOL[invocation.name];
   const estimate = estimateSpendUsd(invocation.name, invocation.input);
 
   if (!plan) {
     appendApprovalRecord({
       ts: Date.now(),
-      sessionId: gateSessionId,
+      sessionId,
       kind: 'trade-plan',
       subject: invocation.name,
       decision: 'deny',
@@ -324,9 +327,13 @@ export function checkTradePlanGate(invocation: CapabilityInvocation): Capability
  * Draw down the plan budget after a successful gated execution. Called from
  * SessionToolGuard.afterExecute for every invocation (no-op for non-trades).
  */
-export function recordTradeExecution(invocation: CapabilityInvocation, result: CapabilityResult): void {
+export function recordTradeExecution(
+  invocation: CapabilityInvocation,
+  result: CapabilityResult,
+  sessionId: string = gateSessionId
+): void {
   if (result.isError || !isGatedInvocation(invocation)) return;
-  const plan = activeTradePlan();
+  const plan = activeTradePlan(sessionId);
   if (!plan) return;
   const venue = VENUE_BY_TOOL[invocation.name];
   const matched = plan.trades.find(t => t.venue === venue && assetMentioned(t.asset, invocation.input));

@@ -207,6 +207,12 @@ export function isToolClassFailure(name: string, result: CapabilityResult): bool
 }
 
 export class SessionToolGuard {
+  /**
+   * Session identity for the trade-plan gate. Explicit (not module-global)
+   * so multiple concurrent sessions in one process (AgentHost) can never
+   * check trades against another session's approved plan.
+   */
+  private sessionId?: string;
   private turn = 0;
   private webSearchesThisTurn = 0;
   private searchFamilies: SearchFamily[] = [];
@@ -222,6 +228,10 @@ export class SessionToolGuard {
   private recentGreps = new Map<string, { preview: string; turn: number }>();
   private recentGlobs = new Map<string, { preview: string; turn: number }>();
   private recentBash = new Map<string, { preview: string; turn: number; isError: boolean }>();
+
+  constructor(sessionId?: string) {
+    this.sessionId = sessionId;
+  }
 
   startTurn(): void {
     this.turn++;
@@ -268,7 +278,7 @@ export class SessionToolGuard {
 
     // Trade-plan gate: real-money trades require an approved plan with
     // remaining budget — in every permission mode, trust included.
-    const tradeGate = checkTradePlanGate(invocation);
+    const tradeGate = checkTradePlanGate(invocation, this.sessionId);
     if (tradeGate) return tradeGate;
 
     switch (invocation.name) {
@@ -400,7 +410,7 @@ export class SessionToolGuard {
     // Draw down the approved trade plan's budget on successful executions
     // (no-op for non-trade tools).
     try {
-      recordTradeExecution(invocation, result);
+      recordTradeExecution(invocation, result, this.sessionId);
     } catch { /* budget accounting must never break tool results */ }
 
     // Per-tool circuit breaker: count consecutive tool-class failures, reset on

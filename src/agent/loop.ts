@@ -40,7 +40,8 @@ import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
 import { logger, setDebugMode } from '../logger.js';
 import { runDataHygiene } from '../storage/hygiene.js';
 import { isTestFixtureModel } from '../stats/test-fixture.js';
-import { setSessionPersistenceDisabled } from '../session/storage.js';
+import { setSessionPersistenceDisabled, isSessionPersistenceDisabled } from '../session/storage.js';
+import { writeLiveAgent } from '../session/live-registry.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
@@ -649,6 +650,7 @@ export async function interactiveSession(
     if (event === 'SessionEnd') {
       schedulerService?.stop();
       schedulerService = undefined;
+      publishLiveState('completed');
       // Zero-cost memory: a metadata-only session log (topics + counts, no
       // LLM call). Trivial sessions are skipped inside.
       try {
@@ -727,6 +729,29 @@ export async function interactiveSession(
   // Document-memory injection state — see the per-turn block below.
   let memoryInjectionPending = true;
   let historyLenAtTurnEnd = 0;
+
+  // ── Live-agent registry (fleet visibility) ──
+  // CLI sessions publish their liveness so the panel's Agents tab can show
+  // them (read-only — cross-process control is out of scope). Serve-hosted
+  // agents publish through AgentHost instead. Suppressed alongside session
+  // persistence so test-fixture runs never touch the registry.
+  const liveRegistryStartedAt = Date.now();
+  const publishLiveState = (state: 'working' | 'idle' | 'completed' | 'failed') => {
+    if (isSessionPersistenceDisabled() || config.sessionChannel?.startsWith('serve')) return;
+    try {
+      writeLiveAgent({
+        sessionId,
+        pid: process.pid,
+        state,
+        label: config.sessionChannel || `cli · ${workDir.split('/').pop() || 'session'}`,
+        model: config.model,
+        host: 'cli',
+        startedAt: liveRegistryStartedAt,
+        updatedAt: Date.now(),
+      });
+    } catch { /* registry is best-effort */ }
+  };
+  publishLiveState('idle');
   schedulerService = startSchedulerService({
     sessionId,
     enqueue: (text) => inputMux.enqueue(text),
@@ -780,7 +805,7 @@ export async function interactiveSession(
   // per-turn. Counts the *name* of each tool invocation only — no inputs,
   // outputs, or paths. Fed into opt-in telemetry at session end.
   const sessionToolCounts = new Map<string, number>();
-  const toolGuard = new SessionToolGuard();
+  const toolGuard = new SessionToolGuard(sessionId);
   // Recovers tool calls that the model leaked into the text or thinking
   // channels instead of the structured tool_use channel. See
   // src/agent/repair/scavenge.ts for the failure modes — most common on
@@ -937,6 +962,7 @@ export async function interactiveSession(
     history.push({ role: 'user', content: input });
     turnCount++;
     toolGuard.startTurn();
+    publishLiveState('working');
     persistSessionMessage({ role: 'user', content: input });
 
     // ── Model recovery: try original model at the start of each new turn ──
@@ -2518,6 +2544,7 @@ export async function interactiveSession(
         }
 
         historyLenAtTurnEnd = history.length;
+        publishLiveState('idle');
         fireLifecycleHook('Stop');
         onEvent({ kind: 'turn_done', reason: 'completed' });
         break;
