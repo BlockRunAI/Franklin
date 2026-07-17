@@ -421,6 +421,8 @@ export async function startCommand(options: StartOptions) {
       options.approveTrades === true,
       agentConfig.maxSpendUsd
     );
+    // A goal must never extend a bounded scripted run past its single prompt.
+    agentConfig.autoContinueGoals = false;
   }
 
   // Bootstrap learnings from existing CLAUDE.md on first run (async, non-blocking)

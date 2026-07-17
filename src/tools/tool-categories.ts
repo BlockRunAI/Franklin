@@ -58,6 +58,9 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   // be core: the moment a trade is blocked for lacking a plan, the agent
   // needs this tool visible to propose one.
   'TradePlan',
+  // Goal-mode control — must be visible whenever /goal armed a goal, and the
+  // goal directive references it by name.
+  'UpdateGoal',
   // Crypto market data — fear/greed, token rankings, ETF flows, options,
   // liquidations, technical & on-chain indicators. The "what's the crypto
   // mood / which coins are pumping / BTC's RSI" category. Core so the agent

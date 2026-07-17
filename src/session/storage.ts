@@ -87,6 +87,12 @@ export interface SessionMeta {
    * meta with imported=true.
    */
   imported?: true;
+  /**
+   * Active goal bound to this session (see src/goal/). Sticky like `chain`
+   * so a `--resume` re-hydrates the goal loop; cleared explicitly when the
+   * goal completes or is abandoned (updateSessionMeta with goalId: '').
+   */
+  goalId?: string;
 }
 
 function getSessionsDir(): string {
@@ -207,6 +213,12 @@ export function updateSessionMeta(
       // shielding the session from auto-deletion. Without preservation, the
       // first turn added via `--resume` would silently drop the flag.
       ...(meta.imported || existing?.imported ? { imported: true as const } : {}),
+      // goalId: explicit empty string clears; undefined preserves existing.
+      ...(meta.goalId !== undefined
+        ? (meta.goalId ? { goalId: meta.goalId } : {})
+        : existing?.goalId
+          ? { goalId: existing.goalId }
+          : {}),
     };
     // Atomic write: tmp file + rename. Prevents corruption when parent
     // and sub-agent update the same session meta concurrently.

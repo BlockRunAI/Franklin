@@ -19,6 +19,11 @@ import { startSchedulerService, type SchedulerService } from '../scheduler/servi
 import { setSchedulerSessionId } from '../scheduler/store.js';
 import { sweepMonitors } from '../monitors/registry.js';
 import { setTradePlanSessionId } from '../trading/trade-plan.js';
+import { getActiveGoal, setActiveGoal, loadGoal, loadPlan, updateActiveGoal } from '../goal/store.js';
+import { setGoalEngineDeps } from '../goal/runtime.js';
+import { continuationDirective } from '../goal/prompts.js';
+import { mineNextStep } from '../goal/engine.js';
+import { goalMaxTurns } from '../goal/types.js';
 import { optimizeHistory, CAPPED_MAX_TOKENS, ESCALATED_MAX_TOKENS, getMaxOutputTokens } from './optimize.js';
 import { classifyAgentError } from './error-classifier.js';
 import { SessionToolGuard } from './tool-guard.js';
@@ -694,6 +699,24 @@ export async function interactiveSession(
   // 30s for the life of the session. Firings arrive via the input mux.
   setSchedulerSessionId(sessionId);
   setTradePlanSessionId(sessionId);
+  // Goal engine: fresh slot per session; deps let UpdateGoal reach the model.
+  setActiveGoal(null);
+  setGoalEngineDeps({
+    client,
+    getModel: () => config.model,
+    capabilities: config.capabilities,
+  });
+  if (config.resumeSessionId) {
+    const resumedMeta = loadSessionMeta(config.resumeSessionId);
+    if (resumedMeta?.goalId) {
+      const resumedGoal = loadGoal(resumedMeta.goalId);
+      if (resumedGoal && resumedGoal.status !== 'completed' && resumedGoal.status !== 'abandoned') {
+        setActiveGoal(resumedGoal);
+        onEvent({ kind: 'text_delta', text: `*[goal] resumed: ${resumedGoal.objective.slice(0, 80)} (${resumedGoal.status})*\n` });
+      }
+    }
+  }
+  let goalSpendSnapshot = getLiveSpendUsd();
   schedulerService = startSchedulerService({
     sessionId,
     enqueue: (text) => inputMux.enqueue(text),
@@ -1344,6 +1367,18 @@ export async function interactiveSession(
       // ── Brain auto-recall (computed once per user turn above) ──
       if (turnBrainContext) systemParts.push(turnBrainContext);
 
+      // ── Goal continuation directive ──
+      // While a goal is active, every turn carries the frozen plan, open
+      // verification gaps, next checklist step, and task discipline. Spend
+      // is bucketed (25/50/75/100% of budget) for prompt-cache stability.
+      {
+        const turnGoal = getActiveGoal();
+        if (turnGoal && (turnGoal.status === 'active' || turnGoal.status === 'verifying')) {
+          const planMd = loadPlan(turnGoal.id);
+          systemParts.push(continuationDirective(turnGoal, planMd, mineNextStep(planMd)));
+        }
+      }
+
       const systemPrompt = systemParts.join('\n\n');
       const modelMaxOut = getMaxOutputTokens(config.model);
       let maxTokens = Math.min(maxTokensOverride ?? CAPPED_MAX_TOKENS, modelMaxOut);
@@ -1733,6 +1768,12 @@ export async function interactiveSession(
           }
           lastSessionActivity = Date.now();
           persistSessionMeta();
+          // User interrupt pauses an active goal — Esc must always regain
+          // control from an autonomous loop. /goal resume re-arms it.
+          if (getActiveGoal()?.status === 'active') {
+            updateActiveGoal({ status: 'paused', blockedReason: 'user interrupt' });
+            onEvent({ kind: 'text_delta', text: '\n*[goal] paused by interrupt — /goal resume to continue*\n' });
+          }
           onEvent({ kind: 'turn_done', reason: 'aborted' });
           break;
         }
@@ -2417,6 +2458,40 @@ export async function interactiveSession(
         if (endedWithQuestion(responseParts)) {
           onEvent({ kind: 'text_delta', text: '\n*▸ awaiting your reply (or type a new message)*\n' });
         }
+
+        // ── Goal auto-continuation ──
+        // An active goal re-engages the agent at the next turn boundary,
+        // bounded by the goal turn cap and budget (plus the session-level
+        // --max-spend the loop already enforces). A turn that ended with a
+        // question to the user yields to the user instead.
+        {
+          const spendNow = getLiveSpendUsd();
+          const goalPreSpend = getActiveGoal();
+          if (goalPreSpend && spendNow > goalSpendSnapshot) {
+            updateActiveGoal({
+              budget: { ...goalPreSpend.budget, spentUsd: goalPreSpend.budget.spentUsd + (spendNow - goalSpendSnapshot) },
+            });
+          }
+          goalSpendSnapshot = spendNow;
+
+          const goal = getActiveGoal();
+          if (goal && goal.status === 'active' && config.autoContinueGoals !== false && !endedWithQuestion(responseParts)) {
+            if (goal.turnsUsed + 1 >= goalMaxTurns()) {
+              updateActiveGoal({ status: 'blocked', blockedReason: `goal turn cap (${goalMaxTurns()}) reached` });
+              onEvent({ kind: 'text_delta', text: `\n*[goal] paused: turn cap (${goalMaxTurns()}) reached — /goal resume to continue*\n` });
+            } else if (goal.budget.maxUsd && goal.budget.spentUsd >= goal.budget.maxUsd) {
+              updateActiveGoal({ status: 'blocked', blockedReason: 'goal budget exhausted' });
+              onEvent({ kind: 'text_delta', text: '\n*[goal] paused: budget exhausted — /goal resume to continue*\n' });
+            } else {
+              updateActiveGoal({ turnsUsed: goal.turnsUsed + 1 });
+              inputMux.enqueue(
+                'Continue working the active goal. Address open verification gaps first; when every acceptance ' +
+                'criterion is met, run the verification plan yourself and claim completion via UpdateGoal.'
+              );
+            }
+          }
+        }
+
         fireLifecycleHook('Stop');
         onEvent({ kind: 'turn_done', reason: 'completed' });
         break;

@@ -668,6 +668,115 @@ export async function handleSlashCommand(
     return { handled: true };
   }
 
+  // /goal — cross-turn autonomous objective. `/goal <objective>` plans and
+  // starts it; status / pause / resume / clear manage it.
+  if (input === '/goal' || input.startsWith('/goal ')) {
+    const arg = input.slice('/goal'.length).trim();
+    const { getActiveGoal, setActiveGoal, updateActiveGoal, createGoal, savePlan, loadPlan } =
+      await import('../goal/store.js');
+    const { runPlanner, mineNextStep } = await import('../goal/engine.js');
+    const { goalMaxTurns } = await import('../goal/types.js');
+    const { updateSessionMeta } = await import('../session/storage.js');
+    const active = getActiveGoal();
+
+    if (!arg || arg === 'status') {
+      if (!active) {
+        ctx.onEvent({ kind: 'text_delta', text:
+          'No active goal.\nUsage: /goal <objective> · /goal status · /goal pause · /goal resume · /goal clear\n' });
+      } else {
+        const nextStep = mineNextStep(loadPlan(active.id));
+        ctx.onEvent({ kind: 'text_delta', text:
+          `Goal ${active.id} (${active.kind}) — ${active.status}\n` +
+          `  Objective: ${active.objective}\n` +
+          `  Turns used: ${active.turnsUsed}/${goalMaxTurns()} · verification rounds: ${active.rounds.length}\n` +
+          `  Spend: $${active.budget.spentUsd.toFixed(4)}${active.budget.maxUsd ? ` / $${active.budget.maxUsd.toFixed(2)}` : ''}\n` +
+          (active.verifierGaps.length ? `  Open gaps:\n${active.verifierGaps.map(g => `    - ${g}`).join('\n')}\n` : '') +
+          (active.blockedReason ? `  Blocked: ${active.blockedReason}\n` : '') +
+          (nextStep ? `  Next step: ${nextStep}\n` : '')
+        });
+      }
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    if (arg === 'pause') {
+      if (active && (active.status === 'active' || active.status === 'verifying')) {
+        updateActiveGoal({ status: 'paused', blockedReason: 'paused by user' });
+        ctx.onEvent({ kind: 'text_delta', text: `Goal ${active.id} paused. /goal resume to continue.\n` });
+      } else {
+        ctx.onEvent({ kind: 'text_delta', text: 'No running goal to pause.\n' });
+      }
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    if (arg === 'resume') {
+      if (active && (active.status === 'paused' || active.status === 'blocked')) {
+        updateActiveGoal({ status: 'active', blockedReason: undefined });
+        emitDone(ctx);
+        return { handled: false, rewritten: 'Resume working the active goal from where it stopped. Address open verification gaps first.' };
+      }
+      ctx.onEvent({ kind: 'text_delta', text: 'No paused/blocked goal to resume.\n' });
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    if (arg === 'clear') {
+      if (active) {
+        updateActiveGoal({ status: 'abandoned' });
+        setActiveGoal(null);
+        updateSessionMeta(ctx.sessionId, { goalId: '' });
+        ctx.onEvent({ kind: 'text_delta', text: `Goal ${active.id} abandoned.\n` });
+      } else {
+        ctx.onEvent({ kind: 'text_delta', text: 'No active goal.\n' });
+      }
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    if (active && active.status !== 'completed' && active.status !== 'abandoned') {
+      ctx.onEvent({ kind: 'text_delta', text:
+        `A goal is already active (${active.id}: ${active.objective.slice(0, 60)}). ` +
+        'Finish it or /goal clear before starting a new one.\n' });
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    // New objective: plan it, arm it, kick off the first working turn.
+    ctx.onEvent({ kind: 'text_delta', text: '*[goal] planning…*\n' });
+    try {
+      const abortCtl = new AbortController();
+      const engineCtx = {
+        client: ctx.client,
+        model: ctx.config.model,
+        capabilities: ctx.config.capabilities,
+        workingDir: ctx.config.workingDir ?? process.cwd(),
+        signal: abortCtl.signal,
+      };
+      const { kind, planMd } = await runPlanner(engineCtx, arg);
+      if (!planMd || planMd.length < 50) {
+        ctx.onEvent({ kind: 'text_delta', text: 'Goal planning produced no usable plan — try rephrasing the objective.\n' });
+        emitDone(ctx);
+        return { handled: true };
+      }
+      const goal = createGoal({ objective: arg, kind, maxUsd: ctx.config.maxSpendUsd });
+      savePlan(goal.id, planMd);
+      setActiveGoal(goal);
+      updateSessionMeta(ctx.sessionId, { goalId: goal.id });
+      ctx.onEvent({ kind: 'text_delta', text:
+        `Goal ${goal.id} armed (${kind}).\n\n${planMd}\n\n` +
+        '*The agent now works this goal autonomously across turns. Esc pauses; /goal status inspects; /goal clear abandons.*\n' });
+      return {
+        handled: false,
+        rewritten: 'Begin working the active goal now: follow the goal plan in your context, starting with the first checklist item.',
+      };
+    } catch (err) {
+      ctx.onEvent({ kind: 'text_delta', text: `Goal planning failed: ${(err as Error).message}\n` });
+      emitDone(ctx);
+      return { handled: true };
+    }
+  }
+
   // /loop — durable recurring prompts. `/loop 5m check BTC price`,
   // `/loop list`, `/loop cancel <id>`. Fires immediately, then repeats.
   if (input === '/loop' || input.startsWith('/loop ')) {
@@ -1214,7 +1323,7 @@ export async function handleSlashCommand(
     ...Object.keys(REWRITE_COMMANDS),
     ...ARG_COMMANDS.map(c => c.prefix.trim()),
     ...skillNames,
-    '/branch', '/resume', '/model', '/auto', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures', '/market', '/loop',
+    '/branch', '/resume', '/model', '/auto', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures', '/market', '/loop', '/goal',
   ];
   const cmd = input.split(/\s/)[0];
   const close = allCommands.filter(c => {

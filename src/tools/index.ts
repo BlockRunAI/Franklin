@@ -20,6 +20,7 @@ import { detachCapability } from './detach.js';
 import { createMonitorCapability } from './monitor.js';
 import { createSchedulerCapability } from './scheduler.js';
 import { createTradePlanCapability } from './trade-plan.js';
+import { createUpdateGoalCapability } from './goal.js';
 import { resetMonitors } from '../monitors/registry.js';
 import { getSchedulerSessionId } from '../scheduler/store.js';
 import { createImageGenCapability } from './imagegen.js';
@@ -180,6 +181,7 @@ export const allCapabilities: CapabilityHandler[] = [
   createMonitorCapability(),   // Monitor — watch long-running commands, lines delivered at turn boundaries
   createSchedulerCapability({ sessionId: getSchedulerSessionId }), // Scheduler — durable recurring/one-shot prompts
   createTradePlanCapability(), // TradePlan — approval artifact required before real-money trades
+  createUpdateGoalCapability(), // UpdateGoal — goal-mode control (verified completion claims)
   defaultImageGenCapability,
   defaultVideoGenCapability,
   defaultMusicGenCapability,

@@ -265,4 +265,10 @@ export interface AgentConfig {
    * --approve-trades + --max-spend. Absent = approvals fail closed.
    */
   approvalPromptFn?: import('./approvals.js').ApprovalPromptFn;
+  /**
+   * Goal auto-continuation: an active goal re-engages the agent at each turn
+   * boundary. Default on for interactive sessions; one-shot/headless runs set
+   * false so a goal never extends a bounded scripted run.
+   */
+  autoContinueGoals?: boolean;
 }
