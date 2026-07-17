@@ -20,6 +20,8 @@ import crypto from 'node:crypto';
 import { BLOCKRUN_DIR } from '../config.js';
 import { appendApprovalRecord } from '../audit/approvals.js';
 import { estimateSpendUsd, TRADE_EXECUTION_TOOLS } from '../tools/spend-tools.js';
+import { captureTradeEvent } from '../memory/capture.js';
+import { getAddress } from '../wallet/manager.js';
 import type { CapabilityInvocation, CapabilityResult } from '../agent/types.js';
 
 export type TradeVenue = 'jupiter' | 'zerox' | 'polymarket';
@@ -336,4 +338,21 @@ export function recordTradeExecution(invocation: CapabilityInvocation, result: C
     status: consumedUsd >= plan.totalSpendUsd - 0.01 ? 'consumed' : plan.status,
   };
   saveTradePlan(updated);
+
+  // Journal the real-money execution into wallet-keyed document memory —
+  // the trade journal follows the wallet, not the working directory.
+  try {
+    const chain = venue === 'jupiter' ? 'solana' : 'base';
+    captureTradeEvent({
+      kind: venue === 'polymarket' ? 'bet' : matched?.action === 'sell' ? 'close' : 'open',
+      chain,
+      address: getAddress(),
+      asset: matched?.asset ?? String(invocation.input.asset ?? invocation.name),
+      amountUsd: spent > 0 ? spent : undefined,
+      thesis: plan.rationale,
+      ref: plan.id,
+    });
+  } catch {
+    /* no wallet or memory disabled — journaling is best-effort */
+  }
 }

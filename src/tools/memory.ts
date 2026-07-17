@@ -20,7 +20,8 @@ import {
   loadEntities,
   getBrainStats,
 } from '../brain/store.js';
-import type { CapabilityHandler, CapabilityResult } from '../agent/types.js';
+import { searchMemory } from '../memory/indexer.js';
+import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 
 interface MemoryRecallInput {
   query: string;
@@ -57,7 +58,7 @@ export const memoryRecallCapability: CapabilityHandler = {
       required: ['query'],
     },
   },
-  execute: async (input: Record<string, unknown>): Promise<CapabilityResult> => {
+  execute: async (input: Record<string, unknown>, ctx?: ExecutionScope): Promise<CapabilityResult> => {
     const { query, limit } = input as unknown as MemoryRecallInput;
     if (!query || !query.trim()) {
       return { output: 'Error: query is required', isError: true };
@@ -67,11 +68,22 @@ export const memoryRecallCapability: CapabilityHandler = {
     const hits = searchEntities(query, cap);
     const stats = getBrainStats();
 
+    // Document memory (curated MEMORY.md files, session logs, trade
+    // journal/theses) — merged into the same recall surface as the graph.
+    const docHits = searchMemory(query, ctx?.workingDir ?? process.cwd(), { limit: 5 });
+    const docSection =
+      docHits.length > 0
+        ? '\n\n# Documents\n' +
+          docHits
+            .map(h => `- [${h.scope}] ${h.snippet}${h.stalenessNote ? `\n  (${h.stalenessNote})` : ''}`)
+            .join('\n')
+        : '';
+
     if (hits.length === 0) {
       return {
         output:
-          `No memory match for "${query}".\n\n` +
-          `Brain holds ${stats.entities} entities, ${stats.observations} observations.`,
+          `${docHits.length === 0 ? `No memory match for "${query}".\n\n` : `No entity match for "${query}".`}${docSection}` +
+          `${docHits.length === 0 ? `Brain holds ${stats.entities} entities, ${stats.observations} observations.` : ''}`,
       };
     }
 
@@ -106,7 +118,7 @@ export const memoryRecallCapability: CapabilityHandler = {
       }
     }
 
-    return { output: lines.join('\n') };
+    return { output: lines.join('\n') + docSection };
   },
   concurrent: true,
 };

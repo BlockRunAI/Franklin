@@ -777,6 +777,70 @@ export async function handleSlashCommand(
     }
   }
 
+  // /remember <note> — append a note to the workspace's curated memory.
+  if (input === '/remember' || input.startsWith('/remember ')) {
+    const note = input.slice('/remember'.length).trim();
+    if (!note) {
+      ctx.onEvent({ kind: 'text_delta', text: 'Usage: /remember <note> — saved to this workspace\'s MEMORY.md\n' });
+      emitDone(ctx);
+      return { handled: true };
+    }
+    const { appendUnderHeading, workspaceMemoryPath, memoryEnabled } = await import('../memory/store.js');
+    if (!memoryEnabled()) {
+      ctx.onEvent({ kind: 'text_delta', text: 'Memory is disabled (FRANKLIN_MEMORY=0).\n' });
+      emitDone(ctx);
+      return { handled: true };
+    }
+    const target = workspaceMemoryPath(ctx.config.workingDir ?? process.cwd());
+    appendUnderHeading(target, 'Notes', note);
+    ctx.onEvent({ kind: 'text_delta', text: `Memory saved to ${target}\n` });
+    emitDone(ctx);
+    return { handled: true };
+  }
+
+  // /flush — LLM capture of this session's durable learnings into a session log.
+  if (input === '/flush') {
+    const { flushSessionMemory } = await import('../memory/capture.js');
+    ctx.onEvent({ kind: 'text_delta', text: '*[memory] capturing durable learnings…*\n' });
+    try {
+      const written = await flushSessionMemory({
+        client: ctx.client,
+        model: ctx.config.model,
+        workDir: ctx.config.workingDir ?? process.cwd(),
+        sessionId: ctx.sessionId,
+        history: ctx.history,
+      });
+      ctx.onEvent({ kind: 'text_delta', text: written
+        ? `Session learnings flushed to ${written}\n`
+        : 'Nothing durable to capture from this session.\n' });
+    } catch (err) {
+      ctx.onEvent({ kind: 'text_delta', text: `Flush failed: ${(err as Error).message}\n` });
+    }
+    emitDone(ctx);
+    return { handled: true };
+  }
+
+  // /dream — consolidate accumulated session logs into curated MEMORY.md.
+  if (input === '/dream') {
+    const { runDream } = await import('../memory/dream.js');
+    ctx.onEvent({ kind: 'text_delta', text: '*[memory] consolidating…*\n' });
+    try {
+      const result = await runDream({
+        client: ctx.client,
+        model: ctx.config.model,
+        workDir: ctx.config.workingDir ?? process.cwd(),
+        force: true,
+      });
+      ctx.onEvent({ kind: 'text_delta', text: result.consolidated
+        ? `Consolidated ${result.logsConsumed} session log(s) into curated memory.\n`
+        : `Nothing consolidated: ${result.reason}\n` });
+    } catch (err) {
+      ctx.onEvent({ kind: 'text_delta', text: `Dream failed: ${(err as Error).message}\n` });
+    }
+    emitDone(ctx);
+    return { handled: true };
+  }
+
   // /loop — durable recurring prompts. `/loop 5m check BTC price`,
   // `/loop list`, `/loop cancel <id>`. Fires immediately, then repeats.
   if (input === '/loop' || input.startsWith('/loop ')) {
@@ -1323,7 +1387,7 @@ export async function handleSlashCommand(
     ...Object.keys(REWRITE_COMMANDS),
     ...ARG_COMMANDS.map(c => c.prefix.trim()),
     ...skillNames,
-    '/branch', '/resume', '/model', '/auto', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures', '/market', '/loop', '/goal',
+    '/branch', '/resume', '/model', '/auto', '/wallet', '/cost', '/help', '/clear', '/retry', '/exit', '/session-search', '/ssearch', '/failures', '/market', '/loop', '/goal', '/remember', '/flush', '/dream',
   ];
   const cmd = input.split(/\s/)[0];
   const close = allCommands.filter(c => {

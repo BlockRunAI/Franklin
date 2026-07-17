@@ -20,6 +20,8 @@ import { setSchedulerSessionId } from '../scheduler/store.js';
 import { sweepMonitors } from '../monitors/registry.js';
 import { setTradePlanSessionId } from '../trading/trade-plan.js';
 import { getActiveGoal, setActiveGoal, loadGoal, loadPlan, updateActiveGoal } from '../goal/store.js';
+import { searchMemory, formatMemoryContext } from '../memory/indexer.js';
+import { writeSessionMetadataSummary } from '../memory/capture.js';
 import { setGoalEngineDeps } from '../goal/runtime.js';
 import { continuationDirective } from '../goal/prompts.js';
 import { mineNextStep } from '../goal/engine.js';
@@ -647,6 +649,11 @@ export async function interactiveSession(
     if (event === 'SessionEnd') {
       schedulerService?.stop();
       schedulerService = undefined;
+      // Zero-cost memory: a metadata-only session log (topics + counts, no
+      // LLM call). Trivial sessions are skipped inside.
+      try {
+        writeSessionMetadataSummary({ workDir, sessionId, history });
+      } catch { /* memory is best-effort */ }
     }
     if (!hookEngine?.hasHooks(event)) return;
     void hookEngine
@@ -717,6 +724,9 @@ export async function interactiveSession(
     }
   }
   let goalSpendSnapshot = getLiveSpendUsd();
+  // Document-memory injection state — see the per-turn block below.
+  let memoryInjectionPending = true;
+  let historyLenAtTurnEnd = 0;
   schedulerService = startSchedulerService({
     sessionId,
     enqueue: (text) => inputMux.enqueue(text),
@@ -938,6 +948,20 @@ export async function interactiveSession(
       config.onModelChange?.(baseModel, 'system');
     }
     turnFailedModels = new Set<string>(); // Fresh slate for transient failures this turn
+
+    // ── Document-memory injection ──
+    // Injected on the FIRST turn of a session (recall what this workspace /
+    // wallet already knows) and re-injected after compaction shrinks history
+    // (compaction may have discarded recalled context). Detected by history
+    // length dropping between turns.
+    if (history.length < historyLenAtTurnEnd) memoryInjectionPending = true;
+    let turnMemoryContext = '';
+    if (memoryInjectionPending) {
+      memoryInjectionPending = false;
+      try {
+        turnMemoryContext = formatMemoryContext(searchMemory(input, workDir, { limit: 6 }));
+      } catch { /* memory is best-effort */ }
+    }
 
     // ── Brain auto-recall (computed once per user turn) ──
     // Scan the new user message plus the previous assistant reply (so
@@ -1366,6 +1390,7 @@ export async function interactiveSession(
 
       // ── Brain auto-recall (computed once per user turn above) ──
       if (turnBrainContext) systemParts.push(turnBrainContext);
+      if (turnMemoryContext) systemParts.push(turnMemoryContext);
 
       // ── Goal continuation directive ──
       // While a goal is active, every turn carries the frozen plan, open
@@ -2492,6 +2517,7 @@ export async function interactiveSession(
           }
         }
 
+        historyLenAtTurnEnd = history.length;
         fireLifecycleHook('Stop');
         onEvent({ kind: 'turn_done', reason: 'completed' });
         break;

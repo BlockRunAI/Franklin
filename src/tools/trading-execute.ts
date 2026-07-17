@@ -15,6 +15,24 @@ import type { TradingEngine } from '../trading/engine.js';
 import type { Position, Portfolio } from '../trading/portfolio.js';
 import type { RiskConfig } from '../trading/risk.js';
 import type { TradeLog, TradeLogEntry, TradeRationale } from '../trading/trade-log.js';
+import { captureTradeEvent } from '../memory/capture.js';
+import { getAddress } from '../wallet/manager.js';
+
+/** Journal a paper-engine trade into document memory (wallet-keyed; the
+ *  'paper' chain tag keeps simulated activity apart from real trades). */
+function capturePaperTrade(event: {
+  kind: 'open' | 'close';
+  asset: string;
+  amountUsd: number;
+  thesis?: string;
+  pnlUsd?: number;
+}): void {
+  try {
+    captureTradeEvent({ ...event, chain: 'paper', address: getAddress(), ref: 'paper' });
+  } catch {
+    /* no wallet yet or memory disabled — journaling is best-effort */
+  }
+}
 import { scoreEntry } from '../trading/journal-quality.js';
 import { renderDisciplineFooter } from '../trading/journal-display.js';
 import {
@@ -191,6 +209,12 @@ export function createTradingCapabilities(
         const history = tradeLog.all();
         draftEntry.qualityScore = scoreEntry(draftEntry, history);
         tradeLog.append(draftEntry);
+        capturePaperTrade({
+          kind: 'open',
+          asset: symbol,
+          amountUsd: outcome.fill.qty * outcome.fill.priceUsd,
+          thesis: rationale?.thesis,
+        });
       }
       if (onStateChange) await onStateChange();
 
@@ -266,6 +290,12 @@ export function createTradingCapabilities(
         };
         draftEntry.qualityScore = scoreEntry(draftEntry, tradeLog.all());
         tradeLog.append(draftEntry);
+        capturePaperTrade({
+          kind: 'close',
+          asset: symbol,
+          amountUsd: outcome.fill.qty * outcome.fill.priceUsd,
+          pnlUsd: tradeRealized,
+        });
       }
       if (onStateChange) await onStateChange();
 

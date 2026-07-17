@@ -35,7 +35,7 @@ export interface SearchOptions {
 
 // ─── Tokenization ─────────────────────────────────────────────────────────
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^\p{L}\p{N}_\s]/gu, ' ')
@@ -43,7 +43,7 @@ function tokenize(text: string): string[] {
     .filter(t => t.length > 1 || /[^\x00-\x7F]/.test(t));
 }
 
-function parseQuery(query: string): { terms: string[]; phrases: string[] } {
+export function parseQuery(query: string): { terms: string[]; phrases: string[] } {
   const phrases: string[] = [];
   // Extract quoted phrases first
   const cleaned = query.replace(/"([^"]+)"/g, (_, phrase) => {
@@ -56,7 +56,7 @@ function parseQuery(query: string): { terms: string[]; phrases: string[] } {
 
 // ─── Snippet Extraction ───────────────────────────────────────────────────
 
-function extractSnippet(content: string, query: string, maxLen = 200): string {
+export function extractSnippet(content: string, query: string, maxLen = 200): string {
   const lower = content.toLowerCase();
   const q = query.toLowerCase();
   const idx = lower.indexOf(q);
