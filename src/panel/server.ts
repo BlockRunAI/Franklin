@@ -36,6 +36,8 @@ import {
 import { reconcileLostTasks } from '../tasks/lost-detection.js';
 import { taskLogPath } from '../tasks/paths.js';
 import { isTerminalTaskStatus } from '../tasks/types.js';
+import { readLiveAgents } from '../session/live-registry.js';
+import { BLOCKRUN_DIR } from '../config.js';
 import { getHTML } from './html.js';
 
 const sseClients = new Set<http.ServerResponse>();
@@ -187,6 +189,43 @@ export function createPanelServer(port: number): http.Server {
 
     // ─── API ──
     try {
+      // Read-only agent fleet view: live registry joined with session meta.
+      // All agent CONTROL flows through serve's gated WebSocket — the panel's
+      // REST surface stays read-only by design (no new mutating routes).
+      if (p === '/api/agents') {
+        const metas = new Map(listSessions().map((m) => [m.id, m]));
+        const agents = readLiveAgents().map((r) => {
+          const meta = metas.get(r.sessionId);
+          return {
+            ...r,
+            costUsd: meta?.costUsd,
+            turnCount: meta?.turnCount,
+            workDir: meta?.workDir,
+          };
+        });
+        json(res, { agents });
+        return;
+      }
+      if (p === '/api/serve-info') {
+        // serve writes ~/.blockrun/serve-url on listen (removed on clean
+        // exit); a 300ms probe distinguishes a live server from a stale file.
+        let wsUrl: string | null = null;
+        try {
+          wsUrl = fs.readFileSync(path.join(BLOCKRUN_DIR, 'serve-url'), 'utf-8').trim() || null;
+        } catch { /* serve never ran */ }
+        let alive = false;
+        const hostMatch = wsUrl?.match(/^ws:\/\/([^/]+)\//);
+        if (hostMatch) {
+          try {
+            await fetch(`http://${hostMatch[1]}/`, { signal: AbortSignal.timeout(300) });
+            alive = true; // any HTTP response (even 404) = server is up
+          } catch {
+            alive = false;
+          }
+        }
+        json(res, { url: wsUrl, alive });
+        return;
+      }
       if (p === '/api/stats') {
         const summary = getStatsSummary();
         json(res, {

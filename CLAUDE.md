@@ -2,12 +2,13 @@
 
 **The AI agent with a wallet.**
 
-Franklin is the first AI agent in the **Autonomous Economic Agent** category — it doesn't just write text, it autonomously spends USDC from a user-funded wallet to execute real work: coding, trading, content generation.
+Franklin is a **general autonomous economic agent** — it doesn't just write text, it autonomously spends USDC from a user-funded wallet to execute real work — with **trading as the flagship vertical**. It is explicitly NOT positioned as a coding agent (decided 2026-07-17): file/shell tools are kept as general infrastructure (strategy scripts, data analysis) but faded from positioning, docs, and the default experience.
 
-Three verticals under one brand:
-- **Dev agent** — coding, debugging, review across 55+ models with wallet-bound spending
-- **Trading agent** — signals, portfolio, risk, persistent P&L across sessions
-- **Content agent** — ImageGen, VideoGen, budget-tracked media production
+Capability pillars:
+- **Trading agent (flagship)** — signals, portfolio, risk, trade-plan approvals, wallet-keyed journal, persistent P&L
+- **Autonomy** — /goal (adversarially verified objectives), /loop scheduler, Monitor, lifecycle hooks, multi-agent mission control (panel Agents tab)
+- **Content & research** — ImageGen, VideoGen, Exa research, budget-tracked production
+- **General tools** — files/shell/search kept but not marketed
 
 Built on three layers:
 1. **x402 micropayment protocol** — HTTP 402 native payments
@@ -66,22 +67,22 @@ src/
 
 ## Positioning
 
-**Franklin runs your money.** Three layers, from external to internal:
+**Franklin runs your money.** (Updated 2026-07-17 — NOT a coding agent.)
 
 | Layer | Message | Audience |
 |-------|---------|----------|
 | External (X, YouTube, KOL) | **The AI Agent with a Wallet** — it holds your USDC and actually spends it for you | Everyone |
-| Core users / docs | **Autonomous Economic Agent** powered by x402 payment layer | Developers, crypto AI community |
-| Product direction | **Dev + Trading + Content** — scenarios where spending money = value | Power users |
+| Core users / docs | **Autonomous Economic Agent** powered by x402 payment layer | Crypto AI community, power users |
+| Product direction | **Trading flagship + general autonomy** — mission-control fleet, one agent per strategy/market | Power users |
 
 Every feature decision should be tested against this positioning:
 
 - Does it make Franklin more of "the agent with a wallet"? → yes
-- Does it dilute us back to "another coding tool"? → no
+- Does it pull us into the coding-agent feature race? → no (explicitly out: worktrees, editor protocols, code plan mode, LSP, codebase indexing)
 
-The moat is the payment layer. The category is Autonomous Economic Agent. The verticals are Dev, Trading, and Content. Coding intelligence is table stakes — necessary but not the differentiator.
+The moat is the payment layer plus the safety architecture around autonomous spending: trade-plan approvals (money never moves without one, trust mode included), lifecycle hooks as user guardrails, adversarially verified goals, and a wallet-keyed memory. Coding tools are general infrastructure — keep them working, don't market them. New prompts/templates/docs use task/trade/research framing, never coding framing.
 
 **What sets Franklin apart:**
-- Most coding agents write great code but can't spend money to buy APIs, data, or ads
-- Memory-focused agents have strong recall but no wallet or economic autonomy
-- Franklin: you fund the wallet, it decides what's worth spending on
+- Most agents can think but can't spend; the ones that spend have no guardrails
+- Franklin: you fund the wallet and set the budget; it proposes, you approve, it executes and journals every trade
+- Memory follows the wallet, goals survive sessions, and the whole fleet is visible in one panel

@@ -252,14 +252,15 @@ const DIRECT_COMMANDS: Record<string, (ctx: CommandContext) => Promise<void> | v
       }
     }
     ctx.onEvent({ kind: 'text_delta', text:
-      `**RunCode Commands**\n\n` +
-      `  **Coding:** /commit /review /test /fix /debug /explain /search /find /refactor /scaffold\n` +
-      `  **Git:** /push /pr /undo /status /diff /log /branch /stash /unstash\n` +
-      `  **Analysis:** /security /lint /optimize /todo /deps /clean /migrate /doc\n` +
+      `**Franklin Commands**\n\n` +
+      `  **Autonomy:** /goal <objective> (verified autonomous goals) · /loop <interval> <prompt> (durable scheduler) · /goal status|pause|resume|clear\n` +
+      `  **Memory:** /remember <note> /flush /dream /brain /learnings\n` +
+      `  **Market:** /market [keyword] · /market info <slug> · /market run <slug> <input>\n` +
       `  **Session:** /plan /ultraplan /execute /compact /retry /sessions /resume /session-search /context /tasks /history /transcript\n` +
       `  **Power:** /ultrathink [query] /ultraplan /noplan /moa [query] /dump\n` +
-      `  **Info:** /model /auto /wallet /cost /tokens /learnings /brain /mcp /doctor /version /bug /help\n` +
-      `  **Market:** /market [keyword] · /market info <slug> · /market run <slug> <input>\n` +
+      `  **Info:** /model /auto /wallet /cost /tokens /mcp /doctor /version /bug /help\n` +
+      `  **Dev tools:** /commit /review /test /fix /debug /explain /search /find /refactor /doc\n` +
+      `  **Git:** /push /pr /undo /status /diff /log /branch /stash /unstash\n` +
       `  **UI:** /clear /exit\n` +
       skillsBlock +
       (ultrathinkOn ? `\n  Ultrathink: ON\n` : '')

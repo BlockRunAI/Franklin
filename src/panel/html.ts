@@ -514,6 +514,11 @@ a:hover { text-decoration:underline; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
       Overview
     </button>
+    <button class="nav-item" data-tab="agents">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M12 7.2V12"/><path d="M12 12l-5.2 5"/><path d="M12 12l5.2 5"/></svg>
+      Agents
+      <span class="nav-badge" id="agents-nav-badge" style="display:none"></span>
+    </button>
     <button class="nav-item" data-tab="wallet">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
       Wallet
@@ -625,6 +630,58 @@ a:hover { text-decoration:underline; }
     <div class="card" style="margin-top:12px">
       <h3>Cost by Model</h3>
       <div class="bar-chart" id="model-chart"></div>
+    </div>
+  </div>
+
+  <!-- Agents — mission control -->
+  <div class="tab" id="tab-agents">
+    <div class="content-header">
+      <h2>Agents</h2>
+      <p>Mission control — dispatch, watch, and approve your agent fleet</p>
+    </div>
+
+    <div id="agents-offline" class="card" style="display:none;border-color:#8a6d3b">
+      <h3>Agent host offline</h3>
+      <div class="sub">Run <code>franklin serve</code> in a terminal to dispatch and control agents from here. Sessions below are read-only.</div>
+    </div>
+
+    <div class="card" id="agents-dispatch-card" style="margin-bottom:12px">
+      <h3>Dispatch a new agent</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="agents-dispatch-prompt" type="text" placeholder="e.g. monitor BTC funding rates and alert me on a flip"
+               style="flex:1;min-width:260px;background:transparent;border:1px solid var(--border,#333);border-radius:6px;padding:8px 10px;color:inherit" />
+        <input id="agents-dispatch-model" type="text" placeholder="model (optional)"
+               style="width:160px;background:transparent;border:1px solid var(--border,#333);border-radius:6px;padding:8px 10px;color:inherit" />
+        <input id="agents-dispatch-maxspend" type="number" step="0.5" min="0" placeholder="max $"
+               style="width:80px;background:transparent;border:1px solid var(--border,#333);border-radius:6px;padding:8px 10px;color:inherit" />
+        <button id="agents-dispatch-btn" class="btn">Dispatch</button>
+      </div>
+      <div class="sub" style="margin-top:6px">Every dispatch starts a NEW agent. Press Enter to batch-dispatch several.</div>
+    </div>
+
+    <div class="grid" style="grid-template-columns: minmax(300px, 5fr) minmax(320px, 7fr); gap:12px; align-items:start">
+      <div class="card">
+        <h3>Fleet</h3>
+        <div id="agents-list" class="sub">Loading…</div>
+      </div>
+      <div class="card" id="agents-peek" style="display:none">
+        <h3 id="agents-peek-title">Agent</h3>
+        <div id="agents-peek-state" class="sub"></div>
+        <div id="agents-approval" style="display:none;margin:10px 0;padding:10px;border:1px solid #8a6d3b;border-radius:8px">
+          <div id="agents-approval-title" style="font-weight:600;margin-bottom:6px"></div>
+          <pre id="agents-approval-desc" style="white-space:pre-wrap;font-size:12px;max-height:220px;overflow:auto"></pre>
+          <div id="agents-approval-options" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
+          <textarea id="agents-approval-message" placeholder="optional message (e.g. requested changes)" rows="2"
+                    style="width:100%;margin-top:8px;background:transparent;border:1px solid var(--border,#333);border-radius:6px;padding:6px;color:inherit;display:none"></textarea>
+        </div>
+        <pre id="agents-transcript" style="white-space:pre-wrap;font-size:12px;max-height:420px;overflow:auto;background:rgba(0,0,0,0.25);border-radius:8px;padding:10px;margin-top:8px"></pre>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input id="agents-reply-input" type="text" placeholder="reply to this agent…"
+                 style="flex:1;background:transparent;border:1px solid var(--border,#333);border-radius:6px;padding:8px 10px;color:inherit" />
+          <button id="agents-reply-btn" class="btn">Send</button>
+          <button id="agents-cancel-btn" class="btn" style="border-color:#8a3b3b">Cancel turn</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -2160,6 +2217,248 @@ setInterval(() => api('wallet').then(w => {
     document.getElementById('sidebar-balance').textContent = usdBig(w.balance) + ' USDC';
   }
 }), 30000);
+
+// ── Agents tab (mission control) ────────────────────────────────────────
+// Control plane: the serve WebSocket (ws://127.0.0.1:3737/agent), reached
+// DIRECTLY from this page — the panel's own REST stays read-only. When the
+// host is offline the tab degrades to read-only registry rows + a banner.
+(function() {
+  var serveUrl = null, serveAlive = false;
+  var ws = null, wsOpen = null;
+  var reqSeq = 0, pending = {};
+  var hosted = [];      // serve-hosted agents (controllable)
+  var registry = [];    // /api/agents live-registry rows (incl. CLI, dead)
+  var selected = null, subscribedTo = null;
+  var approvals = {};   // sessionId -> latest pending approval request
+  var pollTimer = null;
+
+  var STATE_ORDER = { 'needs-input': 0, 'working': 1, 'idle': 2, 'inactive': 3, 'completed': 4, 'failed': 5 };
+  var STATE_DOT = { 'needs-input': '#e6b450', 'working': '#58c05e', 'idle': '#8a93a3', 'inactive': '#555c66', 'completed': '#4a708b', 'failed': '#c05858' };
+
+  function ensureWs() {
+    if (ws && ws.readyState === 1) return Promise.resolve(ws);
+    if (wsOpen) return wsOpen;
+    if (!serveUrl) return Promise.reject(new Error('agent host offline'));
+    wsOpen = new Promise(function(resolve, reject) {
+      var sock = new WebSocket(serveUrl);
+      sock.onopen = function() { ws = sock; wsOpen = null; resolve(sock); };
+      sock.onerror = function() { wsOpen = null; reject(new Error('ws error')); };
+      sock.onclose = function() { ws = null; subscribedTo = null; };
+      sock.onmessage = function(evt) {
+        var msg; try { msg = JSON.parse(evt.data); } catch { return; }
+        if (msg.kind === 'response' || msg.kind === 'error') {
+          var r = pending[msg.id];
+          if (r) { delete pending[msg.id]; r(msg.kind === 'error' ? null : (msg.payload || {})); }
+        } else if (msg.kind === 'agent.event' && msg.payload) {
+          onAgentEvent(msg.payload.sessionId, msg.payload.ev);
+        } else if (msg.kind === 'approval.request' && msg.payload) {
+          approvals[msg.payload.sessionId] = msg.payload;
+          if (msg.payload.sessionId === selected) renderApproval();
+          refreshAgents();
+        }
+      };
+    });
+    return wsOpen;
+  }
+
+  function wsCall(kind, payload) {
+    return ensureWs().then(function(sock) {
+      return new Promise(function(resolve) {
+        var id = 'panel-' + (++reqSeq);
+        pending[id] = resolve;
+        sock.send(JSON.stringify({ id: id, kind: kind, payload: payload || {} }));
+        setTimeout(function() { if (pending[id]) { delete pending[id]; resolve(null); } }, 10000);
+      });
+    }).catch(function() { return null; });
+  }
+
+  function transcriptAppend(text) {
+    var pre = document.getElementById('agents-transcript');
+    pre.textContent += text;
+    pre.scrollTop = pre.scrollHeight;
+  }
+
+  function renderStreamEvent(ev) {
+    if (!ev) return;
+    if (ev.kind === 'text_delta') transcriptAppend(ev.text);
+    else if (ev.kind === 'capability_start') transcriptAppend('\\n▸ ' + ev.name + (ev.preview ? ' · ' + ev.preview : '') + '\\n');
+    else if (ev.kind === 'turn_done') transcriptAppend('\\n— turn ' + (ev.reason || 'done') + ' —\\n');
+  }
+
+  function onAgentEvent(sessionId, ev) {
+    if (sessionId !== selected) return;
+    renderStreamEvent(ev);
+    if (ev && ev.kind === 'turn_done') refreshAgents();
+  }
+
+  function mergedAgents() {
+    var bySession = {};
+    registry.forEach(function(r) {
+      var controllable = false;
+      var state = r.state;
+      if (r.host === 'cli' && state !== 'completed' && state !== 'failed') state = 'inactive';
+      bySession[r.sessionId] = { sessionId: r.sessionId, label: r.label, model: r.model, state: state,
+        host: r.host, controllable: controllable, costUsd: r.costUsd, updatedAt: r.updatedAt };
+    });
+    hosted.forEach(function(a) {
+      var state = a.state;
+      if (a.pendingApprovals && a.pendingApprovals.length > 0) {
+        state = 'needs-input';
+        approvals[a.sessionId] = approvals[a.sessionId] || a.pendingApprovals[0];
+      }
+      bySession[a.sessionId] = { sessionId: a.sessionId, label: a.label, model: a.model, state: state,
+        host: 'serve', controllable: true, updatedAt: a.lastEventAt };
+    });
+    var rows = Object.keys(bySession).map(function(k) { return bySession[k]; });
+    rows.sort(function(a, b) {
+      var d = (STATE_ORDER[a.state] ?? 9) - (STATE_ORDER[b.state] ?? 9);
+      return d !== 0 ? d : (b.updatedAt || 0) - (a.updatedAt || 0);
+    });
+    return rows;
+  }
+
+  function refreshAgents() {
+    var rows = mergedAgents();
+    var el = document.getElementById('agents-list');
+    var needsInput = rows.filter(function(r) { return r.state === 'needs-input'; }).length;
+    var badge = document.getElementById('agents-nav-badge');
+    if (needsInput > 0) { badge.style.display = ''; badge.textContent = String(needsInput); }
+    else badge.style.display = 'none';
+
+    if (rows.length === 0) { el.textContent = serveAlive ? 'No agents yet — dispatch one above.' : 'No agents recorded.'; return; }
+    el.innerHTML = '';
+    rows.forEach(function(r) {
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 6px;border-radius:6px;cursor:pointer'
+        + (r.sessionId === selected ? ';background:rgba(255,255,255,0.06)' : '');
+      var dot = document.createElement('span');
+      dot.style.cssText = 'width:9px;height:9px;border-radius:50%;flex:none;background:' + (STATE_DOT[r.state] || '#666');
+      var label = document.createElement('span');
+      label.textContent = r.label || r.sessionId.slice(0, 8);
+      label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px';
+      var meta = document.createElement('span');
+      meta.textContent = r.state + ' · ' + (r.model || '').split('/').pop() + (r.host === 'cli' ? ' · cli' : '');
+      meta.style.cssText = 'font-size:11px;color:var(--text-dim,#889)';
+      row.appendChild(dot); row.appendChild(label); row.appendChild(meta);
+      row.addEventListener('click', function() { selectAgent(r); });
+      el.appendChild(row);
+    });
+  }
+
+  function renderApproval() {
+    var box = document.getElementById('agents-approval');
+    var req = selected ? approvals[selected] : null;
+    if (!req) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    document.getElementById('agents-approval-title').textContent = req.title || req.kind;
+    document.getElementById('agents-approval-desc').textContent = req.description || '';
+    var opts = document.getElementById('agents-approval-options');
+    var msgBox = document.getElementById('agents-approval-message');
+    msgBox.style.display = '';
+    opts.innerHTML = '';
+    (req.options && req.options.length ? req.options : ['approve', 'deny']).forEach(function(choice, i) {
+      var btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.textContent = (i + 1) + '. ' + choice;
+      btn.addEventListener('click', function() {
+        wsCall('agent.permissionResponse', {
+          sessionId: req.sessionId, requestId: req.requestId,
+          choice: choice, message: msgBox.value.trim() || undefined,
+        }).then(function() {
+          delete approvals[req.sessionId];
+          msgBox.value = '';
+          renderApproval();
+          setTimeout(loadAgents, 400);
+        });
+      });
+      opts.appendChild(btn);
+    });
+  }
+
+  function selectAgent(row) {
+    selected = row.sessionId;
+    document.getElementById('agents-peek').style.display = '';
+    document.getElementById('agents-peek-title').textContent = row.label || row.sessionId.slice(0, 8);
+    document.getElementById('agents-peek-state').textContent =
+      row.state + ' · ' + (row.model || '') + (row.controllable ? '' : ' · read-only (attach in the terminal that owns it)');
+    document.getElementById('agents-transcript').textContent = '';
+    var canDrive = row.controllable && serveAlive;
+    document.getElementById('agents-reply-input').disabled = !canDrive;
+    document.getElementById('agents-reply-btn').disabled = !canDrive;
+    document.getElementById('agents-cancel-btn').disabled = !canDrive;
+    renderApproval();
+    refreshAgents();
+    if (!canDrive) return;
+    if (subscribedTo && subscribedTo !== selected) wsCall('agents.unsubscribe', { sessionId: subscribedTo });
+    var sid = selected;
+    wsCall('agent.output.replay', { sessionId: sid }).then(function(resp) {
+      if (selected !== sid) return;
+      ((resp && resp.events) || []).forEach(renderStreamEvent);
+      return wsCall('agents.subscribe', { sessionId: sid }).then(function() { subscribedTo = sid; });
+    });
+  }
+
+  function loadAgents() {
+    return Promise.all([api('serve-info'), api('agents')]).then(function(res) {
+      var info = res[0] || {}; var reg = res[1] || {};
+      serveUrl = info.url || null;
+      serveAlive = !!info.alive;
+      registry = reg.agents || [];
+      document.getElementById('agents-offline').style.display = serveAlive ? 'none' : '';
+      document.getElementById('agents-dispatch-btn').disabled = !serveAlive;
+      if (!serveAlive) { hosted = []; refreshAgents(); return; }
+      return wsCall('agents.list', {}).then(function(resp) {
+        hosted = (resp && resp.agents) || [];
+        refreshAgents();
+      });
+    });
+  }
+
+  function dispatchAgent() {
+    var promptEl = document.getElementById('agents-dispatch-prompt');
+    var prompt = promptEl.value.trim();
+    if (!prompt || !serveAlive) return;
+    var model = document.getElementById('agents-dispatch-model').value.trim() || undefined;
+    var maxSpend = parseFloat(document.getElementById('agents-dispatch-maxspend').value);
+    promptEl.value = '';
+    promptEl.focus(); // keep focus for batch dispatch
+    wsCall('agents.dispatch', {
+      prompt: prompt, model: model,
+      maxSpendUsd: isFinite(maxSpend) && maxSpend > 0 ? maxSpend : undefined,
+    }).then(loadAgents);
+  }
+
+  document.getElementById('agents-dispatch-btn').addEventListener('click', dispatchAgent);
+  document.getElementById('agents-dispatch-prompt').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') dispatchAgent();
+  });
+  document.getElementById('agents-reply-btn').addEventListener('click', function() {
+    var input = document.getElementById('agents-reply-input');
+    var text = input.value.trim();
+    if (!text || !selected) return;
+    input.value = '';
+    transcriptAppend('\\n❯ ' + text + '\\n');
+    wsCall('agents.reply', { sessionId: selected, text: text }).then(function() { setTimeout(loadAgents, 300); });
+  });
+  document.getElementById('agents-reply-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('agents-reply-btn').click();
+  });
+  document.getElementById('agents-cancel-btn').addEventListener('click', function() {
+    if (selected) wsCall('agents.cancel', { sessionId: selected }).then(function() { setTimeout(loadAgents, 300); });
+  });
+
+  document.addEventListener('tab:activated', function(e) {
+    if (e.detail.name !== 'agents') return;
+    loadAgents();
+    if (!pollTimer) pollTimer = setInterval(loadAgents, 5000);
+  });
+  document.addEventListener('tab:deactivated', function(e) {
+    if (e.detail.name !== 'agents') return;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  });
+  // Badge even before first visit.
+  loadAgents();
+})();
 </script>
 </body>
 </html>`;

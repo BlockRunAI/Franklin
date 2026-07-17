@@ -10,7 +10,8 @@
 <h3>The AI agent with a wallet.</h3>
 
 <p>
-  Other agents write code. Franklin Agent writes code <em>and spends money</em> to get things done.<br>
+  Other agents just talk. Franklin Agent holds your USDC <em>and puts it to work</em> —<br>
+  trading, research, and autonomous tasks with real budgets, real guardrails, real outcomes.<br>
   One wallet. Every model. Every paid API. Pay only for outcomes — not subscriptions.
 </p>
 
@@ -42,7 +43,7 @@
 
 ## The pitch in one paragraph
 
-Most coding agents write code. Franklin Agent writes code **and spends money to get the job done**. It holds a USDC wallet, picks the best model per task from 55+ providers, purchases trading data, generates images, pays for web search — all autonomously. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
+Franklin Agent is an **autonomous economic agent** — an AI that holds a USDC wallet and spends it to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from 55+ providers. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
 
 Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships as one npm package.
 
@@ -185,6 +186,26 @@ Franklin is **chat-first**. You do not wire a DAG, configure six API keys, or co
 ```
 
 Live data from CoinGecko. RSI, MACD, Bollinger, and volatility computed locally. No API key needed.
+
+### 🛡️ Trades only move on YOUR approval
+
+Real-money trades (Jupiter, 0x, Polymarket) are hard-gated behind a **trade plan**: the agent proposes a structured plan — venue, asset, size, slippage, stop condition, rationale, total spend — and nothing executes until you approve it. Approved budgets draw down per trade and expire in 15 minutes. This holds in every permission mode, `--trust` included. Add your own guardrails as [lifecycle hooks](docs/examples/hooks/) — daily spend caps, token blacklists, spend ledgers — that veto actions before money moves.
+
+### 🎯 Autonomous goals with adversarial verification
+
+```text
+> /goal research the top 3 x402-compatible data APIs and produce a comparison
+```
+
+Franklin plans the objective, works it across turns on its own, and — when it claims completion — a panel of **adversarial reviewers audits the evidence and refutes anything unsupported**. Bounded by a turn cap, a verification-round cap, and your `--max-spend`. Esc pauses at any time. Pair with `/loop 1h check funding rates` (durable scheduler) and the `Monitor` tool (live feeds delivered at turn boundaries) for always-on market coverage.
+
+### 🧠 A memory that follows your wallet
+
+Every trade journals itself: thesis on open, P&L on close, written to a **wallet-keyed trading journal** (`~/.blockrun/memory/trading-*/`) that any session can recall — "what was my SOL thesis?" just works, from any directory. Session learnings capture with `/flush`, consolidate with `/dream`, and inject automatically at session start.
+
+### 🕹️ Mission control for your fleet
+
+`franklin serve` + `franklin panel` → the **Agents** tab: dispatch one agent per strategy or market, watch them stream live, reply to any of them, and approve their trade plans and permission requests — all from one browser page. Sessions started in a terminal show up too.
 
 ### 🎨 Image generation
 
