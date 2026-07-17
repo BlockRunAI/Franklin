@@ -1,5 +1,83 @@
 # Changelog
 
+## Franklin Agent 3.34.0 — the economic agent grows up
+
+Six feature commits in one release, all pointing the same direction: Franklin
+is an autonomous economic agent with trading as its flagship — and autonomy
+over money needs architecture, not vibes. Every new capability below ships
+with a hard bound and an off switch.
+
+### Trades only move on your approval
+
+Real-money trades (JupiterSwap, Base0x swaps, PolymarketBet orders) are now
+hard-gated behind a **trade plan**: the agent proposes a structured plan —
+venue, asset, size, slippage, stop condition, rationale, total spend — and
+nothing executes until you approve it. Approved budgets draw down per trade,
+plans expire after 15 minutes, and the gate holds in **every** permission mode,
+`--trust` included (money differs in kind from file edits — same reasoning as
+the always-prompt dangerous-bash list). Headless runs fail closed: without
+`--approve-trades` every plan is rejected, and even with it the plan must fit
+inside what's left of `--max-spend`. Every decision lands in one audit book,
+`~/.blockrun/approvals.jsonl`.
+
+### Lifecycle hooks — your own guardrails
+
+Drop JSON files in `~/.blockrun/hooks/` (or trust-gated `.franklin/hooks/` in
+a repo) and Franklin runs your commands at eight lifecycle points — including
+**PreSpend**, which fires for any money-moving tool with the estimated USD
+amount on stdin and can veto it. Semantics are deliberately safe: a hook that
+crashes or times out fails OPEN; only an explicit deny blocks. Ships with three
+examples: a daily spend cap, a token blacklist, a spend ledger.
+
+### `/goal` — autonomy that has to prove itself
+
+`/goal <objective>` freezes the objective into a plan (outcomes, not methods),
+then works it across turns on its own. When the agent claims completion, a
+panel of **three adversarial reviewers audits the actual evidence** — distinct
+lenses, majority-refute, and "uncertain" counts as refuted. Re-reviews may not
+raise fresh demands (the anti-ratchet rule that keeps goals finishable), a
+strategist steps in once if rounds keep failing in different ways, and success
+closes with an ≤80-word summary. Bounds: 25 turns, 5 verification rounds, the
+goal budget, and Esc always pauses. `/loop 1h <prompt>` (durable scheduler with
+missed-slot catch-up) and the new `Monitor` tool (log lines delivered at turn
+boundaries, flood auto-pause) cover the always-on side.
+
+### Memory that follows the wallet
+
+Every trade journals itself — thesis on open, P&L on close — into a trading
+journal keyed by **wallet address**, not working directory: "what was my SOL
+thesis?" answers from any folder. Workspace memory is keyed by git origin, so
+clones share it. Session logs decay with a 7-day half-life and old hits carry a
+verify-first staleness note; curated files never decay. `/remember` appends,
+`/flush` captures a session's durable learnings, `/dream` consolidates logs
+into curated memory (gated, locked, archived). The Brain entity graph is
+untouched — `MemoryRecall` now reads both.
+
+### Mission control
+
+`franklin serve` now hosts **many concurrent agents**, each with its own loop,
+event stream, and approval broker — and `franklin panel` grew an **Agents**
+tab: dispatch one agent per strategy or market, watch them stream live, reply,
+and answer their permission prompts and trade plans from the browser. Hosted
+agents run in default permission mode (approvals travel over the wire — no more
+hardcoded trust). Terminal sessions appear too, read-only. The legacy desktop
+protocol is untouched.
+
+### Also
+
+- One-shot exit paths, budget stops, and interrupts all publish agent liveness
+  to `~/.blockrun/agents/` with pid reconciliation — the fleet view can tell a
+  live session from a dead one.
+- Test suite grew from 587 to 621; spawn-heavy tests now run under
+  `--test-concurrency=4` (they flaked under unbounded file parallelism).
+- Kill switches: `FRANKLIN_HOOKS=0`, `FRANKLIN_MEMORY=0`, goal caps via
+  `FRANKLIN_GOAL_MAX_TURNS` / `FRANKLIN_GOAL_MAX_ROUNDS` / `FRANKLIN_GOAL_VERIFIERS`.
+
+Known boundaries (deliberate, documented): the scheduler doesn't fire when no
+session is running; dashboard control of terminal-owned sessions is read-only;
+the desktop app has no approval UI yet, so trades it initiates are rejected by
+the gate until it does.
+
 ## Franklin Agent 3.33.0 — the model list stops going stale
 
 Reported as *"Franklin models still list old models."* It was structural, and it
