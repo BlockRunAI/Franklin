@@ -19,12 +19,11 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   smart: 'blockrun/auto',
   eco: 'blockrun/auto',
   premium: 'blockrun/auto',
-  // Anthropic — `sonnet`/`claude` follow the newest Sonnet (5); `fable` is the
-  // Mythos-class tier above Opus.
+  // Anthropic — `claude` follows Opus; `fable` is the Mythos-class tier above it.
   fable: 'anthropic/claude-fable-5',
   'fable-5': 'anthropic/claude-fable-5',
   sonnet: 'anthropic/claude-sonnet-5',
-  claude: 'anthropic/claude-sonnet-5',
+  claude: 'anthropic/claude-opus-4.8',
   'sonnet-5': 'anthropic/claude-sonnet-5',
   'sonnet-4.6': 'anthropic/claude-sonnet-4.6',
   'sonnet-4.5': 'anthropic/claude-sonnet-4.5',
@@ -221,6 +220,30 @@ export interface ModelCategory {
   models: ModelEntry[];
 }
 
+const PROVIDER_ORDER = [
+  'anthropic',
+  'openai',
+  'google',
+  'xai',
+  'zai',
+  'moonshot',
+  'minimax',
+  'deepseek',
+  'nvidia',
+];
+
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: 'Anthropic / Claude',
+  openai: 'OpenAI / GPT',
+  google: 'Google / Gemini',
+  xai: 'xAI / Grok',
+  zai: 'Z.AI / GLM',
+  moonshot: 'Moonshot / Kimi',
+  minimax: 'MiniMax',
+  deepseek: 'DeepSeek',
+  nvidia: 'Free / NVIDIA',
+};
+
 /**
  * Single source of truth for the /model picker.
  * ~30 models across 6 categories. Every ID here is present in src/pricing.ts
@@ -333,6 +356,129 @@ function isSyntheticId(id: string): boolean {
   return id.startsWith('blockrun/');
 }
 
+function providerOf(id: string): string {
+  return id.split('/', 1)[0] || 'other';
+}
+
+function providerRank(provider: string): number {
+  const index = PROVIDER_ORDER.indexOf(provider);
+  return index >= 0 ? index : PROVIDER_ORDER.length;
+}
+
+function providerHeading(provider: string): string {
+  return PROVIDER_LABELS[provider] || provider;
+}
+
+function modelSuffix(id: string): string {
+  return id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
+}
+
+function versionScoreFrom(match: RegExpMatchArray | null): number {
+  if (!match) return 0;
+  const parts = match[1].split('.').map(part => Number.parseInt(part, 10) || 0);
+  return parts.slice(0, 3).reduce((score, part, index) => score + part * [1_000_000, 100_000, 1_000][index], 0);
+}
+
+function providerVersionScore(provider: string, suffix: string): number {
+  switch (provider) {
+    case 'anthropic':
+      return versionScoreFrom(suffix.match(/claude-(?:fable|opus|sonnet|haiku)-(\d+(?:\.\d+)*)/));
+    case 'openai':
+      if (suffix.startsWith('gpt-4o')) return versionScoreFrom(['', '4.0'] as RegExpMatchArray);
+      return versionScoreFrom(suffix.match(/(?:gpt-|o)(\d+(?:\.\d+)*)/));
+    case 'google':
+      return versionScoreFrom(suffix.match(/gemini-(\d+(?:\.\d+)*)/));
+    case 'xai':
+      return versionScoreFrom(suffix.match(/grok-(\d+(?:\.\d+)*)/));
+    case 'zai':
+      return versionScoreFrom(suffix.match(/glm-(\d+(?:\.\d+)*)/));
+    case 'moonshot':
+      return versionScoreFrom(suffix.match(/kimi-k(\d+(?:\.\d+)*)/));
+    case 'minimax':
+      return versionScoreFrom(suffix.match(/minimax-m(\d+(?:\.\d+)*)/));
+    case 'deepseek':
+      return versionScoreFrom(suffix.match(/deepseek-v(\d+(?:\.\d+)*)/));
+    case 'nvidia':
+      return versionScoreFrom(
+        suffix.match(/deepseek-v(\d+(?:\.\d+)*)/) ??
+        suffix.match(/qwen(\d+(?:\.\d+)*)/) ??
+        suffix.match(/step-(\d+(?:\.\d+)*)/) ??
+        suffix.match(/nemotron-(\d+(?:\.\d+)*)/) ??
+        suffix.match(/mistral-large-(\d+(?:\.\d+)*)/) ??
+        suffix.match(/v(\d+(?:\.\d+)*)/),
+      );
+    default:
+      return versionScoreFrom(suffix.match(/(?:^|[^\d])(\d+(?:\.\d+)*)(?:[^\d]|$)/));
+  }
+}
+
+function expandedModelRank(model: GatewayModel): number {
+  const suffix = modelSuffix(model.id).toLowerCase();
+  const provider = providerOf(model.id);
+  let score = providerVersionScore(provider, suffix);
+
+  switch (provider) {
+    case 'anthropic':
+      score += suffix.includes('fable') ? 90_000 : suffix.includes('opus') ? 80_000 : suffix.includes('sonnet') ? 70_000 : suffix.includes('haiku') ? 40_000 : 0;
+      break;
+    case 'openai':
+      score += suffix.startsWith('gpt-') ? 80_000 : suffix.startsWith('o') ? 65_000 : 0;
+      if (suffix.includes('codex')) score += 8_000;
+      if (suffix.includes('pro') || suffix.includes('sol')) score += 3_000;
+      if (suffix.includes('terra')) score += 2_000;
+      if (suffix.includes('luna')) score += 1_000;
+      if (suffix.includes('mini')) score -= 8_000;
+      if (suffix.includes('nano')) score -= 12_000;
+      break;
+    case 'google':
+      score += suffix.includes('gemini') ? 80_000 : 0;
+      if (suffix.includes('pro')) score += 5_000;
+      if (suffix.includes('flash')) score -= 5_000;
+      break;
+    case 'xai':
+      score += suffix.includes('grok') ? 80_000 : 0;
+      if (suffix.includes('fast')) score -= 4_000;
+      if (suffix.includes('build')) score -= 8_000;
+      break;
+    case 'zai':
+      score += suffix.includes('glm') ? 80_000 : 0;
+      if (suffix.includes('turbo')) score -= 5_000;
+      break;
+    case 'moonshot':
+      score += suffix.includes('kimi') ? 80_000 : 0;
+      break;
+    case 'minimax':
+      score += suffix.includes('minimax') ? 80_000 : 0;
+      break;
+    case 'deepseek':
+      score += suffix.includes('v4-pro') ? 90_000 : suffix.includes('reasoner') ? 75_000 : suffix.includes('chat') ? 70_000 : 0;
+      break;
+    case 'nvidia':
+      score += suffix.includes('qwen3-next') ? 80_000 : suffix.includes('qwen') ? 70_000 : suffix.includes('nemotron') ? 60_000 : 0;
+      break;
+  }
+
+  return score;
+}
+
+function cleanGatewayLabel(model: GatewayModel): string {
+  return (model.name || modelSuffix(model.id))
+    .replace(/\s*\((?:free|paid)\)\s*$/i, '')
+    .trim();
+}
+
+function buildShortcutById(): Map<string, string> {
+  const preferred = new Map<string, string>();
+  for (const row of PICKER_CATEGORIES.flatMap(category => category.models)) {
+    preferred.set(row.id, row.shortcut);
+  }
+  for (const [shortcut, id] of Object.entries(MODEL_SHORTCUTS)) {
+    const existing = preferred.get(id);
+    if (!existing || shortcut.length < existing.length) preferred.set(id, shortcut);
+  }
+  return preferred;
+}
+
 /** Render a gateway price object into the picker's display format. */
 function formatPrice(m: GatewayModel): string {
   const p = m.pricing as unknown as Record<string, number | undefined>;
@@ -364,13 +510,12 @@ export interface HydratedPicker {
  * {@link PICKER_CATEGORIES} stays the editorial layer — which models are worth
  * featuring, in what order, under which heading, with which shortcut. The
  * gateway is the source of truth for everything factual: whether a model still
- * exists, its display name, and its price. That split is deliberate: the
- * gateway lists 57 chat models and the picker deliberately shows ~21 (see the
- * v3.9.3 trim), so we can't just render the catalog.
+ * exists and its price. Ctrl+A uses {@link getExpandedPickerCategories} when the
+ * user explicitly wants the full gateway chat catalog.
  *
  * Reconciliation rules:
- *   - Curated row present in the catalog → refresh its label + price from the
- *     gateway, so a price change upstream can't leave a stale number on screen.
+ *   - Curated row present in the catalog → keep its label/shortcut/highlight and
+ *     refresh its price from the gateway.
  *   - Curated row absent → drop it. This is the self-healing half: an id the
  *     gateway retired (the `claude-haiku-4.5-20251001` case) stops being
  *     offered without waiting on a Franklin release. Its MODEL_SHORTCUTS alias
@@ -413,9 +558,7 @@ export function reconcilePicker(catalog: GatewayModel[]): HydratedPicker {
       if (!live) continue; // retired upstream — drop the row, keep the alias
       // Price comes from the gateway (it's factual, it drifts, and it's the
       // user's money). The label stays curated: gateway names are longer than
-      // the picker's tuned columns ("Qwen3-Next 80B Instruct (Free)" is 30
-      // chars against a 26-wide field) and carry redundant "(Free)" suffixes
-      // that the 🆓 heading already says.
+      // the picker's tuned columns and often carry redundant suffixes.
       models.push({ ...row, price: formatPrice(live) });
     }
     if (models.length > 0) categories.push({ ...cat, models });
@@ -426,6 +569,66 @@ export function reconcilePicker(catalog: GatewayModel[]): HydratedPicker {
   ).length;
 
   return { categories, moreCount, live: true };
+}
+
+export async function getExpandedPickerCategories(): Promise<HydratedPicker> {
+  try {
+    return reconcileExpandedPicker(await getGatewayModels());
+  } catch {
+    return { categories: PICKER_CATEGORIES, moreCount: 0, live: false };
+  }
+}
+
+export function reconcileExpandedPicker(catalog: GatewayModel[]): HydratedPicker {
+  const categories: ModelCategory[] = [{ ...PICKER_CATEGORIES[0], models: [...PICKER_CATEGORIES[0].models] }];
+  const curated = new Set<string>();
+  const curatedRows = new Map<string, ModelEntry>();
+
+  for (const cat of PICKER_CATEGORIES) {
+    for (const row of cat.models) {
+      curated.add(row.id);
+      if (!isSyntheticId(row.id)) curatedRows.set(row.id, row);
+    }
+  }
+
+  const shortcutById = buildShortcutById();
+  const chatModels = catalog
+    .filter(m => m.categories?.includes('chat'))
+    .sort((a, b) => {
+      const providerDelta = providerRank(providerOf(a.id)) - providerRank(providerOf(b.id));
+      if (providerDelta !== 0) return providerDelta;
+      const rankDelta = expandedModelRank(b) - expandedModelRank(a);
+      if (rankDelta !== 0) return rankDelta;
+      const curatedDelta = Number(!curated.has(a.id)) - Number(!curated.has(b.id));
+      if (curatedDelta !== 0) return curatedDelta;
+      return modelSuffix(a.id).localeCompare(modelSuffix(b.id));
+    });
+
+  const byProvider = new Map<string, ModelEntry[]>();
+  for (const model of chatModels) {
+    const provider = providerOf(model.id);
+    const curatedRow = curatedRows.get(model.id);
+    const row: ModelEntry = curatedRow
+      ? { ...curatedRow, price: formatPrice(model) }
+      : {
+          id: model.id,
+          shortcut: shortcutById.get(model.id) || model.id,
+          label: cleanGatewayLabel(model),
+          price: formatPrice(model),
+        };
+    const rows = byProvider.get(provider) ?? [];
+    rows.push(row);
+    byProvider.set(provider, rows);
+  }
+
+  for (const [provider, models] of [...byProvider.entries()].sort((a, b) => {
+    const rankDelta = providerRank(a[0]) - providerRank(b[0]);
+    return rankDelta !== 0 ? rankDelta : a[0].localeCompare(b[0]);
+  })) {
+    categories.push({ category: providerHeading(provider), models });
+  }
+
+  return { categories, moreCount: 0, live: true };
 }
 
 /**
