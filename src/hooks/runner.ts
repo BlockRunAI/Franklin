@@ -139,13 +139,15 @@ export class HookEngine {
         }
       );
 
-      try {
-        child.stdin?.write(JSON.stringify(input));
-        child.stdin?.end();
-      } catch {
-        // EPIPE from a handler that never reads stdin — fine, decision comes
-        // from its exit code / stdout.
-      }
+      child.stdin?.on('error', err => {
+        // EPIPE from a handler that exits before reading stdin is fine; the
+        // decision still comes from exit code / stdout.
+        if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
+          logger.warn(`[hooks] ${path.basename(hook.sourceFile)} stdin write failed open: ${err.message.slice(0, 160)}`);
+        }
+      });
+      child.stdin?.write(JSON.stringify(input));
+      child.stdin?.end();
     });
   }
 }
