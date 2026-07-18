@@ -1,5 +1,26 @@
 # Changelog
 
+## Franklin Agent 3.35.0 — expandable model picker + hook stdin fix
+
+Two community contributions from @0xCheetah1.
+
+**Ctrl+A expands the model picker to the full live catalog.** The `/model`
+picker stays curated by default (the editorial ~21 rows), but Ctrl+A now
+toggles a view of every live chat model on the gateway, grouped by provider
+and ranked newest/strongest first within each group. The "+N more on gateway"
+hint points at Ctrl+A instead of asking you to shell out to `franklin models`.
+Also: Esc no longer quits an idle session — it aborts active work and closes
+dialogs, and Ctrl+C / `/exit` remain the deliberate exits (Esc-to-quit
+surprised people). The bare `claude` shortcut now resolves to Opus (the
+flagship) rather than Sonnet.
+
+**Hook stdin EPIPE handled correctly.** A hook handler that exits before
+reading its stdin caused an async EPIPE that the previous synchronous
+try/catch couldn't catch — a latent crash risk. Stdin write errors now flow
+through the stream's `error` event: EPIPE is ignored (the decision still comes
+from exit code / stdout, matching the fail-open model), other write failures
+are logged.
+
 ## Franklin Agent 3.34.3 — concurrent trade-plan fix
 
 A self-review of the 3.34.x work caught one real bug on the money path.
