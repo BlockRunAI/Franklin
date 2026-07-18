@@ -1750,11 +1750,12 @@ export async function interactiveSession(
             .join('\n');
           if (looksLikeStalledIntent(tailText)) {
             // Tool-use-strong fallbacks. Ordered cheap → premium so a free
-            // tier still gets a Kimi/Haiku attempt before paying for GPT-5.
+            // tier still gets a Haiku attempt before paying for GPT-5.
             // Excludes nvidia/* and *-coder-* — they're the source population.
+            // (Kimi dropped 2026-07: retired K2.x, and K3 is premium-priced —
+            // Haiku already fills the cheap tool-use slot here.)
             const TOOL_USE_FALLBACK_MODELS = [
               'anthropic/claude-haiku-4.5',
-              'moonshot/kimi-k2.7',
               'openai/gpt-5.4',
               'anthropic/claude-sonnet-4.6',
             ];

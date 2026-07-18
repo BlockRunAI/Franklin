@@ -371,14 +371,14 @@ test('proxy server handles OPTIONS and local model switching without backend cal
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: [{ role: 'user', content: 'use k2.6' }],
+        messages: [{ role: 'user', content: 'use k3' }],
       }),
     });
     assert.equal(suffixSwitchRes.status, 200, `Expected suffix switch response 200, got ${suffixSwitchRes.status}`);
     const suffixPayload = await suffixSwitchRes.json();
-    assert.equal(suffixPayload.model, 'moonshot/kimi-k2.6');
+    assert.equal(suffixPayload.model, 'moonshot/kimi-k3');
     assert.ok(
-      suffixPayload.content?.[0]?.text?.includes('Switched to **moonshot/kimi-k2.6**'),
+      suffixPayload.content?.[0]?.text?.includes('Switched to **moonshot/kimi-k3**'),
       `Unexpected suffix switch payload: ${JSON.stringify(suffixPayload)}`
     );
 
@@ -6387,15 +6387,16 @@ test('collapseRepetitiveTools leaves image-bearing tool_results alone', async ()
   assert.match(trB.content, /\[xxxx.+\.\.\.\]/);
 });
 
-test('kimi: shortcuts resolve to K2.7 flagship; k2.6 pin still works', async () => {
-  // K2.7 became the gateway Kimi flagship 2026-06 (K2.6 demoted but still
-  // routes). `kimi` + retired K2.5 aliases follow the flagship; `k2.6` pins K2.6.
+test('kimi: shortcuts resolve to the K3 flagship; retired K2.x pins follow it', async () => {
+  // K3 became the gateway Kimi flagship 2026-07 (replaced the whole K2.x
+  // line). `kimi`/`k3` and every retired K2.x pin resolve to the flagship.
   const { resolveModel } = await import('../dist/ui/model-picker.js');
-  assert.equal(resolveModel('kimi'), 'moonshot/kimi-k2.7');
-  assert.equal(resolveModel('k2.7'), 'moonshot/kimi-k2.7');
-  assert.equal(resolveModel('kimi-k2.5'), 'moonshot/kimi-k2.7');
-  assert.equal(resolveModel('k2.5'), 'moonshot/kimi-k2.7');
-  assert.equal(resolveModel('k2.6'), 'moonshot/kimi-k2.6');
+  assert.equal(resolveModel('kimi'), 'moonshot/kimi-k3');
+  assert.equal(resolveModel('k3'), 'moonshot/kimi-k3');
+  assert.equal(resolveModel('k2.7'), 'moonshot/kimi-k3');
+  assert.equal(resolveModel('k2.6'), 'moonshot/kimi-k3');
+  assert.equal(resolveModel('kimi-k2.5'), 'moonshot/kimi-k3');
+  assert.equal(resolveModel('k2.5'), 'moonshot/kimi-k3');
 });
 
 // ─── Tool failure taxonomy + anomaly detector ───────────────────────────────
@@ -6572,20 +6573,23 @@ test('getToolAnomalies: math is deterministic on synthetic on-disk fixture', asy
   }
 });
 
-test('kimi: picker lists the K2.7 flagship, not retired/demoted entries', async () => {
+test('kimi: picker lists the K3 flagship, not retired K2.x entries', async () => {
   const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
   const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
+  assert.ok(!ids.includes('moonshot/kimi-k2.7'),
+    'moonshot/kimi-k2.7 should be gone from the picker (retired by the gateway)');
   assert.ok(!ids.includes('moonshot/kimi-k2.5'),
-    'moonshot/kimi-k2.5 should be removed from the picker (retired by the gateway)');
-  assert.ok(ids.includes('moonshot/kimi-k2.7'),
-    'moonshot/kimi-k2.7 (the current flagship) must be in the picker');
+    'moonshot/kimi-k2.5 should be gone from the picker (retired by the gateway)');
+  assert.ok(ids.includes('moonshot/kimi-k3'),
+    'moonshot/kimi-k3 (the current flagship) must be in the picker');
 });
 
 test('kimi: pricing keeps legacy entries for session-cost records', async () => {
   const { MODEL_PRICING } = await import('../dist/pricing.js');
-  // Keeping retired/demoted model pricing is the same pattern used for
+  // Keeping retired model pricing is the same pattern used for
   // nvidia/gpt-oss-120b and similar — old session-cost records reference these
-  // IDs and must not crash. K2.7 is the current flagship.
+  // IDs and must not crash. K3 is the current flagship.
+  assert.ok(MODEL_PRICING['moonshot/kimi-k3']);
   assert.ok(MODEL_PRICING['moonshot/kimi-k2.7']);
   assert.ok(MODEL_PRICING['moonshot/kimi-k2.6']);
   assert.ok(MODEL_PRICING['moonshot/kimi-k2.5']);
@@ -9803,7 +9807,7 @@ test('vision helpers: isVisionModel allowlist matches curated set', async () => 
     'google/gemini-3.1-pro',
     'google/gemini-2.5-flash',
     'xai/grok-4-0709',
-    'moonshot/kimi-k2.6',
+    'moonshot/kimi-k3',
     'nvidia/nemotron-nano-12b-v2-vl',
   ]) {
     assert.equal(isVisionModel(m), true, `${m} should be vision-capable`);

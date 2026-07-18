@@ -69,7 +69,10 @@ export interface RoutingResult {
 const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
   SIMPLE: {
     primary: 'deepseek/deepseek-v4-pro',
-    fallback: ['google/gemini-2.5-flash', 'moonshot/kimi-k2.7', 'deepseek/deepseek-chat'],
+    // Cheap-tier fallbacks only. Kimi dropped here 2026-07: the K2.x line was
+    // retired and its replacement K3 is premium-priced ($3/$15) — it doesn't
+    // belong in a cost-saving fallback chain.
+    fallback: ['google/gemini-2.5-flash', 'deepseek/deepseek-chat'],
   },
   MEDIUM: {
     primary: 'deepseek/deepseek-v4-pro',

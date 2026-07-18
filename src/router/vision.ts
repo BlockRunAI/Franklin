@@ -52,9 +52,10 @@ const VISION_MODELS = new Set<string>([
   // xAI — only Grok 4 base supports vision; grok-4-1-fast-reasoning is text-only
   'xai/grok-4-0709',
   'xai/grok-3',
-  // Moonshot — K2.7 (flagship) + K2.6 are multimodal (image + video input)
-  'moonshot/kimi-k2.7',
-  'moonshot/kimi-k2.6',
+  // Moonshot — K3 (flagship, 2026-07) is multimodal (image + text input);
+  // gateway catalog lists it under the "vision" category. Replaced the
+  // retired K2.7/K2.6 line.
+  'moonshot/kimi-k3',
   // NVIDIA inference — Nemotron Nano VL is multimodal; deepseek/qwen-coder are
   // not. Llama 4 Maverick dropped 2026-07-14: it left the gateway catalog, and
   // listing it here contradicted routeRequest()'s own "maverick is text-only"

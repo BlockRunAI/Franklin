@@ -144,15 +144,15 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'glm-5.1': 'zai/glm-5.1',
   'glm-turbo': 'zai/glm-5-turbo',
   'glm5': 'zai/glm-5.2',
-  kimi: 'moonshot/kimi-k2.7',
-  'k2.7': 'moonshot/kimi-k2.7',
-  // K2.6 demoted 2026-06 (gateway flagship is K2.7) but still routes — the
-  // `k2.6` pin keeps working for anyone who wants it explicitly.
-  'k2.6': 'moonshot/kimi-k2.6',
-  // K2.5 was retired by the gateway. Aliases stay so muscle memory keeps
-  // working but resolve to the current Kimi flagship (K2.7).
-  'kimi-k2.5': 'moonshot/kimi-k2.7',
-  'k2.5': 'moonshot/kimi-k2.7',
+  kimi: 'moonshot/kimi-k3',
+  k3: 'moonshot/kimi-k3',
+  // The K2.x line was retired by the gateway (2026-07, replaced by K3).
+  // These pins stay so muscle memory keeps working but resolve to the
+  // current Kimi flagship (K3).
+  'k2.7': 'moonshot/kimi-k3',
+  'k2.6': 'moonshot/kimi-k3',
+  'kimi-k2.5': 'moonshot/kimi-k3',
+  'k2.5': 'moonshot/kimi-k3',
 };
 
 /**
@@ -260,6 +260,9 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'google/gemini-3.1-pro',       shortcut: 'gemini-3',  label: 'Gemini 3.1 Pro',    price: '$2/$12' },
       { id: 'google/gemini-2.5-pro',       shortcut: 'gemini',    label: 'Gemini 2.5 Pro',    price: '$1.25/$10' },
       { id: 'xai/grok-4.5',                shortcut: 'grok',      label: 'Grok 4.5',          price: '$2.5/$9' },
+      // Kimi K3 (2026-07): 2.8T open MoE, 1M context, multimodal + reasoning.
+      // Replaced the budget K2.7 line — now premium-priced ($3/$15).
+      { id: 'moonshot/kimi-k3',            shortcut: 'kimi',      label: 'Kimi K3',           price: '$3/$15' },
     ],
   },
   {
@@ -286,7 +289,6 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'google/gemini-2.5-flash',             shortcut: 'flash',    label: 'Gemini 2.5 Flash',    price: '$0.3/$2.5' },
       // Re-aliased to V4 Flash Chat upstream — context 1M, price 30% lower.
       { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V4 Flash Chat', price: '$0.2/$0.4' },
-      { id: 'moonshot/kimi-k2.7',                  shortcut: 'kimi',     label: 'Kimi K2.7',           price: '$0.95/$4' },
       // GLM flat-rate promos fully ended 2026-06-06 — whole family per-token
       // now (glm-5 $0.60/$1.92; `glm` shortcut pins flagship glm-5.2, listed
       // in Reasoning above).

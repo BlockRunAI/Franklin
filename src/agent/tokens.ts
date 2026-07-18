@@ -269,6 +269,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // Others
   'zai/glm-5.2': 1_000_000, // flagship bump 2026-06 — context jumped 200K → 1M
   'zai/glm-5.1': 200_000,
+  'moonshot/kimi-k3': 1_048_576,
   'moonshot/kimi-k2.7': 256_000,
   'moonshot/kimi-k2.6': 256_000,
   'moonshot/kimi-k2.5': 128_000,

@@ -1,5 +1,26 @@
 # Changelog
 
+## Franklin Agent 3.34.2 — Kimi K3
+
+The gateway retired the Kimi K2.x line and replaced it with **Kimi K3** —
+Moonshot's 2.8-trillion-parameter open MoE: 1M context, multimodal (image +
+text input), returns reasoning content, $3/$15 per M. Franklin's hardcoded
+model tables are synced to match, and — because K3 is priced like a frontier
+model, not the budget slot K2.7 held — its routing placement changed with it:
+
+- `kimi` (and `k3`, plus every retired `k2.7`/`k2.6`/`k2.5` pin) now resolve to
+  `moonshot/kimi-k3`. Pricing, context window (1M), and max-output (65K) tables
+  updated; the old K2.x pricing rows stay for historical session-cost records.
+- The picker moves Kimi out of **Budget** and into **Premium frontier** at
+  $3/$15 (same tier as Sonnet 5).
+- K3 is confirmed vision-capable (gateway lists it under the `vision` category),
+  so it replaces K2.7/K2.6 in the vision-routing allowlist.
+- K3 is deliberately **not** added to the cost-saving fallback chains (Auto's
+  SIMPLE tier, the stalled-intent tool-use recovery) — those exist to try a
+  *cheap* model before paying up, and a $3/$15 flagship defeats the purpose.
+  The now-dead K2.7 was removed from them; Haiku / Gemini Flash / DeepSeek
+  Chat still cover the cheap slot.
+
 ## Franklin Agent 3.34.0 — the economic agent grows up
 
 Six feature commits in one release, all pointing the same direction: Franklin
