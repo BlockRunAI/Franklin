@@ -18,6 +18,7 @@ import { renderMarkdown, renderMarkdownStreaming } from './markdown.js';
 import {
   resolveModel,
   getPickerCategories,
+  getExpandedPickerCategories,
   PICKER_CATEGORIES,
   PICKER_MODELS_FLAT,
   type ModelCategory,
@@ -788,13 +789,18 @@ function formatAgentErrorForDisplay(error: string): string {
   return out.join('\n');
 }
 
+function fitPickerText(value: string, width: number): string {
+  if (value.length <= width) return value.padEnd(width);
+  if (width <= 1) return value.slice(0, width);
+  return `${value.slice(0, width - 1)}…`;
+}
+
 // Picker model list is imported from ./model-picker.js (single source of truth
 // for curation). PICKER_CATEGORIES is the static editorial list, used as the
-// initial paint and the offline fallback; getPickerCategories() reconciles it
-// against the live gateway catalog (fresh labels/prices, retired rows dropped)
-// and the result lands in `pickerCats` state. Render and pickerIdx navigation
-// both read `pickerCats` / `pickerFlat` — never the static consts — so the
-// cursor and the visible rows can't disagree after hydration.
+// initial paint and the offline fallback; getPickerCategories() reconciles the
+// curated list against the live gateway catalog. Ctrl+A expands the picker via
+// getExpandedPickerCategories() to show every live chat model grouped by
+// provider.
 
 interface ToolStatus {
   name: string;
@@ -880,6 +886,7 @@ function RunCodeApp({
   // replaced by the hydrated list once the catalog fetch lands.
   const [pickerCats, setPickerCats] = useState<ModelCategory[]>(PICKER_CATEGORIES);
   const [pickerMoreCount, setPickerMoreCount] = useState(0);
+  const [pickerExpanded, setPickerExpanded] = useState(false);
   const pickerFlat = useMemo(() => pickerCats.flatMap(c => c.models), [pickerCats]);
   // Track the live model without re-firing the hydration effect on every model
   // change — the effect should run when the picker opens, not when the model
@@ -934,7 +941,7 @@ function RunCodeApp({
   useEffect(() => {
     if (mode !== 'model-picker') return;
     let cancelled = false;
-    void getPickerCategories()
+    void (pickerExpanded ? getExpandedPickerCategories() : getPickerCategories())
       .then(({ categories, moreCount, live }) => {
         if (cancelled || !live) return;
         setPickerCats(categories);
@@ -948,7 +955,7 @@ function RunCodeApp({
       })
       .catch(() => { /* keep the static list — the picker must stay usable */ });
     return () => { cancelled = true; };
-  }, [mode]);
+  }, [mode, pickerExpanded]);
 
   const bellPlayedRef = useRef(false);
   useEffect(() => {
@@ -1122,9 +1129,10 @@ function RunCodeApp({
     }
   }, { isActive: !!permissionRequest });
 
-  // Key handler for picker + esc + abort
-  const isPickerOrEsc = mode === 'model-picker' || (mode === 'input' && ready && !input) || !ready;
-  useInput((_ch, key) => {
+  // Key handler for picker + abort. Esc aborts active work or closes dialogs;
+  // it must not exit the app while idle — Ctrl+C and /exit are the exit paths.
+  const isPickerOrAbort = mode === 'model-picker' || !ready;
+  useInput((ch, key) => {
     // Escape during generation → abort current turn (skip if permission dialog open)
     if (key.escape && !ready && !permissionRequest) {
       onAbort();
@@ -1135,16 +1143,16 @@ function RunCodeApp({
       return;
     }
 
-    // Esc to quit (only when input is empty and in input mode)
-    // In Vim mode: Esc goes to normal mode (handled by VimInput), only quit on Esc in normal mode with empty input
-    if (key.escape && mode === 'input' && ready && !input) {
-      if (vimEnabled && currentVimMode === 'insert') return; // Let VimInput handle Esc → normal
-      requestExit(false);
-      return;
-    }
-
     // Arrow key navigation for model picker
     if (mode !== 'model-picker') return;
+    if (key.ctrl && ch === 'a') {
+      const nextExpanded = !pickerExpanded;
+      setPickerExpanded(nextExpanded);
+      if (!nextExpanded) setPickerCats(PICKER_CATEGORIES);
+      setPickerMoreCount(0);
+      setPickerIdx(0);
+      return;
+    }
     if (key.upArrow) setPickerIdx(i => Math.max(0, i - 1));
     else if (key.downArrow) setPickerIdx(i => Math.min(pickerFlat.length - 1, i + 1));
     else if (key.return) {
@@ -1160,16 +1168,18 @@ function RunCodeApp({
       // the picker closed, which is both confusing and a privacy risk.
       setInput('');
       setHistoryIdx(-1);
+      setPickerExpanded(false);
       setMode('input');
       setReady(true);
     }
     else if (key.escape) {
       setInput('');
       setHistoryIdx(-1);
+      setPickerExpanded(false);
       setMode('input');
       setReady(true);
     }
-  }, { isActive: isPickerOrEsc });
+  }, { isActive: isPickerOrAbort });
 
   // Tab key: toggle expand/collapse on the last completed tool
   useInput((_ch, key) => {
@@ -1248,6 +1258,9 @@ function RunCodeApp({
             // closing handlers clear input too, so both ends are covered.
             setInput('');
             setHistoryIdx(-1);
+            setPickerExpanded(false);
+            setPickerCats(PICKER_CATEGORIES);
+            setPickerMoreCount(0);
             setMode('model-picker');
           }
           return;
@@ -2044,7 +2057,7 @@ function RunCodeApp({
           <Box flexDirection="column" marginTop={1}>
             <Box marginLeft={2}>
               <Text bold>Select a model </Text>
-              <Text dimColor>(↑↓ navigate, Enter select, Esc cancel)</Text>
+              <Text dimColor>(↑↓ navigate, Enter select, Ctrl+A {pickerExpanded ? 'curated' : 'all models'}, Esc cancel)</Text>
             </Box>
             {hiddenAbove > 0 && (
               <Box marginLeft={2} marginTop={1}>
@@ -2073,9 +2086,9 @@ function RunCodeApp({
                           color={isSelected ? 'cyan' : isHighlight ? 'yellow' : undefined}
                           bold={isSelected || isHighlight}
                         >
-                          {' '}{m.label.padEnd(26)}{' '}
+                          {' '}{fitPickerText(m.label, 26)}{' '}
                         </Text>
-                        <Text dimColor> {m.shortcut.padEnd(14)}</Text>
+                        <Text dimColor> {fitPickerText(m.shortcut, 14)}</Text>
                         <Text
                           color={m.price === 'FREE' ? 'green' : isHighlight ? 'yellow' : undefined}
                           dimColor={!isHighlight && m.price !== 'FREE'}
@@ -2097,7 +2110,7 @@ function RunCodeApp({
             {pickerMoreCount > 0 && (
               <Box marginTop={1} marginLeft={2}>
                 <Text dimColor>
-                  + {pickerMoreCount} more on gateway — `franklin models` to list, or /model &lt;id&gt; to pick one
+                  + {pickerMoreCount} more on gateway — Ctrl+A to show all, or /model &lt;id&gt; to pick one
                 </Text>
               </Box>
             )}

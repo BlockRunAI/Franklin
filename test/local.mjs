@@ -6615,6 +6615,7 @@ test('picker trim: hidden entries are gone from the visible list', async () => {
 
 test('picker trim: shortcuts for hidden models still resolve (muscle-memory preserved)', async () => {
   const { resolveModel } = await import('../dist/ui/model-picker.js');
+  assert.equal(resolveModel('claude'), 'anthropic/claude-opus-4.8');
   assert.equal(resolveModel('opus-4.6'), 'anthropic/claude-opus-4.6');
   assert.equal(resolveModel('gpt-5.4'), 'openai/gpt-5.4');
   assert.equal(resolveModel('gpt-5.4-pro'), 'openai/gpt-5.4-pro');
@@ -6718,7 +6719,7 @@ test('reconcilePicker: refreshes price from the gateway but keeps the curated la
   assert.equal(row.label, opus.label, 'label stays curated — gateway names overflow the column');
 });
 
-test('reconcilePicker: free models render FREE, and moreCount counts uncurated chat models', async () => {
+test('reconcilePicker: free models render FREE, and uncurated chat models stay behind +more', async () => {
   const { reconcilePicker, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
   const free = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.shortcut === 'free');
   const catalog = [
@@ -6729,8 +6730,135 @@ test('reconcilePicker: free models render FREE, and moreCount counts uncurated c
   const { categories, moreCount } = reconcilePicker(catalog);
   const row = categories.flatMap((c) => c.models).find((m) => m.id === free.id);
   assert.equal(row.price, 'FREE');
-  // Only the uncurated *chat* model counts — the image model isn't picker material.
-  assert.equal(moreCount, 1, 'moreCount should count uncurated chat models only');
+  assert.equal(moreCount, 1, 'normal picker should count uncurated chat models behind +more');
+  assert.ok(
+    !categories.flatMap((c) => c.models).some((m) => m.id === 'someprovider/brand-new-flagship'),
+    'normal picker should stay curated until Ctrl+A expands it',
+  );
+});
+
+test('reconcileExpandedPicker: uncurated chat models are provider-grouped', async () => {
+  const { reconcileExpandedPicker, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
+  const free = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.shortcut === 'free');
+  const catalog = [
+    gwModel(free.id, {}),
+    gwModel('someprovider/brand-new-flagship', { input: 5, output: 25 }),
+    gwModel('someprovider/an-image-model', { per_image: 0.02 }, { categories: ['image'] }),
+  ];
+  const { categories, moreCount } = reconcileExpandedPicker(catalog);
+  const row = categories.flatMap((c) => c.models).find((m) => m.id === free.id);
+  assert.equal(row.price, 'FREE');
+  assert.equal(moreCount, 0, 'expanded picker shows uncurated chat models instead of +more');
+  const providerSection = categories.find((c) => c.category === 'someprovider');
+  assert.ok(providerSection, 'unknown providers should get their own section');
+  assert.ok(
+    providerSection.models.some((m) => m.id === 'someprovider/brand-new-flagship'),
+    'uncurated chat model should be selectable from the picker',
+  );
+  assert.ok(
+    !categories.flatMap((c) => c.models).some((m) => m.id === 'someprovider/an-image-model'),
+    'non-chat models should stay out of the model picker',
+  );
+});
+
+test('reconcileExpandedPicker: live catalog is grouped by provider after Auto', async () => {
+  const { reconcileExpandedPicker } = await import('../dist/ui/model-picker.js');
+  const catalog = [
+    gwModel('google/gemini-test', { input: 1, output: 2 }),
+    gwModel('anthropic/claude-test', { input: 1, output: 2 }),
+    gwModel('openai/gpt-test', { input: 1, output: 2 }),
+  ];
+  const { categories } = reconcileExpandedPicker(catalog);
+  assert.deepEqual(
+    categories.map((c) => c.category),
+    ['🧠 Smart routing (auto-pick)', 'Anthropic / Claude', 'OpenAI / GPT', 'Google / Gemini'],
+  );
+});
+
+test('reconcileExpandedPicker: provider groups rank newest and strongest models first', async () => {
+  const { reconcileExpandedPicker } = await import('../dist/ui/model-picker.js');
+  const catalog = [
+    gwModel('anthropic/claude-haiku-4.5', { input: 1, output: 2 }),
+    gwModel('anthropic/claude-opus-4.8', { input: 1, output: 2 }),
+    gwModel('anthropic/claude-sonnet-4.6', { input: 1, output: 2 }),
+    gwModel('anthropic/claude-fable-5', { input: 1, output: 2 }),
+    gwModel('openai/gpt-4.1', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5.2', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5.3-codex', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5.3', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5.4-mini', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5.4-nano', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5.4-pro', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5.5', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5-mini', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5.6-luna', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5.6-sol', { input: 1, output: 2 }),
+    gwModel('openai/gpt-5.6-terra', { input: 1, output: 2 }),
+    gwModel('google/gemini-2.5-flash', { input: 1, output: 2 }),
+    gwModel('google/gemini-3-flash-preview', { input: 1, output: 2 }),
+    gwModel('google/gemini-3.1-flash-lite', { input: 1, output: 2 }),
+    gwModel('google/gemini-3.1-pro', { input: 1, output: 2 }),
+    gwModel('google/gemini-3.5-flash', { input: 1, output: 2 }),
+    gwModel('xai/grok-build-0.1', { input: 1, output: 2 }),
+    gwModel('xai/grok-4.3', { input: 1, output: 2 }),
+    gwModel('xai/grok-4.5', { input: 1, output: 2 }),
+    gwModel('zai/glm-5-turbo', { input: 1, output: 2 }),
+    gwModel('zai/glm-5.1', { input: 1, output: 2 }),
+    gwModel('zai/glm-5.2', { input: 1, output: 2 }),
+    gwModel('zai/glm-5', { input: 1, output: 2 }),
+    gwModel('minimax/minimax-m2.7', { input: 1, output: 2 }),
+    gwModel('minimax/minimax-m3', { input: 1, output: 2 }),
+    gwModel('deepseek/deepseek-chat', { input: 1, output: 2 }),
+    gwModel('deepseek/deepseek-v4-pro', { input: 1, output: 2 }),
+  ];
+  const { categories } = reconcileExpandedPicker(catalog);
+  const idsFor = (category) => categories.find((c) => c.category === category).models.map((m) => m.id);
+  assert.deepEqual(idsFor('Anthropic / Claude'), [
+    'anthropic/claude-fable-5',
+    'anthropic/claude-opus-4.8',
+    'anthropic/claude-sonnet-4.6',
+    'anthropic/claude-haiku-4.5',
+  ]);
+  assert.deepEqual(idsFor('OpenAI / GPT'), [
+    'openai/gpt-5.6-sol',
+    'openai/gpt-5.6-terra',
+    'openai/gpt-5.6-luna',
+    'openai/gpt-5.5',
+    'openai/gpt-5.4-pro',
+    'openai/gpt-5.4-mini',
+    'openai/gpt-5.4-nano',
+    'openai/gpt-5.3-codex',
+    'openai/gpt-5.3',
+    'openai/gpt-5.2',
+    'openai/gpt-5-mini',
+    'openai/gpt-4.1',
+  ]);
+  assert.deepEqual(idsFor('Google / Gemini'), [
+    'google/gemini-3.5-flash',
+    'google/gemini-3.1-pro',
+    'google/gemini-3.1-flash-lite',
+    'google/gemini-3-flash-preview',
+    'google/gemini-2.5-flash',
+  ]);
+  assert.deepEqual(idsFor('xAI / Grok'), [
+    'xai/grok-4.5',
+    'xai/grok-4.3',
+    'xai/grok-build-0.1',
+  ]);
+  assert.deepEqual(idsFor('Z.AI / GLM'), [
+    'zai/glm-5.2',
+    'zai/glm-5.1',
+    'zai/glm-5',
+    'zai/glm-5-turbo',
+  ]);
+  assert.deepEqual(idsFor('MiniMax'), [
+    'minimax/minimax-m3',
+    'minimax/minimax-m2.7',
+  ]);
+  assert.deepEqual(idsFor('DeepSeek'), [
+    'deepseek/deepseek-v4-pro',
+    'deepseek/deepseek-chat',
+  ]);
 });
 
 // ─── franklin models: per-billing-mode rendering ──────────────────────────
