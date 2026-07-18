@@ -65,7 +65,10 @@ export function createTradePlanCapability(): CapabilityHandler {
     concurrent: false,
     execute: async (input, ctx) => {
       const action = String(input.action || '');
-      const sessionId = getSchedulerSessionId();
+      // Bind to THIS session (threaded via the execution scope) so concurrent
+      // hosted agents each propose/query under their own id. Falls back to the
+      // process-global slot for callers that don't populate the scope.
+      const sessionId = ctx.sessionId ?? getSchedulerSessionId();
 
       if (action === 'status') {
         const active = activeTradePlan(sessionId);

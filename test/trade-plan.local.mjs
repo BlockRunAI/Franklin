@@ -170,6 +170,31 @@ test('tool: propose → approve activates the plan', async () => {
   assert.ok(activeTradePlan(SESSION));
 });
 
+test('tool: binds to the scope session id, not the process-global slot (concurrent agents)', async () => {
+  // Simulate franklin serve hosting two concurrent agents: the module-global
+  // slot points at the last-started session (B), but agent A's tool call
+  // carries its own id via the execution scope. The plan must bind to A.
+  clearPlans();
+  setTradePlanSessionId('session-B');
+  setSchedulerSessionId('session-B');
+  try {
+    const tool = createTradePlanCapability();
+    const scopeA = { workingDir: '/tmp', abortSignal: new AbortController().signal, sessionId: 'session-A', onApproval: async () => ({ choice: 'approve' }) };
+    const result = await tool.execute({ action: 'propose', trades: [SOL_TRADE], rationale: 'A trades' }, scopeA);
+    assert.ok(!result.isError, result.output);
+
+    assert.ok(activeTradePlan('session-A'), 'plan must bind to the scope session A');
+    assert.equal(activeTradePlan('session-B'), null, 'nothing should land under the process-global session B');
+
+    // The gate for A now finds the plan; B still sees nothing (would be denied).
+    assert.equal(checkTradePlanGate(swapInvocation(), 'session-A'), null, 'A gate passes on its own approved plan');
+    assert.ok(checkTradePlanGate(swapInvocation(), 'session-B')?.isError, 'B gate denies — no plan under B');
+  } finally {
+    setTradePlanSessionId(SESSION);
+    setSchedulerSessionId(SESSION);
+  }
+});
+
 test('tool: request changes rejects with feedback for revision', async () => {
   clearPlans();
   const tool = createTradePlanCapability();

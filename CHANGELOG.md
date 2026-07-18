@@ -1,5 +1,25 @@
 # Changelog
 
+## Franklin Agent 3.34.3 — concurrent trade-plan fix
+
+A self-review of the 3.34.x work caught one real bug on the money path.
+
+**Concurrent hosted agents proposed trade plans under the wrong session.**
+When one `franklin serve` process hosts multiple agents (the AgentHost added
+in 3.34.0), the `TradePlan` tool derived the session id from a process-global
+slot that the last-started session overwrote. So agent A could propose and
+"approve" a plan that landed under agent B's id, then have its own swap denied
+by the gate (which correctly used A's id) — trading blocked, plan orphaned.
+Single-agent CLI use was never affected (the global equals the one session).
+
+Fix: the executing session id now rides on the tool execution scope, so the
+`TradePlan` tool binds to its own agent's session instead of the global slot.
+The gate and budget drawdown already threaded the id correctly; this closes
+the remaining gap. Added a concurrent-session regression test.
+
+Also: memoized the git-origin lookup behind memory search — it was spawning
+`git remote get-url` a couple of times per recall.
+
 ## Franklin Agent 3.34.2 — Kimi K3
 
 The gateway retired the Kimi K2.x line and replaced it with **Kimi K3** —

@@ -100,6 +100,14 @@ export interface ExecutionScope {
    * anything that requires an explicit decision.
    */
   onApproval?: import('./approvals.js').ApprovalPromptFn;
+  /**
+   * The executing session's id. Threaded so session-scoped tools (TradePlan)
+   * bind to THIS session rather than a process-global slot — required for
+   * correctness when one serve process hosts multiple concurrent agents
+   * (AgentHost). Absent in older/library callers; tools fall back to the
+   * module-global session then.
+   */
+  sessionId?: string;
   /** Context from parent agent — helps sub-agents avoid duplicate work */
   parentContext?: {
     goal?: string;

@@ -1446,6 +1446,7 @@ export async function interactiveSession(
           abortSignal: abort.signal,
           onAskUser: config.onAskUser,
           onApproval: config.approvalPromptFn,
+          sessionId,
           parentContext: {
             goal: lastUserInput?.slice(0, 200),
             recentFiles: [...readFileCache].slice(-10),

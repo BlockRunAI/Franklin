@@ -43,8 +43,18 @@ function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || 'workspace';
 }
 
+// Memoized per workDir: repoIdentity is called several times per memory
+// search (workspaceMemoryPath + sessionLogsDir + workspaceDir), and each call
+// otherwise spawns `git remote get-url origin`. The origin remote doesn't
+// change within a session, so cache it. `null` (not a repo) is cached too.
+const repoIdentityCache = new Map<string, string | null>();
+
 /** org/repo from the git origin remote, or null outside a repo. */
 export function repoIdentity(workDir: string): string | null {
+  const cached = repoIdentityCache.get(workDir);
+  if (cached !== undefined) return cached;
+
+  let identity: string | null = null;
   try {
     const url = execFileSync('git', ['-C', workDir, 'remote', 'get-url', 'origin'], {
       encoding: 'utf-8',
@@ -52,10 +62,12 @@ export function repoIdentity(workDir: string): string | null {
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     const m = url.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?$/);
-    return m ? m[1] : url || null;
+    identity = m ? m[1] : url || null;
   } catch {
-    return null;
+    identity = null;
   }
+  repoIdentityCache.set(workDir, identity);
+  return identity;
 }
 
 export function workspaceKey(workDir: string): { slug: string; hash8: string } {
