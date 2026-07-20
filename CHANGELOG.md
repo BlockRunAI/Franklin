@@ -1,5 +1,23 @@
 # Changelog
 
+## Franklin Agent 3.35.3 — docs only
+
+No runtime change. Ships a corrected comment in `src/gateway-models.ts`.
+
+The note added in 3.35.2 said the gateway's `max_output` values are "not
+enforced: Franklin sends max_tokens 16384 to haiku today and the gateway
+accepts it." Accepting a request and honoring it are different things. Both
+gateway handlers clamp with `Math.min(request.max_tokens, model.maxOutput)`
+and derive the price quote from the clamped ceiling; an over-cap request is
+accepted rather than rejected, with a server-side "capping to <limit>" log the
+caller never sees. The clamp only becomes visible when a reply is long enough
+to hit it, which is why the short smoke test behind that claim looked healthy
+while the model was capped at an eighth of its real ceiling.
+
+The rule the comment supports is unchanged and still correct: static tables
+stay authoritative. Only the stated reason was wrong, and a wrong reason is how
+a right rule gets reverted by the next person who checks it.
+
 ## Franklin Agent 3.35.2 — one token-limit table
 
 **The proxy stops capping every model at 16K.** `src/proxy/server.ts` carried
