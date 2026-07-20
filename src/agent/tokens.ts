@@ -5,6 +5,7 @@
  */
 
 import type { Dialogue, ContentPart, UserContentPart } from './types.js';
+import { peekGatewayModel, warmGatewayModelsCache } from '../gateway-models.js';
 
 const DEFAULT_BYTES_PER_TOKEN = 4;
 
@@ -295,7 +296,20 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
  * Get the context window size for a model, with a conservative default.
  */
 export function getContextWindow(model: string): number {
+  // The static table wins. It is not merely a cache of the gateway catalog —
+  // several entries are deliberate DOWNGRADES from what the gateway advertises
+  // (see the Anthropic block above: the gateway reports 1M, but its 1M beta
+  // header is not enabled, so anything over 200k 413s). Letting the catalog
+  // override these would reintroduce the exact bug those comments prevent.
   if (MODEL_CONTEXT_WINDOWS[model]) return MODEL_CONTEXT_WINDOWS[model];
+  // No static entry — a live catalog value beats the blind default below.
+  // This is the qwen3.7-max class: a real model nobody has catalogued yet,
+  // which would otherwise silently compact at 128k.
+  const live = peekGatewayModel(model)?.context_window;
+  if (live && live > 0) return live;
+  // Cache is cold. Kick a fetch (deduped in-flight, errors swallowed) so the
+  // next call in this session gets a real number instead of the blind default.
+  warmGatewayModelsCache();
   // Pattern-based inference for unknown models
   if (model.includes('gemini')) return 1_000_000;
   if (model.includes('claude')) return 200_000;

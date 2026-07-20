@@ -10,6 +10,7 @@
  */
 
 import type { Dialogue, ContentPart, UserContentPart, TextSegment, ImageSegment } from './types.js';
+import { peekGatewayModel, warmGatewayModelsCache } from '../gateway-models.js';
 import { estimateTokens } from './tokens.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -73,9 +74,21 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   'qwen/qwen3.7-max': 65_536,
 };
 
-/** Get max output tokens for a model */
+/**
+ * Get max output tokens for a model.
+ *
+ * The static table above wins. The gateway catalog is consulted only for
+ * models with no entry — its own max_output values are demonstrably wrong for
+ * models we do have knowledge of (it reports 8192 for claude-haiku-4.5, which
+ * Anthropic documents as 64000), so it is a gap-filler, not a source of truth.
+ */
 export function getMaxOutputTokens(model: string): number {
-  return MODEL_MAX_OUTPUT[model] ?? 16_384;
+  const known = MODEL_MAX_OUTPUT[model];
+  if (known) return known;
+  const live = peekGatewayModel(model)?.max_output;
+  if (live && live > 0) return live;
+  warmGatewayModelsCache();
+  return 16_384;
 }
 
 /** Idle gap (minutes) after which old tool results are cleared.
