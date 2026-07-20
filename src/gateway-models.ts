@@ -92,11 +92,21 @@ export function clearGatewayModelsCache(): void {
  * Deliberately ignores the TTL: a stale gateway record still beats no record
  * at all, and the only callers are fallbacks for models we have no static
  * entry for. Callers must treat the static tables as authoritative — the
- * gateway's own metadata is not reliable (verified 2026-07-20: it reports
- * max_output 8192 for claude-haiku-4.5, which Anthropic documents as 64000,
- * and 64000 for claude-sonnet-4.6, documented as 128000). It is also not
- * enforced: Franklin sends max_tokens 16384 to haiku today and the gateway
- * accepts it. Treat this as "better than a blind default", nothing more.
+ * gateway's own metadata has been wrong for models we already know. As of
+ * 2026-07-20 it reported max_output 8192 for claude-haiku-4.5 (Anthropic
+ * documents 64000) and 64000 for claude-sonnet-4.6 (documented 128000).
+ * Those two specific numbers are being corrected upstream, so do not treat
+ * them as current — the point that outlives them is that the catalog can be
+ * wrong, and a wrong value here is not cosmetic.
+ *
+ * Correction to an earlier note here: these values are NOT inert metadata.
+ * The gateway clamps with them — Math.min(request.max_tokens, model.maxOutput)
+ * in both the messages and chat/completions handlers — and derives its price
+ * quote from the clamped ceiling. An over-cap request is accepted rather than
+ * rejected: the handler logs "capping to <limit>" server-side and continues,
+ * so from here the clamp is invisible until a reply is long enough to hit it.
+ * That is why a short smoke test against a wrongly-capped model looks healthy.
+ * Treat this as "better than a blind default", nothing more.
  */
 export function peekGatewayModel(id: string): GatewayModel | null {
   if (!cache) return null;
