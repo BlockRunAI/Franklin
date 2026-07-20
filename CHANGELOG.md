@@ -1,5 +1,38 @@
 # Changelog
 
+## Franklin Agent 3.35.1 — Qwen3.7 Max
+
+**Qwen3.7 Max joins the picker.** Alibaba's flagship Max tier — $1.475/$4.425
+per million tokens, 1M context, 65K max output — is now a `/model` row and
+answers to `qwen-max`. Community contribution from @Fsocietyhhh (#107).
+
+Note that the shortcut is `qwen-max`, not bare `qwen`. `qwen` has long been an
+alias for the free `nvidia/qwen3-next-80b-a3b-instruct` default, and a free
+alias must never quietly start spending your USDC.
+
+**The tables a new model has to land in.** Adding a model id touches five
+lookups, four of which default silently when you miss one. Qwen3.7 Max now has
+explicit entries for context window (1M — the generic `qwen` fallback returns
+128k and would compact ~8× too early), max output (65K — the default is 16K,
+which truncates long answers and burns USDC on continuation calls that can
+never succeed), model guidance (a bare `qwen` substring written back when every
+qwen id was a free NVIDIA SKU was routing a premium flagship into the
+mid-tier prompt), and provider grouping in the expanded picker.
+
+**tool_choice compatibility.** Qwen3.7 Max returns an opaque
+`400 Invalid request` on any request carrying `tool_choice`, which killed the
+grounding-retry path that forces tool use after an ungrounded answer. It's now
+stripped for that model up front. The runtime retry that recovers this class
+also got broader: it used to fire only when the upstream error text named
+`tool_choice`, so an opaque 400 slipped past it. It now retries on any 400 that
+carried a `tool_choice`, which self-heals the next model like this one.
+
+**The e2e suite stops swallowing schema failures.** `skipIfRateLimited()` was
+classifying the above hard failure as a free-tier rate limit and skipping, so
+the suite reported green with the bash and grep tool tests silently dead. A
+`[Schema]` error is a model-compatibility regression, never an environment
+condition, and is no longer skippable.
+
 ## Franklin Agent 3.35.0 — expandable model picker + hook stdin fix
 
 Two community contributions from @0xCheetah1.
