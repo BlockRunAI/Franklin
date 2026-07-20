@@ -1,5 +1,34 @@
 # Changelog
 
+## Franklin Agent 3.35.2 — one token-limit table
+
+**The proxy stops capping every model at 16K.** `src/proxy/server.ts` carried
+its own hardcoded ladder — `deepseek|haiku|gpt-oss → 8192`, everything else
+`→ 16384` — that never consulted `MODEL_MAX_OUTPUT`. Anyone driving Franklin
+through the payment proxy was losing 4-8× of output headroom on models the CLI
+already knew better: Kimi K3 can emit 65,536 tokens and GPT-5.6 Sol 128,000.
+Both paths read `getMaxOutputTokens()` now.
+
+**Uncatalogued models stop falling through to blind defaults.** Context window
+and max output now consult the live gateway catalog — but only for model ids
+with no static entry. That is the `qwen/qwen3.7-max` case from 3.35.1: a real
+paid model that compacted at 128k and truncated at 16k until someone hand-added
+it to three tables.
+
+The catalog is a gap-filler, deliberately not a source of truth, which is the
+opposite of what `gateway-models.ts` claims in its own header. Two reasons, both
+verified against the live catalog: its numbers are wrong for models we already
+know (it reports 8,192 max output for `claude-haiku-4.5`, which Anthropic
+documents as 64,000) and unenforced (Franklin sends 16,384 to haiku today and
+the gateway accepts it); and where it is right, we deliberately disagree — every
+Anthropic model is pinned to a 200k context window against the advertised 1M,
+because the gateway's 1M beta header is not enabled and anything larger 413s.
+Static entries win; the catalog answers only for ids we have never heard of.
+
+Catalog access is a synchronous cache-only peek that never fetches, with a
+fire-and-forget warm on the first miss. No startup latency, and a cold or
+unreachable gateway degrades to the previous behavior exactly.
+
 ## Franklin Agent 3.35.1 — Qwen3.7 Max
 
 **Qwen3.7 Max joins the picker.** Alibaba's flagship Max tier — $1.475/$4.425
