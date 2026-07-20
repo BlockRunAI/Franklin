@@ -6596,6 +6596,45 @@ test('kimi: pricing keeps legacy entries for session-cost records', async () => 
   assert.ok(MODEL_PRICING['nvidia/kimi-k2.5']);
 });
 
+// ─── Qwen3.7 Max (paid flagship) ──────────────────────────────────────────
+//
+// Every table keyed on a model id defaults silently when an entry is missing
+// (context → 128k, max output → 16k, guidance → the medium bucket via a bare
+// `qwen` substring that predates paid Qwen SKUs). Each assertion below pins
+// one of those defaults so a future edit can't quietly re-open the hole.
+
+test('qwen3.7-max: gateway rates, 1M context, and 65K output are pinned', async () => {
+  const { MODEL_PRICING } = await import('../dist/pricing.js');
+  const { getContextWindow } = await import('../dist/agent/tokens.js');
+  const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
+
+  assert.deepEqual(MODEL_PRICING['qwen/qwen3.7-max'], { input: 1.475, output: 4.425 });
+  assert.equal(getContextWindow('qwen/qwen3.7-max'), 1_000_000,
+    'must not fall through to the generic 128k `qwen` fallback');
+  assert.equal(getMaxOutputTokens('qwen/qwen3.7-max'), 65_536,
+    'must not fall through to the 16k default — the gateway reports max_output 65536');
+});
+
+test('qwen3.7-max: paid flagship gets strong-model guidance, not the medium bucket', async () => {
+  const { getModelGuidance } = await import('../dist/agent/context.js');
+  assert.match(getModelGuidance('qwen/qwen3.7-max'), /strong model/,
+    'the bare `qwen` substring in the medium branch must not capture the paid Max SKU');
+  // The free NVIDIA qwen SKUs must stay where they were.
+  assert.match(getModelGuidance('nvidia/qwen3-next-80b-a3b-instruct'), /Execution Guidance/);
+});
+
+test('qwen3.7-max: paid aliases resolve, and bare `qwen` stays free', async () => {
+  const { resolveModel } = await import('../dist/ui/model-picker.js');
+  const { estimateCost } = await import('../dist/pricing.js');
+
+  for (const alias of ['qwen-max', 'qwen3.7-max', 'qwen-3.7-max']) {
+    assert.equal(resolveModel(alias), 'qwen/qwen3.7-max', `${alias} should resolve to the paid Max SKU`);
+  }
+  // Guardrail: a free alias must never be repointed at a paid model.
+  assert.equal(estimateCost(resolveModel('qwen'), 100_000, 100_000), 0,
+    'bare `qwen` must keep resolving to a $0 model');
+});
+
 // ─── picker trim (v3.9.3) ─────────────────────────────────────────────────
 
 test('picker trim: hidden entries are gone from the visible list', async () => {

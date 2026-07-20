@@ -67,6 +67,10 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   'moonshot/kimi-k3': 65_536,
   'moonshot/kimi-k2.7': 65_536,
   'moonshot/kimi-k2.6': 65_536,
+  // Qwen3.7 Max — gateway model entry reports max_output: 65536. Same 4×
+  // headroom the K3 entry above recovers; without it the paid model gets the
+  // 16K default and truncates mid-answer, burning USDC on continuation calls.
+  'qwen/qwen3.7-max': 65_536,
 };
 
 /** Get max output tokens for a model */

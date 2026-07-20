@@ -106,6 +106,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'minimax/minimax-m3': { input: 0.3, output: 1.2 },
   'minimax/minimax-m2.7': { input: 0.3, output: 1.2 },
   'minimax/minimax-m2.5': { input: 0.3, output: 1.2 },
+  // Qwen
+  'qwen/qwen3.7-max': { input: 1.475, output: 4.425 },
   // Moonshot — K3 is the gateway flagship (2026-07): 2.8T open MoE, 1M
   // context, multimodal (image+text), returns reasoning_content. Pricier
   // than the K2.x line it replaced ($3/$15 vs K2.7's $0.95/$4).

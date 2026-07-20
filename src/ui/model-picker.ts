@@ -135,6 +135,11 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   minimax: 'minimax/minimax-m3',
   'm3': 'minimax/minimax-m3',
   'm2.7': 'minimax/minimax-m2.7',
+  // Qwen (paid). NOTE: bare `qwen` stays pinned to the FREE nvidia default
+  // above — never repoint a free alias at a paid model.
+  'qwen-max': 'qwen/qwen3.7-max',
+  'qwen3.7-max': 'qwen/qwen3.7-max',
+  'qwen-3.7-max': 'qwen/qwen3.7-max',
   glm: 'zai/glm-5.2',
   'glm-5': 'zai/glm-5',
   'glm-5.2': 'zai/glm-5.2',
@@ -228,6 +233,7 @@ const PROVIDER_ORDER = [
   'zai',
   'moonshot',
   'minimax',
+  'qwen',
   'deepseek',
   'nvidia',
 ];
@@ -240,6 +246,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   zai: 'Z.AI / GLM',
   moonshot: 'Moonshot / Kimi',
   minimax: 'MiniMax',
+  qwen: 'Qwen / Alibaba',
   deepseek: 'DeepSeek',
   nvidia: 'Free / NVIDIA',
 };
@@ -279,6 +286,7 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'anthropic/claude-fable-5',    shortcut: 'fable',     label: 'Claude Fable 5',    price: '$10/$50' },
       { id: 'anthropic/claude-opus-4.8',   shortcut: 'opus',      label: 'Claude Opus 4.8',   price: '$5/$25', highlight: true },
       { id: 'anthropic/claude-sonnet-5',   shortcut: 'sonnet',    label: 'Claude Sonnet 5',   price: '$3/$15' },
+      { id: 'qwen/qwen3.7-max',            shortcut: 'qwen-max',  label: 'Qwen3.7 Max',       price: '$1.475/$4.425', highlight: true },
       { id: 'openai/gpt-5.6-sol',          shortcut: 'gpt',       label: 'GPT-5.6 Sol',       price: '$5/$30', highlight: true },
       { id: 'google/gemini-3.1-pro',       shortcut: 'gemini-3',  label: 'Gemini 3.1 Pro',    price: '$2/$12' },
       { id: 'google/gemini-2.5-pro',       shortcut: 'gemini',    label: 'Gemini 2.5 Pro',    price: '$1.25/$10' },

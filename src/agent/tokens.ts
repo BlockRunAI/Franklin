@@ -286,6 +286,9 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'nvidia/nemotron-nano-12b-v2-vl': 131_072,
   'nvidia/llama-4-maverick': 131_072,
   'nvidia/mistral-large-3-675b': 131_072,
+  // Qwen (paid) — Max tier is 1M ctx; the generic `qwen` fallback below is
+  // 128k and would compact ~8x too early.
+  'qwen/qwen3.7-max': 1_000_000,
 };
 
 /**

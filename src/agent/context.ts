@@ -559,9 +559,12 @@ export function getModelGuidance(model: string): string {
 - Before responding: does every URL and fact come from a tool result? If not, remove it.`;
   }
 
-  // Medium models: balanced guidance
+  // Medium models: balanced guidance. The bare `qwen` match dates from when
+  // every qwen id on the gateway was a free NVIDIA SKU — qwen3.7-max is a paid
+  // 1M-context flagship and belongs in the strong branch below.
   if (m.includes('kimi') || m.includes('grok') || m.includes('flash') ||
-      m.includes('haiku') || m.includes('deepseek') || m.includes('qwen')) {
+      m.includes('haiku') || m.includes('deepseek') ||
+      (m.includes('qwen') && !m.includes('qwen3.7-max'))) {
     return `# Execution Guidance
 - Use tools to verify facts before stating them. Do not answer from memory when a tool can confirm.
 - Batch independent tool calls in one response (parallel execution).
@@ -572,7 +575,8 @@ export function getModelGuidance(model: string): string {
   // Strong models: quality standards + thinking guidance
   if (m.includes('claude') || m.includes('gpt-5') || m.includes('opus') ||
       m.includes('sonnet') || m.includes('gemini-2.5-pro') || m.includes('gemini-3') ||
-      m.includes('o3') || m.includes('o1') || m.includes('codex')) {
+      m.includes('o3') || m.includes('o1') || m.includes('codex') ||
+      m.includes('qwen3.7-max')) {
     return `# Quality Standards (strong model)
 - Keep calling tools until the task is complete AND the result is verified. Don't stop at "this should work" — prove it works.
 - Before finalizing: check correctness, grounding in tool output, and formatting.
