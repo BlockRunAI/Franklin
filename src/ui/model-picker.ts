@@ -99,6 +99,10 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   // Others
   minimax: 'minimax/minimax-m3',
   'm3': 'minimax/minimax-m3',
+  // Qwen
+  qwen: 'qwen/qwen3.7-max',
+  'qwen3.7-max': 'qwen/qwen3.7-max',
+  'qwen-3.7-max': 'qwen/qwen3.7-max',
   'm2.7': 'minimax/minimax-m2.7',
   glm: 'zai/glm-5.2',
   'glm-5': 'zai/glm-5',
@@ -176,6 +180,7 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
     models: [
       { id: 'anthropic/claude-opus-4.8',   shortcut: 'opus',      label: 'Claude Opus 4.8',   price: '$5/$25', highlight: true },
       { id: 'anthropic/claude-sonnet-4.6', shortcut: 'sonnet',    label: 'Claude Sonnet 4.6', price: '$3/$15' },
+      { id: 'qwen/qwen3.7-max',            shortcut: 'qwen',      label: 'Qwen3.7 Max',        price: '$1.475/$4.425', highlight: true },
       { id: 'openai/gpt-5.5',              shortcut: 'gpt',       label: 'GPT-5.5',           price: '$5/$30', highlight: true },
       { id: 'google/gemini-3.1-pro',       shortcut: 'gemini-3',  label: 'Gemini 3.1 Pro',    price: '$2/$12' },
       { id: 'google/gemini-2.5-pro',       shortcut: 'gemini',    label: 'Gemini 2.5 Pro',    price: '$1.25/$10' },

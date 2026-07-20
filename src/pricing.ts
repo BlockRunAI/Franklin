@@ -82,6 +82,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'minimax/minimax-m3': { input: 0.3, output: 1.2 },
   'minimax/minimax-m2.7': { input: 0.3, output: 1.2 },
   'minimax/minimax-m2.5': { input: 0.3, output: 1.2 },
+  // Qwen3.7 Max — BlockRun applies its standard 5% margin at settlement.
+  'qwen/qwen3.7-max': { input: 1.475, output: 4.425 },
   // Moonshot — K2.7 is the gateway flagship (2026-06); K2.6 demoted but still
   // routes, kept for the `k2.6` pin + legacy session-cost records.
   'moonshot/kimi-k2.7': { input: 0.95, output: 4.0 },
