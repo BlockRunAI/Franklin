@@ -32,6 +32,7 @@ import {
   type RoutingProfile,
 } from '../router/index.js';
 import { estimateCost } from '../pricing.js';
+import { getMaxOutputTokens } from '../agent/optimize.js';
 import { VERSION } from '../config.js';
 
 // User-Agent for backend requests
@@ -383,13 +384,11 @@ export function createProxy(options: ProxyOptions): http.Server {
 
             {
               const original = parsed.max_tokens;
-              const model = (parsed.model || '').toLowerCase();
-              const modelCap =
-                model.includes('deepseek') ||
-                model.includes('haiku') ||
-                model.includes('gpt-oss')
-                  ? 8192
-                  : 16384;
+              // Was a hardcoded substring ladder (deepseek|haiku|gpt-oss → 8192,
+              // everything else → 16384) that ignored MODEL_MAX_OUTPUT entirely,
+              // so proxy users got a 16K ceiling on models the CLI already knew
+              // could emit 65K+ (Kimi K3, GPT-5.6 Sol). Same table both paths now.
+              const modelCap = getMaxOutputTokens(parsed.model || '');
 
               // Use max of (last output × 2, default 4096) capped by model limit
               // This ensures short replies don't starve the next request

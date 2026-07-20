@@ -6698,6 +6698,71 @@ test('qwen3.7-max: paid aliases resolve, and bare `qwen` stays free', async () =
     'bare `qwen` must keep resolving to a $0 model');
 });
 
+// ─── gateway catalog as a GAP-FILLER, never an override ───────────────────
+//
+// The static tables are authoritative. Several entries are deliberate
+// DOWNGRADES from what the gateway advertises (Anthropic models are pinned to
+// 200k because the gateway's 1M beta header is not enabled — see tokens.ts).
+// And the gateway's own numbers are demonstrably wrong for models we do know:
+// verified live 2026-07-20, it reports max_output 8192 for claude-haiku-4.5,
+// which Anthropic documents as 64000. So: static first, catalog only for ids
+// we have no entry for.
+
+test('gateway catalog never overrides a static context-window entry', async () => {
+  const { getContextWindow } = await import('../dist/agent/tokens.js');
+  const { clearGatewayModelsCache, peekGatewayModel } = await import('../dist/gateway-models.js');
+  clearGatewayModelsCache();
+  // Anthropic models are deliberately pinned below the advertised 1M.
+  assert.equal(getContextWindow('anthropic/claude-opus-4.8'), 200_000,
+    'the 1M the gateway advertises must not win — >200k 413s at the gateway edge');
+  assert.equal(getContextWindow('anthropic/claude-sonnet-5'), 200_000);
+  assert.equal(peekGatewayModel('anything'), null, 'cold cache peeks to null, never fetches');
+});
+
+test('gateway catalog never overrides a static max-output entry', async () => {
+  const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
+  const { clearGatewayModelsCache } = await import('../dist/gateway-models.js');
+  clearGatewayModelsCache();
+  assert.equal(getMaxOutputTokens('anthropic/claude-haiku-4.5'), 16_384,
+    'static entry wins over the gateway\'s (wrong) 8192');
+  assert.equal(getMaxOutputTokens('moonshot/kimi-k3'), 65_536);
+});
+
+test('gateway catalog fills the gap for an uncatalogued model', async () => {
+  // The qwen3.7-max class: a real paid model with no static entry, which would
+  // otherwise compact at 128k and cap output at 16k.
+  const { getContextWindow } = await import('../dist/agent/tokens.js');
+  const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
+  const { clearGatewayModelsCache, __primeGatewayModelsCache } = await import('../dist/gateway-models.js');
+  clearGatewayModelsCache();
+  __primeGatewayModelsCache([
+    { id: 'someprovider/unknown-1', name: 'x', billing_mode: 'paid', categories: ['chat'],
+      context_window: 500_000, max_output: 32_768, pricing: { input: 1, output: 2 } },
+  ]);
+  assert.equal(getContextWindow('someprovider/unknown-1'), 500_000);
+  assert.equal(getMaxOutputTokens('someprovider/unknown-1'), 32_768);
+  // Still no override of a known id, even with the catalog warm.
+  assert.equal(getContextWindow('anthropic/claude-opus-4.8'), 200_000);
+  clearGatewayModelsCache();
+});
+
+test('proxy max-token cap uses the same table as the agent loop', async () => {
+  // Regression: the proxy carried its own substring ladder (deepseek|haiku|
+  // gpt-oss -> 8192, else 16384) that ignored MODEL_MAX_OUTPUT, so proxy users
+  // got 16k on models the CLI already knew could emit 65k+ (Kimi K3 at 65536,
+  // GPT-5.6 Sol at 128000). Both paths read one table now.
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/proxy/server.ts', import.meta.url), 'utf8');
+  assert.ok(src.includes('getMaxOutputTokens(parsed.model'),
+    'proxy must derive its cap from getMaxOutputTokens');
+  assert.ok(!src.includes("model.includes('gpt-oss')"),
+    'the hardcoded substring ladder must be gone from the proxy');
+
+  const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
+  assert.equal(getMaxOutputTokens('moonshot/kimi-k3'), 65_536);
+  assert.equal(getMaxOutputTokens('openai/gpt-5.6-sol'), 128_000);
+});
+
 // ─── picker trim (v3.9.3) ─────────────────────────────────────────────────
 
 test('picker trim: hidden entries are gone from the visible list', async () => {
