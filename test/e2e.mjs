@@ -92,6 +92,13 @@ function skipIfRateLimited(t, result) {
   const combined = (result.stdout || '') + (result.stderr || '');
   const lower = combined.toLowerCase();
 
+  // A rejected tool schema is a model-compatibility regression, not an
+  // environment condition — never skip on it. Added 2026-07-20: qwen3.7-max
+  // 400s on any `tool_choice`, and the broad `rate limit` match below turned
+  // that hard failure into a green "Free tier rate limited" skip. The whole
+  // point of this helper is to absorb flaky infra, not silent breakage.
+  if (lower.includes('[schema]')) return false;
+
   if (
     combined.includes('max 60 requests/hour') ||
     lower.includes('rate limit') ||

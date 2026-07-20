@@ -38,6 +38,10 @@ const MODELS_WITHOUT_TOOL_CHOICE_SUBSTR = [
   'deepseek-reasoner',
   'openai/o1',
   'openai/o3',
+  // Qwen3.7 Max — plain tool use works, but any `tool_choice` on the payload
+  // 400s ("Invalid request: 400 Provider returned error"). Caught 2026-07-20
+  // by the grounding-retry path, which is the only place we force tool use.
+  'qwen3.7-max',
 ];
 
 function modelDoesNotSupportToolChoice(model: string): boolean {
@@ -840,11 +844,22 @@ export class ModelClient {
         // know that. Catch the error, drop tool_choice, re-fire once.
         // No payment re-sign needed — original 402 already settled, and
         // the gateway treats this as the same logical request.
+        // Second shape, verified 2026-07-20 on qwen/qwen3.7-max: the gateway
+        // returns an OPAQUE `400 Invalid request: 400 Provider returned error`
+        // that never names tool_choice, so the precise match below can't fire
+        // and the user just sees "Tool schema rejected by this model". Since
+        // the request has already failed, dropping tool_choice and re-firing
+        // once costs nothing on the happy path and self-heals the whole class
+        // for models we haven't catalogued yet. If tool_choice wasn't the
+        // cause, the retry 400s again and the original error still surfaces.
         const lc = message.toLowerCase();
         const looksLikeToolChoiceReject =
           response.status === 400 &&
-          lc.includes('tool_choice') &&
-          (lc.includes('not support') || lc.includes('unsupported') || lc.includes('does not support'));
+          (
+            (lc.includes('tool_choice') &&
+              (lc.includes('not support') || lc.includes('unsupported') || lc.includes('does not support'))) ||
+            requestPayload['tool_choice'] !== undefined
+          );
 
         if (looksLikeToolChoiceReject && requestPayload['tool_choice'] !== undefined) {
           delete requestPayload['tool_choice'];

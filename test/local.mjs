@@ -2597,6 +2597,69 @@ test('streamCompletion: retries without tool_choice when upstream rejects it', a
   assert.equal(calls[1].tool_choice, undefined, 'retry must have stripped tool_choice');
 });
 
+test('streamCompletion: retries without tool_choice on an OPAQUE 400 too', async () => {
+  // qwen/qwen3.7-max (2026-07-20) 400s on any tool_choice with a message that
+  // never names it — "Invalid request: 400 Provider returned error". The
+  // precise match above can't fire, so the retry must also trigger on a bare
+  // 400 whenever tool_choice was on the payload. Uses an UNCATALOGUED model
+  // id on purpose: qwen3.7-max itself is now in the static strip-list, so it
+  // never reaches this path. This is the safety net for the next such model.
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ tool_choice: body.tool_choice });
+    if (calls.length === 1) {
+      return new Response(
+        JSON.stringify({ error: { message: 'Invalid request: 400 Provider returned error' } }),
+        { status: 400, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    return new Response('retry-shape-ok', { status: 500 });
+  };
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    const gen = client.streamCompletion({
+      model: 'someprovider/uncatalogued-model-1',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1024,
+      tools: [{ name: 'Bash', description: 'x', input_schema: { type: 'object' } }],
+      tool_choice: { type: 'any' },
+    });
+    for await (const _evt of gen) { /* drain */ }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls.length, 2, 'an opaque 400 with tool_choice set must still retry once');
+  assert.deepEqual(calls[0].tool_choice, { type: 'any' }, 'first attempt carried tool_choice');
+  assert.equal(calls[1].tool_choice, undefined, 'retry must have stripped tool_choice');
+});
+
+test('streamCompletion: qwen3.7-max never sends tool_choice in the first place', async () => {
+  // The static strip-list short-circuits ahead of the runtime retry, so the
+  // known-bad model costs zero wasted calls.
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    calls.push(JSON.parse(init.body).tool_choice);
+    return new Response('stop', { status: 500 });
+  };
+  try {
+    const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+    const gen = client.streamCompletion({
+      model: 'qwen/qwen3.7-max',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 1024,
+      tools: [{ name: 'Bash', description: 'x', input_schema: { type: 'object' } }],
+      tool_choice: { type: 'any' },
+    });
+    for await (const _evt of gen) { /* drain */ }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls[0], undefined, 'tool_choice must be stripped before the request is sent');
+});
+
 test('streamCompletion: signed payment rejected by gateway does not count as paid', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
