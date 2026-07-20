@@ -94,9 +94,15 @@ export function clearGatewayModelsCache(): void {
  * entry for. Callers must treat the static tables as authoritative — the
  * gateway's own metadata is not reliable (verified 2026-07-20: it reports
  * max_output 8192 for claude-haiku-4.5, which Anthropic documents as 64000,
- * and 64000 for claude-sonnet-4.6, documented as 128000). It is also not
- * enforced: Franklin sends max_tokens 16384 to haiku today and the gateway
- * accepts it. Treat this as "better than a blind default", nothing more.
+ * and 64000 for claude-sonnet-4.6, documented as 128000).
+ *
+ * Correction to an earlier note here: those values are NOT inert metadata.
+ * The gateway clamps with them — Math.min(request.max_tokens, model.maxOutput)
+ * on both the messages and chat/completions handlers — and derives its price
+ * quote from the clamped ceiling. A request over the advertised cap is
+ * accepted rather than rejected, so the clamp is invisible until a reply is
+ * long enough to hit it, which is why a short smoke test looks fine.
+ * Treat this as "better than a blind default", nothing more.
  */
 export function peekGatewayModel(id: string): GatewayModel | null {
   if (!cache) return null;
