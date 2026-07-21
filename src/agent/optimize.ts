@@ -42,9 +42,14 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   'anthropic/claude-opus-4.6': 32_000,
   'anthropic/claude-opus-4.5': 32_000,
   'anthropic/claude-sonnet-5': 128_000,
-  'anthropic/claude-sonnet-4.6': 64_000,
+  'anthropic/claude-sonnet-4.6': 128_000, // Anthropic-documented; gateway corrected 2026-07-21
   'anthropic/claude-sonnet-4.5': 64_000,
-  'anthropic/claude-haiku-4.5': 16_384,
+  // Anthropic documents 64000 for Haiku 4.5. Held at 16384 until 2026-07-21
+  // because the gateway clamped to 8192 — asking for more only inflated the
+  // price quote (quotedOutputTokens scales with the ceiling) while the reply
+  // stayed capped. blockrun#266 corrected the gateway and it is live, so the
+  // real ceiling is now reachable.
+  'anthropic/claude-haiku-4.5': 64_000,
   'openai/gpt-5.6-sol': 128_000,
   'openai/gpt-5.6-terra': 128_000,
   'openai/gpt-5.6-luna': 128_000,
