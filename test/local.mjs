@@ -7625,6 +7625,31 @@ test('startDetachedTask: returns runId immediately, child completes async', asyn
   }
 });
 
+// Spawning `node dist/index.js` boots the whole CLI — config load, MCP server
+// discovery, wallet init — before the subcommand runs at all. These spawns were
+// capped at 5000ms, and three of them flaked under parallel load on 2026-07-21
+// (task tail / task cancel / task wait). The failure was also undiagnosable:
+// on timeout spawnSync returns status:null with empty stderr, so
+// `assert.equal(result.status, 0, result.stderr.toString())` reported
+// "null !== 0" and said nothing about a timeout. A flaky test in a release gate
+// is worse than a slow one — it trains you to wave the next real failure past.
+//
+// 20s matches what the rest of this file already uses for CLI-spawning tests
+// ({ timeout: 20_000 } at lines 117, 127, 597, ...); 5s was the outlier.
+const CLI_SPAWN_TIMEOUT_MS = 20_000;
+
+/** Assert a spawned CLI exited as expected, naming a timeout as a timeout. */
+function assertCliExit(result, expectedStatus, what) {
+  if (result.error) {
+    const hint = result.error.code === 'ETIMEDOUT'
+      ? ` — exceeded CLI_SPAWN_TIMEOUT_MS (${CLI_SPAWN_TIMEOUT_MS}ms); the machine was likely loaded, not the code broken`
+      : '';
+    assert.fail(`${what}: spawn failed with ${result.error.code || result.error.message}${hint}`);
+  }
+  assert.equal(result.status, expectedStatus,
+    `${what}: expected exit ${expectedStatus}, got ${result.status}\nstderr: ${result.stderr?.toString() ?? ''}`);
+}
+
 test('cli: franklin task list prints recent tasks', async () => {
   const os = await import('node:os');
   const path = await import('node:path');
@@ -7645,9 +7670,9 @@ test('cli: franklin task list prints recent tasks', async () => {
 
     const cli = path.join(process.cwd(), 'dist', 'index.js');
     const result = spawnSync(process.execPath, [cli, 'task', 'list'], {
-      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: CLI_SPAWN_TIMEOUT_MS,
     });
-    assert.equal(result.status, 0, result.stderr.toString());
+    assertCliExit(result, 0, 'task list');
     const out = result.stdout.toString();
     assert.match(out, /t2/);
     assert.match(out, /t1/);
@@ -7683,9 +7708,9 @@ test('cli: franklin task tail <runId> prints log + status', async () => {
 
     const cli = path.join(process.cwd(), 'dist', 'index.js');
     const result = spawnSync(process.execPath, [cli, 'task', 'tail', runId], {
-      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: CLI_SPAWN_TIMEOUT_MS,
     });
-    assert.equal(result.status, 0, result.stderr.toString());
+    assertCliExit(result, 0, 'task tail');
     const out = result.stdout.toString();
     assert.match(out, /line1/);
     assert.match(out, /line2/);
@@ -7722,9 +7747,9 @@ test('cli: franklin task tail reconciles stale queued tasks before printing stat
 
     const cli = path.join(process.cwd(), 'dist', 'index.js');
     const result = spawnSync(process.execPath, [cli, 'task', 'tail', runId], {
-      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: CLI_SPAWN_TIMEOUT_MS,
     });
-    assert.equal(result.status, 0, result.stderr.toString());
+    assertCliExit(result, 0, 'task tail (stale queued)');
     assert.match(result.stdout.toString(), /lost/);
     assert.equal(readTaskMeta(runId).status, 'lost');
   } finally {
@@ -7756,9 +7781,9 @@ test('cli: franklin task cancel <runId> kills running task', async () => {
 
     const cli = path.join(process.cwd(), 'dist', 'index.js');
     const result = spawnSync(process.execPath, [cli, 'task', 'cancel', runId], {
-      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: CLI_SPAWN_TIMEOUT_MS,
     });
-    assert.equal(result.status, 0, result.stderr.toString());
+    assertCliExit(result, 0, 'task cancel');
 
     // Give runner a moment to finalize
     await new Promise(r => setTimeout(r, 1500));
@@ -7828,11 +7853,15 @@ test('cli: franklin task wait reconciles stale queued tasks before blocking', as
     });
 
     const cli = path.join(process.cwd(), 'dist', 'index.js');
+    // The CLI is told to wait up to 10s, so the spawn bound must exceed it —
+    // it was 5000ms, i.e. the harness would have killed the process before the
+    // behaviour under test could finish. That only passed because the task goes
+    // 'lost' almost immediately; a slower reconcile would have failed here for
+    // reasons having nothing to do with `task wait`.
     const result = spawnSync(process.execPath, [cli, 'task', 'wait', runId, '--timeout', '10000'], {
-      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: 5000,
+      env: { ...process.env, FRANKLIN_HOME: fakeHome }, timeout: CLI_SPAWN_TIMEOUT_MS,
     });
-    assert.equal(result.error, undefined, result.error?.message);
-    assert.equal(result.status, 1, result.stderr.toString());
+    assertCliExit(result, 1, 'task wait (stale queued)');
     assert.match(result.stdout.toString(), /lost/);
     assert.equal(readTaskMeta(runId).status, 'lost');
   } finally {
