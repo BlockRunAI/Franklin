@@ -1,5 +1,29 @@
 # Changelog
 
+## Franklin Agent 3.35.4 — Haiku and Sonnet 4.6 get their real output ceilings
+
+**Haiku 4.5 goes from 16,384 to 64,000 max output. Sonnet 4.6 from 64,000 to
+128,000.** Both are Anthropic's documented limits.
+
+They were held low deliberately. The gateway clamped Haiku to 8,192 and Sonnet
+4.6 to 64,000, and asking past a clamp is not free — the upfront price quote
+scales with the ceiling you request, so a bigger ask inflated what you were
+quoted while the reply stayed capped. Raising these before the gateway was
+corrected would have cost money and bought nothing. The gateway now honors the
+real ceilings, so this catches Franklin up.
+
+The raise takes effect on the escalation path: a normal turn still sends
+`min(16384, ceiling)`, and the higher ceiling is reached after a `max_tokens`
+stop escalates. That path was previously a no-op for Haiku — it escalated to
+65,536 and got clamped straight back to 16,384.
+
+**Three OpenAI entries were deliberately left alone** even though the gateway
+catalog now reads higher for them: `gpt-5.5` and `gpt-5.4` stay at 32,768
+(catalog says 128,000) and `gpt-5-mini` stays at 16,384 (catalog says 65,536).
+The catalog is the only evidence for those three, and it was 8x wrong about
+Haiku. A test pins all three so syncing them requires arguing with a failing
+assertion rather than a quiet edit.
+
 ## Franklin Agent 3.35.3 — docs only
 
 No runtime change. Ships a corrected comment in `src/gateway-models.ts`.
