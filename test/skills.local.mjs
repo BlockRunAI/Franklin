@@ -21,7 +21,19 @@ import { formatSkillHints } from '../dist/skills/triggers.js';
 
 const DIST = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 
-function runCli(args, { timeoutMs = 8000, env, cwd } = {}) {
+// Booting `node dist/index.js` runs the whole CLI startup path (config, MCP
+// discovery, wallet init) before the subcommand executes. The default here was
+// 8000ms while the tests around it declare { timeout: 15_000 } — so the inner
+// bound fired first and the declared one never applied. Two call sites had
+// already been patched individually to timeoutMs: 15_000, which is the usual
+// sign that the default, not the call site, is what's wrong.
+//
+// Observed 2026-07-21: `franklin skills --json` failed at 8037ms under parallel
+// load while passing in ~1s idle. Raised to 20s to match what test/local.mjs
+// uses for CLI spawns, so a loaded machine doesn't read as a broken build.
+const CLI_SPAWN_TIMEOUT_MS = 20_000;
+
+function runCli(args, { timeoutMs = CLI_SPAWN_TIMEOUT_MS, env, cwd } = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn('node', [DIST, ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -34,7 +46,10 @@ function runCli(args, { timeoutMs = 8000, env, cwd } = {}) {
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
     const timer = setTimeout(() => {
       proc.kill('SIGTERM');
-      reject(new Error(`Timeout after ${timeoutMs}ms`));
+      reject(new Error(
+        `franklin ${args.join(' ')} exceeded ${timeoutMs}ms. CLI startup is slow ` +
+        `under load; this usually means a busy machine, not broken code.`
+      ));
     }, timeoutMs);
     proc.on('close', (code) => {
       clearTimeout(timer);
