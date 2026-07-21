@@ -66,6 +66,37 @@ import { logger, setDebugMode } from '../logger.js';
 import { isTestFixtureModel } from '../stats/test-fixture.js';
 
 const DEFAULT_MAX_TOKENS = 4096;
+
+/**
+ * Decide the `max_tokens` the proxy forwards upstream.
+ *
+ * An explicit ask is honored; only a missing one gets the adaptive default.
+ * This overwrote unconditionally until 3.35.6 — whatever the caller sent was
+ * replaced by min(adaptive, modelCap), where `adaptive` grows to twice the
+ * previous reply. A client asking for 500 tokens after a long turn got several
+ * thousand instead, and because the gateway quotes on the ceiling it is
+ * requested, that inflated the hold on a request the caller had deliberately
+ * kept small.
+ *
+ * Clamping an explicit ask to `modelCap` stays: asking past the model's own
+ * ceiling is a request the provider rejects outright, and failing it here is
+ * worse than quietly making it legal.
+ *
+ * @param asked      what the caller sent, if anything
+ * @param lastOutput tokens the previous reply on this model produced (0 = none)
+ * @param modelCap   the model's own output ceiling
+ */
+export function resolveProxyMaxTokens(
+  asked: unknown,
+  lastOutput: number,
+  modelCap: number,
+): number {
+  const adaptive =
+    lastOutput > 0 ? Math.max(lastOutput * 2, DEFAULT_MAX_TOKENS) : DEFAULT_MAX_TOKENS;
+  const explicit =
+    typeof asked === 'number' && Number.isFinite(asked) && asked > 0 ? asked : null;
+  return Math.min(explicit ?? adaptive, modelCap);
+}
 // 180s budget for *time-to-headers* — reasoning-class models (zai/glm-*,
 // nemotron *-reasoning, deepseek-r*, gpt-5-codex, anthropic extended-thinking)
 // routinely take 60–120s to first token on cache-cold prompts or busy
@@ -390,14 +421,8 @@ export function createProxy(options: ProxyOptions): http.Server {
               // could emit 65K+ (Kimi K3, GPT-5.6 Sol). Same table both paths now.
               const modelCap = getMaxOutputTokens(parsed.model || '');
 
-              // Use max of (last output × 2, default 4096) capped by model limit
-              // This ensures short replies don't starve the next request
               const lastOut = lastOutputByModel.get(requestModel) ?? 0;
-              const adaptive =
-                lastOut > 0
-                  ? Math.max(lastOut * 2, DEFAULT_MAX_TOKENS)
-                  : DEFAULT_MAX_TOKENS;
-              parsed.max_tokens = Math.min(adaptive, modelCap);
+              parsed.max_tokens = resolveProxyMaxTokens(original, lastOut, modelCap);
 
               if (original !== parsed.max_tokens && options.debug) {
                 logger.debug(`[franklin] max_tokens: ${original || 'unset'} → ${parsed.max_tokens} (last output: ${lastOut || 'none'})`);

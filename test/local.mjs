@@ -6728,6 +6728,45 @@ test('openai ceilings are measured, not read off the catalog', async () => {
   assert.equal(getMaxOutputTokens('openai/gpt-5-mini'), 65_536);
 });
 
+// ─── proxy max_tokens: honor an explicit ask ──────────────────────────────
+
+test('proxy: an explicit max_tokens is honored, not overwritten', async () => {
+  // Regression. The proxy used to overwrite unconditionally with
+  // min(adaptive, modelCap), where adaptive = 2x the previous reply. A caller
+  // asking for 500 after a long turn got 4096+, and since the gateway quotes
+  // on the ceiling it is asked for, that inflated the hold on a request the
+  // caller had deliberately kept small.
+  const { resolveProxyMaxTokens } = await import('../dist/proxy/server.js');
+  assert.equal(resolveProxyMaxTokens(500, 20_000, 128_000), 500,
+    'a small explicit ask must survive a large previous reply');
+  assert.equal(resolveProxyMaxTokens(1, 60_000, 128_000), 1);
+});
+
+test('proxy: a missing max_tokens still gets the adaptive default', async () => {
+  // The adaptive path is why this code exists — a caller that omits the field
+  // should not be starved by a 4096 floor after a long reply.
+  const { resolveProxyMaxTokens } = await import('../dist/proxy/server.js');
+  assert.equal(resolveProxyMaxTokens(undefined, 0, 128_000), 4096, 'no history -> floor');
+  assert.equal(resolveProxyMaxTokens(undefined, 10_000, 128_000), 20_000, 'twice the last reply');
+  assert.equal(resolveProxyMaxTokens(null, 1_000, 128_000), 4096, 'floor wins under 2x4096');
+});
+
+test('proxy: the model ceiling still clamps both paths', async () => {
+  // Asking past the model's own ceiling is a request the provider rejects, so
+  // clamping is friendlier than forwarding a guaranteed 400.
+  const { resolveProxyMaxTokens } = await import('../dist/proxy/server.js');
+  assert.equal(resolveProxyMaxTokens(999_999, 0, 128_000), 128_000, 'explicit ask clamped');
+  assert.equal(resolveProxyMaxTokens(undefined, 500_000, 65_536), 65_536, 'adaptive clamped');
+});
+
+test('proxy: junk in max_tokens falls back to adaptive rather than propagating', async () => {
+  const { resolveProxyMaxTokens } = await import('../dist/proxy/server.js');
+  for (const junk of [0, -1, NaN, Infinity, '4096', {}, true]) {
+    assert.equal(resolveProxyMaxTokens(junk, 0, 128_000), 4096,
+      `${String(junk)} must not become the forwarded ceiling`);
+  }
+});
+
 // ─── gateway catalog as a GAP-FILLER, never an override ───────────────────
 //
 // The static tables are authoritative. Several entries are deliberate
