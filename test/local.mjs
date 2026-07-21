@@ -6710,21 +6710,22 @@ test('anthropic max output matches the documented ceilings', async () => {
   assert.equal(getMaxOutputTokens('anthropic/claude-sonnet-4.6'), 128_000);
 });
 
-test('openai ceilings: one probed, two still unverified', async () => {
-  // gpt-5-mini was raised to 65536 on a real accepted request through the live
-  // gateway (2026-07-21). It is a FLOOR, not a proven ceiling — 65536 is also
-  // ESCALATED_MAX_TOKENS, so nothing here could tell a higher true limit apart.
+test('openai ceilings are measured, not read off the catalog', async () => {
+  // All three are now probed against the live gateway.
   //
-  // gpt-5.5 / gpt-5.4 stay at 32768. The catalog claims 128000 and that claim
-  // is UNREFUTED. An attempt to verify it was invalid: both SDKs reject
-  // max_tokens > 100000 client-side (blockrun_llm validation.py:233,
-  // blockrun-llm-ts validation.ts:74), so probes at 128000 never reached a
-  // provider — the "maximum: 100000" in those errors is an SDK constant, not
-  // an upstream response. Raising these needs a probe that bypasses the guard.
+  // gpt-5-mini  65536 accepted (probe was below the SDK guard, so it went out)
+  // gpt-5.5     128000 accepted, 2026-07-21, guard bypassed
+  // gpt-5.4     128000 accepted, same run
+  //
+  // An earlier pass recorded these as REJECTED at 128000 and concluded the
+  // catalog was wrong. That was measurement error: both SDKs threw on
+  // max_tokens > 100000 client-side, so 19 "rejections" never left the
+  // process. The uniform limit across three different providers was the tell.
+  // Fixed upstream in blockrun-llm#27 and blockrun-llm-ts#15.
   const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
+  assert.equal(getMaxOutputTokens('openai/gpt-5.5'), 128_000);
+  assert.equal(getMaxOutputTokens('openai/gpt-5.4'), 128_000);
   assert.equal(getMaxOutputTokens('openai/gpt-5-mini'), 65_536);
-  assert.equal(getMaxOutputTokens('openai/gpt-5.5'), 32_768);
-  assert.equal(getMaxOutputTokens('openai/gpt-5.4'), 32_768);
 });
 
 // ─── gateway catalog as a GAP-FILLER, never an override ───────────────────
