@@ -53,14 +53,18 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   'openai/gpt-5.6-sol': 128_000,
   'openai/gpt-5.6-terra': 128_000,
   'openai/gpt-5.6-luna': 128_000,
-  // gpt-5.5 / gpt-5.4 stay at 32768. The catalog claims 128000 for both and
-  // that claim is UNREFUTED — an earlier attempt to verify it was invalid:
-  // both SDKs reject max_tokens > 100000 client-side (blockrun_llm
-  // validation.py:233, blockrun-llm-ts validation.ts:74), so the "rejections"
-  // collected at 128000 never reached a provider. Their real ceilings are
-  // unknown. Raising them needs a probe path that bypasses the SDK guard.
-  'openai/gpt-5.5': 32_768,
-  'openai/gpt-5.4': 32_768,
+  // 128000 is measured, not read off the catalog. The earlier probe that
+  // seemed to refute it was invalid — both SDKs rejected max_tokens > 100000
+  // client-side, so nothing reached a provider. Re-probed 2026-07-21 with that
+  // guard bypassed: both accept 128000, as did every model advertising a
+  // ceiling above 100000. The catalog was right; the measurement was broken.
+  //
+  // Franklin does not run that SDK guard on either request path — the agent
+  // loop and the proxy both use raw fetch and import only payment helpers from
+  // @blockrun/llm — so these values are independent of whether the SDK-side
+  // fix lands. (blockrun-llm#27 / blockrun-llm-ts#15, open at time of writing.)
+  'openai/gpt-5.5': 128_000,
+  'openai/gpt-5.4': 128_000,
   'openai/gpt-5.4-mini': 128_000,
   'openai/gpt-5.4-nano': 32_768,
   // Probed accepted at 65536 through the live gateway (2026-07-21) — a real
