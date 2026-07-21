@@ -53,11 +53,21 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   'openai/gpt-5.6-sol': 128_000,
   'openai/gpt-5.6-terra': 128_000,
   'openai/gpt-5.6-luna': 128_000,
+  // gpt-5.5 / gpt-5.4 stay at 32768. The catalog claims 128000 for both and
+  // that claim is UNREFUTED — an earlier attempt to verify it was invalid:
+  // both SDKs reject max_tokens > 100000 client-side (blockrun_llm
+  // validation.py:233, blockrun-llm-ts validation.ts:74), so the "rejections"
+  // collected at 128000 never reached a provider. Their real ceilings are
+  // unknown. Raising them needs a probe path that bypasses the SDK guard.
   'openai/gpt-5.5': 32_768,
   'openai/gpt-5.4': 32_768,
   'openai/gpt-5.4-mini': 128_000,
   'openai/gpt-5.4-nano': 32_768,
-  'openai/gpt-5-mini': 16_384,
+  // Probed accepted at 65536 through the live gateway (2026-07-21) — a real
+  // request, not a catalog reading. Note this is a FLOOR, not a proven
+  // ceiling: 65536 also happens to be ESCALATED_MAX_TOKENS, so nothing here
+  // could distinguish a higher true limit even if one exists.
+  'openai/gpt-5-mini': 65_536,
   'google/gemini-2.5-pro': 65_536,
   'google/gemini-2.5-flash': 65_536,
   'google/gemini-3.5-flash': 65_536,
