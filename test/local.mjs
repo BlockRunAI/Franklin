@@ -6698,6 +6698,30 @@ test('qwen3.7-max: paid aliases resolve, and bare `qwen` stays free', async () =
     'bare `qwen` must keep resolving to a $0 model');
 });
 
+test('anthropic max output matches the documented ceilings', async () => {
+  // Both were held below Anthropic's published limits while the gateway
+  // clamped lower (it reported 8192 for haiku, 64000 for sonnet-4.6). Asking
+  // past a clamp only inflates the price quote — quotedOutputTokens scales
+  // with the ceiling — while the reply stays capped, so raising these before
+  // the gateway was corrected would have cost money and bought nothing.
+  // blockrun#266 + #268 are deployed; verified live 2026-07-21.
+  const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
+  assert.equal(getMaxOutputTokens('anthropic/claude-haiku-4.5'), 64_000);
+  assert.equal(getMaxOutputTokens('anthropic/claude-sonnet-4.6'), 128_000);
+});
+
+test('openai entries stay put until something other than the catalog backs them', async () => {
+  // gpt-5.5 / gpt-5.4 (32768) and gpt-5-mini (16384) all read lower than the
+  // gateway catalog claims. Deliberately NOT raised: the catalog is the only
+  // evidence, and it was 8x wrong about haiku-4.5. Raising on that basis alone
+  // repeats the mistake this whole table exists to guard against. Change these
+  // when a source outside the catalog confirms them — then update this test.
+  const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
+  assert.equal(getMaxOutputTokens('openai/gpt-5.5'), 32_768);
+  assert.equal(getMaxOutputTokens('openai/gpt-5.4'), 32_768);
+  assert.equal(getMaxOutputTokens('openai/gpt-5-mini'), 16_384);
+});
+
 // ─── gateway catalog as a GAP-FILLER, never an override ───────────────────
 //
 // The static tables are authoritative. Several entries are deliberate
@@ -6721,11 +6745,23 @@ test('gateway catalog never overrides a static context-window entry', async () =
 
 test('gateway catalog never overrides a static max-output entry', async () => {
   const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
-  const { clearGatewayModelsCache } = await import('../dist/gateway-models.js');
+  const { clearGatewayModelsCache, __primeGatewayModelsCache } = await import('../dist/gateway-models.js');
   clearGatewayModelsCache();
-  assert.equal(getMaxOutputTokens('anthropic/claude-haiku-4.5'), 16_384,
-    'static entry wins over the gateway\'s (wrong) 8192');
+  // Prime the cache with values that DISAGREE with the static table, so this
+  // actually exercises precedence. It used to assert on haiku-4.5 (static
+  // 16384 vs a catalog reporting 8192); once the gateway was corrected and the
+  // static entry raised to 64000 the two agreed, and the assertion silently
+  // stopped testing anything. gpt-5.5 is the live disagreement now: the
+  // catalog claims 128000, we hold 32768 because nothing outside the catalog
+  // confirms it, and the catalog was 8x wrong about haiku.
+  __primeGatewayModelsCache([
+    { id: 'openai/gpt-5.5', name: 'x', billing_mode: 'paid', categories: ['chat'],
+      context_window: 400_000, max_output: 128_000, pricing: { input: 1, output: 2 } },
+  ]);
+  assert.equal(getMaxOutputTokens('openai/gpt-5.5'), 32_768,
+    'static entry must win even with a warm catalog claiming 128000');
   assert.equal(getMaxOutputTokens('moonshot/kimi-k3'), 65_536);
+  clearGatewayModelsCache();
 });
 
 test('gateway catalog fills the gap for an uncatalogued model', async () => {
