@@ -67,7 +67,7 @@
   },
   "dependencies": {
     "@blockrun/llm": "^3.5.2",
-    "@colbymchenry/codegraph": "^0.9.7",
+    "@colbymchenry/codegraph": "0.9.7",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@polymarket/builder-relayer-client": "^0.0.10",
     "@polymarket/builder-signing-sdk": "0.0.8",
@@ -93,6 +93,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/qrcode": "^1.5.6",
+    "@types/ws": "^7.4.7",
     "typescript": "^5.7.0"
   }
 }
