@@ -6710,16 +6710,21 @@ test('anthropic max output matches the documented ceilings', async () => {
   assert.equal(getMaxOutputTokens('anthropic/claude-sonnet-4.6'), 128_000);
 });
 
-test('openai entries stay put until something other than the catalog backs them', async () => {
-  // gpt-5.5 / gpt-5.4 (32768) and gpt-5-mini (16384) all read lower than the
-  // gateway catalog claims. Deliberately NOT raised: the catalog is the only
-  // evidence, and it was 8x wrong about haiku-4.5. Raising on that basis alone
-  // repeats the mistake this whole table exists to guard against. Change these
-  // when a source outside the catalog confirms them — then update this test.
+test('openai ceilings: one probed, two still unverified', async () => {
+  // gpt-5-mini was raised to 65536 on a real accepted request through the live
+  // gateway (2026-07-21). It is a FLOOR, not a proven ceiling — 65536 is also
+  // ESCALATED_MAX_TOKENS, so nothing here could tell a higher true limit apart.
+  //
+  // gpt-5.5 / gpt-5.4 stay at 32768. The catalog claims 128000 and that claim
+  // is UNREFUTED. An attempt to verify it was invalid: both SDKs reject
+  // max_tokens > 100000 client-side (blockrun_llm validation.py:233,
+  // blockrun-llm-ts validation.ts:74), so probes at 128000 never reached a
+  // provider — the "maximum: 100000" in those errors is an SDK constant, not
+  // an upstream response. Raising these needs a probe that bypasses the guard.
   const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
+  assert.equal(getMaxOutputTokens('openai/gpt-5-mini'), 65_536);
   assert.equal(getMaxOutputTokens('openai/gpt-5.5'), 32_768);
   assert.equal(getMaxOutputTokens('openai/gpt-5.4'), 32_768);
-  assert.equal(getMaxOutputTokens('openai/gpt-5-mini'), 16_384);
 });
 
 // ─── gateway catalog as a GAP-FILLER, never an override ───────────────────
@@ -6747,19 +6752,23 @@ test('gateway catalog never overrides a static max-output entry', async () => {
   const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
   const { clearGatewayModelsCache, __primeGatewayModelsCache } = await import('../dist/gateway-models.js');
   clearGatewayModelsCache();
-  // Prime the cache with values that DISAGREE with the static table, so this
-  // actually exercises precedence. It used to assert on haiku-4.5 (static
-  // 16384 vs a catalog reporting 8192); once the gateway was corrected and the
-  // static entry raised to 64000 the two agreed, and the assertion silently
-  // stopped testing anything. gpt-5.5 is the live disagreement now: the
-  // catalog claims 128000, we hold 32768 because nothing outside the catalog
-  // confirms it, and the catalog was 8x wrong about haiku.
+  // Prime the cache with a SENTINEL no real model will ever carry, then assert
+  // the sentinel does not win. Earlier versions hardcoded whatever the real
+  // static-vs-catalog disagreement happened to be — haiku-4.5 first (16384 vs
+  // a catalog claiming 8192), then gpt-5.5 — and broke each time those numbers
+  // legitimately changed. Worse, the haiku form silently stopped testing
+  // anything the moment the two sides agreed: it kept passing while asserting
+  // nothing, which is the failure mode actually worth designing against. A
+  // sentinel tests the precedence rule instead of the values.
+  const SENTINEL = 999_999;
+  const staticBefore = getMaxOutputTokens('openai/gpt-5.5');
   __primeGatewayModelsCache([
     { id: 'openai/gpt-5.5', name: 'x', billing_mode: 'paid', categories: ['chat'],
-      context_window: 400_000, max_output: 128_000, pricing: { input: 1, output: 2 } },
+      context_window: 400_000, max_output: SENTINEL, pricing: { input: 1, output: 2 } },
   ]);
-  assert.equal(getMaxOutputTokens('openai/gpt-5.5'), 32_768,
-    'static entry must win even with a warm catalog claiming 128000');
+  assert.notEqual(staticBefore, SENTINEL, 'sentinel must differ from the real static value');
+  assert.equal(getMaxOutputTokens('openai/gpt-5.5'), staticBefore,
+    'a warm catalog must not change the answer for a model with a static entry');
   assert.equal(getMaxOutputTokens('moonshot/kimi-k3'), 65_536);
   clearGatewayModelsCache();
 });
