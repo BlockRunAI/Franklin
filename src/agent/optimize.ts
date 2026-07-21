@@ -53,11 +53,17 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   'openai/gpt-5.6-sol': 128_000,
   'openai/gpt-5.6-terra': 128_000,
   'openai/gpt-5.6-luna': 128_000,
-  'openai/gpt-5.5': 32_768,
-  'openai/gpt-5.4': 32_768,
+  // 100000 is upstream's own stated maximum, not the catalog's number: the
+  // gateway advertises 128000 and a probe at that value came back
+  // "max_tokens too large (maximum: 100000)" (2026-07-21). Catalog is wrong.
+  'openai/gpt-5.5': 100_000,
+  'openai/gpt-5.4': 100_000, // same probe, same upstream maximum
   'openai/gpt-5.4-mini': 128_000,
   'openai/gpt-5.4-nano': 32_768,
-  'openai/gpt-5-mini': 16_384,
+  // Probed accepted at 65536 (2026-07-21). That proves the ceiling is at
+  // least 65536, which is all this table needs — ESCALATED_MAX_TOKENS is
+  // 65536, so any higher true limit is indistinguishable here.
+  'openai/gpt-5-mini': 65_536,
   'google/gemini-2.5-pro': 65_536,
   'google/gemini-2.5-flash': 65_536,
   'google/gemini-3.5-flash': 65_536,

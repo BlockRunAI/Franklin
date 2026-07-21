@@ -6710,16 +6710,30 @@ test('anthropic max output matches the documented ceilings', async () => {
   assert.equal(getMaxOutputTokens('anthropic/claude-sonnet-4.6'), 128_000);
 });
 
-test('openai entries stay put until something other than the catalog backs them', async () => {
-  // gpt-5.5 / gpt-5.4 (32768) and gpt-5-mini (16384) all read lower than the
-  // gateway catalog claims. Deliberately NOT raised: the catalog is the only
-  // evidence, and it was 8x wrong about haiku-4.5. Raising on that basis alone
-  // repeats the mistake this whole table exists to guard against. Change these
-  // when a source outside the catalog confirms them — then update this test.
+test('openai ceilings come from an upstream probe, not the catalog', async () => {
+  // Previously these were pinned LOW (32768/32768/16384) with a note to change
+  // them only once a source outside the catalog confirmed them. That source is
+  // now an upstream probe (2026-07-21): a real paid request at the catalog's
+  // advertised ceiling, through the live gateway.
+  //
+  //   gpt-5.5     catalog 128000 -> REJECTED, "max_tokens too large (maximum: 100000)"
+  //   gpt-5.4     catalog 128000 -> REJECTED, same message
+  //   gpt-5-mini  catalog  65536 -> ACCEPTED
+  //
+  // So the catalog was wrong on two of three, in the dangerous direction:
+  // syncing to it would have sent 128000 and taken a hard upstream rejection.
+  // 100000 is upstream's own stated maximum. gpt-5-mini's 65536 is a floor,
+  // not a proven ceiling — the probe only shows the limit is >= 65536, which
+  // is all this table needs since ESCALATED_MAX_TOKENS is 65536.
   const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
-  assert.equal(getMaxOutputTokens('openai/gpt-5.5'), 32_768);
-  assert.equal(getMaxOutputTokens('openai/gpt-5.4'), 32_768);
-  assert.equal(getMaxOutputTokens('openai/gpt-5-mini'), 16_384);
+  assert.equal(getMaxOutputTokens('openai/gpt-5.5'), 100_000);
+  assert.equal(getMaxOutputTokens('openai/gpt-5.4'), 100_000);
+  assert.equal(getMaxOutputTokens('openai/gpt-5-mini'), 65_536);
+  // Guard the reason, not just the number: 128000 is what the catalog claims
+  // and what upstream refuses. If this ever equals 128000, someone synced to
+  // the catalog and reintroduced the rejection.
+  assert.notEqual(getMaxOutputTokens('openai/gpt-5.5'), 128_000,
+    'catalog value is refused by upstream — do not sync to it');
 });
 
 // ─── gateway catalog as a GAP-FILLER, never an override ───────────────────
@@ -6747,19 +6761,23 @@ test('gateway catalog never overrides a static max-output entry', async () => {
   const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
   const { clearGatewayModelsCache, __primeGatewayModelsCache } = await import('../dist/gateway-models.js');
   clearGatewayModelsCache();
-  // Prime the cache with values that DISAGREE with the static table, so this
-  // actually exercises precedence. It used to assert on haiku-4.5 (static
-  // 16384 vs a catalog reporting 8192); once the gateway was corrected and the
-  // static entry raised to 64000 the two agreed, and the assertion silently
-  // stopped testing anything. gpt-5.5 is the live disagreement now: the
-  // catalog claims 128000, we hold 32768 because nothing outside the catalog
-  // confirms it, and the catalog was 8x wrong about haiku.
+  // Prime the cache with a SENTINEL that no real model will ever carry, then
+  // assert the sentinel does not win. Earlier versions of this test hardcoded
+  // whatever the real disagreement happened to be — first haiku-4.5 (static
+  // 16384 vs a catalog claiming 8192), then gpt-5.5 (32768 vs 128000) — and
+  // broke twice when those numbers legitimately changed. Worse, the haiku form
+  // silently stopped testing anything the moment the two sides agreed: it kept
+  // passing while asserting nothing. A sentinel tests the precedence rule
+  // itself and survives every future correction to the real values.
+  const SENTINEL = 999_999;
+  const staticBefore = getMaxOutputTokens('openai/gpt-5.5');
   __primeGatewayModelsCache([
     { id: 'openai/gpt-5.5', name: 'x', billing_mode: 'paid', categories: ['chat'],
-      context_window: 400_000, max_output: 128_000, pricing: { input: 1, output: 2 } },
+      context_window: 400_000, max_output: SENTINEL, pricing: { input: 1, output: 2 } },
   ]);
-  assert.equal(getMaxOutputTokens('openai/gpt-5.5'), 32_768,
-    'static entry must win even with a warm catalog claiming 128000');
+  assert.notEqual(staticBefore, SENTINEL, 'sentinel must differ from the real static value');
+  assert.equal(getMaxOutputTokens('openai/gpt-5.5'), staticBefore,
+    'a warm catalog must not change the answer for a model with a static entry');
   assert.equal(getMaxOutputTokens('moonshot/kimi-k3'), 65_536);
   clearGatewayModelsCache();
 });
