@@ -1,5 +1,40 @@
 # Changelog
 
+## Franklin Agent 3.35.5 — the last three OpenAI ceilings, measured
+
+| model | was | now |
+|---|---|---|
+| `openai/gpt-5.5` | 32,768 | 128,000 |
+| `openai/gpt-5.4` | 32,768 | 128,000 |
+| `openai/gpt-5-mini` | 16,384 | 65,536 |
+
+These took three attempts to get right, and the story is worth keeping because
+the table is where a wrong belief gets frozen.
+
+The first attempt set gpt-5.5 and gpt-5.4 to 100,000, citing "upstream's stated
+maximum". There was no upstream response: both BlockRun SDKs rejected
+`max_tokens > 100000` client-side, so 19 probes at 128,000 never reached a
+provider. The uniform limit across three unrelated vendors should have been the
+tell. That PR was closed. The second attempt put them back at 32,768 and
+recorded the catalog's 128,000 as unrefuted but unverified — honest, but still
+not measured.
+
+Re-probed with the SDK guard bypassed: every model advertising a ceiling above
+100,000 accepts it, including `zai/glm-5.2` at 262,144. The catalog was right
+the whole time; the measurement was broken. Fixed at the root in
+blockrun-llm 1.8.1 and @blockrun/llm 3.8.1, which raise that guard to a
+1,000,000 typo bound and reword the message so it no longer reads like a
+provider response.
+
+Franklin never ran that guard — both request paths use raw fetch and import
+only payment helpers from the SDK — so these values do not depend on the SDK
+release.
+
+Effect is on the escalation path. A normal turn still sends
+`min(16384, ceiling)`; after a `max_tokens` stop the ceiling for gpt-5.5 and
+gpt-5.4 goes from 32,768 to 65,536 (`ESCALATED_MAX_TOKENS`), so recovery
+doubles instead of clamping back below where it started.
+
 ## Franklin Agent 3.35.4 — Haiku and Sonnet 4.6 get their real output ceilings
 
 **Haiku 4.5 goes from 16,384 to 64,000 max output. Sonnet 4.6 from 64,000 to
