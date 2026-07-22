@@ -1,5 +1,29 @@
 # Changelog
 
+## Franklin Agent 3.35.6 — proxy honors your max_tokens; a build that was quietly failing
+
+**The payment proxy stops overwriting an explicit `max_tokens`.** It used to
+replace whatever you sent with `min(adaptive, modelCap)`, where `adaptive` is
+twice the previous reply on that model. A client asking for 500 tokens right
+after a long turn was forwarded several thousand instead — and because the
+gateway quotes on the ceiling a request asks for, that inflated the upfront
+hold on a request you had deliberately kept small. An explicit, positive,
+finite ask is now honored; only a missing one gets the adaptive default.
+Clamping to the model's real ceiling stays, since asking past it is a request
+the provider rejects outright.
+
+**A dependency update that would have broken the build, caught before it
+shipped.** `npm update` pulled `@types/ws` across a major (7 → 8) and
+`@colbymchenry/codegraph` to 0.9.9, whose new `exports` map hides the shim
+Franklin resolves for its built-in CodeGraph MCP server. Both were invisible to
+`npm test` — the suite runs the already-emitted `dist/`, so a `tsc` failure and
+a runtime resolution failure both passed the test gate while `npm run build`
+exited non-zero. Both are now pinned, and this release was cut only after
+checking the build exit code directly, not the test result.
+
+`@blockrun/llm` also moved 3.5.2 → 3.8.3, which carries the `max_tokens` guard
+fix from this line of work.
+
 ## Franklin Agent 3.35.5 — the last three OpenAI ceilings, measured
 
 | model | was | now |
