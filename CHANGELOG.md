@@ -1,5 +1,57 @@
 # Changelog
 
+## Franklin Agent 3.37.0 — the dependency backlog, cleared
+
+**`ws` was never actually declared.** `src/serve/server.ts` imported it while
+`package.json` never listed it — it resolved only because a transitive
+dependency happened to hoist it to the top of `node_modules`. Any shift in that
+dependency's tree, or in npm's hoisting, would have broken `franklin serve` at
+runtime with nothing in CI to catch it. The types were wrong too: `@types/ws`
+was pinned at 7 while ws 8 was what actually ran, which is precisely why the
+`@types/ws` bump 3.35.6 backed out of failed to compile. `ws` is now a real
+dependency at ^8.21.1, the types match reality, and the server uses the named
+`WebSocketServer` export that v8 requires.
+
+**Seven majors taken, each verified on its own terms.** Test coverage alone
+wouldn't have justified any of them, so the runtime-facing ones were exercised
+directly rather than trusted to a green suite:
+
+| upgrade | how it was verified beyond the suite |
+|---|---|
+| typescript 5.9.3 → 7.0.2 | compiled `dist/` with both and diffed the trees — 2 files differ, both cosmetic (quote style in a `.d.ts`, import binding order) |
+| ink 6 → 7 | rendered Franklin's real `VimInput` through the Ink renderer and diffed the frame text |
+| commander 13 → 15 | ran the built CLI: `--version`, root help, subcommand help |
+| @slack/bolt 4 → 5 | checked the exact slice Franklin uses still resolves |
+| sharp 0.34.5 → 0.35.3 | ran read.ts's downscale pipeline on a real 3000x2000 image |
+| @colbymchenry/codegraph 0.9.7 → 1.5.0 | spawned the server and ran a real MCP `initialize` + `tools/list` |
+| @types/node 22 → 26 | type-only |
+
+**Two security findings fixed, the rest are upstream-blocked.** sharp 0.35.3
+clears the inherited libvips CVEs, which sit on a reachable path — Franklin
+runs user-supplied images through sharp before vision calls. And an override
+keyed on the ws advisory range itself (not on the package name) pulls the
+vulnerable copy `@ethersproject/providers` dragged in, while leaving jayson on
+7.5.13 and viem on 8.21.0 — both already outside the range, so neither eats a
+major for no security gain. High-severity findings drop 8 → 6, total 31 → 29.
+Every remaining one reports `fixAvailable: false`.
+
+**CodeGraph is unpinned.** 1.x added an `exports` map that stopped listing
+`./npm-shim.js`, so resolving that subpath threw even though the file still
+ships as the package's own `bin` — the wall 3.35.6 pinned against. Franklin now
+resolves the manifest (still exported) and walks to the shim beside it. Note
+that 1.5.0 consolidates the old five tools into a single `codegraph_explore`;
+nothing hardcodes those names, since MCP tools are discovered at runtime.
+
+**Two upgrades deliberately declined.** `@polymarket/builder-signing-sdk` 1.0.0
+type-conflicts with the copy `builder-relayer-client` bundles, and that package
+is already at its latest while still requiring `^0.0.8` — there is no coherent
+pair to move to yet. `@polymarket/clob-client-v2` 1.1.0 builds and passes, but
+it adds a `waitForResolvedTrades` step so `postOrder` now waits on settlement
+transaction hashes before returning. That is live behavior on the
+order-placement path, no local test places a real order, and the module is a
+byte-faithful port that re-syncs with blockrun-mcp — so it stays pinned at
+1.0.8 pending that paired update.
+
 ## Franklin Agent 3.36.0 — Claude Opus 5 is the default Opus
 
 **`opus` and `claude` now resolve to `anthropic/claude-opus-5`.** It is live on
