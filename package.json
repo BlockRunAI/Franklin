@@ -67,7 +67,7 @@
   },
   "dependencies": {
     "@blockrun/llm": "^3.5.2",
-    "@colbymchenry/codegraph": "0.9.7",
+    "@colbymchenry/codegraph": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@polymarket/builder-relayer-client": "^0.0.10",
     "@polymarket/builder-signing-sdk": "0.0.8",

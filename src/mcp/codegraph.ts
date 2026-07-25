@@ -36,6 +36,17 @@ function userEnabled(): boolean {
  * isn't installed / resolvable. The shim is plain JS runnable by any node.
  */
 export function resolveCodegraphShim(): string | null {
+  // CodeGraph 1.x added an `exports` map that no longer lists ./npm-shim.js,
+  // so resolving that subpath directly throws ERR_PACKAGE_PATH_NOT_EXPORTED
+  // even though the file still ships (it's the package's `bin`). `./package.json`
+  // stays exported, so resolve the manifest and walk to the shim beside it.
+  try {
+    const manifest = require.resolve('@colbymchenry/codegraph/package.json');
+    const shim = path.join(path.dirname(manifest), 'npm-shim.js');
+    if (fs.existsSync(shim)) return shim;
+  } catch {
+    /* fall through to the pre-1.x subpath resolve */
+  }
   try {
     const shim = require.resolve('@colbymchenry/codegraph/npm-shim.js');
     return fs.existsSync(shim) ? shim : null;
