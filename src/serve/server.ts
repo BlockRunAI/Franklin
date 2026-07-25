@@ -20,7 +20,9 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import WebSocket from 'ws';
+// `ws` 8 moved the server class off the default export onto a named one. The
+// default import stays for the `WebSocket` type and its `OPEN` constant.
+import WebSocket, { WebSocketServer } from 'ws';
 import { loadChain, API_URLS, BLOCKRUN_DIR } from '../config.js';
 import { loadConfig, setConfigValue } from '../commands/config.js';
 import { assembleInstructions } from '../agent/context.js';
@@ -839,7 +841,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
     res.writeHead(404);
     res.end();
   });
-  const wss = new WebSocket.Server({
+  const wss = new WebSocketServer({
     server: httpServer,
     path: '/agent',
     // Same gate as /file: refuse upgrades from non-allowlisted browser origins
