@@ -72,7 +72,7 @@
     "@polymarket/builder-relayer-client": "^0.0.10",
     "@polymarket/builder-signing-sdk": "0.0.8",
     "@polymarket/clob-client-v2": "1.0.8",
-    "@slack/bolt": "^4.7.3",
+    "@slack/bolt": "^5.0.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@types/react": "^19.2.14",
