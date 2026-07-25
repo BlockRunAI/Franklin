@@ -1,7 +1,7 @@
 {
   "name": "@blockrun/franklin",
   "version": "3.36.0",
-  "description": "Franklin Agent — The AI agent with a wallet. Spends USDC autonomously to get real work done. Pay per action, no subscriptions.",
+  "description": "Franklin Agent \u2014 The AI agent with a wallet. Spends USDC autonomously to get real work done. Pay per action, no subscriptions.",
   "type": "module",
   "exports": {
     ".": {
@@ -96,5 +96,8 @@
     "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.18.1",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "ws@>=8.0.0 <=8.20.1": "^8.21.1"
   }
 }
