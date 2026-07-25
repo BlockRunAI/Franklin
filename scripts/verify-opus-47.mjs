@@ -1,13 +1,17 @@
 /**
- * Live end-to-end verification of the v3.7.10 Opus 4.7 fix.
+ * Live end-to-end verification of Franklin's Opus request payload.
  *
- * Calls anthropic/claude-opus-4.7 through the real ModelClient (which
- * builds and posts the request payload exactly the way Franklin does
- * in production). Expectation: a 200 streaming response, NOT a 400
- * complaining about the `thinking` field.
+ * Calls each model through the real ModelClient (which builds and posts the
+ * request payload exactly the way Franklin does in production). Expectation:
+ * a 200 streaming response, NOT a 400 complaining about the `thinking` field.
  *
- * For comparison, also calls Opus 4.6 (must still work — regression
- * check that the allowlist refactor didn't break the older path).
+ * The default pair covers both sides of the extended-thinking allowlist:
+ * Opus 5 must be called WITHOUT the flag (it thinks by default and rejects
+ * `budget_tokens`), Opus 4.6 must still be called WITH it — a regression check
+ * that promoting the flagship didn't break the older path.
+ *
+ * Pass model ids as argv to override (e.g. `node scripts/verify-opus-47.mjs
+ * anthropic/claude-opus-4.7`).
  *
  * Cost: ~$0.001 USDC across the two calls (tiny prompt, max_tokens=64).
  */
@@ -47,7 +51,11 @@ async function callModel(model) {
 
 console.log(`Endpoint: ${API_URL}\n`);
 
-for (const m of ['anthropic/claude-opus-4.7', 'anthropic/claude-opus-4.6']) {
+const MODELS = process.argv.slice(2).length
+  ? process.argv.slice(2)
+  : ['anthropic/claude-opus-5', 'anthropic/claude-opus-4.6'];
+
+for (const m of MODELS) {
   process.stdout.write(`→ ${m} ... `);
   const r = await callModel(m);
   if (r.firstError) {

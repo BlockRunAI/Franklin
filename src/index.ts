@@ -98,7 +98,7 @@ program
 program
   .command('predict')
   .description('Prediction mode — forecast one real-world event with a research-only toolset (web/markets), headless')
-  .requiredOption('-m, --model <model>', 'Model to use (e.g. anthropic/claude-opus-4.8, openai/gpt-5.5)')
+  .requiredOption('-m, --model <model>', 'Model to use (e.g. anthropic/claude-opus-5, openai/gpt-5.5)')
   .requiredOption('-q, --question <text>', 'The event question to forecast (include the allowed options)')
   .option('--max-turns <n>', 'Max agent turns before forcing an answer', '8')
   .option('--max-tool-calls <n>', 'Max tool calls before forcing an answer', '6')

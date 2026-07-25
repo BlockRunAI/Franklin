@@ -2355,6 +2355,10 @@ test('permissions: ActivateTool is auto-allowed in default and plan modes', asyn
 import { modelHasExtendedThinking, extractApiErrorMessage } from '../dist/agent/llm.js';
 
 test('modelHasExtendedThinking: Opus 4.7+ returns false (adaptive thinking, no flag)', () => {
+  // Opus 5 thinks by default and rejects budget_tokens outright — the flag
+  // must never be sent.
+  assert.equal(modelHasExtendedThinking('anthropic/claude-opus-5'), false);
+  assert.equal(modelHasExtendedThinking('claude-opus-5'), false);
   assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4.8'), false);
   assert.equal(modelHasExtendedThinking('anthropic/claude-opus-4-8'), false);
   assert.equal(modelHasExtendedThinking('claude-opus-4.8'), false);
@@ -2405,7 +2409,7 @@ test('extractApiErrorMessage unwraps nested JSON error envelopes', () => {
 
 import { ModelClient } from '../dist/agent/llm.js';
 
-async function captureRequestBodyForModel(model) {
+async function captureRequestBodyForModel(model, maxTokens = 8192) {
   const originalFetch = globalThis.fetch;
   let captured = null;
   globalThis.fetch = async (_url, init) => {
@@ -2419,7 +2423,7 @@ async function captureRequestBodyForModel(model) {
     const gen = client.streamCompletion({
       model,
       messages: [{ role: 'user', content: 'hi' }],
-      max_tokens: 1024,
+      max_tokens: maxTokens,
     });
     try { await gen.next(); } catch { /* expected: 'captured' */ }
   } finally {
@@ -2442,6 +2446,46 @@ test('streamCompletion payload: Opus 4.6 must still include thinking field', asy
   assert.ok(body.thinking, 'thinking flag must be present for extended-thinking models');
   assert.equal(body.thinking.type, 'enabled');
   assert.equal(body.temperature, 1, 'extended thinking requires temperature=1');
+});
+
+test('streamCompletion payload: Opus 5 must not include thinking field', async () => {
+  const body = await captureRequestBodyForModel('anthropic/claude-opus-5');
+  assert.ok(body, 'fetch must have been called and body captured');
+  assert.equal(body.model, 'anthropic/claude-opus-5');
+  assert.equal(body.thinking, undefined,
+    'Opus 5 thinks by default and rejects budget_tokens — the flag must be omitted');
+});
+
+// Regression: Anthropic requires 1024 <= budget_tokens < max_tokens. The old
+// Math.min(maxOut, 16_384) sent budget == max_tokens for every caller at or
+// below 16_384, which 400d. Compaction asks Sonnet 4.6 for exactly 16_000, so
+// summarizing a long Opus session failed outright.
+test('extended-thinking budget stays strictly under max_tokens (was a live 400)', async () => {
+  for (const maxTokens of [2048, 8192, 16_000, 16_384]) {
+    const body = await captureRequestBodyForModel('anthropic/claude-sonnet-4.6', maxTokens);
+    assert.ok(body.thinking, `thinking must be present at max_tokens=${maxTokens}`);
+    assert.ok(
+      body.thinking.budget_tokens < maxTokens,
+      `budget_tokens (${body.thinking.budget_tokens}) must be < max_tokens (${maxTokens})`,
+    );
+    assert.ok(
+      body.thinking.budget_tokens >= 1024,
+      `budget_tokens (${body.thinking.budget_tokens}) must be >= the 1024 floor`,
+    );
+  }
+});
+
+test('extended thinking is skipped when max_tokens leaves no legal budget', async () => {
+  // At max_tokens <= 1365 no value satisfies both 1024 <= budget < max_tokens,
+  // so the block must be dropped rather than sent illegal. The compaction path
+  // that exposed this prefers a thinking-less answer over a rejected request.
+  for (const maxTokens of [64, 512, 1024]) {
+    const body = await captureRequestBodyForModel('anthropic/claude-sonnet-4.6', maxTokens);
+    assert.equal(body.thinking, undefined,
+      `thinking must be omitted at max_tokens=${maxTokens} (no legal budget exists)`);
+    assert.equal(body.temperature, undefined,
+      'temperature=1 is only forced alongside an actual thinking block');
+  }
 });
 
 test('streamCompletion payload: Sonnet 4.6 must include thinking field', async () => {
@@ -3005,11 +3049,11 @@ test('agent context: chat-completions example uses real model names (no fictiona
     'utf-8',
   );
   // Real names that should appear as illustrative examples. Refreshed
-  // 2026-07-14: every id below returned 402 (exists, needs payment) rather
+  // 2026-07-24: every id below returned 402 (exists, needs payment) rather
   // than 400 on a live POST /api/v1/chat/completions probe.
   for (const real of [
     'anthropic/claude-sonnet-5',
-    'anthropic/claude-opus-4.8',
+    'anthropic/claude-opus-5',
     'deepseek/deepseek-v4-pro',
     'zai/glm-5.2',
     'xai/grok-4.5',
@@ -6784,6 +6828,8 @@ test('gateway catalog never overrides a static context-window entry', async () =
   // Anthropic models are deliberately pinned below the advertised 1M.
   assert.equal(getContextWindow('anthropic/claude-opus-4.8'), 200_000,
     'the 1M the gateway advertises must not win — >200k 413s at the gateway edge');
+  assert.equal(getContextWindow('anthropic/claude-opus-5'), 200_000,
+    'Opus 5 advertises 1M too — same conservative pin until a >200k call is verified');
   assert.equal(getContextWindow('anthropic/claude-sonnet-5'), 200_000);
   assert.equal(peekGatewayModel('anything'), null, 'cold cache peeks to null, never fetches');
 });
@@ -6867,7 +6913,10 @@ test('picker trim: hidden entries are gone from the visible list', async () => {
 
 test('picker trim: shortcuts for hidden models still resolve (muscle-memory preserved)', async () => {
   const { resolveModel } = await import('../dist/ui/model-picker.js');
-  assert.equal(resolveModel('claude'), 'anthropic/claude-opus-4.8');
+  assert.equal(resolveModel('claude'), 'anthropic/claude-opus-5');
+  // Opus 4.8 left the visible picker when Opus 5 superseded it at the same
+  // price — the explicit pin must keep resolving.
+  assert.equal(resolveModel('opus-4.8'), 'anthropic/claude-opus-4.8');
   assert.equal(resolveModel('opus-4.6'), 'anthropic/claude-opus-4.6');
   assert.equal(resolveModel('gpt-5.4'), 'openai/gpt-5.4');
   assert.equal(resolveModel('gpt-5.4-pro'), 'openai/gpt-5.4-pro');
@@ -6886,7 +6935,7 @@ test('picker trim: shortcuts for hidden models still resolve (muscle-memory pres
 test('picker trim: hero shortcuts (opus, sonnet, gpt, gemini-3, grok) still in visible list', async () => {
   const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
   const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
-  assert.ok(ids.includes('anthropic/claude-opus-4.8'));
+  assert.ok(ids.includes('anthropic/claude-opus-5'));
   assert.ok(ids.includes('anthropic/claude-sonnet-5'));
   assert.ok(ids.includes('openai/gpt-5.6-sol'));
   assert.ok(ids.includes('google/gemini-3.1-pro'));
@@ -10332,7 +10381,7 @@ test('vision routing: Auto with image upgrades V4 Pro pick to a vision model', a
 
   // COMPLEX tier primary (Opus) already has vision — no escalation needed
   const complexWithVision = resolveTierToModel('COMPLEX', 'auto', true);
-  assert.equal(complexWithVision.model, 'anthropic/claude-opus-4.8');
+  assert.equal(complexWithVision.model, 'anthropic/claude-opus-5');
 
   // routeRequest path (no analyzer tier) — image-bearing prompt must end on vision
   const routedWithImage = routeRequest('what is in /tmp/foo.png', 'auto', true);

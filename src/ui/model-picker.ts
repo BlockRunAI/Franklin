@@ -23,11 +23,12 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   fable: 'anthropic/claude-fable-5',
   'fable-5': 'anthropic/claude-fable-5',
   sonnet: 'anthropic/claude-sonnet-5',
-  claude: 'anthropic/claude-opus-4.8',
+  claude: 'anthropic/claude-opus-5',
   'sonnet-5': 'anthropic/claude-sonnet-5',
   'sonnet-4.6': 'anthropic/claude-sonnet-4.6',
   'sonnet-4.5': 'anthropic/claude-sonnet-4.5',
-  opus: 'anthropic/claude-opus-4.8',
+  opus: 'anthropic/claude-opus-5',
+  'opus-5': 'anthropic/claude-opus-5',
   'opus-4.8': 'anthropic/claude-opus-4.8',
   'opus-4.7': 'anthropic/claude-opus-4.7',
   'opus-4.6': 'anthropic/claude-opus-4.6',
@@ -284,7 +285,10 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
     category: '✨ Premium frontier',
     models: [
       { id: 'anthropic/claude-fable-5',    shortcut: 'fable',     label: 'Claude Fable 5',    price: '$10/$50' },
-      { id: 'anthropic/claude-opus-4.8',   shortcut: 'opus',      label: 'Claude Opus 4.8',   price: '$5/$25', highlight: true },
+      // Opus 5 supersedes 4.8 at the same $5/$25 — 4.8 drops out of the visible
+      // list (its `opus-4.8` shortcut stays live) rather than sitting next to a
+      // strictly-better entry at an identical price.
+      { id: 'anthropic/claude-opus-5',     shortcut: 'opus',      label: 'Claude Opus 5',     price: '$5/$25', highlight: true },
       { id: 'anthropic/claude-sonnet-5',   shortcut: 'sonnet',    label: 'Claude Sonnet 5',   price: '$3/$15' },
       { id: 'qwen/qwen3.7-max',            shortcut: 'qwen-max',  label: 'Qwen3.7 Max',       price: '$1.475/$4.425', highlight: true },
       { id: 'openai/gpt-5.6-sol',          shortcut: 'gpt',       label: 'GPT-5.6 Sol',       price: '$5/$30', highlight: true },

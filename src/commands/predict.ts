@@ -11,7 +11,7 @@
  * tool-call trace (what it searched and what it found), the terminal reason and
  * token usage. Human-readable streaming otherwise.
  *
- *   franklin predict --model anthropic/claude-opus-4.8 \
+ *   franklin predict --model anthropic/claude-opus-5 \
  *     --question "Who wins the 2026 FIFA World Cup? Pick one country." --json
  */
 import { interactiveSession } from '../agent/loop.js';

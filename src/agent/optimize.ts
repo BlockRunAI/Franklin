@@ -37,6 +37,7 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   // 128k unlocks the full headroom — runaway generations are gated
   // separately by CAPPED_MAX_TOKENS / ESCALATED_MAX_TOKENS budgets.
   'anthropic/claude-fable-5': 128_000,
+  'anthropic/claude-opus-5': 128_000,
   'anthropic/claude-opus-4.8': 128_000,
   'anthropic/claude-opus-4.7': 128_000,
   'anthropic/claude-opus-4.6': 32_000,

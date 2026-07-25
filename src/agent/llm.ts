@@ -348,6 +348,11 @@ export function modelHasExtendedThinking(model: string): boolean {
   const m = model.toLowerCase();
   // Excluded: Opus 4.7+, Sonnet 5, and Fable 5 use adaptive / always-on
   // thinking; sending an explicit `thinking: enabled` causes the API to 400.
+  // Opus 5 goes further — thinking is ON by default (omitting the field runs
+  // adaptive, unlike 4.8/4.7 where omitting it meant no thinking), and
+  // `budget_tokens` is rejected outright. Listed explicitly rather than left
+  // to fall through, so the allowlist stays readable as the source of truth.
+  if (m.includes('opus-5') || m.includes('opus5')) return false;
   if (m.includes('opus-4.8') || m.includes('opus-4-8')) return false;
   if (m.includes('opus-4.7') || m.includes('opus-4-7')) return false;
   if (m.includes('fable-5') || m.includes('fable5')) return false;
@@ -710,13 +715,26 @@ export class ModelClient {
       // flag); passing the extended-thinking flag to them makes Anthropic
       // reject the request. See `modelHasExtendedThinking` for the allowlist.
       if (modelHasExtendedThinking(request.model)) {
+        // Anthropic requires 1024 <= budget_tokens < max_tokens. The old
+        // `Math.min(maxOut, 16_384)` violated both ends: any caller with
+        // max_tokens <= 16_384 got budget_tokens == max_tokens (400 "max_tokens
+        // must be greater than thinking.budget_tokens"), and a caller under
+        // 1024 got a sub-minimum budget (400 on the floor instead). That hit
+        // real paths, not just edge cases — compaction tiers Opus sessions down
+        // to Sonnet 4.6 and asks for exactly 16_000, so summarizing a long Opus
+        // session failed outright. Reserve a quarter of the ceiling (min 1024)
+        // for the visible answer, and skip the block entirely when there isn't
+        // room for a legal budget — no thinking beats a rejected request.
         const maxOut = (request.max_tokens ?? 16_384);
-        requestPayload['thinking'] = {
-          type: 'enabled',
-          budget_tokens: Math.min(maxOut, 16_384), // Cap thinking budget — most benefit comes from first few K tokens
-        };
-        // Extended thinking requires temperature=1 on Anthropic API
-        requestPayload['temperature'] = 1;
+        const budgetTokens = Math.min(16_384, Math.floor(maxOut * 0.75));
+        if (budgetTokens >= 1024) {
+          requestPayload['thinking'] = {
+            type: 'enabled',
+            budget_tokens: budgetTokens, // Cap thinking budget — most benefit comes from first few K tokens
+          };
+          // Extended thinking requires temperature=1 on Anthropic API
+          requestPayload['temperature'] = 1;
+        }
       }
 
       // ─ Anthropic prompt caching: budgeted breakpoints ───────────────────

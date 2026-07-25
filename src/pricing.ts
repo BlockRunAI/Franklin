@@ -38,6 +38,9 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'nvidia/nemotron-super-49b': { input: 0, output: 0 },
   // Anthropic
   'anthropic/claude-fable-5': { input: 10.0, output: 50.0 }, // Mythos-class tier above Opus, 1M ctx
+  // Opus 5 lands at the same $5/$25 as the 4.x Opus line — a straight upgrade
+  // with no cost delta, so nothing downstream needs a pricing carve-out.
+  'anthropic/claude-opus-5': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.8': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.7': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.6': { input: 5.0, output: 25.0 },
@@ -127,7 +130,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
 };
 
 /** Opus pricing for savings calculations — tracks the current flagship. */
-export const OPUS_PRICING = MODEL_PRICING['anthropic/claude-opus-4.8'];
+export const OPUS_PRICING = MODEL_PRICING['anthropic/claude-opus-5'];
 
 /**
  * Estimate cost in USD for a request.

@@ -22,6 +22,7 @@
 const VISION_MODELS = new Set<string>([
   // Anthropic — native vision across the line
   'anthropic/claude-fable-5',
+  'anthropic/claude-opus-5',
   'anthropic/claude-opus-4.8',
   'anthropic/claude-opus-4.7',
   'anthropic/claude-opus-4.6',
