@@ -149,8 +149,11 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       let normalizeNote = '';
       if (stat.size > SKIP_BELOW_BYTES) {
         try {
-          const sharpMod = await import('sharp');
-          const sharp = (sharpMod as { default: typeof import('sharp') }).default;
+          // sharp 0.35 ships proper ESM types: the default export is the
+          // constructor itself, so the old cast (which claimed `default` was
+          // the whole module namespace) no longer type-checks. Runtime shape
+          // is unchanged — `.default` was always the callable.
+          const { default: sharp } = await import('sharp');
           const img = sharp(rawBytes, { failOn: 'none' });
           const meta = await img.metadata();
           const longEdge = Math.max(meta.width ?? 0, meta.height ?? 0);

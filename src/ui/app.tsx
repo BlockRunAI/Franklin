@@ -211,8 +211,9 @@ async function shrinkImageInPlace(filePath: string): Promise<{ from: number; to:
   try {
     const before = fs.statSync(filePath).size;
     const raw = fs.readFileSync(filePath);
-    const sharpMod = await import('sharp');
-    const sharp = (sharpMod as { default: typeof import('sharp') }).default;
+    // See the note in src/tools/read.ts: sharp 0.35's default export is the
+    // constructor, so the old namespace cast no longer type-checks.
+    const { default: sharp } = await import('sharp');
     const meta = await sharp(raw, { failOn: 'none' }).metadata();
     let hasAlpha = false;
     if (meta.hasAlpha) {
