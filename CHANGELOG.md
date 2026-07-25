@@ -1,5 +1,47 @@
 # Changelog
 
+## Franklin Agent 3.36.0 — Claude Opus 5 is the default Opus
+
+**`opus` and `claude` now resolve to `anthropic/claude-opus-5`.** It is live on
+the BlockRun gateway at $5/$25 per 1M tokens — the same price as Opus 4.8, so
+this is a straight capability upgrade with no cost delta and nothing to opt
+into. The Smart Router's COMPLEX and REASONING tiers point at it, `franklin
+init` writes it as `ANTHROPIC_DEFAULT_OPUS_MODEL`, and the savings-vs-Opus
+figure in `/stats` and the panel now baselines against it.
+
+Opus 4.8 leaves the visible picker rather than sitting next to a
+strictly-better entry at an identical price. Its `opus-4.8` shortcut stays
+live, as do `opus-4.7`, `opus-4.6`, and `opus-4.5` — the same
+muscle-memory-preserving trim used for every prior flagship promotion. Opus 4.8
+and 4.7 remain in the router's fallback chain in case of rollout delays.
+
+**Opus 5 never receives the extended-thinking flag.** It thinks by default —
+omitting the `thinking` field runs adaptive, unlike 4.8 and 4.7 where omitting
+it meant no thinking at all — and it rejects `budget_tokens` outright. It is
+listed explicitly in the allowlist rather than left to fall through it, so the
+one place that decides this stays readable as the source of truth.
+
+The context window stays pinned at 200k. The gateway advertises 1M for Opus 5
+as it does for 4.8 and 4.7, but Franklin keeps the conservative baseline until
+a real >200k call is verified end-to-end; max output is set to the full 128k.
+
+**Also fixed: compacting a long Opus session was failing outright.** The
+release gate for this change surfaced a pre-existing bug on the *older*
+extended-thinking path. Anthropic requires `1024 <= budget_tokens <
+max_tokens`; Franklin sent `min(max_tokens, 16384)`, which violates both ends.
+Any caller asking for 16,384 or fewer output tokens got `budget_tokens ==
+max_tokens` and a 400 (`max_tokens must be greater than
+thinking.budget_tokens`), and any caller under 1024 got a sub-minimum budget
+and a 400 on the floor instead.
+
+This was not a corner case. Compaction tiers an Opus session down to Sonnet 4.6
+and asks for exactly 16,000 tokens — so every attempt to summarize a long Opus
+session hit the 400. Subagents (16,384) and the turn evaluator (512) were on the
+same path. Franklin now reserves a quarter of the ceiling for the visible answer
+and drops the thinking block entirely when no legal budget exists, on the
+principle that a thinking-less answer beats a rejected request. Opus 5 is
+unaffected either way — it never receives the flag.
+
 ## Franklin Agent 3.35.6 — proxy honors your max_tokens; a build that was quietly failing
 
 **The payment proxy stops overwriting an explicit `max_tokens`.** It used to
