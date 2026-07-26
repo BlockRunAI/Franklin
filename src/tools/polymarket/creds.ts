@@ -48,6 +48,13 @@ export interface PolymarketState {
   signer?: string;
   deployed?: boolean;
   approvalsDone?: boolean;
+  /**
+   * A withdrawal batch whose relayer confirmation timed out. Its EIP-712
+   * signature stays executable until `deadline` (unix seconds), so a fresh
+   * withdrawal signed before then can DOUBLE-SEND — withdraw refuses to sign
+   * while this is set and unresolved. Cleared on confirm/failure.
+   */
+  pendingWithdraw?: { transactionID: string; deadline: number };
 }
 
 function readJsonFile<T>(file: string): T | null {
@@ -62,7 +69,13 @@ function readJsonFile<T>(file: string): T | null {
 
 function writeJsonFile(file: string, value: unknown): void {
   fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value, null, 2), { mode: 0o600 });
+  // tmp + rename: a crash mid-write must never leave a half-written creds or
+  // state file — reads swallow parse errors to null, so corruption would
+  // silently drop credentials (and the deposit-wallet mapping) instead of
+  // failing loudly. rename(2) on the same filesystem is atomic.
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, file);
 }
 
 function credsKey(address: string, sigType: number): string {

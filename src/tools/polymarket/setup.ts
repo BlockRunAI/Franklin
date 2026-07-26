@@ -26,14 +26,17 @@ import { checkGeoblock, getClobClient, getPolymarketAccount } from "./client.js"
 import {
   assertContractConfig,
   CONDITIONAL_TOKENS,
+  CTF_COLLATERAL_ADAPTER,
   CTF_EXCHANGE_V2,
   ERC1155_ABI,
   ERC20_ABI,
   getBoundedApprovalsUsd,
   getSigType,
   NEG_RISK_ADAPTER,
+  NEG_RISK_CTF_COLLATERAL_ADAPTER,
   NEG_RISK_CTF_EXCHANGE_V2,
-  POLYGON_RPC_URLS,
+  POLYGON_READ_RPC_URLS,
+  POLYGON_WRITE_RPC_URL,
   PUSD_COLLATERAL,
   PUSD_DECIMALS,
 } from "./constants.js";
@@ -41,13 +44,11 @@ import { loadDepositWalletForSigner, loadState, saveState } from "./creds.js";
 import {
   deployDepositWallet,
   deriveDepositWallet,
-  deriveDepositWalletNoCreds,
   isDepositWalletDeployed,
-  relayerCredsMissing,
-  relayerCredsMissingMessage,
   sendWalletBatch,
   type DepositWalletCall,
 } from "./relayer.js";
+import { assertTransactionSucceeded } from "./transactions.js";
 
 let _publicClient: PublicClient | null = null;
 
@@ -56,7 +57,7 @@ export function getPublicClient(): PublicClient {
     _publicClient = createPublicClient({
       chain: polygon,
       transport: fallback(
-        POLYGON_RPC_URLS.map((u) => http(u, { retryCount: 2, timeout: 8_000 })),
+        POLYGON_READ_RPC_URLS.map((u) => http(u, { retryCount: 2, timeout: 8_000 })),
         { retryCount: 2 },
       ),
     });
@@ -85,12 +86,43 @@ async function withRpcRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
   throw lastErr;
 }
 
-interface ApprovalItem {
+export interface ApprovalItem {
   label: string;
   token: Hex;
   spender: Hex;
   kind: "erc20" | "erc1155";
   granted: boolean;
+}
+
+/**
+ * An approval transaction landing is not the same as the approvals being on
+ * the books — re-read the chain (retrying across RPC propagation lag, the same
+ * 3×750ms shape as redeem's post-transaction reads) and believe ONLY what it
+ * says. An empty read can never count as granted, so a truncated RPC response
+ * cannot fake success. Throws if every read attempt fails; the caller decides
+ * how to report "chain state unknown". `readFn` is injected so tests can pin
+ * the retry/verdict logic without an RPC.
+ */
+export async function verifyApprovalsLanded(
+  readFn: () => Promise<ApprovalItem[]>,
+  attempts = 3,
+  delayMs = 750,
+): Promise<{ approvals: ApprovalItem[]; allGranted: boolean }> {
+  let latest: ApprovalItem[] | null = null;
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      latest = await readFn();
+      if (latest.length > 0 && latest.every((a) => a.granted)) {
+        return { approvals: latest, allGranted: true };
+      }
+    } catch (err) {
+      lastErr = err;
+    }
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  if (latest === null) throw lastErr;
+  return { approvals: latest, allGranted: false };
 }
 
 /**
@@ -105,12 +137,16 @@ function pusdApprovalTarget(): bigint {
 }
 
 /**
- * The approval set Polymarket V2 trading needs from the funds-holding wallet,
- * mirroring Polymarket's own canonical approveTokensForTrading.ts (proxy/safe
- * wallet): pUSD spend for ALL FOUR collateral spenders — both exchanges, the
- * Conditional Tokens contract (direct split/merge), AND the NegRisk Adapter
- * (negRisk order settlement / convert / redeem pulls collateral through it) —
- * plus the CTF operator for both exchanges and the adapter.
+ * The approval set Polymarket V2 trading needs from the funds-holding wallet:
+ * Polymarket's own canonical approveTokensForTrading.ts (proxy/safe wallet) —
+ * pUSD spend for ALL FOUR collateral spenders (both exchanges, the Conditional
+ * Tokens contract for direct split/merge, AND the NegRisk Adapter, whose
+ * negRisk order settlement / convert pulls collateral through it) plus the CTF
+ * operator for both exchanges and the NegRisk Adapter — PLUS, beyond the
+ * canonical script, CTF operator for the two pUSD collateral adapters, which
+ * pull the outcome tokens during action:"redeem" (five ERC-1155 operators in
+ * total). Removing the adapter operators silently reintroduces the
+ * redeem-pays-$0 bug.
  *
  * The NegRisk Adapter pUSD approval is REQUIRED to trade neg-risk markets (e.g.
  * multi-outcome "winner" markets): without it the CLOB accepts the order but
@@ -126,10 +162,16 @@ async function readApprovals(owner: Hex): Promise<ApprovalItem[]> {
     ["pUSD → NegRisk Adapter", NEG_RISK_ADAPTER as Hex],
     ["pUSD → Conditional Tokens", CONDITIONAL_TOKENS as Hex],
   ];
+  // The two collateral adapters are the redeem path (they pull the caller's
+  // outcome tokens via safeBatchTransferFrom, so they need operator approval).
+  // Wallets set up before 2026-07 lack these; readApprovals runs on-chain
+  // every setup, so they self-heal with one action:"setup" confirm:true.
   const erc1155Operators: Array<[string, Hex]> = [
     ["CTF → CTF Exchange V2", CTF_EXCHANGE_V2 as Hex],
     ["CTF → NegRisk Exchange V2", NEG_RISK_CTF_EXCHANGE_V2 as Hex],
     ["CTF → NegRisk Adapter", NEG_RISK_ADAPTER as Hex],
+    ["CTF → CtfCollateral Adapter (redeem)", CTF_COLLATERAL_ADAPTER as Hex],
+    ["CTF → NegRisk CtfCollateral Adapter (redeem)", NEG_RISK_CTF_COLLATERAL_ADAPTER as Hex],
   ];
 
   // "granted" = allowance meets the amount we'd approve (bounded or unlimited),
@@ -189,15 +231,18 @@ async function geoblockLine(): Promise<string> {
   if (geo.orderPlacement === "permitted") return `✅ Region: order placement permitted from this egress${where}`;
   if (geo.orderPlacement === "blocked") {
     return `❌ Region: order placement BLOCKED from this egress${where}. ` +
-      "Route through an unrestricted egress: set POLYMARKET_CLOB_PROXY / HTTPS_PROXY, or point " +
-      "POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a Tokyo relay (see deploy/tokyo-egress).";
+      "Point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay " +
+      "(see deploy/finland-egress) or restore the default. A proxy alone (POLYMARKET_CLOB_PROXY / " +
+      "HTTPS_PROXY) only changes how the current egress is reached, not the Polymarket-facing IP.";
   }
   return "ℹ️ Region: could not determine order-placement status (check re-runs on demand)";
 }
 
 const KEY_BACKUP_NOTE =
-  "🔑 The Polymarket signer is your BlockRun wallet key (~/.blockrun/.session). " +
-  "It is the ONLY key to these funds — back it up; never share or print it.";
+  "🔑 The Polymarket signer is your BlockRun wallet key (~/.blockrun/.session by default; " +
+  "a BLOCKRUN_WALLET_KEY env var or an existing agent wallet.json takes precedence). It is " +
+  "the ONLY key to these funds — back up the key behind the signer address shown above, " +
+  "wherever it lives (key file, or the env-var value itself); never share or print it.";
 
 export async function runSetup(opts: { confirm: boolean }): Promise<{ text: string; structured: Record<string, unknown> }> {
   // Verify our exchange/collateral addresses still match the SDK's BEFORE any
@@ -211,37 +256,6 @@ export async function runSetup(opts: { confirm: boolean }): Promise<{ text: stri
 async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text: string; structured: Record<string, unknown> }> {
   const account = getPolymarketAccount();
 
-  if (relayerCredsMissing()) {
-    // Even without relayer creds we can DERIVE (not deploy) the deposit wallet
-    // address, so the user can pre-fund it while they get creds.
-    let depositWallet: Hex | undefined;
-    try {
-      depositWallet = (loadDepositWalletForSigner(account.address) as Hex | undefined)
-        ?? (await deriveDepositWalletNoCreds());
-      saveState({ depositWallet, signer: account.address });
-    } catch { /* derivation is best-effort here */ }
-    const geo = await geoblockLine();
-    const balance = depositWallet ? await getPusdBalance(depositWallet).catch(() => 0) : 0;
-    return {
-      text: [
-        `Polymarket setup — deposit-wallet mode (signer ${account.address})`,
-        ...(depositWallet
-          ? [
-              ``,
-              `Your deposit wallet (holds betting funds): ${depositWallet}`,
-              `  https://polygonscan.com/address/${depositWallet}`,
-              `  ${balance > 0 ? `✅ pUSD balance: $${balance.toFixed(2)}` : "❌ Not funded yet"} — you can fund it NOW`,
-              `  (send ~$5 pUSD, or USDC via the Polymarket bridge which auto-wraps) while you get relayer creds.`,
-            ]
-          : []),
-        geo,
-        ``,
-        relayerCredsMissingMessage(),
-      ].join("\n"),
-      structured: { mode: "POLY_1271", signer: account.address, depositWallet, ready: false, missing: "relayer_credentials" },
-    };
-  }
-
   // 1. Derive (pure CREATE2 math) + persist, keyed to the current signer.
   const depositWallet = (loadDepositWalletForSigner(account.address) as Hex | undefined) ?? (await deriveDepositWallet());
   saveState({ depositWallet, signer: account.address });
@@ -253,24 +267,56 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
   if (!deployed) {
     const res = await deployDepositWallet();
     deployTxHash = res.transactionHash;
-    deployed = true;
+    // The relayer deployed *something*; only contract code at the CREATE2
+    // address WE derived proves it deployed THIS wallet. If factory/salt ever
+    // diverge between derive and deploy, recording deployed:true here would
+    // point approvals and funding at an address that doesn't exist — stranding
+    // real money (issue #72 finding 4). Retry the read across RPC lag.
+    for (let attempt = 0; attempt < 3 && !deployed; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 750));
+      const code = await getPublicClient().getCode({ address: depositWallet }).catch(() => undefined);
+      deployed = typeof code === "string" && code !== "0x";
+    }
+    if (!deployed) {
+      throw new Error(
+        `Deposit wallet deploy confirmed (tx ${deployTxHash}) but no contract code is visible at the derived ` +
+        `address ${depositWallet} after 3 reads. Either the RPCs are lagging (re-run action:"setup" in a minute — ` +
+        `it re-checks) or the relayer deployed a different address than we derived, in which case do NOT fund ` +
+        `this wallet until that is resolved.`,
+      );
+    }
   }
   saveState({ deployed: true });
 
   // 3. Funds + approvals state.
   const balance = await getPusdBalance(depositWallet);
-  const approvals = await readApprovals(depositWallet);
+  let approvals = await readApprovals(depositWallet);
   const missing = approvals.filter((a) => !a.granted);
 
   // 4. Approvals batch — the first real signature; confirm-gated with preview.
   let approvalsTxHash: string | undefined;
   let approvalsPending = missing.length > 0;
+  let approvalsUnverified = false;
   if (missing.length > 0 && opts.confirm) {
     const calls = buildApprovalCalls(missing);
     const res = await sendWalletBatch(calls, depositWallet, "Approval batch");
     approvalsTxHash = res.transactionHash;
-    approvalsPending = false;
-    saveState({ approvalsDone: true });
+    // The batch landing proves it was MINED, not that the approvals are on the
+    // books. The response used to carry the pre-batch snapshot here, so every
+    // item the batch had just granted still read granted:false — and the
+    // inverse failure (relayer claims success, chain disagrees) was invisible.
+    try {
+      const verified = await verifyApprovalsLanded(() => readApprovals(depositWallet));
+      if (verified.approvals.length > 0) approvals = verified.approvals;
+      approvalsPending = !verified.allGranted;
+      approvalsUnverified = !verified.allGranted;
+    } catch {
+      // Chain state unknown after the tx landed — keep the pre-batch snapshot
+      // and report unverified rather than claiming success.
+      approvalsPending = true;
+      approvalsUnverified = true;
+    }
+    if (!approvalsPending) saveState({ approvalsDone: true });
   } else if (missing.length === 0) {
     saveState({ approvalsDone: true });
   }
@@ -326,6 +372,14 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
           `   batch via the relayer). Re-run action:"setup" with confirm:true to sign.`,
         ]
       : []),
+    ...(approvalsUnverified
+      ? [
+          ``,
+          `   ⚠️ The approval batch landed but the chain does not (yet) show every`,
+          `   approval granted — treat them as NOT granted. Re-run action:"setup"`,
+          `   to re-check before trading or redeeming.`,
+        ]
+      : []),
     `${credsReady ? "✅" : "❌"} CLOB API credentials${credsNote}`,
     ...(balanceCacheWarned
       ? [`   ⚠️ Balance cache not pre-warmed (${balanceCacheWarned}) — your first buy refreshes it automatically.`]
@@ -347,6 +401,8 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
       pusdBalance: balance,
       approvals: approvals.map((a) => ({ label: a.label, granted: a.granted })),
       approvalsPending,
+      ...(approvalsTxHash ? { approvalsTxHash } : {}),
+      ...(approvalsUnverified ? { approvalsUnverified: true } : {}),
       credsReady,
       ready,
     },
@@ -357,22 +413,24 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
   const account = getPolymarketAccount();
   const pc = getPublicClient();
 
-  const [balance, polWei, approvals] = await Promise.all([
+  const [balance, polWei, initialApprovals] = await Promise.all([
     getPusdBalance(account.address),
     pc.getBalance({ address: account.address }),
     readApprovals(account.address),
   ]);
+  let approvals = initialApprovals;
   const pol = Number(formatUnits(polWei, 18));
   const missing = approvals.filter((a) => !a.granted);
 
   // EOA mode sends its own approval transactions — needs POL for gas.
   let approvalsPending = missing.length > 0;
+  let approvalsUnverified = false;
   const approvalTxHashes: string[] = [];
   if (missing.length > 0 && opts.confirm) {
     if (pol <= 0) {
       approvalsPending = true;
     } else {
-      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_RPC_URLS[0]) });
+      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
       const erc20Amount = pusdApprovalTarget(); // honor POLYMARKET_BOUNDED_APPROVALS in EOA mode too
       for (const item of missing) {
         const hash =
@@ -393,10 +451,24 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
                 chain: polygon,
                 account,
               });
-        await pc.waitForTransactionReceipt({ hash });
+        assertTransactionSucceeded(
+          await pc.waitForTransactionReceipt({ hash }),
+          `approval transaction (${item.label})`,
+          hash,
+        );
         approvalTxHashes.push(hash);
       }
-      approvalsPending = false;
+      // Same rule as the deposit-wallet batch: report the post-transaction
+      // chain state, not the pre-transaction snapshot the report was built on.
+      try {
+        const verified = await verifyApprovalsLanded(() => readApprovals(account.address));
+        if (verified.approvals.length > 0) approvals = verified.approvals;
+        approvalsPending = !verified.allGranted;
+        approvalsUnverified = !verified.allGranted;
+      } catch {
+        approvalsPending = true;
+        approvalsUnverified = true;
+      }
     }
   }
 
@@ -428,10 +500,20 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
       : approvalsPending && pol <= 0
         ? [``, `   Cannot send approvals: the EOA has no POL for gas. Send a little POL first.`]
         : []),
+    ...(approvalsUnverified
+      ? [
+          ``,
+          `   ⚠️ The approval transactions landed but the chain does not (yet) show every`,
+          `   approval granted — treat them as NOT granted. Re-run action:"setup" to re-check.`,
+        ]
+      : []),
     `${credsReady ? "✅" : "❌"} CLOB API credentials${credsNote}`,
     geo,
     ``,
-    ready ? `🎯 Ready to trade.` : `Re-run action:"setup" after completing the ❌ items.`,
+    ready
+      ? `🎯 Ready to trade. Note: the CLOB may reject plain-EOA makers on order placement — ` +
+        `the deposit wallet (unset POLYMARKET_SIG_TYPE) is the supported trading path.`
+      : `Re-run action:"setup" after completing the ❌ items.`,
     ``,
     KEY_BACKUP_NOTE,
   ];
@@ -445,6 +527,8 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
       polBalance: pol,
       approvals: approvals.map((a) => ({ label: a.label, granted: a.granted })),
       approvalsPending,
+      ...(approvalTxHashes.length ? { approvalTxHashes } : {}),
+      ...(approvalsUnverified ? { approvalsUnverified: true } : {}),
       credsReady,
       ready,
     },

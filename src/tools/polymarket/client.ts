@@ -30,7 +30,7 @@ import {
   getClobProxy,
   getSigType,
   POLYGON_CHAIN_ID,
-  POLYGON_RPC_URLS,
+  POLYGON_WRITE_RPC_URL,
 } from "./constants.js";
 import { loadDepositWalletForSigner, loadL2Creds, saveL2Creds } from "./creds.js";
 import { deriveApiCreds } from "./l1-auth-1271.js";
@@ -48,7 +48,7 @@ let _bridgeApplied = false;
 // that silently strips POLY_ADDRESS et al. and every authed call fails with
 // "missing address header" / "Invalid L1 Request headers". Fix: also send each
 // as a hyphenated copy (POLY_ADDRESS → poly-address) which survives proxies; the
-// relay maps them back to underscores (see deploy/tokyo-egress/Caddyfile).
+// relay maps them back to underscores (see deploy/finland-egress/Caddyfile).
 // Sending both is harmless direct — Polymarket reads the underscore header and
 // ignores the extra hyphenated one.
 const UNDERSCORE_AUTH_HEADERS = [
@@ -146,7 +146,7 @@ function buildWalletClient(reportAddress?: Hex): WalletClient {
   return createWalletClient({
     account,
     chain: polygon,
-    transport: http(POLYGON_RPC_URLS[0]),
+    transport: http(POLYGON_WRITE_RPC_URL),
   });
 }
 
@@ -165,7 +165,8 @@ export async function getClobClient(): Promise<ClobClient> {
   if (sigType === 3 && !depositWallet) {
     throw new Error(
       `No Polymarket deposit wallet configured for this signer yet. Run blockrun_polymarket ` +
-      `action:"setup" first (or set POLYMARKET_SIG_TYPE=0 for plain EOA mode).`,
+      `action:"setup" first. (POLYMARKET_SIG_TYPE=0 plain EOA mode exists as a diagnostic ` +
+      `fallback; the CLOB may reject plain-EOA makers.)`,
     );
   }
 
@@ -177,7 +178,10 @@ export async function getClobClient(): Promise<ClobClient> {
   // bind creds to the deposit wallet via an ERC-7739-wrapped L1 ClobAuth is what
   // the CLOB rejects with "Invalid L1 Request headers" — issue #65 misdiagnosed
   // the fix as wrapping L1 auth; the real path keeps L1 auth as the EOA.
-  const cacheKey = `${sigType}:${account.address.toLowerCase()}`;
+  // The deposit wallet is part of the key: funderAddress is baked into the
+  // cached client, so a wallet change within the process lifetime (re-setup,
+  // state file rewritten) must not keep building orders against the old funder.
+  const cacheKey = `${sigType}:${account.address.toLowerCase()}:${(depositWallet ?? "").toLowerCase()}`;
   if (_clobClient && _clobClientKey === cacheKey) return _clobClient;
 
   let creds = loadL2Creds(account.address, 0);
@@ -227,11 +231,11 @@ let _geoCache: { at: number; value: GeoblockStatus } | null = null;
  * routes through POLYMARKET_CLOB_HOST, i.e. the exact egress real orders use.
  *
  * We deliberately do NOT trust polymarket.com/api/geoblock's boolean: it
- * reflects FRONTEND blocking (it returns blocked=true for Japan even though the
- * Japanese API accepts orders — verified: POST /order from a Tokyo egress
- * returns 401, not 403). The /api/geoblock call is kept only for country/ip
- * context. Cached 10 min; fail-open (unknown) on network error so a hiccup never
- * blocks a call that might succeed.
+ * reflects FRONTEND blocking, which can diverge from what the order API accepts
+ * (e.g. Japan returns blocked=true on the frontend while its API still accepts
+ * orders — POST /order there returns 401, not 403). The /api/geoblock call is
+ * kept only for country/ip context. Cached 10 min; fail-open (unknown) on
+ * network error so a hiccup never blocks a call that might succeed.
  */
 export async function checkGeoblock(): Promise<GeoblockStatus> {
   applyClobProxyOnce();
@@ -240,7 +244,15 @@ export async function checkGeoblock(): Promise<GeoblockStatus> {
   let orderPlacement: GeoblockStatus["orderPlacement"] = "unknown";
   try {
     const res = await axios.post(`${CLOB_HOST}/order`, {}, { timeout: 6_000, validateStatus: () => true });
-    orderPlacement = res.status === 403 ? "blocked" : "permitted";
+    // Treating "anything that is not 403" as permitted meant a 502/404/429 from
+    // a misconfigured POLYMARKET_CLOB_HOST rendered as "✅ Region: order
+    // placement permitted" + "🎯 Ready to trade", cached for 10 minutes — so the
+    // user funded the wallet and only discovered the truth on the first buy.
+    // An empty body reaching a WORKING CLOB is rejected as a bad request, so
+    // those codes are the positive signal; everything else is genuinely unknown.
+    if (res.status === 403) orderPlacement = "blocked";
+    else if (res.status === 400 || res.status === 401 || res.status === 422) orderPlacement = "permitted";
+    else orderPlacement = "unknown";
   } catch { /* network error → unknown */ }
 
   // Country/ip context — route it through the SAME egress as orders so the

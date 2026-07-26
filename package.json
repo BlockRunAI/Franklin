@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/franklin",
-  "version": "3.37.0",
+  "version": "3.38.0",
   "description": "Franklin Agent — The AI agent with a wallet. Spends USDC autonomously to get real work done. Pay per action, no subscriptions.",
   "type": "module",
   "exports": {
@@ -70,8 +70,8 @@
     "@colbymchenry/codegraph": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@polymarket/builder-relayer-client": "^0.0.10",
-    "@polymarket/builder-signing-sdk": "0.0.8",
-    "@polymarket/clob-client-v2": "1.0.8",
+    "@polymarket/builder-signing-sdk": "1.0.0",
+    "@polymarket/clob-client-v2": "1.1.0",
     "@slack/bolt": "^5.0.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
@@ -98,6 +98,7 @@
     "typescript": "^7.0.2"
   },
   "overrides": {
-    "ws@>=8.0.0 <=8.20.1": "^8.21.1"
+    "ws@>=8.0.0 <=8.20.1": "^8.21.1",
+    "@polymarket/builder-signing-sdk": "1.0.0"
   }
 }

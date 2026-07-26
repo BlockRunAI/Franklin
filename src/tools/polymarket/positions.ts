@@ -103,7 +103,7 @@ export async function listPositions(): Promise<ToolResult> {
     const msg = err instanceof Error ? err.message : String(err);
     return {
       text: `Could not fetch positions from Polymarket's Data-API (${msg}). ` +
-        `Fallback: blockrun_markets path:"polymarket/positions" params:{user:"${user}"} ($0.001).`,
+        `Fallback: blockrun_markets path:"polymarket/positions" params:{user:"${user}"} ($0.0075).`,
       isError: true,
     };
   }

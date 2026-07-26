@@ -21,7 +21,25 @@ export const NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296";
 export const CONDITIONAL_TOKENS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
 // pUSD — Polymarket's 1:1 collateral wrapper (labelled CollateralToken proxy).
 export const PUSD_COLLATERAL = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
+// pUSD collateral adapters — the ONLY correct redeem targets in the pUSD era.
+// CTF positions (the CLOB token_ids) are still keyed to USDC.e (standard) or
+// the legacy NegRiskAdapter's wrapped collateral (neg-risk); calling the CTF /
+// legacy adapter with pUSD burns a positionId nobody holds, which SUCCEEDS
+// redeeming 0 (CTF redeemPositions never reverts on zero balance). These
+// adapters pull the caller's outcome tokens (need a one-time CTF operator
+// approval), redeem through the right underlying path, wrap the USDC.e payout
+// into pUSD, and return it to the caller. Verified on-chain 2026-07-13:
+// Sourcify exact_match; COLLATERAL_TOKEN/CONDITIONAL_TOKENS/USDCE (and
+// NEG_RISK_ADAPTER/WRAPPED_COLLATERAL) all point at the addresses above.
+export const CTF_COLLATERAL_ADAPTER = "0xAdA100Db00Ca00073811820692005400218FcE1f";
+export const NEG_RISK_CTF_COLLATERAL_ADAPTER = "0xadA2005600Dec949baf300f4C6120000bDB6eAab";
 export const COLLATERAL_ONRAMP = "0x93070a847efEf7F70739046A929D47a521F5B8ee";
+// USDC.e — the legacy collateral CTF position ids are keyed to. Withdrawals
+// sweep any residue of it (historic direct-CTF redemptions paid out USDC.e)
+// through the onramp's wrap(asset, to, amount) — signature verified against the
+// Sourcify exact-match source of COLLATERAL_ONRAMP, 2026-07-21 — since the
+// bridge only accepts pUSD.
+export const USDCE_COLLATERAL = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 export const DEPOSIT_WALLET_FACTORY = "0x00000000000Fb5C9ADea0298D729A0CB3823Cc07";
 
 /**
@@ -52,13 +70,16 @@ export function assertContractConfig(): void {
 
 // --- Hosts (env-overridable so Phase 2 can point them at the BlockRun gateway) ---
 // CLOB order placement is geoblocked by IP (US/UK/EU and many regions). We
-// DEFAULT to BlockRun's hosted Tokyo egress so trading works out of the box with
-// zero config — it only forwards to Polymarket's CLOB (it can't see or move
-// funds; every order is still signed locally by the user's key). Override with
-// POLYMARKET_CLOB_HOST to hit Polymarket directly (from a permitted region) or to
-// run your own egress. Direct Polymarket host: https://clob.polymarket.com
+// DEFAULT to BlockRun's hosted Finland egress (europe-north1) so trading works
+// out of the box with zero config — Finland is FULLY unrestricted under
+// Polymarket's geographic policy (frontend + API), a more durable choice than
+// Japan (close-only on the frontend). The relay only forwards to Polymarket's
+// CLOB (it can't see or move funds; every order is still signed locally by the
+// user's key). Override with POLYMARKET_CLOB_HOST to hit Polymarket directly
+// (from a permitted region) or run your own egress (see deploy/finland-egress).
+// Direct Polymarket host: https://clob.polymarket.com
 export const CLOB_HOST =
-  process.env.POLYMARKET_CLOB_HOST || "https://pm-egress-vbsbhh7lea-an.a.run.app/clob";
+  process.env.POLYMARKET_CLOB_HOST || "https://pm-egress-1092497648280.europe-north1.run.app/clob";
 export const RELAYER_URL =
   process.env.POLYMARKET_RELAYER_URL || "https://relayer-v2.polymarket.com";
 export const DATA_API_HOST =
@@ -72,21 +93,54 @@ export const BRIDGE_API_HOST =
 // USDC_ADDRESS in ../constants.ts.)
 export const BASE_CHAIN_ID = 8453;
 export const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-// Overridable so a demo routing orders through a Tokyo relay can report the
+// Overridable so a demo routing orders through the egress relay can report the
 // SAME egress's region (a permitted ✅) instead of the local IP's status.
 export const GEOBLOCK_URL =
   process.env.POLYMARKET_GEOBLOCK_URL || "https://polymarket.com/api/geoblock";
 export const BRIDGE_UI_URL = "https://polymarket.com"; // deposits happen via the Polymarket bridge UI/API
 
 // Public Polygon RPCs with fallback, mirroring BASE_RPC_URLS in ../constants.ts.
-// Used only for read-only approval/balance checks (viem public client).
-// 1rpc first — polygon-rpc.com was observed lagging several blocks behind, which
-// made freshly-confirmed deploys/approvals read as still-pending.
-export const POLYGON_RPC_URLS = [
+// Probed 2026-07-21 with a real eth_call (not just eth_blockNumber):
+//   polygon-bor-rpc.publicnode.com  200 OK
+//   polygon.drpc.org                200 OK
+//   1rpc.io/matic                   200 OK once, then -32001 "usage limit" — rate-limited
+//   polygon.llamarpc.com            DNS/fetch failure
+//   polygon-rpc.com                 401 "tenant disabled"
+//   rpc.ankr.com/polygon            -32000 "Unauthorized: you must authenticate"
+// Two of the three entries here were dead, so fallback() depth was effectively 1
+// while ~9 reads x 4 retries piled onto a single rate-limited endpoint. Dead
+// entries are not free: each costs retryCount x timeout before the chain moves on.
+//
+// READS ONLY. Used by the viem public client, which fans out across all of them
+// via fallback().
+export const POLYGON_READ_RPC_URLS = [
+  "https://polygon-bor-rpc.publicnode.com",
+  "https://polygon.drpc.org",
   "https://1rpc.io/matic",
-  "https://polygon.llamarpc.com",
-  "https://polygon-rpc.com",
 ];
+
+/**
+ * WRITES. Separate on purpose.
+ *
+ * There used to be one list, and entry 0 doubled as the sole un-fallbacked
+ * transport for every SIGNING wallet client (withdraw, redeem, relayer, setup).
+ * So reordering what looked like a read-only fallback list silently changed
+ * which endpoint broadcasts every money transaction — a write-path change
+ * disguised as a comment tweak, and one nobody would review as such.
+ * (Splitting these was @KillerQueen-Z's idea in #66; the default below is not.)
+ *
+ * publicnode, not 1rpc: 1rpc answers once and then returns
+ * -32001 "usage limit" (measured 2026-07-21), which is the last thing you want
+ * broadcasting a withdrawal. Override per-deployment with POLYMARKET_WRITE_RPC_URL.
+ *
+ * Deliberately a single endpoint rather than a fallback list: viem's fallback()
+ * would re-send a signed transaction to the next provider on a timeout, and a
+ * transaction that was actually mined by the first provider must not be
+ * broadcast again. Failing loudly on one endpoint is correct here; silently
+ * retrying a money movement is not.
+ */
+export const POLYGON_WRITE_RPC_URL =
+  process.env.POLYMARKET_WRITE_RPC_URL || "https://polygon-bor-rpc.publicnode.com";
 
 // --- Safety knobs ---
 /**
@@ -154,30 +208,6 @@ export function getClobProxy(): string | undefined {
   return v ? v : undefined;
 }
 
-/**
- * Relayer API credentials — required for the deposit-wallet path (Phase 1:
- * user-provided from polymarket.com → Settings → API Keys; Phase 2 moves these
- * behind the BlockRun gateway). The relayer only ever receives pre-signed
- * payloads; these creds authenticate use of its gas-sponsoring service and
- * grant no control over funds.
- */
-// Polymarket's Settings → API Keys issues a Relayer API key as key + owning
-// address (Option 2 auth: two plain headers RELAYER_API_KEY +
-// RELAYER_API_KEY_ADDRESS, no HMAC). The older builder-HMAC form
-// (key/secret/passphrase) is also accepted by the relayer but is not what the
-// UI hands out today; we implement the key+address form.
-export interface RelayerCreds {
-  key: string;
-  keyAddress: string;
-}
-
-export function getRelayerCreds(): RelayerCreds | null {
-  const key = process.env.POLYMARKET_RELAYER_API_KEY?.trim();
-  const keyAddress = process.env.POLYMARKET_RELAYER_API_KEY_ADDRESS?.trim();
-  if (key && keyAddress) return { key, keyAddress };
-  return null;
-}
-
 // ERC-20/1155 minimal ABIs for approval + balance reads and approval calldata.
 export const ERC20_ABI = [
   {
@@ -225,18 +255,6 @@ export const ERC1155_ABI = [
       { name: "parentCollectionId", type: "bytes32" },
       { name: "conditionId", type: "bytes32" },
       { name: "indexSets", type: "uint256[]" },
-    ],
-    outputs: [],
-  },
-] as const;
-
-// NegRisk adapter redeem takes explicit YES/NO amounts instead of index sets.
-export const NEG_RISK_ADAPTER_ABI = [
-  {
-    name: "redeemPositions", type: "function", stateMutability: "nonpayable",
-    inputs: [
-      { name: "conditionId", type: "bytes32" },
-      { name: "amounts", type: "uint256[]" },
     ],
     outputs: [],
   },

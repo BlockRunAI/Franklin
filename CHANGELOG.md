@@ -1,5 +1,84 @@
 # Changelog
 
+## Franklin Agent 3.38.0 — the Polymarket port was eight rounds stale
+
+**The port had drifted, and the drift was all money bugs.** Franklin's
+Polymarket module is a byte-faithful port of blockrun-mcp's client-side CLOB
+code. It was last synced at upstream `f8d3f8c` (Franklin 3.30.1). Upstream has
+since shipped eleven commits through 0.32.9, and Franklin had none of them. The
+port is now re-synced to upstream HEAD: every file is byte-identical to
+blockrun-mcp except two import lines (`../wallet.js` → `./wallet-key.js`), which
+is the only Franklin-local adaptation the module has ever had.
+
+What was silently wrong in Franklin until this release:
+
+| bug | what it did |
+|---|---|
+| reverted withdrawals reported success | a pUSD transfer that reverted on-chain printed `✅ Withdrawal submitted`. `waitForTransactionReceipt` resolves for reverted transactions too — awaiting it proves the tx was mined, not that it did anything |
+| a buy could sign one tick below its own limit | `0.58 / 0.001` is `579.9999…` in float, and `floor` alone turned a stated 0.58 limit into 0.579 |
+| direct-CTF redeem silently paid $0 | redemption now routes through the pUSD collateral adapters |
+| redeem proved only that a tx landed | it now proves the position was actually consumed, and refuses to guess a missing `neg_risk` — it cross-checks the order book and rejects unresolved markets up front |
+| a resubmitted withdrawal could double-send | the second call signed a *second* transfer on top of an in-flight one; there is now an explicit double-spend window guard |
+| stale `funderAddress` on a cached client | `funderAddress` is baked into the ClobClient at construction, but the cache key ignored the deposit wallet |
+| `deployed: true` recorded without checking | setup now verifies contract code exists at the derived CREATE2 address |
+| approvals reported from a pre-batch snapshot | setup reports post-transaction state instead |
+| creds/state writes were not atomic | now tmp+rename |
+
+Also carried over: legacy USDC.e is swept into pUSD on withdrawal (historic
+direct-CTF redemptions paid out USDC.e, which the bridge does not accept), the
+Polygon read-fallback list is separated from the write RPC, and CLOB egress
+defaults to Finland (`europe-north1`) rather than Tokyo.
+
+**The two Polymarket SDKs 3.37.0 deliberately held back are now in.** Both were
+parked last release for stated reasons; both reasons were investigated rather
+than re-asserted.
+
+`@polymarket/clob-client-v2` 1.0.8 → 1.1.0 was held because `postOrder` gained
+`waitForResolvedTrades` — a real behavior change on the order path, with no
+local test that ever places an order. Reading the shipped bundle settles what it
+actually does: the response type tightens from `Promise<any>` to
+`Promise<OrderResponse>`, and matched orders get their settlement hashes
+back-filled. The relevant code in `orders.ts` *already* read `transactionsHashes`
+and `tradeIDs`, so the upgrade makes an existing display path more often correct
+rather than changing it. Verified against the real bundle, not the release notes:
+an unmatched order returns untouched with zero polls and zero added latency
+(Franklin's resting-limit-order path is unaffected); a response that already
+carries hashes short-circuits; `FAILED` trades are excluded, so a failed fill can
+never be reported as a settlement hash; and the worst case — `getTrades` failing
+persistently — was measured end to end at **30.1 s, after which it degrades and
+returns the placed order rather than throwing**. No tool-level timeout wraps
+this, so the bound holds.
+
+`@polymarket/builder-signing-sdk` 0.0.8 → 1.0.0 was held on a type conflict with
+`builder-relayer-client`, which still pins `^0.0.8` — and under npm semver a
+caret on `0.0.x` is patch-only, so 1.0.0 does not satisfy it. The conflict is
+real: both `BuilderConfig` declarations carry a private `ensureValid`, and TS
+compares classes with private members nominally. The fix is to collapse the tree
+to one copy via an override, which is safe here for a specific verified reason:
+`builder-relayer-client` never `require`s the signing SDK at runtime — it is a
+type-only dependency, and it duck-types the instance
+(`builderConfig.generateBuilderHeaders()`, `.isValid()`) with no `instanceof`
+check anywhere. Nothing else in the tree requires it either. 1.0.0 itself is a
+pure CJS→ESM port: every non-import change in the bundle is `exports.X` →
+`export` boilerplate, and the signing logic is untouched. The CJS→ESM seam was
+then exercised for real — a 1.0.0 `BuilderConfig` handed to a CJS `RelayClient`,
+which generated correct `POLY_BUILDER_*` headers across the boundary.
+
+Neither upgrade adds a single transitive dependency: clob-client-v2's dependency
+set is identical between the two versions, and builder-signing-sdk's is strictly
+smaller (it drops `tslib` and a stale `@types/node ^18` that should never have
+been a runtime dependency).
+
+**Franklin's SDK pins are now ahead of blockrun-mcp**, which still sits on
+clob-client-v2 1.0.8 and builder-signing-sdk 0.0.8. The source stays
+byte-faithful; only the pins diverge. Worth pushing upstream so the next re-sync
+starts from one baseline.
+
+643 tests, typecheck and build green. Because none of the local tests touch the
+order, withdraw or redeem paths — the suite covers l1-auth golden vectors only —
+the SDK behavior above was verified by a separate 20-check runtime pass against
+the installed bundles, with no order signed and no relayer transaction sent.
+
 ## Franklin Agent 3.37.0 — the dependency backlog, cleared
 
 **`ws` was never actually declared.** `src/serve/server.ts` imported it while

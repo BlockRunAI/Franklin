@@ -59,7 +59,13 @@ function commitBet(): void {
 export function roundToTick(price: number, tickSize: string, side: "buy" | "sell" = "buy"): number {
   const tick = parseFloat(tickSize);
   const decimals = Math.max(0, (tickSize.split(".")[1] ?? "").length);
-  const steps = side === "buy" ? Math.floor(price / tick) : Math.ceil(price / tick);
+  // The epsilon absorbs float-division noise on prices ALREADY on the grid:
+  // 0.58/0.001 is 579.9999…, which floor alone turns into 0.579 (a buy signed
+  // one tick below the stated limit), and 0.42/0.01 is 42.000…01, which ceil
+  // alone turns into 0.43 (a sell one tick above). 1e-9 is far below half a
+  // tick for every real tick size, so genuine off-grid prices still round in
+  // the conservative direction (issue #72 finding 7).
+  const steps = side === "buy" ? Math.floor(price / tick + 1e-9) : Math.ceil(price / tick - 1e-9);
   return Number((steps * tick).toFixed(decimals));
 }
 
@@ -167,19 +173,20 @@ export async function mapClobError(err: unknown): Promise<string> {
     const where = geo.country ? ` (egress country: ${geo.country})` : "";
     return `Order rejected with 403 — Polymarket geoblocks order placement from this egress${where} ` +
       `(US/UK/EU and many regions are restricted; automated trading is allowed from unrestricted egress). ` +
-      `Fix: set POLYMARKET_CLOB_PROXY / HTTPS_PROXY, or point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL ` +
-      `at a Tokyo relay (deploy/tokyo-egress). Raw: ${message}`;
+      `Fix: point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay ` +
+      `(deploy/finland-egress) or restore the default. A proxy alone (POLYMARKET_CLOB_PROXY / HTTPS_PROXY) ` +
+      `does not change the Polymarket-facing egress. Raw: ${message}`;
   }
   if (m.includes("maker address not allowed") || m.includes("deposit wallet flow")) {
     return `Polymarket rejected this maker address — CLOB V2 requires the deposit-wallet flow to place ` +
       `orders (a plain EOA maker is not accepted). Use the default deposit-wallet mode: unset ` +
-      `POLYMARKET_SIG_TYPE (=3) and set relayer creds (POLYMARKET_RELAYER_API_KEY/_SECRET/_PASSPHRASE) so ` +
-      `action:"setup" can create your deposit wallet. Raw: ${message}`;
+      `POLYMARKET_SIG_TYPE (=3) and run action:"setup" to create your deposit wallet ` +
+      `(credentials are bootstrapped automatically — no API keys needed). Raw: ${message}`;
   }
   if (isCredsMismatchError(e)) {
     return `CLOB rejected the API credentials (${message}). Credentials were re-derived automatically; ` +
-      `if this persists, run action:"setup", or set POLYMARKET_SIG_TYPE=0 to fall back to plain EOA mode ` +
-      `(see clob-client-v2 issue #65).`;
+      `if this persists, run action:"setup", or as a last resort set POLYMARKET_SIG_TYPE=0 for plain ` +
+      `EOA mode (see clob-client-v2 issue #65; note the CLOB may reject plain-EOA makers).`;
   }
   if (m.includes("not enough balance") || m.includes("insufficient") || m.includes("allowance")) {
     return `Not enough balance/allowance (${message}). The funds wallet needs pUSD and exchange approvals — ` +
