@@ -1,0 +1,24 @@
+name: Brand numbers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Fails when a marketing number in this repo disagrees with brand-numbers.json.
+#
+# --check is deliberately OFFLINE. It compares against the committed snapshot
+# and never fetches, so a blockrun.ai deploy in progress cannot fail this repo's
+# CI. Pulling a newer artifact is a separate, deliberate act:
+#
+#   node scripts/sync-brand-numbers.mjs --refresh
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/sync-brand-numbers.mjs --check
