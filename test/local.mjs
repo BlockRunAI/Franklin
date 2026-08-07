@@ -421,6 +421,149 @@ test('proxy server handles OPTIONS and local model switching without backend cal
   }
 });
 
+test('proxy Auto routes through the shared portfolio before forwarding', async () => {
+  const originalHome = process.env.HOME;
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-proxy-auto-home-'));
+  const proxyUrl = new URL('../dist/proxy/server.js', import.meta.url);
+  const routerUrl = new URL('../dist/router/index.js', import.meta.url);
+  const forwarded = [];
+  const backend = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk.toString();
+    forwarded.push(JSON.parse(raw));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      id: 'msg_auto_router',
+      type: 'message',
+      role: 'assistant',
+      model: forwarded.at(-1)?.model,
+      content: [{ type: 'text', text: 'auto routed' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 4, output_tokens: 2 },
+    }));
+  });
+
+  let proxy;
+  try {
+    process.env.HOME = fakeHome;
+    const backendPort = await listenOnRandomPort(backend);
+    const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
+    const { routeRequest } = await import(`${routerUrl.href}?t=${Date.now()}`);
+    proxy = createProxy({
+      port: 0,
+      apiUrl: `http://127.0.0.1:${backendPort}`,
+      chain: 'base',
+      modelOverride: 'blockrun/auto',
+      fallbackEnabled: false,
+    });
+    const proxyPort = await listenOnRandomPort(proxy);
+    const prompt = 'Inspect the repository, fix the failing tests, and verify the result.';
+    const systemPrompt = 'You are Franklin, a coding agent.';
+    const toolNames = ['Read', 'Edit', 'Bash'];
+    const expected = routeRequest(prompt, 'auto', {
+      hasTools: true,
+      toolNames,
+      requiresTools: true,
+      maxOutputTokens: 8_192,
+      systemPrompt,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/api/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'blockrun/auto',
+        system: systemPrompt,
+        messages: [{ role: 'user', content: prompt }],
+        tools: toolNames.map((name) => ({ name, input_schema: { type: 'object' } })),
+        tool_choice: { type: 'any' },
+        max_tokens: 8_192,
+      }),
+    });
+
+    assert.equal(response.status, 200, `Expected Auto proxy response 200, got ${response.status}`);
+    assert.equal(forwarded.length, 1, 'Auto should make one serving request');
+    assert.equal(forwarded[0].model, expected.model);
+    assert.notEqual(forwarded[0].model, 'blockrun/auto');
+    assert.equal(expected.routerVersion, 'v3-portfolio');
+    assert.equal(expected.taskType, 'tool_agent');
+  } finally {
+    if (proxy) await new Promise((resolve) => proxy.close(() => resolve()));
+    await new Promise((resolve) => backend.close(() => resolve()));
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('proxy Auto honors tool_choice none as a hard no-tool constraint', async () => {
+  const originalHome = process.env.HOME;
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-proxy-auto-none-home-'));
+  const proxyUrl = new URL('../dist/proxy/server.js', import.meta.url);
+  const routerUrl = new URL('../dist/router/index.js', import.meta.url);
+  let forwardedModel = '';
+  const backend = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk.toString();
+    forwardedModel = JSON.parse(raw).model;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      id: 'msg_auto_no_tools',
+      type: 'message',
+      role: 'assistant',
+      model: forwardedModel,
+      content: [{ type: 'text', text: 'no tools' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 4, output_tokens: 2 },
+    }));
+  });
+
+  let proxy;
+  try {
+    process.env.HOME = fakeHome;
+    const backendPort = await listenOnRandomPort(backend);
+    const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
+    const { routeRequest } = await import(`${routerUrl.href}?t=${Date.now()}`);
+    proxy = createProxy({
+      port: 0,
+      apiUrl: `http://127.0.0.1:${backendPort}`,
+      chain: 'base',
+      modelOverride: 'blockrun/auto',
+      fallbackEnabled: false,
+    });
+    const proxyPort = await listenOnRandomPort(proxy);
+    const prompt = 'Cancel my flight booking and refund the ticket.';
+    const expected = routeRequest(prompt, 'auto', {
+      hasTools: true,
+      toolNames: ['CancelBooking'],
+      requiresTools: false,
+      maxOutputTokens: 4_096,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/api/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'blockrun/auto',
+        messages: [{ role: 'user', content: prompt }],
+        tools: [{ name: 'CancelBooking', input_schema: { type: 'object' } }],
+        tool_choice: { type: 'none' },
+        max_tokens: 4_096,
+      }),
+    });
+
+    assert.equal(response.status, 200, `Expected no-tool Auto response 200, got ${response.status}`);
+    assert.equal(forwardedModel, expected.model);
+    assert.notEqual(expected.taskType, 'tool_agent');
+  } finally {
+    if (proxy) await new Promise((resolve) => proxy.close(() => resolve()));
+    await new Promise((resolve) => backend.close(() => resolve()));
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('proxy server falls back when the paid BlockRun request times out', async () => {
   const originalHome = process.env.HOME;
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-proxy-timeout-home-'));
@@ -5722,6 +5865,39 @@ test('router LLM classifier also returns a real local-elo category', async () =>
   assert.equal(routing.tier, 'COMPLEX');
   assert.equal(routing.category, 'trading');
   assert.ok(routing.signals.includes('llm-classified'));
+});
+
+test('router v3.4: Auto uses the shared local portfolio with hard request capabilities', async () => {
+  const { routeRequest, routeRequestAsync, isVisionModel } = await import('../dist/router/index.js');
+
+  const agent = routeRequest(
+    'Inspect the repository, fix the failing tests, and verify the result.',
+    'auto',
+    {
+      hasTools: true,
+      toolNames: ['Read', 'Edit', 'TerminalExec'],
+      maxOutputTokens: 8_192,
+    },
+  );
+  assert.equal(agent.routerVersion, 'v3-portfolio');
+  assert.equal(agent.taskType, 'tool_agent');
+  assert.ok(agent.candidates.length > 1, 'Auto should expose an ordered recovery chain');
+  assert.equal(agent.candidates[0], agent.model, 'selected model must lead the recovery chain');
+
+  const vision = routeRequest('Describe this screenshot.', 'auto', { needsVision: true });
+  assert.equal(vision.taskType, 'vision');
+  assert.ok(isVisionModel(vision.model), `vision hard filter selected ${vision.model}`);
+
+  const structured = routeRequest('Extract these fields.', 'auto', {
+    requiresStructuredOutput: true,
+  });
+  assert.equal(structured.taskType, 'extraction');
+  assert.equal(structured.routerVersion, 'v3-portfolio');
+
+  // No explicit classifier means the async compatibility entry delegates to
+  // the same synchronous local core. This must not create a second LLM call.
+  const asyncLocal = await routeRequestAsync('Fix the test suite.', 'auto');
+  assert.equal(asyncLocal.routerVersion, 'v3-portfolio');
 });
 
 test('router: legacy eco/premium profile strings still parse to auto', async () => {

@@ -25,7 +25,6 @@ import {
 import {
   routeRequest,
   parseRoutingProfile,
-  getFallbackChain as getRouterFallbackChain,
   isVisionModel,
   messagesNeedVision,
   pickVisionSibling,
@@ -310,6 +309,7 @@ export function createProxy(options: ProxyOptions): http.Server {
     req.on('end', async () => {
       let requestModel = currentModel || options.modelOverride || 'unknown';
       let usedFallback = false;
+      let routerCandidates: string[] = [];
 
       try {
         if (options.debug) logger.debug(`[franklin] request: ${req.method} ${req.url} currentModel=${currentModel || 'none'}`);
@@ -387,11 +387,53 @@ export function createProxy(options: ProxyOptions): http.Server {
                 }
               }
 
-              // Route the request — propagate vision-need so AUTO_TIERS' V4
-              // Pro default doesn't get picked for an image-bearing turn.
-              const routing = routeRequest(promptText, routingProfile, proxyNeedsVision);
+              const toolNames = (Array.isArray(parsed.tools) ? parsed.tools : [])
+                .map((tool: { name?: string; function?: { name?: string } }) => tool.name ?? tool.function?.name)
+                .filter((name: unknown): name is string => typeof name === 'string');
+              const toolChoice = parsed.tool_choice;
+              const toolChoiceType = typeof toolChoice === 'object' && toolChoice !== null
+                ? String(toolChoice.type)
+                : undefined;
+              const forbidsTools = toolChoice === 'none' || toolChoiceType === 'none';
+              const requiresTools = !forbidsTools && (toolChoice === 'required'
+                || (toolChoiceType !== undefined
+                  && ['any', 'tool', 'function'].includes(toolChoiceType)));
+              const explicitToolRequirement = forbidsTools
+                ? false
+                : requiresTools
+                  ? true
+                  : undefined;
+              const responseFormat = parsed.response_format;
+              const requiresStructuredOutput = !!responseFormat
+                && responseFormat.type !== undefined
+                && responseFormat.type !== 'text';
+              const systemPrompt = typeof parsed.system === 'string'
+                ? parsed.system
+                : Array.isArray(parsed.system)
+                  ? parsed.system
+                    .filter((part: { type?: string }) => part.type === 'text')
+                    .map((part: { text?: string }) => part.text ?? '')
+                    .join('\n')
+                  : undefined;
+
+              // Same local Router core as ClawRouter. The proxy supplies
+              // concrete request capabilities; no classifier call is added.
+              const routing = routeRequest(promptText, routingProfile, {
+                needsVision: proxyNeedsVision,
+                maxOutputTokens: typeof parsed.max_tokens === 'number'
+                  ? parsed.max_tokens
+                  : DEFAULT_MAX_TOKENS,
+                hasTools: toolNames.length > 0,
+                toolNames,
+                ...(explicitToolRequirement !== undefined
+                  ? { requiresTools: explicitToolRequirement }
+                  : {}),
+                requiresStructuredOutput,
+                systemPrompt,
+              });
               parsed.model = routing.model;
               requestModel = routing.model;
+              routerCandidates = routing.candidates ?? [routing.model];
 
               logger.info(
                 `[franklin] 🧠 Smart routing: ${routingProfile} → ${routing.tier} → ${routing.model} ` +
@@ -488,7 +530,12 @@ export function createProxy(options: ProxyOptions): http.Server {
         if (fallbackEnabled && body && requestPath.includes('messages')) {
           const fallbackConfig: FallbackConfig = {
             ...DEFAULT_FALLBACK_CONFIG,
-            chain: buildFallbackChain(requestModel),
+            chain: [
+              ...new Set([
+                ...routerCandidates,
+                ...buildFallbackChain(requestModel),
+              ]),
+            ],
           };
 
           const result = await fetchWithPaymentFallback(

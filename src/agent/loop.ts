@@ -45,8 +45,8 @@ import { writeLiveAgent } from '../session/live-registry.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
-import { routeRequest, routeRequestAsync, resolveTierToModel, parseRoutingProfile, getFallbackChain, pickFreeFallback, isVisionModel, messageNeedsVision, pickVisionSibling } from '../router/index.js';
-import type { Tier, RoutingProfile } from '../router/index.js';
+import { routeRequest, parseRoutingProfile, getFallbackChain, pickFreeFallback, isVisionModel, messageNeedsVision, pickVisionSibling } from '../router/index.js';
+import type { Tier, RoutingProfile, RoutingResult } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
 import { shouldVerify, runVerification } from './verification.js';
@@ -1041,6 +1041,11 @@ export async function interactiveSession(
     // the same threshold would flap on every iteration once crossed.
     let bloatCompactedThisTurn = false;
     let maxTokensOverride: number | undefined;
+    // Auto picks once for the whole user turn. Internal tool/planning rounds
+    // reuse the decision unless a real provider/payment failure deliberately
+    // switches config.model to a fallback.
+    let pinnedRouting: RoutingResult | undefined;
+    let routingCandidates: string[] = [];
     const turnIdleReference = lastSessionActivity;
     lastSessionActivity = Date.now();
 
@@ -1472,18 +1477,23 @@ export async function interactiveSession(
       const turnNeedsVision = loopCount === 1 && messageNeedsVision(lastUserInput);
 
       // ── Router: resolve routing profiles to concrete models ──
-      // Uses the tier already decided by the turn-analyzer — one LLM call
-      // up-front rather than a separate classifier here. Fallback to the
-      // stand-alone classifier if analyzer wasn't available.
+      // The shared Router is local/deterministic and runs once per user turn.
+      // The turn analyzer remains useful for planning and pushback, but no
+      // longer overrides model selection or adds a router-classifier call.
       const routingProfile = parseRoutingProfile(config.model);
       let resolvedModel = config.model;
       let routingTier: Tier | undefined;
       let routingConfidence: number | undefined;
       let routingSavings: number | undefined;
       if (routingProfile) {
-        const routing = turnAnalysis
-          ? resolveTierToModel(turnAnalysis.tier, routingProfile, turnNeedsVision)
-          : await routeRequestAsync(lastUserInput || '', routingProfile, undefined, turnNeedsVision);
+        const routing = pinnedRouting ?? routeRequest(lastUserInput || '', routingProfile, {
+          needsVision: turnNeedsVision,
+          maxOutputTokens: maxTokens,
+          hasTools: activeCapabilityMap.size > 0,
+          toolNames: [...activeCapabilityMap.keys()],
+        });
+        pinnedRouting ??= routing;
+        routingCandidates = routing.candidates ?? [routing.model];
         resolvedModel = routing.model;
         routingTier = routing.tier;
         routingConfidence = routing.confidence;
@@ -1515,6 +1525,11 @@ export async function interactiveSession(
           text: `*⚠️ ${original} can't see images — using ${visionSwap} for this turn.*\n\n`,
         });
       }
+
+      // The pre-routing cap was calculated from the virtual profile name.
+      // Re-apply it to the concrete pick so capability filtering and the
+      // actual request use the same model output limit.
+      maxTokens = Math.min(maxTokensOverride ?? CAPPED_MAX_TOKENS, getMaxOutputTokens(resolvedModel));
 
       // Update token estimation model for more accurate byte-per-token ratio
       setEstimationModel(resolvedModel);
@@ -1946,8 +1961,9 @@ export async function interactiveSession(
             const streak = (serverErrorsByModel.get(resolvedModel) ?? 0) + 1;
             serverErrorsByModel.set(resolvedModel, streak);
             if (streak >= SERVER_ERROR_STREAK_BEFORE_SWITCH) {
-              const fallbackChain = getFallbackChain(routingTier ?? 'MEDIUM',
-                parseRoutingProfile(config.model) ?? 'auto');
+              const fallbackChain = routingCandidates.length > 0
+                ? routingCandidates
+                : getFallbackChain(routingTier ?? 'MEDIUM', parseRoutingProfile(config.model) ?? 'auto');
               const nextModel = fallbackChain.find(m =>
                 m !== resolvedModel && (serverErrorsByModel.get(m) ?? 0) < SERVER_ERROR_STREAK_BEFORE_SWITCH
               );

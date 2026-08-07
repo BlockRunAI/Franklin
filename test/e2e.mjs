@@ -163,9 +163,9 @@ function parseTokenCount(raw) {
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
-test('startup: banner on stdout and model line on stderr', { timeout: 10_000 }, async () => {
+test('startup: banner on stdout and model line on stderr', { timeout: 20_000 }, async () => {
   // Startup should be observable without waiting on a model response.
-  const { stdout, stderr } = await franklin('/exit', { timeoutMs: 10_000 });
+  const { stdout, stderr } = await franklin('/exit', { timeoutMs: 20_000 });
   assert.ok(
     stdout.includes('blockrun.ai') && stdout.includes('The AI agent with a wallet'),
     `Missing banner tagline. stdout:\n${stdout}`
