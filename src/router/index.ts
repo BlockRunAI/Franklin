@@ -16,7 +16,7 @@ import {
   DEFAULT_ROUTING_CONFIG as SHARED_ROUTING_CONFIG,
   route as routeWithSharedCore,
   type TaskType,
-} from '@blockrun/clawrouter/router';
+} from '@blockrun/router-core';
 import { MODEL_PRICING, OPUS_PRICING } from '../pricing.js';
 import { BLOCKRUN_DIR } from '../config.js';
 import { detectCategory, mapCategoryToTier, type Category } from './categories.js';
