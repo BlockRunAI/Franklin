@@ -12,6 +12,11 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  DEFAULT_ROUTING_CONFIG as SHARED_ROUTING_CONFIG,
+  route as routeWithSharedCore,
+  type TaskType,
+} from '@blockrun/clawrouter/router';
 import { MODEL_PRICING, OPUS_PRICING } from '../pricing.js';
 import { BLOCKRUN_DIR } from '../config.js';
 import { detectCategory, mapCategoryToTier, type Category } from './categories.js';
@@ -55,6 +60,39 @@ export interface RoutingResult {
   signals: string[];
   savings: number;
   category?: Category;
+  /** Ordered capability-eligible recovery chain. The selected model is first. */
+  candidates?: string[];
+  /** Explainable task class produced by the shared Router core. */
+  taskType?: TaskType;
+  /** Shared Router implementation that made this decision. */
+  routerVersion?: 'v2-rules' | 'v3-portfolio' | 'franklin-legacy';
+  reasoning?: string;
+}
+
+/** Request capabilities known by the Franklin host at routing time. */
+export interface RoutingContext {
+  needsVision?: boolean;
+  maxOutputTokens?: number;
+  hasTools?: boolean;
+  toolNames?: readonly string[];
+  requiresTools?: boolean;
+  requiresStructuredOutput?: boolean;
+  systemPrompt?: string;
+}
+
+const SHARED_MODEL_PRICING = new Map(
+  Object.entries(MODEL_PRICING).map(([model, pricing]) => [
+    model,
+    {
+      inputPrice: pricing.input,
+      outputPrice: pricing.output,
+      ...(pricing.perCall !== undefined ? { flatPrice: pricing.perCall } : {}),
+    },
+  ]),
+);
+
+function normalizeRoutingContext(context: boolean | RoutingContext): RoutingContext {
+  return typeof context === 'boolean' ? { needsVision: context } : context;
 }
 
 // ─── Tier Model Configs ───
@@ -457,23 +495,27 @@ export async function llmClassifyRequest(prompt: string): Promise<Tier | null> {
 }
 
 /**
- * Async router — LLM classifier first, keyword classifier as fallback.
- * Profile-specific tier tables (AUTO / ECO / PREMIUM / FREE) still pick
- * the concrete model; the classifier only picks the TIER.
+ * Compatibility async router. Production Auto routing is local and delegates
+ * directly to the shared Router core, so it adds no classifier round trip.
+ * Tests and third-party integrations may still inject an explicit classifier;
+ * that legacy path remains available during the migration window.
  */
 export async function routeRequestAsync(
   prompt: string,
   profile: RoutingProfile = 'auto',
-  classify: TierClassifier = llmClassifyRequest,
-  needsVision = false,
+  classify?: TierClassifier,
+  context: boolean | RoutingContext = false,
 ): Promise<RoutingResult> {
-  // Free / short-circuit profiles — no classifier needed.
-  if (profile === 'free') return routeRequest(prompt, profile, needsVision);
+  // The production path intentionally has no extra model call. Keeping the
+  // function async avoids breaking existing callers while removing router
+  // latency and classifier spend.
+  if (!classify || profile === 'free') return routeRequest(prompt, profile, context);
+
+  const normalizedContext = normalizeRoutingContext(context);
 
   const tier = await classify(prompt).catch(() => null);
   if (!tier) {
-    // Classifier miss or disabled — fall through to the sync keyword router.
-    return routeRequest(prompt, profile, needsVision);
+    return routeRequest(prompt, profile, normalizedContext);
   }
 
   // Build a RoutingResult from the LLM-picked tier using the same tier
@@ -481,7 +523,7 @@ export async function routeRequestAsync(
   let model: string;
   let finalTier: Tier = tier;
   const signals: string[] = ['llm-classified'];
-  if (needsVision) {
+  if (normalizedContext.needsVision) {
     const v = pickVisionTierModel(tier);
     model = v.model;
     finalTier = v.tier;
@@ -554,25 +596,72 @@ export function resolveTierToModel(
 export function routeRequest(
   prompt: string,
   profile: RoutingProfile = 'auto',
-  needsVision = false,
+  context: boolean | RoutingContext = false,
 ): RoutingResult {
+  const normalizedContext = normalizeRoutingContext(context);
+
   // Free profile — always use free model
   if (profile === 'free') {
     return {
       model: 'nvidia/qwen3-next-80b-a3b-instruct',
       tier: 'SIMPLE',
       confidence: 1.0,
-      signals: needsVision ? ['free-profile', 'vision-unsupported'] : ['free-profile'],
+      signals: normalizedContext.needsVision ? ['free-profile', 'vision-unsupported'] : ['free-profile'],
       savings: 1.0,
+      candidates: FREE_MODELS_BY_CATEGORY.chat,
     };
   }
 
-  // Auto profile bypasses learned routing. The learned Elo scores grow with
-  // usage volume rather than pure quality, which biased the router toward
-  // cheap/weak models on agentic work. Classic AUTO_TIERS defaults are
-  // agent-tuned (Sonnet-tier backbone) and more predictable for users.
+  // Emergency rollback for operators. This keeps the former Franklin rules
+  // available without making them the default or mixing their Elo state into
+  // the shared Router decision.
+  if (process.env.FRANKLIN_ROUTER_STRATEGY === 'legacy') {
+    return {
+      ...classicRouteRequest(prompt, profile, normalizedContext.needsVision),
+      routerVersion: 'franklin-legacy',
+    };
+  }
+
+  // Auto now uses the same local, deterministic Router core as ClawRouter.
+  // Hard capability requirements filter candidates before portfolio scoring;
+  // no network request, wallet access, benchmark grader or settlement adapter
+  // runs in this path.
   if (profile === 'auto') {
-    return classicRouteRequest(prompt, profile, needsVision);
+    const toolNames = normalizedContext.toolNames ?? [];
+    const decision = routeWithSharedCore(
+      prompt,
+      normalizedContext.systemPrompt,
+      Math.max(1, normalizedContext.maxOutputTokens ?? 4_096),
+      {
+        config: {
+          ...SHARED_ROUTING_CONFIG,
+          strategy: process.env.FRANKLIN_ROUTER_STRATEGY === 'rules' ? 'rules' : 'portfolio',
+        },
+        modelPricing: SHARED_MODEL_PRICING,
+        routingProfile: 'auto',
+        hasTools: normalizedContext.hasTools ?? toolNames.length > 0,
+        toolCount: toolNames.length,
+        toolNames,
+        ...(normalizedContext.requiresTools !== undefined
+          ? { requiresTools: normalizedContext.requiresTools }
+          : {}),
+        hasVision: normalizedContext.needsVision ?? false,
+        requiresStructuredOutput: normalizedContext.requiresStructuredOutput ?? false,
+      },
+    );
+    const category = detectCategory(prompt, loadLearnedWeights()?.category_keywords).category;
+    return {
+      model: decision.model,
+      tier: decision.tier,
+      confidence: decision.confidence,
+      signals: [decision.routerVersion ?? decision.method, ...(decision.taskType ? [decision.taskType] : [])],
+      savings: decision.savings,
+      category,
+      candidates: decision.candidates ?? [decision.model],
+      taskType: decision.taskType,
+      routerVersion: decision.routerVersion,
+      reasoning: decision.reasoning,
+    };
   }
 
   // ── Learned routing (if weights available) ──
@@ -605,7 +694,7 @@ export function routeRequest(
       // the turn needs vision, swap to the tier's first vision-capable model.
       // We deliberately don't blend Elo with vision capability — vision is a
       // hard requirement, not a quality dimension.
-      if (needsVision && !isVisionModel(selected.model)) {
+      if (normalizedContext.needsVision && !isVisionModel(selected.model)) {
         const v = pickVisionTierModel(tier);
         return {
           model: v.model,
@@ -630,7 +719,7 @@ export function routeRequest(
   }
 
   // ── Classic routing (keyword-based fallback) ──
-  return classicRouteRequest(prompt, profile, needsVision);
+  return classicRouteRequest(prompt, profile, normalizedContext.needsVision);
 }
 
 function computeSavings(model: string): number {
