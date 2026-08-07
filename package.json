@@ -68,7 +68,7 @@
   },
   "dependencies": {
     "@blockrun/llm": "^3.5.2",
-    "@blockrun/router-core": "https://codeload.github.com/BlockRunAI/router-core/tar.gz/9edfb53749ae5e6cca5f94b26fda84e3353eec9a",
+    "@blockrun/router-core": "https://codeload.github.com/BlockRunAI/router-core/tar.gz/6a790ebec60161825bbc8c4093fd221006b4e5fb",
     "@colbymchenry/codegraph": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@polymarket/builder-relayer-client": "^0.0.10",
