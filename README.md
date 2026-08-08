@@ -316,7 +316,7 @@ You don't subscribe to electricity, you pay for what you use. Franklin brings th
 
 ### 🧠 &nbsp;Multi-model is the future
 
-No single model is best at everything. Sonnet writes better code, Gemini handles longer context, DeepSeek costs 20x less for simple tasks. The Smart Router routes every request to the optimal model in <1ms — <!-- br:savings.autoVsBaselinePct -->87<!-- /br:savings.autoVsBaselinePct -->% cheaper than pinning Claude Opus 5 for every request.
+No single model is best at everything. Sonnet writes better code, Gemini handles longer context, DeepSeek costs 20x less for simple tasks. The Smart Router routes every request to the optimal model in <1ms — <!-- br:savings.autoVsBaselinePct -->88<!-- /br:savings.autoVsBaselinePct -->% cheaper than pinning Claude Opus 5 for every request.
 
 </td>
 <td width="33%" valign="top">
