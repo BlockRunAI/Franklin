@@ -1,0 +1,14 @@
+{
+  "id": "taskmarket-delegation",
+  "name": "TaskMarket Delegation",
+  "description": "Discover external TaskMarket work and prepare authorized delegation tasks from Franklin workflows.",
+  "version": "0.1.0",
+  "provides": {
+    "workflows": ["taskmarket-delegation"]
+  },
+  "entry": "index.js",
+  "author": "BlockRun community",
+  "homepage": "https://taskmarket.dev/",
+  "license": "Apache-2.0",
+  "franklinVersion": ">=3.38.0"
+}
