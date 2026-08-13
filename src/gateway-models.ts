@@ -10,8 +10,10 @@
  * Per gateway team (2026-04-22): every model returns `billing_mode` and
  * a mode-specific `pricing` object. Dispatch on billing_mode to compute
  * an estimated charge. x402 adds a fixed 5% margin on top of base price,
- * so actual charge = base * 1.05 (confirmed against a live 402 response
- * on seedance-2.0-fast: 5s × $0.15 × 1.05 = $0.7875).
+ * plus a flat $0.001 per-transaction fee on paid calls (Base since
+ * 2026-07-10; Solana instead enforces a $0.001 minimum per call with no
+ * service fee — the flat-fee estimate over-counts there by ≤$0.001, which
+ * is the safe direction for budget tracking).
  */
 
 import { loadChain, API_URLS, USER_AGENT } from './config.js';
@@ -192,6 +194,14 @@ export async function findModel(id: string): Promise<GatewayModel | null> {
 /** x402 gateway's fixed margin percentage applied on top of the base price. */
 export const GATEWAY_MARGIN = 1.05;
 
+/**
+ * Flat per-transaction fee (USD) the gateway adds on top of the margined
+ * price on every PAID call (no-op on $0 calls). Introduced upstream
+ * 2026-07-10, briefly $0.002, back to $0.001 since 2026-07-29
+ * (blockrun src/lib/transaction-fee.ts).
+ */
+export const GATEWAY_TRANSACTION_FEE_USD = 0.001;
+
 export interface EstimateContext {
   /** Number of images (per_image). Default 1. */
   quantity?: number;
@@ -203,8 +213,9 @@ export interface EstimateContext {
 
 /**
  * Estimated USD charge to generate one response from this model under the
- * given context. Includes the 5% gateway margin. Returns 0 for free and
- * token-metered (paid) models where a pre-call estimate isn't meaningful.
+ * given context. Includes the 5% gateway margin and the flat $0.001
+ * per-transaction fee on paid calls. Returns 0 for free and token-metered
+ * (paid) models where a pre-call estimate isn't meaningful.
  */
 export function estimateCostUsd(model: GatewayModel, ctx: EstimateContext = {}): number {
   const p = model.pricing as unknown as Record<string, number | undefined>;
@@ -242,7 +253,10 @@ export function estimateCostUsd(model: GatewayModel, ctx: EstimateContext = {}):
       base = 0;
       break;
   }
-  return +(base * GATEWAY_MARGIN).toFixed(6);
+  // The flat transaction fee only applies to non-zero charges (the gateway's
+  // addTransactionFee is a no-op at $0, keeping free flows free).
+  const margined = base * GATEWAY_MARGIN;
+  return +(margined > 0 ? margined + GATEWAY_TRANSACTION_FEE_USD : 0).toFixed(6);
 }
 
 /** Effective default duration for a per_second model (falls back to 8s). */

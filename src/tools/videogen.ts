@@ -2,9 +2,10 @@
  * Video Generation capability — generate short MP4 videos via the BlockRun
  * /v1/videos/generations endpoint. Uses x402 payment (Base or Solana).
  *
- * Default model `xai/grok-imagine-video` returns an 8-second clip for ~$0.42.
- * Seedance 2.0 (bytedance/seedance-2.0 and -fast) runs longer — up to a few
- * minutes for a 10s clip.
+ * Default model `xai/grok-imagine-video` returns an 8-second clip for ~$0.42
+ * (480p at $0.05/s; the gateway added an official 720p tier at $0.07/s on
+ * 2026-08-12). Seedance (bytedance/seedance-2.0-mini through -2.5) runs
+ * longer — up to a few minutes for a 10s clip.
  *
  * Flow (async since blockrun@654cd35):
  *   1. POST /v1/videos/generations with signed x-payment header. The server
@@ -606,10 +607,12 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
           model: {
             type: 'string',
             description:
-              'Video model. Default: xai/grok-imagine-video. Known-valid models on the BlockRun gateway as of 2026-05: ' +
-              'xai/grok-imagine-video, bytedance/seedance-1.5-pro, bytedance/seedance-2.0, bytedance/seedance-2.0-fast. ' +
+              'Video model. Default: xai/grok-imagine-video ($0.05/s). Known-valid models on the BlockRun gateway as of 2026-08: ' +
+              'xai/grok-imagine-video, bytedance/seedance-1.5-pro ($0.070/s), bytedance/seedance-2.0-mini ($0.0797/s), ' +
+              'bytedance/seedance-2.0-fast ($0.165/s), bytedance/seedance-2.0 ($0.227/s), bytedance/seedance-2.5 ($0.315/s), azure/sora-2 ($0.10/s). ' +
               'Pick from this list; the gateway rejects unknown names with HTTP 400 (no money charged on rejection). ' +
-              'Speak "Seedance Pro" → bytedance/seedance-2.0; speak "Seedance fast" → bytedance/seedance-2.0-fast.',
+              'Speak "Seedance" → bytedance/seedance-2.5 (newest flagship); "Seedance Pro" → bytedance/seedance-2.0; ' +
+              '"Seedance fast" → bytedance/seedance-2.0-fast; "Seedance mini" → bytedance/seedance-2.0-mini (cheapest).',
           },
           image_url: { type: 'string', description: 'Optional seed image (image-to-video). Accepts http(s) URL, data: URI, or local file path — local paths get inlined as base64 data URIs automatically.' },
           duration_seconds: { type: 'number', description: 'Duration billed for. Default depends on model (8s for grok-imagine-video).' },

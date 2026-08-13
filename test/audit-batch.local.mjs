@@ -31,12 +31,13 @@ test('checkImageBudget enforces the caller-resolved cost for a model absent from
   const { checkImageBudget } = await import('../dist/content/record-image.js');
   const lib = new ContentLibrary();
   const c = lib.create({ type: 'blog', title: 'x', budgetUsd: 0.03 });
-  // 'xai/grok-imagine-image-pro' is NOT in the static PRICE_TABLE → the static
-  // estimate is $0 and would wrongly greenlight (documents the bypass).
-  const noOverride = checkImageBudget(lib, c.id, 'xai/grok-imagine-image-pro', '1024x1024');
+  // A synthetic id NOT in the static PRICE_TABLE → the static estimate is $0
+  // and would wrongly greenlight (documents the bypass). (Was
+  // xai/grok-imagine-image-pro until the 2026-08-12 catalog sync added it.)
+  const noOverride = checkImageBudget(lib, c.id, 'example/future-image-model', '1024x1024');
   assert.equal(noOverride.ok, true, 'static table returns $0 for an unlisted model — the gap');
   // With the caller-resolved $0.07 (from the live catalog) it must refuse.
-  const withOverride = checkImageBudget(lib, c.id, 'xai/grok-imagine-image-pro', '1024x1024', 1, 0.07);
+  const withOverride = checkImageBudget(lib, c.id, 'example/future-image-model', '1024x1024', 1, 0.07);
   assert.equal(withOverride.ok, false, 'caller-resolved cost must enforce the budget cap');
 });
 
@@ -47,7 +48,7 @@ test('recordImageAsset books the caller-resolved cost, not the $0 static estimat
   const c = lib.create({ type: 'blog', title: 'Hero', budgetUsd: 1 });
   const dec = recordImageAsset(lib, {
     contentId: c.id, imagePath: '/tmp/h.png',
-    model: 'xai/grok-imagine-image-pro', size: '1024x1024', costUsd: 0.07,
+    model: 'example/future-image-model', size: '1024x1024', costUsd: 0.07,
   });
   assert.equal(dec.ok, true);
   assert.equal(dec.costUsd, 0.07);
@@ -110,10 +111,10 @@ test('loadPortfolio recovers from .bak when the live file is corrupt', async () 
 // budget check / spend confirm / asset record can't undercount a big size.
 test('resolveImageUnitCost prefers the size-aware price over a size-blind catalog flat', async () => {
   const { resolveImageUnitCost } = await import('../dist/tools/imagegen.js');
-  // gpt-image-1 catalogued at the flat 1024 base ($0.02 → $0.021 w/ margin).
+  // gpt-image-1 catalogued at the flat 1024 base ($0.02 → $0.022 w/ margin + $0.001 fee).
   const catalog = { id: 'openai/gpt-image-1', billing_mode: 'per_image', pricing: { per_image: 0.02 } };
-  // Default 1024 size: catalog (with margin) wins.
-  assert.equal(resolveImageUnitCost(catalog, 'openai/gpt-image-1', '1024x1024'), 0.021);
+  // Default 1024 size: catalog (with margin + fee) wins.
+  assert.equal(resolveImageUnitCost(catalog, 'openai/gpt-image-1', '1024x1024'), 0.022);
   // Large size really costs $0.04 base → $0.042 with the 5% gateway margin; the
   // size-blind catalog $0.021 must NOT win, and the static operand must carry margin.
   assert.equal(resolveImageUnitCost(catalog, 'openai/gpt-image-1', '1536x1024'), 0.042,
@@ -122,9 +123,9 @@ test('resolveImageUnitCost prefers the size-aware price over a size-blind catalo
 
 test('resolveImageUnitCost keeps the catalog price for a model absent from the static table', async () => {
   const { resolveImageUnitCost } = await import('../dist/tools/imagegen.js');
-  // grok-imagine-image-pro is NOT in the static PRICE_TABLE (static → $0).
-  const catalog = { id: 'xai/grok-imagine-image-pro', billing_mode: 'per_image', pricing: { per_image: 0.07 } };
-  assert.equal(resolveImageUnitCost(catalog, 'xai/grok-imagine-image-pro', '1024x1024'), 0.0735,
+  // A synthetic model NOT in the static PRICE_TABLE (static → $0).
+  const catalog = { id: 'example/future-image-model', billing_mode: 'per_image', pricing: { per_image: 0.07 } };
+  assert.equal(resolveImageUnitCost(catalog, 'example/future-image-model', '1024x1024'), 0.0745,
     'catalog price (closing the $0 bypass) survives when the static table omits the model');
 });
 
@@ -137,9 +138,9 @@ test('resolveImageUnitCost falls back to the size-aware static estimate when the
 // ── video / music cost resolution: same unify-and-never-undercount contract ──
 test('resolveVideoUnitCost prefers the per-second catalog price over the flat $0.05/s fallback', async () => {
   const { resolveVideoUnitCost } = await import('../dist/tools/videogen.js');
-  // Seedance: real $0.15/s. An 8s clip really costs 8×0.15×1.05 = $1.26, NOT 8×0.05.
+  // Seedance: real $0.15/s. An 8s clip really costs 8×0.15×1.05 + $0.001 fee = $1.261, NOT 8×0.05.
   const seedance = { id: 'token360/seedance-2.0-fast', billing_mode: 'per_second', pricing: { per_second: 0.15 } };
-  assert.equal(resolveVideoUnitCost(seedance, 8), 1.26,
+  assert.equal(resolveVideoUnitCost(seedance, 8), 1.261,
     'catalog per-second price must win — flat $0.40 would ~3x-undercount the budget');
   // Cold catalog (null): degrade to the flat estimate, margin-included.
   assert.equal(resolveVideoUnitCost(null, 8), +(8 * 0.05 * 1.05).toFixed(6));
@@ -147,9 +148,9 @@ test('resolveVideoUnitCost prefers the per-second catalog price over the flat $0
 
 test('resolveMusicUnitCost prefers the per-track catalog price over the flat PRICE_USD fallback', async () => {
   const { resolveMusicUnitCost } = await import('../dist/tools/musicgen.js');
-  // A pricier non-default music model: real $0.30/track → $0.315 with margin.
+  // A pricier non-default music model: real $0.30/track → $0.316 with margin + fee.
   const pricey = { id: 'some/pricey-music', billing_mode: 'per_track', pricing: { per_track: 0.30 } };
-  assert.equal(resolveMusicUnitCost(pricey), 0.315,
+  assert.equal(resolveMusicUnitCost(pricey), 0.316,
     'catalog per-track price must win over the flat default-model PRICE_USD');
   // Default model / cold catalog: the flat PRICE_USD (already margin-inclusive) holds.
   assert.equal(resolveMusicUnitCost(null), 0.1575);

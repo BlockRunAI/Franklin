@@ -1727,7 +1727,7 @@ export async function interactiveSession(
           // Free-only recovery chain — a free/empty-response session must NEVER
           // fall back to a paid model (would silently charge the wallet). Both
           // entries are $0 nvidia models.
-          const EMPTY_FALLBACK_MODELS = ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'];
+          const EMPTY_FALLBACK_MODELS = ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'];
           const nextModel = EMPTY_FALLBACK_MODELS.find(m => m !== config.model && !turnFailedModels.has(m));
           if (nextModel && recoveryAttempts < 2 && !config.disableModelFallback) {
             recoveryAttempts++;

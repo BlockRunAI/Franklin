@@ -18,14 +18,14 @@ import { ModelClient } from '../agent/llm.js';
 
 /** Reference models — diverse, cheap/free models for parallel queries. */
 const REFERENCE_MODELS = [
-  'nvidia/qwen3-next-80b-a3b-instruct',     // Free, clean instruction-follower
-  'nvidia/mistral-nemotron',                // Free, diverse family (maverick left the catalog 2026-07-14)
+  'nvidia/nemotron-nano-9b-v2',             // Free, serves itself on every path (qwen3-next EOL'd 2026-08-12)
+  'nvidia/mistral-nemotron',                // Free second voice (DEGRADED upstream; non-stream rides gateway fallback)
   'google/gemini-2.5-flash',                // Fast, cheap
   'deepseek/deepseek-chat',                 // Cheap, good reasoning
 ];
 
 /** Aggregator model — free by default. Users explicitly pass `aggregator` to upgrade. */
-const AGGREGATOR_MODEL = 'nvidia/qwen3-next-80b-a3b-instruct';
+const AGGREGATOR_MODEL = 'nvidia/nemotron-nano-9b-v2';
 
 /** Max tokens per reference response. */
 const REFERENCE_MAX_TOKENS = 4096;

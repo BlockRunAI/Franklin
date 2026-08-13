@@ -15,8 +15,8 @@ import type { Skill } from './types.js';
 // Free models for learning extraction — JSON extraction is simple enough.
 // Ordered by reliability: try the best free model first, fall back to others.
 const EXTRACTION_MODELS = [
-  'nvidia/qwen3-next-80b-a3b-instruct', // Clean JSON output, no thinking leak (verified live)
-  'nvidia/mistral-nemotron',            // Diverse-family free fallback (serves itself; maverick is pooled)
+  'nvidia/nemotron-nano-9b-v2', // Serves itself on every path (verified live 2026-08-12)
+  'nvidia/mistral-nemotron',    // Fallback: DEGRADED upstream but non-stream calls ride the gateway fallback
 ];
 
 const VALID_CATEGORIES = new Set<LearningCategory>([

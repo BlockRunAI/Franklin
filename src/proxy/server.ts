@@ -349,7 +349,7 @@ export function createProxy(options: ProxyOptions): http.Server {
             // Model override logic:
             // - Native Anthropic-format IDs (e.g. "claude-sonnet-4-6-20250514")
             //   don't contain "/" — these MUST be replaced with currentModel.
-            // - BlockRun model IDs always contain "/" (e.g. "blockrun/auto", "nvidia/nemotron-ultra-253b")
+            // - BlockRun model IDs always contain "/" (e.g. "blockrun/auto", "nvidia/mistral-nemotron")
             //   — these should be passed through as-is.
             // - If --model CLI flag is set, always override regardless.
             if (options.modelOverride) {

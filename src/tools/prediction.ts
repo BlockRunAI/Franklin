@@ -14,8 +14,11 @@
  *                              Limitless+Opinion+Predict.Fun in one call
  *   searchPolymarket   $0.001  query Polymarket markets (event filter, sort)
  *   searchKalshi       $0.001  query Kalshi markets
- *   crossPlatform      $0.005  matching market pairs across Polymarket+Kalshi
- *                              (the arbitrage / consensus signal)
+ *   crossPlatform      SUNSET  Predexon discontinued market matching
+ *                              2026-07-20 (upstream 410; gateway de-registered
+ *                              it 2026-08-03). Kept as a zero-cost tombstone
+ *                              that steers callers to searchAll, whose
+ *                              canonical containers already span venues.
  *   leaderboard        $0.001  global Polymarket leaderboard — top wallets by P&L
  *   walletProfile      $0.005  full Polymarket wallet profile (single wallet)
  *                              or batch profiles (comma-separated wallets)
@@ -61,7 +64,6 @@ const MAX_LIMIT = 50;
 // (success/latency) so panel health stays accurate.
 const PATH_PRICES: Array<{ pattern: RegExp; usd: number }> = [
   { pattern: /\/v1\/pm\/markets\/search$/, usd: 0.005 },
-  { pattern: /\/v1\/pm\/matching-markets/, usd: 0.005 },
   { pattern: /\/v1\/pm\/polymarket\/wallets\//, usd: 0.005 },
   { pattern: /\/v1\/pm\/polymarket\/wallet\//, usd: 0.005 },
   { pattern: /\/v1\/pm\/polymarket\/market\/[^/]+\/smart-money$/, usd: 0.005 },
@@ -286,33 +288,6 @@ type KalshiMarket = {
   yes_bid?: number;
   yes_ask?: number;
 };
-// Predexon v2 `/matching-markets/pairs` shape (verified against
-// openapi-v2.json MatchedPair/PolymarketPairInfo/KalshiPairInfo): each venue
-// is an UPPERCASE sub-object with a nested `title`, not a flat
-// `polymarket_question` / `kalshi_title`. POLYMARKET is the only required
-// anchor; KALSHI (and the other venues) can be null when there's no match.
-type PairVenueInfo = {
-  title?: string | null;
-  market_slug?: string;
-  condition_id?: string | null;
-  market_id?: string | null;
-  market_ticker?: string;
-  slug?: string;
-};
-type MatchedPair = {
-  POLYMARKET?: PairVenueInfo;
-  KALSHI?: PairVenueInfo | null;
-  LIMITLESS?: PairVenueInfo | null;
-  PREDICT?: PairVenueInfo | null;
-  OPINION?: PairVenueInfo | null;
-  similarity?: number | null;
-  explanation?: string | null;
-  predexon_id?: string | null;
-  // Legacy/flat fallbacks — kept so a gateway shape change can't blank titles.
-  polymarket_question?: string;
-  kalshi_title?: string;
-  kalshi_ticker?: string;
-};
 // Predexon v2 smart-money response (verified live 2026-05-20): a single
 // `positioning` aggregate, NOT buyers/sellers arrays. Reports net buyer/seller
 // counts, smart buy/sell volume, and avg prices for wallets meeting the
@@ -467,7 +442,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   if (!action) {
     return {
-      output: 'Error: action is required (searchAll | searchPolymarket | searchKalshi | crossPlatform | leaderboard | walletProfile | walletPnl | walletPositions | smartActivity | smartMoney)',
+      output: 'Error: action is required (searchAll | searchPolymarket | searchKalshi | leaderboard | walletProfile | walletPnl | walletPositions | smartActivity | smartMoney)',
       isError: true,
     };
   }
@@ -1015,48 +990,25 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       }
 
       case 'crossPlatform': {
-        const raw = await getWithPayment<unknown>('/v1/pm/matching-markets/pairs', {
-          limit: cappedLimit,
-        }, ctx);
-        const pairs = unwrapList<MatchedPair>(raw);
-        if (pairs.length === 0) {
-          return { output: 'No matched market pairs available right now.' };
-        }
-        const lines: string[] = [
-          `## Cross-platform matched pairs — ${pairs.length}`,
-          '_Polymarket ↔ Kalshi equivalent markets. Use these to compare implied probabilities across venues._',
-          '',
-        ];
-        pairs.forEach((p, i) => {
-          // Venues are nested UPPERCASE sub-objects in Predexon v2. pickString
-          // walks the sub-object's name keys (title/slug/...), so passing the
-          // whole `POLYMARKET` / `KALSHI` object resolves the title regardless
-          // of which name-bearing key is populated. Flat legacy fields are
-          // passed as fallbacks.
-          const poly = p.POLYMARKET ?? undefined;
-          const kalshi = p.KALSHI ?? undefined;
-          const polyTitle = pickString(poly, p.polymarket_question) ?? '(untitled)';
-          const kalshiTitle = pickString(kalshi, p.kalshi_title);
-          const ticker = (kalshi && kalshi.market_ticker) || p.kalshi_ticker;
-          const sim = p.similarity != null ? ` · similarity ${formatPct(p.similarity, 0)}` : '';
-          lines.push(`${i + 1}. **Polymarket:** ${polyTitle}`);
-          if (kalshi) {
-            lines.push(
-              `   **Kalshi:** ${kalshiTitle ?? '(untitled)'}` +
-              (ticker ? ` · ticker=\`${ticker}\`` : '') +
-              sim
-            );
-          } else {
-            lines.push(`   _(no Kalshi match)_${sim}`);
-          }
-        });
-        lines.push('', `_$0.005 paid via x402._`);
-        return { output: frameUntrusted('Prediction-market data (untrusted)', lines.join('\n')) };
+        // Tombstone (no charge): Predexon sunset market matching 2026-07-20
+        // and the gateway de-registered /v1/pm/matching-markets{,/pairs} on
+        // 2026-08-03 — the upstream 410s. Old sessions / prompts may still
+        // ask for this action, so steer them instead of burning a paid call
+        // on a dead endpoint.
+        return {
+          output:
+            'crossPlatform was retired: Predexon discontinued cross-venue market ' +
+            'matching on 2026-07-20 and the gateway removed the endpoint. To compare ' +
+            'venues, use `searchAll` — its canonical market containers already span ' +
+            'Polymarket+Kalshi+Limitless+Opinion+Predict.Fun — or run `searchPolymarket` ' +
+            'and `searchKalshi` in parallel and compare implied probabilities.',
+          isError: true,
+        };
       }
 
       default:
         return {
-          output: `Error: unknown action "${action}". Use: searchAll, searchPolymarket, searchKalshi, crossPlatform, leaderboard, walletProfile, walletPnl, walletPositions, smartActivity, smartMoney`,
+          output: `Error: unknown action "${action}". Use: searchAll, searchPolymarket, searchKalshi, leaderboard, walletProfile, walletPnl, walletPositions, smartActivity, smartMoney`,
           isError: true,
         };
     }
@@ -1074,7 +1026,6 @@ export const predictionMarketCapability: CapabilityHandler = {
       '`searchAll` (search markets across Polymarket+Kalshi+Limitless+Opinion+Predict.Fun in one call — $0.005), ' +
       '`searchPolymarket` (Polymarket only, supports sort+status — $0.001), ' +
       '`searchKalshi` (Kalshi only, supports sort+status — $0.001), ' +
-      '`crossPlatform` (matched market pairs across Polymarket+Kalshi for arbitrage / consensus — $0.005), ' +
       '`leaderboard` (global top wallets by P&L on Polymarket — $0.001), ' +
       '`walletProfile` (full Polymarket wallet profile — labels, scores, stats. Single address → /wallet/{addr}; comma-list → batch /wallets/profiles — $0.005), ' +
       '`walletPnl` (single Polymarket wallet P&L summary + time series — $0.005), ' +
@@ -1097,7 +1048,6 @@ export const predictionMarketCapability: CapabilityHandler = {
             'searchAll',
             'searchPolymarket',
             'searchKalshi',
-            'crossPlatform',
             'leaderboard',
             'walletProfile',
             'walletPnl',
@@ -1109,7 +1059,7 @@ export const predictionMarketCapability: CapabilityHandler = {
         },
         search: {
           type: 'string',
-          description: 'Search query. Used by searchAll / searchPolymarket / searchKalshi / smartActivity. Optional for crossPlatform/leaderboard/walletProfile/walletPnl/walletPositions/smartMoney.',
+          description: 'Search query. Used by searchAll / searchPolymarket / searchKalshi / smartActivity. Optional for leaderboard/walletProfile/walletPnl/walletPositions/smartMoney.',
         },
         status: {
           type: 'string',

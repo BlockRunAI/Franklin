@@ -1,5 +1,72 @@
 # Changelog
 
+## Franklin Agent 3.39.0 — the gateway moved for three weeks and Franklin didn't
+
+**Franklin's free default was a dead model, and the whole catalog had drifted.**
+The gateway (Base + Solana) shipped ~100 commits since Franklin's last sync
+(2026-07-25). This release re-syncs everything that drifted, each item verified
+against the live gateway — not the repos' claims.
+
+**The free tier was broken in the default path.**
+`nvidia/qwen3-next-80b-a3b-instruct` — Franklin's free default across ~20
+files — hit NVIDIA's published EOL on 2026-07-27 (HTTP 410). The gateway hides
+it and rides its calls on a pooled fallback, so nothing *looked* broken while
+every free turn silently ran a model nobody chose. Live probes of the surviving
+free pool found worse:
+
+| free model | live behavior (2026-08-12) |
+|---|---|
+| `mistral-nemotron` | DEGRADED at NVIDIA — **streaming calls 400**; non-stream rides a disclosed gateway fallback |
+| `step-3.7-flash` | serves itself but leaks thinking prose into content |
+| 30B omni (`nemotron-3-nano-omni`) | answers as `nvidia/gpt-oss-120b` — the pooled-substitute trap |
+| `nemotron-nano-9b-v2` | **serves itself, on every path** — verified end-to-end through the binary |
+| `nemotron-nano-12b-v2-vl` | serves itself, vision-capable |
+
+The new free default is `nvidia/nemotron-nano-9b-v2` (the streaming path is
+what Franklin actually uses), with `mistral-nemotron` second and free vision
+turns routed to `nemotron-nano-12b-v2-vl` — the free profile previously
+shrugged (`vision-unsupported`); now it works. Every free alias, chain,
+picker row, and internal utility model (compaction, evaluator, turn analyzer,
+learnings extractor, MoA, verification, Slack/Telegram/social defaults) moved
+together.
+
+**Pricing re-synced to the live catalog.** Seven drifted prices fixed — the
+GPT-5.6 luna/terra cut (luna $1/$6 → $0.20/$1.20), the deepseek-chat/reasoner
+cut ($0.20/$0.40 → $0.14/$0.28), the gemini-3.5-flash correction ($0.50/$3 →
+$1.50/$9 — the gateway had been billing at 1/3 of Google's rate), and the
+glm-5 raise ($0.60/$1.92 → $1/$3.20). Eleven new chat models added (GPT-5.6
+Pro tiers, GPT-5.5 Pro, chat-latest, Gemini 3.6 Flash + 3.5 Flash-Lite,
+Qwen3.7 Plus/Flash, Tencent HY3, Xiaomi MiMo v2.5 Pro) with context windows.
+Media catalog refreshed: Seedance 2.5 ($0.315/s) and 2.0-mini ($0.0797/s) join
+the video roster with the repriced family; grok-imagine-video's official 720p
+tier documented; nano-banana-2, grok-imagine-image/-pro, seedream-5-pro, and
+cogview-4 added to image pricing; dall-e-3 marked retired (OpenAI delisted it)
+but kept for legacy asset pricing.
+
+**Cost estimates now include the flat $0.001 transaction fee.** The gateway
+adds it to every paid call on Base (transaction-fee.ts, since 2026-07-10);
+Franklin's media estimators only applied the 5% margin, undercounting every
+budget check by a tenth of a cent. On Solana the estimate over-counts by
+≤$0.001 (no service fee there, $0.001 minimum instead) — the safe direction.
+
+**`crossPlatform` is now a zero-cost tombstone.** Predexon discontinued
+cross-venue market matching on 2026-07-20 and the gateway de-registered
+`/v1/pm/matching-markets{,/pairs}` (upstream 410 — a caller was observed
+retrying it every 30 minutes). The action is out of the tool schema; old
+sessions that still ask for it get steered to `searchAll`, whose canonical
+containers already span all five venues. Every other `/v1/pm/*` path Franklin
+calls was verified against the live openapi.json — all nine survive.
+
+**`@blockrun/llm` 3.8.3 → 3.13.1** (declared floor ^3.5.2 → ^3.13.1). Picks up
+the Solana key-format fix (3.9.0), fail-fast retired-PM helpers, and Router
+Core V3. All 31 SDK symbols Franklin imports verified present. Known gap noted
+upstream: the SDK still fetches its own Solana blockhash rather than consuming
+the one the gateway now embeds in 402 challenges (x402#2693) — an SDK-repo
+work item, not a Franklin one.
+
+643/643 local tests pass; free default verified live end-to-end (`franklin -m
+free` answers as `nemotron-nano-9b-v2`, no fallback banner, $0).
+
 ## Franklin Agent 3.38.0 — the Polymarket port was eight rounds stale
 
 **The port had drifted, and the drift was all money bugs.** Franklin's

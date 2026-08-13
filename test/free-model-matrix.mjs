@@ -3,7 +3,7 @@
  *
  * Run:
  *   npm run test:free-models
- *   FREE_MODEL_MATRIX=nvidia/qwen3-next-80b-a3b-instruct,nvidia/mistral-nemotron npm run test:free-models
+ *   FREE_MODEL_MATRIX=nvidia/mistral-nemotron,nvidia/nemotron-nano-9b-v2 npm run test:free-models
  *   FREE_MODEL_MATRIX=all npm run test:free-models
  *   FREE_MODEL_MATRIX_PROBES=echo npm run test:free-models
  *
@@ -34,8 +34,8 @@ const requestedModels = (process.env.FREE_MODEL_MATRIX || '')
   .map(resolveModel);
 
 const defaultMatrixModels = new Set([
-  'nvidia/qwen3-next-80b-a3b-instruct',
   'nvidia/mistral-nemotron',
+  'nvidia/nemotron-nano-9b-v2',
 ]);
 
 const selectedModels = process.env.FREE_MODEL_MATRIX === 'all'

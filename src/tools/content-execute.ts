@@ -138,7 +138,7 @@ export function createContentCapabilities(
         properties: {
           id: { type: 'string', description: 'Content id returned by ContentCreate' },
           kind: { type: 'string', description: 'image, audio, video, or text' },
-          source: { type: 'string', description: 'Generator model or "manual" (e.g. "openai/dall-e-3")' },
+          source: { type: 'string', description: 'Generator model or "manual" (e.g. "openai/gpt-image-2")' },
           costUsd: { type: 'number', description: 'Actual USD spent producing this asset' },
           data: { type: 'string', description: 'Optional URL or inline text reference to the asset' },
         },

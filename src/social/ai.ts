@@ -28,7 +28,7 @@ export interface GenerateReplyOptions {
   };
   product: ProductConfig;
   config: SocialConfig;
-  model: string;              // e.g. "nvidia/nemotron-ultra-253b" or "anthropic/claude-sonnet-4.6"
+  model: string;              // e.g. "nvidia/mistral-nemotron" or "anthropic/claude-sonnet-4.6"
   apiUrl: string;
   chain: Chain;
   debug?: boolean;

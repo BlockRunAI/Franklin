@@ -585,14 +585,14 @@ export class ModelClient {
 
     // Static fallback when the router module isn't loadable. Defaults to a
     // FREE model so users aren't silently charged. The unknown-key path also
-    // falls through to qwen, so legacy `blockrun/eco` / `blockrun/premium`
-    // strings (now retired routing profiles) end up at the same place
-    // without needing dedicated entries.
+    // falls through to nemotron-nano-9b-v2, so legacy `blockrun/eco` /
+    // `blockrun/premium` strings (now retired routing profiles) end up at the
+    // same place without needing dedicated entries.
     const FALLBACKS: Record<string, string> = {
-      'blockrun/auto': 'nvidia/qwen3-next-80b-a3b-instruct',
-      'blockrun/free': 'nvidia/qwen3-next-80b-a3b-instruct',
+      'blockrun/auto': 'nvidia/nemotron-nano-9b-v2',
+      'blockrun/free': 'nvidia/nemotron-nano-9b-v2',
     };
-    return FALLBACKS[model] || 'nvidia/qwen3-next-80b-a3b-instruct';
+    return FALLBACKS[model] || 'nvidia/nemotron-nano-9b-v2';
   }
 
   /**

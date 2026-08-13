@@ -81,11 +81,13 @@ const CACHE_MAX_SIZE = 64;
 // ─── Analyzer prompt ────────────────────────────────────────────────────
 //
 // Design: one compact prompt, a few precise examples, instruct the model to
-// emit a single-line JSON. Maverick (the classifier backbone since v3.8.23)
-// reliably produces plain-text structured output under tight max_tokens,
-// unlike thinking-first models that leave text empty.
+// emit a single-line JSON. The backbone must produce plain-text structured
+// output under tight max_tokens (thinking-first models leave text empty).
+// Nemotron Nano 9B took over 2026-08-12: qwen3-next-80b-a3b-instruct hit
+// NVIDIA's EOL (410) and mistral-nemotron is DEGRADED upstream (stream calls
+// 400). Nano 9B verifiably serves itself — verified live through the binary.
 
-const ANALYZER_MODEL_DEFAULT = process.env.FRANKLIN_ANALYZER_MODEL || 'nvidia/qwen3-next-80b-a3b-instruct';
+const ANALYZER_MODEL_DEFAULT = process.env.FRANKLIN_ANALYZER_MODEL || 'nvidia/nemotron-nano-9b-v2';
 
 const ANALYZER_SYSTEM = `You analyze ONE user message for Franklin's routing + prefetch harness. Output ONE LINE of compact JSON — no explanation, no markdown, no code fences.
 

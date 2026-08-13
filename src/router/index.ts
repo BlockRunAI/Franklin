@@ -557,17 +557,15 @@ export function resolveTierToModel(
   needsVision = false,
 ): RoutingResult {
   // Free profile short-circuits — everything routes to a single free model.
-  // llama-4-maverick is text-only; on a vision turn the free profile can't
-  // help us. Caller should detect this and warn the user that Free won't
-  // handle images — for now we just return the free pick and let the model
-  // fail gracefully. (The only vision-capable free model is the Nemotron Omni
-  // line; revisit hard-falling to it if a real user hits this path.)
+  // Vision turns go to nemotron-nano-12b-v2-vl: the one vision-capable free
+  // model that verifiably serves itself (the 30B omni line is pooled onto a
+  // text-only substitute upstream, verified live 2026-08-12).
   if (profile === 'free') {
     return {
-      model: 'nvidia/qwen3-next-80b-a3b-instruct',
+      model: needsVision ? 'nvidia/nemotron-nano-12b-v2-vl' : 'nvidia/nemotron-nano-9b-v2',
       tier: 'SIMPLE',
       confidence: 1.0,
-      signals: needsVision ? ['free-profile', 'vision-unsupported'] : ['free-profile'],
+      signals: needsVision ? ['free-profile', 'free-vision'] : ['free-profile'],
       savings: 1.0,
     };
   }
@@ -600,13 +598,14 @@ export function routeRequest(
 ): RoutingResult {
   const normalizedContext = normalizeRoutingContext(context);
 
-  // Free profile — always use free model
+  // Free profile — always use free model (vision turns get the free VL model;
+  // see resolveTierToModel for the rationale).
   if (profile === 'free') {
     return {
-      model: 'nvidia/qwen3-next-80b-a3b-instruct',
+      model: normalizedContext.needsVision ? 'nvidia/nemotron-nano-12b-v2-vl' : 'nvidia/nemotron-nano-9b-v2',
       tier: 'SIMPLE',
       confidence: 1.0,
-      signals: normalizedContext.needsVision ? ['free-profile', 'vision-unsupported'] : ['free-profile'],
+      signals: normalizedContext.needsVision ? ['free-profile', 'free-vision'] : ['free-profile'],
       savings: 1.0,
       candidates: FREE_MODELS_BY_CATEGORY.chat,
     };
@@ -766,17 +765,28 @@ export function getFallbackChain(
 // entries backed by the same pooled model is fake resilience: the fallback
 // couldn't rescue a turn the primary had already failed. mistral-nemotron
 // verifiably serves itself, so the chain is genuinely two families again.
+// 2026-08-12: nvidia/qwen3-next-80b-a3b-instruct removed — NVIDIA EOL'd it
+// (410 on 2026-07-27; the gateway hid it and rides its calls on a fallback).
+// nemotron-nano-9b-v2 promoted to lead: it is the only free text model that
+// verifiably serves ITSELF on the streaming path Franklin uses (verified live
+// through the binary today). mistral-nemotron is DEGRADED at NVIDIA — stream
+// calls 400 ("DEGRADED function cannot be invoked") and non-stream calls ride
+// the gateway's disclosed fallback — so it sits second: it still answers
+// non-streaming turns, and it upgrades the chain automatically if NVIDIA
+// restores it. step-3.7-flash leaks thinking prose into content, and the 30B
+// omni model came back served as nvidia/gpt-oss-120b (the pooled-substitute
+// trap this comment already warns about).
 const FREE_MODELS_BY_CATEGORY: Record<Category, string[]> = {
-  coding:    ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
-  trading:   ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
-  research:  ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
-  reasoning: ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
-  chat:      ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
-  creative:  ['nvidia/qwen3-next-80b-a3b-instruct', 'nvidia/mistral-nemotron'],
+  coding:    ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
+  trading:   ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
+  research:  ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
+  reasoning: ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
+  chat:      ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
+  creative:  ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
 };
 
 const DEFAULT_FREE_CHAIN: string[] = [
-  'nvidia/qwen3-next-80b-a3b-instruct',
+  'nvidia/nemotron-nano-9b-v2',
   'nvidia/mistral-nemotron',
 ];
 

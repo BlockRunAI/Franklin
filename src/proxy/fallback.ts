@@ -20,7 +20,7 @@ export const DEFAULT_FALLBACK_CONFIG: FallbackConfig = {
   chain: [
     'deepseek/deepseek-chat', // Direct fallback — cheap & reliable
     'google/gemini-2.5-flash', // Fast & capable
-    'nvidia/qwen3-next-80b-a3b-instruct', // Free model as ultimate fallback (reliable instruction-follower)
+    'nvidia/nemotron-nano-9b-v2', // Free model as ultimate fallback (reliable instruction-follower)
   ],
   retryOn: [429, 500, 502, 503, 504, 529],
   maxRetries: 5,

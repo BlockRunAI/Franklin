@@ -383,17 +383,18 @@ test('proxy server handles OPTIONS and local model switching without backend cal
     );
 
     const freeSwitches = {
-      free: 'nvidia/qwen3-next-80b-a3b-instruct',
-      glm4: 'nvidia/qwen3-next-80b-a3b-instruct',
-      'qwen-think': 'nvidia/qwen3-next-80b-a3b-instruct',
-      'qwen-coder': 'nvidia/qwen3-next-80b-a3b-instruct',
-      maverick: 'nvidia/qwen3-next-80b-a3b-instruct',
-      'deepseek-free': 'nvidia/qwen3-next-80b-a3b-instruct',
-      'gpt-oss': 'nvidia/qwen3-next-80b-a3b-instruct',
-      'gpt-oss-small': 'nvidia/qwen3-next-80b-a3b-instruct',
-      'mistral-small': 'nvidia/qwen3-next-80b-a3b-instruct',
+      free: 'nvidia/nemotron-nano-9b-v2',
+      glm4: 'nvidia/nemotron-nano-9b-v2',
+      'qwen-think': 'nvidia/nemotron-nano-9b-v2',
+      'qwen-coder': 'nvidia/nemotron-nano-9b-v2',
+      maverick: 'nvidia/nemotron-nano-9b-v2',
+      'deepseek-free': 'nvidia/nemotron-nano-9b-v2',
+      'gpt-oss': 'nvidia/nemotron-nano-9b-v2',
+      'gpt-oss-small': 'nvidia/nemotron-nano-9b-v2',
+      'mistral-small': 'nvidia/mistral-nemotron',
       nemotron: 'nvidia/mistral-nemotron',
-      devstral: 'nvidia/qwen3-next-80b-a3b-instruct',
+      devstral: 'nvidia/nemotron-nano-9b-v2',
+      'nano-9b': 'nvidia/nemotron-nano-9b-v2',
     };
     for (const [shortcut, expectedModel] of Object.entries(freeSwitches)) {
       const freeSwitchRes = await fetch(`http://127.0.0.1:${port}/api/messages`, {
@@ -5606,29 +5607,32 @@ test('dynamic tool visibility: FRANKLIN_DYNAMIC_TOOLS=0 opts out of the split', 
   }
 });
 
-test('gateway-models: estimateCostUsd dispatches per billing_mode with 5% margin', async () => {
+test('gateway-models: estimateCostUsd dispatches per billing_mode with 5% margin + $0.001 fee', async () => {
   const { estimateCostUsd } = await import('../dist/gateway-models.js');
+  // Every paid charge carries the flat $0.001 gateway transaction fee on top
+  // of the 5% margin (upstream transaction-fee.ts; $0 stays $0).
+  const FEE = 0.001;
 
-  // per_image: base * quantity * 1.05
+  // per_image: base * quantity * 1.05 + fee
   const perImage = { id: 'openai/gpt-image-2', name: 'GPT Image 2', billing_mode: 'per_image', categories: ['image'], pricing: { per_image: 0.06 } };
-  assert.equal(estimateCostUsd(perImage, { quantity: 1 }), +(0.06 * 1.05).toFixed(6));
-  assert.equal(estimateCostUsd(perImage, { quantity: 3 }), +(0.06 * 3 * 1.05).toFixed(6));
+  assert.equal(estimateCostUsd(perImage, { quantity: 1 }), +(0.06 * 1.05 + FEE).toFixed(6));
+  assert.equal(estimateCostUsd(perImage, { quantity: 3 }), +(0.06 * 3 * 1.05 + FEE).toFixed(6));
 
-  // per_second: base * duration * 1.05, honors user override
+  // per_second: base * duration * 1.05 + fee, honors user override
   const perSecond = { id: 'bytedance/seedance-2.0-fast', name: 'Seedance Fast', billing_mode: 'per_second', categories: ['video'],
                      pricing: { per_second: 0.15, default_duration_seconds: 5, max_duration_seconds: 10 } };
-  assert.equal(estimateCostUsd(perSecond, { duration_seconds: 5 }), +(0.15 * 5 * 1.05).toFixed(6));
-  assert.equal(estimateCostUsd(perSecond, { duration_seconds: 10 }), +(0.15 * 10 * 1.05).toFixed(6));
+  assert.equal(estimateCostUsd(perSecond, { duration_seconds: 5 }), +(0.15 * 5 * 1.05 + FEE).toFixed(6));
+  assert.equal(estimateCostUsd(perSecond, { duration_seconds: 10 }), +(0.15 * 10 * 1.05 + FEE).toFixed(6));
   // Falls back to default_duration_seconds when unspecified
-  assert.equal(estimateCostUsd(perSecond, {}), +(0.15 * 5 * 1.05).toFixed(6));
+  assert.equal(estimateCostUsd(perSecond, {}), +(0.15 * 5 * 1.05 + FEE).toFixed(6));
 
   // per_track
   const perTrack = { id: 'minimax/music-2.5+', name: 'Minimax Music', billing_mode: 'per_track', categories: ['music'], pricing: { per_track: 0.15 } };
-  assert.equal(estimateCostUsd(perTrack), +(0.15 * 1.05).toFixed(6));
+  assert.equal(estimateCostUsd(perTrack), +(0.15 * 1.05 + FEE).toFixed(6));
 
   // flat
   const flat = { id: 'zai/glm-5.1', name: 'GLM-5.1', billing_mode: 'flat', categories: ['chat'], pricing: { flat: 0.001 } };
-  assert.equal(estimateCostUsd(flat), +(0.001 * 1.05).toFixed(6));
+  assert.equal(estimateCostUsd(flat), +(0.001 * 1.05 + FEE).toFixed(6));
 
   // free always zero
   const free = { id: 'nvidia/glm-4.7', name: 'GLM-4.7', billing_mode: 'free', categories: ['chat'], pricing: { input: 0, output: 0 } };
@@ -5938,25 +5942,28 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
     assert.equal(isWeakModel(entry.id), true, `${entry.id} should receive weak/free-model guardrails`);
   }
 
-  // Refreshed 2026-07-11: `free` + most legacy free aliases now resolve to the
-  // current free default (qwen3-next-80b-a3b-instruct). Every target is a $0
-  // nvidia model — the final estimateCost assertion enforces free-only.
+  // Refreshed 2026-08-12: `free` + most legacy free aliases now resolve to the
+  // current free default (mistral-nemotron — qwen3-next hit NVIDIA's EOL).
+  // Every target is a $0 nvidia model — the final estimateCost assertion
+  // enforces free-only.
   const freeAliases = {
-    free: 'nvidia/qwen3-next-80b-a3b-instruct',
-    qwen: 'nvidia/qwen3-next-80b-a3b-instruct',
-    qwen3: 'nvidia/qwen3-next-80b-a3b-instruct',
-    glm4: 'nvidia/qwen3-next-80b-a3b-instruct',
-    'qwen-think': 'nvidia/qwen3-next-80b-a3b-instruct',
-    'qwen-coder': 'nvidia/qwen3-next-80b-a3b-instruct',
-    maverick: 'nvidia/llama-4-maverick',
-    'deepseek-free': 'nvidia/qwen3-next-80b-a3b-instruct',
-    'gpt-oss': 'nvidia/qwen3-next-80b-a3b-instruct',
-    'gpt-oss-small': 'nvidia/qwen3-next-80b-a3b-instruct',
-    'mistral-small': 'nvidia/qwen3-next-80b-a3b-instruct',
+    free: 'nvidia/nemotron-nano-9b-v2',
+    qwen: 'nvidia/nemotron-nano-9b-v2',
+    qwen3: 'nvidia/nemotron-nano-9b-v2',
+    glm4: 'nvidia/nemotron-nano-9b-v2',
+    'qwen-think': 'nvidia/nemotron-nano-9b-v2',
+    'qwen-coder': 'nvidia/nemotron-nano-9b-v2',
+    'deepseek-free': 'nvidia/nemotron-nano-9b-v2',
+    'gpt-oss': 'nvidia/nemotron-nano-9b-v2',
+    'gpt-oss-small': 'nvidia/nemotron-nano-9b-v2',
+    'mistral-small': 'nvidia/mistral-nemotron',
     nemotron: 'nvidia/mistral-nemotron',
-    devstral: 'nvidia/qwen3-next-80b-a3b-instruct',
-    maverick: 'nvidia/qwen3-next-80b-a3b-instruct',
-    llama: 'nvidia/qwen3-next-80b-a3b-instruct',
+    devstral: 'nvidia/nemotron-nano-9b-v2',
+    maverick: 'nvidia/nemotron-nano-9b-v2',
+    llama: 'nvidia/nemotron-nano-9b-v2',
+    'nano-9b': 'nvidia/nemotron-nano-9b-v2',
+    'nano-vl': 'nvidia/nemotron-nano-12b-v2-vl',
+    'free-vision': 'nvidia/nemotron-nano-12b-v2-vl',
   };
 
   for (const [shortcut, expectedModel] of Object.entries(freeAliases)) {
@@ -5987,10 +5994,16 @@ test('free routing profile stays free across router entry points', async () => {
 
   for (const prompt of prompts) {
     const routed = routeRequest(prompt, 'free');
-    assert.equal(routed.model, 'nvidia/qwen3-next-80b-a3b-instruct', `routeRequest free drifted for prompt: ${prompt}`);
+    assert.equal(routed.model, 'nvidia/nemotron-nano-9b-v2', `routeRequest free drifted for prompt: ${prompt}`);
     assert.equal(routed.tier, 'SIMPLE');
     assert.deepEqual(routed.signals, ['free-profile']);
   }
+
+  // Vision turns on the free profile go to the free VL model — the only
+  // vision-capable free id that verifiably serves itself (2026-08-12).
+  const visionRouted = routeRequest('what is in this image?', 'free', true);
+  assert.equal(visionRouted.model, 'nvidia/nemotron-nano-12b-v2-vl');
+  assert.deepEqual(visionRouted.signals, ['free-profile', 'free-vision']);
 
   let classifierCalled = false;
   const asyncRouted = await routeRequestAsync('prove this theorem step by step', 'free', async () => {
@@ -5998,7 +6011,7 @@ test('free routing profile stays free across router entry points', async () => {
     return 'REASONING';
   });
   assert.equal(classifierCalled, false, 'free profile should not spend a classifier call');
-  assert.equal(asyncRouted.model, 'nvidia/qwen3-next-80b-a3b-instruct');
+  assert.equal(asyncRouted.model, 'nvidia/nemotron-nano-9b-v2');
   assert.deepEqual(asyncRouted.signals, ['free-profile']);
 
   // Free chain expanded 2026-05-03: was a single-element chain that just
@@ -6011,14 +6024,13 @@ test('free routing profile stays free across router entry points', async () => {
   // a paid model (a free/empty session silently charging the wallet). This set
   // membership is the guard; keep it all-free.
   const FREE_GATEWAY_MODELS = new Set([
-    'nvidia/qwen3-next-80b-a3b-instruct',
-    'nvidia/qwen3.5-122b-a10b',
     'nvidia/mistral-nemotron',
-    'nvidia/mistral-large-3-675b',
+    'nvidia/nemotron-nano-9b-v2',
+    'nvidia/nemotron-nano-12b-v2-vl',
   ]);
   for (const tier of ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING']) {
     const resolved = resolveTierToModel(tier, 'free');
-    assert.equal(resolved.model, 'nvidia/qwen3-next-80b-a3b-instruct', `resolveTierToModel free drifted for ${tier}`);
+    assert.equal(resolved.model, 'nvidia/nemotron-nano-9b-v2', `resolveTierToModel free drifted for ${tier}`);
     const chain = getFallbackChain(tier, 'free');
     assert.ok(Array.isArray(chain) && chain.length > 0, `free fallback chain empty for ${tier}`);
     for (const m of chain) {
@@ -6902,8 +6914,9 @@ test('qwen3.7-max: paid flagship gets strong-model guidance, not the medium buck
   const { getModelGuidance } = await import('../dist/agent/context.js');
   assert.match(getModelGuidance('qwen/qwen3.7-max'), /strong model/,
     'the bare `qwen` substring in the medium branch must not capture the paid Max SKU');
-  // The free NVIDIA qwen SKUs must stay where they were.
-  assert.match(getModelGuidance('nvidia/qwen3-next-80b-a3b-instruct'), /Execution Guidance/);
+  // The free default (nemotron-nano-9b-v2) is a weak model and must keep the
+  // strict guardrails bucket.
+  assert.match(getModelGuidance('nvidia/nemotron-nano-9b-v2'), /Execution Discipline/);
 });
 
 test('qwen3.7-max: paid aliases resolve, and bare `qwen` stays free', async () => {
@@ -7385,8 +7398,8 @@ test('estimateCostUsd: per_character and per_generation are priced, not silently
     categories: ['speech'],
     pricing: { per_1k_chars: 0.05, max_input_chars: 40000 },
   };
-  // 2000 chars × $0.05/1K = $0.10 base, +5% gateway margin.
-  assert.equal(estimateCostUsd(speech, { characters: 2000 }), +(0.1 * GATEWAY_MARGIN).toFixed(6));
+  // 2000 chars × $0.05/1K = $0.10 base, +5% gateway margin + $0.001 fee.
+  assert.equal(estimateCostUsd(speech, { characters: 2000 }), +(0.1 * GATEWAY_MARGIN + 0.001).toFixed(6));
   // No length given → no meaningful estimate rather than an invented one.
   assert.equal(estimateCostUsd(speech, {}), 0);
 
@@ -7397,7 +7410,7 @@ test('estimateCostUsd: per_character and per_generation are priced, not silently
     categories: ['sound_effect'],
     pricing: { per_generation: 0.05, max_duration_seconds: 22 },
   };
-  assert.equal(estimateCostUsd(sfx, {}), +(0.05 * GATEWAY_MARGIN).toFixed(6));
+  assert.equal(estimateCostUsd(sfx, {}), +(0.05 * GATEWAY_MARGIN + 0.001).toFixed(6));
   assert.ok(estimateCostUsd(sfx, {}) > 0, 'a paid sound-effect call must not estimate as free');
 });
 
@@ -8763,19 +8776,20 @@ test('enforceRetention is a no-op when audit log is small', async () => {
 // category. pickFreeFallback selects from per-category chains so trading /
 // research / chat get general-purpose free models first.
 
-test('pickFreeFallback: coding category prefers qwen3-next first', async () => {
-  // Refreshed 2026-07-11: qwen3-next-80b-a3b-instruct leads every category
-  // (cleanest free instruction-follower); llama-4-maverick is the diverse
-  // secondary. deepseek-v4-flash was EOL'd (gateway 410s).
+test('pickFreeFallback: coding category prefers nemotron-nano-9b-v2 first', async () => {
+  // Refreshed 2026-08-12: nemotron-nano-9b-v2 leads every category (the one
+  // free model that serves itself on the streaming path); mistral-nemotron is
+  // the secondary (DEGRADED upstream, non-stream rides the gateway fallback).
+  // qwen3-next-80b-a3b-instruct hit NVIDIA's EOL (410).
   const { pickFreeFallback } = await import('../dist/router/index.js');
   const pick = pickFreeFallback('coding', new Set());
-  assert.equal(pick, 'nvidia/qwen3-next-80b-a3b-instruct');
+  assert.equal(pick, 'nvidia/nemotron-nano-9b-v2');
 });
 
 test('pickFreeFallback: trading category skips coder, picks the general workhorse', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
   const pick = pickFreeFallback('trading', new Set());
-  assert.equal(pick, 'nvidia/qwen3-next-80b-a3b-instruct', 'trading should not start with a coder model');
+  assert.equal(pick, 'nvidia/nemotron-nano-9b-v2', 'trading should not start with a coder model');
   assert.notEqual(pick, 'nvidia/qwen3-coder-480b');
 });
 
@@ -8790,13 +8804,13 @@ test('pickFreeFallback: research / chat / creative also skip coder first', async
 
 test('pickFreeFallback: respects alreadyFailed set', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
-  // Coding starts with qwen3-next. After it fails, next is the mistral-nemotron
-  // secondary (replaced maverick 2026-07-14 — it left the gateway catalog).
-  const failed = new Set(['nvidia/qwen3-next-80b-a3b-instruct']);
+  // Coding starts with nemotron-nano-9b-v2. After it fails, next is the
+  // mistral-nemotron secondary (2026-08-12 refresh).
+  const failed = new Set(['nvidia/nemotron-nano-9b-v2']);
   const pick = pickFreeFallback('coding', failed);
-  assert.notEqual(pick, 'nvidia/qwen3-next-80b-a3b-instruct');
+  assert.notEqual(pick, 'nvidia/nemotron-nano-9b-v2');
   assert.equal(pick, 'nvidia/mistral-nemotron',
-    `after qwen3-next fails, coding should fall to mistral-nemotron, got ${pick}`);
+    `after nemotron-nano-9b-v2 fails, coding should fall to mistral-nemotron, got ${pick}`);
 });
 
 test('pickFreeFallback: unknown category uses default chain (general model first)', async () => {
@@ -8810,8 +8824,8 @@ test('pickFreeFallback: unknown category uses default chain (general model first
 test('pickFreeFallback: returns undefined when every candidate failed', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
   const failed = new Set([
-    'nvidia/qwen3-next-80b-a3b-instruct',
     'nvidia/mistral-nemotron',
+    'nvidia/nemotron-nano-9b-v2',
   ]);
   const pick = pickFreeFallback('trading', failed);
   assert.equal(pick, undefined);
@@ -8941,10 +8955,12 @@ test('PredictionMarket spec exposes the ten x402-paid actions (3.15.73)', async 
   // Verified against gateway: single-wallet questions need /wallet/{addr},
   // not the batch /wallets/profiles which the 3.15.70 ship was hitting
   // and getting 422 from.
+  // crossPlatform left the enum 2026-08-12: Predexon sunset market matching
+  // (2026-07-20) and the gateway de-registered the endpoint. The action id
+  // survives in execute() as a zero-cost tombstone for old sessions.
   assert.deepEqual(
     [...actions].sort(),
     [
-      'crossPlatform',
       'leaderboard',
       'searchAll',
       'searchKalshi',
@@ -8955,7 +8971,7 @@ test('PredictionMarket spec exposes the ten x402-paid actions (3.15.73)', async 
       'walletPositions',
       'walletProfile',
     ],
-    'enum should expose exactly the ten supported actions',
+    'enum should expose exactly the nine supported actions',
   );
   // Description must steer agents away from training-data odds answers and
   // surface wallet/leaderboard/wallet-analysis-triplet intents.

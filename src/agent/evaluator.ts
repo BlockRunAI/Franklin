@@ -270,7 +270,7 @@ export function parseGroundingResponse(raw: string): GroundingResult {
  *  choice so both quality gates have the same cost profile. Override via
  *  `FRANKLIN_EVALUATOR_MODEL` to experiment with accuracy/cost trade-offs. */
 export function evaluatorModel(): string {
-  return process.env.FRANKLIN_EVALUATOR_MODEL || 'nvidia/qwen3-next-80b-a3b-instruct';
+  return process.env.FRANKLIN_EVALUATOR_MODEL || 'nvidia/nemotron-nano-9b-v2';
 }
 
 // ─── Run grounding check ─────────────────────────────────────────────────

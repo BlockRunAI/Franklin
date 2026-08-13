@@ -40,10 +40,10 @@ import { bus } from '../events/bus.js';
 import type { FranklinEvent } from '../events/types.js';
 import type { AgentConfig, StreamEvent, Dialogue, ContentPart, UserContentPart } from '../agent/types.js';
 
-// qwen3-next-80b-a3b-instruct: cleanest free instruction-follower (no thinking
-// leak / markdown fences — verified live 2026-07-11). Replaces the EOL'd
-// nvidia/deepseek-v4-flash the gateway no longer serves.
-const FREE_DEFAULT_MODEL = 'nvidia/qwen3-next-80b-a3b-instruct';
+// nemotron-nano-9b-v2: the one free model that verifiably serves itself on
+// the STREAMING path (verified live 2026-08-12 — mistral-nemotron is DEGRADED
+// at NVIDIA and 400s on stream; qwen3-next-80b-a3b-instruct hit NVIDIA's EOL).
+const FREE_DEFAULT_MODEL = 'nvidia/nemotron-nano-9b-v2';
 
 // Curated Base (chainId 8453) tokens for the wallet "holdings" view. Plain RPC
 // can't enumerate every token an address holds (no on-chain "list all"), so we

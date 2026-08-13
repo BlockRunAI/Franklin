@@ -33,7 +33,7 @@ export type AssetKind = 'image' | 'audio' | 'video' | 'text';
 
 export interface ContentAsset {
   kind: AssetKind;
-  /** Producer of the asset: model ID like "openai/dall-e-3", or "manual". */
+  /** Producer of the asset: model ID like "openai/gpt-image-2", or "manual". */
   source: string;
   /** USD actually spent producing this asset. 0 is valid (free models). */
   costUsd: number;

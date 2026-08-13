@@ -19,6 +19,8 @@
  * listed for a model fall back to that model's 1024x1024 tier.
  */
 const PRICE_TABLE: Record<string, { sizes: Record<string, number>; base: number }> = {
+  // Retired 2026-07-27 (OpenAI delisted it; the gateway dropped the catalog
+  // entry). Kept so legacy Content assets produced by it still price.
   'openai/dall-e-3': {
     base: 0.04,
     sizes: { '1024x1024': 0.04, '1792x1024': 0.08, '1024x1792': 0.08 },
@@ -35,9 +37,30 @@ const PRICE_TABLE: Record<string, { sizes: Record<string, number>; base: number 
     base: 0.05,
     sizes: { '1024x1024': 0.05 },
   },
+  // 2026-08 gateway additions (flat per-image pricing from the live catalog).
+  'google/nano-banana-2': {
+    base: 0.09,
+    sizes: { '1024x1024': 0.09 },
+  },
   'google/nano-banana-pro': {
     base: 0.1,
     sizes: { '1024x1024': 0.1, '2048x2048': 0.1, '4096x4096': 0.15 },
+  },
+  'xai/grok-imagine-image': {
+    base: 0.02,
+    sizes: { '1024x1024': 0.02 },
+  },
+  'xai/grok-imagine-image-pro': {
+    base: 0.07,
+    sizes: { '1024x1024': 0.07 },
+  },
+  'bytedance/seedream-5-pro': {
+    base: 0.045,
+    sizes: { '1024x1024': 0.045 },
+  },
+  'zai/cogview-4': {
+    base: 0.015,
+    sizes: { '1024x1024': 0.015 },
   },
 };
 

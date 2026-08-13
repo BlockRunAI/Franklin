@@ -277,20 +277,34 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'moonshot/kimi-k2.5': 128_000,
   'minimax/minimax-m3': 1_000_000,
   'minimax/minimax-m2.7': 128_000,
-  // NVIDIA-hosted free tier (refreshed 2026-07-11 to match live /v1/models).
-  'nvidia/qwen3-next-80b-a3b-instruct': 262_144, // current free default
+  // NVIDIA-hosted free tier (refreshed 2026-08-12 to match live /api/v1/models).
+  // Dead ids (qwen3-next, qwen3.5-122b, seed-oss, maverick, mistral-large) are
+  // kept so legacy session records still get a sane window.
+  'nvidia/qwen3-next-80b-a3b-instruct': 262_144, // NVIDIA EOL 410, 2026-07-27
   'nvidia/qwen3.5-122b-a10b': 131_072,
   'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': 256_000,
   'nvidia/mistral-nemotron': 131_072,
   'nvidia/step-3.7-flash': 131_072,
   'nvidia/seed-oss-36b': 131_072,
-  'nvidia/nemotron-nano-9b-v2': 131_072,
+  'nvidia/nemotron-nano-9b-v2': 131_072, // current free default
   'nvidia/nemotron-nano-12b-v2-vl': 131_072,
   'nvidia/llama-4-maverick': 131_072,
   'nvidia/mistral-large-3-675b': 131_072,
   // Qwen (paid) — Max tier is 1M ctx; the generic `qwen` fallback below is
   // 128k and would compact ~8x too early.
   'qwen/qwen3.7-max': 1_000_000,
+  'qwen/qwen3.7-plus': 1_000_000,
+  'qwen/qwen3.7-flash': 1_000_000,
+  // 2026-08 gateway additions (windows from the live catalog).
+  'google/gemini-3.6-flash': 1_048_576,
+  'google/gemini-3.5-flash-lite': 1_048_576,
+  'openai/gpt-5.6-luna-pro': 1_050_000,
+  'openai/gpt-5.6-terra-pro': 1_050_000,
+  'openai/gpt-5.6-sol-pro': 1_050_000,
+  'openai/gpt-5.5-pro': 1_050_000,
+  'openai/chat-latest': 128_000,
+  'tencent/hy3': 262_144,
+  'xiaomi/mimo-v2.5-pro': 1_048_576,
 };
 
 /**
