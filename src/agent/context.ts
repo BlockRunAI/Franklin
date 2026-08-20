@@ -548,8 +548,14 @@ export function assembleInstructions(workingDir: string, model?: string): string
 export function getModelGuidance(model: string): string {
   const m = model.toLowerCase();
 
-  // Weak/cheap models: strict discipline to prevent looping and hallucination
-  if (m.includes('glm') || m.includes('gpt-oss') || m.includes('nemotron') ||
+  // Weak/cheap models: strict discipline to prevent looping and hallucination.
+  // The bare `glm` match dates from the GLM-4.x era. The paid Z.AI GLM-5 line
+  // is a different animal — 1M context, always-on reasoning, priced above
+  // Gemini 3.1 Pro on input — and `glm` now resolves to 5.3, so matching it
+  // here was telling a flagship to make ONE tool call and stay under 300
+  // words. GLM-5.x moves to the balanced branch; glm-4.7 and friends stay.
+  if ((m.includes('glm') && !m.includes('glm-5')) ||
+      m.includes('gpt-oss') || m.includes('nemotron') ||
       m.includes('minimax') || m.includes('devstral') || m.includes('llama-4')) {
     return `# Execution Discipline (strict — this model requires guardrails)
 - Make ONE tool call per task. Do NOT retry the same tool with query variations.
@@ -566,7 +572,7 @@ export function getModelGuidance(model: string): string {
   // legacy free `nvidia/qwen*` ids keep matching as before.
   if (m.includes('kimi') || m.includes('grok') || m.includes('flash') ||
       m.includes('haiku') || m.includes('deepseek') ||
-      m.includes('hy3') || m.includes('mimo') ||
+      m.includes('hy3') || m.includes('mimo') || m.includes('glm-5') ||
       (m.includes('qwen') && !m.includes('qwen3.7-max'))) {
     return `# Execution Guidance
 - Use tools to verify facts before stating them. Do not answer from memory when a tool can confirm.

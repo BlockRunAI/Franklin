@@ -10603,13 +10603,39 @@ test('vision routing: pickVisionSibling stays within the user-chosen family', as
   assert.ok(isVisionModel(pickVisionSibling('deepseek/deepseek-v4-pro')));
 
   // xai/grok-4-1-fast-reasoning (text-only) → must stay in xai family if any
-  // xai vision sibling exists. Currently xai/grok-4-0709 is vision-capable.
-  assert.equal(pickVisionSibling('xai/grok-4-1-fast-reasoning'), 'xai/grok-4-0709');
+  // xai vision sibling exists. Asserted by family + capability rather than by
+  // id: the pick moved from grok-4-0709 to grok-4.5 on 2026-08-20 when the
+  // allowlist gained the vision-capable flagship, and pinning the exact id
+  // just made a strictly better answer look like a regression.
+  const grokSwap = pickVisionSibling('xai/grok-4-1-fast-reasoning');
+  assert.ok(grokSwap.startsWith('xai/'), `expected xai sibling, got ${grokSwap}`);
+  assert.ok(isVisionModel(grokSwap));
 
   // openai/gpt-5.3-codex (text-only) → must stay in openai family
   const codexSwap = pickVisionSibling('openai/gpt-5.3-codex');
   assert.ok(codexSwap.startsWith('openai/'), `expected openai sibling, got ${codexSwap}`);
   assert.ok(isVisionModel(codexSwap));
+});
+
+test('vision routing: every flagship bare alias is in the vision allowlist', async () => {
+  const { isVisionModel } = await import('../dist/router/vision.js');
+  const { MODEL_SHORTCUTS } = await import('../dist/ui/model-picker.js');
+
+  // The allowlist in src/router/vision.ts is hand-curated, so it drifts when
+  // the gateway ships a new flagship: grok-4.5 was vision-capable and missing
+  // for weeks, which silently rerouted every image turn on `grok` to a model
+  // the user never chose. The bare aliases are the ones people actually type,
+  // so they are the ones worth pinning — a new flagship that lands without a
+  // vision entry fails here instead of in someone's session.
+  for (const alias of ['claude', 'opus', 'sonnet', 'gpt', 'gemini', 'grok', 'kimi']) {
+    const id = MODEL_SHORTCUTS[alias];
+    assert.ok(id, `bare alias "${alias}" disappeared from MODEL_SHORTCUTS`);
+    assert.ok(
+      isVisionModel(id),
+      `bare alias "${alias}" resolves to ${id}, which is missing from VISION_MODELS — ` +
+        `image turns on it get rerouted to another model`,
+    );
+  }
 });
 
 // ─── journal-quality scorer ─────────────────────────────────────────────

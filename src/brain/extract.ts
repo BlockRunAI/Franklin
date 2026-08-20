@@ -11,10 +11,15 @@ import {
   addObservation, upsertRelation, isJunkEntityName,
 } from './store.js';
 
+// Last entry is the free safety net. nvidia/nemotron-super-49b held it until
+// 2026-08-20, by which point it had left the catalog entirely — the free pool
+// answers for it with a substitute, so the "free fallback" was neither the
+// model named nor reliably shaped. nemotron-nano-9b-v2 is the current free
+// default and verifiably serves itself.
 const EXTRACTION_MODELS = [
   'google/gemini-2.5-flash-lite',
   'google/gemini-2.5-flash',
-  'nvidia/nemotron-super-49b',
+  'nvidia/nemotron-nano-9b-v2',
 ];
 
 const VALID_TYPES = new Set<EntityType>(['person', 'project', 'company', 'product', 'concept']);

@@ -249,8 +249,15 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'openai/gpt-5.2': 128_000,
   'openai/gpt-5-mini': 128_000,
   'openai/gpt-5-nano': 128_000,
+  'openai/gpt-5.2-pro': 400_000,
   'openai/gpt-4.1': 1_000_000,
+  'openai/gpt-4.1-mini': 128_000,
+  'openai/gpt-4.1-nano': 128_000,
+  'openai/gpt-4o': 128_000,
+  'openai/gpt-4o-mini': 128_000,
+  'openai/o1': 200_000,
   'openai/o3': 200_000,
+  'openai/o3-mini': 128_000,
   'openai/o4-mini': 200_000,
   // Google
   'google/gemini-2.5-pro': 1_000_000,
@@ -259,18 +266,27 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'google/gemini-3.1-pro': 1_000_000,
   'google/gemini-3.5-flash': 1_000_000,
   'google/gemini-3.1-flash-lite': 1_000_000,
+  'google/gemini-3-flash-preview': 1_048_576,
   // DeepSeek (V4 family — gateway aliased deepseek-chat / -reasoner to V4
   // Flash on 2026-05-03; context bumped 128K → 1M for both, 65K out)
   'deepseek/deepseek-chat': 1_000_000,
   'deepseek/deepseek-reasoner': 1_000_000,
   'deepseek/deepseek-v4-pro': 1_000_000,
-  // xAI
+  // xAI. grok-4.5 / 4.3 / build were missing until 2026-08-20: neither matches
+  // any inference pattern below, so a cold catalog cache fell through to the
+  // blind 128k default and compacted a 500K–1M window ~4-8x too early.
+  'xai/grok-4.5': 500_000,
+  'xai/grok-4.3': 1_000_000,
+  'xai/grok-build-0.1': 256_000,
   'xai/grok-3': 131_072,
   'xai/grok-4-0709': 131_072,
   'xai/grok-4-1-fast-reasoning': 131_072,
   // Others
+  'zai/glm-5.3': 1_000_000, // flagship 2026-08 — 1M context, always-on reasoning
   'zai/glm-5.2': 1_000_000, // flagship bump 2026-06 — context jumped 200K → 1M
   'zai/glm-5.1': 200_000,
+  'zai/glm-5': 200_000,
+  'zai/glm-5-turbo': 200_000,
   'moonshot/kimi-k3': 1_048_576,
   'moonshot/kimi-k2.7': 256_000,
   'moonshot/kimi-k2.6': 256_000,

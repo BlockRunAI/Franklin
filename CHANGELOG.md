@@ -75,7 +75,29 @@ models visible, 8 video, 5 free. Model-family guidance now recognises
 `chat-latest` as a strong model and routes Tencent/Xiaomi to balanced
 guidance.
 
-All 646 local tests pass. The five hidden-but-resolvable ids Franklin still
+**Second pass — the tables the aliases exposed.** Surfacing the models turned
+up three hand-curated tables that had drifted behind the catalog:
+
+- **`xai/grok-4.5` was missing from the vision allowlist.** It is what `grok`
+  resolves to, and it is vision-capable — so every image turn on the xAI
+  flagship was quietly rerouted to a "vision sibling" the user never asked
+  for. Eleven other vision models were missing too (the GPT-5.6 pro tier,
+  `chat-latest`, `gpt-5.3`, `gpt-4o`, Gemini 3.6 Flash, the free omni model).
+  A new test pins the invariant: every bare flagship alias must be in the
+  allowlist, so the next flagship fails CI instead of someone's session.
+- **Context windows.** `grok-4.5` (500K), `grok-4.3` (1M) and `glm-5.3` (1M)
+  had no entry and match no inference pattern, so a cold catalog cache fell
+  through to the blind 128k default — compacting a 1M window eight times too
+  early. Twelve entries added.
+- **Model-family guidance.** The weak-model branch matched on bare `glm`,
+  which dates from GLM-4.x. `glm` now resolves to GLM-5.3 — 1M context,
+  always-on reasoning, priced above Gemini 3.1 Pro on input — and it was being
+  told to make ONE tool call and stay under 300 words. GLM-5.x moves to
+  balanced guidance.
+- The Brain's third extraction fallback was `nvidia/nemotron-super-49b`, gone
+  from the catalog; now the current free default.
+
+All 647 local tests pass. The five hidden-but-resolvable ids Franklin still
 pins (`opus-4.6`, `gpt-5-nano`, `grok-3`, `grok-4-0709`,
 `grok-4-1-fast-reasoning`) were each re-probed and still return 402, not 400 —
 they stay.
