@@ -25,8 +25,17 @@ Sol Pro matches Sol exactly. `gpt` stays pinned to Sol — bare aliases follow
 the gateway's flagship, not the cheapest sibling.
 
 **New arrivals since 3.39.0.** `zai/glm-5.3` is Z.AI's flagship (1M context,
-always-on reasoning, priced at 5.2's $1.4/$4.4) — `glm` now follows it.
-`xai/grok-imagine-video-1.5` joins VideoGen at $0.08/s.
+always-on reasoning, priced at 5.2's $1.4/$4.4) and `xai/grok-imagine-video-1.5`
+joins VideoGen at $0.08/s.
+
+One catalog fact worth writing down: **GLM-5.3 is Base-only.** The Solana
+gateway lists 92 of Base's 93 models and 5.3 is the one it's missing (prices
+are otherwise identical across chains). So `glm` stays pinned to 5.2 rather
+than following the flagship — a bare alias is what people type from muscle
+memory and has to resolve on *both* chains; pointing it at a Base-only id
+would hand every Solana user an HTTP 400. 5.3 is one keystroke away as
+`glm-5.3` and has its own picker row, which reconciliation drops automatically
+for Solana users.
 
 **The router's LLM classifier has been dead since 2026-07-27, silently.**
 Its default model was `nvidia/qwen3-next-80b-a3b-instruct` — the same id

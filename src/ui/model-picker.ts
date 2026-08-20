@@ -211,8 +211,16 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'qwen-flash': 'qwen/qwen3.7-flash',
   'qwen3.7-flash': 'qwen/qwen3.7-flash',
   // GLM-5.3 (2026-08) is Z.AI's flagship — same $1.4/$4.4 as 5.2 with 1M
-  // context and always-on reasoning, so `glm` follows it. 5.2 stays pinned.
-  glm: 'zai/glm-5.3',
+  // context and always-on reasoning — but it ships on the BASE gateway ONLY
+  // (sol.blockrun.ai lists 92 of Base's 93 models, and 5.3 is the one it's
+  // missing; verified 2026-08-20).
+  //
+  // So `glm` deliberately does NOT follow the flagship here. A bare alias is
+  // what people type from muscle memory, and it has to resolve on BOTH chains
+  // — pointing it at a Base-only id would hand every Solana user an HTTP 400
+  // on `/model glm`. 5.2 is on both, identically priced, one generation back.
+  // Promote this line the day 5.3 lands on Solana.
+  glm: 'zai/glm-5.2',
   'glm-5': 'zai/glm-5',
   'glm-5.3': 'zai/glm-5.3',
   'glm-5.2': 'zai/glm-5.2',
@@ -220,7 +228,7 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   // routes for anyone who wants the 200K-context build explicitly.
   'glm-5.1': 'zai/glm-5.1',
   'glm-turbo': 'zai/glm-5-turbo',
-  'glm5': 'zai/glm-5.3',
+  'glm5': 'zai/glm-5.2',
   // Tencent + Xiaomi joined the gateway in 2026-08 — cheap reasoning at long
   // context, below the frontier tier.
   hy3: 'tencent/hy3',
@@ -402,7 +410,7 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'openai/gpt-5.6-terra-pro',      shortcut: 'terra-pro',    label: 'GPT-5.6 Terra Pro',     price: '$1/$6', highlight: true },
       // GLM-5.3: Z.AI's flagship — 1M context, always-on reasoning, strong on
       // long-horizon coding. `glm`/`glm5` shortcuts pin it.
-      { id: 'zai/glm-5.3',                   shortcut: 'glm',          label: 'GLM-5.3',               price: '$1.4/$4.4' },
+      { id: 'zai/glm-5.3',                   shortcut: 'glm-5.3',      label: 'GLM-5.3',               price: '$1.4/$4.4' },
     ],
   },
   {
