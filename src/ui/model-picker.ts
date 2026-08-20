@@ -44,7 +44,26 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'gpt-5.6-sol': 'openai/gpt-5.6-sol',
   'gpt-5.6-terra': 'openai/gpt-5.6-terra',
   'gpt-5.6-luna': 'openai/gpt-5.6-luna',
+  // GPT-5.6 pro reasoning tier (gateway, 2026-08). Same base models with pro
+  // reasoning mode on: Sol Pro matches Sol at $5/$30, while Terra Pro ($1/$6)
+  // and Luna Pro ($0.1/$0.6) come in UNDER their own base tiers — so the pro
+  // ids are the better pick for anything reasoning-shaped. `gpt` stays pinned
+  // to Sol: bare aliases track the gateway's flagship, not the cheapest
+  // sibling.
+  'gpt-5.6-sol-pro': 'openai/gpt-5.6-sol-pro',
+  'sol-pro': 'openai/gpt-5.6-sol-pro',
+  'gpt-5.6-terra-pro': 'openai/gpt-5.6-terra-pro',
+  'terra-pro': 'openai/gpt-5.6-terra-pro',
+  'gpt-5.6-luna-pro': 'openai/gpt-5.6-luna-pro',
+  'luna-pro': 'openai/gpt-5.6-luna-pro',
   'gpt-5.5': 'openai/gpt-5.5',
+  'gpt-5.5-pro': 'openai/gpt-5.5-pro',
+  // The rolling `chat-latest` alias — whatever ChatGPT currently serves as its
+  // default (GPT-5.5 Instant today), tuned for speed and concision. Priced
+  // like GPT-5.5 but capped at 128K context.
+  'chat-latest': 'openai/chat-latest',
+  chatgpt: 'openai/chat-latest',
+  instant: 'openai/chat-latest',
   'gpt-5.4': 'openai/gpt-5.4',
   'gpt-5.4-pro': 'openai/gpt-5.4-pro',
   'gpt-5.4-mini': 'openai/gpt-5.4-mini',
@@ -53,19 +72,43 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'gpt-5.2': 'openai/gpt-5.2',
   'gpt-5.2-pro': 'openai/gpt-5.2-pro',
   'gpt-4.1': 'openai/gpt-4.1',
+  'gpt-4.1-mini': 'openai/gpt-4.1-mini',
+  'gpt-4.1-nano': 'openai/gpt-4.1-nano',
+  '4o': 'openai/gpt-4o',
+  'gpt-4o': 'openai/gpt-4o',
+  'gpt-4o-mini': 'openai/gpt-4o-mini',
   codex: 'openai/gpt-5.3-codex',
   nano: 'openai/gpt-5-nano',
   mini: 'openai/gpt-5-mini',
   o3: 'openai/o3',
+  'o3-mini': 'openai/o3-mini',
   o4: 'openai/o4-mini',
   'o4-mini': 'openai/o4-mini',
   o1: 'openai/o1',
   // Google
-  gemini: 'google/gemini-2.5-pro',
+  // `gemini` follows the flagship Pro build (3.1 since 2026-08), matching the
+  // bare-alias-tracks-flagship rule `gpt`, `grok` and `glm` already use. 2.5
+  // Pro stays reachable as `gemini-2.5` — it is cheaper on input but a
+  // generation behind.
+  gemini: 'google/gemini-3.1-pro',
   'gemini-2.5': 'google/gemini-2.5-pro',
-  flash: 'google/gemini-3.5-flash',
-  'gemini-flash': 'google/gemini-3.5-flash',
+  'gemini-2.5-pro': 'google/gemini-2.5-pro',
+  // `flash` follows the newest Flash generation (3.6 since 2026-08). 3.5 stays
+  // reachable by its explicit id — it is dearer on output ($9 vs $7.5) with no
+  // capability edge, so nothing should be pinned to it deliberately.
+  flash: 'google/gemini-3.6-flash',
+  'gemini-flash': 'google/gemini-3.6-flash',
+  'gemini-3.6': 'google/gemini-3.6-flash',
+  'gemini-3.6-flash': 'google/gemini-3.6-flash',
   'gemini-3.5-flash': 'google/gemini-3.5-flash',
+  'gemini-2.5-flash': 'google/gemini-2.5-flash',
+  'gemini-3-flash-preview': 'google/gemini-3-flash-preview',
+  // Flash Lite — thinking-mode Gemini for high-throughput work. `flash-lite`
+  // follows the newest (3.5); 3.1 is cheaper still and stays explicit.
+  'flash-lite': 'google/gemini-3.5-flash-lite',
+  'gemini-3.5-flash-lite': 'google/gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite': 'google/gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite': 'google/gemini-2.5-flash-lite',
   'gemini-3': 'google/gemini-3.1-pro',
   'gemini-3.1': 'google/gemini-3.1-pro',
   // xAI — grok-4.5 is the public flagship since 2026-07-14; `grok` follows it
@@ -123,6 +166,17 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'nano-9b': 'nvidia/nemotron-nano-9b-v2',
   'nano-vl': 'nvidia/nemotron-nano-12b-v2-vl',
   'free-vision': 'nvidia/nemotron-nano-12b-v2-vl',
+  // Nemotron 3 Nano Omni started answering as ITSELF (re-probed 2026-08-19,
+  // stream and non-stream) — it was pooled behind gpt-oss-120b when it was
+  // last checked, which is why it had no alias until now. 31B/3.2B MoE,
+  // text + image + video + audio in, 256K context.
+  omni: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+  'free-omni': 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+  'nano-omni': 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+  // Deliberately NOT aliased: nvidia/step-3.7-flash. It is in the catalog and
+  // billed at $0, but live probes (2026-08-19) come back served by
+  // nvidia/nemotron-3-super-120b — pointing users at it would promise a model
+  // they don't get. Same rule that retired the maverick and qwen3-next ids.
   // Maverick left the gateway catalog on/before 2026-07-14. The id still
   // answers, but only because the free pool silently substitutes another model
   // for it — so pointing users at it would be promising a model they don't get.
@@ -150,14 +204,30 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'qwen-max': 'qwen/qwen3.7-max',
   'qwen3.7-max': 'qwen/qwen3.7-max',
   'qwen-3.7-max': 'qwen/qwen3.7-max',
-  glm: 'zai/glm-5.2',
+  // Plus and Flash round out the paid Qwen line — both 1M context with
+  // reasoning. Flash at $0.03/$0.13 is the cheapest paid model on the gateway.
+  'qwen-plus': 'qwen/qwen3.7-plus',
+  'qwen3.7-plus': 'qwen/qwen3.7-plus',
+  'qwen-flash': 'qwen/qwen3.7-flash',
+  'qwen3.7-flash': 'qwen/qwen3.7-flash',
+  // GLM-5.3 (2026-08) is Z.AI's flagship — same $1.4/$4.4 as 5.2 with 1M
+  // context and always-on reasoning, so `glm` follows it. 5.2 stays pinned.
+  glm: 'zai/glm-5.3',
   'glm-5': 'zai/glm-5',
+  'glm-5.3': 'zai/glm-5.3',
   'glm-5.2': 'zai/glm-5.2',
   // GLM-5.1 demoted to a back-compat pin 2026-06 (flagship is 5.2) — still
   // routes for anyone who wants the 200K-context build explicitly.
   'glm-5.1': 'zai/glm-5.1',
   'glm-turbo': 'zai/glm-5-turbo',
-  'glm5': 'zai/glm-5.2',
+  'glm5': 'zai/glm-5.3',
+  // Tencent + Xiaomi joined the gateway in 2026-08 — cheap reasoning at long
+  // context, below the frontier tier.
+  hy3: 'tencent/hy3',
+  tencent: 'tencent/hy3',
+  mimo: 'xiaomi/mimo-v2.5-pro',
+  'mimo-v2.5-pro': 'xiaomi/mimo-v2.5-pro',
+  xiaomi: 'xiaomi/mimo-v2.5-pro',
   kimi: 'moonshot/kimi-k3',
   k3: 'moonshot/kimi-k3',
   // The K2.x line was retired by the gateway (2026-07, replaced by K3).
@@ -245,6 +315,8 @@ const PROVIDER_ORDER = [
   'minimax',
   'qwen',
   'deepseek',
+  'tencent',
+  'xiaomi',
   'nvidia',
 ];
 
@@ -258,6 +330,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   minimax: 'MiniMax',
   qwen: 'Qwen / Alibaba',
   deepseek: 'DeepSeek',
+  tencent: 'Tencent / Hunyuan',
+  xiaomi: 'Xiaomi / MiMo',
   nvidia: 'Free / NVIDIA',
 };
 
@@ -301,8 +375,10 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       { id: 'anthropic/claude-sonnet-5',   shortcut: 'sonnet',    label: 'Claude Sonnet 5',   price: '$3/$15' },
       { id: 'qwen/qwen3.7-max',            shortcut: 'qwen-max',  label: 'Qwen3.7 Max',       price: '$1.475/$4.425', highlight: true },
       { id: 'openai/gpt-5.6-sol',          shortcut: 'gpt',       label: 'GPT-5.6 Sol',       price: '$5/$30', highlight: true },
-      { id: 'google/gemini-3.1-pro',       shortcut: 'gemini-3',  label: 'Gemini 3.1 Pro',    price: '$2/$12' },
-      { id: 'google/gemini-2.5-pro',       shortcut: 'gemini',    label: 'Gemini 2.5 Pro',    price: '$1.25/$10' },
+      // Gemini 2.5 Pro's row retired here the same way Opus 4.8's did: a
+      // superseded sibling listed directly under its successor is choice
+      // paralysis, not choice. `gemini-2.5` still resolves to it.
+      { id: 'google/gemini-3.1-pro',       shortcut: 'gemini',    label: 'Gemini 3.1 Pro',    price: '$2/$12' },
       { id: 'xai/grok-4.5',                shortcut: 'grok',      label: 'Grok 4.5',          price: '$2.5/$9' },
       // Kimi K3 (2026-07): 2.8T open MoE, 1M context, multimodal + reasoning.
       // Replaced the budget K2.7 line — now premium-priced ($3/$15).
@@ -319,10 +395,14 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       // on hard tasks at <1/10 the price.
       { id: 'deepseek/deepseek-v4-pro',      shortcut: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro',    price: '$0.435/$0.87', highlight: true },
       { id: 'deepseek/deepseek-reasoner',    shortcut: 'r1',           label: 'DeepSeek V4 Flash R.',  price: '$0.2/$0.4' },
-      { id: 'xai/grok-4-1-fast-reasoning',   shortcut: 'grok-fast',    label: 'Grok 4.1 Fast R.',      price: '$0.2/$0.5' },
-      // GLM-5.2: Z.AI's new flagship — 1M context, top open-source on
+      // Terra Pro took the row grok-4-1-fast-reasoning used to hold: the xAI
+      // fast family is hidden from /v1/models, so reconcilePicker dropped that
+      // row on every live render anyway (`grok-fast` still resolves). Terra
+      // Pro is GPT-5.6 Terra with pro reasoning on, at HALF Terra's price.
+      { id: 'openai/gpt-5.6-terra-pro',      shortcut: 'terra-pro',    label: 'GPT-5.6 Terra Pro',     price: '$1/$6', highlight: true },
+      // GLM-5.3: Z.AI's flagship — 1M context, always-on reasoning, strong on
       // long-horizon coding. `glm`/`glm5` shortcuts pin it.
-      { id: 'zai/glm-5.2',                   shortcut: 'glm',          label: 'GLM-5.2',               price: '$1.4/$4.4' },
+      { id: 'zai/glm-5.3',                   shortcut: 'glm',          label: 'GLM-5.3',               price: '$1.4/$4.4' },
     ],
   },
   {
@@ -330,13 +410,16 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
     models: [
       { id: 'anthropic/claude-haiku-4.5',          shortcut: 'haiku',    label: 'Claude Haiku 4.5',    price: '$1/$5' },
       { id: 'openai/gpt-5-mini',                   shortcut: 'mini',     label: 'GPT-5 Mini',          price: '$0.25/$2' },
-      { id: 'google/gemini-2.5-flash',             shortcut: 'flash',    label: 'Gemini 2.5 Flash',    price: '$0.3/$2.5' },
+      // `flash` now follows Gemini 3.6; this row keeps the cheap 2.5 build and
+      // labels itself with the explicit shortcut so the two can't drift apart.
+      { id: 'google/gemini-2.5-flash',             shortcut: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', price: '$0.3/$2.5' },
       // Re-aliased to V4 Flash Chat upstream — context 1M, price 30% lower.
-      { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V4 Flash Chat', price: '$0.2/$0.4' },
-      // GLM flat-rate promos fully ended 2026-06-06 — whole family per-token
-      // now (glm-5 $0.60/$1.92; `glm` shortcut pins flagship glm-5.2, listed
-      // in Reasoning above).
-      { id: 'zai/glm-5',                           shortcut: 'glm-5',    label: 'GLM-5',               price: '$0.6/$1.92' },
+      { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V4 Flash Chat', price: '$0.14/$0.28' },
+      // Cheapest paid model on the gateway, and it still carries 1M context
+      // with reasoning — the budget slot GLM-5 used to hold (its flat-rate
+      // promo ended 2026-06-06 and it now lists at $1/$3.2, no longer a budget
+      // number; the `glm-5` shortcut stays live).
+      { id: 'qwen/qwen3.7-flash',                  shortcut: 'qwen-flash', label: 'Qwen3.7 Flash',     price: '$0.03/$0.13', highlight: true },
       // Minimax M2.7 hidden to make room for V4 Pro in Reasoning + V4 Flash
       // (free) without exceeding the picker's 24-entry cap. Shortcut `minimax`
       // still resolves to it.
@@ -351,13 +434,18 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       // back to paid.
       //
       // Caveat worth knowing before editing this list: the NVIDIA free pool
-      // silently substitutes or degrades. The 30B omni model currently answers
-      // as `nvidia/gpt-oss-120b`, and mistral-nemotron 400s on streaming calls
-      // (DEGRADED upstream; non-stream rides a disclosed gateway fallback) —
-      // both verified live 2026-08-12. The nano rows lead precisely because
-      // they serve themselves, consistently, on every path.
+      // silently substitutes or degrades, so every row here is re-probed
+      // before it ships. Re-probed 2026-08-19: the nano pair and the 30B omni
+      // model all answer as THEMSELVES on both the streaming and non-streaming
+      // paths (omni was pooled behind gpt-oss-120b in August and has since
+      // been fixed upstream — hence its new row). mistral-nemotron still
+      // comes back served by `nvidia/nemotron-3-super-120b`; it keeps its row
+      // and its `nemotron` alias but must never lead a chain. The catalog's
+      // fifth free id, nvidia/step-3.7-flash, is substituted the same way and
+      // is deliberately absent from both this list and MODEL_SHORTCUTS.
       { id: 'nvidia/nemotron-nano-9b-v2',     shortcut: 'free',     label: 'Nemotron Nano 9B',   price: 'FREE', highlight: true },
       { id: 'nvidia/nemotron-nano-12b-v2-vl', shortcut: 'nano-vl',  label: 'Nemotron Nano VL',   price: 'FREE' },
+      { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', shortcut: 'omni', label: 'Nemotron 3 Nano Omni', price: 'FREE' },
       { id: 'nvidia/mistral-nemotron',        shortcut: 'nemotron', label: 'Mistral Nemotron',   price: 'FREE' },
     ],
   },

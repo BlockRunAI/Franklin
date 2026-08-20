@@ -608,10 +608,11 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
             type: 'string',
             description:
               'Video model. Default: xai/grok-imagine-video ($0.05/s). Known-valid models on the BlockRun gateway as of 2026-08: ' +
-              'xai/grok-imagine-video, bytedance/seedance-1.5-pro ($0.070/s), bytedance/seedance-2.0-mini ($0.0797/s), ' +
+              'xai/grok-imagine-video, xai/grok-imagine-video-1.5 ($0.08/s), bytedance/seedance-1.5-pro ($0.070/s), bytedance/seedance-2.0-mini ($0.0797/s), ' +
               'bytedance/seedance-2.0-fast ($0.165/s), bytedance/seedance-2.0 ($0.227/s), bytedance/seedance-2.5 ($0.315/s), azure/sora-2 ($0.10/s). ' +
               'Pick from this list; the gateway rejects unknown names with HTTP 400 (no money charged on rejection). ' +
               'Speak "Seedance" → bytedance/seedance-2.5 (newest flagship); "Seedance Pro" → bytedance/seedance-2.0; ' +
+              '"Grok video" → xai/grok-imagine-video-1.5 (newer Grok clip model, $0.08/s vs $0.05/s); ' +
               '"Seedance fast" → bytedance/seedance-2.0-fast; "Seedance mini" → bytedance/seedance-2.0-mini (cheapest).',
           },
           image_url: { type: 'string', description: 'Optional seed image (image-to-video). Accepts http(s) URL, data: URI, or local file path — local paths get inlined as base64 data URIs automatically.' },

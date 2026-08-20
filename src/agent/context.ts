@@ -254,7 +254,7 @@ You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun
 - \`GET /.well-known/x402\` — x402 resource list with prices
 
 **LLM (POST, x402-paid)**
-- \`POST /v1/chat/completions\` — OpenAI-compatible. Body: \`{ model, messages, stream?, tools?, max_tokens?, temperature? }\`. \`model\` MUST come from \`GET /v1/models\` (real frontier examples on the gateway, verified live 2026-08-12: \`anthropic/claude-sonnet-5\`, \`anthropic/claude-opus-5\`, \`deepseek/deepseek-v4-pro\`, \`zai/glm-5.2\`, \`xai/grok-4.5\`, \`nvidia/nemotron-nano-9b-v2\` (free)). Do NOT invent versions like \`openai/gpt-5.1\` or \`xai/grok-5\` — those don't exist; the gateway 400s with the valid list in the error body, so when in doubt fetch \`GET /v1/models\` first.
+- \`POST /v1/chat/completions\` — OpenAI-compatible. Body: \`{ model, messages, stream?, tools?, max_tokens?, temperature? }\`. \`model\` MUST come from \`GET /v1/models\` (real frontier examples on the gateway, verified live 2026-08-19: \`anthropic/claude-sonnet-5\`, \`anthropic/claude-opus-5\`, \`openai/gpt-5.6-sol\`, \`deepseek/deepseek-v4-pro\`, \`zai/glm-5.3\`, \`xai/grok-4.5\`, \`qwen/qwen3.7-flash\`, \`nvidia/nemotron-nano-9b-v2\` (free)). Do NOT invent versions like \`openai/gpt-5.1\` or \`xai/grok-5\` — those don't exist; the gateway 400s with the valid list in the error body, so when in doubt fetch \`GET /v1/models\` first.
 - \`POST /v1/messages\` — Anthropic-compatible. Body: \`{ model, messages, max_tokens, system?, tools? }\`.
 
 **Media (POST, x402-paid; GET to poll async jobs)**
@@ -560,10 +560,13 @@ export function getModelGuidance(model: string): string {
   }
 
   // Medium models: balanced guidance. The bare `qwen` match dates from when
-  // every qwen id on the gateway was a free NVIDIA SKU — qwen3.7-max is a paid
-  // 1M-context flagship and belongs in the strong branch below.
+  // every qwen id on the gateway was a free NVIDIA SKU. The paid Qwen line is
+  // now Max + Plus + Flash — all 1M-context with reasoning — so only the Max
+  // flagship graduates to the strong branch; Plus and Flash stay here, and the
+  // legacy free `nvidia/qwen*` ids keep matching as before.
   if (m.includes('kimi') || m.includes('grok') || m.includes('flash') ||
       m.includes('haiku') || m.includes('deepseek') ||
+      m.includes('hy3') || m.includes('mimo') ||
       (m.includes('qwen') && !m.includes('qwen3.7-max'))) {
     return `# Execution Guidance
 - Use tools to verify facts before stating them. Do not answer from memory when a tool can confirm.
@@ -576,7 +579,7 @@ export function getModelGuidance(model: string): string {
   if (m.includes('claude') || m.includes('gpt-5') || m.includes('opus') ||
       m.includes('sonnet') || m.includes('gemini-2.5-pro') || m.includes('gemini-3') ||
       m.includes('o3') || m.includes('o1') || m.includes('codex') ||
-      m.includes('qwen3.7-max')) {
+      m.includes('chat-latest') || m.includes('qwen3.7-max')) {
     return `# Quality Standards (strong model)
 - Keep calling tools until the task is complete AND the result is verified. Don't stop at "this should work" — prove it works.
 - Before finalizing: check correctness, grounding in tool output, and formatting.
