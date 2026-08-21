@@ -36,21 +36,37 @@ const VISION_MODELS = new Set<string>([
   'openai/gpt-5.6-sol',
   'openai/gpt-5.6-terra',
   'openai/gpt-5.6-luna',
+  // The pro reasoning tier is the same multimodal base with thinking on.
+  'openai/gpt-5.6-sol-pro',
+  'openai/gpt-5.6-terra-pro',
+  'openai/gpt-5.6-luna-pro',
   'openai/gpt-5.5',
+  'openai/gpt-5.5-pro',
+  // The rolling ChatGPT default — vision-tagged in the catalog.
+  'openai/chat-latest',
   'openai/gpt-5.4',
   'openai/gpt-5.4-pro',
   'openai/gpt-5.4-mini',
   'openai/gpt-5.2',
   'openai/gpt-5.2-pro',
   'openai/gpt-5-mini',
+  'openai/gpt-5.3',
   'openai/gpt-4.1',
+  'openai/gpt-4o',
   'openai/o3',
   // Google — vision baked into every Gemini SKU we surface (flash-lite excepted)
   'google/gemini-3.1-pro',
+  'google/gemini-3.6-flash',
   'google/gemini-3.5-flash',
+  'google/gemini-3-flash-preview',
   'google/gemini-2.5-pro',
   'google/gemini-2.5-flash',
-  // xAI — only Grok 4 base supports vision; grok-4-1-fast-reasoning is text-only
+  // xAI — grok-4-1-fast-reasoning stays out (text-only). Grok 4.5 and 4.3 are
+  // both vision-capable in the catalog and were missing here until 2026-08-20:
+  // `grok` resolves to 4.5, so every image turn on the xAI flagship was being
+  // rerouted to a "vision sibling" the user never asked for.
+  'xai/grok-4.5',
+  'xai/grok-4.3',
   'xai/grok-4-0709',
   'xai/grok-3',
   // Moonshot — K3 is the Solana flagship; the K2.x compatibility line remains
@@ -64,6 +80,10 @@ const VISION_MODELS = new Set<string>([
   // listing it here contradicted routeRequest()'s own "maverick is text-only"
   // note — the free profile would route a vision turn to a text-only model.
   'nvidia/nemotron-nano-12b-v2-vl',
+  // Nemotron 3 Nano Omni accepts text, images, video and audio, and now serves
+  // itself (2026-08-19 probe) — it is the strongest free vision option in the
+  // catalog on ChartQA / DocVQA / MMMU.
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
 ]);
 
 /** Does this concrete gateway model accept image input? */

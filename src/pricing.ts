@@ -145,6 +145,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'zai/glm-5': { input: 1.0, output: 3.2 }, // flat promo ended 2026-06-06; raised upstream 2026-08-07
   'zai/glm-5.1': { input: 1.40, output: 4.40 }, // launch promo ended 2026-06-05 — per-token now
   'zai/glm-5.2': { input: 1.40, output: 4.40 }, // new flagship 2026-06 — 1M context, same per-token price as 5.1
+  'zai/glm-5.3': { input: 1.40, output: 4.40 }, // flagship 2026-08 — 1M context, always-on reasoning, priced at 5.2
   'zai/glm-5-turbo': { input: 1.2, output: 4.0 }, // flat promo ended 2026-06-06 — per-token now
   'zai/glm-5.1-turbo': { input: 1.2, output: 4.0 },  // client alias for zai/glm-5-turbo
 };

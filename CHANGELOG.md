@@ -1,5 +1,116 @@
 # Changelog
 
+## Franklin Agent 3.40.0 — priced but unreachable: the catalog gets a front door
+
+**3.39.0 taught Franklin what the new models cost. It never taught anyone how
+to ask for them.** That release added eleven chat models to `src/pricing.ts`
+and stopped there — no shortcut, no picker row, no router wiring. The models
+were live on the gateway, correctly priced, and reachable only by typing the
+full `provider/model` id from memory. This release finishes the job.
+
+**38 new shortcuts (107 → 145), covering every model 3.39.0 priced:**
+
+| family | now reachable as |
+|---|---|
+| GPT-5.6 pro reasoning tier | `sol-pro`, `terra-pro`, `luna-pro` |
+| GPT-5.5 Pro / ChatGPT default | `gpt-5.5-pro`, `chatgpt` / `instant` |
+| Gemini 3.6 Flash + the Flash Lite line | `flash` (now 3.6), `flash-lite`, `gemini-3.1-flash-lite` |
+| Qwen3.7 Plus / Flash | `qwen-plus`, `qwen-flash` |
+| Tencent, Xiaomi (new providers) | `hy3` / `tencent`, `mimo` / `xiaomi` |
+| GPT-4o + 4.1 mini/nano, o3-mini | `4o`, `gpt-4o-mini`, `gpt-4.1-mini`, `o3-mini` |
+
+Worth knowing about the pro tier: **Terra Pro ($1/$6) and Luna Pro
+($0.1/$0.6) undercut their own base tiers** while adding pro reasoning mode.
+Sol Pro matches Sol exactly. `gpt` stays pinned to Sol — bare aliases follow
+the gateway's flagship, not the cheapest sibling.
+
+**New arrivals since 3.39.0.** `zai/glm-5.3` is Z.AI's flagship (1M context,
+always-on reasoning, priced at 5.2's $1.4/$4.4) and `xai/grok-imagine-video-1.5`
+joins VideoGen at $0.08/s.
+
+One catalog fact worth writing down: **GLM-5.3 is Base-only.** The Solana
+gateway lists 92 of Base's 93 models and 5.3 is the one it's missing (prices
+are otherwise identical across chains). So `glm` stays pinned to 5.2 rather
+than following the flagship — a bare alias is what people type from muscle
+memory and has to resolve on *both* chains; pointing it at a Base-only id
+would hand every Solana user an HTTP 400. 5.3 is one keystroke away as
+`glm-5.3` and has its own picker row, which reconciliation drops automatically
+for Solana users.
+
+**The router's LLM classifier has been dead since 2026-07-27, silently.**
+Its default model was `nvidia/qwen3-next-80b-a3b-instruct` — the same id
+NVIDIA EOL'd, which the gateway now rides on `nemotron-3-super-120b`. That
+substitute opens with *"Okay, let's see. The user wants to…"* and never
+reaches a verdict inside the classifier's 16-token budget, so every
+classification failed the strict parse and fell through to keyword-only
+routing. The fallback is invisible by design, which is exactly why this went
+three weeks without anyone noticing. Re-probed the free pool on the real
+classifier prompt:
+
+| free model | reply to a classification prompt |
+|---|---|
+| `qwen3-next` (old default) | prose, served by `nemotron-3-super-120b` |
+| `nemotron-nano-9b-v2` | prose — *"Okay, let's see…"* |
+| `nemotron-3-nano-omni` | **`MEDIUM`** — one bare word, served by itself |
+
+`nemotron-3-nano-omni` is the new classifier. The lesson worth keeping: "good
+free chat model" and "answers in one bare word under a tight cap" are
+different requirements, and the free default is not automatically both.
+
+**The 30B omni model started serving itself again.** In August it came back
+as `gpt-oss-120b` — the pooled-substitute trap — which is why it had no alias
+and led no chain. Re-probed 2026-08-19 on both the streaming and non-streaming
+paths, it now answers as itself. It gets a shortcut (`omni`), a free picker
+row, and second place in every free chain; the still-degraded
+`mistral-nemotron` slides to third but stays as a genuinely different family.
+`nvidia/step-3.7-flash` remains deliberately unaliased — it is billed at $0
+and listed in the catalog, but live probes come back served by
+`nemotron-3-super-120b`, and an alias that promises a model you don't get is
+worse than no alias.
+
+**Picker stays at its 24-row cap — new models displaced old ones.** GLM-5.3
+takes GLM-5.2's slot. GPT-5.6 Terra Pro takes the row
+`grok-4-1-fast-reasoning` held, which the gateway hides and reconciliation
+dropped on every live render anyway. Qwen3.7 Flash ($0.03/$0.13, 1M context,
+the cheapest paid model on the gateway) takes GLM-5's budget slot. Gemini 2.5
+Pro's row retires from directly under 3.1 Pro. Every retired row keeps its
+shortcut, per the long-standing hide-the-row-keep-the-alias rule, and `gemini`
+now tracks the 3.1 Pro flagship like `gpt`, `grok` and `glm` already did.
+
+**Also:** the offline picker fallback had stale prices (deepseek at
+$0.20/$0.40, corrected to $0.14/$0.28 — live renders were already right since
+the gateway is the source of truth for price). Brand numbers re-synced: 95
+models visible, 8 video, 5 free. Model-family guidance now recognises
+`chat-latest` as a strong model and routes Tencent/Xiaomi to balanced
+guidance.
+
+**Second pass — the tables the aliases exposed.** Surfacing the models turned
+up three hand-curated tables that had drifted behind the catalog:
+
+- **`xai/grok-4.5` was missing from the vision allowlist.** It is what `grok`
+  resolves to, and it is vision-capable — so every image turn on the xAI
+  flagship was quietly rerouted to a "vision sibling" the user never asked
+  for. Eleven other vision models were missing too (the GPT-5.6 pro tier,
+  `chat-latest`, `gpt-5.3`, `gpt-4o`, Gemini 3.6 Flash, the free omni model).
+  A new test pins the invariant: every bare flagship alias must be in the
+  allowlist, so the next flagship fails CI instead of someone's session.
+- **Context windows.** `grok-4.5` (500K), `grok-4.3` (1M) and `glm-5.3` (1M)
+  had no entry and match no inference pattern, so a cold catalog cache fell
+  through to the blind 128k default — compacting a 1M window eight times too
+  early. Twelve entries added.
+- **Model-family guidance.** The weak-model branch matched on bare `glm`,
+  which dates from GLM-4.x. `glm` now resolves to GLM-5.3 — 1M context,
+  always-on reasoning, priced above Gemini 3.1 Pro on input — and it was being
+  told to make ONE tool call and stay under 300 words. GLM-5.x moves to
+  balanced guidance.
+- The Brain's third extraction fallback was `nvidia/nemotron-super-49b`, gone
+  from the catalog; now the current free default.
+
+All 647 local tests pass. The five hidden-but-resolvable ids Franklin still
+pins (`opus-4.6`, `gpt-5-nano`, `grok-3`, `grok-4-0709`,
+`grok-4-1-fast-reasoning`) were each re-probed and still return 402, not 400 —
+they stay.
+
 ## Franklin Agent 3.39.0 — the gateway moved for three weeks and Franklin didn't
 
 **Franklin's free default was a dead model, and the whole catalog had drifted.**

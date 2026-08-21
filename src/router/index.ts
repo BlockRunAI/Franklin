@@ -414,10 +414,23 @@ function classicRouteRequest(
 //     that can't be async (proxy, LLM-client bootstrap) keep using the sync
 //     `routeRequest`, which silently does keyword-only routing.
 
-// llama-4-maverick: clean one-word classification output. glm-4.7 + qwen-
-// thinking emit reasoning into thinking blocks and leave text empty under
-// tight max_tokens — fine for chat, wrong shape for single-word dispatch.
-const CLASSIFIER_MODEL = process.env.FRANKLIN_ROUTER_MODEL || 'nvidia/qwen3-next-80b-a3b-instruct';
+// The classifier needs a free model that answers with ONE BARE WORD under a
+// tight max_tokens. That is a narrower requirement than "is a good free chat
+// model", and most of the free pool fails it by streaming chain-of-thought
+// into `content` (glm-4.7 and the qwen-thinking builds emit reasoning and
+// leave text empty; nemotron-nano-9b-v2 opens with "Okay, let's see. The user
+// wants to…" and never reaches a verdict inside the budget).
+//
+// 2026-08-19: the previous default, nvidia/qwen3-next-80b-a3b-instruct, was
+// EOL'd by NVIDIA (410 on 2026-07-27) — the gateway now rides its calls on
+// nemotron-3-super-120b, which leaks prose. Every classification has been
+// failing the strict parse and falling through to keyword-only routing ever
+// since, silently, because the fallback is by design invisible.
+//
+// nemotron-3-nano-omni is the replacement: live-probed on this exact prompt
+// shape it returns "MEDIUM" and nothing else, and it verifiably serves itself
+// rather than riding a pooled substitute.
+const CLASSIFIER_MODEL = process.env.FRANKLIN_ROUTER_MODEL || 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning';
 const CLASSIFIER_TIMEOUT_MS = 2_500;
 
 const CLASSIFIER_SYSTEM = `You classify a user's message into ONE routing tier for a CLI agent. Reply with EXACTLY ONE WORD from the allowed set. No explanation, no punctuation, no quotes.
@@ -771,22 +784,31 @@ export function getFallbackChain(
 // verifiably serves ITSELF on the streaming path Franklin uses (verified live
 // through the binary today). mistral-nemotron is DEGRADED at NVIDIA — stream
 // calls 400 ("DEGRADED function cannot be invoked") and non-stream calls ride
-// the gateway's disclosed fallback — so it sits second: it still answers
-// non-streaming turns, and it upgrades the chain automatically if NVIDIA
-// restores it. step-3.7-flash leaks thinking prose into content, and the 30B
-// omni model came back served as nvidia/gpt-oss-120b (the pooled-substitute
-// trap this comment already warns about).
+// the gateway's disclosed fallback.
+// 2026-08-19: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning promoted to
+// second. When it was last probed it came back served as gpt-oss-120b — the
+// pooled-substitute trap this comment warns about — but NVIDIA has since
+// fixed it: it now answers as ITSELF on both the streaming and non-streaming
+// paths, and it returns clean single-word output under tight max_tokens (it
+// is also the router's classifier for that reason). mistral-nemotron drops to
+// third: still DEGRADED at NVIDIA, kept as a genuinely different family for
+// the case where both Nemotron nano builds are down. The catalog's fifth free
+// id, step-3.7-flash, stays out of every chain — it leaks thinking prose into
+// content AND comes back served by nemotron-3-super-120b.
+const OMNI = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning';
+
 const FREE_MODELS_BY_CATEGORY: Record<Category, string[]> = {
-  coding:    ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
-  trading:   ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
-  research:  ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
-  reasoning: ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
-  chat:      ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
-  creative:  ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'],
+  coding:    ['nvidia/nemotron-nano-9b-v2', OMNI, 'nvidia/mistral-nemotron'],
+  trading:   ['nvidia/nemotron-nano-9b-v2', OMNI, 'nvidia/mistral-nemotron'],
+  research:  ['nvidia/nemotron-nano-9b-v2', OMNI, 'nvidia/mistral-nemotron'],
+  reasoning: ['nvidia/nemotron-nano-9b-v2', OMNI, 'nvidia/mistral-nemotron'],
+  chat:      ['nvidia/nemotron-nano-9b-v2', OMNI, 'nvidia/mistral-nemotron'],
+  creative:  ['nvidia/nemotron-nano-9b-v2', OMNI, 'nvidia/mistral-nemotron'],
 };
 
 const DEFAULT_FREE_CHAIN: string[] = [
   'nvidia/nemotron-nano-9b-v2',
+  OMNI,
   'nvidia/mistral-nemotron',
 ];
 

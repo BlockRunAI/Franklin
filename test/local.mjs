@@ -3193,14 +3193,16 @@ test('agent context: chat-completions example uses real model names (no fictiona
     'utf-8',
   );
   // Real names that should appear as illustrative examples. Refreshed
-  // 2026-07-24: every id below returned 402 (exists, needs payment) rather
+  // 2026-08-19: every id below returned 402 (exists, needs payment) rather
   // than 400 on a live POST /api/v1/chat/completions probe.
   for (const real of [
     'anthropic/claude-sonnet-5',
     'anthropic/claude-opus-5',
+    'openai/gpt-5.6-sol',
     'deepseek/deepseek-v4-pro',
-    'zai/glm-5.2',
+    'zai/glm-5.3',
     'xai/grok-4.5',
+    'qwen/qwen3.7-flash',
   ]) {
     assert.ok(src.includes(real), `chat-completions example list must include real model "${real}"`);
   }
@@ -6027,6 +6029,10 @@ test('free routing profile stays free across router entry points', async () => {
     'nvidia/mistral-nemotron',
     'nvidia/nemotron-nano-9b-v2',
     'nvidia/nemotron-nano-12b-v2-vl',
+    // Added 2026-08-19 with the chain promotion. Billed $0 by the gateway and
+    // live-probed serving itself; the guard's job is to keep a PAID id out of
+    // the free chain, not to freeze the roster.
+    'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
   ]);
   for (const tier of ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING']) {
     const resolved = resolveTierToModel(tier, 'free');
@@ -7128,18 +7134,23 @@ test('picker trim: hero shortcuts (opus, sonnet, gpt, gemini-3, grok) still in v
   assert.ok(ids.includes('anthropic/claude-sonnet-5'));
   assert.ok(ids.includes('openai/gpt-5.6-sol'));
   assert.ok(ids.includes('google/gemini-3.1-pro'));
-  assert.ok(ids.includes('google/gemini-2.5-pro'));
+  // Gemini 2.5 Pro lost its row in the 2026-08-19 sync (superseded sibling
+  // directly under 3.1 Pro). `gemini-2.5` still resolves — same "hide the row,
+  // keep the shortcut" pattern the rest of this trim uses.
+  assert.ok(!ids.includes('google/gemini-2.5-pro'));
   assert.ok(ids.includes('xai/grok-4.5')); // grok-4-0709 hidden on gateway; 4.5 is the public flagship row
 });
 
 test('picker trim: total visible entries dropped meaningfully', async () => {
   const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
   const total = PICKER_CATEGORIES.reduce((sum, c) => sum + c.models.length, 0);
-  // Sanity bounds. Flat-rate GLM category removed 2026-06-06 (promos fully
-  // ended); GLM-5 moved into Budget — current shape is 1 routing + 6 premium
-  // + 5 reasoning + 6 budget + 3 free = 21.
+  // Sanity bounds. Current shape after the 2026-08-19 catalog sync is
+  // 1 routing + 8 premium + 6 reasoning + 5 budget + 4 free = 24. The upper
+  // bound is the point: new models earn a row by displacing one (GLM-5 and
+  // Gemini 2.5 Pro made way for Qwen3.7 Flash and the free omni model), never
+  // by growing the list.
   assert.ok(total >= 20, `expected >= 20 visible entries, got ${total}`);
-  assert.ok(total <= 24, `expected <= 24 visible entries (33 → ~21), got ${total}`);
+  assert.ok(total <= 24, `expected <= 24 visible entries (33 → ~24), got ${total}`);
 });
 
 // ─── picker ↔ gateway reconciliation ──────────────────────────────────────
@@ -8805,12 +8816,13 @@ test('pickFreeFallback: research / chat / creative also skip coder first', async
 test('pickFreeFallback: respects alreadyFailed set', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
   // Coding starts with nemotron-nano-9b-v2. After it fails, next is the
-  // mistral-nemotron secondary (2026-08-12 refresh).
+  // nano-omni secondary (2026-08-19 refresh — it started serving itself again,
+  // so it displaced the still-degraded mistral-nemotron, which slid to third).
   const failed = new Set(['nvidia/nemotron-nano-9b-v2']);
   const pick = pickFreeFallback('coding', failed);
   assert.notEqual(pick, 'nvidia/nemotron-nano-9b-v2');
-  assert.equal(pick, 'nvidia/mistral-nemotron',
-    `after nemotron-nano-9b-v2 fails, coding should fall to mistral-nemotron, got ${pick}`);
+  assert.equal(pick, 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+    `after nemotron-nano-9b-v2 fails, coding should fall to nano-omni, got ${pick}`);
 });
 
 test('pickFreeFallback: unknown category uses default chain (general model first)', async () => {
@@ -8826,6 +8838,7 @@ test('pickFreeFallback: returns undefined when every candidate failed', async ()
   const failed = new Set([
     'nvidia/mistral-nemotron',
     'nvidia/nemotron-nano-9b-v2',
+    'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
   ]);
   const pick = pickFreeFallback('trading', failed);
   assert.equal(pick, undefined);
@@ -10590,13 +10603,39 @@ test('vision routing: pickVisionSibling stays within the user-chosen family', as
   assert.ok(isVisionModel(pickVisionSibling('deepseek/deepseek-v4-pro')));
 
   // xai/grok-4-1-fast-reasoning (text-only) → must stay in xai family if any
-  // xai vision sibling exists. Currently xai/grok-4-0709 is vision-capable.
-  assert.equal(pickVisionSibling('xai/grok-4-1-fast-reasoning'), 'xai/grok-4-0709');
+  // xai vision sibling exists. Asserted by family + capability rather than by
+  // id: the pick moved from grok-4-0709 to grok-4.5 on 2026-08-20 when the
+  // allowlist gained the vision-capable flagship, and pinning the exact id
+  // just made a strictly better answer look like a regression.
+  const grokSwap = pickVisionSibling('xai/grok-4-1-fast-reasoning');
+  assert.ok(grokSwap.startsWith('xai/'), `expected xai sibling, got ${grokSwap}`);
+  assert.ok(isVisionModel(grokSwap));
 
   // openai/gpt-5.3-codex (text-only) → must stay in openai family
   const codexSwap = pickVisionSibling('openai/gpt-5.3-codex');
   assert.ok(codexSwap.startsWith('openai/'), `expected openai sibling, got ${codexSwap}`);
   assert.ok(isVisionModel(codexSwap));
+});
+
+test('vision routing: every flagship bare alias is in the vision allowlist', async () => {
+  const { isVisionModel } = await import('../dist/router/vision.js');
+  const { MODEL_SHORTCUTS } = await import('../dist/ui/model-picker.js');
+
+  // The allowlist in src/router/vision.ts is hand-curated, so it drifts when
+  // the gateway ships a new flagship: grok-4.5 was vision-capable and missing
+  // for weeks, which silently rerouted every image turn on `grok` to a model
+  // the user never chose. The bare aliases are the ones people actually type,
+  // so they are the ones worth pinning — a new flagship that lands without a
+  // vision entry fails here instead of in someone's session.
+  for (const alias of ['claude', 'opus', 'sonnet', 'gpt', 'gemini', 'grok', 'kimi']) {
+    const id = MODEL_SHORTCUTS[alias];
+    assert.ok(id, `bare alias "${alias}" disappeared from MODEL_SHORTCUTS`);
+    assert.ok(
+      isVisionModel(id),
+      `bare alias "${alias}" resolves to ${id}, which is missing from VISION_MODELS — ` +
+        `image turns on it get rerouted to another model`,
+    );
+  }
 });
 
 // ─── journal-quality scorer ─────────────────────────────────────────────
