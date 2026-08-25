@@ -55,35 +55,27 @@
   --bill-green: #1a4d3a;
 }
 
-/* Theme: "gold" is the default (:root above — warm cream + gold). "light" is a
-   cooler neutral white; "dark" is a dark mode. Applied via data-theme on <html>. */
+/* Light is the product default. Gold and dark remain user-selectable themes. */
 :root[data-theme="light"] {
-  /* Clean, modern light theme (à la ChatGPT / Linear / Doubao): crisp white +
-     subtle cool off-white surfaces, sharp near-black text, and a lively cool
-     BLUE accent for links / active states / primary actions. Cool, not warm —
-     so it stays clearly distinct from the gold theme — but not flat gray. */
   --bg: #ffffff;
-  --bg-alt: #f6f6f7;          /* clean neutral surface (not warm cream) */
-  --fg: #0b0c0e;
-  --fg-muted: #585d66;
-  --fg-subtle: #8f939b;
-  --border: #e9eaec;
-  --border-strong: #d7d9dd;
-  /* Dark ink for primary buttons (white text reads on it), GOLD for the accent
-     thread — links, active nav, role labels, highlights. Gives the light theme
-     life via gold (no flat gray, no stark blue), on clean neutral-white. */
-  --accent: #1a1a1a;
-  --accent-hover: #333333;
-  --gold: #c9a227;
-  --gold-hi: #c9a227;
-  --gold-dim: #a87d1a;
-  --gold-line: rgba(201, 162, 39, 0.42);
-  --gold-soft: rgba(201, 162, 39, 0.12);
-  --success: #16a34a;
+  --bg-alt: #f5f6f7;
+  --fg: #17181a;
+  --fg-muted: #62666d;
+  --fg-subtle: #92969d;
+  --border: #e7e8ea;
+  --border-strong: #d8dade;
+  --accent: #202124;
+  --accent-hover: #34363a;
+  --gold: #b88b12;
+  --gold-hi: #b88b12;
+  --gold-dim: #8a6810;
+  --gold-line: rgba(166, 124, 0, 0.28);
+  --gold-soft: rgba(184, 139, 18, 0.08);
+  --success: #18835a;
 }
 /* …but keep the "Franklin" wordmark gold even in light mode — the one
    intentional brand-color touchpoint. */
-:root[data-theme="light"] .try-brand-name { color: #c9a227; }
+:root[data-theme="light"] .try-brand-name { color: #a67c00; }
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #1b1a17;
@@ -4725,7 +4717,7 @@ h2.dark-h,
   padding: 40px 28px;
 }
 .try-tools-inner {
-  max-width: 860px;
+  max-width: 980px;
   margin: 0 auto;
 }
 .try-tools-h {
@@ -4753,7 +4745,7 @@ h2.dark-h,
 }
 .try-tools-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 12px;
 }
 .try-tool-card {
@@ -4799,6 +4791,10 @@ h2.dark-h,
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+.try-mkt-foot .try-tool-card-price {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .try-mkt-provider {
   font-family: var(--font-mono);
@@ -6451,4 +6447,316 @@ html.is-mac .try-brand {
   gap: 12px;
   padding: 14px 20px;
   border-top: 1px solid var(--border, #e7e3da);
+}
+
+/* =====================================================
+   Desktop UI refresh — clearer Light hierarchy + motion
+   ===================================================== */
+
+html,
+body {
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.try-sidebar {
+  width: 264px;
+  padding: 14px 12px;
+  transition:
+    width 0.22s cubic-bezier(0.2, 0.7, 0.2, 1),
+    padding 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.try-brand {
+  gap: 10px;
+  padding: 2px 7px 12px;
+}
+
+.try-brand-ring {
+  width: 28px;
+  height: 28px;
+  box-shadow: 0 1px 2px rgba(15, 18, 22, 0.08);
+}
+
+.try-brand-name {
+  font-size: 21px;
+  letter-spacing: -0.02em;
+}
+
+.try-nav-item {
+  min-height: 38px;
+  gap: 10px;
+  border-radius: 10px;
+  padding: 8px 10px;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.try-nav-item > svg:first-child,
+.try-more-item > svg:first-child {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+  transition: color 0.16s ease, transform 0.16s ease;
+}
+
+.try-nav-item:hover {
+  transform: translateX(2px);
+}
+
+.try-nav-item:hover > svg:first-child,
+.try-more-item:hover > svg:first-child {
+  transform: scale(1.06);
+}
+
+.try-history-item {
+  min-height: 34px;
+  padding: 7px 10px;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.try-history-item:hover { transform: translateX(2px); }
+.try-history-icon { width: 16px; height: 16px; stroke-width: 1.8; }
+
+.try-lang-btn,
+.try-sidebar-toggle,
+.try-bar-more,
+.try-bar-share {
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.14s ease;
+}
+
+.try-lang-btn:hover,
+.try-sidebar-toggle:hover,
+.try-bar-more:hover,
+.try-bar-share:hover {
+  transform: translateY(-1px);
+}
+
+.try-lang-btn:active,
+.try-sidebar-toggle:active,
+.try-bar-more:active,
+.try-bar-share:active,
+.try-send:active:not(:disabled),
+.try-tool-icon:active:not(:disabled),
+.try-tool:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.try-sidebar-toggle,
+.try-bar-more,
+.try-bar-share {
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+}
+
+.try-lang-btn { width: 40px; height: 40px; }
+
+.try-tool svg { width: 17px; height: 17px; stroke-width: 1.8; }
+.try-action svg { width: 16px; height: 16px; }
+
+.try-composer {
+  border-radius: 22px;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.try-send {
+  width: 38px;
+  height: 38px;
+  transition:
+    background-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.14s ease;
+}
+
+.try-send:hover:not(:disabled) {
+  box-shadow: 0 6px 16px -8px rgba(0, 0, 0, 0.7);
+}
+
+.try-settings-menu,
+.try-submenu,
+.try-more-flyout,
+.try-topbar-menu,
+.try-ratio-menu {
+  box-shadow:
+    0 1px 2px rgba(15, 18, 22, 0.06),
+    0 18px 48px -18px rgba(15, 18, 22, 0.3);
+}
+
+.try-tool-card {
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.try-tool-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px -20px rgba(15, 18, 22, 0.45);
+}
+
+.try-empty,
+.try-tools-panel,
+.try-gallery,
+.try-wallet-panel,
+.try-phone {
+  animation: try-panel-enter 0.2s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.try-msg {
+  animation: try-message-enter 0.18s ease-out;
+}
+
+@keyframes try-panel-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes try-message-enter {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.try-nav-item:focus-visible,
+.try-history-item:focus-visible,
+.try-lang-btn:focus-visible,
+.try-sidebar-toggle:focus-visible,
+.try-bar-more:focus-visible,
+.try-bar-share:focus-visible,
+.try-tool:focus-visible,
+.try-tool-icon:focus-visible,
+.try-send:focus-visible,
+.try-suggestion:focus-visible,
+.try-select-option:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--gold-dim) 65%, white);
+  outline-offset: 2px;
+}
+
+:root[data-theme="light"] .try-shell,
+:root[data-theme="light"] .try-chat {
+  background: #fbfbfc;
+}
+
+:root[data-theme="light"] .try-sidebar {
+  background: #f4f5f6;
+  border-right-color: #e4e5e7;
+  box-shadow: inset -1px 0 rgba(255, 255, 255, 0.7);
+}
+
+:root[data-theme="light"] .try-chat-bar {
+  background: rgba(251, 251, 252, 0.88);
+  border-bottom-color: rgba(25, 28, 32, 0.07);
+  backdrop-filter: saturate(130%) blur(14px);
+  -webkit-backdrop-filter: saturate(130%) blur(14px);
+}
+
+:root[data-theme="light"] .try-nav-item:hover {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+:root[data-theme="light"] .try-nav-item.is-active,
+:root[data-theme="light"] .try-more-item.is-active {
+  color: var(--fg);
+  background: #ffffff;
+  border-color: transparent;
+  box-shadow:
+    0 1px 2px rgba(15, 18, 22, 0.06),
+    0 5px 16px -14px rgba(15, 18, 22, 0.35);
+}
+
+:root[data-theme="light"] .try-nav-item.is-active svg,
+:root[data-theme="light"] .try-more-item.is-active svg {
+  color: var(--gold-dim);
+}
+
+:root[data-theme="light"] .try-history-item:hover {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+:root[data-theme="light"] .try-history-item.is-active {
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 18, 22, 0.06);
+}
+
+:root[data-theme="light"] .try-input-wrap {
+  background: linear-gradient(180deg, transparent, #fbfbfc 28%);
+}
+
+:root[data-theme="light"] .try-composer {
+  background: #ffffff;
+  border-color: #dfe1e4;
+  box-shadow:
+    0 1px 2px rgba(15, 18, 22, 0.04),
+    0 10px 32px -22px rgba(15, 18, 22, 0.35);
+}
+
+:root[data-theme="light"] .try-composer:focus-within {
+  border-color: #b9bcc2;
+  box-shadow:
+    0 0 0 3px rgba(32, 33, 36, 0.045),
+    0 14px 36px -24px rgba(15, 18, 22, 0.4);
+}
+
+:root[data-theme="light"] .try-msg-user .try-msg-body,
+:root[data-theme="light"] .try-toolgroup {
+  background: #f3f4f5;
+}
+
+:root[data-theme="light"] .try-settings-menu,
+:root[data-theme="light"] .try-submenu,
+:root[data-theme="light"] .try-more-flyout,
+:root[data-theme="light"] .try-topbar-menu,
+:root[data-theme="light"] .try-ratio-menu {
+  background: rgba(255, 255, 255, 0.97);
+  border-color: #dfe1e4;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+:root[data-theme="light"] .try-tool-card,
+:root[data-theme="light"] .try-wallet-stat,
+:root[data-theme="light"] .try-md-table-card {
+  border-color: #e3e4e6;
+  box-shadow: 0 1px 2px rgba(15, 18, 22, 0.025);
+}
+
+:root[data-theme="light"] .try-tool-card:hover {
+  border-color: #d2d4d8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html,
+  body,
+  .try-sidebar,
+  .try-nav-item,
+  .try-history-item,
+  .try-lang-btn,
+  .try-sidebar-toggle,
+  .try-bar-more,
+  .try-bar-share,
+  .try-tool-card,
+  .try-composer,
+  .try-send,
+  .try-msg,
+  .try-empty,
+  .try-tools-panel,
+  .try-gallery,
+  .try-wallet-panel,
+  .try-phone {
+    animation: none !important;
+    transition: none !important;
+  }
 }

@@ -1,6 +1,4 @@
-// App shell — i18n provider + theme bootstrap + the main chat surface. v0.1
-// has only the chat view; later phases insert routing (files / terminal /
-// plugins panels) here.
+// Desktop shell — i18n, theme bootstrap, and the Franklin workspace surface.
 
 import { useEffect } from "react";
 import { FranklinChat } from "./components/FranklinChat";
@@ -20,10 +18,8 @@ function ThemeBoot() {
 const IS_ELECTRON = typeof window !== "undefined" && !!window.__FRANKLIN__;
 
 export default function App() {
-  // Tab title reflects local-only nature so users find the WebUI tab among
-  // many open tabs while the CLI owns the terminal.
   useEffect(() => {
-    document.title = "Franklin · Local WebUI";
+    document.title = "Franklin";
   }, []);
 
   useEffect(() => {

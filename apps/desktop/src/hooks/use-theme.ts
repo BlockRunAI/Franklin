@@ -1,22 +1,23 @@
-// Theme (Gold / Light / Dark). Applied via `data-theme` on <html>, persisted
-// to localStorage. Same model as franklin-run's useTheme — ported verbatim
-// because it has no Next.js dependency.
+// Theme (Light / Gold / Dark). Applied via `data-theme` on <html>, persisted
+// to localStorage. Existing user choices are preserved; fresh installs start
+// in Light.
 
 import { useEffect, useState } from "react";
 
 export type Theme = "gold" | "light" | "dark";
 const KEY = "franklin-webui-theme";
+const DEFAULT_THEME: Theme = "light";
 
 export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>("gold");
+  const [theme, setThemeState] = useState<Theme>(DEFAULT_THEME);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(KEY) as Theme | null;
-      const next: Theme = saved === "light" || saved === "dark" || saved === "gold" ? saved : "gold";
+      const next: Theme = saved === "light" || saved === "dark" || saved === "gold" ? saved : DEFAULT_THEME;
       setThemeState(next);
       applyTheme(next);
-    } catch { /* no localStorage — defaults to gold */ }
+    } catch { /* no localStorage — defaults to light */ }
   }, []);
 
   const setTheme = (t: Theme) => {
@@ -29,6 +30,5 @@ export function useTheme() {
 }
 
 function applyTheme(t: Theme) {
-  if (t === "gold") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.setAttribute("data-theme", t);
+  document.documentElement.setAttribute("data-theme", t);
 }

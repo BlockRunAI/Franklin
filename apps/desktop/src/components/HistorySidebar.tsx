@@ -44,14 +44,14 @@ export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDel
   const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
 
   const nav: { key: TryView; icon: React.ReactNode; label: string }[] = [
-    { key: "tools", icon: <Blocks className="h-4 w-4" />, label: t.marketplace },
-    { key: "gallery", icon: <Images className="h-4 w-4" />, label: t.gallery },
-    { key: "cli", icon: <Terminal className="h-4 w-4" />, label: t.cli },
+    { key: "tools", icon: <Blocks className="h-[18px] w-[18px]" />, label: t.marketplace },
+    { key: "gallery", icon: <Images className="h-[18px] w-[18px]" />, label: t.gallery },
+    { key: "cli", icon: <Terminal className="h-[18px] w-[18px]" />, label: t.cli },
   ];
   const moreNav: { key: TryView; icon: React.ReactNode; label: string }[] = [
-    { key: "skills", icon: <Sparkles className="h-4 w-4" />, label: t.skills },
-    { key: "phone", icon: <Phone className="h-4 w-4" />, label: t.phone },
-    { key: "wallet", icon: <Wallet className="h-4 w-4" />, label: t.wallet },
+    { key: "skills", icon: <Sparkles className="h-[18px] w-[18px]" />, label: t.skills },
+    { key: "phone", icon: <Phone className="h-[18px] w-[18px]" />, label: t.phone },
+    { key: "wallet", icon: <Wallet className="h-[18px] w-[18px]" />, label: t.wallet },
   ];
   const moreActive = moreNav.some((n) => n.key === view);
 
@@ -66,12 +66,12 @@ export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDel
       </button>
 
       <button className="try-nav-item" onClick={onNew}>
-        <Plus className="h-4 w-4" />
+        <Plus className="h-[18px] w-[18px]" />
         {t.newChat}
       </button>
 
       <button className="try-nav-item" onClick={() => setSearchOpen(true)}>
-        <Search className="h-4 w-4" />
+        <Search className="h-[18px] w-[18px]" />
         {t.searchChats}
       </button>
 
@@ -92,9 +92,9 @@ export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDel
         className={`try-nav-item try-more-btn${moreActive ? " is-active" : ""}`}
         onClick={() => (moreOpen ? setMoreOpen(false) : openMore())}
       >
-        <Grid2x2 className="h-4 w-4" />
+        <Grid2x2 className="h-[18px] w-[18px]" />
         <span className="try-more-label">{t.more}</span>
-        <ChevronRight className="try-more-chevron h-4 w-4" />
+        <ChevronRight className="try-more-chevron h-[17px] w-[17px]" />
       </button>
 
       <div className="try-history">
@@ -122,7 +122,7 @@ export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDel
                     onDelete(c.id);
                   }}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-4 w-4" />
                 </button>
               </div>
             ))}

@@ -26,8 +26,8 @@ export function MoreMenu() {
     }
   };
   const themeOptions: { id: Theme; label: string }[] = [
-    { id: "gold", label: t.themeGold },
     { id: "light", label: t.themeLight },
+    { id: "gold", label: t.themeGold },
     { id: "dark", label: t.themeDark },
   ];
   const [open, setOpen] = useState(false);
