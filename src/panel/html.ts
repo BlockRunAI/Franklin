@@ -713,7 +713,7 @@ a:hover { text-decoration:underline; }
           <button class="btn btn-onramp" id="wallet-onramp-btn">&#128179;&nbsp; Buy USDC with card</button>
           <span class="wallet-import-status" id="wallet-onramp-status"></span>
         </div>
-        <p class="wallet-hint" id="wallet-onramp-hint">Powered by Coinbase Onramp &middot; Base only &middot; 60+ fiat currencies</p>
+        <p class="wallet-hint" id="wallet-onramp-hint">Powered by Coinbase Onramp &middot; 60+ fiat currencies</p>
       </div>
 
       <div class="card">
@@ -1207,12 +1207,8 @@ async function loadWallet() {
     solanaBtn.classList.toggle('active', w.chain === 'solana');
   }
 
-  // Coinbase Onramp is Base-only — hide the buy button + hint on Solana.
-  const onrampActions = document.getElementById('wallet-onramp-actions');
-  const onrampHint = document.getElementById('wallet-onramp-hint');
-  const onBase = w.chain === 'base';
-  if (onrampActions) onrampActions.style.display = onBase ? '' : 'none';
-  if (onrampHint) onrampHint.style.display = onBase ? '' : 'none';
+  // Coinbase Onramp works on both chains — the gateway of the active chain
+  // mints the link, so the buy button stays visible on Base and Solana alike.
 
   // QR via server — never leak address to third parties.
   // Encode chain + USDC token in the QR payload so wallet apps land

@@ -8,8 +8,9 @@ import {
 import { type Chain, saveChain } from '../config.js';
 
 export async function setupCommand(chainArg?: string) {
+  // Solana is the default chain; `franklin setup base` opts into Base.
   const chain: Chain =
-    chainArg === 'solana' ? 'solana' : 'base';
+    chainArg === 'base' ? 'base' : 'solana';
 
   if (chain === 'solana') {
     const wallets = scanSolanaWallets();
