@@ -3378,6 +3378,41 @@ test('paid media and Modal tools pass measured latency to recordUsage', async ()
     'ModalTerminate recordUsage must receive latencyMs');
 });
 
+// ─── ambiguous-settlement reservation guard (issue #128) ─────────────────
+//
+// Verified 2026-08-25: x402 is fire-and-forget per request. If the 30s budget
+// (or parent signal) aborts the signed, paid request mid-handshake, the server
+// may already have settled it on-chain. Releasing the reservation in that case
+// under-counts totalReserved() and lets the next hold() see headroom that
+// doesn't exist. The fix holds the reservation (errs tight) on the ambiguous
+// path and refetches the true on-chain balance. The regression asserts both the
+// ambiguity flag is surfaced from the payment helper and that each Modal paid
+// handler routes ambiguous settlements to a hold (invalidateBalance) instead of
+// a release.
+test('postWithPayment surfaces settlement ambiguity and Modal handlers hold on ambiguous settlement', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const readDist = (file) => fs.readFileSync(
+    path.join(process.cwd(), 'dist', 'tools', file),
+    'utf-8',
+  );
+
+  const modal = readDist('modal.js');
+  // The payment helper must track whether it dispatched the signed request and
+  // surface that as an ambiguity flag on the aborted/error path.
+  assert.match(modal, /settlementAmbiguous:/, 'postWithPayment must surface settlement ambiguity');
+  assert.match(modal, /paidRequestDispatched/, 'postWithPayment must track whether the paid request was dispatched');
+  // Every Modal paid handler must route an ambiguous settlement to a balance
+  // invalidation (err-tight, keep the reservation held) rather than a release.
+  assert.equal((modal.match(/if \(settlementAmbiguous\)/g) ?? []).length, 4,
+    'all four Modal paid handlers must guard the ambiguous-settlement path');
+  assert.match(modal, /settlementAmbiguous\)\s*\{\s*walletReservation\.invalidateBalance\(\)/,
+    'ambiguous settlement must invalidate the balance cache (keep reservation held)');
+  // Sanity: the normal path must still release.
+  assert.match(modal, /walletReservation\.release\(reservation\)/,
+    'definitive outcomes must still release the reservation');
+});
+
 // ─── stripLargeImageData: prevent multi-MB session jsonl files ─────
 //
 // Verified 2026-05-05: a 5-turn session with .png reads grew to 12 MB

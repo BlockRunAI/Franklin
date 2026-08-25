@@ -181,7 +181,19 @@ async function postWithPayment(
   resourceDescription: string,
   abortSignal: AbortSignal,
   timeoutMs: number,
-): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; raw: string }> {
+): Promise<{
+  ok: boolean;
+  status: number;
+  body: Record<string, unknown>;
+  raw: string;
+  /**
+   * True when the paid x402 request was dispatched but its outcome is unknown
+   * (the shared 30s budget expired mid-handshake). x402 is fire-and-forget, so
+   * an aborted paid request may already have settled on-chain. Callers should
+   * err toward "spent" and keep the reservation held in this case.
+   */
+  settlementAmbiguous: boolean;
+}> {
   const chain = loadChain();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -192,6 +204,9 @@ async function postWithPayment(
   abortSignal.addEventListener('abort', onParentAbort, { once: true });
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
 
+  // Did we dispatch the signed (paid) request? Only then is an abort ambiguous.
+  let paidRequestDispatched = false;
+
   try {
     const payload = JSON.stringify(body);
     let response = await fetch(endpoint, { method: 'POST', signal: ctrl.signal, headers, body: payload });
@@ -199,8 +214,9 @@ async function postWithPayment(
     if (response.status === 402) {
       const paymentHeaders = await signPayment(response, chain, endpoint, resourceDescription);
       if (!paymentHeaders) {
-        return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '' };
+        return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '', settlementAmbiguous: false };
       }
+      paidRequestDispatched = true;
       response = await fetch(endpoint, {
         method: 'POST',
         signal: ctrl.signal,
@@ -212,7 +228,19 @@ async function postWithPayment(
     const raw = await response.text().catch(() => '');
     let parsed: Record<string, unknown> = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { /* leave as {} */ }
-    return { ok: response.ok, status: response.status, body: parsed, raw };
+    return { ok: response.ok, status: response.status, body: parsed, raw, settlementAmbiguous: false };
+  } catch (err) {
+    // Only reachable via abort (parent signal or the 30s budget) or a network
+    // error. If the signed payment request had been dispatched, the settlement
+    // is ambiguous — the server may already have settled it even though we
+    // never saw the response. Surface that so the reservation stays held.
+    return {
+      ok: false,
+      status: 0,
+      body: {},
+      raw: '',
+      settlementAmbiguous: paidRequestDispatched,
+    };
   } finally {
     clearTimeout(timer);
     abortSignal.removeEventListener('abort', onParentAbort);
@@ -380,6 +408,7 @@ export const modalCreateCapability: CapabilityHandler = {
 
     // Wallet reservation — block over-spend if other in-flight calls hold balance.
     let reservation: ReservationToken | null = null;
+    let settlementAmbiguous = false;
     try {
       reservation = await walletReservation.hold(price);
       if (!reservation) {
@@ -407,6 +436,7 @@ export const modalCreateCapability: CapabilityHandler = {
         ctx.abortSignal,
         90_000, // 90s — sandbox cold-start can be slow on fresh GPU pulls
       );
+      settlementAmbiguous = res.settlementAmbiguous;
       const latencyMs = Date.now() - callStartedAt;
 
       if (!res.ok) {
@@ -458,7 +488,14 @@ export const modalCreateCapability: CapabilityHandler = {
           `Next: ModalExec({ sandbox_id: "${sandboxId}", command: ["python","-c","print(1)"] })`,
       };
     } finally {
-      walletReservation.release(reservation);
+      // If the paid request may have settled (aborted mid-handshake), keep the
+      // reservation held — err tight, never loose. It self-heals at the next
+      // session/ledger reset or a fresh balance refetch on the next hold.
+      if (settlementAmbiguous) {
+        walletReservation.invalidateBalance();
+      } else {
+        walletReservation.release(reservation);
+      }
     }
   },
 };
@@ -521,6 +558,7 @@ export const modalExecCapability: CapabilityHandler = {
     }
 
     let reservation: ReservationToken | null = null;
+    let settlementAmbiguous = false;
     try {
       reservation = await walletReservation.hold(EXEC_PRICE_USD);
       // For micro-cost calls don't hard-block on insufficient — just proceed.
@@ -556,6 +594,7 @@ export const modalExecCapability: CapabilityHandler = {
         ctx.abortSignal,
         Math.max(30_000, ((coercedTimeout ?? 300) + 30) * 1000),
       );
+      settlementAmbiguous = res.settlementAmbiguous;
       const latencyMs = Date.now() - callStartedAt;
 
       if (!res.ok) {
@@ -605,7 +644,11 @@ export const modalExecCapability: CapabilityHandler = {
       const isError = rawExit !== null ? rawExit !== 0 : !hasAnyOutput;
       return { output: sections.join('\n\n'), isError };
     } finally {
-      walletReservation.release(reservation);
+      if (settlementAmbiguous) {
+        walletReservation.invalidateBalance();
+      } else {
+        walletReservation.release(reservation);
+      }
     }
   },
 };
@@ -633,6 +676,7 @@ export const modalStatusCapability: CapabilityHandler = {
     if (!sandbox_id) return { output: 'Error: sandbox_id is required', isError: true };
 
     let reservation: ReservationToken | null = null;
+    let settlementAmbiguous = false;
     try { reservation = await walletReservation.hold(STATUS_PRICE_USD); } catch { /* ignore */ }
 
     try {
@@ -644,6 +688,7 @@ export const modalStatusCapability: CapabilityHandler = {
         ctx.abortSignal,
         30_000,
       );
+      settlementAmbiguous = res.settlementAmbiguous;
       const latencyMs = Date.now() - callStartedAt;
 
       if (!res.ok) {
@@ -657,7 +702,11 @@ export const modalStatusCapability: CapabilityHandler = {
       const extra = JSON.stringify(res.body, null, 2);
       return { output: `Sandbox \`${sandbox_id}\` status: **${status}**\n\n${extra}` };
     } finally {
-      walletReservation.release(reservation);
+      if (settlementAmbiguous) {
+        walletReservation.invalidateBalance();
+      } else {
+        walletReservation.release(reservation);
+      }
     }
   },
 };
@@ -687,6 +736,7 @@ export const modalTerminateCapability: CapabilityHandler = {
     if (!sandbox_id) return { output: 'Error: sandbox_id is required', isError: true };
 
     let reservation: ReservationToken | null = null;
+    let settlementAmbiguous = false;
     try { reservation = await walletReservation.hold(TERMINATE_PRICE_USD); } catch { /* ignore */ }
 
     try {
@@ -698,6 +748,7 @@ export const modalTerminateCapability: CapabilityHandler = {
         ctx.abortSignal,
         30_000,
       );
+      settlementAmbiguous = res.settlementAmbiguous;
       const latencyMs = Date.now() - callStartedAt;
 
       // Always remove from tracker — even on failure, retrying is wasteful.
@@ -717,7 +768,11 @@ export const modalTerminateCapability: CapabilityHandler = {
 
       return { output: `Sandbox \`${sandbox_id}\` terminated.` };
     } finally {
-      walletReservation.release(reservation);
+      if (settlementAmbiguous) {
+        walletReservation.invalidateBalance();
+      } else {
+        walletReservation.release(reservation);
+      }
     }
   },
 };
