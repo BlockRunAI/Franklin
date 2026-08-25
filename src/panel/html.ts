@@ -1251,6 +1251,10 @@ async function loadWallet() {
     baseBtn.disabled = true;
     solanaBtn.disabled = true;
     note.textContent = 'Switching to ' + target + '…';
+    // The onramp status (e.g. a popup-blocked Coinbase link) belongs to the
+    // previous chain's wallet — a stale link would fund the wrong chain.
+    const onrampStatus = document.getElementById('wallet-onramp-status');
+    if (onrampStatus) onrampStatus.textContent = '';
     try {
       const r = await fetch('/api/chain', {
         method: 'POST',
