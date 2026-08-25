@@ -1,0 +1,111 @@
+name: Release (macOS + Windows)
+
+# Builds Franklin Desktop for BOTH macOS and Windows on their own native
+# runners, then collects every installer into a single GitHub Release.
+#
+# Why a matrix of native runners (not cross-compilation): the app bundles the
+# Franklin agent, whose native deps (sharp, bufferutil, ...) are platform- and
+# arch-specific. Each runner's `npm install` resolves the correct binaries for
+# that OS — a macOS build can't produce working Windows binaries and vice versa.
+#
+# Trigger:
+#   • Manually — Actions tab → "Run workflow" (builds + uploads artifacts).
+#   • Push a tag `vX.Y.Z` — also publishes all installers to a GitHub Release.
+#
+# Signing: none yet. macOS is built unsigned (identity: null) and Windows is
+# unsigned too, so first-launch will warn (Gatekeeper / SmartScreen). Add an
+# Apple Developer ID + notarization and a Windows Authenticode cert later via
+# repo secrets — the build steps already disable auto-discovery so unsigned
+# builds don't fail.
+
+on:
+  workflow_dispatch:
+    inputs:
+      franklin_ref:
+        description: "Branch/tag of BlockRunAI/Franklin to bundle (default: its default branch)"
+        required: false
+        default: ""
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # needed to create a Release on tag builds
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+            build_script: dist:mac
+            artifacts: |
+              franklin-desktop/release/*.dmg
+              franklin-desktop/release/*.dmg.blockmap
+          - os: windows-latest
+            name: Windows
+            build_script: dist:win
+            artifacts: |
+              franklin-desktop/release/*.exe
+              franklin-desktop/release/*.exe.blockmap
+
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Lay out both repos as SIBLINGS so the desktop's `file:../Franklin`
+      # dependency and `extraResources` ("../Franklin/...") resolve:
+      #   <workspace>/franklin-desktop
+      #   <workspace>/Franklin
+      - name: Checkout franklin-desktop
+        uses: actions/checkout@v4
+        with:
+          path: franklin-desktop
+
+      - name: Checkout Franklin agent (public)
+        uses: actions/checkout@v4
+        with:
+          repository: BlockRunAI/Franklin
+          ref: ${{ github.event.inputs.franklin_ref }}
+          path: Franklin
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Build the Franklin agent first — electron-builder copies its dist +
+      # node_modules into the installer. This `npm install` pulls the native
+      # variants for THIS runner's OS/arch (e.g. sharp-win32-x64 on Windows,
+      # sharp-darwin-arm64 on macOS).
+      - name: Install & build Franklin agent
+        working-directory: Franklin
+        run: |
+          npm install
+          npm run build
+
+      - name: Install desktop deps
+        working-directory: franklin-desktop
+        run: npm install
+
+      - name: Build & package
+        working-directory: franklin-desktop
+        run: npm run ${{ matrix.build_script }}
+        env:
+          # No signing certs configured yet — keep unsigned builds from failing.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: franklin-${{ matrix.name }}-installer
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+
+      # On tag builds, attach this platform's installers to the shared Release.
+      - name: Publish to Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifacts }}
