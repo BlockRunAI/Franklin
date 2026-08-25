@@ -62,11 +62,14 @@ program
   )
   .option('--debug', 'Enable debug logging')
   .option('--trust', 'Trust mode — skip permission prompts for all tools')
+  .option('--approval-mode <mode>', 'Tool permissions: default, plan, trust, or deny-all')
+  .option('-C, --work-dir <dir>', 'Working directory exposed to file and shell tools (default: cwd)')
   .option('--from <agent>', 'Start a new Franklin session from another agent context (claude or codex)')
   .option('-r, --resume [sessionId]', 'Resume a session by ID (or show picker if omitted)')
   .option('-c, --continue', 'Continue the most recent session in this directory')
   .option('--max-spend <usd>', 'Hard USD cap on total session API spend — session stops when exceeded')
   .option('-p, --prompt <text>', 'Run a single prompt non-interactively (for batch/scripted use)')
+  .option('-o, --output-format <format>', 'One-shot output: text, json, or stream-json', 'text')
   .option('--approve-trades', 'Non-interactive runs: auto-approve trade plans that fit within --max-spend (default: reject all trades)')
   .action((fromSessionId: string | undefined, options) => startCommand({ ...options, fromSessionId, version }));
 
@@ -79,6 +82,8 @@ program
   )
   .option('--debug', 'Enable debug logging')
   .option('--trust', 'Trust mode — skip permission prompts for all tools')
+  .option('--approval-mode <mode>', 'Tool permissions: default, plan, trust, or deny-all')
+  .option('-C, --work-dir <dir>', 'Working directory exposed to file and shell tools (default: cwd)')
   .action((sessionId: string | undefined, options) =>
     startCommand({ ...options, version, resume: sessionId ?? 'picker' })
   );
@@ -338,14 +343,21 @@ const args = process.argv.slice(2);
 const firstArg = args[0];
 const HELP_FLAGS = new Set(['-h', '--help']);
 const VERSION_FLAGS = new Set(['-V', '--version']);
-const START_ONLY_FLAGS = new Set(['--trust', '--debug', '-m', '--model', '--from', '-r', '--resume', '-c', '--continue', '-p', '--prompt', '--max-spend', '--approve-trades']);
+const START_ONLY_FLAGS = new Set([
+  '--trust', '--debug', '-m', '--model', '--approval-mode', '-C', '--work-dir', '--from',
+  '-r', '--resume', '-c', '--continue', '-p', '--prompt', '-o', '--output-format',
+  '--max-spend', '--approve-trades',
+]);
 
 function hasAnyFlag(argv: string[], flags: Set<string>): boolean {
   return argv.some(arg => flags.has(arg));
 }
 
 function hasStartOnlyFlag(argv: string[]): boolean {
-  return argv.some(arg => START_ONLY_FLAGS.has(arg));
+  return argv.some(arg =>
+    START_ONLY_FLAGS.has(arg)
+    || [...START_ONLY_FLAGS].some(flag => flag.startsWith('--') && arg.startsWith(`${flag}=`))
+  );
 }
 
 function parseStartFlags(argv: string[], startIdx = 0): Record<string, unknown> {
@@ -354,10 +366,27 @@ function parseStartFlags(argv: string[], startIdx = 0): Record<string, unknown> 
     const arg = argv[i];
     if (arg === '--trust') opts.trust = true;
     else if (arg === '--debug') opts.debug = true;
+    else if (arg.startsWith('--model=')) opts.model = arg.slice('--model='.length);
     else if ((arg === '-m' || arg === '--model') && argv[i + 1]) {
       opts.model = argv[++i];
+    } else if (arg.startsWith('--approval-mode=')) {
+      opts.approvalMode = arg.slice('--approval-mode='.length);
+    } else if (arg === '--approval-mode' && argv[i + 1]) {
+      opts.approvalMode = argv[++i];
+    } else if (arg.startsWith('--work-dir=')) {
+      opts.workDir = arg.slice('--work-dir='.length);
+    } else if ((arg === '-C' || arg === '--work-dir') && argv[i + 1]) {
+      opts.workDir = argv[++i];
+    } else if (arg.startsWith('--prompt=')) {
+      opts.prompt = arg.slice('--prompt='.length);
     } else if ((arg === '-p' || arg === '--prompt') && argv[i + 1]) {
       opts.prompt = argv[++i];
+    } else if (arg.startsWith('--output-format=')) {
+      opts.outputFormat = arg.slice('--output-format='.length);
+    } else if ((arg === '-o' || arg === '--output-format') && argv[i + 1]) {
+      opts.outputFormat = argv[++i];
+    } else if (arg.startsWith('--max-spend=')) {
+      opts.maxSpend = arg.slice('--max-spend='.length);
     } else if (arg === '--max-spend' && argv[i + 1]) {
       opts.maxSpend = argv[++i];
     } else if (arg === '--approve-trades') {

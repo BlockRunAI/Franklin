@@ -79,6 +79,32 @@ That's it. Zero signup, zero credit card, zero phone verification. Send **$5 of 
 npx @blockrun/franklin
 ```
 
+### Use Franklin from Desktop, CI, or another agent host
+
+One-shot mode has a stable, versioned machine interface. Choose the project
+directory and permission boundary explicitly instead of depending on the
+parent process's current directory or terminal prompts:
+
+```bash
+# One JSON result after the run finishes
+franklin -C ./my-project -p "review this repository" \
+  --approval-mode plan --output-format json
+
+# Newline-delimited lifecycle events for a live Desktop/Studio UI
+franklin -C ./my-project -p "run the tests and explain failures" \
+  --approval-mode deny-all --output-format stream-json
+```
+
+Permission modes are `default` (interactive approval), `plan` (read-only),
+`trust` (no tool prompts), and `deny-all`. `--trust` remains available as a
+backwards-compatible shortcut. One-shot runs cannot use `default`, because no
+person is present to answer an approval prompt.
+
+The `stream-json` protocol emits one JSON object per line with
+`schemaVersion: 1`, including session, message, reasoning, tool, usage, and
+terminal events. Large full tool logs and image payloads are intentionally
+excluded from IPC events.
+
 ### Install troubleshooting
 
 | Symptom | Cause | Fix |

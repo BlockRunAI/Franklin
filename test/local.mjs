@@ -31,7 +31,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFileSync, spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unwatchFile, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unwatchFile, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -176,6 +176,89 @@ test('--prompt preserves non-zero exit code through the CLI entrypoint', async (
     result.stderr.includes('`--prompt` requires `--resume` to include an explicit session id.'),
     `Expected explicit batch-mode resume error.\nstderr:\n${result.stderr}`,
   );
+});
+
+test('start help exposes Studio-friendly work directory, permissions, and output flags', async () => {
+  const result = await runCli('', { args: [DIST, 'start', '--help'] });
+
+  assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
+  assert.ok(result.stdout.includes('--work-dir <dir>'), `Missing --work-dir.\nstdout:\n${result.stdout}`);
+  assert.ok(result.stdout.includes('--approval-mode <mode>'), `Missing --approval-mode.\nstdout:\n${result.stdout}`);
+  assert.ok(result.stdout.includes('--output-format <format>'), `Missing --output-format.\nstdout:\n${result.stdout}`);
+});
+
+test('one-shot integration flags fail fast with actionable validation', async () => {
+  const badFormat = await runCli('', {
+    args: [DIST, '--prompt', 'hello', '--output-format', 'xml'],
+  });
+  assert.equal(badFormat.code, 1);
+  assert.ok(badFormat.stderr.includes('Supported formats: text, json, stream-json'));
+
+  const interactiveJson = await runCli('', {
+    args: [DIST, '--output-format=json'],
+  });
+  assert.equal(interactiveJson.code, 1);
+  assert.ok(interactiveJson.stderr.includes('only available with `--prompt`'));
+
+  const interactiveApproval = await runCli('', {
+    args: [DIST, '--prompt=hello', '--approval-mode=default'],
+  });
+  assert.equal(interactiveApproval.code, 1);
+  assert.ok(interactiveApproval.stderr.includes('requires an interactive terminal'));
+
+  const missingDir = await runCli('', {
+    args: [DIST, '--prompt', 'hello', '--work-dir', join(tmpdir(), 'franklin-no-such-directory')],
+  });
+  assert.equal(missingDir.code, 1);
+  assert.ok(missingDir.stderr.includes('Working directory does not exist or is not a directory'));
+});
+
+test('stream-json records are versioned and omit oversized tool payloads', async () => {
+  const { oneShotStreamRecord } = await import('../dist/commands/start.js');
+
+  assert.deepEqual(oneShotStreamRecord({ kind: 'text_delta', text: 'hello' }), {
+    schemaVersion: 1,
+    type: 'message.delta',
+    delta: 'hello',
+  });
+
+  const toolRecord = oneShotStreamRecord({
+    kind: 'capability_done',
+    id: 'tool-1',
+    result: {
+      output: 'summary',
+      fullOutput: 'x'.repeat(100_000),
+      images: [{ mediaType: 'image/png', base64: 'secret-large-payload' }],
+    },
+  });
+  assert.deepEqual(toolRecord, {
+    schemaVersion: 1,
+    type: 'tool.done',
+    id: 'tool-1',
+    result: { output: 'summary' },
+  });
+});
+
+test('json and stream-json one-shot modes emit parseable protocol-only stdout', async () => {
+  const jsonRun = await runCli('', {
+    args: [DIST, '--model', 'nvidia/llama-4-maverick', '--prompt', '/exit', '--output-format', 'json', '-C', tmpdir()],
+  });
+  assert.equal(jsonRun.code, 0, `CLI exited non-zero.\nstdout:\n${jsonRun.stdout}\nstderr:\n${jsonRun.stderr}`);
+  const result = JSON.parse(jsonRun.stdout);
+  assert.equal(result.schemaVersion, 1);
+  assert.equal(result.type, 'result');
+  assert.equal(result.status, 'completed');
+  assert.equal(result.workingDir, realpathSync(tmpdir()));
+
+  const streamRun = await runCli('', {
+    args: [DIST, '--model', 'nvidia/llama-4-maverick', '--prompt', '/exit', '--output-format=stream-json'],
+  });
+  assert.equal(streamRun.code, 0, `CLI exited non-zero.\nstdout:\n${streamRun.stdout}\nstderr:\n${streamRun.stderr}`);
+  const records = streamRun.stdout.trim().split('\n').map((line) => JSON.parse(line));
+  assert.ok(records.every((record) => record.schemaVersion === 1));
+  assert.equal(records[0].type, 'session.started');
+  assert.equal(records.at(-1).type, 'turn.done');
+  assert.equal(records.at(-1).status, 'completed');
 });
 
 test('oneShotExitCodeForTurnReason treats only completed turns as success', async () => {

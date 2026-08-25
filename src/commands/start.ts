@@ -17,7 +17,10 @@ import { pickModel, resolveModel, resolveModelStrict } from '../ui/model-picker.
 import { loadMcpConfig } from '../mcp/config.js';
 import { connectMcpServers, disconnectMcpServers, getMcpServerInstructions } from '../mcp/client.js';
 import { ensureCodegraphIndex } from '../mcp/codegraph.js';
-import type { AgentConfig, Dialogue, StreamTurnDone } from '../agent/types.js';
+import type { AgentConfig, Dialogue, StreamEvent, StreamTurnDone } from '../agent/types.js';
+
+export type OneShotOutputFormat = 'text' | 'json' | 'stream-json';
+export type CliApprovalMode = NonNullable<AgentConfig['permissionMode']>;
 
 interface StartOptions {
   model?: string;
@@ -38,10 +41,70 @@ interface StartOptions {
   prompt?: string;
   /** Non-interactive runs: auto-approve trade plans that fit --max-spend. */
   approveTrades?: boolean;
+  /** Directory exposed to the agent's file and shell tools. */
+  workDir?: string;
+  /** Stable output contract for batch and Studio callers. */
+  outputFormat?: string;
+  /** Explicit tool permission policy. --trust remains a backwards-compatible alias. */
+  approvalMode?: string;
 }
 
 export async function startCommand(options: StartOptions) {
   const version = options.version ?? '1.0.0';
+
+  const outputFormat = parseOutputFormat(options.outputFormat);
+  if (!outputFormat) {
+    console.error(chalk.red(`Unknown --output-format: ${options.outputFormat}`));
+    console.error(chalk.dim('Supported formats: text, json, stream-json'));
+    process.exitCode = 1;
+    return;
+  }
+  if (!options.prompt && outputFormat !== 'text') {
+    console.error(chalk.red('`--output-format` is only available with `--prompt`.'));
+    process.exitCode = 1;
+    return;
+  }
+  // Machine-readable stdout must contain only protocol records. Informational
+  // resume/import status is still useful, but belongs on stderr in that mode.
+  const logStartupStatus = (message = '') => {
+    const target = outputFormat === 'text' ? process.stdout : process.stderr;
+    target.write(`${message}\n`);
+  };
+
+  const approvalMode = parseApprovalMode(options.approvalMode);
+  if (options.approvalMode && !approvalMode) {
+    console.error(chalk.red(`Unknown --approval-mode: ${options.approvalMode}`));
+    console.error(chalk.dim('Supported modes: default, plan, trust, deny-all'));
+    process.exitCode = 1;
+    return;
+  }
+  if (options.trust && approvalMode && approvalMode !== 'trust') {
+    console.error(chalk.red('`--trust` cannot be combined with a different `--approval-mode`.'));
+    process.exitCode = 1;
+    return;
+  }
+  if (options.prompt && approvalMode === 'default') {
+    console.error(chalk.red('`--approval-mode default` requires an interactive terminal.'));
+    console.error(chalk.dim('For one-shot runs, choose plan, trust, or deny-all.'));
+    process.exitCode = 1;
+    return;
+  }
+
+  let workDir = process.cwd();
+  if (options.workDir) {
+    const requestedDir = path.resolve(options.workDir);
+    try {
+      if (!fs.statSync(requestedDir).isDirectory()) {
+        throw new Error('not a directory');
+      }
+      process.chdir(requestedDir);
+      workDir = process.cwd();
+    } catch {
+      console.error(chalk.red(`Working directory does not exist or is not a directory: ${requestedDir}`));
+      process.exitCode = 1;
+      return;
+    }
+  }
 
   // Early-validate explicit resume ID so a typo fails fast — before wallet
   // creation, banner, or MCP connection. Also resolve unambiguous prefixes so
@@ -71,7 +134,7 @@ export async function startCommand(options: StartOptions) {
   let continueResolvedId: string | undefined;
   if (options.continue && !options.resume) {
     const { findLatestSessionForDir } = await import('../ui/session-picker.js');
-    continueResolvedId = findLatestSessionForDir(process.cwd())?.id;
+    continueResolvedId = findLatestSessionForDir(workDir)?.id;
   }
 
   // Sessions are wallet-bound: the conversation, audit trail, and tool
@@ -90,7 +153,7 @@ export async function startCommand(options: StartOptions) {
     const { loadSessionMeta } = await import('../session/storage.js');
     const sessMeta = loadSessionMeta(resumeIdEarly);
     if (sessMeta?.chain && sessMeta.chain !== chain) {
-      console.log(chalk.dim(`  Restoring session's chain: ${sessMeta.chain} (default was ${chain}; session is wallet-bound to ${sessMeta.chain})`));
+      logStartupStatus(chalk.dim(`  Restoring session's chain: ${sessMeta.chain} (default was ${chain}; session is wallet-bound to ${sessMeta.chain})`));
       chain = sessMeta.chain;
     } else if (sessMeta?.chain) {
       chain = sessMeta.chain;
@@ -130,8 +193,6 @@ export async function startCommand(options: StartOptions) {
     model = 'blockrun/auto';
   }
 
-  let workDir = process.cwd();
-
   let importedKickoffPrompt: string | undefined;
   if (options.from) {
     const { importExternalSessionAsFranklin, parseExternalAgentSource } = await import('../session/from-import.js');
@@ -145,7 +206,7 @@ export async function startCommand(options: StartOptions) {
 
     try {
       const imported = await importExternalSessionAsFranklin(source, options.fromSessionId, { model, workDir });
-      if (imported.imported.cwd) {
+      if (imported.imported.cwd && !options.workDir) {
         try {
           process.chdir(imported.imported.cwd);
           workDir = process.cwd();
@@ -161,10 +222,10 @@ export async function startCommand(options: StartOptions) {
         'Do not claim you resumed or modified the source agent session. This is a new Franklin session with imported context awareness.',
         'If the next action is clear, offer to proceed; if it is not clear, ask one concise question.',
       ].join('\n');
-      console.log(chalk.green(`  Imported ${source} context into Franklin session ${imported.sessionId.slice(0, 24)}…`));
-      console.log(chalk.dim(`  Source session: ${imported.imported.id}`));
-      if (imported.imported.cwd) console.log(chalk.dim(`  Dir: ${workDir}`));
-      console.log('');
+      logStartupStatus(chalk.green(`  Imported ${source} context into Franklin session ${imported.sessionId.slice(0, 24)}…`));
+      logStartupStatus(chalk.dim(`  Source session: ${imported.imported.id}`));
+      if (imported.imported.cwd) logStartupStatus(chalk.dim(`  Dir: ${workDir}`));
+      logStartupStatus();
     } catch (err) {
       console.error(chalk.red((err as Error).message));
       process.exitCode = 1;
@@ -203,7 +264,9 @@ export async function startCommand(options: StartOptions) {
       capabilities,
       maxTurns: 100,
       workingDir: workDir,
-      permissionMode: 'trust',
+      // Keep the historical one-shot default (`trust`) for compatibility,
+      // while allowing Studio and CI callers to opt into safer policies.
+      permissionMode: approvalMode ?? 'trust',
       debug: options.debug,
       showPrefetchStatus: false,
       resumeSessionId:
@@ -215,7 +278,7 @@ export async function startCommand(options: StartOptions) {
         : {}),
     };
 
-    const exitCode = await runOneShot(agentConfig, options.prompt);
+    const exitCode = await runOneShot(agentConfig, options.prompt, outputFormat);
     flushStats();
     process.exitCode = exitCode;
     return;
@@ -403,7 +466,7 @@ export async function startCommand(options: StartOptions) {
     // Non-TTY (piped) input = scripted mode → trust all tools automatically.
     // Interactive TTY = default mode (prompts for Bash/Write/Edit).
     // --prompt is also scripted; batch callers never see a TTY.
-    permissionMode: (options.trust || options.prompt || !process.stdin.isTTY) ? 'trust' : 'default',
+    permissionMode: approvalMode ?? ((options.trust || options.prompt || !process.stdin.isTTY) ? 'trust' : 'default'),
     debug: options.debug,
     showPrefetchStatus: process.stdin.isTTY,
     resumeSessionId,
@@ -452,6 +515,73 @@ export function oneShotExitCodeForTurnReason(reason: StreamTurnDone['reason']): 
   return reason === 'completed' ? 0 : 1;
 }
 
+function parseOutputFormat(value?: string): OneShotOutputFormat | undefined {
+  const normalized = value ?? 'text';
+  return normalized === 'text' || normalized === 'json' || normalized === 'stream-json'
+    ? normalized
+    : undefined;
+}
+
+function parseApprovalMode(value?: string): CliApprovalMode | undefined {
+  if (value == null) return undefined;
+  return value === 'default' || value === 'plan' || value === 'trust' || value === 'deny-all'
+    ? value
+    : undefined;
+}
+
+/**
+ * Versioned JSONL contract for Desktop/Studio and other process integrations.
+ * Deliberately omits fullOutput and base64 images so a single tool event cannot
+ * unexpectedly flood an IPC channel; callers still receive the normal result.
+ */
+export function oneShotStreamRecord(event: StreamEvent): Record<string, unknown> {
+  const base = { schemaVersion: 1 };
+  switch (event.kind) {
+    case 'text_delta':
+      return { ...base, type: 'message.delta', delta: event.text };
+    case 'thinking_delta':
+      return { ...base, type: 'reasoning.delta', delta: event.text };
+    case 'capability_start':
+      return { ...base, type: 'tool.start', id: event.id, name: event.name, ...(event.preview ? { preview: event.preview } : {}) };
+    case 'capability_input_delta':
+      return { ...base, type: 'tool.input_delta', id: event.id, delta: event.delta };
+    case 'capability_progress':
+      return { ...base, type: 'tool.progress', id: event.id, text: event.text };
+    case 'capability_done':
+      return {
+        ...base,
+        type: 'tool.done',
+        id: event.id,
+        result: {
+          output: event.result.output,
+          ...(event.result.isError != null ? { isError: event.result.isError } : {}),
+          ...(event.result.diff ? { diff: event.result.diff } : {}),
+        },
+      };
+    case 'usage':
+      return {
+        ...base,
+        type: 'usage',
+        inputTokens: event.inputTokens,
+        outputTokens: event.outputTokens,
+        model: event.model,
+        calls: event.calls,
+        ...(event.tier ? { tier: event.tier } : {}),
+        ...(event.confidence != null ? { confidence: event.confidence } : {}),
+        ...(event.savings != null ? { savings: event.savings } : {}),
+        ...(event.contextPct != null ? { contextPct: event.contextPct } : {}),
+      };
+    case 'turn_done':
+      return {
+        ...base,
+        type: 'turn.done',
+        status: event.reason === 'completed' ? 'completed' : 'failed',
+        reason: event.reason,
+        ...(event.error ? { error: event.error } : {}),
+      };
+  }
+}
+
 /**
  * Headless approval policy. No human is present, so:
  *   - without --approve-trades: every trade plan is denied
@@ -484,29 +614,110 @@ export function createHeadlessApprovalFn(
   };
 }
 
-async function runOneShot(agentConfig: AgentConfig, prompt: string): Promise<number> {
+async function runOneShot(
+  agentConfig: AgentConfig,
+  prompt: string,
+  outputFormat: OneShotOutputFormat = 'text',
+): Promise<number> {
   let delivered = false;
   let exitCode = 0;
+  let response = '';
+  let sessionId: string | undefined;
+  let terminal: StreamTurnDone = { kind: 'turn_done', reason: 'error', error: 'Agent stopped without a terminal event.' };
+  const usage = { inputTokens: 0, outputTokens: 0, calls: 0 };
+  const tools: Array<Record<string, unknown>> = [];
+  const toolIndexes = new Map<string, number>();
+  const priorOnSessionStart = agentConfig.onSessionStart;
+  agentConfig.onSessionStart = (id) => {
+    sessionId = id;
+    priorOnSessionStart?.(id);
+    if (outputFormat === 'stream-json') {
+      writeJsonLine({ schemaVersion: 1, type: 'session.started', sessionId: id });
+    }
+  };
+
   const getInput = async () => {
     if (delivered) return null;
     delivered = true;
     return prompt;
   };
-  await interactiveSession(agentConfig, getInput, (event) => {
-    if (event.kind === 'text_delta') {
-      process.stdout.write(event.text);
-    } else if (event.kind === 'turn_done') {
-      exitCode = oneShotExitCodeForTurnReason(event.reason);
-      // Without this, headless callers see exit 1 + zero stderr — impossible
-      // to triage. Verified 2026-06-03: GPT-5 family failing with HTTP 400
-      // from the gateway looked identical to a network timeout in `-p` mode.
-      if (event.reason !== 'completed' && event.error) {
-        process.stderr.write(`\n${event.error}\n`);
+
+  try {
+    await interactiveSession(agentConfig, getInput, (event) => {
+      if (event.kind === 'text_delta') response += event.text;
+      if (event.kind === 'usage') {
+        usage.inputTokens += event.inputTokens;
+        usage.outputTokens += event.outputTokens;
+        usage.calls += event.calls;
       }
-      process.stdout.write('\n');
+      if (event.kind === 'capability_start') {
+        toolIndexes.set(event.id, tools.length);
+        tools.push({ id: event.id, name: event.name, status: 'running', ...(event.preview ? { preview: event.preview } : {}) });
+      }
+      if (event.kind === 'capability_done') {
+        const index = toolIndexes.get(event.id);
+        const completed = {
+          ...(index == null ? { id: event.id } : tools[index]),
+          status: event.result.isError ? 'error' : 'completed',
+          result: {
+            output: event.result.output,
+            ...(event.result.isError != null ? { isError: event.result.isError } : {}),
+            ...(event.result.diff ? { diff: event.result.diff } : {}),
+          },
+        };
+        if (index == null) tools.push(completed);
+        else tools[index] = completed;
+      }
+      if (event.kind === 'turn_done') {
+        terminal = event;
+        exitCode = oneShotExitCodeForTurnReason(event.reason);
+      }
+
+      if (outputFormat === 'text') {
+        if (event.kind === 'text_delta') process.stdout.write(event.text);
+        if (event.kind === 'turn_done') {
+          // Without this, headless callers see exit 1 + zero stderr — impossible
+          // to triage. Machine formats carry the error in their result record.
+          if (event.reason !== 'completed' && event.error) {
+            process.stderr.write(`\n${event.error}\n`);
+          }
+          process.stdout.write('\n');
+        }
+      } else if (outputFormat === 'stream-json') {
+        writeJsonLine(oneShotStreamRecord(event));
+      }
+    });
+  } catch (err) {
+    terminal = { kind: 'turn_done', reason: 'error', error: (err as Error).message };
+    exitCode = 1;
+    if (outputFormat === 'text') {
+      process.stderr.write(`\n${terminal.error}\n`);
+    } else if (outputFormat === 'stream-json') {
+      writeJsonLine(oneShotStreamRecord(terminal));
     }
-  });
+  }
+
+  if (outputFormat === 'json') {
+    process.stdout.write(`${JSON.stringify({
+      schemaVersion: 1,
+      type: 'result',
+      status: terminal.reason === 'completed' ? 'completed' : 'failed',
+      reason: terminal.reason,
+      response,
+      ...(sessionId ? { sessionId } : {}),
+      model: agentConfig.model,
+      workingDir: agentConfig.workingDir,
+      usage,
+      tools,
+      ...(terminal.error ? { error: terminal.error } : {}),
+    })}\n`);
+  }
+
   return exitCode;
+}
+
+function writeJsonLine(record: Record<string, unknown>): void {
+  process.stdout.write(`${JSON.stringify(record)}\n`);
 }
 
 function buildResumeTranscript(history: Dialogue[]): Array<{ role: 'user' | 'assistant'; text: string }> {
