@@ -12,7 +12,7 @@
 import { useCallback, useRef, useState } from "react";
 import { agent } from "../lib/ws";
 import { useModels } from "./use-models";
-import type { AgentSendPayload, AgentStep, ServerMsg } from "../lib/wire";
+import type { AgentPermissionAsk, AgentSendPayload, AgentStep, ServerMsg } from "../lib/wire";
 
 export type ChatMode = "chat" | "image" | "video" | "music";
 
@@ -327,6 +327,17 @@ export function useFranklinChat(
             setGenConvId(null);
             clearMediaJob(convId);
             cancelRef.current = null;
+            break;
+          }
+          case "agent.permissionAsk": {
+            const p = msg.payload as AgentPermissionAsk;
+            const approved = window.confirm(
+              `Franklin wants to use ${p.toolName}.\n\n${p.description}\n\nAllow this action?`,
+            );
+            agent.emit("agent.permissionResponse", {
+              askId: p.askId,
+              decision: approved ? "y" : "n",
+            });
             break;
           }
           default:

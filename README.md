@@ -565,6 +565,25 @@ npm run test:free-models # live matrix across current free NVIDIA models
 node dist/index.js --help
 ```
 
+### Desktop app
+
+The stable Franklin Desktop shell lives in [`apps/desktop`](apps/desktop). It uses
+the Franklin runtime built by this repository, so CLI and Desktop changes are
+versioned and tested together.
+
+```bash
+npm run desktop:dev       # local Desktop development
+npm run desktop:build     # type-check and build the renderer
+npm run desktop:package:mac
+npm run desktop:package:win
+```
+
+Packaged builds create a private, per-launch credential for the local Franklin
+service, keep cloud session sync off unless the user explicitly enables it, and
+use `Documents/Franklin` as the default workspace. Files outside that workspace
+remain available after an explicit approval, similar to other coding agents.
+Team Mode is being developed separately and is not part of this stable integration.
+
 For the recommended live validation order and failure triage, see [docs/live-e2e-checklist.md](docs/live-e2e-checklist.md).
 
 **Contributing:** open an issue first to discuss meaningful changes. PRs welcome on bugs, docs, new models in pricing, and new tools.

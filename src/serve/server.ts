@@ -18,6 +18,7 @@
  */
 
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 // `ws` 8 moved the server class off the default export onto a named one. The
@@ -151,6 +152,11 @@ const PROVIDER_LABEL: Record<string, string> = {
   perplexity: 'Perplexity', amazon: 'Amazon', microsoft: 'Microsoft', '01-ai': 'Yi', ai21: 'AI21',
 };
 const PROVIDER_ORDER = ['Anthropic', 'OpenAI', 'Google', 'xAI', 'DeepSeek', 'Qwen', 'Moonshot', 'Meta', 'Mistral', 'MiniMax', 'NVIDIA'];
+const MEDIA_MIME: Record<string, string> = {
+  mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg', flac: 'audio/flac',
+  mp4: 'video/mp4', webm: 'video/webm',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
+};
 function providerLabel(id: string, ownedBy?: string): string {
   const p = (id.split('/')[0] || ownedBy || '').toLowerCase();
   return PROVIDER_LABEL[p] || (p ? p.charAt(0).toUpperCase() + p.slice(1) : 'Other');
@@ -172,7 +178,7 @@ function providerLabel(id: string, ownedBy?: string): string {
 // Defense-in-depth: when FRANKLIN_SERVE_TOKEN is set, every WS upgrade and
 // /file request must also carry it (?token=…).
 const DEFAULT_ALLOWED_ORIGINS = ['https://franklin.run'];
-function isOriginAllowed(origin: string | undefined): boolean {
+export function isOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return true; // non-browser local client
   if (origin === 'null') return process.env.FRANKLIN_SERVE_ALLOW_NULL_ORIGIN === '1';
   if (origin.startsWith('file://') || origin.startsWith('app://')) return true; // Electron renderer
@@ -183,10 +189,159 @@ function isOriginAllowed(origin: string | undefined): boolean {
     .split(',').map((s) => s.trim()).filter(Boolean);
   return [...DEFAULT_ALLOWED_ORIGINS, ...extra].includes(origin);
 }
-function tokenOk(url: URL): boolean {
+export function tokenOk(url: URL): boolean {
   const required = process.env.FRANKLIN_SERVE_TOKEN;
   if (!required) return true;
-  return url.searchParams.get('token') === required;
+  const supplied = url.searchParams.get('token');
+  if (!supplied) return false;
+  const expectedBytes = Buffer.from(required);
+  const suppliedBytes = Buffer.from(supplied);
+  return expectedBytes.length === suppliedBytes.length && crypto.timingSafeEqual(expectedBytes, suppliedBytes);
+}
+
+export function localFileUrl(port: number, filePath: string): string {
+  const url = new URL(`http://127.0.0.1:${port}/file`);
+  url.searchParams.set('path', filePath);
+  const signingKey = process.env.FRANKLIN_SERVE_FILE_TOKEN || process.env.FRANKLIN_SERVE_TOKEN;
+  if (signingKey) {
+    url.searchParams.set('sig', crypto.createHmac('sha256', signingKey).update(filePath).digest('base64url'));
+  }
+  return url.toString();
+}
+
+export function fileTokenOk(url: URL): boolean {
+  const signingKey = process.env.FRANKLIN_SERVE_FILE_TOKEN || process.env.FRANKLIN_SERVE_TOKEN;
+  if (!signingKey) return true;
+  const filePath = url.searchParams.get('path');
+  const supplied = url.searchParams.get('sig');
+  if (!filePath || !supplied) return false;
+  const expected = crypto.createHmac('sha256', signingKey).update(filePath).digest('base64url');
+  const expectedBytes = Buffer.from(expected);
+  const suppliedBytes = Buffer.from(supplied);
+  return expectedBytes.length === suppliedBytes.length && crypto.timingSafeEqual(expectedBytes, suppliedBytes);
+}
+
+export function resolveServedMediaPath(candidate: string, fileRoots: string[]): { realPath: string; mediaType: string } | null {
+  if (!candidate || !fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) return null;
+  const realPath = fs.realpathSync(candidate);
+  const insideRoot = fileRoots.some((root) => realPath === root || realPath.startsWith(root + path.sep));
+  const extension = realPath.toLowerCase().split('.').pop() || '';
+  const mediaType = MEDIA_MIME[extension];
+  return insideRoot && mediaType ? { realPath, mediaType } : null;
+}
+
+/**
+ * Resolve a possibly-not-yet-created path through its nearest existing parent.
+ * This catches both `..` escapes and an in-workspace symlink that points out of
+ * the workspace, including writes to a new file below that symlink.
+ */
+function canonicalProspectivePath(candidate: string): string {
+  let cursor = path.resolve(candidate);
+  const missing: string[] = [];
+  while (!fs.existsSync(cursor)) {
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    missing.unshift(path.basename(cursor));
+    cursor = parent;
+  }
+  const realParent = fs.realpathSync(cursor);
+  return path.resolve(realParent, ...missing);
+}
+
+/** Desktop-only policy: paths outside the workspace require explicit approval. */
+export function createDesktopWorkspacePermissionPolicy(
+  workDir: string,
+): NonNullable<AgentConfig['permissionPolicyFn']> {
+  const canonicalRoot = fs.realpathSync(workDir);
+  const pathKeys: Record<string, 'file_path' | 'path'> = {
+    Read: 'file_path',
+    Write: 'file_path',
+    Edit: 'file_path',
+    Glob: 'path',
+    Grep: 'path',
+  };
+  return (toolName, input) => {
+    // Shell syntax is intentionally not treated as a confinement primitive.
+    // Every Bash call must be visibly approved in Desktop, even if Franklin's
+    // generic classifier would normally auto-allow a read-only command.
+    if (toolName === 'Bash') {
+      return { behavior: 'ask', reason: 'Desktop requires approval for shell commands' };
+    }
+    const candidates: unknown[] = [];
+    const key = pathKeys[toolName];
+    if (key) candidates.push(input[key]);
+
+    // Media tools accept local input/output paths in addition to the core file
+    // tools. HTTP(S)/data references are remote/inline and need no file grant.
+    if (toolName === 'ImageGen') {
+      candidates.push(input.output_path, input.image_url, input.mask);
+      if (Array.isArray(input.images)) candidates.push(...input.images);
+      else if (input.images != null) return { behavior: 'deny', reason: 'invalid image path list' };
+    } else if (toolName === 'VideoGen') {
+      candidates.push(input.output_path, input.image_url);
+    } else if (toolName === 'MusicGen') {
+      candidates.push(input.output_path);
+    } else if (toolName === 'BrowserX' && input.action === 'screenshot') {
+      // BrowserX's implicit destination is ~/.blockrun/screenshots, outside
+      // the project workspace, so it also needs visible consent.
+      if (input.path == null || input.path === '') {
+        return { behavior: 'ask', reason: 'screenshot is saved outside the Desktop workspace' };
+      }
+      candidates.push(input.path);
+    } else if (toolName === 'BrowserX' && input.action === 'open' && typeof input.url === 'string') {
+      try {
+        // Use WHATWG parsing, matching the browser's normalization of ASCII
+        // whitespace (for example `fi\tle:` still becomes the `file:` scheme).
+        if (new URL(input.url).protocol === 'file:') {
+          // A later snapshot can reveal the file contents, so authorize the
+          // navigation itself rather than the snapshot that follows it.
+          return { behavior: 'ask', reason: 'browser is opening a local file' };
+        }
+      } catch { /* BrowserX will report malformed URLs itself. */ }
+    }
+
+    const localCandidates = candidates.filter((raw) => {
+      if (raw == null || raw === '') return false;
+      return !(typeof raw === 'string' && /^(?:https?:|data:|blob:)/i.test(raw));
+    });
+    if (localCandidates.length === 0) return undefined;
+    try {
+      for (const raw of localCandidates) {
+        if (typeof raw !== 'string') {
+          return { behavior: 'deny', reason: 'invalid workspace path' };
+        }
+        const candidate = path.isAbsolute(raw) ? raw : path.resolve(canonicalRoot, raw);
+        const canonical = canonicalProspectivePath(candidate);
+        const inside = canonical === canonicalRoot || canonical.startsWith(canonicalRoot + path.sep);
+        if (!inside) {
+          return { behavior: 'ask', reason: `path is outside Desktop workspace: ${canonicalRoot}` };
+        }
+      }
+      return undefined;
+    } catch {
+      return { behavior: 'deny', reason: 'unable to validate workspace path' };
+    }
+  };
+}
+
+function refreshPersistedMediaUrls(value: unknown, port: number, key = ''): unknown {
+  if (Array.isArray(value)) return value.map((item) => refreshPersistedMediaUrls(item, port));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
+      childKey,
+      refreshPersistedMediaUrls(childValue, port, childKey),
+    ]));
+  }
+  if (typeof value !== 'string' || !['image', 'video', 'music'].includes(key)) return value;
+  try {
+    const url = new URL(value);
+    const localHosts = new Set(['127.0.0.1', 'localhost', '[::1]']);
+    const filePath = url.searchParams.get('path');
+    if (localHosts.has(url.hostname) && url.pathname === '/file' && filePath) {
+      return localFileUrl(port, filePath);
+    }
+  } catch { /* data URL, local path, or ordinary text */ }
+  return value;
 }
 
 interface ServerOptions {
@@ -225,6 +380,10 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
   const userConfig = loadConfig();
+  const desktopBoundary = process.env.FRANKLIN_DESKTOP_WORKSPACE_BOUNDARY === '1';
+  const desktopPermissionPolicy = desktopBoundary
+    ? createDesktopWorkspacePermissionPolicy(workDir)
+    : undefined;
 
   // ── Multi-agent host (dashboard fleet) ──
   // The legacy single-window path below stays byte-compatible for the
@@ -236,6 +395,8 @@ export async function startServer(opts: ServerOptions): Promise<void> {
     apiUrl,
     defaultModel: userConfig['default-model'] || FREE_DEFAULT_MODEL,
     debug,
+    permissionPolicyFn: desktopPermissionPolicy,
+    allowSubAgents: !desktopBoundary,
   });
   // Per-socket subscription bookkeeping: sessionId → unsubscribe.
   const wsSubs = new WeakMap<WebSocket, Map<string, () => void>>();
@@ -266,11 +427,33 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   // The socket + correlation id for the in-flight turn (single-window).
   let activeWs: WebSocket | null = null;
   let activeTurnId: string | null = null;
-  // Pending approval asks for the legacy desktop session (trade plans).
+  // Pending approval asks for the legacy desktop session (tools + trade plans).
   // Keyed by askId — the wire contract the desktop UI already declares
   // (agent.permissionAsk / agent.permissionResponse with askId + decision).
   let askSeq = 0;
-  const legacyAsks = new Map<string, (decision: { choice: string; message?: string }) => void>();
+  type LegacyDecision = 'yes' | 'no' | 'always';
+  const legacyAsks = new Map<string, (decision: LegacyDecision) => void>();
+
+  const requestDesktopPermission = (
+    toolName: string,
+    description: string,
+    timeoutMs = 15 * 60 * 1000,
+  ): Promise<LegacyDecision> => new Promise((resolve) => {
+    if (!activeWs || !activeTurnId) {
+      resolve('no');
+      return;
+    }
+    const askId = `ask_${++askSeq}_${Date.now().toString(36)}`;
+    const timer = setTimeout(() => {
+      if (legacyAsks.delete(askId)) resolve('no');
+    }, timeoutMs);
+    timer.unref?.();
+    legacyAsks.set(askId, (decision) => {
+      clearTimeout(timer);
+      resolve(decision);
+    });
+    emit('agent.permissionAsk', { sessionId: '', toolName, description, askId });
+  });
   // We sometimes inject helper commands (`/model …`, `/clear`) as their own
   // turns ahead of the real prompt. Each ends with its own turn_done — which
   // would emit agent.done and clear activeTurnId, killing the real prompt's
@@ -397,7 +580,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
             sessionId: '',
             toolCallId: event.id,
             preview: '',
-            artifacts: [{ path: `http://127.0.0.1:${port}/file?path=${encodeURIComponent(filePath)}`, mediaType }],
+            artifacts: [{ path: localFileUrl(port, filePath), mediaType }],
           });
         }
         break;
@@ -428,12 +611,14 @@ export async function startServer(opts: ServerOptions): Promise<void> {
     sessionStarted = true;
     currentModel = model;
     const systemInstructions = assembleInstructions(workDir, model);
-    const subAgent = createSubAgentCapability(apiUrl, chain, allCapabilities, model);
+    const subAgent = desktopBoundary
+      ? null
+      : createSubAgentCapability(apiUrl, chain, allCapabilities, model);
     try {
       const { registerMoAConfig } = await import('../tools/moa.js');
       registerMoAConfig(apiUrl, chain, model);
     } catch { /* MoA optional */ }
-    const capabilities = [...allCapabilities, subAgent];
+    const capabilities = subAgent ? [...allCapabilities, subAgent] : allCapabilities;
 
     const config: AgentConfig = {
       model,
@@ -443,7 +628,9 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       capabilities,
       maxTurns: 100,
       workingDir: workDir,
-      permissionMode: 'trust', // tools auto-run; money still gates via approvalPromptFn below
+      permissionMode: 'default',
+      permissionPromptFn: (toolName, description) => requestDesktopPermission(toolName, description),
+      permissionPolicyFn: desktopPermissionPolicy,
       debug: !!debug,
       showPrefetchStatus: false,
       costSaver,
@@ -452,30 +639,16 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       // agent.permissionResponse {askId, decision}. Without a connected
       // client — or unanswered past the TTL — the approval fails closed,
       // matching the trade-plan gate's deny-by-default posture.
-      approvalPromptFn: (req) =>
-        new Promise((resolve) => {
-          if (!activeWs || !activeTurnId) {
-            resolve({ choice: 'deny', message: 'no client connected to approve' });
-            return;
-          }
-          const askId = `ask_${++askSeq}_${Date.now().toString(36)}`;
-          const timer = setTimeout(() => {
-            if (legacyAsks.delete(askId)) {
-              resolve({ choice: 'deny', message: 'approval timed out' });
-            }
-          }, req.timeoutMs ?? 15 * 60 * 1000);
-          timer.unref?.();
-          legacyAsks.set(askId, (decision) => {
-            clearTimeout(timer);
-            resolve(decision);
-          });
-          emit('agent.permissionAsk', {
-            sessionId: '',
-            toolName: req.kind === 'trade-plan' ? 'TradePlan' : req.title,
-            description: `${req.title}\n\n${req.description}`,
-            askId,
-          });
-        }),
+      approvalPromptFn: async (req) => {
+        const decision = await requestDesktopPermission(
+          req.kind === 'trade-plan' ? 'TradePlan' : req.title,
+          `${req.title}\n\n${req.description}`,
+          req.timeoutMs,
+        );
+        return decision === 'yes' || decision === 'always'
+          ? { choice: 'approve' }
+          : { choice: 'deny', message: 'approval denied or timed out' };
+      },
     };
     agentConfig = config;
 
@@ -556,10 +729,10 @@ export async function startServer(opts: ServerOptions): Promise<void> {
           try { fs.mkdirSync(BLOCKRUN_DIR, { recursive: true }); fs.writeFileSync(file, JSON.stringify(c), { mode: 0o600 }); } catch { /* ignore */ }
         };
         try {
-          const local = readLocal();
+          const local = refreshPersistedMediaUrls(readLocal(), port) as unknown[];
           if (isCloudSyncEnabled()) {
             try {
-              const cloud = await cloudList();
+              const cloud = refreshPersistedMediaUrls(await cloudList(), port) as CloudConversation[];
               if (cloud.length > 0) {
                 writeLocal(cloud);            // refresh local cache
                 send(ws, id, 'response', { conversations: cloud });
@@ -577,7 +750,10 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       }
       case 'history.save': {
         try {
-          const conversations = Array.isArray(p.conversations) ? p.conversations : [];
+          const conversations = refreshPersistedMediaUrls(
+            Array.isArray(p.conversations) ? p.conversations : [],
+            port,
+          ) as unknown[];
           // Local file = instant durable cache; cloud = best-effort wallet sync.
           fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
           fs.writeFileSync(path.join(BLOCKRUN_DIR, 'franklin-desktop-history.json'), JSON.stringify(conversations), { mode: 0o600 });
@@ -716,11 +892,8 @@ export async function startServer(opts: ServerOptions): Promise<void> {
           if (resolver) {
             legacyAsks.delete(askId);
             const decision = String(p.decision ?? p.choice ?? 'n').toLowerCase();
-            const approve = decision === 'y' || decision === 'yes' || decision === 'always' || decision === 'approve';
-            resolver({
-              choice: approve ? 'approve' : 'deny',
-              message: p.message ? String(p.message) : undefined,
-            });
+            resolver(decision === 'always' ? 'always' :
+              decision === 'y' || decision === 'yes' || decision === 'approve' ? 'yes' : 'no');
             send(ws, id, 'response', { ok: true });
           } else {
             send(ws, id, 'response', { ok: false });
@@ -809,32 +982,22 @@ export async function startServer(opts: ServerOptions): Promise<void> {
     path.join(BLOCKRUN_DIR, 'content'),
     ...(process.env.FRANKLIN_SERVE_FILE_ROOTS || '').split(',').map((s) => s.trim()).filter(Boolean),
   ].map((r) => { try { return fs.realpathSync(r); } catch { return null; } }).filter((r): r is string => !!r);
-  const MEDIA_MIME: Record<string, string> = {
-    mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg', flac: 'audio/flac',
-    mp4: 'video/mp4', webm: 'video/webm',
-    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
-  };
   const httpServer = http.createServer((req, res) => {
     try {
       const url = new URL(req.url || '/', 'http://127.0.0.1');
       const origin = req.headers.origin;
       if (url.pathname === '/file') {
-        if (!isOriginAllowed(origin) || !tokenOk(url)) { res.writeHead(403); res.end(); return; }
+        if (!isOriginAllowed(origin) || !fileTokenOk(url)) { res.writeHead(403); res.end(); return; }
         const p = url.searchParams.get('path') || '';
-        if (!p || !fs.existsSync(p) || !fs.statSync(p).isFile()) { res.writeHead(404); res.end(); return; }
-        // Resolve symlinks before the prefix check so a link can't escape a root.
-        const real = fs.realpathSync(p);
-        const inRoot = fileRoots.some((root) => real === root || real.startsWith(root + path.sep));
-        const ext = real.toLowerCase().split('.').pop() || '';
-        const mime = MEDIA_MIME[ext];
-        if (!inRoot || !mime) { res.writeHead(403); res.end(); return; }
+        const media = resolveServedMediaPath(p, fileRoots);
+        if (!media) { res.writeHead(p ? 403 : 404); res.end(); return; }
         res.writeHead(200, {
-          'Content-Type': mime,
+          'Content-Type': media.mediaType,
           // Reflect the (already vetted) origin instead of `*` so arbitrary
           // sites can't read the bytes cross-origin.
           ...(origin && origin !== 'null' ? { 'Access-Control-Allow-Origin': origin } : {}),
         });
-        fs.createReadStream(real).pipe(res);
+        fs.createReadStream(media.realPath).pipe(res);
         return;
       }
     } catch { /* fall through to 404 */ }
@@ -882,12 +1045,26 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   // Discovery file (mirror of the panel-url pattern): lets `franklin panel`
   // point its Agents tab at this server without configuration.
   const serveUrlFile = path.join(BLOCKRUN_DIR, 'serve-url');
-  try {
-    fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
-    fs.writeFileSync(serveUrlFile, `ws://127.0.0.1:${port}/agent`);
-  } catch { /* best-effort */ }
+  const discoveryEnabled = process.env.FRANKLIN_SERVE_DISCOVERY !== 'off';
+  let writtenDiscoveryUrl: string | null = null;
+  if (discoveryEnabled) {
+    try {
+      const discoveryUrl = new URL(`ws://127.0.0.1:${port}/agent`);
+      const token = process.env.FRANKLIN_SERVE_TOKEN;
+      if (token) discoveryUrl.searchParams.set('token', token);
+      writtenDiscoveryUrl = discoveryUrl.toString();
+      fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+      fs.writeFileSync(serveUrlFile, writtenDiscoveryUrl, { mode: 0o600 });
+    } catch { /* best-effort */ }
+  }
   const cleanup = () => {
-    try { fs.unlinkSync(serveUrlFile); } catch { /* gone */ }
+    // Do not remove another server's discovery record. Packaged Desktop has
+    // discovery disabled, and multiple standalone servers may overlap.
+    if (writtenDiscoveryUrl) {
+      try {
+        if (fs.readFileSync(serveUrlFile, 'utf8') === writtenDiscoveryUrl) fs.unlinkSync(serveUrlFile);
+      } catch { /* gone or replaced */ }
+    }
     host.shutdown();
   };
   process.once('SIGINT', () => { cleanup(); process.exit(130); });

@@ -12,9 +12,12 @@
 // @blockrun/franklin) without touching the renderer.
 
 const { app, BrowserWindow, shell, ipcMain } = require("electron");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
 const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
+const { pathToFileURL } = require("node:url");
 
 // Is something already listening on a local port? Used so we don't double-spawn
 // Franklin Canvas (a second `npm start` would hit EADDRINUSE on :3100 and, per
@@ -28,13 +31,84 @@ function isPortOpen(port) {
 }
 
 const DEV_URL = process.env.FRANKLIN_DESKTOP_DEV_URL; // set by the desktop:dev script
-const AGENT_PORT = process.env.FRANKLIN_AGENT_PORT || "3737";
 const CANVAS_URL = process.env.FRANKLIN_CANVAS_URL || "http://localhost:5173";
+const AGENT_TOKEN = DEV_URL ? "" : crypto.randomBytes(32).toString("base64url");
+const FILE_TOKEN = DEV_URL ? "" : crypto.randomBytes(32).toString("base64url");
+
+let agentPort = process.env.FRANKLIN_AGENT_PORT || "0";
+if (AGENT_TOKEN) process.env.FRANKLIN_SERVE_TOKEN = AGENT_TOKEN;
 
 let win = null;
 let backend = null;
 let canvas = null;
 let canvasWin = null;
+
+function listenOnce(port) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
+      const address = server.address();
+      const selected = address && typeof address === "object" ? address.port : port;
+      server.close((error) => error ? reject(error) : resolve(selected));
+    });
+  });
+}
+
+async function selectAgentPort() {
+  const preferred = Number.parseInt(String(agentPort), 10);
+  try {
+    return String(await listenOnce(Number.isInteger(preferred) && preferred > 0 ? preferred : 0));
+  } catch (error) {
+    if (error?.code !== "EADDRINUSE") throw error;
+    return String(await listenOnce(0));
+  }
+}
+
+function backendBaseEnvironment() {
+  const allowed = [
+    "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "SHELL", "USER", "LOGNAME",
+    "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "APPDATA", "LOCALAPPDATA", "USERPROFILE",
+  ];
+  return Object.fromEntries(allowed.flatMap((key) => process.env[key] ? [[key, process.env[key]]] : []));
+}
+
+function isSafeExternalUrl(raw) {
+  try {
+    const protocol = new URL(raw).protocol;
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function sameOrigin(candidate, trusted) {
+  try { return new URL(candidate).origin === new URL(trusted).origin; }
+  catch { return false; }
+}
+
+function isTrustedMainRendererUrl(raw) {
+  if (DEV_URL) return sameOrigin(raw, DEV_URL);
+  return raw === pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).toString();
+}
+
+function guardWindowNavigation(browserWindow, trustedUrl) {
+  browserWindow.webContents.on("will-navigate", (event, url) => {
+    const allowed = trustedUrl.startsWith("file:") ? url === trustedUrl : sameOrigin(url, trustedUrl);
+    if (!allowed) event.preventDefault();
+  });
+  browserWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+}
+
+function assertTrustedIpcSender(event) {
+  if (!win || win.isDestroyed() || event.sender !== win.webContents || !isTrustedMainRendererUrl(event.sender.getURL())) {
+    throw new Error("Rejected IPC from an untrusted renderer");
+  }
+}
 
 // Auto-start Franklin Canvas (its own backend :3100 + Vite UI :5173) so the
 // embedded canvas mode "just works" — the user never juggles a second terminal
@@ -70,10 +144,11 @@ async function startCanvas() {
 // The real backend is Franklin's `serve` server (drives the actual agent loop,
 // wallet and tools). Set FRANKLIN_USE_MOCK=1 to fall back to the dev mock.
 function resolveFranklinEntry() {
-  // Packaged app: the agent runtime is bundled under
-  // resources/franklin-agent/ (extraResources). Dev: resolve the workspace dep.
-  if (app.isPackaged && process.resourcesPath) {
-    const bundled = path.join(process.resourcesPath, "franklin-agent", "dist", "index.js");
+  // Packaged app: the agent runtime lives inside app.asar next to the
+  // production dependencies electron-builder already collects. Keeping the
+  // runtime there avoids shipping a second, full copy of node_modules.
+  if (app.isPackaged) {
+    const bundled = path.join(app.getAppPath(), "franklin-agent", "dist", "index.js");
     if (require("node:fs").existsSync(bundled)) return bundled;
   }
   try {
@@ -87,18 +162,33 @@ function resolveFranklinEntry() {
 function startBackend() {
   if (DEV_URL) return;
   const useMock = process.env.FRANKLIN_USE_MOCK === "1";
+  if (app.isPackaged && useMock) {
+    throw new Error("The development mock is disabled in packaged Franklin builds.");
+  }
   const franklinEntry = useMock ? null : resolveFranklinEntry();
-  // Tools (Read/Write/Bash) run in this directory. Default to the user's home
-  // so a packaged app launched from Finder doesn't operate at "/".
-  const workDir = app.getPath("home");
+  if (!useMock && !franklinEntry) {
+    throw new Error("The packaged Franklin agent runtime is missing.");
+  }
+  // Keep the default tool root out of the user's entire home directory. A user
+  // can still select an explicit workspace with FRANKLIN_WORK_DIR.
+  const workDir = process.env.FRANKLIN_WORK_DIR
+    ? path.resolve(process.env.FRANKLIN_WORK_DIR)
+    : path.join(app.getPath("documents"), "Franklin");
+  fs.mkdirSync(workDir, { recursive: true, mode: 0o700 });
   const [cmd, args] = franklinEntry
-    ? [franklinEntry, ["serve", "--port", AGENT_PORT, "--work-dir", workDir]]
+    ? [franklinEntry, ["serve", "--port", agentPort, "--work-dir", workDir]]
     : [path.join(__dirname, "..", "dev-server", "mock.mjs"), []];
   backend = spawn(process.execPath, [cmd, ...args], {
     cwd: workDir,
     env: {
-      ...process.env,
-      FRANKLIN_AGENT_PORT: AGENT_PORT,
+      ...backendBaseEnvironment(),
+      FRANKLIN_AGENT_PORT: agentPort,
+      FRANKLIN_SERVE_TOKEN: AGENT_TOKEN,
+      FRANKLIN_SERVE_FILE_TOKEN: FILE_TOKEN,
+      FRANKLIN_SERVE_ALLOW_NULL_ORIGIN: "1",
+      FRANKLIN_SERVE_DISCOVERY: "off",
+      FRANKLIN_CLOUD_SYNC: "off",
+      FRANKLIN_DESKTOP_WORKSPACE_BOUNDARY: "1",
       ELECTRON_RUN_AS_NODE: "1", // run the Node entry under Electron's Node
     },
     stdio: "inherit",
@@ -128,12 +218,9 @@ async function openCanvasWindow() {
     // Normal native title bar (NOT hiddenInset) — the canvas app has no custom
     // drag region, so it needs the OS title bar to be movable.
     titleBarStyle: "default",
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
-  canvasWin.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http")) shell.openExternal(url);
-    return { action: "deny" };
-  });
+  guardWindowNavigation(canvasWin, CANVAS_URL);
   canvasWin.on("closed", () => { canvasWin = null; });
   for (let i = 0; i < 40; i++) {
     try { await canvasWin.loadURL(CANVAS_URL); return; }
@@ -170,14 +257,12 @@ function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
 
-  // Open target=_blank / external links in the system browser, not a new window.
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http")) shell.openExternal(url);
-    return { action: "deny" };
-  });
+  const trustedRendererUrl = DEV_URL || pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).toString();
+  guardWindowNavigation(win, trustedRendererUrl);
 
   loadRenderer();
   win.on("closed", () => {
@@ -185,14 +270,22 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  agentPort = await selectAgentPort();
+  process.env.FRANKLIN_AGENT_PORT = agentPort;
   startBackend();
   startCanvas();
-  ipcMain.handle("franklin:open-canvas", () => openCanvasWindow());
+  ipcMain.handle("franklin:open-canvas", (event) => {
+    assertTrustedIpcSender(event);
+    return openCanvasWindow();
+  });
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch((error) => {
+  console.error("[franklin-desktop] startup failed", error);
+  app.quit();
 });
 
 app.on("window-all-closed", () => {

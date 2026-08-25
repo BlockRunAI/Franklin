@@ -115,23 +115,33 @@ async function withPermissionConfigSnapshot(contents, fn) {
 }
 
 test('cli startup prints the full portrait banner by default', { timeout: 20_000 }, async () => {
-  const result = await runCli('/exit');
-  assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
-  assert.ok(result.stdout.includes('██████╗'), `Default banner should be the full FRANKLIN block-art + portrait.\nstdout:\n${result.stdout}`);
-  assert.ok(result.stdout.includes('blockrun.ai'), `Banner tagline should include blockrun.ai.\nstdout:\n${result.stdout}`);
-  assert.ok(result.stdout.includes('The AI agent with a wallet'), `Banner tagline should include the slogan.\nstdout:\n${result.stdout}`);
-  assert.ok(result.stdout.includes('Wallet:'), `Missing wallet line.\nstdout:\n${result.stdout}`);
-  assert.ok(result.stderr.includes('Model:'), `Missing model line.\nstderr:\n${result.stderr}`);
+  const fakeHome = mkdtempSync(join(tmpdir(), 'franklin-banner-home-'));
+  try {
+    const result = await runCli('/exit', { env: { HOME: fakeHome } });
+    assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
+    assert.ok(result.stdout.includes('██████╗'), `Default banner should be the full FRANKLIN block-art + portrait.\nstdout:\n${result.stdout}`);
+    assert.ok(result.stdout.includes('blockrun.ai'), `Banner tagline should include blockrun.ai.\nstdout:\n${result.stdout}`);
+    assert.ok(result.stdout.includes('The AI agent with a wallet'), `Banner tagline should include the slogan.\nstdout:\n${result.stdout}`);
+    assert.ok(result.stdout.includes('Wallet:'), `Missing wallet line.\nstdout:\n${result.stdout}`);
+    assert.ok(result.stderr.includes('Model:'), `Missing model line.\nstderr:\n${result.stderr}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 });
 
 test('FRANKLIN_BANNER=compact opts into the 2-line banner', { timeout: 20_000 }, async () => {
-  const result = await runCli('/exit', {
-    env: { FRANKLIN_BANNER: 'compact' },
-  });
+  const fakeHome = mkdtempSync(join(tmpdir(), 'franklin-compact-banner-home-'));
+  try {
+    const result = await runCli('/exit', {
+      env: { FRANKLIN_BANNER: 'compact', HOME: fakeHome },
+    });
 
-  assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
-  assert.ok(!result.stdout.includes('██████╗'), `Compact opt-in should drop the block art.\nstdout:\n${result.stdout}`);
-  assert.ok(result.stdout.includes('blockrun.ai'), `Expected compact tagline.\nstdout:\n${result.stdout}`);
+    assert.equal(result.code, 0, `CLI exited non-zero.\nstderr:\n${result.stderr}`);
+    assert.ok(!result.stdout.includes('██████╗'), `Compact opt-in should drop the block art.\nstdout:\n${result.stdout}`);
+    assert.ok(result.stdout.includes('blockrun.ai'), `Expected compact tagline.\nstdout:\n${result.stdout}`);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 });
 
 test('flags-only start options still honor --help without launching the agent', async () => {
@@ -8275,6 +8285,9 @@ test('repository text files do not contain restricted script characters', () => 
   const offenders = [];
 
   for (const file of trackedFiles) {
+    // The native Desktop is intentionally localized. This guard protects the
+    // English-only CLI/runtime sources, not user-facing translation catalogs.
+    if (file.startsWith('apps/desktop/')) continue;
     if (!textFile.test(file)) continue;
     const absPath = join(REPO_ROOT, file);
     if (!existsSync(absPath)) continue;

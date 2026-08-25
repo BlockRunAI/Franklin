@@ -1,0 +1,67 @@
+name: Desktop CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "src/agent/**"
+      - "src/serve/**"
+      - "src/tools/**"
+      - "test/serve-security.local.mjs"
+      - ".npmrc"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/desktop-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            script: dist:mac
+            artifact: apps/desktop/release/*.dmg
+            name: macOS
+          - os: windows-latest
+            script: dist:win
+            artifact: apps/desktop/release/*.exe
+            name: Windows
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install the pinned monorepo dependency graph
+        run: npm ci
+
+      - name: Build Franklin runtime
+        run: npm run build
+
+      - name: Check Desktop
+        run: |
+          npm run typecheck --workspace @blockrun/franklin-desktop
+          npm run lint --workspace @blockrun/franklin-desktop
+
+      - name: Build unsigned test installer
+        run: npm run ${{ matrix.script }} --workspace @blockrun/franklin-desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload test installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: franklin-desktop-${{ matrix.name }}-unsigned-test
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 7

@@ -203,6 +203,17 @@ export interface AgentConfig {
    * Returns 'yes' | 'no' | 'always' (always = allow for rest of session).
    */
   permissionPromptFn?: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
+  /**
+   * Optional driver-level policy evaluated before Franklin's normal permission
+   * rules. Returning undefined delegates to the normal policy.
+   */
+  permissionPolicyFn?: (
+    toolName: string,
+    input: Record<string, unknown>,
+  ) =>
+    | { behavior: 'allow' | 'deny' | 'ask'; reason?: string }
+    | undefined
+    | Promise<{ behavior: 'allow' | 'deny' | 'ask'; reason?: string } | undefined>;
   /** Routes AskUser questions through ink UI input to avoid raw-mode stdin conflict */
   onAskUser?: (question: string, options?: string[]) => Promise<string>;
   /** Notify UI when agent switches model. `reason` is 'user' for explicit /model
