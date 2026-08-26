@@ -1,5 +1,36 @@
 # Changelog
 
+## Franklin Agent 3.41.0 — card funding on Solana, and Solana becomes the default
+
+**Onramp was Base-only in three places; now it follows the wallet.** The
+Coinbase "Buy USDC with card" button used to be hidden on Solana because the
+gateway couldn't mint a session link for a Solana address. The Solana gateway
+now can (sol.blockrun.ai `/v1/onramp/token`, shipped alongside this release),
+so the client guard, the panel route gate, and the UI hide are all gone —
+`getOnrampUrl` targets the active chain's gateway and the $0 x402 handshake
+signs with the matching wallet. On Solana the authentication is verified
+locally by the gateway (pure ed25519 + strict transaction structure, no
+facilitator) precisely so that an **empty** wallet can authenticate — funding
+an unfunded wallet is the whole point of an onramp. A gateway that hasn't
+shipped the route yet answers with a clear "not available on the <chain>
+gateway yet" instead of a bare 404.
+
+**Solana is now the default chain.** A fresh install resolves to Solana; a
+saved choice (`franklin solana` / `franklin base`, the panel switcher,
+`RUNCODE_CHAIN`) always wins. One migration exception, so nobody's money is
+stranded: a Base wallet on disk with no Solana wallet means the user funded
+before the flip — they stay on Base until they choose otherwise. The
+resolution is a pure read (help/version paths still write nothing).
+`franklin setup` now creates a Solana wallet by default; `franklin setup
+base` opts into Base.
+
+**Panel fix caught by end-to-end testing:** switching chains left the previous
+chain's onramp status on screen — including a still-valid Coinbase link that
+would have funded the *other* chain's wallet. The chain switcher now clears
+it. The whole flow was verified live headless: Solana mints a real
+`pay.coinbase.com` link with `defaultNetwork=solana`, Base keeps working, and
+the popup-blocked fallback link renders on both.
+
 ## Franklin Agent 3.40.0 — priced but unreachable: the catalog gets a front door
 
 **3.39.0 taught Franklin what the new models cost. It never taught anyone how
