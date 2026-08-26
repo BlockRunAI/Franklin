@@ -34,10 +34,15 @@ export function WalletPill({ wallet }: Props) {
   }
 
   const net = wallet.chain === "base" ? "Base" : "Solana";
-  const addr = `${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`;
+  // RPC values are runtime data, even when the TypeScript contract says
+  // `string`. Keep a malformed wallet response from taking down the whole UI.
+  const fullAddress = typeof wallet.address === "string" ? wallet.address : "";
+  const addr = fullAddress
+    ? `${fullAddress.slice(0, 6)}…${fullAddress.slice(-4)}`
+    : "Unavailable";
 
   const copy = async () => {
-    if (await copyText(wallet.address)) {
+    if (fullAddress && await copyText(fullAddress)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     }
@@ -52,7 +57,13 @@ export function WalletPill({ wallet }: Props) {
         </div>
         <span className="try-wallet-addr">{addr}</span>
       </div>
-      <button className="try-wallet-disconnect" onClick={copy} title={wallet.address} aria-label="Copy address">
+      <button
+        className="try-wallet-disconnect"
+        onClick={copy}
+        title={fullAddress || "Wallet address unavailable"}
+        aria-label="Copy address"
+        disabled={!fullAddress}
+      >
         {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
       </button>
     </div>

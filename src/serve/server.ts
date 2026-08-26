@@ -692,7 +692,10 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       case 'wallet.info': {
         try {
           const client = await getWallet();
-          const address = client.getWalletAddress();
+          // Solana resolves its public key asynchronously while Base returns it
+          // synchronously. Awaiting works for both and keeps the wire payload a
+          // string instead of accidentally serializing a pending Promise as {}.
+          const address = await client.getWalletAddress();
           const balanceUsd = await fetchBalanceUsd(); // best-effort; undefined on failure
           send(ws, id, 'response', { address, chain, balanceUsd });
         } catch (err) {
