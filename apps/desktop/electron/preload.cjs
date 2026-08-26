@@ -10,6 +10,15 @@ const token = process.env.FRANKLIN_SERVE_TOKEN || "";
 const agentUrl = new URL(`ws://127.0.0.1:${port}/agent`);
 if (token) agentUrl.searchParams.set("token", token);
 
+// `ready-to-show` can fire before React paints meaningful content. Wait for two
+// animation frames after DOMContentLoaded, then let the main process replace
+// the startup window. This keeps a blank Electron surface off screen.
+window.addEventListener("DOMContentLoaded", () => {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => ipcRenderer.send("franklin:renderer-ready"));
+  });
+}, { once: true });
+
 contextBridge.exposeInMainWorld("__FRANKLIN__", {
   agentUrl: agentUrl.toString(),
   // Franklin Canvas (node-based media studio) opens in its own native window;

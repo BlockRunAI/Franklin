@@ -62,7 +62,7 @@ function EmphTitle({ text }: { text: string }) {
 export function FranklinChat() {
   const { t } = useTryLang();
   const auth = useAuth();
-  const { wallet } = useWallet();
+  const { wallet, connectionState: walletConnectionState, isLoading: walletLoading, error: walletError } = useWallet();
   const history = useChatHistory(auth.address);
   const usage = useSpend();
   const chat = useFranklinChat(history.messages, history.setMessages, history.ensureConvId);
@@ -236,6 +236,9 @@ export function FranklinChat() {
           closeSidebarOnMobile();
         }}
         wallet={wallet}
+        walletConnectionState={walletConnectionState}
+        walletLoading={walletLoading}
+        walletError={walletError}
       />
 
       {sidebarOpen && <div className="try-sidebar-scrim" onClick={() => setSidebarOpen(false)} />}

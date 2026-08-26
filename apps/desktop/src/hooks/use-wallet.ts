@@ -9,12 +9,13 @@
 // different gateway balances). One source of truth fixes that mismatch.
 
 import { useEffect, useState } from "react";
-import { agent } from "../lib/ws";
+import { agent, type AgentConnectionState } from "../lib/ws";
 import type { ServerMsg, WalletInfo } from "../lib/wire";
 
 let current: WalletInfo | null = null;
 let loading = true;
 let lastError: string | null = null;
+let connectionState: AgentConnectionState = agent.state;
 let started = false;
 const subs = new Set<() => void>();
 
@@ -40,7 +41,11 @@ async function refresh() {
 function ensureStarted() {
   if (started) return;
   started = true;
-  agent.onState((state) => { if (state === "open") void refresh(); });
+  agent.onState((state) => {
+    connectionState = state;
+    emit();
+    if (state === "open") void refresh();
+  });
   // CLI broadcasts wallet.event after every turn (settlement may have changed
   // the balance); merge it into the shared state so all consumers update.
   agent.subscribe((msg: ServerMsg) => {
@@ -57,7 +62,12 @@ function ensureStarted() {
   setInterval(() => { void refresh(); }, 30_000);
 }
 
-export function useWallet(): { wallet: WalletInfo | null; isLoading: boolean; error: string | null } {
+export function useWallet(): {
+  wallet: WalletInfo | null;
+  isLoading: boolean;
+  error: string | null;
+  connectionState: AgentConnectionState;
+} {
   ensureStarted();
   const [, force] = useState(0);
   useEffect(() => {
@@ -65,5 +75,5 @@ export function useWallet(): { wallet: WalletInfo | null; isLoading: boolean; er
     subs.add(fn);
     return () => { subs.delete(fn); };
   }, []);
-  return { wallet: current, isLoading: loading, error: lastError };
+  return { wallet: current, isLoading: loading, error: lastError, connectionState };
 }

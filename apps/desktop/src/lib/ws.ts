@@ -16,6 +16,7 @@
 import type { ClientMsg, ClientMsgKind, ServerMsg, ServerMsgKind } from "./wire";
 
 type Listener = (msg: ServerMsg) => void;
+export type AgentConnectionState = "connecting" | "open" | "closed";
 
 interface Pending {
   resolve: (value: ServerMsg) => void;
@@ -40,7 +41,7 @@ class AgentSocket {
   private url: string;
 
   /** Last connection state, exposed via subscribe(). React hooks render off it. */
-  state: "connecting" | "open" | "closed" = "closed";
+  state: AgentConnectionState = "closed";
 
   constructor() {
     // Three load contexts:

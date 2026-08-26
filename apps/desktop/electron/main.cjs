@@ -39,10 +39,19 @@ let agentPort = process.env.FRANKLIN_AGENT_PORT || (DEV_URL ? "3737" : "0");
 if (AGENT_TOKEN) process.env.FRANKLIN_SERVE_TOKEN = AGENT_TOKEN;
 
 let win = null;
+let startupWin = null;
 let backend = null;
 let canvas = null;
 let canvasWin = null;
 let quitting = false;
+let backendReady = false;
+const rendererReadyWaiters = new Map();
+let startupState = {
+  status: "loading",
+  message: "Preparing your secure workspace…",
+};
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.exit(0);
 
 function backendBaseEnvironment() {
   const allowed = [
@@ -71,6 +80,10 @@ function isTrustedMainRendererUrl(raw) {
   return raw === pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).toString();
 }
 
+function isTrustedStartupRendererUrl(raw) {
+  return raw === pathToFileURL(path.join(__dirname, "startup.html")).toString();
+}
+
 function guardWindowNavigation(browserWindow, trustedUrl) {
   browserWindow.webContents.on("will-navigate", (event, url) => {
     const allowed = trustedUrl.startsWith("file:") ? url === trustedUrl : sameOrigin(url, trustedUrl);
@@ -86,6 +99,77 @@ function assertTrustedIpcSender(event) {
   if (!win || win.isDestroyed() || event.sender !== win.webContents || !isTrustedMainRendererUrl(event.sender.getURL())) {
     throw new Error("Rejected IPC from an untrusted renderer");
   }
+}
+
+function assertTrustedStartupIpcSender(event) {
+  if (!startupWin || startupWin.isDestroyed() || event.sender !== startupWin.webContents || !isTrustedStartupRendererUrl(event.sender.getURL())) {
+    throw new Error("Rejected startup IPC from an untrusted renderer");
+  }
+}
+
+function updateStartupState(status, message) {
+  startupState = { status, message };
+  if (startupWin && !startupWin.isDestroyed() && !startupWin.webContents.isLoading()) {
+    startupWin.webContents.send("franklin:startup-state", startupState);
+  }
+}
+
+function createStartupWindow() {
+  if (startupWin && !startupWin.isDestroyed()) {
+    startupWin.show();
+    startupWin.focus();
+    return startupWin;
+  }
+
+  startupWin = new BrowserWindow({
+    width: 440,
+    height: 300,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    frame: false,
+    show: false,
+    center: true,
+    backgroundColor: "#f7f6f1",
+    webPreferences: {
+      preload: path.join(__dirname, "startup-preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  const startupUrl = pathToFileURL(path.join(__dirname, "startup.html")).toString();
+  guardWindowNavigation(startupWin, startupUrl);
+  startupWin.once("ready-to-show", () => {
+    if (startupWin && !startupWin.isDestroyed()) startupWin.show();
+  });
+  startupWin.webContents.on("did-finish-load", () => {
+    if (startupWin && !startupWin.isDestroyed()) {
+      startupWin.webContents.send("franklin:startup-state", startupState);
+    }
+  });
+  startupWin.on("closed", () => { startupWin = null; });
+  void startupWin.loadFile(path.join(__dirname, "startup.html")).catch((error) => {
+    console.error("[franklin-desktop] failed to load startup window", error);
+  });
+  return startupWin;
+}
+
+function closeStartupWindow() {
+  if (!startupWin || startupWin.isDestroyed()) return;
+  startupWin.close();
+  startupWin = null;
+}
+
+if (hasSingleInstanceLock) {
+  app.on("second-instance", () => {
+    const activeWindow = win && !win.isDestroyed() ? win : startupWin;
+    if (!activeWindow || activeWindow.isDestroyed()) return;
+    if (activeWindow.isMinimized()) activeWindow.restore();
+    activeWindow.show();
+    activeWindow.focus();
+  });
 }
 
 // Auto-start Franklin Canvas (its own backend :3100 + Vite UI :5173) so the
@@ -233,20 +317,20 @@ async function openCanvasWindow() {
   }
 }
 
-async function loadRenderer() {
+async function loadRenderer(targetWindow) {
   if (DEV_URL) {
     // Vite may still be coming up — retry until it answers.
     for (let i = 0; i < 40; i++) {
       try {
-        await win.loadURL(DEV_URL);
+        await targetWindow.loadURL(DEV_URL);
         return;
       } catch {
         await new Promise((r) => setTimeout(r, 300));
       }
     }
-    await win.loadURL(DEV_URL); // final attempt; let the error surface
+    await targetWindow.loadURL(DEV_URL); // final attempt; let the error surface
   } else {
-    await win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    await targetWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
 }
 
@@ -256,7 +340,8 @@ function createWindow() {
     height: 800,
     minWidth: 720,
     minHeight: 480,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#f7f6f1",
+    show: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -269,27 +354,114 @@ function createWindow() {
   const trustedRendererUrl = DEV_URL || pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).toString();
   guardWindowNavigation(win, trustedRendererUrl);
 
-  loadRenderer();
+  win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (isMainFrame) {
+      console.error("[franklin-desktop] renderer load failed", { errorCode, errorDescription, validatedURL });
+    }
+  });
+  win.webContents.on("render-process-gone", (_event, details) => {
+    console.error("[franklin-desktop] renderer process exited", details);
+    if (quitting) return;
+    if (win && !win.isDestroyed()) win.destroy();
+    win = null;
+    createStartupWindow();
+    updateStartupState("error", "Franklin stopped unexpectedly. Please try again.");
+  });
   win.on("closed", () => {
     win = null;
   });
+  return win;
 }
 
-app.whenReady().then(async () => {
+function waitForRendererContent(targetWindow) {
+  return new Promise((resolve, reject) => {
+    const webContentsId = targetWindow.webContents.id;
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      rendererReadyWaiters.delete(webContentsId);
+      callback();
+    };
+    const timeout = setTimeout(() => {
+      finish(() => reject(new Error("Franklin’s interface did not become ready in time.")));
+    }, 15_000);
+    rendererReadyWaiters.set(webContentsId, () => finish(resolve));
+    targetWindow.once("closed", () => {
+      finish(() => reject(new Error("Franklin window closed before its interface was ready.")));
+    });
+  });
+}
+
+async function openMainWindow() {
+  if (win && !win.isDestroyed()) {
+    win.show();
+    win.focus();
+    closeStartupWindow();
+    return;
+  }
+
+  const mainWindow = createWindow();
+  const rendererReady = waitForRendererContent(mainWindow);
+  await loadRenderer(mainWindow);
+  await rendererReady;
+  if (mainWindow.isDestroyed()) throw new Error("Franklin window closed before it was ready.");
+  mainWindow.show();
+  mainWindow.focus();
+  closeStartupWindow();
+}
+
+async function startApplication() {
+  createStartupWindow();
+  updateStartupState("loading", "Preparing your secure workspace…");
   agentPort = await startBackend();
+  backendReady = true;
   process.env.FRANKLIN_AGENT_PORT = agentPort;
-  startCanvas();
+  updateStartupState("loading", "Opening Franklin…");
+  void startCanvas();
+  await openMainWindow();
+}
+
+app.whenReady().then(() => {
+  if (!hasSingleInstanceLock) return;
   ipcMain.handle("franklin:open-canvas", (event) => {
     assertTrustedIpcSender(event);
     return openCanvasWindow();
   });
-  createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  ipcMain.on("franklin:renderer-ready", (event) => {
+    assertTrustedIpcSender(event);
+    rendererReadyWaiters.get(event.sender.id)?.();
   });
-}).catch((error) => {
-  console.error("[franklin-desktop] startup failed", error);
-  app.quit();
+  ipcMain.handle("franklin:startup-retry", (event) => {
+    assertTrustedStartupIpcSender(event);
+    app.relaunch();
+    app.exit(0);
+  });
+  void startApplication().catch((error) => {
+    console.error("[franklin-desktop] startup failed", error);
+    if (win && !win.isDestroyed()) win.destroy();
+    win = null;
+    createStartupWindow();
+    updateStartupState("error", "Franklin couldn’t start. Please try again.");
+  });
+  app.on("activate", () => {
+    if (!backendReady) {
+      createStartupWindow();
+      return;
+    }
+    if (win && !win.isDestroyed()) {
+      win.show();
+      win.focus();
+      return;
+    }
+    createStartupWindow();
+    updateStartupState("loading", "Opening Franklin…");
+    void openMainWindow().catch((error) => {
+      console.error("[franklin-desktop] failed to reopen window", error);
+      updateStartupState("error", "Franklin couldn’t open its window. Please try again.");
+    });
+  });
 });
 
 app.on("window-all-closed", () => {
