@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowUp, PanelLeft, ImageIcon, Clapperboard, Music, X, Plus, Check, ChevronDown, Gauge, BarChart3, TrendingUp, MoreHorizontal } from "lucide-react";
 import { TopBarMenu } from "./TopBarMenu";
 import { ModelSelect } from "./ModelSelect";
-import { HistorySidebar, type TryView } from "./HistorySidebar";
+import { HistorySidebar, type TryView, type WorkspaceMode } from "./HistorySidebar";
 import { MessageContent } from "./MessageContent";
 import { ActivitySummary } from "./ActivitySummary";
 import { MessageActions } from "./MessageActions";
@@ -19,6 +19,7 @@ import { GalleryPanel } from "./GalleryPanel";
 import { WalletPanel } from "./WalletPanel";
 import { SkillsPanel } from "./SkillsPanel";
 import { CLIPanel } from "./CLIPanel";
+import { TeamPanel } from "./TeamPanel";
 import { useFranklinChat } from "../hooks/use-franklin-chat";
 import { useChatHistory } from "../hooks/use-chat-history";
 import { useSpend } from "../hooks/use-spend";
@@ -75,6 +76,7 @@ export function FranklinChat() {
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [view, setView] = useState<TryView>("chat");
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("personal");
   const MOBILE_BP = 880;
   const closeSidebarOnMobile = () => {
     if (typeof window !== "undefined" && window.innerWidth <= MOBILE_BP) setSidebarOpen(false);
@@ -209,11 +211,13 @@ export function FranklinChat() {
         conversations={history.conversations}
         activeId={history.activeId}
         onNew={() => {
+          setWorkspaceMode("personal");
           history.newChat();
           setView("chat");
           closeSidebarOnMobile();
         }}
         onSelect={(id) => {
+          setWorkspaceMode("personal");
           history.selectChat(id);
           setView("chat");
           closeSidebarOnMobile();
@@ -225,6 +229,12 @@ export function FranklinChat() {
           closeSidebarOnMobile();
         }}
         open={sidebarOpen}
+        workspaceMode={workspaceMode}
+        onWorkspaceMode={(next) => {
+          setWorkspaceMode(next);
+          setView(next === "team" ? "team" : "chat");
+          closeSidebarOnMobile();
+        }}
         wallet={wallet}
       />
 
@@ -296,7 +306,9 @@ export function FranklinChat() {
           )}
         </div>
 
-        {view === "phone" ? (
+        {view === "team" ? (
+          <TeamPanel onPersonal={() => { setWorkspaceMode("personal"); setView("chat"); }} />
+        ) : view === "phone" ? (
           <PhonePanel />
         ) : view === "tools" ? (
           <ToolsPanel onTry={tryMarketplace} />

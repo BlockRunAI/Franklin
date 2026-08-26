@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Plus, MessageSquare, Trash2, Phone, Blocks, Images, Wallet, Sparkles, Search,
-  Grid2x2, ChevronRight, Terminal,
+  Grid2x2, ChevronRight, Terminal, UsersRound, FolderKanban, BookOpen, Workflow,
 } from "lucide-react";
 import type { Conversation } from "../hooks/use-chat-history";
 import type { WalletInfo } from "../lib/wire";
@@ -10,7 +10,8 @@ import { MoreMenu } from "./MoreMenu";
 import { WalletPill } from "./WalletPill";
 import franklinAvatar from "../assets/franklin-avatar.png";
 
-export type TryView = "chat" | "phone" | "tools" | "gallery" | "wallet" | "skills" | "cli";
+export type TryView = "chat" | "phone" | "tools" | "gallery" | "wallet" | "skills" | "cli" | "team";
+export type WorkspaceMode = "personal" | "team";
 
 // Local bundled logo (no network → no offline blank).
 const PORTRAIT_URL = franklinAvatar;
@@ -24,12 +25,14 @@ interface Props {
   view: TryView;
   onView: (v: TryView) => void;
   open: boolean;
+  workspaceMode: WorkspaceMode;
+  onWorkspaceMode: (mode: WorkspaceMode) => void;
   /** Local CLI wallet (read-only) — replaces run's browser connect-wallet UI. */
   wallet: WalletInfo | null;
 }
 
-export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDelete, view, onView, open, wallet }: Props) {
-  const { t } = useTryLang();
+export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDelete, view, onView, open, workspaceMode, onWorkspaceMode, wallet }: Props) {
+  const { t, lang } = useTryLang();
   const [searchOpen, setSearchOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreBtnRef = useRef<HTMLButtonElement>(null);
@@ -54,17 +57,45 @@ export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDel
     { key: "wallet", icon: <Wallet className="h-[18px] w-[18px]" />, label: t.wallet },
   ];
   const moreActive = moreNav.some((n) => n.key === view);
+  const teamCopy = lang === "zh"
+    ? { personal: "个人", team: "团队", home: "团队首页", chats: "共享对话", files: "共享文件", knowledge: "团队知识", workflows: "工作流", soon: "即将开放" }
+    : lang === "es"
+      ? { personal: "Personal", team: "Equipo", home: "Inicio del equipo", chats: "Conversaciones", files: "Archivos", knowledge: "Conocimiento", workflows: "Flujos", soon: "Próximamente" }
+      : { personal: "Personal", team: "Team", home: "Team home", chats: "Shared chats", files: "Shared files", knowledge: "Knowledge", workflows: "Workflows", soon: "Coming soon" };
+  const teamNav = [
+    { icon: <MessageSquare className="h-[18px] w-[18px]" />, label: teamCopy.chats },
+    { icon: <FolderKanban className="h-[18px] w-[18px]" />, label: teamCopy.files },
+    { icon: <BookOpen className="h-[18px] w-[18px]" />, label: teamCopy.knowledge },
+    { icon: <Workflow className="h-[18px] w-[18px]" />, label: teamCopy.workflows },
+  ];
 
   return (
     <>
     <aside className={`try-sidebar${open ? " is-open" : ""}`}>
-      <button className="try-brand" onClick={() => onView("chat")}>
+      <button className="try-brand" onClick={() => onWorkspaceMode("personal")}>
         <span className="try-brand-ring">
           <img src={PORTRAIT_URL} alt="Franklin" width={30} height={30} />
         </span>
         <span className="try-brand-name">Franklin</span>
       </button>
 
+      <div className="try-workspace-switch" aria-label="Workspace mode">
+        <button
+          className={workspaceMode === "personal" ? "is-active" : ""}
+          onClick={() => onWorkspaceMode("personal")}
+        >
+          {teamCopy.personal}
+        </button>
+        <button
+          className={workspaceMode === "team" ? "is-active" : ""}
+          onClick={() => onWorkspaceMode("team")}
+        >
+          <UsersRound className="h-3.5 w-3.5" />{teamCopy.team}<span>Beta</span>
+        </button>
+      </div>
+
+      {workspaceMode === "personal" ? (
+      <>
       <button className="try-nav-item" onClick={onNew}>
         <Plus className="h-[18px] w-[18px]" />
         {t.newChat}
@@ -130,6 +161,20 @@ export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDel
         )}
       </div>
       </div>
+      </>
+      ) : (
+      <div className="try-scroll try-team-sidebar-content">
+        <button className="try-nav-item is-active" onClick={() => onView("team")}>
+          <UsersRound className="h-[18px] w-[18px]" />{teamCopy.home}<span className="try-nav-beta">Beta</span>
+        </button>
+        <div className="try-team-sidebar-label">{teamCopy.soon}</div>
+        {teamNav.map((item) => (
+          <button key={item.label} className="try-nav-item try-nav-disabled" disabled>
+            {item.icon}<span>{item.label}</span><span className="try-nav-soon">{teamCopy.soon}</span>
+          </button>
+        ))}
+      </div>
+      )}
 
       <div className="try-sidebar-footer">
         <div className="try-footer-icons">
