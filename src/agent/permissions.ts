@@ -54,6 +54,11 @@ export interface PermissionDecision {
   reason?: string;
 }
 
+export type PermissionPolicyFn = (
+  toolName: string,
+  input: Record<string, unknown>,
+) => PermissionDecision | undefined | Promise<PermissionDecision | undefined>;
+
 // ─── Default Rules ─────────────────────────────────────────────────────────
 
 const READ_ONLY_TOOLS = new Set([
@@ -104,14 +109,17 @@ export class PermissionManager {
   private mode: PermissionMode;
   private sessionAllowed = new Set<string>(); // "always allow" for this session
   private promptFn?: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>;
+  private policyFn?: PermissionPolicyFn;
 
   constructor(
     mode: PermissionMode = 'default',
-    promptFn?: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>
+    promptFn?: (toolName: string, description: string) => Promise<'yes' | 'no' | 'always'>,
+    policyFn?: PermissionPolicyFn,
   ) {
     this.mode = mode;
     this.rules = this.loadRules();
     this.promptFn = promptFn;
+    this.policyFn = policyFn;
   }
 
   /**
@@ -121,6 +129,11 @@ export class PermissionManager {
     toolName: string,
     input: Record<string, unknown>
   ): Promise<PermissionDecision> {
+    // Driver policy is authoritative and runs before trust/session/default
+    // shortcuts, so a persisted "always allow" cannot bypass a boundary.
+    const policyDecision = await this.policyFn?.(toolName, input);
+    if (policyDecision) return policyDecision;
+
     // Trust mode: allow everything
     if (this.mode === 'trust') {
       return { behavior: 'allow', reason: 'trust mode' };

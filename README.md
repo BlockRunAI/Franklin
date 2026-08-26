@@ -28,6 +28,7 @@
 
 <p>
   <a href="#quick-start">Quick&nbsp;start</a> ·
+  <a href="#franklin-desktop-beta">Desktop</a> ·
   <a href="#yopo">YOPO</a> ·
   <a href="#a-new-category">Category</a> ·
   <a href="#what-franklin-can-execute">What&nbsp;it&nbsp;does</a> ·
@@ -112,6 +113,34 @@ VS Code → Extensions  (Cmd+Shift+X / Ctrl+Shift+X)
 ```
 
 Free models work immediately. Paid models, image gen, and video gen activate the moment your wallet has USDC. The CLI and the extension share the same `~/.blockrun/` config and session history, so jumping between terminal and VS Code is seamless.
+
+### Franklin Desktop (Beta)
+
+Franklin Desktop brings the real Franklin agent into a native workspace for macOS
+and Windows. It uses the same local wallet, models, tools, and session runtime as
+the CLI, with a visual chat, conversation history, gallery, wallet, tools, skills,
+and CLI panels.
+
+| Platform | Current beta package |
+| -------- | -------------------- |
+| macOS (Apple silicon) | Unsigned `.dmg` test build |
+| Windows (x64) | Unsigned `.exe` test build |
+
+> **Beta distribution:** signed public downloads and automatic updates are not
+> live yet. Maintainers can download the short-lived unsigned installers from
+> [Desktop CI](https://github.com/BlockRunAI/Franklin/actions/workflows/desktop-ci.yml).
+> Public signed builds will appear on the
+> [Franklin releases page](https://github.com/BlockRunAI/Franklin/releases).
+
+Desktop is local-first: it opens in `Documents/Franklin`, keeps session history
+local by default, and asks before an agent accesses files outside the active
+workspace. External files are not blocked; each access requires explicit approval.
+Shell commands also require approval in the current beta.
+
+The stable beta currently runs the Franklin agent. Team Mode and Studio adapters
+for additional agent CLIs are being developed separately and are not included in
+this release. See the [Desktop guide](apps/desktop/README.md) for development and
+packaging instructions.
 
 ---
 
@@ -564,6 +593,27 @@ npm run test:e2e      # live e2e tests — free smoke works unfunded; paid tools
 npm run test:free-models # live matrix across current free NVIDIA models
 node dist/index.js --help
 ```
+
+### Desktop app
+
+The stable Franklin Desktop shell lives in [`apps/desktop`](apps/desktop). It uses
+the Franklin runtime built by this monorepo, so CLI and Desktop changes are
+versioned and tested together. See the [Desktop guide](apps/desktop/README.md) for
+the product status, security model, and complete development workflow.
+
+```bash
+npm run desktop:dev       # Desktop UI with the local mock agent
+npm run desktop:real --workspace @blockrun/franklin-desktop # real Franklin agent
+npm run desktop:build     # type-check and build the renderer
+npm run desktop:package:mac
+npm run desktop:package:win
+```
+
+Packaged builds create a private, per-launch credential for the local Franklin
+service, keep cloud session sync off unless the user explicitly enables it, and
+use `Documents/Franklin` as the default workspace. Files outside that workspace
+remain available after an explicit approval, similar to other coding agents.
+Team Mode is being developed separately and is not part of this stable integration.
 
 For the recommended live validation order and failure triage, see [docs/live-e2e-checklist.md](docs/live-e2e-checklist.md).
 

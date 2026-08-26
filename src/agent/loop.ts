@@ -636,7 +636,8 @@ export async function interactiveSession(
   const workDir = config.workingDir ?? process.cwd();
   const permissions = new PermissionManager(
     config.permissionMode ?? 'default',
-    config.permissionPromptFn
+    config.permissionPromptFn,
+    config.permissionPolicyFn,
   );
 
   // ── Lifecycle hooks ──

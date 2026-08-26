@@ -74,6 +74,8 @@ export class AgentHost {
       apiUrl: string;
       defaultModel: string;
       debug?: boolean;
+      permissionPolicyFn?: AgentConfig['permissionPolicyFn'];
+      allowSubAgents?: boolean;
     }
   ) {}
 
@@ -186,16 +188,19 @@ export class AgentHost {
     };
 
     const systemInstructions = assembleInstructions(this.opts.workDir, model);
-    const subAgent = createSubAgentCapability(this.opts.apiUrl, this.opts.chain, allCapabilities, model);
+    const subAgent = this.opts.allowSubAgents === false
+      ? null
+      : createSubAgentCapability(this.opts.apiUrl, this.opts.chain, allCapabilities, model);
     const config: AgentConfig = {
       model,
       apiUrl: this.opts.apiUrl,
       chain: this.opts.chain,
       systemInstructions,
-      capabilities: [...allCapabilities, subAgent],
+      capabilities: subAgent ? [...allCapabilities, subAgent] : allCapabilities,
       maxTurns: 100,
       workingDir: this.opts.workDir,
       permissionMode: options.permissionMode ?? 'default',
+      permissionPolicyFn: this.opts.permissionPolicyFn,
       debug: !!this.opts.debug,
       showPrefetchStatus: false,
       ...(options.maxSpendUsd != null ? { maxSpendUsd: options.maxSpendUsd } : {}),
