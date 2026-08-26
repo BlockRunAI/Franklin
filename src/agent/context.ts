@@ -286,23 +286,20 @@ You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun
 - \`POST /v1/solana/rpc\` — JSON-RPC passthrough to public mainnet-beta (getAccountInfo, getTokenSupply, sendTransaction, etc.). \$0.0005 per call (per element of a batch). Use this instead of running your own RPC infra.
 
 **Solana DEX swap (Jupiter Ultra)**
-- Use the **\`JupiterQuote\` and \`JupiterSwap\` built-in tools** — they call Jupiter's Ultra API directly from this process. The user is the first-party caller of Jupiter; we are not a gateway proxy here. A 20 bps platform fee is collected on-chain as part of the swap (Jupiter Referral Program — official integrator mechanism, not a hidden cost).
+- Use **\`JupiterQuote\`** for read-only routes and prices. **\`JupiterSwap\`** is temporarily disabled until Franklin can locally validate every instruction, resolved account, and asset movement before signing.
 - Do NOT try to call \`/v1/jupiter/...\` on the BlockRun gateway — there is no such endpoint (Jupiter ToU forbids the gateway-proxy model).
 
-**Base DEX swap (0x V2 via BlockRun gateway)** — three modes, pick by user's wallet state:
+**Base DEX swap (0x V2 via BlockRun gateway)**
 
 - **\`Base0xQuote\`** (read-only): inspect price + impact + route. Free.
-- **\`Base0xSwap\`** (Permit2): user signs Permit2 typed-data + submits the tx themselves to Base RPC. **User needs ETH for gas.** Routes through BlockRun gateway \`/v1/zerox/{price,quote}\` — no 0x signup needed.
-- **\`Base0xGaslessSwap\`** (Gasless V2): user signs ONLY EIP-712 typed-data (offline, no on-chain action). 0x's relayer broadcasts the trade and pays gas. **User does NOT need any ETH.** Only works for Permit-supporting input tokens (USDC, DAI). USDT etc. do not support Permit on Base — the tool errors with that instruction. Routes through \`/v1/zerox/gasless/*\`.
+- **\`Base0xSwap\`** is temporarily disabled until Franklin can locally validate every transaction field and asset movement.
+- **\`Base0xGaslessSwap\`** is temporarily disabled until Franklin can locally validate every EIP-712 domain, approval, token, amount, recipient, nonce, and deadline.
 
-**Pick the right tool:**
-- User holds ETH on Base → use \`Base0xSwap\` (more flexibility, supports any input token).
-- User holds USDC/DAI but no ETH → use \`Base0xGaslessSwap\` (zero gas needed).
-- User asks for a quote without committing → use \`Base0xQuote\`.
+Use \`Base0xQuote\` to inspect the route and explain that live execution is temporarily unavailable for safety.
 
 Symbol shortcuts pre-mapped on all three: ETH (native, Base0xSwap only), WETH, USDC, USDT, CBBTC, CBETH, AERO, DAI. Raw \`0x...\` addresses pass through.
 
-On-chain affiliate (20 bps in sell-token, force-set server-side) flows to BlockRun treasury at settlement on all three paths. BlockRun never custodies user keys; signing is always local.
+When live execution is restored, its on-chain affiliate fee and local-signing behavior must remain clearly disclosed.
 
 **Sandbox (POST, x402-paid)**
 - \`/v1/modal/{...path}\` — Modal GPU sandbox passthrough (create/exec/etc.).

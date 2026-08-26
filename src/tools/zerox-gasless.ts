@@ -348,7 +348,7 @@ interface SwapInput {
   auto_approve?: boolean;
 }
 
-async function executeBase0xGaslessSwap(
+async function executeBase0xGaslessSwapUnsafeReference(
   input: SwapInput,
   ctx: ExecutionScope,
 ): Promise<{ output: string; isError?: boolean }> {
@@ -569,15 +569,30 @@ async function executeBase0xGaslessSwap(
   };
 }
 
+async function executeBase0xGaslessSwap(
+  input: SwapInput,
+  ctx: ExecutionScope,
+): Promise<{ output: string; isError?: boolean }> {
+  // The relayer quote supplies both trade and approval EIP-712 payloads. Do
+  // not sign them until Franklin can independently bind every domain, token,
+  // amount, spender, nonce, recipient, and deadline to the user's approval.
+  void input;
+  void ctx;
+  void executeBase0xGaslessSwapUnsafeReference;
+  return {
+    output:
+      'Live gasless Base swaps through 0x are temporarily disabled for safety. Franklin will not sign gateway-provided trade or approval typed data until every field and asset movement can be verified locally. Use Base0xQuote for a read-only route and price.',
+    isError: true,
+  };
+}
+
 // ─── Capability handler ──────────────────────────────────────────────────
 
 export const base0xGaslessSwapCapability: CapabilityHandler = {
   spec: {
     name: 'Base0xGaslessSwap',
     description:
-      "Execute a Base DEX swap via 0x Gasless V2. The user signs only EIP-712 typed-data (offline, no on-chain action) — 0x's relayer broadcasts the trade and pays gas. **The user does NOT need any ETH for gas.** Only input token (USDC, DAI, etc. — Permit-supporting ERC-20) is required. Returns the BaseScan link once the relayer confirms. " +
-      "Routes through BlockRun gateway /v1/zerox/gasless/* — no 0x signup needed. Affiliate 20 bps in sell-token to BlockRun treasury (server-side enforced). " +
-      "Use this instead of Base0xSwap when the user has 0 ETH but holds USDC/DAI. For tokens that don't support Permit (USDT etc.), the tool errors with a clear instruction to use Base0xSwap instead.",
+      "Live gasless Base swap execution through 0x is temporarily unavailable while Franklin adds complete local EIP-712 validation. Use Base0xQuote for a read-only route and price; Franklin will not sign opaque gateway-provided trade or approval data.",
     input_schema: {
       type: 'object',
       required: ['sell_token', 'buy_token', 'sell_amount'],

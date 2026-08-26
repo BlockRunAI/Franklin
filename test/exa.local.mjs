@@ -144,3 +144,22 @@ test('readExaAnswer degrades (does not throw) on a malformed non-string answer, 
   assert.deepEqual(readExaAnswer(null, true), { text: null, costUsd: 0.01 });
   assert.deepEqual(readExaAnswer('not json', false), { text: null, costUsd: 0 });
 });
+
+test('paid prefetch can be disabled before any network or wallet access', async () => {
+  const { prefetchForIntent } = await import('../dist/agent/intent-prefetch.js');
+  const original = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    throw new Error('network must not be reached');
+  };
+  try {
+    const result = await prefetchForIntent({
+      kind: 'ticker', symbol: 'AAPL', assetClass: 'stock', market: 'us', wantNews: true,
+    }, {}, { allowPaid: false });
+    assert.equal(result, null);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

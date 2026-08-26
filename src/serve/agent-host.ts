@@ -30,6 +30,14 @@ import type { AgentConfig, StreamEvent } from '../agent/types.js';
 
 const RING_BUFFER_SIZE = 200;
 
+export function resolveHostedMaxSpendUsd(
+  requested: number | undefined,
+  ceiling: number | undefined,
+): number | undefined {
+  if (ceiling == null) return requested;
+  return requested != null && requested > 0 ? Math.min(requested, ceiling) : ceiling;
+}
+
 export interface DispatchOptions {
   prompt: string;
   model?: string;
@@ -76,6 +84,8 @@ export class AgentHost {
       debug?: boolean;
       permissionPolicyFn?: AgentConfig['permissionPolicyFn'];
       allowSubAgents?: boolean;
+      allowPaidPrefetch?: boolean;
+      defaultMaxSpendUsd?: number;
     }
   ) {}
 
@@ -109,6 +119,7 @@ export class AgentHost {
     if (!prompt) throw new Error('prompt must not be empty');
     const model = options.model || this.opts.defaultModel;
     const label = options.label?.trim() || prompt.replace(/\s+/g, ' ').slice(0, 60);
+    const maxSpendUsd = resolveHostedMaxSpendUsd(options.maxSpendUsd, this.opts.defaultMaxSpendUsd);
 
     // Per-agent input queue (same contract the loop's own multiplexer wraps).
     const queue: string[] = [];
@@ -203,7 +214,8 @@ export class AgentHost {
       permissionPolicyFn: this.opts.permissionPolicyFn,
       debug: !!this.opts.debug,
       showPrefetchStatus: false,
-      ...(options.maxSpendUsd != null ? { maxSpendUsd: options.maxSpendUsd } : {}),
+      allowPaidPrefetch: this.opts.allowPaidPrefetch,
+      ...(maxSpendUsd != null ? { maxSpendUsd } : {}),
       onSessionStart: (sessionId) => {
         agent.sessionId = sessionId;
         this.agents.set(sessionId, agent);

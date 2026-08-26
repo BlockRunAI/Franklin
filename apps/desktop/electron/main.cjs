@@ -35,36 +35,14 @@ const CANVAS_URL = process.env.FRANKLIN_CANVAS_URL || "http://localhost:5173";
 const AGENT_TOKEN = DEV_URL ? "" : crypto.randomBytes(32).toString("base64url");
 const FILE_TOKEN = DEV_URL ? "" : crypto.randomBytes(32).toString("base64url");
 
-let agentPort = process.env.FRANKLIN_AGENT_PORT || "0";
+let agentPort = process.env.FRANKLIN_AGENT_PORT || (DEV_URL ? "3737" : "0");
 if (AGENT_TOKEN) process.env.FRANKLIN_SERVE_TOKEN = AGENT_TOKEN;
 
 let win = null;
 let backend = null;
 let canvas = null;
 let canvasWin = null;
-
-function listenOnce(port) {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.once("error", reject);
-    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
-      const address = server.address();
-      const selected = address && typeof address === "object" ? address.port : port;
-      server.close((error) => error ? reject(error) : resolve(selected));
-    });
-  });
-}
-
-async function selectAgentPort() {
-  const preferred = Number.parseInt(String(agentPort), 10);
-  try {
-    return String(await listenOnce(Number.isInteger(preferred) && preferred > 0 ? preferred : 0));
-  } catch (error) {
-    if (error?.code !== "EADDRINUSE") throw error;
-    return String(await listenOnce(0));
-  }
-}
+let quitting = false;
 
 function backendBaseEnvironment() {
   const allowed = [
@@ -160,7 +138,7 @@ function resolveFranklinEntry() {
 }
 
 function startBackend() {
-  if (DEV_URL) return;
+  if (DEV_URL) return Promise.resolve(String(agentPort));
   const useMock = process.env.FRANKLIN_USE_MOCK === "1";
   if (app.isPackaged && useMock) {
     throw new Error("The development mock is disabled in packaged Franklin builds.");
@@ -191,11 +169,38 @@ function startBackend() {
       FRANKLIN_DESKTOP_WORKSPACE_BOUNDARY: "1",
       ELECTRON_RUN_AS_NODE: "1", // run the Node entry under Electron's Node
     },
-    stdio: "inherit",
+    stdio: ["ignore", "inherit", "inherit", "ipc"],
   });
-  backend.on("exit", (code) => {
-    console.log(`[franklin-desktop] backend exited (${code})`);
-    backend = null;
+  return new Promise((resolve, reject) => {
+    let ready = false;
+    const timeout = setTimeout(() => {
+      if (backend) backend.kill();
+      reject(new Error("Franklin agent server did not become ready in time."));
+    }, 20_000);
+    backend.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    backend.on("message", (message) => {
+      if (ready || !message || message.type !== "franklin:server-ready") return;
+      const reported = Number(message.port);
+      if (!Number.isInteger(reported) || reported <= 0 || reported > 65535) {
+        clearTimeout(timeout);
+        backend.kill();
+        reject(new Error("Franklin agent server reported an invalid port."));
+        return;
+      }
+      ready = true;
+      clearTimeout(timeout);
+      resolve(String(reported));
+    });
+    backend.on("exit", (code) => {
+      clearTimeout(timeout);
+      console.log(`[franklin-desktop] backend exited (${code})`);
+      backend = null;
+      if (!ready) reject(new Error(`Franklin agent server exited before readiness (${code}).`));
+      else if (!quitting) app.quit();
+    });
   });
 }
 
@@ -271,9 +276,8 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  agentPort = await selectAgentPort();
+  agentPort = await startBackend();
   process.env.FRANKLIN_AGENT_PORT = agentPort;
-  startBackend();
   startCanvas();
   ipcMain.handle("franklin:open-canvas", (event) => {
     assertTrustedIpcSender(event);
@@ -291,6 +295,8 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
+app.on("before-quit", () => { quitting = true; });
 
 app.on("quit", () => {
   if (backend) backend.kill();

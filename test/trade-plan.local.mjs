@@ -24,6 +24,9 @@ const { setSchedulerSessionId } = await import('../dist/scheduler/store.js');
 const { ApprovalBroker } = await import('../dist/agent/approvals.js');
 const { createHeadlessApprovalFn } = await import('../dist/commands/start.js');
 const { resetLiveSpend, recordUsage } = await import('../dist/stats/tracker.js');
+const { jupiterSwapCapability } = await import('../dist/tools/jupiter.js');
+const { base0xQuoteCapability, base0xSwapCapability } = await import('../dist/tools/zerox-base.js');
+const { base0xGaslessSwapCapability } = await import('../dist/tools/zerox-gasless.js');
 
 after(() => {
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
@@ -43,6 +46,50 @@ const swapInvocation = (over = {}) => ({
 });
 
 const SOL_TRADE = { venue: 'jupiter', action: 'buy', asset: 'SOL', amountUsd: 2 };
+
+test('Jupiter live execution fails closed before wallet or network access', async () => {
+  const original = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    throw new Error('network must not be reached');
+  };
+  try {
+    const result = await jupiterSwapCapability.execute(
+      { input_mint: 'USDC', output_mint: 'SOL', amount: 2, auto_approve: true },
+      { workingDir: process.cwd(), abortSignal: new AbortController().signal },
+    );
+    assert.equal(result.isError, true);
+    assert.match(result.output, /temporarily disabled|will not sign/i);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('0x live execution fails closed before wallet or network access while quotes remain available', async () => {
+  const original = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    throw new Error('network must not be reached');
+  };
+  try {
+    const scope = { workingDir: process.cwd(), abortSignal: new AbortController().signal };
+    for (const capability of [base0xSwapCapability, base0xGaslessSwapCapability]) {
+      const result = await capability.execute(
+        { sell_token: 'USDC', buy_token: 'WETH', sell_amount: 2, auto_approve: true },
+        scope,
+      );
+      assert.equal(result.isError, true);
+      assert.match(result.output, /temporarily disabled|will not sign/i);
+    }
+    assert.match(base0xQuoteCapability.spec.description, /read-only/i);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
 
 // ─── Validation ────────────────────────────────────────────────────────────
 

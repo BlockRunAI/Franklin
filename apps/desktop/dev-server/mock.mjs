@@ -227,8 +227,11 @@ function chunkText(s, size) {
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 server.listen(PORT, () => {
-  console.log(`[mock] franklin agent server on http://localhost:${PORT}`);
-  console.log(`[mock] WebSocket: ws://localhost:${PORT}/agent`);
+  const address = server.address();
+  const effectivePort = address && typeof address === 'object' ? address.port : PORT;
+  if (typeof process.send === 'function') process.send({ type: 'franklin:server-ready', port: effectivePort });
+  console.log(`[mock] franklin agent server on http://localhost:${effectivePort}`);
+  console.log(`[mock] WebSocket: ws://localhost:${effectivePort}/agent`);
   console.log(`[mock] Vite dev server proxies /agent → here. Run \`npm run dev:vite\` in another terminal,`);
   console.log(`[mock] then open http://localhost:5173.`);
 });
