@@ -7,25 +7,38 @@
 import { useState } from "react";
 import { Copy, Check } from "lucide-react";
 import type { WalletInfo } from "../lib/wire";
+import type { AgentConnectionState } from "../lib/ws";
 import { copyText } from "../lib/clipboard";
 
 interface Props {
   wallet: WalletInfo | null;
+  connectionState: AgentConnectionState;
+  isLoading: boolean;
+  error: string | null;
 }
 
 function fmtBal(n: number): string {
   return `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`;
 }
 
-export function WalletPill({ wallet }: Props) {
+export function WalletPill({ wallet, connectionState, isLoading, error }: Props) {
   const [copied, setCopied] = useState(false);
 
-  if (!wallet) {
+  if (connectionState !== "open" || !wallet) {
+    const status = connectionState === "connecting"
+      ? "Connecting…"
+      : connectionState === "closed"
+        ? "Reconnecting…"
+        : isLoading
+          ? "Loading wallet…"
+          : error
+            ? "Wallet unavailable"
+            : "Wallet unavailable";
     return (
-      <div className="try-wallet" style={{ opacity: 0.6 }}>
+      <div className="try-wallet" style={{ opacity: 0.72 }}>
         <div className="try-wallet-info">
           <div className="try-wallet-row1">
-            <span className="try-wallet-net">CLI offline</span>
+            <span className="try-wallet-net">{status}</span>
           </div>
           <span className="try-wallet-addr">—</span>
         </div>

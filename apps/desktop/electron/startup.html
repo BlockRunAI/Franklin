@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'" />
+    <title>Starting Franklin</title>
+    <link rel="stylesheet" href="./startup.css" />
+  </head>
+  <body>
+    <main class="startup-shell" aria-live="polite">
+      <div class="brand-mark" aria-hidden="true">
+        <img src="../dist/franklin-avatar.png" alt="" />
+      </div>
+      <h1>Franklin</h1>
+      <p id="status">Preparing your secure workspace…</p>
+      <div id="progress" class="progress" aria-label="Starting">
+        <span></span><span></span><span></span>
+      </div>
+      <button id="retry" type="button" hidden>Try again</button>
+      <p id="hint" class="hint" hidden>Your conversations and wallet remain on this Mac.</p>
+    </main>
+    <script src="./startup.js"></script>
+  </body>
+</html>

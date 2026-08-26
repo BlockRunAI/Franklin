@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import type { Conversation } from "../hooks/use-chat-history";
 import type { WalletInfo } from "../lib/wire";
+import type { AgentConnectionState } from "../lib/ws";
 import { useTryLang } from "../lib/i18n";
 import { MoreMenu } from "./MoreMenu";
 import { WalletPill } from "./WalletPill";
@@ -29,9 +30,12 @@ interface Props {
   onWorkspaceMode: (mode: WorkspaceMode) => void;
   /** Local CLI wallet (read-only) — replaces run's browser connect-wallet UI. */
   wallet: WalletInfo | null;
+  walletConnectionState: AgentConnectionState;
+  walletLoading: boolean;
+  walletError: string | null;
 }
 
-export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDelete, view, onView, open, workspaceMode, onWorkspaceMode, wallet }: Props) {
+export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDelete, view, onView, open, workspaceMode, onWorkspaceMode, wallet, walletConnectionState, walletLoading, walletError }: Props) {
   const { t, lang } = useTryLang();
   const [searchOpen, setSearchOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -180,7 +184,12 @@ export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDel
         <div className="try-footer-icons">
           <MoreMenu />
           <div className="try-footer-wallet">
-            <WalletPill wallet={wallet} />
+            <WalletPill
+              wallet={wallet}
+              connectionState={walletConnectionState}
+              isLoading={walletLoading}
+              error={walletError}
+            />
           </div>
         </div>
       </div>
