@@ -1,15 +1,19 @@
 /**
  * Coinbase Onramp link client.
  *
- * Exchanges the user's Base wallet address for a one-time Coinbase Onramp
- * URL via the BlockRun gateway. The gateway holds the CDP API key, signs the
- * JWT, and mints a single-use `sessionToken` (Coinbase requires Secure Init
- * since 2025-07-31 — plain appId URLs are deprecated). The returned URL is
- * one-time and expires in ~5 minutes, so it must be minted at click time and
- * never cached.
+ * Exchanges the user's wallet address for a one-time Coinbase Onramp URL via
+ * the BlockRun gateway of the active chain (Base → blockrun.ai, Solana →
+ * sol.blockrun.ai). The gateway holds the CDP API key, signs the JWT, and
+ * mints a single-use `sessionToken` (Coinbase requires Secure Init since
+ * 2025-07-31 — plain appId URLs are deprecated). The returned URL is one-time
+ * and expires in ~5 minutes, so it must be minted at click time and never
+ * cached.
  *
- * Base / USDC only. Mirrors the gateway-call pattern in src/phone/client.ts
- * and reuses the shared x402 POST helper.
+ * USDC only, on the active chain. The $0 x402 handshake doubles as wallet
+ * authentication — postWithPayment signs with the active chain's wallet, and
+ * the gateway binds the funding address to that signer. Mirrors the
+ * gateway-call pattern in src/phone/client.ts and reuses the shared x402 POST
+ * helper.
  */
 
 import { API_URLS, loadChain } from '../config.js';
@@ -21,23 +25,25 @@ export interface OnrampLinkResult {
 }
 
 /**
- * Mint a one-time Coinbase Onramp link that funds `address` (Base USDC).
- * Throws if the gateway is unreachable, not configured, or returns no URL.
+ * Mint a one-time Coinbase Onramp link that funds `address` with USDC on the
+ * active chain. Throws if the gateway is unreachable, not configured, or
+ * returns no URL.
  */
 export async function getOnrampUrl(address: string): Promise<OnrampLinkResult> {
-  // postWithPayment signs with the active chain's wallet; on Solana that
-  // would crash confusingly against this Base-only endpoint. Fail clearly.
-  if (loadChain() !== 'base') {
-    throw new Error('Onramp is Base-only — switch to Base to buy USDC with a card.');
-  }
-  const endpoint = `${API_URLS.base}/v1/onramp/token`;
+  const chain = loadChain();
+  const endpoint = `${API_URLS[chain]}/v1/onramp/token`;
   const result = await postWithPayment(
     endpoint,
-    { address, network: 'base', asset: 'USDC' },
+    { address, network: chain, asset: 'USDC' },
     'Mint a Coinbase Onramp session link to fund this wallet',
   );
 
   if (!result.ok) {
+    // A 404 means this gateway has not shipped the onramp route yet (gateway
+    // deploys are manual) — name the real situation instead of a bare status.
+    if (result.status === 404) {
+      throw new Error(`Onramp is not available on the ${chain} gateway yet — try again later.`);
+    }
     const msg = typeof result.body.error === 'string'
       ? result.body.error
       : `gateway ${result.status}`;

@@ -352,21 +352,15 @@ export function createPanelServer(port: number): http.Server {
       // Mints a one-time Coinbase Onramp link to fund the wallet with a card.
       // Spends nothing locally, but it talks to the gateway with this wallet's
       // identity and opens a payment flow, so it gets the same loopback +
-      // same-origin posture as the wallet-mutating routes. Base only — the
-      // gateway mints a session token scoped to the Base address.
+      // same-origin posture as the wallet-mutating routes. The gateway of the
+      // active chain mints a session token scoped to that chain's address.
       if (p === '/api/wallet/onramp' && req.method === 'POST') {
         if (!isLocalPanelRequest(req)) {
           json(res, { error: 'forbidden' }, 403);
           return;
         }
         try {
-          const chain = loadChain();
-          if (chain !== 'base') {
-            json(res, { error: 'Onramp currently supports Base only — switch to Base to buy USDC with a card.' }, 400);
-            return;
-          }
-          const { setupAgentWallet } = await import('@blockrun/llm');
-          const address = setupAgentWallet({ silent: true }).getWalletAddress();
+          const address = await currentWalletAddress();
           const { getOnrampUrl } = await import('../onramp/client.js');
           const { url } = await getOnrampUrl(address);
           json(res, { url });

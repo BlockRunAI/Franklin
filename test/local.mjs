@@ -189,6 +189,38 @@ test('oneShotExitCodeForTurnReason treats only completed turns as success', asyn
   assert.equal(oneShotExitCodeForTurnReason('aborted'), 1);
 });
 
+test('chain default: fresh installs resolve to solana; a lone legacy Base wallet stays on base', () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-chain-default-'));
+  const configUrl = new URL('../dist/config.js', import.meta.url).href;
+  const readChain = () => execFileSync(
+    process.execPath,
+    ['-e', `import(${JSON.stringify(configUrl)}).then(m => process.stdout.write(m.loadChain()))`],
+    { env: { ...process.env, HOME: fakeHome, RUNCODE_CHAIN: '' }, encoding: 'utf-8' },
+  );
+
+  try {
+    // Fresh install — no wallets, no saved choice → Solana.
+    assert.equal(readChain(), 'solana');
+
+    // Legacy user: a Base wallet exists but no Solana wallet and no explicit
+    // choice — flipping them to an empty Solana wallet would strand funded
+    // USDC, so they stay on Base.
+    mkdirSync(join(fakeHome, '.blockrun'), { recursive: true });
+    writeFileSync(join(fakeHome, '.blockrun', '.session'), '0xdeadbeef');
+    assert.equal(readChain(), 'base');
+
+    // Both wallets present without an explicit choice → the default wins.
+    writeFileSync(join(fakeHome, '.blockrun', '.solana-session'), 'deadbeef');
+    assert.equal(readChain(), 'solana');
+
+    // An explicit saved choice always beats the heuristic.
+    writeFileSync(join(fakeHome, '.blockrun', 'payment-chain'), 'base\n');
+    assert.equal(readChain(), 'base');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('chain shortcut --help does not mutate saved chain or launch the agent', async () => {
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-chain-help-'));
   const chainFile = join(fakeHome, '.blockrun', 'payment-chain');

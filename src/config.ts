@@ -45,9 +45,18 @@ export function loadChain(): Chain {
 
   try {
     const content = fs.readFileSync(CHAIN_FILE, 'utf-8').trim();
+    if (content === 'base') return 'base';
     if (content === 'solana') return 'solana';
-    return 'base';
-  } catch {
-    return 'base';
-  }
+  } catch { /* no explicit choice on disk — fall through to the default */ }
+
+  // Default chain is Solana. Exception: a Base wallet with no Solana wallet
+  // means the user funded before the default flipped — silently moving their
+  // spending to an empty Solana wallet would strand their USDC, so keep them
+  // on Base until they choose explicitly (`franklin solana`, panel switch,
+  // setup). Pure read — every path that creates the other wallet also calls
+  // saveChain, so the heuristic is only ever the pre-choice fallback.
+  // (.session / .solana-session are the SDK's wallet key files.)
+  const hasBaseWallet = fs.existsSync(path.join(BLOCKRUN_DIR, '.session'));
+  const hasSolanaWallet = fs.existsSync(path.join(BLOCKRUN_DIR, '.solana-session'));
+  return hasBaseWallet && !hasSolanaWallet ? 'base' : 'solana';
 }
