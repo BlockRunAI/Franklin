@@ -267,6 +267,22 @@ export function createDesktopWorkspacePermissionPolicy(
     if (toolName === 'Bash') {
       return { behavior: 'ask', reason: 'Desktop requires approval for shell commands' };
     }
+    // Detach ultimately executes `bash -lc` in the background. Treat it as a
+    // shell boundary too, even when a CLI user previously persisted an allow
+    // rule for the tool name.
+    if (toolName === 'Detach') {
+      return { behavior: 'ask', reason: 'Desktop requires approval for background shell commands' };
+    }
+    // These confirmed actions can move funds or grant token approvals. The
+    // driver policy runs before persisted/session allow rules, so every
+    // Desktop execution receives a fresh, visible decision.
+    if (toolName === 'PolymarketBet') {
+      const action = typeof input.action === 'string' ? input.action.toLowerCase() : '';
+      const confirmed = input.confirm !== false && input.confirm != null;
+      if (confirmed && ['setup', 'fund', 'redeem', 'withdraw', 'cancel'].includes(action)) {
+        return { behavior: 'ask', reason: `Desktop requires approval for Polymarket ${action}` };
+      }
+    }
     const candidates: unknown[] = [];
     const key = pathKeys[toolName];
     if (key) candidates.push(input[key]);
@@ -376,7 +392,8 @@ function dialogueText(content: Dialogue['content']): string {
 }
 
 export async function startServer(opts: ServerOptions): Promise<void> {
-  const { port, workDir, debug } = opts;
+  let { port } = opts;
+  const { workDir, debug } = opts;
   const chain = loadChain();
   const apiUrl = API_URLS[chain];
   const userConfig = loadConfig();
@@ -397,6 +414,8 @@ export async function startServer(opts: ServerOptions): Promise<void> {
     debug,
     permissionPolicyFn: desktopPermissionPolicy,
     allowSubAgents: !desktopBoundary,
+    allowPaidPrefetch: !desktopBoundary,
+    defaultMaxSpendUsd: desktopBoundary ? 5 : undefined,
   });
   // Per-socket subscription bookkeeping: sessionId → unsubscribe.
   const wsSubs = new WeakMap<WebSocket, Map<string, () => void>>();
@@ -633,7 +652,16 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       permissionPolicyFn: desktopPermissionPolicy,
       debug: !!debug,
       showPrefetchStatus: false,
+      allowPaidPrefetch: !desktopBoundary,
+      ...(desktopBoundary ? { maxSpendUsd: 5 } : {}),
       costSaver,
+      // Tools such as ImageGen perform their own exact-price confirmation.
+      // Map the Desktop yes/no approval bridge back to the tool's choices.
+      onAskUser: async (question, options) => {
+        const decision = await requestDesktopPermission('Agent confirmation', question);
+        if (decision === 'yes' || decision === 'always') return options?.[0] ?? 'yes';
+        return options?.[options.length - 1] ?? 'no';
+      },
       // Structured approvals (trade plans): surfaced to the desktop over the
       // in-flight turn stream as agent.permissionAsk; the UI answers with
       // agent.permissionResponse {askId, decision}. Without a connected
@@ -1037,13 +1065,27 @@ export async function startServer(opts: ServerOptions): Promise<void> {
     });
   });
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once('error', reject);
     httpServer.listen(port, '127.0.0.1', () => {
+      httpServer.off('error', reject);
+      const address = httpServer.address();
+      if (!address || typeof address === 'string') {
+        reject(new Error('Franklin agent server did not report a TCP address'));
+        return;
+      }
+      port = address.port;
       // eslint-disable-next-line no-console
       console.log(`Franklin agent server on ws://127.0.0.1:${port}/agent  (chain: ${chain}, workdir: ${workDir})`);
       resolve();
     });
   });
+
+  // Packaged Desktop uses a private parent/child IPC channel for readiness.
+  // The renderer is not created until Electron receives this effective port.
+  if (typeof process.send === 'function') {
+    process.send({ type: 'franklin:server-ready', port });
+  }
 
   // Discovery file (mirror of the panel-url pattern): lets `franklin panel`
   // point its Agents tab at this server without configuration.

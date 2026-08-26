@@ -320,7 +320,7 @@ async function executeJupiterQuote(input: QuoteInput): Promise<{ output: string;
   }
 }
 
-async function executeJupiterSwap(
+async function executeJupiterSwapUnsafeReference(
   input: SwapInput,
   ctx: ExecutionScope
 ): Promise<{ output: string; isError?: boolean }> {
@@ -484,6 +484,25 @@ async function executeJupiterSwap(
   }
 }
 
+async function executeJupiterSwap(
+  input: SwapInput,
+  ctx: ExecutionScope,
+): Promise<{ output: string; isError?: boolean }> {
+  // Fail closed until Franklin can independently validate the complete
+  // versioned transaction (including address-table-resolved accounts and all
+  // token/lamport effects) against the user's approved swap. Signing opaque
+  // transaction bytes returned by an upstream service is not an acceptable
+  // wallet boundary. JupiterQuote remains available.
+  void input;
+  void ctx;
+  void executeJupiterSwapUnsafeReference;
+  return {
+    output:
+      'Live Jupiter swaps are temporarily disabled for safety. Franklin will not sign an upstream transaction until it can locally verify every instruction and asset movement. Use JupiterQuote to inspect current routes and prices.',
+    isError: true,
+  };
+}
+
 // ─── Capability handlers ──────────────────────────────────────────────────
 
 const COMMON_INPUT_PROPERTIES = {
@@ -524,7 +543,7 @@ export const jupiterSwapCapability: CapabilityHandler = {
   spec: {
     name: 'JupiterSwap',
     description:
-      "Execute a Solana DEX swap via Jupiter Ultra. Quotes the order, asks the user to confirm via AskUser, signs locally with the Franklin Solana wallet, and submits. A 20 bps platform fee is collected on-chain by Jupiter as part of the swap (BlockRun referral — official integrator program). Returns the Solscan transaction link.",
+      "Live Solana swap execution is temporarily unavailable while Franklin adds complete local transaction validation. Use JupiterQuote for a read-only route and price; Franklin will not sign opaque upstream transaction bytes.",
     input_schema: {
       type: 'object',
       required: ['input_mint', 'output_mint', 'amount'],

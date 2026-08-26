@@ -83,6 +83,7 @@ function formatUsd(n: number): string {
 export async function prefetchForIntent(
   intent: Intent,
   client: ModelClient,
+  options: { allowPaid?: boolean } = {},
 ): Promise<PrefetchResult | null> {
   if (!intent) return null;
 
@@ -92,27 +93,29 @@ export async function prefetchForIntent(
   // 1. Price
   if (intent.kind === 'ticker') {
     if (intent.assetClass === 'stock') {
-      const market: MarketCode = intent.market || 'us';
-      tasks.push(
-        (async () => {
-          // The stock price is a paid x402 call ($0.001) BUT cached for 5 min,
-          // so a repeat ticker within the window pays nothing. Book the REAL
-          // spend by diffing telemetry around the call (recordFetch fires only
-          // on a fresh paid fetch, never a cache hit) instead of hardcoding
-          // $0.001 — otherwise a cached hit over-reports the prefetch cost.
-          const before = blockrunSpendUsdToday();
-          const r = await getStockPrice(intent.symbol, market);
-          const paidUsd = Math.max(0, blockrunSpendUsdToday() - before);
-          if (typeof r === 'string') {
-            return { ok: false, line: `- ${intent.symbol} (${market}): lookup failed — ${r.slice(0, 80)}`, cost: paidUsd };
-          }
-          return {
-            ok: true,
-            line: `- ${intent.symbol} (${market}) live price: ${formatUsd(r.price)} (BlockRun Gateway / Pyth)`,
-            cost: paidUsd,
-          };
-        })(),
-      );
+      if (options.allowPaid !== false) {
+        const market: MarketCode = intent.market || 'us';
+        tasks.push(
+          (async () => {
+            // The stock price is a paid x402 call ($0.001) BUT cached for 5 min,
+            // so a repeat ticker within the window pays nothing. Book the REAL
+            // spend by diffing telemetry around the call (recordFetch fires only
+            // on a fresh paid fetch, never a cache hit) instead of hardcoding
+            // $0.001 — otherwise a cached hit over-reports the prefetch cost.
+            const before = blockrunSpendUsdToday();
+            const r = await getStockPrice(intent.symbol, market);
+            const paidUsd = Math.max(0, blockrunSpendUsdToday() - before);
+            if (typeof r === 'string') {
+              return { ok: false, line: `- ${intent.symbol} (${market}): lookup failed — ${r.slice(0, 80)}`, cost: paidUsd };
+            }
+            return {
+              ok: true,
+              line: `- ${intent.symbol} (${market}) live price: ${formatUsd(r.price)} (BlockRun Gateway / Pyth)`,
+              cost: paidUsd,
+            };
+          })(),
+        );
+      }
     } else {
       // crypto
       tasks.push(
@@ -132,7 +135,7 @@ export async function prefetchForIntent(
   }
 
   // 2. News, if asked
-  if (intent.kind === 'ticker' && intent.wantNews) {
+  if (intent.kind === 'ticker' && intent.wantNews && options.allowPaid !== false) {
     const query = intent.assetClass === 'stock'
       ? `Why did ${intent.symbol} stock move over the past week? Recent news and catalysts for ${intent.symbol} as of today.`
       : `What are the most important recent news events affecting ${intent.symbol} cryptocurrency in the past week?`;
@@ -150,6 +153,7 @@ export async function prefetchForIntent(
     }));
   }
 
+  if (tasks.length === 0) return null;
   const results = await Promise.all(tasks);
   const anyOk = results.some(r => r.ok);
   cost = results.reduce((s, r) => s + r.cost, 0);

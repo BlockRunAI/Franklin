@@ -240,6 +240,8 @@ export interface AgentConfig {
    * bound a single run to keep autonomous execution inside a known envelope.
    */
   maxSpendUsd?: number;
+  /** Disable proactive data sources that may sign an x402 payment. */
+  allowPaidPrefetch?: boolean;
   /** Show user-visible harness prefetch status lines (interactive UX only). */
   showPrefetchStatus?: boolean;
   /**

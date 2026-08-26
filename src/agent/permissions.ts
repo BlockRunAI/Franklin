@@ -403,6 +403,19 @@ export class PermissionManager {
         }
         return `Execute: ${preview}`;
       }
+      case 'Detach': {
+        const cmd = String(input.command ?? '');
+        const preview = cmd.length > 160 ? cmd.slice(0, 160) + '...' : cmd;
+        return `Run in background: ${preview}`;
+      }
+      case 'PolymarketBet': {
+        const action = String(input.action ?? 'unknown').toLowerCase();
+        const amount = input.amount != null ? String(input.amount)
+          : input.amount_usd != null ? `$${String(input.amount_usd)}`
+          : action === 'withdraw' ? 'full available balance' : 'not specified';
+        const destination = String(input.to_address ?? input.market_id ?? input.condition_id ?? 'default wallet/market');
+        return `Polymarket ${action} — amount: ${amount}; destination/market: ${destination}`;
+      }
       case 'Write': {
         const fp = (input.file_path as string) || '';
         return `Write file: ${fp}`;

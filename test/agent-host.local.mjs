@@ -16,12 +16,21 @@ const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-agenthost-test-
 process.env.HOME = TMP_HOME;
 const WORK_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-agenthost-work-'));
 
-const { AgentHost } = await import('../dist/serve/agent-host.js');
+const { AgentHost, resolveHostedMaxSpendUsd } = await import('../dist/serve/agent-host.js');
 const { readLiveAgents } = await import('../dist/session/live-registry.js');
 
 after(() => {
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
   fs.rmSync(WORK_DIR, { recursive: true, force: true });
+});
+
+test('hosted Desktop spend ceiling cannot be raised or disabled by dispatch input', () => {
+  assert.equal(resolveHostedMaxSpendUsd(undefined, 5), 5);
+  assert.equal(resolveHostedMaxSpendUsd(2, 5), 2);
+  assert.equal(resolveHostedMaxSpendUsd(50, 5), 5);
+  assert.equal(resolveHostedMaxSpendUsd(0, 5), 5);
+  assert.equal(resolveHostedMaxSpendUsd(-1, 5), 5);
+  assert.equal(resolveHostedMaxSpendUsd(50, undefined), 50);
 });
 
 async function until(cond, timeoutMs = 15_000, everyMs = 50) {

@@ -1198,7 +1198,9 @@ export async function interactiveSession(
     // prefetch-classifier call that previously ran here.
     try {
       if (turnAnalysis?.intent) {
-        const prefetch = await prefetchForIntent(turnAnalysis.intent, client);
+        const prefetch = await prefetchForIntent(turnAnalysis.intent, client, {
+          allowPaid: config.allowPaidPrefetch !== false,
+        });
         if (prefetch && prefetch.anyOk) {
           if (config.showPrefetchStatus !== false) {
             onEvent({ kind: 'text_delta', text: `\n${prefetch.statusLine}\n\n` });

@@ -178,6 +178,57 @@ export class StreamingExecutor {
     pendingCount = 1,
     callStart = true  // false for concurrent tools (already called in onToolReceived)
   ): Promise<CapabilityResult> {
+    // Canonicalize the tool name and normalize schema-typed values before any
+    // hook, guard, or permission boundary. Otherwise an alias such as
+    // `detach` or a boolean-like value such as `confirm: "true"` could be
+    // authorized under a different shape than the handler later executes.
+    let handler = this.handlers.get(invocation.name);
+    if (!handler) {
+      const attempted = invocation.name;
+      const lower = attempted.toLowerCase();
+      for (const [name, candidate] of this.handlers) {
+        if (name.toLowerCase() === lower || name.toLowerCase().replace(/[-_ ]/g, '') === lower.replace(/[-_ ]/g, '')) {
+          handler = candidate;
+          invocation = { ...invocation, name };
+          break;
+        }
+      }
+      if (!handler) {
+        this.guard?.cancelInvocation(invocation.id);
+        const available = [...this.handlers.keys()].join(', ');
+        return {
+          output: `Unknown tool "${attempted}". Available tools: ${available}. Check spelling and try again.`,
+          isError: true,
+        };
+      }
+    }
+
+    const schema = handler.spec.input_schema;
+    if (schema?.properties) {
+      for (const [key, value] of Object.entries(invocation.input)) {
+        if (value == null) continue;
+        const prop = schema.properties[key] as { type?: string } | undefined;
+        if (!prop?.type) continue;
+        if (prop.type === 'number' && typeof value === 'string' && !isNaN(Number(value))) {
+          invocation.input[key] = Number(value);
+        } else if (prop.type === 'boolean' && typeof value === 'string') {
+          if (value === 'true') invocation.input[key] = true;
+          else if (value === 'false') invocation.input[key] = false;
+        }
+      }
+    }
+    if (schema?.required) {
+      for (const field of schema.required) {
+        if (invocation.input[field] === undefined || invocation.input[field] === null) {
+          const desc = (schema.properties?.[field] as { description?: string } | undefined)?.description || '';
+          return {
+            output: `Error: missing required parameter "${field}" for ${handler.spec.name}. ${desc}`,
+            isError: true,
+          };
+        }
+      }
+    }
+
     // User hooks fire first — before built-in policy — so an explicit deny
     // is reported with the hook's own reason rather than a generic one.
     if (this.hooks?.hasHooks('PreToolUse')) {
@@ -226,28 +277,6 @@ export class StreamingExecutor {
       this.onStart(invocation.id, invocation.name, preview);
     }
 
-    let handler = this.handlers.get(invocation.name);
-    if (!handler) {
-      // Attempt repair: lowercase, normalize hyphens/spaces → match
-      const attempted = invocation.name;
-      const lower = attempted.toLowerCase();
-      for (const [name, h] of this.handlers) {
-        if (name.toLowerCase() === lower || name.toLowerCase().replace(/[-_ ]/g, '') === lower.replace(/[-_ ]/g, '')) {
-          handler = h;
-          invocation = { ...invocation, name };
-          break;
-        }
-      }
-      if (!handler) {
-        this.guard?.cancelInvocation(invocation.id);
-        const available = [...this.handlers.keys()].join(', ');
-        return {
-          output: `Unknown tool "${attempted}". Available tools: ${available}. Check spelling and try again.`,
-          isError: true,
-        };
-      }
-    }
-
     // Wire per-invocation progress to onProgress callback
     const progressScope: ExecutionScope = this.onProgress
       ? {
@@ -257,34 +286,6 @@ export class StreamingExecutor {
       : this.scope;
 
     try {
-      // Runtime input validation: check required fields and types
-      const schema = handler.spec.input_schema;
-      if (schema?.required) {
-        for (const field of schema.required) {
-          if (invocation.input[field] === undefined || invocation.input[field] === null) {
-            const desc = (schema.properties?.[field] as { description?: string } | undefined)?.description || '';
-            return {
-              output: `Error: missing required parameter "${field}" for ${handler.spec.name}. ${desc}`,
-              isError: true,
-            };
-          }
-        }
-      }
-      // Type coercion for common model mistakes (string↔number, string↔boolean)
-      if (schema?.properties) {
-        for (const [key, value] of Object.entries(invocation.input)) {
-          if (value == null) continue;
-          const prop = schema.properties[key] as { type?: string } | undefined;
-          if (!prop?.type) continue;
-          if (prop.type === 'number' && typeof value === 'string' && !isNaN(Number(value))) {
-            invocation.input[key] = Number(value);
-          } else if (prop.type === 'boolean' && typeof value === 'string') {
-            if (value === 'true') invocation.input[key] = true;
-            else if (value === 'false') invocation.input[key] = false;
-          }
-        }
-      }
-
       // Track elapsed for slow-tool forensics. Verified 2026-05-04
       // from a real session: a 337.6s Bash error left no trace in
       // franklin-debug.log — the user could see the ✗ in the UI but
