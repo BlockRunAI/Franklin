@@ -571,11 +571,9 @@ Full BlockRun docs: **https://blockrun.ai/docs**
 
 ## Contributors
 
-External contributors whose work has shipped into Franklin:
+Franklin ships work from outside the core team on a regular basis: typed Phone & Voice tools, the `/market` command, the model picker catalog, Jupiter precision guards, and the bug reports behind the prompt-caching, stream-timeout, and wallet-reservation fixes.
 
-- [**@KillerQueen-Z**](https://github.com/KillerQueen-Z) — typed Phone & Voice tools (#58), permissions classifier + internal VoiceStatus polling (#59), inline-paste threshold (#60), voicemail controls (#61), PredictionMarket / Predexon v2 schema realignment + agent-loop retry guard (#62)
-- [**@BeneficialVast1048**](https://github.com/BeneficialVast1048) — VoiceCall `interruption_threshold` + `model` controls (#66)
-- [**@TateLyman**](https://github.com/TateLyman) — test path-with-spaces fix (#57)
+The full list, with what each person shipped, lives in [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md). Thank you.
 
 PRs welcome — see the Development section below for the local loop.
 
