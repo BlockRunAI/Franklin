@@ -78,6 +78,12 @@ export interface RoutingContext {
   requiresTools?: boolean;
   requiresStructuredOutput?: boolean;
   systemPrompt?: string;
+  /**
+   * Extra model ids to treat as dead for this call only, on top of the
+   * process-wide set (see markModelUnavailable). Tests use this; hosts
+   * normally let the runtime observation feed the process-wide set.
+   */
+  unavailableModels?: readonly string[];
 }
 
 const SHARED_MODEL_PRICING = new Map(
@@ -90,6 +96,86 @@ const SHARED_MODEL_PRICING = new Map(
     },
   ]),
 );
+
+// ─── Dead-rung kill-switch ───
+//
+// router-core ships its tier chains as committed config, so a model that
+// leaves the gateway keeps its rung until a core release and a consumer
+// repin land — weeks, historically (the free/gpt-oss rungs 400'd for two
+// weeks before d7bc10c retired them). `options.unavailableModels` is the
+// core's answer: ids the host has observed dead are hard-removed from every
+// chain before selection, effective on the next request. Franklin feeds it
+// from three sources:
+//
+//   1. KNOWN_UNAVAILABLE_MODELS — ids the committed core config still
+//      references that the gateway has been observed to REJECT. Absence from
+//      GET /v1/models is NOT evidence: on 2026-08-29 every catalog-absent id
+//      the core config names (Opus 4.6, the K2.x line, the xAI 3.x / 4-0709 /
+//      4-fast family, gpt-5-nano) was probed through the binary and every one
+//      answered and was charged — the gateway hides them from the catalog
+//      but still serves them. Only add an id here after a real 400/404/410,
+//      and drop it once the core config itself stops naming it.
+//   2. QUARANTINED_MODELS — ids the catalog DOES list but Franklin refuses to
+//      route to, because the free pool answers for them with a substitute
+//      (the response's `model` field names a different model) and leaks
+//      thinking prose into content. Same "never promise a model the user
+//      doesn't get" rule the picker applies; see FREE_MODELS_BY_CATEGORY.
+//   3. Runtime observations — markModelUnavailable() is called by the agent
+//      loop when the gateway rejects a routed model id (400 "Unknown model",
+//      404, 410 — see AgentErrorInfo.modelUnavailable). Process-scoped: the
+//      next routing decision in this session never picks that id again.
+//
+// The core treats this as distinct from user-preference exclusion: a chain
+// whose every rung is dead keeps its config (the outage stays visible)
+// instead of fail-opening to something the host said is gone.
+const KNOWN_UNAVAILABLE_MODELS: readonly string[] = [
+  // Empty as of 2026-08-29 — see the probe note above. The free/gpt-oss and
+  // free/deepseek-v4-flash rungs that would have lived here were retired in
+  // the core itself (d7bc10c), which is the steady state this list waits for.
+];
+
+const QUARANTINED_MODELS: readonly string[] = [
+  // Catalogued free id; live probe 2026-08-29 answered as
+  // nvidia/nemotron-3-super-120b with the reasoning trace duplicated into
+  // `content`. The core uses it as the free backstop rung of every Auto
+  // chain — Franklin's chains end one rung earlier instead.
+  'nvidia/step-3.7-flash',
+];
+
+const observedUnavailable = new Set<string>();
+
+/**
+ * Record that the gateway rejected a model id outright (400 "Unknown model",
+ * 404, 410). Every later routing decision in this process removes it from
+ * the shared Router's chains. Idempotent; returns true the first time.
+ */
+export function markModelUnavailable(model: string | undefined | null): boolean {
+  if (!model || observedUnavailable.has(model)) return false;
+  observedUnavailable.add(model);
+  return true;
+}
+
+/** Ids the shared Router must not select: static, quarantined, and observed. */
+export function getUnavailableModels(extra?: readonly string[]): string[] {
+  return [...new Set([
+    ...KNOWN_UNAVAILABLE_MODELS,
+    ...QUARANTINED_MODELS,
+    ...observedUnavailable,
+    ...(extra ?? []),
+  ])];
+}
+
+export function isModelUnavailable(model: string | undefined | null): boolean {
+  if (!model) return false;
+  return observedUnavailable.has(model)
+    || KNOWN_UNAVAILABLE_MODELS.includes(model)
+    || QUARANTINED_MODELS.includes(model);
+}
+
+/** Test hook: forget runtime observations (the static lists stay). */
+export function resetUnavailableModels(): void {
+  observedUnavailable.clear();
+}
 
 function normalizeRoutingContext(context: boolean | RoutingContext): RoutingContext {
   return typeof context === 'boolean' ? { needsVision: context } : context;
@@ -133,6 +219,7 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
       'anthropic/claude-opus-4.7',
       'openai/o3',
       'deepseek/deepseek-v4-pro',
+      // Hidden from /v1/models but still served (probed 2026-08-29).
       'xai/grok-4-1-fast-reasoning',
       'deepseek/deepseek-reasoner',
     ],
@@ -659,6 +746,7 @@ export function routeRequest(
           : {}),
         hasVision: normalizedContext.needsVision ?? false,
         requiresStructuredOutput: normalizedContext.requiresStructuredOutput ?? false,
+        unavailableModels: getUnavailableModels(normalizedContext.unavailableModels),
       },
     );
     const category = detectCategory(prompt, loadLearnedWeights()?.category_keywords).category;
@@ -794,7 +882,9 @@ export function getFallbackChain(
 // third: still DEGRADED at NVIDIA, kept as a genuinely different family for
 // the case where both Nemotron nano builds are down. The catalog's fifth free
 // id, step-3.7-flash, stays out of every chain — it leaks thinking prose into
-// content AND comes back served by nemotron-3-super-120b.
+// content AND comes back served by nemotron-3-super-120b (re-probed
+// 2026-08-29, unchanged). It is also QUARANTINED for the shared Router above,
+// which would otherwise use it as the free backstop rung of every Auto chain.
 const OMNI = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning';
 
 const FREE_MODELS_BY_CATEGORY: Record<Category, string[]> = {

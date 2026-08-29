@@ -1,5 +1,57 @@
 # Changelog
 
+## Franklin Agent 3.42.0 — router-core d7bc10c, and the dead-rung kill-switch is wired
+
+**The shared Router can now be told a model is gone — and Franklin tells it.**
+`@blockrun/router-core` moves from `6a790eb` to `d7bc10c` (eleven commits):
+the `free/gpt-oss-120b` / `-20b` rungs that had been 400-ing for two weeks are
+retired in the core, `free/deepseek-v4-flash` (NVIDIA EOL, 410) leaves the eco
+chain, and `options.unavailableModels` arrives — ids the host has observed
+dead are hard-removed from every tier chain before selection, never restored
+by an eligibility fail-open, effective on the next request instead of after a
+core release and two consumer repins. Franklin now feeds it from two sources.
+The first is a **quarantine**: `d7bc10c` makes `nvidia/step-3.7-flash` the
+free backstop rung of every Auto chain, and a live probe today still came back
+served by `nvidia/nemotron-3-super-120b` with the reasoning trace duplicated
+into `content` — the same "never promise a model the user doesn't get" rule
+the picker already applies, so Franklin's Auto chains end one rung earlier.
+The second is **runtime observation**: the error classifier flags a rejected
+model id (`400 Unknown model`, 404, or a 410 provider EOL) as
+`modelUnavailable`, distinct from the request-shape errors it shares a
+category with, and when Auto routing picked that id the loop marks it dead
+(`markModelUnavailable`) and re-routes the same turn — bounded to three
+re-routes per turn so a chain that is dead end-to-end surfaces the error
+instead of cycling. A concrete user-pinned model is left alone; the user chose
+it, and the suggestion already says `/model`.
+
+**Absence from `/v1/models` is not death, and this release nearly got that
+wrong.** The catalog no longer lists Opus 4.6, the Kimi K2.x line, the xAI
+3.x / 4-0709 / 4-fast family or `gpt-5-nano`, and the core config still names
+every one of them. Before declaring them dead they were all called through the
+binary: every one answered and every one was charged. So nothing is retired on
+catalog grounds — the static dead list ships empty with the probe recorded
+beside it, the explicit picker pins keep resolving to the real ids, their
+pricing stays at list (regrouped under one "hidden from `/v1/models`, still
+served" heading, each probed id marked), and the vision allowlist keeps them.
+One observed number worth knowing if you pin them: a 12-token-in /
+13-token-out probe cost **$0.097 on `xai/grok-3` and `xai/grok-4-0709`** —
+`grok` (4.5) is the cheaper flagship.
+
+**GLM-5.3 Flash lands in every table.** The one model the catalog gained since
+3.40.0: $0.15/$0.5, 1M context, and the only GLM SKU tagged multimodal. It is
+priced, sized, on the vision allowlist, pinnable as `glm-flash` /
+`glm-5.3-flash`, and takes Gemini 2.5 Flash's row in the Budget picker (half
+the price, same 1M and vision, plus reasoning; `gemini-2.5-flash` still
+resolves — hide the row, keep the shortcut).
+
+Also: the gateway API brief the agent carries now lists `zai/glm-5.3-flash`
+among its verified-live examples (2026-08-29); the plugin-SDK tier table and
+the live e2e checklist no longer point at `nvidia/qwen3-coder-480b`, retired
+months ago; brand numbers re-synced from the canonical artifact (72 visible
+chat models). Seven new local tests pin the kill-switch (static, per-call and
+observed), the classifier flag, the GLM-5.3 Flash tables, and the
+hidden-but-served invariant.
+
 ## Franklin Agent 3.41.0 — card funding on Solana, and Solana becomes the default
 
 **Onramp was Base-only in three places; now it follows the wallet.** The

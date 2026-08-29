@@ -257,7 +257,7 @@ Every tool call is itemized. Every token is priced. When the wallet hits zero, F
 
 ## Smart Router
 
-**<!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> models. One decision. Zero guesswork.**
+**<!-- br:models.chatVisible -->72<!-- /br:models.chatVisible --> models. One decision. Zero guesswork.**
 
 You don't pick models. Franklin picks for you.
 
@@ -338,7 +338,7 @@ No email. No phone. No KYC. Your Base or Solana address is your account — port
 | Writes code                            | ✅               | ✅               | ⚠️                | ✅                              |
 | **Spends money for you**               | ❌               | ❌               | ❌               | ✅ **USDC wallet, x402**        |
 | **Buys data + APIs + images + search** | ❌               | ❌               | ❌               | ✅ **55+ APIs, one wallet**     |
-| Picks best model per task              | ❌ single-vendor | ❌ plan-tied    | ❌               | ✅ **Smart Router, <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> models** |
+| Picks best model per task              | ❌ single-vendor | ❌ plan-tied    | ❌               | ✅ **Smart Router, <!-- br:models.chatVisible -->72<!-- /br:models.chatVisible --> models** |
 | Pricing model                          | Subscription     | Subscription     | Subscription     | **YOPO** — per outcome, USDC    |
 | Monthly fee                            | $20–$200         | $20–$40          | $20+             | **$0**                          |
 | Rate-limited                           | Yes              | Yes              | Yes              | No — limited only by wallet     |
@@ -366,14 +366,14 @@ Ask "what's BTC looking like?" — Franklin fetches live price data, computes RS
 **🎨 AI image generation**
 Ask "generate a logo" — Franklin calls DALL-E / GPT Image, saves the result locally, paid from your wallet.
 
-**🧠 <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> models via one wallet**
+**🧠 <!-- br:models.chatVisible -->72<!-- /br:models.chatVisible --> models via one wallet**
 Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, NVIDIA free tier. One wallet, one interface, automatic fallback.
 
 **💳 x402 micropayments (YOPO)**
 HTTP 402 native. Every paid action is a signed USDC micropayment via EIP-712 — non-custodial, your keys never leave your machine. YOPO: you pay only for outcomes.
 
 **🧠 Learned model router**
-Trained on 2M+ real requests. Classifies your task and picks the best model from <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> LLMs. Four profiles (auto/eco/premium/free). Adapts to your usage over time.
+Trained on 2M+ real requests. Classifies your task and picks the best model from <!-- br:models.chatVisible -->72<!-- /br:models.chatVisible --> LLMs. Four profiles (auto/eco/premium/free). Adapts to your usage over time.
 
 </td>
 <td width="50%" valign="top">

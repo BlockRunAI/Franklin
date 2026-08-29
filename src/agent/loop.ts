@@ -45,7 +45,7 @@ import { writeLiveAgent } from '../session/live-registry.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
-import { routeRequest, parseRoutingProfile, getFallbackChain, pickFreeFallback, isVisionModel, messageNeedsVision, pickVisionSibling } from '../router/index.js';
+import { routeRequest, parseRoutingProfile, getFallbackChain, pickFreeFallback, isVisionModel, messageNeedsVision, pickVisionSibling, markModelUnavailable } from '../router/index.js';
 import type { Tier, RoutingProfile, RoutingResult } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
@@ -1045,6 +1045,12 @@ export async function interactiveSession(
     // reuse the decision unless a real provider/payment failure deliberately
     // switches config.model to a fallback.
     let pinnedRouting: RoutingResult | undefined;
+    // Re-routes taken this turn because the gateway rejected the routed model
+    // id outright. Bounded so a chain that is dead end-to-end surfaces the
+    // error instead of cycling; each re-route is a $0 request anyway (the
+    // gateway rejects the id before any payment settles).
+    let deadModelReroutes = 0;
+    const MAX_DEAD_MODEL_REROUTES = 3;
     let routingCandidates: string[] = [];
     const turnIdleReference = lastSessionActivity;
     lastSessionActivity = Date.now();
@@ -1864,6 +1870,27 @@ export async function interactiveSession(
 
         const errMsg = (err as Error).message || '';
         const classified = classifyAgentError(errMsg);
+
+        // ── Dead model id (400 "Unknown model" / 404 / 410) ──
+        // Retrying can't help and a fallback chain that still names the id
+        // would just hand it back. When Auto routing picked it, feed the
+        // router's dead-rung kill-switch and re-route this same turn: the
+        // shared Router removes the id from every chain before its next
+        // selection. A concrete user-pinned model is left alone — the user
+        // chose it, and the classified suggestion already says /model.
+        if (classified.modelUnavailable && parseRoutingProfile(config.model)) {
+          const dead = resolvedModel;
+          if (markModelUnavailable(dead) && deadModelReroutes < MAX_DEAD_MODEL_REROUTES) {
+            deadModelReroutes++;
+            pinnedRouting = undefined;
+            logger.warn(`[franklin] ${dead} rejected by the gateway as unavailable — re-routing (${deadModelReroutes}/${MAX_DEAD_MODEL_REROUTES})`);
+            onEvent({
+              kind: 'text_delta',
+              text: `\n*${dead} is no longer served by the gateway — re-routing*\n`,
+            });
+            continue;
+          }
+        }
 
         // ── Media size error recovery (strip images/PDFs + retry) ──
         if (isMediaSizeError(errMsg) && recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {

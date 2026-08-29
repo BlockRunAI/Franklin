@@ -37,6 +37,13 @@ export interface AgentErrorInfo {
    * malicious or buggy server can't pin the agent indefinitely.
    */
   retryAfterMs?: number;
+  /**
+   * The gateway rejected the model id itself (400 "Unknown model", 404, 410
+   * provider EOL) — not the request shape. Retrying the same id can never
+   * succeed; when the id came from Auto routing the loop feeds it to the
+   * router's dead-rung kill-switch (markModelUnavailable) and re-routes.
+   */
+  modelUnavailable?: boolean;
 }
 
 function includesAny(text: string, patterns: string[]): boolean {
@@ -247,15 +254,24 @@ export function classifyAgentError(message: string): AgentErrorInfo {
   // "Unknown model: moonshot/kimi-k2". Without this branch the error falls
   // through to the catch-all 'unknown' category and shows the user a bare
   // "Type: Unknown" with no actionable next step.
+  // A retired id looks the same to the loop: NVIDIA EOLs surface as HTTP
+  // 410 through the gateway (qwen3-next 2026-07-27, deepseek-v4-flash
+  // 2026-08-12), and a model the gateway dropped from its catalog 400s as
+  // unknown. Either way the id is dead for the rest of the session.
   if (includesAny(err, [
     'unknown model',
     'model not found',
     'model does not exist',
     'no such model',
-  ])) {
+    'model has been retired',
+    'model is retired',
+    'model is no longer available',
+    'model no longer available',
+  ]) || (/\b410\b/.test(err) && err.includes('model'))) {
     return {
       category: 'schema', label: 'Schema', isTransient: false, maxRetries: 0,
-      suggestion: 'The gateway rejected the model id (unknown / typo). Use /model to pick a valid one, or upgrade Franklin if a fallback chain references a stale id.',
+      modelUnavailable: true,
+      suggestion: 'The gateway rejected the model id (unknown / retired). Use /model to pick a valid one, or upgrade Franklin if a fallback chain references a stale id.',
     };
   }
 

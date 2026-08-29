@@ -31,6 +31,7 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'opus-5': 'anthropic/claude-opus-5',
   'opus-4.8': 'anthropic/claude-opus-4.8',
   'opus-4.7': 'anthropic/claude-opus-4.7',
+  // Hidden from /v1/models since 2026-08, still served (probed 2026-08-29).
   'opus-4.6': 'anthropic/claude-opus-4.6',
   'opus-4.5': 'anthropic/claude-opus-4.5',
   haiku: 'anthropic/claude-haiku-4.5',
@@ -78,6 +79,7 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'gpt-4o': 'openai/gpt-4o',
   'gpt-4o-mini': 'openai/gpt-4o-mini',
   codex: 'openai/gpt-5.3-codex',
+  // Hidden from /v1/models, still served (probed 2026-08-29).
   nano: 'openai/gpt-5-nano',
   mini: 'openai/gpt-5-mini',
   o3: 'openai/o3',
@@ -120,6 +122,10 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   'grok-4.5': 'xai/grok-4.5',
   'grok-4.3': 'xai/grok-4.3',
   'grok-build': 'xai/grok-build-0.1',
+  // grok-3 / grok-4-0709 / the grok-4-1-fast pair are hidden from
+  // /v1/models but still served and charged (probed 2026-08-29) — explicit
+  // pins keep resolving to the real ids. Note grok-3 and grok-4-0709 bill at
+  // $3/$15; `grok` (4.5) is the cheaper flagship.
   'grok-3': 'xai/grok-3',
   'grok-4': 'xai/grok-4-0709',
   'grok-fast': 'xai/grok-4-1-fast-reasoning',
@@ -223,6 +229,9 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   glm: 'zai/glm-5.2',
   'glm-5': 'zai/glm-5',
   'glm-5.3': 'zai/glm-5.3',
+  // GLM-5.3 Flash (2026-08-29 catalog sync): 1M ctx, vision, $0.15/$0.5.
+  'glm-5.3-flash': 'zai/glm-5.3-flash',
+  'glm-flash': 'zai/glm-5.3-flash',
   'glm-5.2': 'zai/glm-5.2',
   // GLM-5.1 demoted to a back-compat pin 2026-06 (flagship is 5.2) — still
   // routes for anyone who wants the 200K-context build explicitly.
@@ -418,9 +427,10 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
     models: [
       { id: 'anthropic/claude-haiku-4.5',          shortcut: 'haiku',    label: 'Claude Haiku 4.5',    price: '$1/$5' },
       { id: 'openai/gpt-5-mini',                   shortcut: 'mini',     label: 'GPT-5 Mini',          price: '$0.25/$2' },
-      // `flash` now follows Gemini 3.6; this row keeps the cheap 2.5 build and
-      // labels itself with the explicit shortcut so the two can't drift apart.
-      { id: 'google/gemini-2.5-flash',             shortcut: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', price: '$0.3/$2.5' },
+      // GLM-5.3 Flash took Gemini 2.5 Flash's row 2026-08-29: half the price,
+      // the same 1M context and vision, plus reasoning. `gemini-2.5-flash`
+      // still resolves — hide the row, keep the shortcut.
+      { id: 'zai/glm-5.3-flash',                   shortcut: 'glm-flash', label: 'GLM-5.3 Flash',      price: '$0.15/$0.5' },
       // Re-aliased to V4 Flash Chat upstream — context 1M, price 30% lower.
       { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V4 Flash Chat', price: '$0.14/$0.28' },
       // Cheapest paid model on the gateway, and it still carries 1M context

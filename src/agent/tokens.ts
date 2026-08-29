@@ -222,7 +222,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'anthropic/claude-opus-5': 200_000,
   'anthropic/claude-opus-4.8': 200_000,
   'anthropic/claude-opus-4.7': 200_000,
-  'anthropic/claude-opus-4.6': 200_000,
+  'anthropic/claude-opus-4.6': 200_000, // hidden from /v1/models, still served (probed 2026-08-29)
   'anthropic/claude-opus-4.5': 200_000,
   'anthropic/claude-sonnet-5': 200_000,
   'anthropic/claude-sonnet-4.6': 200_000,
@@ -278,16 +278,20 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'xai/grok-4.5': 500_000,
   'xai/grok-4.3': 1_000_000,
   'xai/grok-build-0.1': 256_000,
+  // xAI 3.x / 4-0709 / 4-1-fast: hidden from /v1/models since 2026-08 but
+  // still served and charged (probed 2026-08-29) — keep their windows.
   'xai/grok-3': 131_072,
   'xai/grok-4-0709': 131_072,
   'xai/grok-4-1-fast-reasoning': 131_072,
   // Others
   'zai/glm-5.3': 1_000_000, // flagship 2026-08 — 1M context, always-on reasoning
+  'zai/glm-5.3-flash': 1_000_000, // 2026-08-29 catalog sync — 1M context, vision, $0.15/$0.5
   'zai/glm-5.2': 1_000_000, // flagship bump 2026-06 — context jumped 200K → 1M
   'zai/glm-5.1': 200_000,
   'zai/glm-5': 200_000,
   'zai/glm-5-turbo': 200_000,
   'moonshot/kimi-k3': 1_048_576,
+  // K2.x: hidden from /v1/models, still served (probed 2026-08-29).
   'moonshot/kimi-k2.7': 256_000,
   'moonshot/kimi-k2.6': 256_000,
   'moonshot/kimi-k2.5': 128_000,

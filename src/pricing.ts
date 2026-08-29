@@ -45,7 +45,6 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'anthropic/claude-opus-5': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.8': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.7': { input: 5.0, output: 25.0 },
-  'anthropic/claude-opus-4.6': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.5': { input: 5.0, output: 25.0 },
   'anthropic/claude-sonnet-5': { input: 3.0, output: 15.0 }, // near-Opus at Sonnet cost, 1M ctx
   'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
@@ -55,7 +54,6 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   // Kept for cost lookup on sessions recorded before the switch.
   'anthropic/claude-haiku-4.5-20251001': { input: 1.0, output: 5.0 },
   // OpenAI
-  'openai/gpt-5-nano': { input: 0.05, output: 0.4 },
   'openai/gpt-4.1-nano': { input: 0.1, output: 0.4 },
   'openai/gpt-4o-mini': { input: 0.15, output: 0.6 },
   'openai/gpt-5.4-nano': { input: 0.2, output: 1.25 },
@@ -73,7 +71,6 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'openai/gpt-4o': { input: 2.5, output: 10.0 },
   'openai/gpt-5.4': { input: 2.5, output: 15.0 },
   'openai/gpt-5.6-terra': { input: 2.0, output: 12.0 }, // balanced GPT-5.6 tier, 1M ctx (2026-07-30 cut)
-  'openai/o1-mini': { input: 1.1, output: 4.4 },
   'openai/o3-mini': { input: 1.1, output: 4.4 },
   'openai/o4-mini': { input: 1.1, output: 4.4 },
   'openai/o1': { input: 15.0, output: 60.0 },
@@ -99,17 +96,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'google/gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
   'google/gemini-3.6-flash': { input: 1.5, output: 7.5 }, // added upstream 2026-08-03 (base #329)
   'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
-  'google/gemini-3-pro-preview': { input: 2.0, output: 12.0 },
   'google/gemini-3.1-pro': { input: 2.0, output: 12.0 },
   // xAI
-  'xai/grok-4-fast': { input: 0.2, output: 0.5 },
-  'xai/grok-4-fast-reasoning': { input: 0.2, output: 0.5 },
-  'xai/grok-4-1-fast': { input: 0.2, output: 0.5 },
-  'xai/grok-4-1-fast-reasoning': { input: 0.2, output: 0.5 },
-  'xai/grok-4-0709': { input: 3.0, output: 15.0 }, // gateway lists $3/$15 (was mispriced here at $0.2/$1.5)
-  'xai/grok-3-mini': { input: 0.3, output: 0.5 },
-  'xai/grok-2-vision': { input: 2.0, output: 10.0 },
-  'xai/grok-3': { input: 3.0, output: 15.0 },
   'xai/grok-4.3': { input: 1.5, output: 4.0 },        // 1M ctx; demoted from flagship 2026-07-14
   'xai/grok-4.5': { input: 2.5, output: 9.0 },        // xAI flagship — 500K ctx (note: less than 4.3's 1M)
   'xai/grok-build-0.1': { input: 1.5, output: 3.0 },  // agentic coding, OpenRouter resale
@@ -123,7 +111,6 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   // Minimax
   'minimax/minimax-m3': { input: 0.3, output: 1.2 },
   'minimax/minimax-m2.7': { input: 0.3, output: 1.2 },
-  'minimax/minimax-m2.5': { input: 0.3, output: 1.2 },
   // Qwen — Plus/Flash tiers added upstream 2026-08-03 (base #329).
   'qwen/qwen3.7-max': { input: 1.475, output: 4.425 },
   'qwen/qwen3.7-plus': { input: 0.32, output: 1.28 },
@@ -135,19 +122,46 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   // context, multimodal (image+text), returns reasoning_content. Pricier
   // than the K2.x line it replaced ($3/$15 vs K2.7's $0.95/$4).
   'moonshot/kimi-k3': { input: 3.0, output: 15.0 },
-  // Retired K2.x line (kept for legacy session-cost records; the gateway no
-  // longer serves these and the `kimi`/`k2.*` shortcuts now resolve to K3).
-  'moonshot/kimi-k2.7': { input: 0.95, output: 4.0 },
-  'moonshot/kimi-k2.6': { input: 0.95, output: 4.0 },
-  'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
-  'nvidia/kimi-k2.5': { input: 0.55, output: 2.5 },
   // PROMOTION (active ~2026-04): flat $0.001/call for all GLM models
   'zai/glm-5': { input: 1.0, output: 3.2 }, // flat promo ended 2026-06-06; raised upstream 2026-08-07
   'zai/glm-5.1': { input: 1.40, output: 4.40 }, // launch promo ended 2026-06-05 — per-token now
   'zai/glm-5.2': { input: 1.40, output: 4.40 }, // new flagship 2026-06 — 1M context, same per-token price as 5.1
   'zai/glm-5.3': { input: 1.40, output: 4.40 }, // flagship 2026-08 — 1M context, always-on reasoning, priced at 5.2
+  // GLM-5.3 Flash (catalog 2026-08-29): 1M context, vision, reasoning — the
+  // only GLM SKU tagged multimodal, at roughly a tenth of the flagship price.
+  'zai/glm-5.3-flash': { input: 0.15, output: 0.5 },
   'zai/glm-5-turbo': { input: 1.2, output: 4.0 }, // flat promo ended 2026-06-06 — per-token now
-  'zai/glm-5.1-turbo': { input: 1.2, output: 4.0 },  // client alias for zai/glm-5-turbo
+
+  // ── Hidden from /v1/models, still served ──
+  // None of these appear in GET /v1/models any more, but the gateway still
+  // routes and CHARGES for them: on 2026-08-29 every id marked (probed) below
+  // was called through the binary and answered. So they stay priced at list
+  // — a pinned `/model opus-4.6` or a router chain that still names one must
+  // cost correctly — and the picker keeps their shortcuts. The unmarked ids
+  // were not re-probed; they are kept so session-cost records written while
+  // they were live still price. The router's kill-switch
+  // (src/router/index.ts, markModelUnavailable) is what retires an id from
+  // routing, and it fires on a real 400/404/410, never on catalog absence.
+  'anthropic/claude-opus-4.6': { input: 5.0, output: 25.0 }, // (probed) superseded by 4.7 / 4.8 / 5 at the same price
+  'openai/gpt-5-nano': { input: 0.05, output: 0.4 }, // (probed)
+  'openai/o1-mini': { input: 1.1, output: 4.4 },
+  'google/gemini-3-pro-preview': { input: 2.0, output: 12.0 }, // GA'd as gemini-3.1-pro
+  'xai/grok-4-fast': { input: 0.2, output: 0.5 },
+  'xai/grok-4-fast-reasoning': { input: 0.2, output: 0.5 }, // (probed)
+  'xai/grok-4-1-fast': { input: 0.2, output: 0.5 },
+  'xai/grok-4-1-fast-reasoning': { input: 0.2, output: 0.5 }, // (probed)
+  'xai/grok-4-0709': { input: 3.0, output: 15.0 }, // (probed) gateway lists $3/$15 (was mispriced here at $0.2/$1.5)
+  'xai/grok-3-mini': { input: 0.3, output: 0.5 }, // (probed)
+  'xai/grok-2-vision': { input: 2.0, output: 10.0 },
+  'xai/grok-3': { input: 3.0, output: 15.0 }, // (probed)
+  'minimax/minimax-m2.5': { input: 0.3, output: 1.2 },
+  // K2.x (probed): the bare `kimi`/`k2.*` shortcuts resolve to K3, the
+  // explicit ids still answer.
+  'moonshot/kimi-k2.7': { input: 0.95, output: 4.0 },
+  'moonshot/kimi-k2.6': { input: 0.95, output: 4.0 },
+  'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
+  'nvidia/kimi-k2.5': { input: 0.55, output: 2.5 },
+  'zai/glm-5.1-turbo': { input: 1.2, output: 4.0 }, // was a client alias for zai/glm-5-turbo
 };
 
 /** Opus pricing for savings calculations — tracks the current flagship. */
