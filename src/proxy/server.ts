@@ -28,8 +28,10 @@ import {
   isVisionModel,
   messagesNeedVision,
   pickVisionSibling,
+  markModelUnavailable,
   type RoutingProfile,
 } from '../router/index.js';
+import { classifyAgentError } from '../agent/error-classifier.js';
 import { estimateCost } from '../pricing.js';
 import { getMaxOutputTokens } from '../agent/optimize.js';
 import { VERSION } from '../config.js';
@@ -615,6 +617,16 @@ export function createProxy(options: ProxyOptions): http.Server {
             } else {
               // Wrap in Anthropic error format
               const errorMsg = parsed.error?.message || parsed.message || rawText.slice(0, 500);
+              // The proxy's fallback chain only retries 429/5xx, so a routed
+              // id the gateway rejects outright (400 "Unknown model", 404,
+              // 410) reaches here untouched. Feed the router's dead-rung
+              // kill-switch so the next routed request skips it; a client
+              // that pinned the id by name is left alone.
+              if (routerCandidates.length > 0 && classifyAgentError(String(errorMsg)).modelUnavailable) {
+                if (markModelUnavailable(finalModel)) {
+                  logger.warn(`[franklin] ${finalModel} rejected by the gateway as unavailable — removed from routing for this process`);
+                }
+              }
               errorBody = JSON.stringify({
                 type: 'error',
                 error: {

@@ -1,5 +1,41 @@
 # Changelog
 
+## Franklin Agent 3.42.1 — the deep pass after 3.42.0: three things the sync missed
+
+**An image turn on Auto could land on a model that cannot see.** The shared
+Router decides vision eligibility from its own capability snapshot, and that
+snapshot fails *open* for any id it has no entry for — 36 gateway chat ids as
+of today, including text-only models that sit in the core's evidence lists
+(`zai/glm-5.2` in long-context, for one). Franklin's Auto branch trusted the
+pick as-is; the manual-mode vision guard only ran for user-pinned models. Two
+fixes: Franklin now hands the core a capability override whose
+`supportsVision` comes from its own maintained allowlist (the core also
+disagreed with it on `gpt-5-mini`, `o3` and `grok-4-0709`, all of which accept
+images), and the Auto branch walks the core's recovery chain for the first
+sighted model before falling back to the family sibling — so a knocked-out
+pick still recovers to a model with eyes.
+
+**Two ids in the core's SIMPLE chains had no price.** `xai/grok-4-1-fast-non-
+reasoning` and `xai/grok-4-fast-non-reasoning` are served and were charged
+today, yet Franklin's table had only their reasoning siblings: the UI
+reported them as $0 while the wallet paid, and the portfolio scorer — which
+treats an unpriced id as infinitely expensive — could never prefer them over
+a priced rung. Priced at the pair's $0.2/$0.5, with context windows for the
+whole hidden xAI fast family.
+
+**The proxy never fed the kill-switch.** Its fallback chain only retries
+429/5xx, so a routed id the gateway rejects outright (`400 Unknown model`,
+404, 410) passed straight through to the client with nothing learned. The
+4xx intercept now classifies the error and, for routed requests only, marks
+the id dead for the process — a client that pinned the id by name is left
+alone.
+
+Also verified today and deliberately *not* changed: every `free/*` id the
+core still lists in its capability table 400s (`Unknown model`), but none of
+them sits in a chain, so nothing can select them; the static dead list stays
+empty. Three new tests cover the vision guard through the recovery chain, the
+xAI pricing, and the proxy hook.
+
 ## Franklin Agent 3.42.0 — router-core d7bc10c, and the dead-rung kill-switch is wired
 
 **The shared Router can now be told a model is gone — and Franklin tells it.**
