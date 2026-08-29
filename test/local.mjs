@@ -11698,3 +11698,43 @@ test('catalog sync 2026-08-29: hidden-but-served ids stay priced, routable and p
     assert.equal(resolveModel(pin), id, `${pin} must keep resolving to the real id`);
   }
 });
+
+
+test('router vision guard: Auto never lands an image turn on a text-only model, even through the recovery chain', async () => {
+  const { routeRequest, resetUnavailableModels } = await import('../dist/router/index.js');
+  const { isVisionModel } = await import('../dist/router/vision.js');
+  resetUnavailableModels();
+  const prompts = [
+    'what is in this screenshot? ./shot.png',
+    'read chart.png and tell me the trend',
+    'summarize this 40k-token document with the attached diagram.png: ' + 'lorem ipsum '.repeat(4000),
+    'refactor the component shown in ui.png and add tests',
+    'which option is correct in quiz.jpg? A, B, C or D — think step by step',
+  ];
+  for (const prompt of prompts) {
+    const r = routeRequest(prompt, 'auto', { needsVision: true, hasTools: true, toolNames: ['Read', 'Bash'] });
+    assert.ok(isVisionModel(r.model), `${r.model} cannot see images (prompt: ${prompt.slice(0, 40)})`);
+    for (const c of r.candidates ?? []) {
+      assert.ok(isVisionModel(c), `recovery chain offered text-only ${c}`);
+    }
+    // Knock out the pick and the next rung must still be sighted.
+    const next = routeRequest(prompt, 'auto', { needsVision: true, hasTools: true, toolNames: ['Read', 'Bash'], unavailableModels: [r.model] });
+    assert.ok(isVisionModel(next.model), `${next.model} cannot see images after ${r.model} was removed`);
+  }
+});
+
+test('catalog sync 2026-08-29: the xAI non-reasoning fast ids in the core chains are priced', async () => {
+  const { MODEL_PRICING } = await import('../dist/pricing.js');
+  const { getContextWindow } = await import('../dist/agent/tokens.js');
+  for (const id of ['xai/grok-4-1-fast-non-reasoning', 'xai/grok-4-fast-non-reasoning']) {
+    assert.deepEqual(MODEL_PRICING[id], { input: 0.2, output: 0.5 }, `${id} was charged today; it must not estimate as $0`);
+    assert.equal(getContextWindow(id), 131_072);
+  }
+});
+
+test('proxy: a gateway-rejected routed id feeds the dead-rung kill-switch', async () => {
+  const src = readFileSync(new URL('../src/proxy/server.ts', import.meta.url), 'utf-8');
+  assert.match(src, /routerCandidates\.length > 0 && classifyAgentError\(String\(errorMsg\)\)\.modelUnavailable/,
+    'the 4xx intercept must classify the error and only act on routed requests');
+  assert.match(src, /markModelUnavailable\(finalModel\)/);
+});

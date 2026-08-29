@@ -281,8 +281,12 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // xAI 3.x / 4-0709 / 4-1-fast: hidden from /v1/models since 2026-08 but
   // still served and charged (probed 2026-08-29) — keep their windows.
   'xai/grok-3': 131_072,
+  'xai/grok-3-mini': 131_072,
   'xai/grok-4-0709': 131_072,
   'xai/grok-4-1-fast-reasoning': 131_072,
+  'xai/grok-4-1-fast-non-reasoning': 131_072,
+  'xai/grok-4-fast-reasoning': 131_072,
+  'xai/grok-4-fast-non-reasoning': 131_072,
   // Others
   'zai/glm-5.3': 1_000_000, // flagship 2026-08 — 1M context, always-on reasoning
   'zai/glm-5.3-flash': 1_000_000, // 2026-08-29 catalog sync — 1M context, vision, $0.15/$0.5

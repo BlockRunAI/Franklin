@@ -150,6 +150,13 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'xai/grok-4-fast-reasoning': { input: 0.2, output: 0.5 }, // (probed)
   'xai/grok-4-1-fast': { input: 0.2, output: 0.5 },
   'xai/grok-4-1-fast-reasoning': { input: 0.2, output: 0.5 }, // (probed)
+  // The two non-reasoning ids sit in the shared Router's SIMPLE chains and
+  // were charged today, yet had no row here — Franklin reported them as $0
+  // and the portfolio scorer, which treats an unpriced id as infinitely
+  // expensive, could never pick them over a priced rung. Priced with their
+  // reasoning siblings (xAI bills the pair identically).
+  'xai/grok-4-1-fast-non-reasoning': { input: 0.2, output: 0.5 }, // (probed)
+  'xai/grok-4-fast-non-reasoning': { input: 0.2, output: 0.5 }, // (probed)
   'xai/grok-4-0709': { input: 3.0, output: 15.0 }, // (probed) gateway lists $3/$15 (was mispriced here at $0.2/$1.5)
   'xai/grok-3-mini': { input: 0.3, output: 0.5 }, // (probed)
   'xai/grok-2-vision': { input: 2.0, output: 10.0 },

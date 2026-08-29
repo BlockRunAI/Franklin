@@ -13,8 +13,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  DEFAULT_MODEL_CAPABILITIES as SHARED_MODEL_CAPABILITIES_BASE,
   DEFAULT_ROUTING_CONFIG as SHARED_ROUTING_CONFIG,
   route as routeWithSharedCore,
+  type ModelCapabilities,
   type TaskType,
 } from '@blockrun/router-core';
 import { MODEL_PRICING, OPUS_PRICING } from '../pricing.js';
@@ -23,7 +25,7 @@ import { detectCategory, mapCategoryToTier, type Category } from './categories.j
 import { selectModel } from './selector.js';
 import type { LearnedWeights } from './selector.js';
 import { computeLocalElo, blendElo } from './local-elo.js';
-import { isVisionModel } from './vision.js';
+import { isVisionModel, pickVisionSibling } from './vision.js';
 
 export { isVisionModel, messageNeedsVision, messagesNeedVision, pickVisionSibling } from './vision.js';
 
@@ -176,6 +178,22 @@ export function isModelUnavailable(model: string | undefined | null): boolean {
 export function resetUnavailableModels(): void {
   observedUnavailable.clear();
 }
+
+// The core's capability snapshot decides vision eligibility inside the
+// portfolio, but it lags the catalog (36 gateway chat ids have no entry as of
+// 2026-08-29, and it disagrees with Franklin's allowlist on gpt-5-mini / o3 /
+// grok-4-0709, all of which accept images). Franklin's allowlist in vision.ts
+// is the maintained source, so its verdict overrides `supportsVision` on
+// every entry the core knows. Ids the core does not know fail OPEN inside
+// the core (`isEligible` returns true) — that gap is closed by the
+// post-selection guard in routeRequest, not by inventing context/output
+// numbers here that would silently change eligibility.
+const SHARED_MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = Object.fromEntries(
+  Object.entries(SHARED_MODEL_CAPABILITIES_BASE).map(([id, caps]) => [
+    id,
+    { ...caps, supportsVision: isVisionModel(id) },
+  ]),
+);
 
 function normalizeRoutingContext(context: boolean | RoutingContext): RoutingContext {
   return typeof context === 'boolean' ? { needsVision: context } : context;
@@ -737,6 +755,7 @@ export function routeRequest(
           strategy: process.env.FRANKLIN_ROUTER_STRATEGY === 'rules' ? 'rules' : 'portfolio',
         },
         modelPricing: SHARED_MODEL_PRICING,
+        modelCapabilities: SHARED_MODEL_CAPABILITIES,
         routingProfile: 'auto',
         hasTools: normalizedContext.hasTools ?? toolNames.length > 0,
         toolCount: toolNames.length,
@@ -750,14 +769,30 @@ export function routeRequest(
       },
     );
     const category = detectCategory(prompt, loadLearnedWeights()?.category_keywords).category;
+    let model = decision.model;
+    let candidates = decision.candidates ?? [decision.model];
+    const signals: string[] = [decision.routerVersion ?? decision.method, ...(decision.taskType ? [decision.taskType] : [])];
+    // Vision is a hard requirement, and the core fails open for any id
+    // missing from its capability snapshot (see SHARED_MODEL_CAPABILITIES).
+    // Before this guard an image turn could land on a text-only model the
+    // core simply had no opinion about — zai/glm-5.2 sits in the long-context
+    // evidence list, for instance — and the model would then hallucinate
+    // from the `Image file: <path>` stub. Walk the core's own recovery chain
+    // for the first model that can see; fall back to the family sibling.
+    if (normalizedContext.needsVision && !isVisionModel(model)) {
+      const sighted = candidates.filter(isVisionModel);
+      model = sighted[0] ?? pickVisionSibling(model);
+      candidates = sighted.length > 0 ? sighted : [model];
+      signals.push('vision-required');
+    }
     return {
-      model: decision.model,
+      model,
       tier: decision.tier,
       confidence: decision.confidence,
-      signals: [decision.routerVersion ?? decision.method, ...(decision.taskType ? [decision.taskType] : [])],
-      savings: decision.savings,
+      signals,
+      savings: model === decision.model ? decision.savings : computeSavings(model),
       category,
-      candidates: decision.candidates ?? [decision.model],
+      candidates,
       taskType: decision.taskType,
       routerVersion: decision.routerVersion,
       reasoning: decision.reasoning,
