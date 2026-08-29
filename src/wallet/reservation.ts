@@ -1,9 +1,9 @@
 /**
  * WalletReservation — local accounting layer for concurrent paid tool calls.
  *
- * Problem this solves: when N batch tools (ImageGen / VideoGen) run in
- * parallel, each independently checks balance and dispatches its x402
- * payment. With balance $0.20 and 6 calls × $0.04 each, all 6 see "$0.20
+ * Problem this solves: when N paid tool calls (today: the Modal sandbox
+ * tools) run in parallel, each independently checks balance and dispatches
+ * its x402 payment. With balance $0.20 and 6 calls × $0.04 each, all 6 see "$0.20
  * available, $0.04 fits" and start; only 5 can actually settle on-chain,
  * the rest fail mid-flight with insufficient-funds and the user sees
  * partial completion with no preflight warning.
@@ -14,6 +14,16 @@
  *   1. Tool calls hold(amount) before paying.
  *   2. hold() refuses if (balance - sum(active reservations)) < amount.
  *   3. After payment succeeds OR fails, tool calls release(token).
+ *   4. If the outcome is AMBIGUOUS — the signed request was dispatched and
+ *      then aborted / timed out before a response came back — the caller
+ *      marks the token ambiguous instead. The gateway may have settled the
+ *      payment on-chain, so the amount stays counted against headroom for
+ *      a grace window and is dropped on the next fresh balance fetch that
+ *      STARTED after the window closed (so the read reflects the real
+ *      on-chain state). The window is sized by the caller from its own
+ *      request timeout: the gateway may still be running the paid work when
+ *      we abort, and settlement lands when that work finishes. The cap can
+ *      only err tight, never loose.
  *
  * Single-process JS guarantees the check-and-set is atomic (no real race),
  * and balance is cached briefly so we don't hit the RPC for every hold.
@@ -28,11 +38,30 @@ export interface ReservationToken {
 }
 
 const BALANCE_CACHE_MS = 5_000;
+/**
+ * Settlement margin added on top of the caller-supplied request timeout for
+ * an ambiguous-settlement hold. The window starts at OUR abort, not at the
+ * gateway's settlement: if the gateway settles after the paid work finishes,
+ * that can be up to the request timeout later, plus on-chain confirmation.
+ * Callers pass `graceMs = timeoutMs + AMBIGUOUS_GRACE_MS`.
+ */
+export const AMBIGUOUS_GRACE_MS = 30_000;
+
+async function readChainBalance(): Promise<number> {
+  if (loadChain() === 'solana') {
+    const client = await setupAgentSolanaWallet({ silent: true });
+    return client.getBalance();
+  }
+  const client = setupAgentWallet({ silent: true });
+  return client.getBalance();
+}
 
 class WalletReservationManager {
   private reserved = new Map<string, number>();
+  private ambiguous = new Map<string, { amountUsd: number; expiresAt: number }>();
   private cachedBalance: { value: number; fetchedAt: number } | null = null;
   private balanceFetchInflight: Promise<number> | null = null;
+  private balanceFetcher: () => Promise<number> = readChainBalance;
 
   private async fetchBalance(): Promise<number> {
     if (this.cachedBalance && Date.now() - this.cachedBalance.fetchedAt < BALANCE_CACHE_MS) {
@@ -40,15 +69,21 @@ class WalletReservationManager {
     }
     if (this.balanceFetchInflight) return this.balanceFetchInflight;
 
-    const chain = loadChain();
+    // Sample the clock BEFORE the read goes out: a read that started inside
+    // an ambiguous entry's window cannot be trusted to reflect it, however
+    // long the RPC took to answer.
+    const startedAt = Date.now();
     this.balanceFetchInflight = (async () => {
       try {
-        if (chain === 'solana') {
-          const client = await setupAgentSolanaWallet({ silent: true });
-          return await client.getBalance();
+        const v = await this.balanceFetcher();
+        // A real on-chain read already includes any ambiguous spend that
+        // settled; drop entries whose window closed before this read began
+        // so a genuinely-absent spend self-heals instead of pinning headroom.
+        // Only on a real read: the Infinity fallback below reflects nothing.
+        for (const [id, entry] of this.ambiguous) {
+          if (entry.expiresAt <= startedAt) this.ambiguous.delete(id);
         }
-        const client = setupAgentWallet({ silent: true });
-        return await client.getBalance();
+        return v;
       } catch {
         // If balance fetch fails, return Infinity so reservations don't
         // block — the actual payment will surface the real error. We'd
@@ -68,6 +103,7 @@ class WalletReservationManager {
   private totalReserved(): number {
     let sum = 0;
     for (const v of this.reserved.values()) sum += v;
+    for (const e of this.ambiguous.values()) sum += e.amountUsd;
     return sum;
   }
 
@@ -104,14 +140,58 @@ class WalletReservationManager {
     }
   }
 
+  /**
+   * Mark a hold as ambiguous: the signed payment was dispatched but the
+   * request aborted / timed out before we saw the outcome. The money may be
+   * gone, so keep the amount counted against headroom (see header) for
+   * `graceMs` (default AMBIGUOUS_GRACE_MS; callers add their request
+   * timeout). A later release() of the same token is a no-op — the ambiguous
+   * entry outlives it. Idempotent: a second call for the same id is a no-op.
+   */
+  markAmbiguous(token: ReservationToken | string | null | undefined, graceMs = AMBIGUOUS_GRACE_MS): void {
+    if (!token) return;
+    const id = typeof token === 'string' ? token : token.id;
+    const amountUsd = this.reserved.get(id);
+    if (amountUsd === undefined || amountUsd <= 0) return;
+    this.reserved.delete(id);
+    this.ambiguous.set(id, { amountUsd, expiresAt: Date.now() + Math.max(0, graceMs) });
+    this.cachedBalance = null;
+  }
+
   /** Force the next hold() to refetch balance from chain. */
   invalidateBalance(): void {
     this.cachedBalance = null;
   }
 
   /** Snapshot of current reservation state — diagnostic / testing only. */
-  snapshot(): { count: number; totalUsd: number } {
-    return { count: this.reserved.size, totalUsd: this.totalReserved() };
+  snapshot(): { count: number; totalUsd: number; ambiguousCount: number; ambiguousUsd: number } {
+    let ambiguousUsd = 0;
+    for (const e of this.ambiguous.values()) ambiguousUsd += e.amountUsd;
+    return {
+      count: this.reserved.size,
+      totalUsd: this.totalReserved(),
+      ambiguousCount: this.ambiguous.size,
+      ambiguousUsd,
+    };
+  }
+
+  /** Testing only — reset all bookkeeping and cached balance. */
+  _resetForTests(fetcher?: () => Promise<number>): void {
+    this.reserved.clear();
+    this.ambiguous.clear();
+    this.cachedBalance = null;
+    this.balanceFetchInflight = null;
+    this.balanceFetcher = fetcher ?? readChainBalance;
+  }
+
+  /** Testing only — seed the balance cache so hold() never touches RPC. */
+  _seedBalanceForTests(value: number): void {
+    this.cachedBalance = { value, fetchedAt: Date.now() };
+  }
+
+  /** Testing only — shift every ambiguous entry's expiry earlier by `ms`. */
+  _ageAmbiguousForTests(ms: number): void {
+    for (const e of this.ambiguous.values()) e.expiresAt -= ms;
   }
 }
 
