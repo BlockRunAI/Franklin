@@ -7164,8 +7164,12 @@ test('picker trim: shortcuts for hidden models still resolve (muscle-memory pres
   // flagship-promotion pattern as kimi → k2.7. Explicit pins still resolve.
   assert.equal(resolveModel('grok'), 'xai/grok-4.5');
   assert.equal(resolveModel('grok-4.3'), 'xai/grok-4.3');
+  // grok-3 / grok-4-0709 / grok-4-1-fast are hidden from /v1/models but
+  // still served (probed 2026-08-29) — explicit pins resolve to the real ids.
   assert.equal(resolveModel('grok-3'), 'xai/grok-3');
   assert.equal(resolveModel('grok-4'), 'xai/grok-4-0709');
+  assert.equal(resolveModel('grok-fast'), 'xai/grok-4-1-fast-reasoning');
+  assert.equal(resolveModel('grok-4.1'), 'xai/grok-4-1-fast-reasoning');
   assert.equal(resolveModel('grok-build'), 'xai/grok-build-0.1');
 });
 
@@ -10514,8 +10518,10 @@ test('vision helpers: isVisionModel allowlist matches curated set', async () => 
     'openai/o3',
     'google/gemini-3.1-pro',
     'google/gemini-2.5-flash',
+    'xai/grok-4.3',
     'xai/grok-4-0709',
     'moonshot/kimi-k3',
+    'zai/glm-5.3-flash',
     'nvidia/nemotron-nano-12b-v2-vl',
   ]) {
     assert.equal(isVisionModel(m), true, `${m} should be vision-capable`);
@@ -11529,4 +11535,166 @@ test('agent loop folds concurrent paid-tool spend on the stream-failure path (no
   // The post-drop cap check must also trip on tool spend, not only a dropped LLM charge.
   assert.match(src, /droppedPaidUsd > 0 \|\| droppedToolUsd > 0/,
     'the cap-after-drop guard must consider tool spend too');
+});
+
+
+// ─── 3.42.0: router-core d7bc10c + 2026-08-29 catalog sync ────────────────
+//
+// router-core ships its tier chains as committed config, and d7bc10c makes
+// nvidia/step-3.7-flash the free backstop rung of every Auto chain — an id
+// that answers as a different model with its reasoning leaked into content
+// (probed 2026-08-29). `options.unavailableModels` is the core's kill-switch
+// for a rung the host knows is bad; these tests pin that Franklin feeds it,
+// statically (the quarantine) and from runtime observation (a real gateway
+// rejection). Catalog absence alone is deliberately NOT a trigger: every
+// catalog-absent id the core config names still answered on 2026-08-29.
+
+const ROUTER_DEAD_IDS = [
+  'nvidia/step-3.7-flash',
+];
+
+const ROUTER_CORPUS = [
+  'hello',
+  'what is a closure in javascript',
+  'prove that the square root of 2 is irrational, step by step',
+  'refactor src/agent/loop.ts to extract the retry policy into its own module and add tests',
+  'compare BTC and ETH funding rates over the last 30 days and propose a pairs trade',
+  'summarize this 40k-token transcript: ' + 'lorem ipsum '.repeat(4000),
+  'write a haiku about autumn',
+  'debug: TypeError: cannot read properties of undefined (reading "map") at render (App.tsx:42)',
+  'extract every email address from the following text as a JSON array',
+];
+
+test('router kill-switch: Auto never selects an id the gateway no longer serves', async () => {
+  const { routeRequest, getUnavailableModels, resetUnavailableModels } = await import('../dist/router/index.js');
+  resetUnavailableModels();
+  const dead = new Set(getUnavailableModels());
+  for (const id of ROUTER_DEAD_IDS) {
+    assert.ok(dead.has(id), `${id} must be in the static unavailable set`);
+  }
+  for (const prompt of ROUTER_CORPUS) {
+    for (const ctx of [{}, { hasTools: true, toolNames: ['Read', 'Bash', 'Write'] }, { needsVision: true }, { maxOutputTokens: 60_000 }]) {
+      const r = routeRequest(prompt, 'auto', ctx);
+      assert.ok(!dead.has(r.model), `picked dead ${r.model} for ${JSON.stringify(prompt.slice(0, 40))}`);
+      for (const c of r.candidates ?? []) {
+        assert.ok(!dead.has(c), `dead ${c} survived in candidates for ${JSON.stringify(prompt.slice(0, 40))}`);
+      }
+    }
+  }
+});
+
+test('router kill-switch: a runtime observation removes the model from the next decision', async () => {
+  const { routeRequest, markModelUnavailable, isModelUnavailable, resetUnavailableModels } = await import('../dist/router/index.js');
+  resetUnavailableModels();
+  const prompt = 'refactor src/agent/loop.ts to extract the retry policy into its own module and add tests';
+  const before = routeRequest(prompt, 'auto', { hasTools: true, toolNames: ['Read', 'Edit', 'Bash'] });
+  assert.ok(before.model && before.model !== 'blockrun/auto');
+  assert.equal(isModelUnavailable(before.model), false);
+
+  // First observation is recorded; a repeat is a no-op (the loop uses the
+  // boolean to bound re-routes to one per dead id).
+  assert.equal(markModelUnavailable(before.model), true);
+  assert.equal(markModelUnavailable(before.model), false);
+  assert.equal(isModelUnavailable(before.model), true);
+
+  const after = routeRequest(prompt, 'auto', { hasTools: true, toolNames: ['Read', 'Edit', 'Bash'] });
+  assert.notEqual(after.model, before.model, 'the dead id must not be selected again');
+  assert.ok(!(after.candidates ?? []).includes(before.model), 'the dead id must leave the recovery chain too');
+  // The survivor is what the chain would have fallen back to — a real model.
+  assert.ok(after.model.includes('/'), `expected a gateway id, got ${after.model}`);
+
+  resetUnavailableModels();
+  assert.equal(isModelUnavailable(before.model), false);
+  const restored = routeRequest(prompt, 'auto', { hasTools: true, toolNames: ['Read', 'Edit', 'Bash'] });
+  assert.equal(restored.model, before.model, 'reset must restore the original decision');
+});
+
+test('router kill-switch: per-call unavailableModels context is honored', async () => {
+  const { routeRequest, resetUnavailableModels } = await import('../dist/router/index.js');
+  resetUnavailableModels();
+  const prompt = 'what is a closure in javascript';
+  const base = routeRequest(prompt, 'auto', {});
+  const routed = routeRequest(prompt, 'auto', { unavailableModels: [base.model] });
+  assert.notEqual(routed.model, base.model);
+  assert.ok(!(routed.candidates ?? []).includes(base.model));
+  // Scoped to the call — the process-wide set is untouched.
+  assert.equal(routeRequest(prompt, 'auto', {}).model, base.model);
+});
+
+test('router kill-switch: the free profile is not affected by the shared Router set', async () => {
+  const { routeRequest, markModelUnavailable, resetUnavailableModels } = await import('../dist/router/index.js');
+  resetUnavailableModels();
+  const r = routeRequest('hello', 'free');
+  assert.equal(r.model, 'nvidia/nemotron-nano-9b-v2');
+  assert.ok(!r.candidates.includes('nvidia/step-3.7-flash'), 'quarantined free id must not be in the free chain');
+  markModelUnavailable('nvidia/nemotron-nano-9b-v2');
+  // The free chain is Franklin's own (pickFreeFallback walks it with the
+  // per-turn failed set); the kill-switch only feeds the shared Router.
+  assert.equal(routeRequest('hello', 'free').model, 'nvidia/nemotron-nano-9b-v2');
+  resetUnavailableModels();
+});
+
+test('error classifier: a rejected model id is flagged modelUnavailable, request-shape errors are not', async () => {
+  const { classifyAgentError } = await import('../dist/agent/error-classifier.js');
+  const unknown = classifyAgentError('HTTP 400: {"error":"Unknown model: xai/grok-4-1-fast-reasoning"}');
+  assert.equal(unknown.category, 'schema');
+  assert.equal(unknown.modelUnavailable, true);
+  assert.equal(unknown.isTransient, false);
+
+  const gone = classifyAgentError('HTTP 410 Gone: model nvidia/deepseek-v4-flash has been retired by the provider');
+  assert.equal(gone.modelUnavailable, true);
+
+  const bare410 = classifyAgentError('410: this model is no longer served');
+  assert.equal(bare410.modelUnavailable, true);
+
+  // Same category (schema), but the id is fine — the loop must not re-route.
+  const shape = classifyAgentError('400 invalid request: array schema missing items');
+  assert.equal(shape.category, 'schema');
+  assert.equal(shape.modelUnavailable, undefined);
+
+  // A 4100-token count or a 410 in a request id is not an HTTP 410.
+  assert.equal(classifyAgentError('prompt is too long: 4100 tokens over the limit').modelUnavailable, undefined);
+  assert.equal(classifyAgentError('500 internal server error (req_410)').modelUnavailable, undefined);
+});
+
+test('catalog sync 2026-08-29: GLM-5.3 Flash is priced, sized, vision-tagged and pickable', async () => {
+  const { MODEL_PRICING } = await import('../dist/pricing.js');
+  const { getContextWindow } = await import('../dist/agent/tokens.js');
+  const { isVisionModel } = await import('../dist/router/vision.js');
+  const { resolveModel, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
+  assert.deepEqual(MODEL_PRICING['zai/glm-5.3-flash'], { input: 0.15, output: 0.5 });
+  assert.equal(getContextWindow('zai/glm-5.3-flash'), 1_000_000);
+  assert.equal(isVisionModel('zai/glm-5.3-flash'), true);
+  assert.equal(isVisionModel('zai/glm-5.3'), false, 'only the Flash SKU is multimodal in the catalog');
+  assert.equal(resolveModel('glm-flash'), 'zai/glm-5.3-flash');
+  assert.equal(resolveModel('glm-5.3-flash'), 'zai/glm-5.3-flash');
+  const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
+  assert.ok(ids.includes('zai/glm-5.3-flash'), 'GLM-5.3 Flash earns a budget row');
+  assert.ok(!ids.includes('google/gemini-2.5-flash'), 'Gemini 2.5 Flash gave up its row (shortcut stays)');
+  assert.equal(resolveModel('gemini-2.5-flash'), 'google/gemini-2.5-flash');
+});
+
+test('catalog sync 2026-08-29: hidden-but-served ids stay priced, routable and pinnable', async () => {
+  // Every one of these is absent from GET /v1/models and every one answered
+  // (and was charged) through the binary on 2026-08-29. Absence from the
+  // catalog must not retire an id anywhere: not from pricing (the charge is
+  // real), not from the router (the core config still names them), not from
+  // the picker's explicit pins.
+  const { MODEL_PRICING } = await import('../dist/pricing.js');
+  const { isModelUnavailable, resetUnavailableModels } = await import('../dist/router/index.js');
+  const { resolveModel } = await import('../dist/ui/model-picker.js');
+  resetUnavailableModels();
+  const served = {
+    'anthropic/claude-opus-4.6': 'opus-4.6',
+    'xai/grok-4-0709': 'grok-4',
+    'xai/grok-3': 'grok-3',
+    'xai/grok-4-1-fast-reasoning': 'grok-fast',
+    'moonshot/kimi-k2.7': 'moonshot/kimi-k2.7',
+    'openai/gpt-5-nano': 'nano',
+  };
+  for (const [id, pin] of Object.entries(served)) {
+    assert.ok(MODEL_PRICING[id], `${id} must stay priced — the gateway still charges for it`);
+    assert.equal(isModelUnavailable(id), false, `${id} must not be pre-declared dead on catalog absence`);
+    assert.equal(resolveModel(pin), id, `${pin} must keep resolving to the real id`);
+  }
 });

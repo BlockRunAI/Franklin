@@ -25,6 +25,9 @@ const VISION_MODELS = new Set<string>([
   'anthropic/claude-opus-5',
   'anthropic/claude-opus-4.8',
   'anthropic/claude-opus-4.7',
+  // Hidden from /v1/models since 2026-08 but still served (probed through
+  // the binary 2026-08-29) — a pinned `opus-4.6` image turn must not be
+  // rerouted to a sibling the user didn't ask for.
   'anthropic/claude-opus-4.6',
   'anthropic/claude-opus-4.5',
   'anthropic/claude-sonnet-5',
@@ -64,17 +67,21 @@ const VISION_MODELS = new Set<string>([
   // xAI — grok-4-1-fast-reasoning stays out (text-only). Grok 4.5 and 4.3 are
   // both vision-capable in the catalog and were missing here until 2026-08-20:
   // `grok` resolves to 4.5, so every image turn on the xAI flagship was being
-  // rerouted to a "vision sibling" the user never asked for.
+  // rerouted to a "vision sibling" the user never asked for. grok-4-0709 and
+  // grok-3 are hidden from /v1/models but still served (probed 2026-08-29).
   'xai/grok-4.5',
   'xai/grok-4.3',
   'xai/grok-4-0709',
   'xai/grok-3',
-  // Moonshot — K3 is the Solana flagship; the K2.x compatibility line remains
-  // routable on both gateways and is also catalogued as multimodal.
+  // Moonshot — K3 is the flagship; the K2.x line is hidden from /v1/models
+  // but still served (probed 2026-08-29) and is catalogued as multimodal.
   'moonshot/kimi-k3',
   'moonshot/kimi-k2.7',
   'moonshot/kimi-k2.6',
   'moonshot/kimi-k2.5',
+  // Z.AI — GLM-5.3 Flash is the one GLM SKU the catalog tags as vision
+  // (2026-08-29 sync); GLM-5.3 / 5.2 / 5.1 are text + reasoning only.
+  'zai/glm-5.3-flash',
   // NVIDIA inference — Nemotron Nano VL is multimodal; deepseek/qwen-coder are
   // not. Llama 4 Maverick dropped 2026-07-14: it left the gateway catalog, and
   // listing it here contradicted routeRequest()'s own "maverick is text-only"

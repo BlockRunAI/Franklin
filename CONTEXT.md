@@ -19,7 +19,7 @@ The first, unpaid HTTP request whose 402 response carries the payment terms; Fra
 _Avoid_: Pre-flight, handshake.
 
 **BlockRun Gateway**:
-The single upstream service Franklin calls for both LLM completions and paid tools (Exa, ImageGen, VideoGen, MusicGen, market data); aggregates <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> models and accepts x402.
+The single upstream service Franklin calls for both LLM completions and paid tools (Exa, ImageGen, VideoGen, MusicGen, market data); aggregates <!-- br:models.chatVisible -->72<!-- /br:models.chatVisible --> models and accepts x402.
 _Avoid_: API, provider, backend, BlockRun (without "Gateway") when referring to the service.
 
 **Per-turn spend cap**:

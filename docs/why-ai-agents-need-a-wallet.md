@@ -154,7 +154,7 @@ cheap models because cheapness is now something the agent can
 agents both learn in real time.
 
 **3. Single-vendor failure becomes a one-command swap.** A router
-with <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> models across every major provider can route around any
+with <!-- br:models.chatVisible -->72<!-- /br:models.chatVisible --> models across every major provider can route around any
 single vendor's bad release. The wallet doesn't know or care which
 model answered — it only pays for the answer that arrived.
 
@@ -175,7 +175,7 @@ filled it.
 
 Franklin is the reference implementation of the Economic Agent. It's
 an AI agent CLI that holds USDC on Base or Solana, routes requests
-across <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> models, and settles every paid action in real time via
+across <!-- br:models.chatVisible -->72<!-- /br:models.chatVisible --> models, and settles every paid action in real time via
 the [x402](https://x402.org) HTTP-402 micropayment protocol. It is
 Apache-2.0, written in TypeScript, and ships as one npm package.
 
