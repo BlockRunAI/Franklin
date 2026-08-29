@@ -174,6 +174,13 @@ async function extractPaymentReq(response: Response): Promise<string | null> {
  * first POST gets a 402 with payment requirements; we sign and retry once
  * with the X-PAYMENT header. Returns the parsed JSON body and the raw
  * Response (callers may need status code).
+ *
+ * `reservation` is the caller's wallet hold for this call. If the signed
+ * (paid) request has been dispatched and the call then aborts or times out
+ * before a response, the outcome is ambiguous — the gateway may already have
+ * settled the payment. The hold is marked ambiguous so the reservation layer
+ * keeps counting it (see reservation.ts) instead of the caller's `finally`
+ * releasing it as if nothing was spent.
  */
 async function postWithPayment(
   endpoint: string,
@@ -181,6 +188,7 @@ async function postWithPayment(
   resourceDescription: string,
   abortSignal: AbortSignal,
   timeoutMs: number,
+  reservation?: ReservationToken | null,
 ): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; raw: string }> {
   const chain = loadChain();
   const headers: Record<string, string> = {
@@ -191,6 +199,7 @@ async function postWithPayment(
   const onParentAbort = () => ctrl.abort();
   abortSignal.addEventListener('abort', onParentAbort, { once: true });
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let paymentDispatched = false;
 
   try {
     const payload = JSON.stringify(body);
@@ -201,6 +210,7 @@ async function postWithPayment(
       if (!paymentHeaders) {
         return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '' };
       }
+      paymentDispatched = true;
       response = await fetch(endpoint, {
         method: 'POST',
         signal: ctrl.signal,
@@ -213,6 +223,17 @@ async function postWithPayment(
     let parsed: Record<string, unknown> = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { /* leave as {} */ }
     return { ok: response.ok, status: response.status, body: parsed, raw };
+  } catch (err) {
+    if (paymentDispatched && reservation) {
+      // Signed request went out; abort/timeout hit before we saw the result.
+      // Money may be gone — keep the hold counted rather than releasing it.
+      walletReservation.markAmbiguous(reservation);
+      logger.warn(
+        `[franklin] Modal payment outcome ambiguous (${(err as Error).message}); ` +
+        `holding ${reservation.amountUsd.toFixed(4)} USDC reservation until balance refresh`,
+      );
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
     abortSignal.removeEventListener('abort', onParentAbort);
@@ -406,6 +427,7 @@ export const modalCreateCapability: CapabilityHandler = {
         'Franklin Modal sandbox create',
         ctx.abortSignal,
         90_000, // 90s — sandbox cold-start can be slow on fresh GPU pulls
+        reservation,
       );
       const latencyMs = Date.now() - callStartedAt;
 
@@ -555,6 +577,7 @@ export const modalExecCapability: CapabilityHandler = {
         'Franklin Modal sandbox exec',
         ctx.abortSignal,
         Math.max(30_000, ((coercedTimeout ?? 300) + 30) * 1000),
+        reservation,
       );
       const latencyMs = Date.now() - callStartedAt;
 
@@ -643,6 +666,7 @@ export const modalStatusCapability: CapabilityHandler = {
         'Franklin Modal sandbox status',
         ctx.abortSignal,
         30_000,
+        reservation,
       );
       const latencyMs = Date.now() - callStartedAt;
 
@@ -697,6 +721,7 @@ export const modalTerminateCapability: CapabilityHandler = {
         'Franklin Modal sandbox terminate',
         ctx.abortSignal,
         30_000,
+        reservation,
       );
       const latencyMs = Date.now() - callStartedAt;
 
