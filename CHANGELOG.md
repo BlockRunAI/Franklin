@@ -1,5 +1,50 @@
 # Changelog
 
+## Franklin Agent 3.42.2 — an aborted payment is not a refund
+
+**A paid call that timed out could quietly hand its money back to the
+budget.** The wallet-reservation layer (`src/wallet/reservation.ts`) is the
+local bookkeeping that stops N parallel paid calls from each seeing the same
+headroom. Every Modal handler released its hold in a `finally`, whatever
+happened. But x402 is fire-and-forget: once the signed request has left the
+machine, an abort or timeout tells you nothing about whether the gateway
+settled it. On that path the hold was released anyway, `totalReserved()`
+under-counted, and the next call saw USDC that was already gone. Reported in
+#128 by @aurumflux20, with a parallel fix proposed in #129 by @GentechLabs.
+
+**Ambiguous settlements now err tight.** `postWithPayment` tracks whether the
+signed request was dispatched; if the call then aborts, times out, or the
+response body is cut off, the hold is moved to an *ambiguous* set instead of
+released. It stays counted against headroom for the call's own timeout plus
+a 30s settlement margin (the gateway may settle when the paid work finishes,
+which can be the full timeout after our abort), and is dropped only by a
+real on-chain balance read that started after that window — which already
+reflects the spend if it happened. A genuinely-absent spend self-heals; a
+real one is never double-counted for long. The cap can err tight, never
+loose.
+
+**What is deliberately not ambiguous.** A budget that expired during signing
+(before the paid fetch went out), or a connection-refused / DNS failure on
+the paid request, provably never reached the gateway and releases normally.
+A paid 2xx whose body was truncated used to come back as `ok: true` with an
+empty body — for `ModalCreate` that was a paid sandbox with no id in the
+session tracker; it now throws and holds. The RPC-failure fallback (balance
+= Infinity so an outage does not block every paid tool) never prunes
+ambiguous entries. And `ModalCreate`'s insufficient-funds message now says
+what is actually held instead of blaming "other in-flight calls".
+
+Also in this release: `ACKNOWLEDGMENTS.md` lists the outside contributors and
+bug reporters whose work shipped, and the README contributors section points
+at it (#139).
+
+Known, tracked separately (#140): the SDK's Solana `getBalance()` returns `0`
+on RPC errors rather than throwing, so the fail-open fallback above never
+engages on Solana.
+
+Verified: local suite 683/683 (13 new tests cover the ambiguous / not-
+ambiguous matrix through `postWithPayment` with an injected fetch and
+signer). Closes #128.
+
 ## Franklin Agent 3.42.1 — the deep pass after 3.42.0: three things the sync missed
 
 **An image turn on Auto could land on a model that cannot see.** The shared
