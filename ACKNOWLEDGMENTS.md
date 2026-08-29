@@ -22,6 +22,7 @@ Issues that were correct, specific, and changed the code.
 | Reporter | Issue | Outcome |
 |----------|-------|---------|
 | [@aurumflux20](https://github.com/aurumflux20) | #128 — wallet reservation released on an aborted x402 payment that may already have settled | Fixed in #138: ambiguous settlements now hold the reservation instead of releasing it |
+| [@GentechLabs](https://github.com/GentechLabs) | #129 — parallel PR for the same bug; the `paidRequestDispatched` tracking in `postWithPayment` follows their approach | Superseded by #138, which adds the bounded grace window |
 | [@KillerQueen-Z](https://github.com/KillerQueen-Z) | #119 — legacy Solana wallet migration must not silently change the active address; plus #5, #10, #12, #51, #52, #65 on gateway tool-call conversion, vision payloads, and image-to-image | #119 tracked as a wallet enhancement; the rest shipped |
 | [@Zambala108](https://github.com/Zambala108) | #73 — five `cache_control` breakpoints on multi-turn tool sessions (HTTP 400); #74 — stream-idle timeout shorter than reasoning-model first-token latency | Both fixed |
 | [@jackinehu](https://github.com/jackinehu) | #69 — should autonomous x402 payments have a pre-spend risk hook? | Became the `PreSpend` lifecycle hook |
