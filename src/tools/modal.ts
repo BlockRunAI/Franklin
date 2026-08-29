@@ -38,7 +38,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, API_URLS, VERSION } from '../config.js';
-import { walletReservation, type ReservationToken } from '../wallet/reservation.js';
+import { walletReservation, AMBIGUOUS_GRACE_MS, type ReservationToken } from '../wallet/reservation.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
 
@@ -98,6 +98,12 @@ class SessionSandboxTracker {
 export const sessionSandboxTracker = new SessionSandboxTracker();
 
 // ─── x402 payment signing — same shape as imagegen's helper ───────────────
+
+/** Indirection so tests can stub the signer without a funded wallet. */
+let paymentSigner: typeof signPayment = (...args) => signPayment(...args);
+export function _setPaymentSignerForTests(fn: typeof signPayment | null): void {
+  paymentSigner = fn ?? ((...args) => signPayment(...args));
+}
 
 async function signPayment(
   response: Response,
@@ -177,12 +183,15 @@ async function extractPaymentReq(response: Response): Promise<string | null> {
  *
  * `reservation` is the caller's wallet hold for this call. If the signed
  * (paid) request has been dispatched and the call then aborts or times out
- * before a response, the outcome is ambiguous — the gateway may already have
- * settled the payment. The hold is marked ambiguous so the reservation layer
- * keeps counting it (see reservation.ts) instead of the caller's `finally`
- * releasing it as if nothing was spent.
+ * before a response, or the response arrives but its body is cut off, the
+ * outcome is ambiguous — the gateway may already have settled the payment.
+ * The hold is marked ambiguous so the reservation layer keeps counting it
+ * (see reservation.ts) instead of the caller's `finally` releasing it as if
+ * nothing was spent. Failures that provably never left this machine (signal
+ * already aborted before dispatch, DNS / connection-refused) are NOT
+ * ambiguous and release normally.
  */
-async function postWithPayment(
+export async function postWithPayment(
   endpoint: string,
   body: Record<string, unknown>,
   resourceDescription: string,
@@ -206,10 +215,14 @@ async function postWithPayment(
     let response = await fetch(endpoint, { method: 'POST', signal: ctrl.signal, headers, body: payload });
 
     if (response.status === 402) {
-      const paymentHeaders = await signPayment(response, chain, endpoint, resourceDescription);
+      const paymentHeaders = await paymentSigner(response, chain, endpoint, resourceDescription);
       if (!paymentHeaders) {
         return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '' };
       }
+      // Signing can take a while (wallet load, Solana RPC). If the budget
+      // expired meanwhile, fetch rejects before writing a byte — that is a
+      // definite non-payment, not an ambiguous one.
+      if (ctrl.signal.aborted) throw signalError(ctrl.signal);
       paymentDispatched = true;
       response = await fetch(endpoint, {
         method: 'POST',
@@ -219,15 +232,25 @@ async function postWithPayment(
       });
     }
 
-    const raw = await response.text().catch(() => '');
+    let raw = '';
+    try {
+      raw = await response.text();
+    } catch (err) {
+      // A paid 2xx whose body was cut off (abort mid-stream) is still a
+      // settled payment with an unknown result — e.g. a sandbox we were never
+      // told the id of. Surface it instead of returning ok:true with {}.
+      if (paymentDispatched) throw err;
+    }
     let parsed: Record<string, unknown> = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { /* leave as {} */ }
     return { ok: response.ok, status: response.status, body: parsed, raw };
   } catch (err) {
-    if (paymentDispatched && reservation) {
+    if (paymentDispatched && reservation && !definitelyNotSent(err)) {
       // Signed request went out; abort/timeout hit before we saw the result.
       // Money may be gone — keep the hold counted rather than releasing it.
-      walletReservation.markAmbiguous(reservation);
+      // Window = this call's own timeout (the gateway may still be running
+      // the paid work and settle when it finishes) + settlement margin.
+      walletReservation.markAmbiguous(reservation, timeoutMs + AMBIGUOUS_GRACE_MS);
       logger.warn(
         `[franklin] Modal payment outcome ambiguous (${(err as Error).message}); ` +
         `holding ${reservation.amountUsd.toFixed(4)} USDC reservation until balance refresh`,
@@ -241,6 +264,41 @@ async function postWithPayment(
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
+
+/** Explain why hold() refused, so the agent does not loop on "wait". */
+function describeHeadroom(): string {
+  const snap = walletReservation.snapshot();
+  const parts: string[] = [];
+  if (snap.count > 0) parts.push(`${snap.count} in-flight paid call(s) hold ${fmtUsd(snap.totalUsd - snap.ambiguousUsd)}`);
+  if (snap.ambiguousCount > 0) {
+    parts.push(
+      `${fmtUsd(snap.ambiguousUsd)} is held for ${snap.ambiguousCount} recent payment(s) whose settlement is ` +
+      `unconfirmed (released automatically after the on-chain balance refreshes)`,
+    );
+  }
+  if (parts.length === 0) return 'Fund the wallet.';
+  return parts.join('; ') + ' — wait for those to clear or fund the wallet.';
+}
+
+function signalError(signal: AbortSignal): Error {
+  const reason = (signal as { reason?: unknown }).reason;
+  if (reason instanceof Error) return reason;
+  const e = new Error('This operation was aborted');
+  e.name = 'AbortError';
+  return e;
+}
+
+/**
+ * Errors whose cause proves the request never reached the network: the
+ * payment cannot have settled, so the reservation should release normally.
+ * Anything else after dispatch (abort, timeout, reset, unknown) errs tight.
+ */
+const NOT_SENT_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'ERR_INVALID_URL']);
+function definitelyNotSent(err: unknown): boolean {
+  const cause = (err as { cause?: { code?: unknown } } | null)?.cause;
+  const code = typeof cause?.code === 'string' ? cause.code : '';
+  return NOT_SENT_CODES.has(code);
+}
 
 function modalEndpoint(path: string): string {
   const chain = loadChain();
@@ -407,7 +465,7 @@ export const modalCreateCapability: CapabilityHandler = {
         return {
           output:
             `Insufficient USDC for ModalCreate (${tier}, ~${fmtUsd(price)}). ` +
-            `Other in-flight paid calls may be holding your balance — wait or fund the wallet.`,
+            describeHeadroom(),
           isError: true,
         };
       }

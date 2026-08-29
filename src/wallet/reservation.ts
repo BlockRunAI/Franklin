@@ -1,9 +1,9 @@
 /**
  * WalletReservation — local accounting layer for concurrent paid tool calls.
  *
- * Problem this solves: when N batch tools (ImageGen / VideoGen) run in
- * parallel, each independently checks balance and dispatches its x402
- * payment. With balance $0.20 and 6 calls × $0.04 each, all 6 see "$0.20
+ * Problem this solves: when N paid tool calls (today: the Modal sandbox
+ * tools) run in parallel, each independently checks balance and dispatches
+ * its x402 payment. With balance $0.20 and 6 calls × $0.04 each, all 6 see "$0.20
  * available, $0.04 fits" and start; only 5 can actually settle on-chain,
  * the rest fail mid-flight with insufficient-funds and the user sees
  * partial completion with no preflight warning.
@@ -18,8 +18,11 @@
  *      then aborted / timed out before a response came back — the caller
  *      marks the token ambiguous instead. The gateway may have settled the
  *      payment on-chain, so the amount stays counted against headroom for
- *      a grace window and is dropped on the next fresh balance fetch after
- *      that window (which reflects the real on-chain state). The cap can
+ *      a grace window and is dropped on the next fresh balance fetch that
+ *      STARTED after the window closed (so the read reflects the real
+ *      on-chain state). The window is sized by the caller from its own
+ *      request timeout: the gateway may still be running the paid work when
+ *      we abort, and settlement lands when that work finishes. The cap can
  *      only err tight, never loose.
  *
  * Single-process JS guarantees the check-and-set is atomic (no real race),
@@ -36,9 +39,11 @@ export interface ReservationToken {
 
 const BALANCE_CACHE_MS = 5_000;
 /**
- * How long an ambiguous-settlement hold stays counted before a fresh
- * balance fetch is trusted to reflect it. x402 settlement on Base / Solana
- * lands well inside this; the window only bounds how long we err tight.
+ * Settlement margin added on top of the caller-supplied request timeout for
+ * an ambiguous-settlement hold. The window starts at OUR abort, not at the
+ * gateway's settlement: if the gateway settles after the paid work finishes,
+ * that can be up to the request timeout later, plus on-chain confirmation.
+ * Callers pass `graceMs = timeoutMs + AMBIGUOUS_GRACE_MS`.
  */
 export const AMBIGUOUS_GRACE_MS = 30_000;
 
@@ -53,7 +58,7 @@ async function readChainBalance(): Promise<number> {
 
 class WalletReservationManager {
   private reserved = new Map<string, number>();
-  private ambiguous = new Map<string, { amountUsd: number; at: number }>();
+  private ambiguous = new Map<string, { amountUsd: number; expiresAt: number }>();
   private cachedBalance: { value: number; fetchedAt: number } | null = null;
   private balanceFetchInflight: Promise<number> | null = null;
   private balanceFetcher: () => Promise<number> = readChainBalance;
@@ -64,9 +69,21 @@ class WalletReservationManager {
     }
     if (this.balanceFetchInflight) return this.balanceFetchInflight;
 
+    // Sample the clock BEFORE the read goes out: a read that started inside
+    // an ambiguous entry's window cannot be trusted to reflect it, however
+    // long the RPC took to answer.
+    const startedAt = Date.now();
     this.balanceFetchInflight = (async () => {
       try {
-        return await this.balanceFetcher();
+        const v = await this.balanceFetcher();
+        // A real on-chain read already includes any ambiguous spend that
+        // settled; drop entries whose window closed before this read began
+        // so a genuinely-absent spend self-heals instead of pinning headroom.
+        // Only on a real read: the Infinity fallback below reflects nothing.
+        for (const [id, entry] of this.ambiguous) {
+          if (entry.expiresAt <= startedAt) this.ambiguous.delete(id);
+        }
+        return v;
       } catch {
         // If balance fetch fails, return Infinity so reservations don't
         // block — the actual payment will surface the real error. We'd
@@ -75,15 +92,8 @@ class WalletReservationManager {
       }
     })()
       .then((v) => {
-        const now = Date.now();
-        this.cachedBalance = { value: v, fetchedAt: now };
+        this.cachedBalance = { value: v, fetchedAt: Date.now() };
         this.balanceFetchInflight = null;
-        // A fresh on-chain read already includes any ambiguous spend that
-        // actually settled; drop entries past the grace window so a
-        // genuinely-absent spend self-heals instead of pinning headroom.
-        for (const [id, entry] of this.ambiguous) {
-          if (now - entry.at >= AMBIGUOUS_GRACE_MS) this.ambiguous.delete(id);
-        }
         return v;
       });
 
@@ -133,16 +143,18 @@ class WalletReservationManager {
   /**
    * Mark a hold as ambiguous: the signed payment was dispatched but the
    * request aborted / timed out before we saw the outcome. The money may be
-   * gone, so keep the amount counted against headroom (see header). A later
-   * release() of the same token is a no-op — the ambiguous entry outlives it.
+   * gone, so keep the amount counted against headroom (see header) for
+   * `graceMs` (default AMBIGUOUS_GRACE_MS; callers add their request
+   * timeout). A later release() of the same token is a no-op — the ambiguous
+   * entry outlives it. Idempotent: a second call for the same id is a no-op.
    */
-  markAmbiguous(token: ReservationToken | string | null | undefined): void {
+  markAmbiguous(token: ReservationToken | string | null | undefined, graceMs = AMBIGUOUS_GRACE_MS): void {
     if (!token) return;
     const id = typeof token === 'string' ? token : token.id;
     const amountUsd = this.reserved.get(id);
     if (amountUsd === undefined || amountUsd <= 0) return;
     this.reserved.delete(id);
-    this.ambiguous.set(id, { amountUsd, at: Date.now() });
+    this.ambiguous.set(id, { amountUsd, expiresAt: Date.now() + Math.max(0, graceMs) });
     this.cachedBalance = null;
   }
 
@@ -177,9 +189,9 @@ class WalletReservationManager {
     this.cachedBalance = { value, fetchedAt: Date.now() };
   }
 
-  /** Testing only — backdate an ambiguous entry past the grace window. */
+  /** Testing only — shift every ambiguous entry's expiry earlier by `ms`. */
   _ageAmbiguousForTests(ms: number): void {
-    for (const e of this.ambiguous.values()) e.at -= ms;
+    for (const e of this.ambiguous.values()) e.expiresAt -= ms;
   }
 }
 
