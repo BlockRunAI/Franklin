@@ -12,7 +12,7 @@ Capability pillars:
 
 Built on three layers:
 1. **x402 micropayment protocol** — HTTP 402 native payments
-2. **BlockRun Gateway** — aggregates <!-- br:models.chatVisible -->72<!-- /br:models.chatVisible --> LLMs + paid APIs (Exa, DALL-E, future Runway/Suno/CoinGecko)
+2. **BlockRun Gateway** — aggregates <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> LLMs + paid APIs (Exa, DALL-E, future Runway/Suno/CoinGecko)
 3. **Franklin Agent** — this repo, the reference client
 
 ## Commands
