@@ -85,7 +85,7 @@ import type {
   ThinkingSegment,
   UserContentPart,
 } from './types.js';
-import { FREE_DEFAULT_MODEL, isFreeModelId } from '../free-models.js';
+import { FREE_DEFAULT_MODEL, freeVisionModel, isFreeModelId } from '../free-models.js';
 
 /**
  * Atomically replace all elements in a history array.
@@ -1548,14 +1548,26 @@ export async function interactiveSession(
         // return the paid default and start charging a user who explicitly
         // chose the free tier — silently, mid-turn. Say so and stay free.
         if (isFreeModelId(original)) {
-          onEvent({
-            kind: 'text_delta',
-            text:
-              `*⚠️ ${original} can't see images, and no free vision model is ` +
-              'available — the gateway serves both free vision ids from a model ' +
-              'that drops the image. Answering from text only; switch to a paid ' +
-              'model (e.g. `/model haiku`) to send it.*\n\n',
-          });
+          // Stay on the free tier: swap to the chain's free vision model if it
+          // has one, otherwise say so. Never swap a free model for a paid one.
+          const freeVision = freeVisionModel();
+          if (freeVision) {
+            resolvedModel = freeVision;
+            config.model = freeVision;
+            onEvent({
+              kind: 'text_delta',
+              text: `*⚠️ ${original} can't see images — using ${freeVision} for this turn (still free).*\n\n`,
+            });
+          } else {
+            onEvent({
+              kind: 'text_delta',
+              text:
+                `*⚠️ ${original} can't see images, and this chain has no free ` +
+                'vision model — the gateway drops the image before it reaches ' +
+                'one. Answering from text only; switch to a paid model ' +
+                '(e.g. `/model haiku`) to send it.*\n\n',
+            });
+          }
         } else {
           const visionSwap = pickVisionSibling(original);
           resolvedModel = visionSwap;

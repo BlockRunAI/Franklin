@@ -19,6 +19,8 @@
  * `Image file: <path>` description string. Expensive AND wrong.
  */
 
+import { freeVisionModel } from '../free-models.js';
+
 const VISION_MODELS = new Set<string>([
   // Anthropic — native vision across the line
   'anthropic/claude-fable-5',
@@ -82,7 +84,11 @@ const VISION_MODELS = new Set<string>([
   // Z.AI — GLM-5.3 Flash is the one GLM SKU the catalog tags as vision
   // (2026-08-29 sync); GLM-5.3 / 5.2 / 5.1 are text + reasoning only.
   'zai/glm-5.3-flash',
-  // ── No free vision model (2026-08-30) ──
+  // ── The free vision model is NOT here, on purpose ──
+  // It is chain-dependent, so isVisionModel() consults freeVisionModel()
+  // instead of this static set. See the note below and src/free-models.ts.
+  //
+  // ── History: no free vision at all (2026-08-30) ──
   // The catalog tags two free ids as vision-capable — nemotron-3-nano-omni and
   // llama-3.2-11b-vision — and neither honours an image. Sent a real PNG, both
   // came back from a TEXT-ONLY substitute (nvidia/nemotron-3-nano-30b) replying
@@ -104,7 +110,12 @@ const VISION_MODELS = new Set<string>([
 /** Does this concrete gateway model accept image input? */
 export function isVisionModel(modelId: string | undefined | null): boolean {
   if (!modelId) return false;
-  return VISION_MODELS.has(modelId);
+  if (VISION_MODELS.has(modelId)) return true;
+  // The free tier's vision model is chain-dependent — the gateway's image
+  // allow-list fix reached Solana before Base — so it cannot live in a static
+  // set. freeVisionModel() returns null on a chain where no free model can
+  // actually accept an image, and this stays false there.
+  return modelId === freeVisionModel();
 }
 
 /** Lower-cased copy used for prefix family matching in pickVisionSibling. */

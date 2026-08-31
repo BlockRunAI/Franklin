@@ -33,7 +33,7 @@ import {
 } from '../router/index.js';
 import { classifyAgentError } from '../agent/error-classifier.js';
 import { estimateCost } from '../pricing.js';
-import { isFreeModelId } from '../free-models.js';
+import { freeVisionModel, isFreeModelId } from '../free-models.js';
 import { getMaxOutputTokens } from '../agent/optimize.js';
 import { VERSION } from '../config.js';
 
@@ -455,7 +455,9 @@ export function createProxy(options: ProxyOptions): http.Server {
               // lookup returns the paid default — swapping would start
               // charging a user who explicitly chose the free tier.
               const original = requestModel;
-              const visionSwap = isFreeModelId(original) ? original : pickVisionSibling(original);
+              const visionSwap = isFreeModelId(original)
+                ? (freeVisionModel() ?? original)
+                : pickVisionSibling(original);
               parsed.model = visionSwap;
               requestModel = visionSwap;
               logger.warn(

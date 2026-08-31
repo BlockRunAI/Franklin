@@ -47,11 +47,19 @@ clawrouter sessions — the latter nearly shipped a textual `<tool_call>`
 extractor for a model that returns a clean structured array at a larger
 budget.
 
-**No free vision, said out loud.** Both ids the catalog tags free + vision
-fail on a real image: Solana answers as itself and drops the image ("I can't
-view the image"), Base returns a 502 "Failed to load image". A dropped image
-produces a confidently wrong answer, so `isVisionModel()` now reports the
-truth and the free profile says vision is unavailable instead of guessing.
+**Free vision is now chain-aware, and honest where it is missing.** The
+original failure was never the models: the gateway was dropping every
+`image_url` unconditionally under a stale comment, which is why it presented
+as a confident wrong answer with no error — the image never left the
+gateway. The allow-list fix reached Solana first. Measured through
+`/v1/messages` with a valid 64x64 PNG (fixtures under 10px per side are
+rejected upstream, so a tiny one proves nothing): `llama-3.2-11b-vision`
+answers 5/5 on Solana and 0/5 on Base, and `nemotron-3-nano-omni` drops the
+image on 2 of 4 Solana calls despite being catalogued as vision-capable.
+So Solana gets a working free vision model, Base honestly reports none, and
+nano-omni is not used for vision on either — dropping the image half the time
+is worse than declining, because the caller cannot tell which half they got.
+A free vision turn never falls back to a paid model on either chain.
 
 **Two money bugs found on the way.** `m.startsWith('nvidia/')` was standing
 in for "is this model free" in three places. It was wrong in both

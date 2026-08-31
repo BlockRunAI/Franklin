@@ -60,6 +60,7 @@
  */
 
 import { peekGatewayModel } from './gateway-models.js';
+import { loadChain } from './config.js';
 
 /**
  * The free model Franklin asks for by default.
@@ -185,16 +186,16 @@ export const FREE_POOL_CONTEXT_FLOOR = 131_072;
  * are excluded on behaviour, not availability.
  */
 export const QUARANTINED_FREE_MODELS: readonly string[] = [
-  // Cannot accept an image today. The CAUSE turned out to be gateway-side,
-  // not the model: the andy session found both NVIDIA paths dropping every
-  // `image_url` unconditionally under a stale comment, which is exactly why
-  // the failure looked like a confident wrong answer with no error — the
-  // image never left the gateway. A red PNG came back "Black" from sol and
-  // "Red" from all three upstreams. A fix with a verified allow-list is in
-  // flight upstream; when it deploys, re-probe and revisit both this entry
-  // and freeVisionModel(). Until then the id cannot honour a vision turn, and
-  // it is the weakest text model in the pool.
-  'nvidia/llama-3.2-11b-vision',
+  // Nothing is quarantined right now.
+  //
+  // llama-3.2-11b-vision was here until the gateway's image_url fix deployed
+  // to Solana; it is now the free VISION model there (5/5 on a valid 64x64
+  // PNG) and is reached through freeVisionModel(), not through the text
+  // chain. It stays out of FREE_PREFERENCE_ORDER because it is the weakest
+  // text model in the pool, which is a ranking, not a ban.
+  //
+  // nemotron-3.5-lightning and cohere/north-mini-code were both here on
+  // measurement artifacts (see the TRUNCATION note above) and were released.
   // NOT quarantined, deliberately, though an earlier revision had them here:
   //   nvidia/nemotron-3.5-lightning — the "CoT leak" was max_tokens truncation.
   //     It is merely slow, which keeps it out of FREE_PREFERENCE_ORDER but is
@@ -235,28 +236,53 @@ export const FREE_MODEL_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
 };
 
 /**
- * Free vision is unavailable.
+ * The free model that can actually accept an image, or null when there is
+ * none on this chain.
  *
- * Probed 2026-08-30 with a real PNG on POST /api/v1/messages — the endpoint
- * Franklin uses — against both ids the catalog tags free + vision:
+ * This is CHAIN-AWARE because the gateways are at different deploy states,
+ * not because the models differ. The original failure was gateway-side: both
+ * NVIDIA paths dropped every `image_url` unconditionally under a stale
+ * comment (found by the andy session), which is why it presented as a
+ * confident wrong answer with no error — the image never left the gateway.
+ * An allow-list fix shipped to Solana first.
  *
- *   Solana, nemotron-3-nano-omni : answers as itself, image dropped —
- *                                  "I can't view the image, so I can't list
- *                                  its colors."
- *   Base,   nemotron-3-nano-omni : 502 from the upstream, "Failed to load
- *                                  image from data:image/png..."
- *   Base,   llama-3.2-11b-vision : served by a text-only model replying
- *                                  "There's no image provided."
+ * Measured through /v1/messages with a valid 64x64 red PNG, 2026-08-31.
+ * (Fixture size matters: images under 10px per side are rejected upstream
+ * with invalid_parameter_error, so a tiny test PNG proves nothing.)
  *
- * A dropped image produces a confidently wrong answer, the worst outcome for
- * a vision turn. Returning null makes the free profile say so instead of
- * guessing, and the free profile must never fall back to a paid model.
+ *   sol  llama-3.2-11b-vision  5/5 "Red."          <- reliable
+ *   sol  nano-omni             2/4 "Red", 2/4 "unknown"
+ *   base llama-3.2-11b-vision  0/5 "I'm not seeing an image."
+ *   base nano-omni             0/4 502 / circuit breaker open
  *
- * This is a claim about what the gateway currently serves, not about the
- * models' capabilities — re-add when a real image probe succeeds.
+ * So Solana gets a working free vision model and Base honestly reports none.
+ * nano-omni is NOT used for vision on either chain even though the catalog
+ * tags it vision-capable: dropping the image on half of all calls is worse
+ * than declining, because the caller cannot tell which half they got.
+ *
+ * KNOWN LIMITATION, measured end-to-end through the binary: llama-3.2-11b-vision
+ * is reliable as a bare vision call and weak as an AGENT model. Swapped in for
+ * a vision turn with Franklin's full tool set active, 1 of 2 runs answered
+ * correctly (via the empty-response fallback) and the other re-called `Read`
+ * on the same path until the repeat guard stopped the turn. Both guardrails
+ * engage, so the failure is bounded and visible rather than silent — which is
+ * why this is still better than declining the turn outright. If it proves
+ * annoying in practice, the fix is to run the vision call as a one-shot
+ * without tools rather than to hand the model the whole turn.
+ *
+ * WHEN BASE'S ALLOW-LIST FIX DEPLOYS: re-probe with a >=10px PNG and, if
+ * llama-3.2-11b-vision answers there too, delete the chain check and return
+ * it unconditionally.
  */
 export function freeVisionModel(): string | null {
-  return null;
+  // Escape hatch for operators probing a chain mid-deploy.
+  const override = process.env.FRANKLIN_FREE_VISION_MODEL;
+  if (override) return override === 'none' ? null : override;
+  try {
+    return loadChain() === 'solana' ? 'nvidia/llama-3.2-11b-vision' : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

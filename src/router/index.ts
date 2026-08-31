@@ -30,6 +30,7 @@ import {
   FREE_DEFAULT_MODEL,
   QUARANTINED_FREE_MODELS,
   freeChain,
+  freeVisionModel,
   resolveFreeModel,
 } from '../free-models.js';
 
@@ -709,18 +710,18 @@ export function resolveTierToModel(
 ): RoutingResult {
   // Free profile short-circuits — everything routes to a single free model.
   //
-  // Vision turns get the same TEXT model plus a `free-vision-unavailable`
-  // signal. Both ids the catalog tags free+vision were served by a text-only
-  // substitute when sent a real image (2026-08-30) and answered "There's no
-  // image provided" — so there is no free vision model to route to. Callers
-  // surface the signal; the free profile never falls back to a paid model.
+  // Vision turns go to the chain's free vision model when it has one. Where
+  // it doesn't, they get the TEXT model plus a `free-vision-unavailable`
+  // signal that callers surface — the free profile never falls back to a paid
+  // model. See freeVisionModel() for the per-chain measurements.
   if (profile === 'free') {
+    const freeVision = needsVision ? freeVisionModel() : null;
     return {
-      model: resolveFreeModel(),
+      model: freeVision ?? resolveFreeModel(),
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: needsVision
-        ? ['free-profile', 'free-vision-unavailable']
+        ? ['free-profile', freeVision ? 'free-vision' : 'free-vision-unavailable']
         : ['free-profile'],
       savings: 1.0,
     };
@@ -754,16 +755,16 @@ export function routeRequest(
 ): RoutingResult {
   const normalizedContext = normalizeRoutingContext(context);
 
-  // Free profile — always use a free model. There is no free vision model to
-  // route to (see resolveTierToModel for the rationale); vision turns get the
-  // text model plus a signal the caller surfaces to the user.
+  // Free profile — always use a free model. Vision turns go to the chain's
+  // free vision model where one exists (see resolveTierToModel).
   if (profile === 'free') {
+    const freeVision = normalizedContext.needsVision ? freeVisionModel() : null;
     return {
-      model: resolveFreeModel(),
+      model: freeVision ?? resolveFreeModel(),
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: normalizedContext.needsVision
-        ? ['free-profile', 'free-vision-unavailable']
+        ? ['free-profile', freeVision ? 'free-vision' : 'free-vision-unavailable']
         : ['free-profile'],
       savings: 1.0,
       candidates: freeModelsForCategory(),

@@ -6065,15 +6065,24 @@ test('free routing profile stays free across router entry points', async () => {
     assert.deepEqual(routed.signals, ['free-profile']);
   }
 
-  // Vision turns on the free profile get the TEXT model plus an explicit
-  // unavailable signal. Both free vision ids were served by a text-only
-  // substitute that answered "There's no image provided" (probed 2026-08-30),
-  // so there is nothing to route to — and the free profile must never fall
-  // back to a paid vision model. The agent loop turns this signal into a
-  // user-visible notice.
+  // Vision turns on the free profile are CHAIN-DEPENDENT: the gateway's
+  // image allow-list fix reached Solana before Base, so Solana has a working
+  // free vision model and Base has none (probed 2026-08-31 with a valid
+  // 64x64 PNG). Either way the free profile must never fall back to a PAID
+  // vision model — that is the invariant this asserts.
+  const { freeVisionModel } = await import('../dist/free-models.js');
   const visionRouted = routeRequest('what is in this image?', 'free', true);
-  assert.equal(visionRouted.model, FREE_DEFAULT_MODEL);
-  assert.deepEqual(visionRouted.signals, ['free-profile', 'free-vision-unavailable']);
+  const expectedVision = freeVisionModel();
+  if (expectedVision) {
+    assert.equal(visionRouted.model, expectedVision);
+    assert.deepEqual(visionRouted.signals, ['free-profile', 'free-vision']);
+  } else {
+    assert.equal(visionRouted.model, FREE_DEFAULT_MODEL);
+    assert.deepEqual(visionRouted.signals, ['free-profile', 'free-vision-unavailable']);
+  }
+  // Whichever branch ran, the routed model is free.
+  const { isFreeModelId: isFree } = await import('../dist/free-models.js');
+  assert.equal(isFree(visionRouted.model), true, 'free vision turn must stay on a $0 model');
 
   let classifierCalled = false;
   const asyncRouted = await routeRequestAsync('prove this theorem step by step', 'free', async () => {
@@ -10583,19 +10592,26 @@ test('vision helpers: isVisionModel allowlist matches curated set', async () => 
     'openai/gpt-5.3-codex',
     'nvidia/qwen3-coder-480b',
     'nvidia/llama-4-maverick',
-    // No free vision model (2026-08-30). The catalog tags these two as
-    // vision-capable and the gateway serves both from a TEXT-ONLY substitute:
-    // sent a real PNG, both replied "There's no image provided". Listing an id
-    // here is a promise the agent loop and the proxy act on, so the honest
-    // answer is false until a real image probe comes back from the id that was
-    // asked for. nemotron-nano-12b-v2-vl held the free vision slot until it
-    // left the catalog in the same rotation.
+    // nano-omni is catalogued vision-capable and is NOT treated as such:
+    // probed 2026-08-31 with a valid 64x64 PNG it dropped the image on 2 of 4
+    // calls on Solana and 502'd on Base. Dropping half the time is worse than
+    // declining, because the caller cannot tell which half they got.
     'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
-    'nvidia/llama-3.2-11b-vision',
+    // Held the free vision slot until it left the catalog in the rotation.
     'nvidia/nemotron-nano-12b-v2-vl',
   ]) {
     assert.equal(isVisionModel(m), false, `${m} should be text-only`);
   }
+
+  // The free vision model is chain-dependent — the gateway's image allow-list
+  // fix reached Solana before Base — so it is resolved at runtime rather than
+  // held in the static allowlist. llama-3.2-11b-vision answers 5/5 on Solana
+  // and 0/5 on Base, both through /v1/messages with a valid 64x64 PNG.
+  const { freeVisionModel: freeVision } = await import('../dist/free-models.js');
+  const fv = freeVision();
+  assert.equal(isVisionModel(fv), fv !== null,
+    'isVisionModel must agree with freeVisionModel() about the free vision id');
+  assert.equal(isVisionModel('nvidia/llama-3.2-11b-vision'), fv === 'nvidia/llama-3.2-11b-vision');
 
   // Defensive: null / empty / unknown model never asserts as vision-capable
   assert.equal(isVisionModel(undefined), false);
