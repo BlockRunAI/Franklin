@@ -94,9 +94,13 @@ const VISION_MODELS = new Set<string>([
   // loop and the proxy both use it to decide whether an image can be sent at
   // all. Neither free vision id earns that promise, for two DIFFERENT reasons:
   //
-  //   nemotron-3-nano-omni    — sees the image 6/10 on /v1/messages, and on
-  //                             /chat/completions is substituted 7/10 by a
-  //                             model with no vision at all.
+  //   nemotron-3-nano-omni    — the gateway now REFUSES image input for this
+  //                             id on /v1/messages with an explicit 400 and no
+  //                             charge ("served text-only on NVIDIA"). Before
+  //                             that it silently saw the image 6/10 and was
+  //                             substituted 7/10 on /chat/completions by a
+  //                             model with no vision at all. The loud refusal
+  //                             is the better failure and needs no guard here.
   //   llama-3.2-11b-vision    — reads the image reliably as a bare call
   //                             (30/30) but only 1/5 end-to-end through the
   //                             agent loop, which is Franklin's own wiring

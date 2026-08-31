@@ -274,6 +274,12 @@ export const FREE_MODEL_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
  *   sol  nemotron-3-nano-omni  /v1/messages           6/10 sees, 0/10 substituted
  *   sol  nemotron-3-nano-omni  /chat/completions      4/10 sees, 7/10 SUBSTITUTED
  *
+ * Re-probed 2026-08-31 after the gateway's vision-routing fix: nano-omni now
+ * returns an explicit 400 on image input on /v1/messages ("served text-only on
+ * NVIDIA"), refused BEFORE payment. The silent-drop mode is gone on our path —
+ * a loud refusal is the outcome this module wanted all along. llama-3.2-11b-vision
+ * re-verified 6/6 in the same window, so the bare-call number still holds.
+ *
  * So Solana gets llama-3.2-11b-vision and Base honestly reports none. On
  * Base the model serves itself and simply cannot see — 0 substitutions, so
  * this is the missing allow-list fix, not a cascade problem.
