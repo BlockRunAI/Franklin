@@ -6098,9 +6098,9 @@ test('free routing profile stays free across router entry points', async () => {
     // keep a PAID id out of the free chain, not to freeze the roster — see
     // src/free-models.ts for why each id is in or out.
     'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
-    'nvidia/nemotron-3-ultra-550b',
     'nvidia/nemotron-3-nano-30b',
     'poolside/laguna-xs-2.1',
+    'cohere/north-mini-code',
   ]);
   for (const tier of ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING']) {
     const resolved = resolveTierToModel(tier, 'free');
@@ -8903,14 +8903,14 @@ test('pickFreeFallback: respects alreadyFailed set', async () => {
     pricing: { input: 0, output: 0 },
   });
   __primeGatewayModelsCache([
-    freeEntry('nvidia/nemotron-3-ultra-550b'),
-    freeEntry(FREE_DEFAULT_MODEL),
     freeEntry('nvidia/nemotron-3-nano-30b'),
+    freeEntry(FREE_DEFAULT_MODEL),
     freeEntry('poolside/laguna-xs-2.1'),
+    freeEntry('cohere/north-mini-code'),
   ]);
-  const failed = new Set(['nvidia/nemotron-3-ultra-550b']);
+  const failed = new Set(['nvidia/nemotron-3-nano-30b']);
   const pick = pickFreeFallback('coding', failed);
-  assert.notEqual(pick, 'nvidia/nemotron-3-ultra-550b');
+  assert.notEqual(pick, 'nvidia/nemotron-3-nano-30b');
   assert.equal(pick, FREE_DEFAULT_MODEL,
     `after the Base leader fails, coding should fall to the chain-safe default, got ${pick}`);
 

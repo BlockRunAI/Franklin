@@ -30,21 +30,22 @@ each one had shipped with a few stale copies left behind. It is now
 `src/free-models.ts`: one constant, one preference order, one quarantine
 list, each id carrying the evidence for why it is in or out.
 
-**A probe is only evidence for the conditions it ran under.** Two
-conclusions inverted mid-investigation, and both are worth recording. On
-`/api/v1/chat/completions` the free pool substitutes under load —
-`ultra-550b` served itself on 10 consecutive calls and then on 0 of the next
-8 twenty minutes later — while on `/api/v1/messages`, the endpoint the agent
-loop actually uses, every id answers as itself on both chains. And the
-"chain-of-thought leak" the free pool gets blamed for is `max_tokens`
-truncation: `nemotron-3-nano-30b` returns truncated thinking in `content`
-with `finish_reason: length` at 120 tokens, and a clean answer with the
-trace in `reasoning_content` at 300. `cohere/north-mini-code`'s "empty
-stream" (6 of 8 calls) is the same bug wearing a different hat — 6 of 6
-clean once given room. Every free model is a reasoning model; budget for it
-rather than scrubbing the output. Caught by the andy and clawrouter sessions,
-the latter having nearly shipped a textual `<tool_call>` extractor for a
-model that returns a clean structured array at a larger budget.
+**A probe is only evidence for the conditions it ran under.** Several
+conclusions inverted mid-investigation, which is the finding worth keeping.
+The "chain-of-thought leak" the free pool gets blamed for is truncation:
+`nemotron-3-nano-30b` returns truncated thinking in `content` with
+`finish_reason: length` at 120 tokens and a clean answer with the trace in
+`reasoning_content` at 300, and `cohere/north-mini-code`'s "empty stream"
+(6 of 8 calls) is the same bug wearing a different hat — 6 of 6 clean once
+given room. The cause is the gateway's extractor falling back to reasoning
+text when the answer field is empty, so `finish_reason: length` is the real
+discriminator and a bigger budget only stops triggering it. Availability
+inverted too: `ultra-550b` looked like the strongest free model, then went
+0 for 5 with hard 40s timeouts, so the chain now orders on availability
+first and leads with the pool's own backing model. Thanks to the andy and
+clawrouter sessions — the latter nearly shipped a textual `<tool_call>`
+extractor for a model that returns a clean structured array at a larger
+budget.
 
 **No free vision, said out loud.** Both ids the catalog tags free + vision
 fail on a real image: Solana answers as itself and drops the image ("I can't

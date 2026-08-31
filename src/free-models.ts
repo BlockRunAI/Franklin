@@ -82,27 +82,40 @@ export const FREE_DEFAULT_MODEL = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
  * as of 2026-08-30. freeChain() filters this against the live catalog for the
  * CURRENT chain, so this list can name Base-only ids without breaking Solana.
  *
- * Ordering rationale:
- *   - nemotron-3-ultra-550b leads on Base. It was the only free model to
- *     answer the "name three Base-chain DEXes" control question correctly (it
- *     named Aerodrome; the others hallucinated Uniswap forks), and it carries
- *     the largest catalogued context.
- *   - poolside/laguna-xs-2.1 is last on purpose: it is the only rung from a
- *     different PROVIDER, so the chain survives an NVIDIA-wide outage instead
- *     of being four names for one upstream.
+ * Ordering rationale — AVAILABILITY FIRST, quality second. Measured on
+ * /v1/messages, Base, max_tokens 300, 5 calls each (2026-08-31):
+ *
+ *   nemotron-3-nano-30b   5/5 healthy, 0.8-2.9s
+ *   nemotron-3-nano-omni  2/5 healthy, three HTTP 503s
+ *   nemotron-3-ultra-550b 0/5 healthy — every call timed out at 40s
+ *
+ *   - nemotron-3-nano-30b leads on Base. It is the pool's own backing model,
+ *     which is why it is the one id that never comes back as a substitute and
+ *     the one that stays up when the rest of the pool is congested.
+ *   - nemotron-3-ultra-550b is NOT in this list, and that reverses an earlier
+ *     revision which had it leading. It gives the best answers when it answers
+ *     — the only free model to name Aerodrome for "three Base-chain DEXes"
+ *     while the others hallucinated Uniswap forks — but a model you cannot
+ *     reach is not a better model. The andy session measured it independently
+ *     at 1/3 and 1/5, with NVIDIA congestion relayed as HTTP 200; here it was
+ *     0/5 with hard timeouts. It stays reachable by explicit pin
+ *     (`/model ultra-550b`), it just cannot lead a chain.
+ *   - the two non-NVIDIA rungs are last on purpose: they are what keeps the
+ *     chain alive through an NVIDIA-wide outage instead of it being four names
+ *     for one upstream.
  *
  * Not listed, and why:
  *   - nvidia/nemotron-3.5-lightning — LATENCY, and only latency. Measured
  *     10.9s / 12.2s / 22.5s for a one-sentence answer at max_tokens 800,
  *     against ~0.8-3s for the rest of the pool. Its name is a lie. (An
  *     earlier revision of this file quarantined it for leaking reasoning
- *     prose; that was wrong — see MAX_TOKENS below.)
+ *     prose; that was wrong — see TRUNCATION below.)
  *   - nvidia/llama-3.2-11b-vision — catalogued as vision, cannot accept an
  *     image (see freeVisionModel), and is otherwise the weakest text model in
  *     the pool.
  *
- * MAX_TOKENS: THE FREE POOL NEEDS ROOM TO THINK
- * --------------------------------------------
+ * TRUNCATION: THE FREE POOL NEEDS ROOM TO THINK
+ * ---------------------------------------------
  * Every free model here is a reasoning model, and a tight max_tokens makes
  * them look broken in two different ways that are the SAME bug. Measured on
  * chat/completions, 2026-08-31:
@@ -119,22 +132,38 @@ export const FREE_DEFAULT_MODEL = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
  *     max_tokens 2000 -> 6 of 6 clean, finish_reason "stop"
  *
  * So "leaks chain-of-thought into content" and "returns an empty stream" are
- * both just the budget running out before the model stops reasoning. Neither
- * is a property of the model, and neither is worth a workaround — give the
- * call room instead. This is why the router's tier classifier no longer asks
- * for a one-word answer in 8 tokens (see router/index.ts).
+ * both the budget running out before the model stops reasoning. Neither is a
+ * property of the model, and neither is worth a workaround — give the call
+ * room. This is why the router's tier classifier no longer asks for a
+ * one-word answer in 8 tokens (see router/index.ts).
  *
- * Credit where due: caught by the andy session, which re-measured the same
- * "leak" across budgets after making the same mistake, and by the clawrouter
+ * The andy session traced the mechanism further, and it changes what the
+ * discriminator is. Probed three ways at max_tokens 20: the NIM upstream
+ * returns a clean `content: "OK"` with finish_reason "stop", while sol's
+ * /chat/completions returns the thinking in `content` with finish_reason
+ * "length". The upstream separates the fields correctly; the GATEWAY's
+ * extractor falls back to reasoning text when the answer field is empty. So
+ * raising max_tokens does not fix the bug, it stops triggering it, and
+ * finish_reason "length" is the real discriminator — treat any truncated
+ * free-tier reply as suspect regardless of budget.
+ *
+ * One claim of theirs did NOT reproduce here: they reported /v1/messages
+ * leaking on nano-omni at a small budget. Probed at max_tokens 20, 60 and 300
+ * on both chains, /v1/messages came back clean 12 of 12, with proper
+ * thinking+text block separation and stop_reason "end_turn". Recording the
+ * disagreement rather than picking a winner — if it resurfaces, the block
+ * separation is the thing to check.
+ *
+ * Credit: the andy session, which re-measured across budgets, then retracted
+ * its own retraction with the three-way upstream probe, and the clawrouter
  * session, which nearly shipped a textual <tool_call> extractor for a model
  * that returns a clean structured tool_calls array once given room.
  */
 export const FREE_PREFERENCE_ORDER: readonly string[] = [
-  'nvidia/nemotron-3-ultra-550b',   // Base only
+  'nvidia/nemotron-3-nano-30b',     // Base only; 5/5 healthy, fastest
   FREE_DEFAULT_MODEL,               // both chains — the floor this never drops below
-  'nvidia/nemotron-3-nano-30b',     // Base only
   'poolside/laguna-xs-2.1',         // Base only, different provider
-  'cohere/north-mini-code',         // Base only, different provider; needs a generous budget
+  'cohere/north-mini-code',         // Base only, different provider; needs max_tokens >= 1200
 ];
 
 /**
@@ -156,10 +185,15 @@ export const FREE_POOL_CONTEXT_FLOOR = 131_072;
  * are excluded on behaviour, not availability.
  */
 export const QUARANTINED_FREE_MODELS: readonly string[] = [
-  // Catalogued as vision-capable, but cannot accept an image on the endpoint
-  // Franklin uses: Base returns 502 "Failed to load image", and on
-  // chat/completions it comes back from a text-only substitute replying
-  // "There's no image provided". Weakest text model in the pool otherwise.
+  // Cannot accept an image today. The CAUSE turned out to be gateway-side,
+  // not the model: the andy session found both NVIDIA paths dropping every
+  // `image_url` unconditionally under a stale comment, which is exactly why
+  // the failure looked like a confident wrong answer with no error — the
+  // image never left the gateway. A red PNG came back "Black" from sol and
+  // "Red" from all three upstreams. A fix with a verified allow-list is in
+  // flight upstream; when it deploys, re-probe and revisit both this entry
+  // and freeVisionModel(). Until then the id cannot honour a vision turn, and
+  // it is the weakest text model in the pool.
   'nvidia/llama-3.2-11b-vision',
   // NOT quarantined, deliberately, though an earlier revision had them here:
   //   nvidia/nemotron-3.5-lightning — the "CoT leak" was max_tokens truncation.
