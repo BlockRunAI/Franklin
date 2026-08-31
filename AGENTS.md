@@ -1,6 +1,6 @@
 # Franklin Agent
 
-Open-source AI agent with a wallet. <!-- br:models.chatVisible -->73<!-- /br:models.chatVisible --> models. Pay per use with USDC via x402.
+Open-source AI agent with a wallet. <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> models. Pay per use with USDC via x402.
 
 ## Commands
 

@@ -2,7 +2,7 @@
 
 **Status:** accepted
 
-Franklin makes every LLM and paid-tool call through a single counterparty — the BlockRun Gateway — instead of integrating directly with each model provider, image/video/audio service, search API, and market-data feed. The gateway aggregates <!-- br:models.chatVisible -->73<!-- /br:models.chatVisible --> models and a small set of paid APIs and accepts x402 uniformly.
+Franklin makes every LLM and paid-tool call through a single counterparty — the BlockRun Gateway — instead of integrating directly with each model provider, image/video/audio service, search API, and market-data feed. The gateway aggregates <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> models and a small set of paid APIs and accepts x402 uniformly.
 
 ## Considered options
 
