@@ -13,8 +13,8 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   // /api/v1/models, which rotated the entire free pool). The routing order and
   // the reasoning behind it live in src/free-models.ts; this table only has to
   // price every id at $0 so no free call is ever reported as a charge.
-  'nvidia/nemotron-3-ultra-550b': { input: 0, output: 0 },      // current free default
-  'nvidia/nemotron-3-nano-30b': { input: 0, output: 0 },        // what the pool substitutes with
+  'nvidia/nemotron-3-ultra-550b': { input: 0, output: 0 },      // strongest free model, but 0/5 reachable — NOT the default
+  'nvidia/nemotron-3-nano-30b': { input: 0, output: 0 },        // leads the free chain on Base (see free-models.ts)
   'nvidia/nemotron-3.5-lightning': { input: 0, output: 0 },
   'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': { input: 0, output: 0 },
   'nvidia/llama-3.2-11b-vision': { input: 0, output: 0 },

@@ -85,23 +85,25 @@ const VISION_MODELS = new Set<string>([
   // (2026-08-29 sync); GLM-5.3 / 5.2 / 5.1 are text + reasoning only.
   'zai/glm-5.3-flash',
   // ── The free vision model is NOT here, on purpose ──
-  // It is chain-dependent, so isVisionModel() consults freeVisionModel()
-  // instead of this static set. See the note below and src/free-models.ts.
+  // isVisionModel() consults freeVisionModel() instead of this static set,
+  // because that answer depends on gateway deploy state and an env override
+  // rather than on a fixed capability. See the note below and free-models.ts.
   //
-  // ── History: no free vision at all (2026-08-30) ──
-  // The catalog tags two free ids as vision-capable — nemotron-3-nano-omni and
-  // llama-3.2-11b-vision — and neither honours an image. Sent a real PNG, both
-  // came back from a TEXT-ONLY substitute (nvidia/nemotron-3-nano-30b) replying
-  // "There's no image provided". A wrong-but-confident answer is the worst
-  // outcome for a vision turn, and listing an id here is a promise that
-  // isVisionModel() callers act on: the agent loop and the proxy both use it to
-  // decide whether an image can be sent at all.
+  // ── Why no free vision id is listed (2026-08-31) ──
+  // Listing an id here is a promise isVisionModel() callers act on: the agent
+  // loop and the proxy both use it to decide whether an image can be sent at
+  // all. Neither free vision id earns that promise, for two DIFFERENT reasons:
   //
-  // So they are deliberately absent, and the free profile reports vision as
-  // unavailable rather than guessing (see routeRequest's free branch). This is
-  // NOT a claim that the models lack the capability — it is a claim about what
-  // the gateway currently serves. Re-add when a real image probe comes back
-  // from the id that was asked for.
+  //   nemotron-3-nano-omni    — sees the image 6/10 on /v1/messages, and on
+  //                             /chat/completions is substituted 7/10 by a
+  //                             model with no vision at all.
+  //   llama-3.2-11b-vision    — reads the image reliably as a bare call
+  //                             (30/30) but only 1/5 end-to-end through the
+  //                             agent loop, which is Franklin's own wiring
+  //                             problem, not the model's.
+  //
+  // Full measurement history and the acceptance bar for re-adding either:
+  // freeVisionModel() in src/free-models.ts.
   //
   // nvidia/nemotron-nano-12b-v2-vl held this slot until it left the catalog on
   // 2026-08-30; Llama 4 Maverick before that (dropped 2026-07-14).
@@ -111,10 +113,10 @@ const VISION_MODELS = new Set<string>([
 export function isVisionModel(modelId: string | undefined | null): boolean {
   if (!modelId) return false;
   if (VISION_MODELS.has(modelId)) return true;
-  // The free tier's vision model is chain-dependent — the gateway's image
-  // allow-list fix reached Solana before Base — so it cannot live in a static
-  // set. freeVisionModel() returns null on a chain where no free model can
-  // actually accept an image, and this stays false there.
+  // The free tier's vision model is resolved at runtime, not fixed: it depends
+  // on gateway deploy state and on FRANKLIN_FREE_VISION_MODEL. freeVisionModel()
+  // returns null when no free model can be trusted with an image, and this
+  // stays false there.
   return modelId === freeVisionModel();
 }
 

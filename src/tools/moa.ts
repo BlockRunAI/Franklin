@@ -13,17 +13,19 @@
 
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { ModelClient } from '../agent/llm.js';
-import { FREE_DEFAULT_MODEL } from '../free-models.js';
+import { FREE_DEFAULT_MODEL, freeChain } from '../free-models.js';
 
 // ─── Configuration ────────────────────────────────────────────────────────
 
 /** Reference models — diverse, cheap/free models for parallel queries. */
 const REFERENCE_MODELS = [
-  FREE_DEFAULT_MODEL,                       // Free lead voice — see src/free-models.ts
-  'poolside/laguna-xs-2.1',                 // Free second voice: a different PROVIDER, so MoA gets two
-                                            // genuinely independent answers. Every NVIDIA free id collapses
-                                            // onto one backing model under load (probed 2026-08-30), which
-                                            // would have made this an ensemble of one.
+  // Free voices come from the live chain rather than literals: a hardcoded
+  // second id (poolside/laguna-xs-2.1) is absent from some gateways and 400s
+  // there, turning the ensemble into one voice on exactly those chains.
+  // freeChain() also keeps the two voices on different PROVIDERS where the
+  // catalog allows it, which is the point — every NVIDIA free id can collapse
+  // onto one backing model under load (probed 2026-08-30).
+  ...freeChain().slice(0, 2),
   'google/gemini-2.5-flash',                // Fast, cheap
   'deepseek/deepseek-chat',                 // Cheap, good reasoning
 ];

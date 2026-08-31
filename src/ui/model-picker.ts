@@ -458,11 +458,10 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       // against the gateway catalog, and a user who pins a Base-only id on
       // Solana gets a clear "Unknown model" rather than a silent wrong model.
       //
-      // Quarantined and deliberately absent, all probed 2026-08-30:
-      // llama-3.2-11b-vision (catalogued as vision, cannot accept an image),
-      // nemotron-3.5-lightning (slowest, dumps its full trace into content)
-      // and cohere/north-mini-code (empty stream on 3 of 5 calls). Reasons per
-      // id live in src/free-models.ts.
+      // Deliberately absent (NOT quarantined — QUARANTINED_FREE_MODELS is
+      // empty): nemotron-3.5-lightning is merely slow, cohere/north-mini-code
+      // is a routable chain rung with no picker row, and llama-3.2-11b-vision
+      // is vision-only. Reasons per id live in src/free-models.ts.
       { id: FREE_DEFAULT_MODEL,               shortcut: 'free',      label: 'Nemotron 3 Nano Omni', price: 'FREE', highlight: true },
       { id: 'nvidia/nemotron-3-ultra-550b',   shortcut: 'ultra-550b', label: 'Nemotron 3 Ultra 550B', price: 'FREE' },
       { id: 'nvidia/nemotron-3-nano-30b',     shortcut: 'nano-30b',  label: 'Nemotron 3 Nano 30B',  price: 'FREE' },

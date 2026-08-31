@@ -31,7 +31,7 @@ import {
   QUARANTINED_FREE_MODELS,
   freeChain,
   freeVisionModel,
-  resolveFreeModel,
+
 } from '../free-models.js';
 
 export { isVisionModel, messageNeedsVision, messagesNeedVision, pickVisionSibling } from './vision.js';
@@ -546,8 +546,10 @@ function classicRouteRequest(
 //     out loud now; there is no bare-word free model left to promote.
 //
 // So the classifier stops fighting the pool and reads it instead:
-//   - it asks for whatever resolveFreeModel() picks, rather than pinning a
-//     literal that the next rotation invalidates;
+//   - it defaults to FREE_DEFAULT_MODEL rather than its own pinned literal, so
+//     a pool rotation is one edit in free-models.ts, not two. (It is a static
+//     module-level pin, NOT a per-call resolveFreeModel() — a rotation that
+//     retires the default still needs a release.)
 //   - max_tokens is large enough for the verdict to actually ARRIVE after the
 //     model has finished thinking out loud (8 tokens never got there). Every
 //     free model is a reasoning model, and a tight budget truncates them
@@ -588,11 +590,29 @@ export type TierClassifier = (prompt: string) => Promise<Tier | null>;
  * the caller can fall back to keyword classification.
  */
 function parseTierWord(reply: string): Tier | null {
-  // Last match, not first: a leaked reasoning trace quotes the allowed set
-  // before it commits to one. See the CLASSIFIER_MODEL note above.
-  const matches = reply.toUpperCase().match(/\b(SIMPLE|MEDIUM|COMPLEX|REASONING)\b/g);
-  if (!matches || matches.length === 0) return null;
-  return matches[matches.length - 1] as Tier;
+  const text = reply.trim().toUpperCase();
+  if (!text) return null;
+  const TIER = /\b(SIMPLE|MEDIUM|COMPLEX|REASONING)\b/g;
+
+  // Preferred: the reply is (or ends on) a bare tier word. A model that
+  // followed the instruction lands here.
+  const lastLine = text.split(/\n+/).filter(Boolean).pop() ?? '';
+  const bare = lastLine.match(/^[^A-Z]*\b(SIMPLE|MEDIUM|COMPLEX|REASONING)\b[^A-Z]*$/);
+  if (bare) return bare[1] as Tier;
+
+  // Otherwise take the last tier word ON THE LAST LINE, not on the whole blob.
+  // Whole-blob last-match was wrong in a way that costs money: CLASSIFIER_SYSTEM
+  // itself ends "SIMPLE or MEDIUM or COMPLEX or REASONING", so any reply that
+  // restates its instructions — the documented failure this parser exists to
+  // survive — matched REASONING, the most expensive tier. The classified text
+  // is also untrusted user content, so a prompt ending in the word REASONING
+  // could push its own tier up. Failing toward the cheap end is the safe
+  // direction; returning null (keyword routing) is safer still.
+  const onLastLine = lastLine.match(TIER);
+  if (onLastLine && onLastLine.length > 0) {
+    return onLastLine[onLastLine.length - 1] as Tier;
+  }
+  return null;
 }
 
 /**
@@ -717,7 +737,7 @@ export function resolveTierToModel(
   if (profile === 'free') {
     const freeVision = needsVision ? freeVisionModel() : null;
     return {
-      model: freeVision ?? resolveFreeModel(),
+      model: freeVision ?? liveFreeChain()[0] ?? FREE_DEFAULT_MODEL,
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: needsVision
@@ -760,7 +780,7 @@ export function routeRequest(
   if (profile === 'free') {
     const freeVision = normalizedContext.needsVision ? freeVisionModel() : null;
     return {
-      model: freeVision ?? resolveFreeModel(),
+      model: freeVision ?? liveFreeChain()[0] ?? FREE_DEFAULT_MODEL,
       tier: 'SIMPLE',
       confidence: 1.0,
       signals: normalizedContext.needsVision
@@ -946,8 +966,28 @@ export function getFallbackChain(
 // them and 400s on the rest. It is a function, not a constant, for that
 // reason — a frozen array captured at module load would pin whichever answer
 // was true before the catalog cache warmed.
-function freeModelsForCategory(_category?: string): string[] {
-  return freeChain();
+function freeModelsForCategory(): string[] {
+  return liveFreeChain();
+}
+
+/**
+ * freeChain() filtered by the runtime kill-switch.
+ *
+ * freeChain lives in free-models.ts, which cannot import this module (the
+ * dependency runs the other way), so it knows nothing about the ids
+ * markModelUnavailable() has observed the gateway REJECT with 400 / 404 / 410.
+ * Without this filter a dead free rung was re-selected on every turn — the
+ * per-turn `alreadyFailed` set is cleared at the top of each turn, so the
+ * kill-switch had no effect on the free profile at all. Given this branch
+ * exists because the free pool rotates ids without notice, that is the exact
+ * failure mode it has to survive.
+ */
+function liveFreeChain(alreadyFailed: ReadonlySet<string> = new Set()): string[] {
+  const live = freeChain(alreadyFailed).filter(m => !isModelUnavailable(m));
+  // Every rung observed dead: fall back to the unfiltered chain rather than
+  // refusing to route. A stale kill-switch entry must not strand a free user
+  // with no model at all.
+  return live.length > 0 ? live : freeChain(alreadyFailed);
 }
 
 /**
@@ -956,13 +996,15 @@ function freeModelsForCategory(_category?: string): string[] {
  * candidate has been exhausted (caller should surface an error to user).
  */
 export function pickFreeFallback(
+  /** @deprecated Ignored — the free chain no longer varies by category. */
   category: string,
   alreadyFailed: Set<string>
 ): string | undefined {
   // Category is accepted for API compatibility; the chain no longer varies by
-  // it (see freeModelsForCategory).
+  // it (see freeModelsForCategory). Marked deprecated so a new caller doesn't
+  // assume passing one changes the answer.
   void category;
-  return freeChain(alreadyFailed)[0];
+  return liveFreeChain(alreadyFailed)[0];
 }
 
 /**

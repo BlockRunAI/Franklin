@@ -461,7 +461,12 @@ export function createProxy(options: ProxyOptions): http.Server {
               parsed.model = visionSwap;
               requestModel = visionSwap;
               logger.warn(
-                `[franklin] 👁️  Vision swap: ${original} can't see images → ${visionSwap}`
+                visionSwap === original
+                  // Free tier with no free vision model: nothing to swap to, and
+                  // we must not reach for a paid one. Say that, rather than
+                  // logging a swap that did not happen.
+                  ? `[franklin] 👁️  ${original} can't see images and no free vision model is available — answering from text only`
+                  : `[franklin] 👁️  Vision swap: ${original} can't see images → ${visionSwap}`
               );
             }
 

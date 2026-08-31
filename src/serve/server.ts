@@ -42,10 +42,6 @@ import type { FranklinEvent } from '../events/types.js';
 import type { AgentConfig, StreamEvent, Dialogue, ContentPart, UserContentPart } from '../agent/types.js';
 import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
-// nemotron-nano-9b-v2: the one free model that verifiably serves itself on
-// the STREAMING path (verified live 2026-08-12 — mistral-nemotron is DEGRADED
-// at NVIDIA and 400s on stream; qwen3-next-80b-a3b-instruct hit NVIDIA's EOL).
-
 
 // Curated Base (chainId 8453) tokens for the wallet "holdings" view. Plain RPC
 // can't enumerate every token an address holds (no on-chain "list all"), so we

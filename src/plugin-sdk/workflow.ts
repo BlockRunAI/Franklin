@@ -7,7 +7,9 @@
 
 import type { SearchResult } from './search.js';
 import type { ChannelMessage } from './channel.js';
-import { FREE_DEFAULT_MODEL } from '../free-models.js';
+// Zero-import leaf: naming the free default must not drag core's config
+// module (and its module-load filesystem reads) into the public SDK.
+import { FREE_DEFAULT_MODEL } from '../free-models.constants.js';
 
 // ─── Model Tiers ──────────────────────────────────────────────────────────
 
@@ -16,7 +18,7 @@ export type ModelTier = 'free' | 'cheap' | 'premium' | 'none';
 
 /** Maps tier names to actual model identifiers */
 export interface ModelTierConfig {
-  free: string;      // e.g. "nvidia/nemotron-3-ultra-550b"
+  free: string;      // resolved from FREE_DEFAULT_MODEL in src/free-models.ts
   cheap: string;     // e.g. "zai/glm-5.1"
   premium: string;   // e.g. "anthropic/claude-sonnet-5"
 }

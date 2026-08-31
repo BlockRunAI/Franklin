@@ -165,12 +165,12 @@ function assertNoModelArtifacts(model, stdout) {
   );
 }
 
-test('free model matrix catalog is zero-cost and NVIDIA-backed', () => {
+test('free model matrix catalog is zero-cost', () => {
   assert.ok(selectedModels.length > 0, 'Expected at least one free model');
   for (const entry of selectedModels) {
     // Was an `nvidia/` prefix check; the 2026-08-30 rotation added non-NVIDIA
-    // free rungs, and $0 billing is the property that actually matters.
-    assert.equal(entry.price, 'FREE', `${entry.id} should be a $0 free-tier id`);
+    // free rungs, and $0 billing is the property that actually matters — which
+    // the assertion above already covers.
     assert.equal(entry.price, 'FREE', `${entry.id} should render as FREE`);
     assert.equal(resolveModel(entry.shortcut), entry.id, `${entry.shortcut} shortcut drifted`);
     const pricing = MODEL_PRICING[entry.id];

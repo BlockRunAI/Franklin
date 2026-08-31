@@ -148,8 +148,8 @@ Workflows pick a tier per step; the runner resolves to actual models.
 
 | Tier | Default | When to use |
 |------|---------|-------------|
-| `free` | nvidia/nemotron-3-ultra-550b | Warmup, throwaway calls, $0 cost |
-| `cheap` | nvidia/nemotron-3-ultra-550b | Filtering, classification, $0 cost by default |
+| `free` | `FREE_DEFAULT_MODEL` (see src/free-models.ts) | Warmup, throwaway calls, $0 cost |
+| `cheap` | `FREE_DEFAULT_MODEL` (see src/free-models.ts) | Filtering, classification, $0 cost by default |
 | `premium` | anthropic/claude-sonnet-4.6 | High-stakes content, ~$0.02/call |
 | `none` | (no model) | Steps that don't call LLMs |
 | `dynamic` | (runtime decision) | Step decides based on context |

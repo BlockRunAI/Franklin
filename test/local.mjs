@@ -6034,6 +6034,88 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
   }
 });
 
+test('buildFallbackChain: a free model never falls back to a paid one', async () => {
+  const { buildFallbackChain } = await import('../dist/proxy/fallback.js');
+  const { isFreeModelId, FREE_DEFAULT_MODEL } = await import('../dist/free-models.js');
+
+  // The bug: an explicit free request that hit a 429/5xx walked on to
+  // deepseek/gemini and signed an x402 payment for it.
+  for (const free of ['poolside/laguna-xs-2.1', 'nvidia/nemotron-3-nano-30b', FREE_DEFAULT_MODEL]) {
+    const chain = buildFallbackChain(free);
+    assert.equal(chain[0], free, 'the requested model leads its own chain');
+    for (const m of chain) {
+      assert.equal(isFreeModelId(m), true,
+        `free request ${free} must not fall back to paid ${m}`);
+    }
+  }
+
+  // Paid start models keep the full chain — this guard is free-tier only.
+  const paid = buildFallbackChain('anthropic/claude-sonnet-5');
+  assert.ok(paid.includes('deepseek/deepseek-chat'),
+    'a paid request still gets the normal fallback ladder');
+});
+
+test('isFreeModelId: the two regressions it was built to catch, plus the spend-gate empty case', async () => {
+  const { isFreeModelId } = await import('../dist/free-models.js');
+  const { clearGatewayModelsCache } = await import('../dist/gateway-models.js');
+  clearGatewayModelsCache();
+
+  // The bug this predicate replaced: `m.startsWith('nvidia/')` called a PAID
+  // model free, so `/model kimi-k2.5` skipped the wallet-charge warning.
+  assert.equal(isFreeModelId('nvidia/kimi-k2.5'), false,
+    'nvidia/kimi-k2.5 is paid ($0.55/$2.50) and must not read as free');
+
+  // The other direction: the 2026-08-30 rotation added non-NVIDIA free ids,
+  // which the prefix heuristic called paid.
+  assert.equal(isFreeModelId('poolside/laguna-xs-2.1'), true);
+  assert.equal(isFreeModelId('cohere/north-mini-code'), true);
+
+  // '' means "no parent model registered yet". tools/subagent.ts reads it
+  // through this predicate to decide whether a PAID sub-agent spawn needs
+  // approval; returning false here silently disarms that gate. `!id` is true
+  // for '' too, so this only holds if the empty check is ordered FIRST.
+  assert.equal(isFreeModelId(''), true, 'empty model must read as free — it gates paid sub-agent spawns');
+  assert.equal(isFreeModelId('blockrun/free'), true);
+  assert.equal(isFreeModelId(null), false);
+  assert.equal(isFreeModelId(undefined), false);
+  assert.equal(isFreeModelId('anthropic/claude-opus-5'), false);
+});
+
+test('freeVisionModel: the env override is validated, never trusted verbatim', async () => {
+  const { freeVisionModel } = await import('../dist/free-models.js');
+  const saved = process.env.FRANKLIN_FREE_VISION_MODEL;
+  try {
+    delete process.env.FRANKLIN_FREE_VISION_MODEL;
+    assert.equal(freeVisionModel(), null, 'no free vision model by default');
+
+    process.env.FRANKLIN_FREE_VISION_MODEL = 'none';
+    assert.equal(freeVisionModel(), null);
+
+    // Every caller presents this value as free — the loop even prints
+    // "(still free)". A PAID id must never survive the override.
+    process.env.FRANKLIN_FREE_VISION_MODEL = 'anthropic/claude-sonnet-4.6';
+    assert.equal(freeVisionModel(), null,
+      'a paid model must not be usable as the free vision model');
+
+    process.env.FRANKLIN_FREE_VISION_MODEL = 'nvidia/llama-3.2-11b-vision';
+    assert.equal(freeVisionModel(), 'nvidia/llama-3.2-11b-vision');
+  } finally {
+    if (saved === undefined) delete process.env.FRANKLIN_FREE_VISION_MODEL;
+    else process.env.FRANKLIN_FREE_VISION_MODEL = saved;
+  }
+});
+
+test('getContextWindow pins the free pool to the floor, not the catalogued window', async () => {
+  const { getContextWindow } = await import('../dist/agent/tokens.js');
+  const { FREE_POOL_CONTEXT_FLOOR } = await import('../dist/free-models.js');
+  // ultra-550b and 3.5-lightning are catalogued at 1M. Sizing compaction off
+  // that would build a prompt the 131K substitute cannot accept.
+  for (const id of ['nvidia/nemotron-3-ultra-550b', 'nvidia/nemotron-3.5-lightning']) {
+    assert.equal(getContextWindow(id), FREE_POOL_CONTEXT_FLOOR,
+      `${id} must be sized by the pool floor, not its 1M catalog entry`);
+  }
+});
+
 test('free routing profile stays free across router entry points', async () => {
   const {
     getFallbackChain,
@@ -8911,23 +8993,34 @@ test('pickFreeFallback: respects alreadyFailed set', async () => {
     id, name: id, billing_mode: 'free', categories: ['chat'],
     pricing: { input: 0, output: 0 },
   });
-  __primeGatewayModelsCache([
-    freeEntry('nvidia/nemotron-3-nano-30b'),
-    freeEntry(FREE_DEFAULT_MODEL),
-    freeEntry('poolside/laguna-xs-2.1'),
-    freeEntry('cohere/north-mini-code'),
-  ]);
-  const failed = new Set(['nvidia/nemotron-3-nano-30b']);
-  const pick = pickFreeFallback('coding', failed);
-  assert.notEqual(pick, 'nvidia/nemotron-3-nano-30b');
-  assert.equal(pick, FREE_DEFAULT_MODEL,
-    `after the Base leader fails, coding should fall to the chain-safe default, got ${pick}`);
+  // try/finally: the gateway catalog cache is a MODULE SINGLETON shared by
+  // every test in this process, and this file has no global teardown. Without
+  // the finally, one failed assertion here leaves a primed cache behind and
+  // every later test sees a catalog it never asked for.
+  try {
+    __primeGatewayModelsCache([
+      freeEntry('nvidia/nemotron-3-nano-30b'),
+      freeEntry(FREE_DEFAULT_MODEL),
+      freeEntry('poolside/laguna-xs-2.1'),
+      freeEntry('cohere/north-mini-code'),
+    ]);
+    const failed = new Set(['nvidia/nemotron-3-nano-30b']);
+    const pick = pickFreeFallback('coding', failed);
+    assert.notEqual(pick, 'nvidia/nemotron-3-nano-30b');
+    assert.equal(pick, FREE_DEFAULT_MODEL,
+      `after the Base leader fails, coding should fall to the chain-safe default, got ${pick}`);
 
-  // Cold cache: only the both-chains id is offered, so a Solana user is never
-  // routed to a Base-only model that would 400.
-  clearGatewayModelsCache();
-  assert.equal(pickFreeFallback('coding', new Set()), FREE_DEFAULT_MODEL);
-  assert.equal(pickFreeFallback('coding', new Set([FREE_DEFAULT_MODEL])), undefined);
+    // Cold cache: the both-chains id leads, so a gateway missing the Base-only
+    // rungs is never handed one first. But the chain must NOT collapse to a
+    // single rung — after the default fails there is still somewhere to go.
+    clearGatewayModelsCache();
+    assert.equal(pickFreeFallback('coding', new Set()), FREE_DEFAULT_MODEL);
+    const coldSecond = pickFreeFallback('coding', new Set([FREE_DEFAULT_MODEL]));
+    assert.ok(coldSecond && coldSecond !== FREE_DEFAULT_MODEL,
+      `cold cache must still offer a second rung, got ${coldSecond}`);
+  } finally {
+    clearGatewayModelsCache();
+  }
 });
 
 test('pickFreeFallback: unknown category uses default chain (general model first)', async () => {
@@ -8940,9 +9033,15 @@ test('pickFreeFallback: unknown category uses default chain (general model first
 
 test('pickFreeFallback: returns undefined when every candidate failed', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
-  const { FREE_PREFERENCE_ORDER } = await import('../dist/free-models.js');
-  const pick = pickFreeFallback('trading', new Set(FREE_PREFERENCE_ORDER));
+  const { FREE_PREFERENCE_ORDER, resolveFreeModel } = await import('../dist/free-models.js');
+  const everything = new Set(FREE_PREFERENCE_ORDER);
+  const pick = pickFreeFallback('trading', everything);
   assert.equal(pick, undefined);
+  // resolveFreeModel must honour `exclude` too. It used to `?? FREE_DEFAULT_MODEL`
+  // on an empty chain and hand back a model the caller had just seen fail,
+  // which would spin a retry loop on a known-dead id.
+  assert.equal(resolveFreeModel(everything), undefined,
+    'resolveFreeModel must never return an excluded model');
 });
 
 // ── TradingSignal data sufficiency ────────────────────────────────────────

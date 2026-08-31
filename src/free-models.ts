@@ -33,13 +33,14 @@
  * Two findings shape everything below, and BOTH were invisible until the
  * probe ran against the endpoint and the chain Franklin actually uses.
  *
- * 1. THE CHAINS ARE NOT IN SYNC. The Base gateway lists 7 free models; the
- *    Solana gateway lists exactly ONE — nemotron-3-nano-omni — and 400s
- *    ("Unknown model") on the other six. A default picked from the Base
- *    catalog is a hard failure on a Solana user's first turn. That is why
- *    FREE_DEFAULT_MODEL is the id present on BOTH chains, and the stronger
- *    Base-only model is an upgrade applied at runtime rather than a
- *    committed literal.
+ * 1. THE CHAINS DRIFT. When this landed, Base listed 7 free models and Solana
+ *    listed exactly ONE — nemotron-3-nano-omni — and 400'd ("Unknown model")
+ *    on the other six. Solana caught up later the same day (both list 7 as of
+ *    2026-08-31), but the gap was real for hours and will recur: the two
+ *    gateways deploy independently. A default picked from the Base catalog is
+ *    a hard failure on a Solana user's first turn during such a window, which
+ *    is why FREE_DEFAULT_MODEL is the id that survived on BOTH chains and the
+ *    Base-only models are a runtime upgrade rather than a committed literal.
  *
  * 2. SUBSTITUTION IS ENDPOINT-SPECIFIC. The pooling above reproduces on
  *    POST /api/v1/chat/completions. On POST /api/v1/messages — the endpoint
@@ -60,6 +61,16 @@
  */
 
 import { peekGatewayModel } from './gateway-models.js';
+import {
+  FREE_DEFAULT_MODEL,
+  FREE_POOL_CONTEXT_FLOOR,
+  FREE_PREFERENCE_ORDER,
+} from './free-models.constants.js';
+
+// Re-exported so every consumer keeps importing from ONE place. The constants
+// live in a zero-import leaf only so the public plugin SDK can read them
+// without pulling core's filesystem-touching config module in behind them.
+export { FREE_DEFAULT_MODEL, FREE_POOL_CONTEXT_FLOOR, FREE_PREFERENCE_ORDER };
 
 /**
  * The free model Franklin asks for by default.
@@ -73,14 +84,15 @@ import { peekGatewayModel } from './gateway-models.js';
  * Verified on POST /api/v1/messages (Franklin's own endpoint) on both chains:
  * answers as itself, no leaked reasoning, tool calls work.
  */
-export const FREE_DEFAULT_MODEL = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning';
+// (defined in ./free-models.constants.ts, re-exported above)
 
 /**
  * Free models in preference order, best first.
  *
- * Only FREE_DEFAULT_MODEL is available on both chains; the rest are Base-only
- * as of 2026-08-30. freeChain() filters this against the live catalog for the
- * CURRENT chain, so this list can name Base-only ids without breaking Solana.
+ * FREE_DEFAULT_MODEL is the id that survived on both chains through the
+ * 2026-08-30 rotation window; the rest were Base-only during it. freeChain()
+ * filters this against the live catalog for the CURRENT chain, so the list can
+ * name ids one gateway lacks without breaking the other.
  *
  * Ordering rationale — AVAILABILITY FIRST, quality second. Measured on
  * /v1/messages, Base, max_tokens 300, 5 calls each (2026-08-31):
@@ -159,12 +171,7 @@ export const FREE_DEFAULT_MODEL = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
  * session, which nearly shipped a textual <tool_call> extractor for a model
  * that returns a clean structured tool_calls array once given room.
  */
-export const FREE_PREFERENCE_ORDER: readonly string[] = [
-  'nvidia/nemotron-3-nano-30b',     // Base only; 5/5 healthy, fastest
-  FREE_DEFAULT_MODEL,               // both chains — the floor this never drops below
-  'poolside/laguna-xs-2.1',         // Base only, different provider
-  'cohere/north-mini-code',         // Base only, different provider; needs max_tokens >= 1200
-];
+// (defined in ./free-models.constants.ts, re-exported above)
 
 /**
  * Context budget for ANY free-tier request, regardless of the catalogued
@@ -175,9 +182,11 @@ export const FREE_PREFERENCE_ORDER: readonly string[] = [
  * nemotron-3-nano-30b with no warning, and the chain-safe default is 256K.
  * Sizing compaction off 1M would build a prompt the substitute cannot accept,
  * and it would fail mid-session on a user who never chose the substitute.
- * 131_072 is the floor of every model currently in the free pool.
+ * 131_072 is the floor of every model in FREE_PREFERENCE_ORDER. The one free
+ * id below it (llama-3.2-11b-vision, 128_000) is vision-only and never routed
+ * as a text rung, so it is sized from its own catalog entry in tokens.ts.
  */
-export const FREE_POOL_CONTEXT_FLOOR = 131_072;
+// (defined in ./free-models.constants.ts, re-exported above)
 
 /**
  * Catalogued free ids Franklin will not route to, with the reason each was
@@ -193,15 +202,13 @@ export const QUARANTINED_FREE_MODELS: readonly string[] = [
   // chain. It stays out of FREE_PREFERENCE_ORDER because it is the weakest
   // text model in the pool, which is a ranking, not a ban.
   //
-  // nemotron-3.5-lightning and cohere/north-mini-code were both here on
-  // measurement artifacts (see the TRUNCATION note above) and were released.
-  // NOT quarantined, deliberately, though an earlier revision had them here:
+  // Released, deliberately, though an earlier revision quarantined both — the
+  // evidence was a measurement artifact, see the TRUNCATION note above:
   //   nvidia/nemotron-3.5-lightning — the "CoT leak" was max_tokens truncation.
   //     It is merely slow, which keeps it out of FREE_PREFERENCE_ORDER but is
   //     no reason to refuse to route to it if a user asks.
   //   cohere/north-mini-code — the "empty stream" was the same truncation, and
   //     it is a cascade rung other BlockRun components depend on.
-  // See the MAX_TOKENS note in FREE_PREFERENCE_ORDER above.
 ];
 
 /**
@@ -317,8 +324,15 @@ export const FREE_MODEL_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
  */
 export function freeVisionModel(): string | null {
   const override = process.env.FRANKLIN_FREE_VISION_MODEL;
-  if (override) return override === 'none' ? null : override;
-  return null;
+  if (!override || override === 'none') return null;
+  // The override is NOT trusted blindly. Every caller treats this return value
+  // as free — router/vision.ts calls it vision-capable, the agent loop swaps a
+  // free-tier user onto it and prints "(still free)", the proxy does the same,
+  // and the router reports savings: 1.0. Handing back an unvalidated id would
+  // let this env var route a free-tier turn onto a PAID model while telling the
+  // user it costs nothing, which is the invariant this module exists to hold.
+  // Unknown-on-a-cold-cache fails CLOSED (decline vision) rather than open.
+  return isFreeModelId(override) ? override : null;
 }
 
 
@@ -339,8 +353,15 @@ export function freeVisionModel(): string | null {
  * free ids without a release); the static sets answer when the cache is cold.
  */
 export function isFreeModelId(id: string | undefined | null): boolean {
+  // ORDER MATTERS. `!id` is true for '' as well as null/undefined, so the
+  // empty-string check has to come first or it is unreachable — which is
+  // exactly the bug this ordering fixes. '' means "no parent model registered
+  // yet", and tools/subagent.ts reads that through this predicate to decide
+  // whether a PAID sub-agent spawn needs the user's approval. Returning false
+  // for '' silently skipped that gate and let a paid spawn charge the wallet
+  // with no prompt and no fail-closed path.
+  if (id === '' || id === 'blockrun/free') return true;
   if (!id) return false;
-  if (id === 'blockrun/free' || id === '') return true;
   const entry = peekGatewayModel(id);
   if (entry) return entry.billing_mode === 'free';
   if (id in FREE_MODEL_CONTEXT_WINDOWS) return true;
@@ -366,12 +387,28 @@ export function freeChain(exclude: ReadonlySet<string> = new Set()): string[] {
     id => peekGatewayModel(id)?.billing_mode === 'free',
   );
   if (confirmed.length > 0) return confirmed;
-  // Cold cache, or a catalog listing none of them: fall back to the only id
-  // known to exist on every chain.
-  return candidates.filter(id => id === FREE_DEFAULT_MODEL);
+  // No catalog evidence — cold cache (every turn-1 decision, and the whole
+  // session if the fetch fails, since gateway-models swallows that error).
+  //
+  // Prefer the id that survived on both gateways. But if the caller has
+  // already excluded it, fall through to the remaining candidates instead of
+  // returning nothing: an earlier revision returned [] here, which collapsed
+  // the free recovery chain from three rungs to ONE precisely when it was
+  // needed — a free user got a single rescue attempt on a 402 or rate limit
+  // and then the turn died. There is no evidence against the other rungs
+  // either; asking and being told "unknown model" beats not asking.
+  const preferred = candidates.filter(id => id === FREE_DEFAULT_MODEL);
+  return preferred.length > 0 ? preferred : candidates;
 }
 
-/** Pick the single free model to request right now. See freeChain(). */
-export function resolveFreeModel(exclude: ReadonlySet<string> = new Set()): string {
-  return freeChain(exclude)[0] ?? FREE_DEFAULT_MODEL;
+/**
+ * Pick the single free model to request right now. See freeChain().
+ *
+ * Returns undefined when every candidate is excluded — it must NEVER hand back
+ * a model the caller listed in `exclude`. The previous `?? FREE_DEFAULT_MODEL`
+ * fallback did exactly that on a cold cache, which would spin a retry loop on
+ * a model the caller had just watched fail.
+ */
+export function resolveFreeModel(exclude: ReadonlySet<string> = new Set()): string | undefined {
+  return freeChain(exclude)[0];
 }

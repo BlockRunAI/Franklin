@@ -15,14 +15,16 @@ you did not ask for, with a different context window and a different
 temperament.
 
 **The chains are not in sync, and that is the part that actually breaks.**
-The Base gateway lists 7 free models. The Solana gateway lists exactly one —
-`nemotron-3-nano-omni` — and returns 400 "Unknown model" on the other six.
-Any free default chosen from the Base catalog is a hard failure on a Solana
-user's first turn. So the committed default is now the id that exists on
-*both* chains, and Base's stronger model (`nemotron-3-ultra-550b`, 1M
-context, and the only free model that answered the control question
-correctly) is applied at runtime as an upgrade read from the live catalog —
-never as a literal that the next rotation invalidates.
+When this landed, the Base gateway listed 7 free models and the Solana
+gateway listed exactly one — `nemotron-3-nano-omni` — returning 400 "Unknown
+model" on the other six. Any free default chosen from the Base catalog is a
+hard failure on a Solana user's first turn during a window like that, and the
+two gateways deploy independently, so it will recur. The committed default is
+therefore the id that survived on *both* chains, and the Base-only models are
+applied at runtime as an upgrade read from the live catalog — never as a
+literal that the next rotation invalidates. (Solana caught up hours later;
+the availability probe below then dropped `ultra-550b` from the chain
+entirely, so the runtime upgrade is `nemotron-3-nano-30b`.)
 
 **One source of truth.** The free default was a bare string repeated 63
 times across 21 files. This was the sixth pool rotation in three months, and
@@ -85,7 +87,7 @@ to a paid model, which was always the rule.
 classification and falling through to keyword routing since the previous
 rotation: no free model returns a bare tier word under `max_tokens: 8` any
 more. It now budgets 1024 tokens for the model to think out loud and parses
-the last tier word rather than the first. Brand numbers synced (73
+the last tier word rather than the first. Brand numbers synced (76
 chat-visible models, 7 free).
 
 ## Franklin Agent 3.42.2 — an aborted payment is not a refund

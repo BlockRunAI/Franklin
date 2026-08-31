@@ -1527,9 +1527,10 @@ export async function interactiveSession(
             onEvent({
               kind: 'text_delta',
               text:
-                '*⚠️ No free vision model is available — the gateway serves both free ' +
-                'vision ids from a text-only model. This turn answers from text only. ' +
-                'Switch to a paid model (e.g. `/model haiku`) to send the image.*\n\n',
+                '*⚠️ No free vision model is available — the free vision ids drop the ' +
+                'image on about half of all calls and answer anyway. This turn answers ' +
+                'from text only, so treat anything said about the image as a guess. ' +
+                'Switch to a paid model (e.g. `/model haiku`) to send it.*\n\n',
             });
           }
         }
@@ -1799,8 +1800,13 @@ export async function interactiveSession(
         if (!hasText && !hasTools && !hasThinking) {
           // Free-only recovery chain — a free/empty-response session must NEVER
           // fall back to a paid model (would silently charge the wallet). Both
-          // entries are $0 nvidia models.
-          const EMPTY_FALLBACK_MODELS = [FREE_DEFAULT_MODEL, 'poolside/laguna-xs-2.1'];
+          // entries are $0 free-tier ids; the second is deliberately a different
+          // PROVIDER (poolside), not another NVIDIA id.
+          // Built from the live chain, not a literal list: the second rung used
+          // to be a hardcoded `poolside/laguna-xs-2.1`, which is absent from
+          // some gateways and 400s there — so the rescue was guaranteed to fail
+          // on exactly the chains it was meant to rescue.
+          const EMPTY_FALLBACK_MODELS = getFallbackChain('SIMPLE', 'free');
           const nextModel = EMPTY_FALLBACK_MODELS.find(m => m !== config.model && !turnFailedModels.has(m));
           if (nextModel && recoveryAttempts < 2 && !config.disableModelFallback) {
             recoveryAttempts++;
