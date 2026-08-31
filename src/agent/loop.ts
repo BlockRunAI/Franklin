@@ -45,7 +45,7 @@ import { writeLiveAgent } from '../session/live-registry.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
-import { routeRequest, parseRoutingProfile, getFallbackChain, pickFreeFallback, isVisionModel, messageNeedsVision, pickVisionSibling, markModelUnavailable } from '../router/index.js';
+import { routeRequest, parseRoutingProfile, getFallbackChain, pickFreeFallback, isVisionModel, messageNeedsVision, messagesNeedVision, pickVisionSibling, markModelUnavailable } from '../router/index.js';
 import type { Tier, RoutingProfile, RoutingResult } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
@@ -1635,6 +1635,25 @@ export async function interactiveSession(
       // answer (and waste the spend). Opt-in per config. Ordered last so a
       // forced turn intentionally rebuilds the prompt from the base (dropping
       // the skill hints above); normal turns keep them.
+      // ── Free vision is a ONE-SHOT ──
+      // llama-3.2-11b-vision reads an image reliably as a bare call (30/30 on
+      // a validated fixture) and confabulates in a tool loop: handed the full
+      // tool set it re-called `Read` on the same path until the repeat guard
+      // stopped the turn, in one run out of two. Once the image is actually in
+      // the history there is nothing left to fetch, so take the tools away and
+      // let it answer. Read still runs on the first pass — this only fires
+      // after an image block exists.
+      if (
+        resolvedModel === freeVisionModel() &&
+        callToolDefs.length > 0 &&
+        messagesNeedVision(history as Array<{ role?: string; content?: unknown }>)
+      ) {
+        callToolDefs = [];
+        callSystemPrompt = systemPrompt +
+          '\n\nThe image is already included above. Answer the question about it ' +
+          'directly. Do not call any tools.';
+      }
+
       const onFinalTurn = config.forceAnswerOnFinalTurn && loopCount === maxTurns;
       const toolBudgetSpent = config.maxToolCalls != null && turnToolCalls >= config.maxToolCalls;
       if ((onFinalTurn || toolBudgetSpent) && callToolDefs.length > 0) {

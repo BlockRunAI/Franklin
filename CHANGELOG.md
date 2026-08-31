@@ -47,26 +47,30 @@ clawrouter sessions — the latter nearly shipped a textual `<tool_call>`
 extractor for a model that returns a clean structured array at a larger
 budget.
 
-**No free vision, and the third measurement is the one that counts.** This
-took three passes, each reversing the last, and the reversals are the
-lesson. The first used a 2x2 PNG and proved nothing — images under 10px per
-side are rejected upstream. The second, with a valid 64x64 PNG, had
-`llama-3.2-11b-vision` answering 5 of 5 on Solana after the gateway's
-`image_url` allow-list fix landed there, and that shipped as a chain-aware
-free vision model. The third, ten calls instead of five and capturing the
-served `model` field, got 5 of 10 — the 5/5 was a lucky window. Notably the
-served id matched the requested id 10 times out of 10, so on `/v1/messages`
-this is not the cascade substituting a non-vision model (which is the
-mechanism on `/chat/completions`); the model simply does not see the image
-half the time. `nemotron-3-nano-omni` is worse and is never used for vision.
+**No free vision, and it took five measurement passes to be sure — four of
+which pointed the wrong way.** A 2x2 test PNG (rejected upstream, proves
+nothing). Then 5 of 5 on Solana with a valid 64x64 fixture, shipped. Then 5
+of 10 on a bigger sample, reverted. Then 30 of 30 across both HTTP paths and
+three runs once the gateway's `image_url` allow-list fix had settled,
+re-enabled. Then the measurement that actually mattered: the whole feature,
+end to end through the binary, **1 of 5**.
 
-A 50% silent-drop rate is the worst outcome available: HTTP 200, no error, a
-confident wrong answer, and nothing telling the caller which half they got.
-Intermittent failure is worse than constant failure, because constant
-failure gets fixed and intermittent failure gets shipped. So Franklin
-declines the turn, says the image was not seen, and stays on the free tier
-rather than falling back to a paid model. `FRANKLIN_FREE_VISION_MODEL`
-opts back in.
+`llama-3.2-11b-vision` is reliable as a vision *call* and too weak to drive
+an agent *turn*. Handed the full tool set it re-called `Read` on the same
+path until the repeat guard fired; handed no tools once the image was in
+history, it ended the turn after `Read` without answering. So the blocker
+stopped being the gateway and became Franklin's own wiring, which swaps the
+agent model for the whole turn. A capability that works 30/30 in isolation
+and 1/5 in the product is not a capability, so Franklin declines and says
+the image was not seen, on the free tier, without falling back to a paid
+model. The fix is recorded in `free-models.ts`: make the vision turn a
+one-shot side-call and let the normal agent model finish.
+`FRANKLIN_FREE_VISION_MODEL` exercises the whole path without a code change.
+
+Also worth carrying forward: a hand-rolled PNG that `file` accepts can still
+be corrupt, and a model politely saying it cannot see an image is
+indistinguishable from the gateway having dropped it. Validate the fixture
+with a real decoder and check the chunk CRCs before trusting a negative.
 
 **Two money bugs found on the way.** `m.startsWith('nvidia/')` was standing
 in for "is this model free" in three places. It was wrong in both

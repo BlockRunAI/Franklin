@@ -235,51 +235,92 @@ export const FREE_MODEL_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
 };
 
 /**
- * The free model that can accept an image, or null when there is none.
+ * The free model that can accept an image, or null when this chain has none.
  *
- * Currently null on BOTH chains. Three separate measurement passes, each of
- * which reversed the previous conclusion — the history is kept because the
- * reversals are the lesson.
+ * Chain-aware because the gateways are at different deploy states, not
+ * because the models differ. The original defect was gateway-side: both
+ * NVIDIA paths dropped every `image_url` unconditionally under a stale
+ * comment, which is why it presented as a confident wrong answer with no
+ * error. The allow-list fix reached Solana first.
  *
- * PASS 1 (2026-08-30, 2x2 PNG): both catalogued free vision ids failed. Later
- *   invalidated as a fixture problem — images under 10px per side are
- *   rejected upstream with invalid_parameter_error, so a tiny PNG proves
- *   nothing. Use >=64x64.
+ * FOUR measurement passes, each of which reversed the previous conclusion.
+ * The history stays because the reversals are the lesson:
  *
- * PASS 2 (2026-08-31, valid 64x64 red PNG, 5 calls): llama-3.2-11b-vision
- *   answered "Red." 5/5 on Solana after the gateway's image_url allow-list
- *   fix deployed there, 0/5 on Base. Shipped as chain-aware on that basis.
+ *   1. 2x2 PNG, both ids fail.        INVALID — images under 10px per side
+ *      are rejected upstream, so the fixture proved nothing.
+ *   2. 64x64, 5 calls, llama 5/5 sol. Shipped. Too small a sample.
+ *   3. 64x64, 10 calls, llama 5/10.   Reverted. A real bad window: the
+ *      gateway fix was still settling. Fixture validated, so not a repeat
+ *      of mistake 1.
+ *   4. 64x64, 30 calls across both    RE-ENABLED. See below.
+ *      HTTP paths and three runs.
  *
- * PASS 3 (same day, 10 calls, capturing the served `model` field): 5/10.
- *   The 5/5 was a lucky window. Two things worth keeping from this pass:
+ * Pass 4, validated fixture (`sips` decodes it, and every PNG chunk CRC
+ * checks against zlib.crc32 — `file` reports dimensions from the header and
+ * will happily accept a corrupt image, which is how a broken fixture
+ * masquerades as a broken product):
  *
- *     - substituted 0/10. The served id matched the requested id EVERY time,
- *       so on /v1/messages this is not the cascade handing the turn to a
- *       non-vision model (which is the mechanism on /chat/completions, where
- *       the andy session captured nano-omni being served by
- *       nemotron-3-nano-30b, a model with no vision at all, 3/3). On this
- *       path the model itself simply does not see the image half the time.
- *     - nemotron-3-nano-omni is worse and is never used for vision: 2/4 on
- *       Solana, 0/4 on Base (502, then circuit breaker open).
+ *   sol  llama-3.2-11b-vision  /v1/messages          10/10 sees, 0/10 substituted
+ *   sol  llama-3.2-11b-vision  /chat/completions     10/10 sees, 0/10 substituted
+ *   sol  llama-3.2-11b-vision  /v1/messages (repeat) 10/10 sees, 0/10 substituted
+ *   base llama-3.2-11b-vision  /v1/messages           0/10 sees, 0/10 substituted
+ *   sol  nemotron-3-nano-omni  /v1/messages           6/10 sees, 0/10 substituted
+ *   sol  nemotron-3-nano-omni  /chat/completions      4/10 sees, 7/10 SUBSTITUTED
  *
- * A 50% silent-drop rate is the worst possible outcome for a vision turn: the
- * reply is HTTP 200 with no error and a confident wrong answer, and nothing
- * in the response tells the caller which half they got. Intermittent failure
- * is worse than constant failure, because constant failure gets fixed and
- * intermittent failure gets shipped — which is exactly what happened between
- * pass 2 and pass 3. So Franklin declines instead, and says why.
+ * So Solana gets llama-3.2-11b-vision and Base honestly reports none. On
+ * Base the model serves itself and simply cannot see — 0 substitutions, so
+ * this is the missing allow-list fix, not a cascade problem.
  *
- * TO RE-ENABLE: probe with a >=64x64 PNG, at least 10 calls, asserting BOTH
- * that the answer is right AND that the served `model` echoes the requested
- * id. A capability-aware cascade fix (a rescue that cannot serve the request
- * is not a rescue) is in flight upstream. FRANKLIN_FREE_VISION_MODEL
- * overrides this for operators who want to opt in early.
+ * nano-omni is NEVER used for vision despite its catalog tag. On
+ * chat/completions it is substituted 7 times in 10 by nemotron-3-nano-30b,
+ * a model with no vision at all (the andy session captured the same thing
+ * 3/3), and even unsubstituted it only sees the image 6 times in 10.
+ *
+ * ACCEPTANCE BAR for changing any of this — all four are required, and each
+ * one exists because skipping it produced a wrong answer above:
+ *   - a fixture >=64x64 that a real decoder accepts and whose CRCs verify;
+ *   - at least 10 calls (5 is inside the noise);
+ *   - assert the served `model` echoes the id you requested;
+ *   - assert the answer is actually right, not merely non-empty.
+ *
+ * AND YET THIS RETURNS NULL. Pass 5 measured the thing that actually
+ * matters — the whole feature, end to end through the binary, not the API
+ * call — and it is 1 in 5:
+ *
+ *   bare vision call, validated fixture   30/30
+ *   end-to-end `franklin --model free`     1/5
+ *
+ * llama-3.2-11b-vision is reliable as a vision CALL and too weak to drive an
+ * agent turn. Given the full tool set it re-called `Read` on the same path
+ * until the repeat guard fired. Given no tools after the image was in
+ * history (the one-shot path below, which is implemented and stays) it
+ * stopped looping and instead ended the turn after `Read` without producing
+ * an answer at all. So the blocker is no longer the gateway — it is
+ * Franklin's own wiring, which hands a vision turn to a weak model by
+ * swapping the AGENT model for the whole turn.
+ *
+ * A capability that works 30/30 in isolation and 1/5 in the product is not a
+ * capability. By the rule this file already applies to nano-omni — an
+ * intermittent confident wrong answer is worse than declining, because the
+ * caller cannot tell which half they got — Franklin declines and says the
+ * image was not seen.
+ *
+ * THE FIX, for whoever picks this up: do not swap the agent model. Make the
+ * vision turn a dedicated one-shot side-call — inline the image, ask the
+ * vision model directly, feed the answer back as context, and let the normal
+ * agent model finish the turn. The 30/30 says that call will work. The
+ * groundwork is in place: the one-shot tool suppression in agent/loop.ts
+ * fires whenever this function returns a model.
+ *
+ * FRANKLIN_FREE_VISION_MODEL overrides ('none' disables), so the whole path
+ * above can be exercised without a code change.
  */
 export function freeVisionModel(): string | null {
   const override = process.env.FRANKLIN_FREE_VISION_MODEL;
-  if (override && override !== 'none') return override;
+  if (override) return override === 'none' ? null : override;
   return null;
 }
+
 
 /**
  * Is this id billed at $0?
