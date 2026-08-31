@@ -1,5 +1,47 @@
 # Changelog
 
+## Franklin Agent 3.43.1 — a guard that only runs on the happy path is not a guard
+
+**A vision request could fall back onto a model that cannot read images, and
+pay for it.** The proxy's pre-request vision guard swaps a text-only pick for
+a vision sibling, but it runs once, before the call. The fallback chain is
+walked *after* a failure and was not vision-aware, so an image sent to
+`claude-sonnet-4.6` that hit a 429 fell straight onto
+`deepseek/deepseek-chat`, which cannot read images at all.
+
+```
+before  [claude-sonnet-4.6, deepseek-chat, gemini-2.5-flash, nano-omni]
+after   [claude-sonnet-4.6, gemini-2.5-flash]
+```
+
+**Why that costs money.** The gateway does not reliably refuse those calls
+before payment. Probing both gateways with an *unpaid* request separates the
+two cases for free — a 400 means refused pre-payment, a 402 means it is
+quoting you for a call the upstream will reject:
+
+| model | Base | Solana |
+|---|---|---|
+| `zai/glm-5.3`, `glm-5.1`, `glm-5-turbo` | 402 — quotes you | 400 refused |
+| `deepseek/deepseek-chat` | 402 — quotes you | 400 refused |
+| `zai/glm-5.3-flash` (natively multimodal) | 402 correct | 402 correct |
+
+On Base the retry is quoted, signed, settled, and only then rejected upstream
+— or answered without the image, which is worse. Franklin no longer depends
+on either gateway getting that right.
+
+This is the same shape as the free-tier guard added in 3.43.0: the chain has
+to know what the request *needs*, not just what it costs. The two filters now
+compose, so a free vision request gets rungs that are both free and
+vision-capable. The requirement is re-derived from the raw body at the
+fallback site rather than reused from the pre-request guard, whose binding is
+out of scope by then — losing it silently on the retry path is the bug, so
+the fix does not depend on a binding that can go out of scope again.
+
+Found while chasing a gateway-side report, which is the third instance this
+week of a mechanism that existed and was simply routed around by the composed
+path. The others were an approval gate disarmed by an unreachable branch and
+a kill-switch the free profile never consulted.
+
 ## Franklin Agent 3.43.0 — the free tier stops naming ghosts
 
 **Every free model Franklin asked for had left the catalog.** On 2026-08-30
