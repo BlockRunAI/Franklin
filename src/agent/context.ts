@@ -254,7 +254,7 @@ You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun
 - \`GET /.well-known/x402\` — x402 resource list with prices
 
 **LLM (POST, x402-paid)**
-- \`POST /v1/chat/completions\` — OpenAI-compatible. Body: \`{ model, messages, stream?, tools?, max_tokens?, temperature? }\`. \`model\` MUST come from \`GET /v1/models\` (real frontier examples on the gateway, verified live 2026-08-29: \`anthropic/claude-sonnet-5\`, \`anthropic/claude-opus-5\`, \`openai/gpt-5.6-sol\`, \`deepseek/deepseek-v4-pro\`, \`zai/glm-5.3\`, \`zai/glm-5.3-flash\`, \`xai/grok-4.5\`, \`qwen/qwen3.7-flash\`, \`nvidia/nemotron-nano-9b-v2\` (free)). Do NOT invent versions like \`openai/gpt-5.1\` or \`xai/grok-5\` — those don't exist; the gateway 400s with the valid list in the error body, so when in doubt fetch \`GET /v1/models\` first.
+- \`POST /v1/chat/completions\` — OpenAI-compatible. Body: \`{ model, messages, stream?, tools?, max_tokens?, temperature? }\`. \`model\` MUST come from \`GET /v1/models\` (real frontier examples on the gateway, verified live 2026-08-30: \`anthropic/claude-sonnet-5\`, \`anthropic/claude-opus-5\`, \`openai/gpt-5.6-sol\`, \`deepseek/deepseek-v4-pro\`, \`zai/glm-5.3\`, \`zai/glm-5.3-flash\`, \`xai/grok-4.5\`, \`qwen/qwen3.7-flash\`, \`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning\` (free, the only free id on BOTH the Base and Solana gateways — the other free models are Base-only)). Do NOT invent versions like \`openai/gpt-5.1\` or \`xai/grok-5\` — those don't exist; the gateway 400s with the valid list in the error body, so when in doubt fetch \`GET /v1/models\` first.
 - \`POST /v1/messages\` — Anthropic-compatible. Body: \`{ model, messages, max_tokens, system?, tools? }\`.
 
 **Media (POST, x402-paid; GET to poll async jobs)**

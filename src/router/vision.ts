@@ -82,15 +82,23 @@ const VISION_MODELS = new Set<string>([
   // Z.AI — GLM-5.3 Flash is the one GLM SKU the catalog tags as vision
   // (2026-08-29 sync); GLM-5.3 / 5.2 / 5.1 are text + reasoning only.
   'zai/glm-5.3-flash',
-  // NVIDIA inference — Nemotron Nano VL is multimodal; deepseek/qwen-coder are
-  // not. Llama 4 Maverick dropped 2026-07-14: it left the gateway catalog, and
-  // listing it here contradicted routeRequest()'s own "maverick is text-only"
-  // note — the free profile would route a vision turn to a text-only model.
-  'nvidia/nemotron-nano-12b-v2-vl',
-  // Nemotron 3 Nano Omni accepts text, images, video and audio, and now serves
-  // itself (2026-08-19 probe) — it is the strongest free vision option in the
-  // catalog on ChartQA / DocVQA / MMMU.
-  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+  // ── No free vision model (2026-08-30) ──
+  // The catalog tags two free ids as vision-capable — nemotron-3-nano-omni and
+  // llama-3.2-11b-vision — and neither honours an image. Sent a real PNG, both
+  // came back from a TEXT-ONLY substitute (nvidia/nemotron-3-nano-30b) replying
+  // "There's no image provided". A wrong-but-confident answer is the worst
+  // outcome for a vision turn, and listing an id here is a promise that
+  // isVisionModel() callers act on: the agent loop and the proxy both use it to
+  // decide whether an image can be sent at all.
+  //
+  // So they are deliberately absent, and the free profile reports vision as
+  // unavailable rather than guessing (see routeRequest's free branch). This is
+  // NOT a claim that the models lack the capability — it is a claim about what
+  // the gateway currently serves. Re-add when a real image probe comes back
+  // from the id that was asked for.
+  //
+  // nvidia/nemotron-nano-12b-v2-vl held this slot until it left the catalog on
+  // 2026-08-30; Llama 4 Maverick before that (dropped 2026-07-14).
 ]);
 
 /** Does this concrete gateway model accept image input? */

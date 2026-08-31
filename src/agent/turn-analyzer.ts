@@ -30,6 +30,7 @@
 import type { ModelClient } from './llm.js';
 import type { MarketCode } from '../trading/providers/standard-models.js';
 import type { Tier } from '../router/index.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ const CACHE_MAX_SIZE = 64;
 // NVIDIA's EOL (410) and mistral-nemotron is DEGRADED upstream (stream calls
 // 400). Nano 9B verifiably serves itself — verified live through the binary.
 
-const ANALYZER_MODEL_DEFAULT = process.env.FRANKLIN_ANALYZER_MODEL || 'nvidia/nemotron-nano-9b-v2';
+const ANALYZER_MODEL_DEFAULT = process.env.FRANKLIN_ANALYZER_MODEL || FREE_DEFAULT_MODEL;
 
 const ANALYZER_SYSTEM = `You analyze ONE user message for Franklin's routing + prefetch harness. Output ONE LINE of compact JSON — no explanation, no markdown, no code fences.
 

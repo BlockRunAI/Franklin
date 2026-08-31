@@ -4,6 +4,7 @@
  */
 
 import { logger } from '../logger.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 export interface FallbackConfig {
   /** Models to try in order of priority */
@@ -20,7 +21,7 @@ export const DEFAULT_FALLBACK_CONFIG: FallbackConfig = {
   chain: [
     'deepseek/deepseek-chat', // Direct fallback — cheap & reliable
     'google/gemini-2.5-flash', // Fast & capable
-    'nvidia/nemotron-nano-9b-v2', // Free model as ultimate fallback (reliable instruction-follower)
+    FREE_DEFAULT_MODEL, // Free model as ultimate fallback — see src/free-models.ts
   ],
   retryOn: [429, 500, 502, 503, 504, 529],
   maxRetries: 5,

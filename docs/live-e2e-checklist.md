@@ -87,7 +87,7 @@ FREE_MODEL_MATRIX_PROBES=echo npm run test:free-models
 To isolate one or two models:
 
 ```bash
-FREE_MODEL_MATRIX=nvidia/nemotron-nano-9b-v2,omni npm run test:free-models
+FREE_MODEL_MATRIX=nvidia/nemotron-3-ultra-550b,nano-30b npm run test:free-models
 ```
 
 Expected result:

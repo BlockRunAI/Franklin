@@ -11,12 +11,13 @@ import type { Dialogue, ContentPart } from '../agent/types.js';
 import type { ExtractionResult, LearningCategory } from './types.js';
 import { loadLearnings, mergeLearning, saveLearnings, loadSkills, saveSkill } from './store.js';
 import type { Skill } from './types.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // Free models for learning extraction — JSON extraction is simple enough.
 // Ordered by reliability: try the best free model first, fall back to others.
 const EXTRACTION_MODELS = [
-  'nvidia/nemotron-nano-9b-v2', // Serves itself on every path (verified live 2026-08-12)
-  'nvidia/mistral-nemotron',    // Fallback: DEGRADED upstream but non-stream calls ride the gateway fallback
+  FREE_DEFAULT_MODEL,           // Free lead — see src/free-models.ts
+  'poolside/laguna-xs-2.1',     // Different provider, so the fallback survives an NVIDIA-wide outage
 ];
 
 const VALID_CATEGORIES = new Set<LearningCategory>([

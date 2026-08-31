@@ -85,6 +85,7 @@ import type {
   ThinkingSegment,
   UserContentPart,
 } from './types.js';
+import { FREE_DEFAULT_MODEL, isFreeModelId } from '../free-models.js';
 
 /**
  * Atomically replace all elements in a history array.
@@ -549,9 +550,10 @@ function formatModelSwitch(
  */
 export function isWeakModel(model: string): boolean {
   const m = model.toLowerCase();
-  // NVIDIA-hosted open models have been observed confabulating tool calls.
-  // `blockrun/free` resolves to an NVIDIA model before the API call, so
-  // catching the `nvidia/` prefix also catches the free-profile path.
+  // Free-tier open models have been observed confabulating tool calls. The
+  // whole free pool qualifies, including the non-NVIDIA rungs (poolside,
+  // cohere) added when the pool rotated on 2026-08-30.
+  if (isFreeModelId(model)) return true;
   if (m.startsWith('nvidia/')) return true;
   if (m.includes('nemotron-ultra')) return true;
   if (m.includes('qwen3-coder')) return true;
@@ -1510,11 +1512,26 @@ export async function interactiveSession(
         lastRoutedModel = routing.model;
         lastRoutedCategory = routing.category || '';
         if (loopCount === 1) {
-          const visionTag = turnNeedsVision ? ' 👁️' : '';
+          // A free-profile vision turn is routed to a TEXT model on purpose:
+          // the gateway has no free model that honours an image (see
+          // router/vision.ts). Say so instead of showing the 👁️ tag over a
+          // model that will answer from the text stub alone — and never fall
+          // back to a paid model, which the free profile must not do.
+          const visionUnavailable = routing.signals.includes('free-vision-unavailable');
+          const visionTag = turnNeedsVision && !visionUnavailable ? ' 👁️' : '';
           onEvent({
             kind: 'text_delta',
             text: `*Auto → ${routing.model}${visionTag}*\n\n`,
           });
+          if (visionUnavailable) {
+            onEvent({
+              kind: 'text_delta',
+              text:
+                '*⚠️ No free vision model is available — the gateway serves both free ' +
+                'vision ids from a text-only model. This turn answers from text only. ' +
+                'Switch to a paid model (e.g. `/model haiku`) to send the image.*\n\n',
+            });
+          }
         }
       } else if (turnNeedsVision && !isVisionModel(resolvedModel)) {
         // ── Manual-mode guard ──
@@ -1526,13 +1543,28 @@ export async function interactiveSession(
         // overridden). Always emit a visible notice so the user knows their
         // pick was overridden and why.
         const original = resolvedModel;
-        const visionSwap = pickVisionSibling(original);
-        resolvedModel = visionSwap;
-        config.model = visionSwap;
-        onEvent({
-          kind: 'text_delta',
-          text: `*⚠️ ${original} can't see images — using ${visionSwap} for this turn.*\n\n`,
-        });
+        // A free-tier model must NEVER be swapped for a paid one. There is no
+        // free vision model (router/vision.ts), so pickVisionSibling would
+        // return the paid default and start charging a user who explicitly
+        // chose the free tier — silently, mid-turn. Say so and stay free.
+        if (isFreeModelId(original)) {
+          onEvent({
+            kind: 'text_delta',
+            text:
+              `*⚠️ ${original} can't see images, and no free vision model is ` +
+              'available — the gateway serves both free vision ids from a model ' +
+              'that drops the image. Answering from text only; switch to a paid ' +
+              'model (e.g. `/model haiku`) to send it.*\n\n',
+          });
+        } else {
+          const visionSwap = pickVisionSibling(original);
+          resolvedModel = visionSwap;
+          config.model = visionSwap;
+          onEvent({
+            kind: 'text_delta',
+            text: `*⚠️ ${original} can't see images — using ${visionSwap} for this turn.*\n\n`,
+          });
+        }
       }
 
       // The pre-routing cap was calculated from the virtual profile name.
@@ -1736,7 +1768,7 @@ export async function interactiveSession(
           // Free-only recovery chain — a free/empty-response session must NEVER
           // fall back to a paid model (would silently charge the wallet). Both
           // entries are $0 nvidia models.
-          const EMPTY_FALLBACK_MODELS = ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'];
+          const EMPTY_FALLBACK_MODELS = [FREE_DEFAULT_MODEL, 'poolside/laguna-xs-2.1'];
           const nextModel = EMPTY_FALLBACK_MODELS.find(m => m !== config.model && !turnFailedModels.has(m));
           if (nextModel && recoveryAttempts < 2 && !config.disableModelFallback) {
             recoveryAttempts++;

@@ -1,7 +1,7 @@
 {
   "name": "@blockrun/franklin",
-  "version": "3.42.2",
-  "description": "Franklin Agent — The AI agent with a wallet. Spends USDC autonomously to get real work done. Pay per action, no subscriptions.",
+  "version": "3.43.0",
+  "description": "Franklin Agent \u2014 The AI agent with a wallet. Spends USDC autonomously to get real work done. Pay per action, no subscriptions.",
   "type": "module",
   "exports": {
     ".": {

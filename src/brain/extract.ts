@@ -10,6 +10,7 @@ import {
   loadEntities, saveEntities, upsertEntity,
   addObservation, upsertRelation, isJunkEntityName,
 } from './store.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // Last entry is the free safety net. nvidia/nemotron-super-49b held it until
 // 2026-08-20, by which point it had left the catalog entirely — the free pool
@@ -19,7 +20,7 @@ import {
 const EXTRACTION_MODELS = [
   'google/gemini-2.5-flash-lite',
   'google/gemini-2.5-flash',
-  'nvidia/nemotron-nano-9b-v2',
+  FREE_DEFAULT_MODEL,
 ];
 
 const VALID_TYPES = new Set<EntityType>(['person', 'project', 'company', 'product', 'concept']);

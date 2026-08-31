@@ -3,7 +3,7 @@
  *
  * Run:
  *   npm run test:free-models
- *   FREE_MODEL_MATRIX=nvidia/mistral-nemotron,nvidia/nemotron-nano-9b-v2 npm run test:free-models
+ *   FREE_MODEL_MATRIX=nvidia/nemotron-3-ultra-550b,nvidia/nemotron-3-nano-30b npm run test:free-models
  *   FREE_MODEL_MATRIX=all npm run test:free-models
  *   FREE_MODEL_MATRIX_PROBES=echo npm run test:free-models
  *
@@ -34,8 +34,9 @@ const requestedModels = (process.env.FREE_MODEL_MATRIX || '')
   .map(resolveModel);
 
 const defaultMatrixModels = new Set([
-  'nvidia/mistral-nemotron',
-  'nvidia/nemotron-nano-9b-v2',
+  'nvidia/nemotron-3-ultra-550b',
+  'nvidia/nemotron-3-nano-30b',
+  'poolside/laguna-xs-2.1',
 ]);
 
 const selectedModels = process.env.FREE_MODEL_MATRIX === 'all'
@@ -167,7 +168,9 @@ function assertNoModelArtifacts(model, stdout) {
 test('free model matrix catalog is zero-cost and NVIDIA-backed', () => {
   assert.ok(selectedModels.length > 0, 'Expected at least one free model');
   for (const entry of selectedModels) {
-    assert.ok(entry.id.startsWith('nvidia/'), `${entry.id} should be NVIDIA-backed free tier`);
+    // Was an `nvidia/` prefix check; the 2026-08-30 rotation added non-NVIDIA
+    // free rungs, and $0 billing is the property that actually matters.
+    assert.equal(entry.price, 'FREE', `${entry.id} should be a $0 free-tier id`);
     assert.equal(entry.price, 'FREE', `${entry.id} should render as FREE`);
     assert.equal(resolveModel(entry.shortcut), entry.id, `${entry.shortcut} shortcut drifted`);
     const pricing = MODEL_PRICING[entry.id];

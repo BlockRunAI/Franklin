@@ -7,6 +7,7 @@
 
 import type { SearchResult } from './search.js';
 import type { ChannelMessage } from './channel.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // ─── Model Tiers ──────────────────────────────────────────────────────────
 
@@ -15,14 +16,14 @@ export type ModelTier = 'free' | 'cheap' | 'premium' | 'none';
 
 /** Maps tier names to actual model identifiers */
 export interface ModelTierConfig {
-  free: string;      // e.g. "nvidia/nemotron-nano-9b-v2"
+  free: string;      // e.g. "nvidia/nemotron-3-ultra-550b"
   cheap: string;     // e.g. "zai/glm-5.1"
   premium: string;   // e.g. "anthropic/claude-sonnet-5"
 }
 
 export const DEFAULT_MODEL_TIERS: ModelTierConfig = {
-  free: 'nvidia/nemotron-nano-9b-v2',
-  cheap: 'nvidia/nemotron-nano-9b-v2', // Free by default; opt-in to paid flat-rate via 'zai/glm-5.1'.
+  free: FREE_DEFAULT_MODEL,
+  cheap: FREE_DEFAULT_MODEL, // Free by default; opt-in to paid flat-rate via 'zai/glm-5.1'.
   premium: 'anthropic/claude-sonnet-5',
 };
 

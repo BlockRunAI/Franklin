@@ -28,6 +28,7 @@ import type {
 import { ThinkTagStripper } from './think-tag-stripper.js';
 import { isNemotronProseModel, stripNemotronProse } from './nemotron-prose-stripper.js';
 import { repairAndParseArgs } from './repair/index.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // Reasoning-tier models the gateway routes to that reject `tool_choice`
 // outright. Pattern: OpenAI o1/o3 family + DeepSeek's reasoner variant.
@@ -589,10 +590,10 @@ export class ModelClient {
     // `blockrun/premium` strings (now retired routing profiles) end up at the
     // same place without needing dedicated entries.
     const FALLBACKS: Record<string, string> = {
-      'blockrun/auto': 'nvidia/nemotron-nano-9b-v2',
-      'blockrun/free': 'nvidia/nemotron-nano-9b-v2',
+      'blockrun/auto': FREE_DEFAULT_MODEL,
+      'blockrun/free': FREE_DEFAULT_MODEL,
     };
-    return FALLBACKS[model] || 'nvidia/nemotron-nano-9b-v2';
+    return FALLBACKS[model] || FREE_DEFAULT_MODEL;
   }
 
   /**

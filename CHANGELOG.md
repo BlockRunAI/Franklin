@@ -1,5 +1,66 @@
 # Changelog
 
+## Franklin Agent 3.43.0 — the free tier stops naming ghosts
+
+**Every free model Franklin asked for had left the catalog.** On 2026-08-30
+the gateway rotated the entire free pool. All four ids Franklin named —
+`nemotron-nano-9b-v2` (the default), `mistral-nemotron`,
+`nemotron-nano-12b-v2-vl` and `step-3.7-flash` — were gone from
+`/api/v1/models` and still answering, because the gateway routes around dead
+free models on purpose: NVIDIA's on-demand tier EOLs and hangs them, so
+blockrun runs a self-healing breaker that substitutes a live one and names it
+in the response's `model` field. The mechanism is sound. Reading it was our
+job, and Franklin never did — so nothing looked broken, you just got a model
+you did not ask for, with a different context window and a different
+temperament. The free default had been resolving to a model that leaks its
+chain of thought into the answer.
+
+**The chains are not in sync, and that is the part that actually breaks.**
+The Base gateway lists 7 free models. The Solana gateway lists exactly one —
+`nemotron-3-nano-omni` — and returns 400 "Unknown model" on the other six.
+Any free default chosen from the Base catalog is a hard failure on a Solana
+user's first turn. So the committed default is now the id that exists on
+*both* chains, and Base's stronger model (`nemotron-3-ultra-550b`, 1M
+context, and the only free model that answered the control question
+correctly) is applied at runtime as an upgrade read from the live catalog —
+never as a literal that the next rotation invalidates.
+
+**One source of truth.** The free default was a bare string repeated 63
+times across 21 files. This was the sixth pool rotation in three months, and
+each one had shipped with a few stale copies left behind. It is now
+`src/free-models.ts`: one constant, one preference order, one quarantine
+list, each id carrying the evidence for why it is in or out.
+
+**A probe is only evidence for the endpoint it ran against.** Worth
+recording, because it inverted a conclusion mid-investigation: on
+`/api/v1/chat/completions` the free pool collapses onto one backing model
+under load and leaks reasoning prose into `content` — `ultra-550b` served
+itself on 10 consecutive calls and then on 0 of the next 8 twenty minutes
+later. On `/api/v1/messages`, the endpoint the agent loop actually uses,
+every id answers as itself with no leak, on both chains.
+
+**No free vision, said out loud.** Both ids the catalog tags free + vision
+fail on a real image: Solana answers as itself and drops the image ("I can't
+view the image"), Base returns a 502 "Failed to load image". A dropped image
+produces a confidently wrong answer, so `isVisionModel()` now reports the
+truth and the free profile says vision is unavailable instead of guessing.
+
+**Two money bugs found on the way.** `m.startsWith('nvidia/')` was standing
+in for "is this model free" in three places. It was wrong in both
+directions: `nvidia/kimi-k2.5` is paid at $0.55/$2.50 per 1M and was
+skipping the "charges from your wallet" warning on `/model`, while the new
+free `poolside/` and `cohere/` ids were treated as paid. Separately, a
+free-tier turn that mentioned an image was silently swapped to paid
+`claude-sonnet-4.6` by the vision guard — the free tier now never falls back
+to a paid model, which was always the rule.
+
+**Also.** The router's tier classifier had been silently failing every
+classification and falling through to keyword routing since the previous
+rotation: no free model returns a bare tier word under `max_tokens: 8` any
+more. It now budgets for the model to think out loud and parses the last
+tier word rather than the first. Brand numbers synced (73 chat-visible
+models, 7 free).
+
 ## Franklin Agent 3.42.2 — an aborted payment is not a refund
 
 **A paid call that timed out could quietly hand its money back to the

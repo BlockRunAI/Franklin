@@ -424,19 +424,25 @@ test('proxy server handles OPTIONS and local model switching without backend cal
       `Unexpected suffix switch payload: ${JSON.stringify(suffixPayload)}`
     );
 
+    // Refreshed 2026-08-30: the gateway rotated the whole free pool, so every
+    // legacy free shortcut resolves to the current default.
+    const FREE_DEFAULT = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning';
     const freeSwitches = {
-      free: 'nvidia/nemotron-nano-9b-v2',
-      glm4: 'nvidia/nemotron-nano-9b-v2',
-      'qwen-think': 'nvidia/nemotron-nano-9b-v2',
-      'qwen-coder': 'nvidia/nemotron-nano-9b-v2',
-      maverick: 'nvidia/nemotron-nano-9b-v2',
-      'deepseek-free': 'nvidia/nemotron-nano-9b-v2',
-      'gpt-oss': 'nvidia/nemotron-nano-9b-v2',
-      'gpt-oss-small': 'nvidia/nemotron-nano-9b-v2',
-      'mistral-small': 'nvidia/mistral-nemotron',
-      nemotron: 'nvidia/mistral-nemotron',
-      devstral: 'nvidia/nemotron-nano-9b-v2',
-      'nano-9b': 'nvidia/nemotron-nano-9b-v2',
+      free: FREE_DEFAULT,
+      glm4: FREE_DEFAULT,
+      'qwen-think': FREE_DEFAULT,
+      'qwen-coder': FREE_DEFAULT,
+      maverick: FREE_DEFAULT,
+      'deepseek-free': FREE_DEFAULT,
+      'gpt-oss': FREE_DEFAULT,
+      'gpt-oss-small': FREE_DEFAULT,
+      'mistral-small': FREE_DEFAULT,
+      nemotron: FREE_DEFAULT,
+      devstral: FREE_DEFAULT,
+      'nano-9b': FREE_DEFAULT,
+      'nano-30b': 'nvidia/nemotron-3-nano-30b',
+      laguna: 'poolside/laguna-xs-2.1',
+      'ultra-550b': 'nvidia/nemotron-3-ultra-550b',
     };
     for (const [shortcut, expectedModel] of Object.entries(freeSwitches)) {
       const freeSwitchRes = await fetch(`http://127.0.0.1:${port}/api/messages`, {
@@ -5967,6 +5973,7 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
   const { MODEL_PRICING, estimateCost } = await import('../dist/pricing.js');
   const { isWeakModel } = await import('../dist/agent/loop.js');
   const { MODEL_SHORTCUTS, PICKER_CATEGORIES, resolveModel } = await import('../dist/ui/model-picker.js');
+  const { isFreeModelId, FREE_DEFAULT_MODEL } = await import('../dist/free-models.js');
 
   const freeCategory = PICKER_CATEGORIES.find((category) => /Free/.test(category.category));
   assert.ok(freeCategory, 'Expected a free model picker category');
@@ -5974,7 +5981,11 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
 
   for (const entry of freeCategory.models) {
     assert.equal(entry.price, 'FREE', `${entry.id} must render as FREE in the picker`);
-    assert.ok(entry.id.startsWith('nvidia/'), `${entry.id} should stay on the free NVIDIA tier`);
+    // Was `startsWith('nvidia/')`. The 2026-08-30 pool rotation added
+    // non-NVIDIA free rungs (poolside), and the prefix was never the property
+    // that mattered — being billed at $0 is. The pricing assertions below are
+    // the real guard; this one keeps a PAID id out of the free category.
+    assert.equal(isFreeModelId(entry.id), true, `${entry.id} must be a $0 free-tier id`);
     assert.equal(resolveModel(entry.shortcut), entry.id, `Picker shortcut ${entry.shortcut} drifted`);
 
     const pricing = MODEL_PRICING[entry.id];
@@ -5986,28 +5997,34 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
     assert.equal(isWeakModel(entry.id), true, `${entry.id} should receive weak/free-model guardrails`);
   }
 
-  // Refreshed 2026-08-12: `free` + most legacy free aliases now resolve to the
-  // current free default (mistral-nemotron — qwen3-next hit NVIDIA's EOL).
-  // Every target is a $0 nvidia model — the final estimateCost assertion
-  // enforces free-only.
+  // Refreshed 2026-08-30: the gateway rotated the ENTIRE free pool, so every
+  // legacy free alias now resolves to the current free default. `nano-vl` and
+  // `free-vision` are in this list on purpose — they no longer promise vision
+  // (the gateway serves both free vision ids from a text-only model), they
+  // just keep the muscle memory working. Every target is a $0 model; the
+  // estimateCost assertion below enforces free-only.
   const freeAliases = {
-    free: 'nvidia/nemotron-nano-9b-v2',
-    qwen: 'nvidia/nemotron-nano-9b-v2',
-    qwen3: 'nvidia/nemotron-nano-9b-v2',
-    glm4: 'nvidia/nemotron-nano-9b-v2',
-    'qwen-think': 'nvidia/nemotron-nano-9b-v2',
-    'qwen-coder': 'nvidia/nemotron-nano-9b-v2',
-    'deepseek-free': 'nvidia/nemotron-nano-9b-v2',
-    'gpt-oss': 'nvidia/nemotron-nano-9b-v2',
-    'gpt-oss-small': 'nvidia/nemotron-nano-9b-v2',
-    'mistral-small': 'nvidia/mistral-nemotron',
-    nemotron: 'nvidia/mistral-nemotron',
-    devstral: 'nvidia/nemotron-nano-9b-v2',
-    maverick: 'nvidia/nemotron-nano-9b-v2',
-    llama: 'nvidia/nemotron-nano-9b-v2',
-    'nano-9b': 'nvidia/nemotron-nano-9b-v2',
-    'nano-vl': 'nvidia/nemotron-nano-12b-v2-vl',
-    'free-vision': 'nvidia/nemotron-nano-12b-v2-vl',
+    free: FREE_DEFAULT_MODEL,
+    qwen: FREE_DEFAULT_MODEL,
+    qwen3: FREE_DEFAULT_MODEL,
+    glm4: FREE_DEFAULT_MODEL,
+    'qwen-think': FREE_DEFAULT_MODEL,
+    'qwen-coder': FREE_DEFAULT_MODEL,
+    'deepseek-free': FREE_DEFAULT_MODEL,
+    'gpt-oss': FREE_DEFAULT_MODEL,
+    'gpt-oss-small': FREE_DEFAULT_MODEL,
+    'mistral-small': FREE_DEFAULT_MODEL,
+    nemotron: FREE_DEFAULT_MODEL,
+    devstral: FREE_DEFAULT_MODEL,
+    maverick: FREE_DEFAULT_MODEL,
+    llama: FREE_DEFAULT_MODEL,
+    'nano-9b': FREE_DEFAULT_MODEL,
+    'nano-vl': FREE_DEFAULT_MODEL,
+    'free-vision': FREE_DEFAULT_MODEL,
+    omni: FREE_DEFAULT_MODEL,
+    'nano-30b': 'nvidia/nemotron-3-nano-30b',
+    laguna: 'poolside/laguna-xs-2.1',
+    'ultra-550b': 'nvidia/nemotron-3-ultra-550b',
   };
 
   for (const [shortcut, expectedModel] of Object.entries(freeAliases)) {
@@ -6025,6 +6042,11 @@ test('free routing profile stays free across router entry points', async () => {
     routeRequest,
     routeRequestAsync,
   } = await import('../dist/router/index.js');
+  const { FREE_DEFAULT_MODEL } = await import('../dist/free-models.js');
+  const { clearGatewayModelsCache } = await import('../dist/gateway-models.js');
+  // Cold catalog cache: freeChain() must fall back to the one id that exists
+  // on BOTH chains. Priming Base's catalog is exercised separately below.
+  clearGatewayModelsCache();
 
   assert.equal(parseRoutingProfile('free'), 'free');
   assert.equal(parseRoutingProfile('blockrun/free'), 'free');
@@ -6038,16 +6060,20 @@ test('free routing profile stays free across router entry points', async () => {
 
   for (const prompt of prompts) {
     const routed = routeRequest(prompt, 'free');
-    assert.equal(routed.model, 'nvidia/nemotron-nano-9b-v2', `routeRequest free drifted for prompt: ${prompt}`);
+    assert.equal(routed.model, FREE_DEFAULT_MODEL, `routeRequest free drifted for prompt: ${prompt}`);
     assert.equal(routed.tier, 'SIMPLE');
     assert.deepEqual(routed.signals, ['free-profile']);
   }
 
-  // Vision turns on the free profile go to the free VL model — the only
-  // vision-capable free id that verifiably serves itself (2026-08-12).
+  // Vision turns on the free profile get the TEXT model plus an explicit
+  // unavailable signal. Both free vision ids were served by a text-only
+  // substitute that answered "There's no image provided" (probed 2026-08-30),
+  // so there is nothing to route to — and the free profile must never fall
+  // back to a paid vision model. The agent loop turns this signal into a
+  // user-visible notice.
   const visionRouted = routeRequest('what is in this image?', 'free', true);
-  assert.equal(visionRouted.model, 'nvidia/nemotron-nano-12b-v2-vl');
-  assert.deepEqual(visionRouted.signals, ['free-profile', 'free-vision']);
+  assert.equal(visionRouted.model, FREE_DEFAULT_MODEL);
+  assert.deepEqual(visionRouted.signals, ['free-profile', 'free-vision-unavailable']);
 
   let classifierCalled = false;
   const asyncRouted = await routeRequestAsync('prove this theorem step by step', 'free', async () => {
@@ -6055,7 +6081,7 @@ test('free routing profile stays free across router entry points', async () => {
     return 'REASONING';
   });
   assert.equal(classifierCalled, false, 'free profile should not spend a classifier call');
-  assert.equal(asyncRouted.model, 'nvidia/nemotron-nano-9b-v2');
+  assert.equal(asyncRouted.model, FREE_DEFAULT_MODEL);
   assert.deepEqual(asyncRouted.signals, ['free-profile']);
 
   // Free chain expanded 2026-05-03: was a single-element chain that just
@@ -6068,17 +6094,17 @@ test('free routing profile stays free across router entry points', async () => {
   // a paid model (a free/empty session silently charging the wallet). This set
   // membership is the guard; keep it all-free.
   const FREE_GATEWAY_MODELS = new Set([
-    'nvidia/mistral-nemotron',
-    'nvidia/nemotron-nano-9b-v2',
-    'nvidia/nemotron-nano-12b-v2-vl',
-    // Added 2026-08-19 with the chain promotion. Billed $0 by the gateway and
-    // live-probed serving itself; the guard's job is to keep a PAID id out of
-    // the free chain, not to freeze the roster.
+    // Refreshed 2026-08-30 with the full pool rotation. The guard's job is to
+    // keep a PAID id out of the free chain, not to freeze the roster — see
+    // src/free-models.ts for why each id is in or out.
     'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+    'nvidia/nemotron-3-ultra-550b',
+    'nvidia/nemotron-3-nano-30b',
+    'poolside/laguna-xs-2.1',
   ]);
   for (const tier of ['SIMPLE', 'MEDIUM', 'COMPLEX', 'REASONING']) {
     const resolved = resolveTierToModel(tier, 'free');
-    assert.equal(resolved.model, 'nvidia/nemotron-nano-9b-v2', `resolveTierToModel free drifted for ${tier}`);
+    assert.equal(resolved.model, FREE_DEFAULT_MODEL, `resolveTierToModel free drifted for ${tier}`);
     const chain = getFallbackChain(tier, 'free');
     assert.ok(Array.isArray(chain) && chain.length > 0, `free fallback chain empty for ${tier}`);
     for (const m of chain) {
@@ -8836,20 +8862,21 @@ test('enforceRetention is a no-op when audit log is small', async () => {
 // category. pickFreeFallback selects from per-category chains so trading /
 // research / chat get general-purpose free models first.
 
-test('pickFreeFallback: coding category prefers nemotron-nano-9b-v2 first', async () => {
-  // Refreshed 2026-08-12: nemotron-nano-9b-v2 leads every category (the one
-  // free model that serves itself on the streaming path); mistral-nemotron is
-  // the secondary (DEGRADED upstream, non-stream rides the gateway fallback).
-  // qwen3-next-80b-a3b-instruct hit NVIDIA's EOL (410).
+test('pickFreeFallback: coding category leads with the free default', async () => {
+  // Refreshed 2026-08-30: the pool rotated wholesale and every category now
+  // shares one chain. Per-category NVIDIA rungs were three names for one
+  // backing model under load — see src/free-models.ts.
   const { pickFreeFallback } = await import('../dist/router/index.js');
+  const { FREE_DEFAULT_MODEL } = await import('../dist/free-models.js');
   const pick = pickFreeFallback('coding', new Set());
-  assert.equal(pick, 'nvidia/nemotron-nano-9b-v2');
+  assert.equal(pick, FREE_DEFAULT_MODEL);
 });
 
 test('pickFreeFallback: trading category skips coder, picks the general workhorse', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
+  const { FREE_DEFAULT_MODEL } = await import('../dist/free-models.js');
   const pick = pickFreeFallback('trading', new Set());
-  assert.equal(pick, 'nvidia/nemotron-nano-9b-v2', 'trading should not start with a coder model');
+  assert.equal(pick, FREE_DEFAULT_MODEL, 'trading should not start with a coder model');
   assert.notEqual(pick, 'nvidia/qwen3-coder-480b');
 });
 
@@ -8864,14 +8891,34 @@ test('pickFreeFallback: research / chat / creative also skip coder first', async
 
 test('pickFreeFallback: respects alreadyFailed set', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
-  // Coding starts with nemotron-nano-9b-v2. After it fails, next is the
-  // nano-omni secondary (2026-08-19 refresh — it started serving itself again,
-  // so it displaced the still-degraded mistral-nemotron, which slid to third).
-  const failed = new Set(['nvidia/nemotron-nano-9b-v2']);
+  // Rungs past the chain-safe default are Base-only, so the chain only offers
+  // them once the live catalog confirms them. Prime a Base-shaped catalog and
+  // the fallback walks down it; with a cold cache it correctly stops at the
+  // one id that exists on every chain (asserted below).
+  const { FREE_DEFAULT_MODEL } = await import('../dist/free-models.js');
+  const { __primeGatewayModelsCache, clearGatewayModelsCache } =
+    await import('../dist/gateway-models.js');
+  const freeEntry = (id) => ({
+    id, name: id, billing_mode: 'free', categories: ['chat'],
+    pricing: { input: 0, output: 0 },
+  });
+  __primeGatewayModelsCache([
+    freeEntry('nvidia/nemotron-3-ultra-550b'),
+    freeEntry(FREE_DEFAULT_MODEL),
+    freeEntry('nvidia/nemotron-3-nano-30b'),
+    freeEntry('poolside/laguna-xs-2.1'),
+  ]);
+  const failed = new Set(['nvidia/nemotron-3-ultra-550b']);
   const pick = pickFreeFallback('coding', failed);
-  assert.notEqual(pick, 'nvidia/nemotron-nano-9b-v2');
-  assert.equal(pick, 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
-    `after nemotron-nano-9b-v2 fails, coding should fall to nano-omni, got ${pick}`);
+  assert.notEqual(pick, 'nvidia/nemotron-3-ultra-550b');
+  assert.equal(pick, FREE_DEFAULT_MODEL,
+    `after the Base leader fails, coding should fall to the chain-safe default, got ${pick}`);
+
+  // Cold cache: only the both-chains id is offered, so a Solana user is never
+  // routed to a Base-only model that would 400.
+  clearGatewayModelsCache();
+  assert.equal(pickFreeFallback('coding', new Set()), FREE_DEFAULT_MODEL);
+  assert.equal(pickFreeFallback('coding', new Set([FREE_DEFAULT_MODEL])), undefined);
 });
 
 test('pickFreeFallback: unknown category uses default chain (general model first)', async () => {
@@ -8884,12 +8931,8 @@ test('pickFreeFallback: unknown category uses default chain (general model first
 
 test('pickFreeFallback: returns undefined when every candidate failed', async () => {
   const { pickFreeFallback } = await import('../dist/router/index.js');
-  const failed = new Set([
-    'nvidia/mistral-nemotron',
-    'nvidia/nemotron-nano-9b-v2',
-    'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
-  ]);
-  const pick = pickFreeFallback('trading', failed);
+  const { FREE_PREFERENCE_ORDER } = await import('../dist/free-models.js');
+  const pick = pickFreeFallback('trading', new Set(FREE_PREFERENCE_ORDER));
   assert.equal(pick, undefined);
 });
 
@@ -10522,7 +10565,6 @@ test('vision helpers: isVisionModel allowlist matches curated set', async () => 
     'xai/grok-4-0709',
     'moonshot/kimi-k3',
     'zai/glm-5.3-flash',
-    'nvidia/nemotron-nano-12b-v2-vl',
   ]) {
     assert.equal(isVisionModel(m), true, `${m} should be vision-capable`);
   }
@@ -10541,6 +10583,16 @@ test('vision helpers: isVisionModel allowlist matches curated set', async () => 
     'openai/gpt-5.3-codex',
     'nvidia/qwen3-coder-480b',
     'nvidia/llama-4-maverick',
+    // No free vision model (2026-08-30). The catalog tags these two as
+    // vision-capable and the gateway serves both from a TEXT-ONLY substitute:
+    // sent a real PNG, both replied "There's no image provided". Listing an id
+    // here is a promise the agent loop and the proxy act on, so the honest
+    // answer is false until a real image probe comes back from the id that was
+    // asked for. nemotron-nano-12b-v2-vl held the free vision slot until it
+    // left the catalog in the same rotation.
+    'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+    'nvidia/llama-3.2-11b-vision',
+    'nvidia/nemotron-nano-12b-v2-vl',
   ]) {
     assert.equal(isVisionModel(m), false, `${m} should be text-only`);
   }
@@ -11624,13 +11676,17 @@ test('router kill-switch: per-call unavailableModels context is honored', async 
 test('router kill-switch: the free profile is not affected by the shared Router set', async () => {
   const { routeRequest, markModelUnavailable, resetUnavailableModels } = await import('../dist/router/index.js');
   resetUnavailableModels();
+  const { FREE_DEFAULT_MODEL, QUARANTINED_FREE_MODELS } = await import('../dist/free-models.js');
   const r = routeRequest('hello', 'free');
-  assert.equal(r.model, 'nvidia/nemotron-nano-9b-v2');
+  assert.equal(r.model, FREE_DEFAULT_MODEL);
   assert.ok(!r.candidates.includes('nvidia/step-3.7-flash'), 'quarantined free id must not be in the free chain');
-  markModelUnavailable('nvidia/nemotron-nano-9b-v2');
+  for (const q of QUARANTINED_FREE_MODELS) {
+    assert.ok(!r.candidates.includes(q), `quarantined free id ${q} must not be in the free chain`);
+  }
+  markModelUnavailable(FREE_DEFAULT_MODEL);
   // The free chain is Franklin's own (pickFreeFallback walks it with the
   // per-turn failed set); the kill-switch only feeds the shared Router.
-  assert.equal(routeRequest('hello', 'free').model, 'nvidia/nemotron-nano-9b-v2');
+  assert.equal(routeRequest('hello', 'free').model, FREE_DEFAULT_MODEL);
   resetUnavailableModels();
 });
 

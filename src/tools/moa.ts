@@ -13,19 +13,23 @@
 
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { ModelClient } from '../agent/llm.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // ─── Configuration ────────────────────────────────────────────────────────
 
 /** Reference models — diverse, cheap/free models for parallel queries. */
 const REFERENCE_MODELS = [
-  'nvidia/nemotron-nano-9b-v2',             // Free, serves itself on every path (qwen3-next EOL'd 2026-08-12)
-  'nvidia/mistral-nemotron',                // Free second voice (DEGRADED upstream; non-stream rides gateway fallback)
+  FREE_DEFAULT_MODEL,                       // Free lead voice — see src/free-models.ts
+  'poolside/laguna-xs-2.1',                 // Free second voice: a different PROVIDER, so MoA gets two
+                                            // genuinely independent answers. Every NVIDIA free id collapses
+                                            // onto one backing model under load (probed 2026-08-30), which
+                                            // would have made this an ensemble of one.
   'google/gemini-2.5-flash',                // Fast, cheap
   'deepseek/deepseek-chat',                 // Cheap, good reasoning
 ];
 
 /** Aggregator model — free by default. Users explicitly pass `aggregator` to upgrade. */
-const AGGREGATOR_MODEL = 'nvidia/nemotron-nano-9b-v2';
+const AGGREGATOR_MODEL = FREE_DEFAULT_MODEL;
 
 /** Max tokens per reference response. */
 const REFERENCE_MAX_TOKENS = 4096;

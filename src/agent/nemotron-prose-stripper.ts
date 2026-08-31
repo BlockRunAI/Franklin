@@ -17,8 +17,17 @@
  * remainder is the user-facing `answer`.
  */
 
+import { isFreeModelId } from '../free-models.js';
+
 const REASONING_OPENERS = [
   /^the user (asks|wants|says|requested|is asking|wants me|wrote|just|said)/i,
+  // Observed live on 2026-08-30 from the rotated free pool (nemotron-3-nano-30b
+  // and nemotron-3.5-lightning, which every free id can be served by). These
+  // openers were not covered, so the leak reached users verbatim.
+  /^here'?s\s+(?:a|my|the)\s+thinking process/i,
+  /^hmm,?\s/i,
+  /^user (asks|says|wants|requested|wrote)/i,
+  /^we need to/i,
   /^looking at (this|the)/i,
   /^based on (the|this)/i,
   /^according to/i,
@@ -41,8 +50,28 @@ const ANSWER_INTRODUCERS: RegExp[] = [
   /\bi(?:'ll| will| shall)\s+(?:output|respond|say|reply|return|emit|write|give|print)\s+(?:the|a|with|out|to|exactly|back|only)?\s*(?:token|word|answer|response|string|text|output|message)?\s*:?\s*/gi,
 ];
 
+/**
+ * Which models leak chain-of-thought into `content`?
+ *
+ * This used to name one id (nemotron-3-nano-omni). The 2026-08-30 probe
+ * showed the leak is a property of the free POOL, not of that id: on
+ * /api/v1/chat/completions a request for any free id can be served by
+ * nemotron-3-nano-30b or nemotron-3.5-lightning, and both emit their full
+ * trace as plain text. The requested id is what the stripper sees, so
+ * matching on it missed every substituted response — Franklin's own free
+ * default leaked to users unstripped for exactly that reason.
+ *
+ * On /api/v1/messages (the agent loop's endpoint) the substitution does not
+ * happen and only nemotron-3.5-lightning leaks. Franklin also talks to
+ * chat/completions through the proxy, so the whole free tier is treated as
+ * leak-prone rather than tracking which endpoint a call came from.
+ *
+ * Stripping is safe on clean output: the opener patterns reject anything that
+ * doesn't start with a meta-reasoning sentence.
+ */
 export function isNemotronProseModel(model: string): boolean {
-  return /^nvidia\/nemotron-3-nano-omni/i.test(model);
+  if (/^nvidia\/nemotron/i.test(model)) return true;
+  return isFreeModelId(model);
 }
 
 export function stripNemotronProse(text: string): { thinking: string; answer: string } {
