@@ -5,6 +5,7 @@
 
 import { logger } from '../logger.js';
 import { FREE_DEFAULT_MODEL, isFreeModelId } from '../free-models.js';
+import { isVisionModel } from '../router/vision.js';
 
 export interface FallbackConfig {
   /** Models to try in order of priority */
@@ -174,10 +175,30 @@ export const ROUTING_PROFILES = new Set([
  */
 export function buildFallbackChain(
   startModel: string,
-  config: FallbackConfig = DEFAULT_FALLBACK_CONFIG
+  config: FallbackConfig = DEFAULT_FALLBACK_CONFIG,
+  needsVision = false,
 ): string[] {
   // Never include routing profiles in the chain — they'd cause 400s
-  const safeChain = config.chain.filter(m => !ROUTING_PROFILES.has(m));
+  let safeChain = config.chain.filter(m => !ROUTING_PROFILES.has(m));
+
+  // A request carrying images must not fall back onto a text-only model.
+  //
+  // The pre-request guard in proxy/server.ts swaps a text-only pick for a
+  // vision sibling, but it runs ONCE, before the call. This chain is walked
+  // AFTER a failure, so the guard was bypassed on every retry: an image sent
+  // to claude-sonnet-4.6 that hit a 429 fell straight to
+  // deepseek/deepseek-chat, which cannot read images at all.
+  //
+  // That costs real money. The gateway does not always refuse these before
+  // payment — probed 2026-08-31, Base returns 402 (a payment quote) for an
+  // image request to deepseek/deepseek-chat and the whole zai/glm-5.x line,
+  // while Solana correctly 400s them pre-payment. So on Base the retry is
+  // quoted, signed, settled, and THEN rejected upstream — or worse, answered
+  // without the image. Same shape as the free-tier guard above: the chain has
+  // to know what the request needs, not just what it costs.
+  if (needsVision) {
+    safeChain = safeChain.filter(m => isVisionModel(m));
+  }
 
   // Free start model → free-only chain. Ends the walk rather than reaching for
   // a paid rung; the caller gets the failure instead of a surprise charge.

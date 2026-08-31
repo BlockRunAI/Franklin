@@ -6034,6 +6034,29 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
   }
 });
 
+test('buildFallbackChain: a vision request never falls back to a text-only model', async () => {
+  const { buildFallbackChain, DEFAULT_FALLBACK_CONFIG } = await import('../dist/proxy/fallback.js');
+  const { isVisionModel } = await import('../dist/router/vision.js');
+
+  // The pre-request vision guard runs ONCE, before the call. The fallback
+  // chain is walked AFTER a failure, so an image sent to a vision model that
+  // 429'd used to land on deepseek/deepseek-chat, which cannot read images.
+  // The gateway does not always refuse that before payment — probed
+  // 2026-08-31, Base returns 402 (a payment quote) for an image request to
+  // deepseek/deepseek-chat and the whole zai/glm-5.x line, so the retry gets
+  // quoted, signed and settled before the upstream rejects it.
+  const vision = buildFallbackChain('anthropic/claude-sonnet-4.6', DEFAULT_FALLBACK_CONFIG, true);
+  for (const m of vision) {
+    assert.equal(isVisionModel(m), true, `vision request must not fall back to text-only ${m}`);
+  }
+  assert.ok(!vision.includes('deepseek/deepseek-chat'), 'deepseek/deepseek-chat is text-only');
+  assert.ok(vision.length > 1, 'the vision chain must still offer a real fallback rung');
+
+  // Text requests keep the full ladder — this filter is vision-only.
+  const text = buildFallbackChain('anthropic/claude-sonnet-4.6', DEFAULT_FALLBACK_CONFIG, false);
+  assert.ok(text.includes('deepseek/deepseek-chat'), 'a text request keeps the normal ladder');
+});
+
 test('buildFallbackChain: a free model never falls back to a paid one', async () => {
   const { buildFallbackChain } = await import('../dist/proxy/fallback.js');
   const { isFreeModelId, FREE_DEFAULT_MODEL } = await import('../dist/free-models.js');

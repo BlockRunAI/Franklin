@@ -235,6 +235,29 @@ function withinRateLimit(): boolean {
   return true;
 }
 
+/**
+ * Does this raw request body carry image content?
+ *
+ * The pre-request vision guard computes this from the already-parsed body, but
+ * that binding is out of scope by the time the FALLBACK chain is built — and
+ * the fallback walk is exactly where an unguarded retry drops an image onto a
+ * text-only model the gateway will still charge for. Re-derived from the raw
+ * body so the retry path cannot silently lose the requirement.
+ */
+function bodyNeedsVision(body: string | undefined): boolean {
+  if (!body) return false;
+  try {
+    const parsed = JSON.parse(body) as { messages?: unknown };
+    return messagesNeedVision(
+      (parsed.messages ?? []) as Array<{ role?: string; content?: unknown }>,
+    );
+  } catch {
+    // Unparseable body: assume no images rather than filtering the chain down
+    // on a guess. The pre-request guard already ran on the parsed copy.
+    return false;
+  }
+}
+
 export function createProxy(options: ProxyOptions): http.Server {
   // Wire stderr-mirroring of unified logger output to the proxy's debug
   // flag — same pattern as interactiveSession in agent/loop. File writes
@@ -548,7 +571,11 @@ export function createProxy(options: ProxyOptions): http.Server {
             chain: [
               ...new Set([
                 ...routerCandidates,
-                ...buildFallbackChain(requestModel),
+                // Recomputed here rather than reused from the pre-request
+                // guard above: that const is out of scope by this point, and
+                // without it the RETRY path drops images onto a text-only
+                // model that the gateway will happily charge for.
+                ...buildFallbackChain(requestModel, DEFAULT_FALLBACK_CONFIG, bodyNeedsVision(body)),
               ]),
             ],
           };
