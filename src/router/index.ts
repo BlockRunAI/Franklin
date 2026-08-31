@@ -548,7 +548,10 @@ function classicRouteRequest(
 //   - it asks for whatever resolveFreeModel() picks, rather than pinning a
 //     literal that the next rotation invalidates;
 //   - max_tokens is large enough for the verdict to actually ARRIVE after the
-//     model has finished thinking out loud (8 tokens never got there);
+//     model has finished thinking out loud (8 tokens never got there). Every
+//     free model is a reasoning model, and a tight budget truncates them
+//     mid-thought — the "chain-of-thought leak" this pool is blamed for is
+//     mostly just that. 1024 is cheap when the call bills at $0.
 //   - the parse takes the LAST tier word, not the first. A leaked trace
 //     restates the allowed set from the system prompt ("SIMPLE, MEDIUM, or
 //     COMPLEX") before reaching a verdict, so first-match reads the menu and
@@ -563,7 +566,7 @@ function classicRouteRequest(
 // one again.
 const CLASSIFIER_MODEL = process.env.FRANKLIN_ROUTER_MODEL || FREE_DEFAULT_MODEL;
 const CLASSIFIER_TIMEOUT_MS = 8_000;
-const CLASSIFIER_MAX_TOKENS = 256;
+const CLASSIFIER_MAX_TOKENS = 1_024;
 
 const CLASSIFIER_SYSTEM = `You classify a user's message into ONE routing tier for a CLI agent. Reply with EXACTLY ONE WORD from the allowed set. No explanation, no punctuation, no quotes.
 

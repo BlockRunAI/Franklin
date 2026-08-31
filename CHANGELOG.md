@@ -12,8 +12,7 @@ blockrun runs a self-healing breaker that substitutes a live one and names it
 in the response's `model` field. The mechanism is sound. Reading it was our
 job, and Franklin never did — so nothing looked broken, you just got a model
 you did not ask for, with a different context window and a different
-temperament. The free default had been resolving to a model that leaks its
-chain of thought into the answer.
+temperament.
 
 **The chains are not in sync, and that is the part that actually breaks.**
 The Base gateway lists 7 free models. The Solana gateway lists exactly one —
@@ -31,13 +30,21 @@ each one had shipped with a few stale copies left behind. It is now
 `src/free-models.ts`: one constant, one preference order, one quarantine
 list, each id carrying the evidence for why it is in or out.
 
-**A probe is only evidence for the endpoint it ran against.** Worth
-recording, because it inverted a conclusion mid-investigation: on
-`/api/v1/chat/completions` the free pool collapses onto one backing model
-under load and leaks reasoning prose into `content` — `ultra-550b` served
-itself on 10 consecutive calls and then on 0 of the next 8 twenty minutes
-later. On `/api/v1/messages`, the endpoint the agent loop actually uses,
-every id answers as itself with no leak, on both chains.
+**A probe is only evidence for the conditions it ran under.** Two
+conclusions inverted mid-investigation, and both are worth recording. On
+`/api/v1/chat/completions` the free pool substitutes under load —
+`ultra-550b` served itself on 10 consecutive calls and then on 0 of the next
+8 twenty minutes later — while on `/api/v1/messages`, the endpoint the agent
+loop actually uses, every id answers as itself on both chains. And the
+"chain-of-thought leak" the free pool gets blamed for is `max_tokens`
+truncation: `nemotron-3-nano-30b` returns truncated thinking in `content`
+with `finish_reason: length` at 120 tokens, and a clean answer with the
+trace in `reasoning_content` at 300. `cohere/north-mini-code`'s "empty
+stream" (6 of 8 calls) is the same bug wearing a different hat — 6 of 6
+clean once given room. Every free model is a reasoning model; budget for it
+rather than scrubbing the output. Caught by the andy and clawrouter sessions,
+the latter having nearly shipped a textual `<tool_call>` extractor for a
+model that returns a clean structured array at a larger budget.
 
 **No free vision, said out loud.** Both ids the catalog tags free + vision
 fail on a real image: Solana answers as itself and drops the image ("I can't
@@ -57,9 +64,9 @@ to a paid model, which was always the rule.
 **Also.** The router's tier classifier had been silently failing every
 classification and falling through to keyword routing since the previous
 rotation: no free model returns a bare tier word under `max_tokens: 8` any
-more. It now budgets for the model to think out loud and parses the last
-tier word rather than the first. Brand numbers synced (73 chat-visible
-models, 7 free).
+more. It now budgets 1024 tokens for the model to think out loud and parses
+the last tier word rather than the first. Brand numbers synced (73
+chat-visible models, 7 free).
 
 ## Franklin Agent 3.42.2 — an aborted payment is not a refund
 

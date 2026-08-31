@@ -91,21 +91,50 @@ export const FREE_DEFAULT_MODEL = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
  *     different PROVIDER, so the chain survives an NVIDIA-wide outage instead
  *     of being four names for one upstream.
  *
- * Not listed, and why (all probed 2026-08-30):
- *   - nvidia/nemotron-3.5-lightning — slowest measured, and the one id that
- *     leaked its full "Here's a thinking process:" trace into content on
- *     /v1/messages as well as on chat/completions.
- *   - cohere/north-mini-code — returned an EMPTY stream on 3 of 5 streaming
- *     calls. Franklin's agent loop streams, so an empty stream is a dead turn.
+ * Not listed, and why:
+ *   - nvidia/nemotron-3.5-lightning — LATENCY, and only latency. Measured
+ *     10.9s / 12.2s / 22.5s for a one-sentence answer at max_tokens 800,
+ *     against ~0.8-3s for the rest of the pool. Its name is a lie. (An
+ *     earlier revision of this file quarantined it for leaking reasoning
+ *     prose; that was wrong — see MAX_TOKENS below.)
  *   - nvidia/llama-3.2-11b-vision — catalogued as vision, cannot accept an
  *     image (see freeVisionModel), and is otherwise the weakest text model in
  *     the pool.
+ *
+ * MAX_TOKENS: THE FREE POOL NEEDS ROOM TO THINK
+ * --------------------------------------------
+ * Every free model here is a reasoning model, and a tight max_tokens makes
+ * them look broken in two different ways that are the SAME bug. Measured on
+ * chat/completions, 2026-08-31:
+ *
+ *   nemotron-3-nano-30b, "what does approve() do":
+ *     max_tokens 20  -> finish_reason "length", content is truncated thinking
+ *                       ("Okay, the user is asking about...")
+ *     max_tokens 120 -> finish_reason "length", still truncated thinking
+ *     max_tokens 300 -> finish_reason "stop", content is a clean answer and
+ *                       the thinking sits in reasoning_content
+ *
+ *   cohere/north-mini-code, "name three Base-chain DEXes":
+ *     max_tokens 200  -> EMPTY stream, 0 content chunks, 6 of 8 calls
+ *     max_tokens 2000 -> 6 of 6 clean, finish_reason "stop"
+ *
+ * So "leaks chain-of-thought into content" and "returns an empty stream" are
+ * both just the budget running out before the model stops reasoning. Neither
+ * is a property of the model, and neither is worth a workaround — give the
+ * call room instead. This is why the router's tier classifier no longer asks
+ * for a one-word answer in 8 tokens (see router/index.ts).
+ *
+ * Credit where due: caught by the andy session, which re-measured the same
+ * "leak" across budgets after making the same mistake, and by the clawrouter
+ * session, which nearly shipped a textual <tool_call> extractor for a model
+ * that returns a clean structured tool_calls array once given room.
  */
 export const FREE_PREFERENCE_ORDER: readonly string[] = [
   'nvidia/nemotron-3-ultra-550b',   // Base only
   FREE_DEFAULT_MODEL,               // both chains — the floor this never drops below
   'nvidia/nemotron-3-nano-30b',     // Base only
   'poolside/laguna-xs-2.1',         // Base only, different provider
+  'cohere/north-mini-code',         // Base only, different provider; needs a generous budget
 ];
 
 /**
@@ -132,12 +161,13 @@ export const QUARANTINED_FREE_MODELS: readonly string[] = [
   // chat/completions it comes back from a text-only substitute replying
   // "There's no image provided". Weakest text model in the pool otherwise.
   'nvidia/llama-3.2-11b-vision',
-  // Slowest free model measured (8.2s), and leaks its full reasoning trace
-  // into content on both endpoints.
-  'nvidia/nemotron-3.5-lightning',
-  // Self-serving, but returned an EMPTY stream on 3 of 5 streaming calls.
-  // Franklin's agent loop streams, so an empty stream is a dead turn.
-  'cohere/north-mini-code',
+  // NOT quarantined, deliberately, though an earlier revision had them here:
+  //   nvidia/nemotron-3.5-lightning — the "CoT leak" was max_tokens truncation.
+  //     It is merely slow, which keeps it out of FREE_PREFERENCE_ORDER but is
+  //     no reason to refuse to route to it if a user asks.
+  //   cohere/north-mini-code — the "empty stream" was the same truncation, and
+  //     it is a cascade rung other BlockRun components depend on.
+  // See the MAX_TOKENS note in FREE_PREFERENCE_ORDER above.
 ];
 
 /**
