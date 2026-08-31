@@ -47,19 +47,26 @@ clawrouter sessions — the latter nearly shipped a textual `<tool_call>`
 extractor for a model that returns a clean structured array at a larger
 budget.
 
-**Free vision is now chain-aware, and honest where it is missing.** The
-original failure was never the models: the gateway was dropping every
-`image_url` unconditionally under a stale comment, which is why it presented
-as a confident wrong answer with no error — the image never left the
-gateway. The allow-list fix reached Solana first. Measured through
-`/v1/messages` with a valid 64x64 PNG (fixtures under 10px per side are
-rejected upstream, so a tiny one proves nothing): `llama-3.2-11b-vision`
-answers 5/5 on Solana and 0/5 on Base, and `nemotron-3-nano-omni` drops the
-image on 2 of 4 Solana calls despite being catalogued as vision-capable.
-So Solana gets a working free vision model, Base honestly reports none, and
-nano-omni is not used for vision on either — dropping the image half the time
-is worse than declining, because the caller cannot tell which half they got.
-A free vision turn never falls back to a paid model on either chain.
+**No free vision, and the third measurement is the one that counts.** This
+took three passes, each reversing the last, and the reversals are the
+lesson. The first used a 2x2 PNG and proved nothing — images under 10px per
+side are rejected upstream. The second, with a valid 64x64 PNG, had
+`llama-3.2-11b-vision` answering 5 of 5 on Solana after the gateway's
+`image_url` allow-list fix landed there, and that shipped as a chain-aware
+free vision model. The third, ten calls instead of five and capturing the
+served `model` field, got 5 of 10 — the 5/5 was a lucky window. Notably the
+served id matched the requested id 10 times out of 10, so on `/v1/messages`
+this is not the cascade substituting a non-vision model (which is the
+mechanism on `/chat/completions`); the model simply does not see the image
+half the time. `nemotron-3-nano-omni` is worse and is never used for vision.
+
+A 50% silent-drop rate is the worst outcome available: HTTP 200, no error, a
+confident wrong answer, and nothing telling the caller which half they got.
+Intermittent failure is worse than constant failure, because constant
+failure gets fixed and intermittent failure gets shipped. So Franklin
+declines the turn, says the image was not seen, and stays on the free tier
+rather than falling back to a paid model. `FRANKLIN_FREE_VISION_MODEL`
+opts back in.
 
 **Two money bugs found on the way.** `m.startsWith('nvidia/')` was standing
 in for "is this model free" in three places. It was wrong in both

@@ -1562,10 +1562,11 @@ export async function interactiveSession(
             onEvent({
               kind: 'text_delta',
               text:
-                `*⚠️ ${original} can't see images, and this chain has no free ` +
-                'vision model — the gateway drops the image before it reaches ' +
-                'one. Answering from text only; switch to a paid model ' +
-                '(e.g. `/model haiku`) to send it.*\n\n',
+                `*⚠️ ${original} can't see images, and no free vision model ` +
+                'is reliable right now — the free vision ids drop the image on ' +
+                'about half of all calls and answer anyway. Answering from ' +
+                'text only, so treat anything said about the image as a guess; ' +
+                'switch to a paid model (e.g. `/model haiku`) to send it.*\n\n',
             });
           }
         } else {

@@ -60,7 +60,6 @@
  */
 
 import { peekGatewayModel } from './gateway-models.js';
-import { loadChain } from './config.js';
 
 /**
  * The free model Franklin asks for by default.
@@ -236,53 +235,50 @@ export const FREE_MODEL_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
 };
 
 /**
- * The free model that can actually accept an image, or null when there is
- * none on this chain.
+ * The free model that can accept an image, or null when there is none.
  *
- * This is CHAIN-AWARE because the gateways are at different deploy states,
- * not because the models differ. The original failure was gateway-side: both
- * NVIDIA paths dropped every `image_url` unconditionally under a stale
- * comment (found by the andy session), which is why it presented as a
- * confident wrong answer with no error — the image never left the gateway.
- * An allow-list fix shipped to Solana first.
+ * Currently null on BOTH chains. Three separate measurement passes, each of
+ * which reversed the previous conclusion — the history is kept because the
+ * reversals are the lesson.
  *
- * Measured through /v1/messages with a valid 64x64 red PNG, 2026-08-31.
- * (Fixture size matters: images under 10px per side are rejected upstream
- * with invalid_parameter_error, so a tiny test PNG proves nothing.)
+ * PASS 1 (2026-08-30, 2x2 PNG): both catalogued free vision ids failed. Later
+ *   invalidated as a fixture problem — images under 10px per side are
+ *   rejected upstream with invalid_parameter_error, so a tiny PNG proves
+ *   nothing. Use >=64x64.
  *
- *   sol  llama-3.2-11b-vision  5/5 "Red."          <- reliable
- *   sol  nano-omni             2/4 "Red", 2/4 "unknown"
- *   base llama-3.2-11b-vision  0/5 "I'm not seeing an image."
- *   base nano-omni             0/4 502 / circuit breaker open
+ * PASS 2 (2026-08-31, valid 64x64 red PNG, 5 calls): llama-3.2-11b-vision
+ *   answered "Red." 5/5 on Solana after the gateway's image_url allow-list
+ *   fix deployed there, 0/5 on Base. Shipped as chain-aware on that basis.
  *
- * So Solana gets a working free vision model and Base honestly reports none.
- * nano-omni is NOT used for vision on either chain even though the catalog
- * tags it vision-capable: dropping the image on half of all calls is worse
- * than declining, because the caller cannot tell which half they got.
+ * PASS 3 (same day, 10 calls, capturing the served `model` field): 5/10.
+ *   The 5/5 was a lucky window. Two things worth keeping from this pass:
  *
- * KNOWN LIMITATION, measured end-to-end through the binary: llama-3.2-11b-vision
- * is reliable as a bare vision call and weak as an AGENT model. Swapped in for
- * a vision turn with Franklin's full tool set active, 1 of 2 runs answered
- * correctly (via the empty-response fallback) and the other re-called `Read`
- * on the same path until the repeat guard stopped the turn. Both guardrails
- * engage, so the failure is bounded and visible rather than silent — which is
- * why this is still better than declining the turn outright. If it proves
- * annoying in practice, the fix is to run the vision call as a one-shot
- * without tools rather than to hand the model the whole turn.
+ *     - substituted 0/10. The served id matched the requested id EVERY time,
+ *       so on /v1/messages this is not the cascade handing the turn to a
+ *       non-vision model (which is the mechanism on /chat/completions, where
+ *       the andy session captured nano-omni being served by
+ *       nemotron-3-nano-30b, a model with no vision at all, 3/3). On this
+ *       path the model itself simply does not see the image half the time.
+ *     - nemotron-3-nano-omni is worse and is never used for vision: 2/4 on
+ *       Solana, 0/4 on Base (502, then circuit breaker open).
  *
- * WHEN BASE'S ALLOW-LIST FIX DEPLOYS: re-probe with a >=10px PNG and, if
- * llama-3.2-11b-vision answers there too, delete the chain check and return
- * it unconditionally.
+ * A 50% silent-drop rate is the worst possible outcome for a vision turn: the
+ * reply is HTTP 200 with no error and a confident wrong answer, and nothing
+ * in the response tells the caller which half they got. Intermittent failure
+ * is worse than constant failure, because constant failure gets fixed and
+ * intermittent failure gets shipped — which is exactly what happened between
+ * pass 2 and pass 3. So Franklin declines instead, and says why.
+ *
+ * TO RE-ENABLE: probe with a >=64x64 PNG, at least 10 calls, asserting BOTH
+ * that the answer is right AND that the served `model` echoes the requested
+ * id. A capability-aware cascade fix (a rescue that cannot serve the request
+ * is not a rescue) is in flight upstream. FRANKLIN_FREE_VISION_MODEL
+ * overrides this for operators who want to opt in early.
  */
 export function freeVisionModel(): string | null {
-  // Escape hatch for operators probing a chain mid-deploy.
   const override = process.env.FRANKLIN_FREE_VISION_MODEL;
-  if (override) return override === 'none' ? null : override;
-  try {
-    return loadChain() === 'solana' ? 'nvidia/llama-3.2-11b-vision' : null;
-  } catch {
-    return null;
-  }
+  if (override && override !== 'none') return override;
+  return null;
 }
 
 /**
