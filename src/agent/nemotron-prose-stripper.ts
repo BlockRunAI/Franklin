@@ -19,6 +19,18 @@
 
 const REASONING_OPENERS = [
   /^the user (asks|wants|says|requested|is asking|wants me|wrote|just|said)/i,
+  // Observed live 2026-08-30 on truncated (finish_reason "length") replies
+  // from nemotron-3-nano-30b and nemotron-3.5-lightning.
+  //
+  // `/^hmm,?\s/` and a bare `/^we need to/` were tried here and REMOVED: they
+  // match ordinary answers ("We need to bump the timeout first…"), and because
+  // stripNemotronProse discards everything up to the LAST answer-introducer, a
+  // false positive silently deletes real content rather than degrading it. The
+  // surviving patterns all name the user or the request explicitly, which an
+  // answer addressed TO the user does not do.
+  /^here'?s\s+(?:a|my|the)\s+thinking process/i,
+  /^user (asks|says|wants|requested|wrote)/i,
+  /^we need to (classify|answer|determine|decide|figure out|respond)\b/i,
   /^looking at (this|the)/i,
   /^based on (the|this)/i,
   /^according to/i,
@@ -41,8 +53,34 @@ const ANSWER_INTRODUCERS: RegExp[] = [
   /\bi(?:'ll| will| shall)\s+(?:output|respond|say|reply|return|emit|write|give|print)\s+(?:the|a|with|out|to|exactly|back|only)?\s*(?:token|word|answer|response|string|text|output|message)?\s*:?\s*/gi,
 ];
 
+/**
+ * Which models can put chain-of-thought in `content`?
+ *
+ * Scope correction (2026-08-31). A previous revision widened this to the
+ * whole free tier on the theory that the pool leaks. Re-measured across token
+ * budgets, that was wrong: the "leak" is max_tokens TRUNCATION. A Nemotron
+ * reasoning model cut off mid-thought emits the partial trace in `content`
+ * with finish_reason "length"; given room it returns a clean answer with
+ * finish_reason "stop" and the trace in `reasoning_content`.
+ *
+ *   nemotron-3-nano-30b, same prompt, chat/completions:
+ *     max_tokens 120 -> "length", content = "Okay, the user is asking..."
+ *     max_tokens 300 -> "stop",   content = the actual answer
+ *
+ * So the fix is to give free calls room (see router/index.ts's classifier
+ * budget and turn-analyzer.ts's), not to scrub output. This stays narrow — the
+ * Nemotron family, the only models observed producing untagged prose — because
+ * a wider net plus an opener match could truncate a legitimate answer that
+ * happens to begin "The user asks...".
+ *
+ * KNOWN LIMITATION: the real discriminator is `finish_reason === "length"`,
+ * which this module never sees — the streaming call site in agent/llm.ts
+ * decides whether to strip before the finish reason arrives. Until that is
+ * plumbed through, the opener list is the proxy for it, which is why the
+ * openers must stay specific enough that an untruncated answer cannot match.
+ */
 export function isNemotronProseModel(model: string): boolean {
-  return /^nvidia\/nemotron-3-nano-omni/i.test(model);
+  return /^nvidia\/nemotron/i.test(model);
 }
 
 export function stripNemotronProse(text: string): { thinking: string; answer: string } {

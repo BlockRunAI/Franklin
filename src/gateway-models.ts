@@ -16,7 +16,7 @@
  * is the safe direction for budget tracking).
  */
 
-import { loadChain, API_URLS, USER_AGENT } from './config.js';
+import { loadChain, API_URLS, USER_AGENT, type Chain } from './config.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -76,7 +76,14 @@ export interface GatewayModel {
 const CACHE_TTL_MS = 5 * 60_000;   // 5 min — gateway rotates models, but not often
 const FETCH_TIMEOUT_MS = 4_000;    // one-shot on init; don't let a slow gateway hang startup
 
-interface CacheEntry { models: GatewayModel[]; expiresAt: number; }
+// Keyed by chain. The Base and Solana gateways ship independent catalogs — an
+// id free on one can be absent on the other — and loadChain() can change
+// in-process (the panel writes it at runtime). A single unkeyed cache meant a
+// Base catalog kept answering after a switch to Solana, so free-models.ts
+// "confirmed" a Base-only id and routed to something that 400s there. Worse
+// than a cold cache, because peekGatewayModel deliberately ignores the TTL, so
+// the poisoned entry never aged out.
+interface CacheEntry { models: GatewayModel[]; expiresAt: number; chain: Chain; }
 let cache: CacheEntry | null = null;
 let inflight: Promise<GatewayModel[]> | null = null;
 
@@ -112,12 +119,19 @@ export function clearGatewayModelsCache(): void {
  */
 export function peekGatewayModel(id: string): GatewayModel | null {
   if (!cache) return null;
+  // A catalog fetched for a different chain is not evidence about this one.
+  if (cache.chain !== currentChain()) return null;
   return cache.models.find(m => m.id === id) ?? null;
+}
+
+/** loadChain() with the throw swallowed — this is a hot, sync path. */
+function currentChain(): Chain {
+  try { return loadChain(); } catch { return 'base'; }
 }
 
 /** Test helper — seed the cache without a network call. */
 export function __primeGatewayModelsCache(models: GatewayModel[]): void {
-  cache = { models, expiresAt: Date.now() + CACHE_TTL_MS };
+  cache = { models, expiresAt: Date.now() + CACHE_TTL_MS, chain: currentChain() };
 }
 
 /**
@@ -160,11 +174,11 @@ async function doFetch(): Promise<GatewayModel[]> {
  * the gateway at process start.
  */
 export async function getGatewayModels(): Promise<GatewayModel[]> {
-  if (cache && cache.expiresAt > Date.now()) return cache.models;
+  if (cache && cache.chain === currentChain() && cache.expiresAt > Date.now()) return cache.models;
   if (inflight) return inflight;
   inflight = doFetch()
     .then(models => {
-      cache = { models, expiresAt: Date.now() + CACHE_TTL_MS };
+      cache = { models, expiresAt: Date.now() + CACHE_TTL_MS, chain: currentChain() };
       return models;
     })
     .catch(err => {

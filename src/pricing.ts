@@ -9,16 +9,25 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   // their parser mapping promotes them to Auto upstream of cost estimation.
   'blockrun/auto': { input: 0.8, output: 4.0 },
   'blockrun/free': { input: 0, output: 0 },
-  // FREE — BlockRun gateway free tier (refreshed 2026-08-12 to match live
-  // /api/v1/models). nemotron-nano-9b-v2 is the current free default — the
-  // one free model that verifiably serves itself on the streaming path
-  // (mistral-nemotron is DEGRADED upstream: stream calls 400, non-stream
-  // rides a disclosed gateway fallback).
-  'nvidia/nemotron-nano-9b-v2': { input: 0, output: 0 },
-  'nvidia/mistral-nemotron': { input: 0, output: 0 },
-  'nvidia/nemotron-nano-12b-v2-vl': { input: 0, output: 0 },
+  // FREE — BlockRun gateway free tier (refreshed 2026-08-30 to match live
+  // /api/v1/models, which rotated the entire free pool). The routing order and
+  // the reasoning behind it live in src/free-models.ts; this table only has to
+  // price every id at $0 so no free call is ever reported as a charge.
+  'nvidia/nemotron-3-ultra-550b': { input: 0, output: 0 },      // strongest free model, but 0/5 reachable — NOT the default
+  'nvidia/nemotron-3-nano-30b': { input: 0, output: 0 },        // leads the free chain on Base (see free-models.ts)
+  'nvidia/nemotron-3.5-lightning': { input: 0, output: 0 },
   'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': { input: 0, output: 0 },
-  'nvidia/step-3.7-flash': { input: 0, output: 0 },
+  'nvidia/llama-3.2-11b-vision': { input: 0, output: 0 },
+  'cohere/north-mini-code': { input: 0, output: 0 },
+  'poolside/laguna-xs-2.1': { input: 0, output: 0 },
+  // Substituted free models: gone from /api/v1/models on 2026-08-30, but the
+  // gateway still answers for them by serving a different model. Priced at $0
+  // for legacy session-cost records — do NOT route to them.
+  'nvidia/nemotron-nano-9b-v2': { input: 0, output: 0 },        // -> nemotron-3-nano-30b
+  'nvidia/mistral-nemotron': { input: 0, output: 0 },           // -> nemotron-3-super-120b-a12b-free
+  'nvidia/nemotron-nano-12b-v2-vl': { input: 0, output: 0 },    // -> nemotron-3-nano-omni
+  'nvidia/step-3.7-flash': { input: 0, output: 0 },             // -> nemotron-3.5-lightning
+  'nvidia/nemotron-3-super-120b-a12b-free': { input: 0, output: 0 }, // pool backing id, never listed
   // Retired free models (kept at 0 for legacy session-cost records; gateway no
   // longer serves these — do NOT route to them).
   'nvidia/qwen3-next-80b-a3b-instruct': { input: 0, output: 0 }, // NVIDIA EOL 410, 2026-07-27

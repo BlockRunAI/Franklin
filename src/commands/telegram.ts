@@ -16,6 +16,7 @@ import { loadConfig } from './config.js';
 import { runTelegramBot } from '../channel/telegram.js';
 import { findLatestSessionByChannel } from '../session/storage.js';
 import type { AgentConfig } from '../agent/types.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 interface TelegramCommandOptions {
   model?: string;
@@ -59,7 +60,7 @@ export async function telegramCommand(opts: TelegramCommandOptions): Promise<voi
   const model =
     opts.model ||
     config['default-model'] ||
-    'nvidia/nemotron-nano-9b-v2';
+    FREE_DEFAULT_MODEL;
 
   const workingDir = process.cwd();
   const systemInstructions = assembleInstructions(workingDir, model);

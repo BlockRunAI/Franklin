@@ -11,6 +11,7 @@
 
 import type { CapabilityHandler, Dialogue } from './types.js';
 import { ModelClient } from './llm.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // ─── Verification System Prompt ───────────────────────────────────────────
 
@@ -154,7 +155,7 @@ export async function runVerification(
   config.onEvent?.({ kind: 'text_delta', text: '\n*Verifying...*\n' });
 
   // Use agent-tested free model for verification.
-  const verificationModel = 'nvidia/nemotron-nano-9b-v2';
+  const verificationModel = FREE_DEFAULT_MODEL;
 
   try {
     // Simple single-turn verification call

@@ -12,13 +12,13 @@ const { resolveModel, resolveModelStrict } = await import('../dist/ui/model-pick
 test('resolveModel: shortcut maps to canonical id', () => {
   assert.equal(resolveModel('sonnet'), 'anthropic/claude-sonnet-5');
   assert.equal(resolveModel('  SONNET  '), 'anthropic/claude-sonnet-5');
-  assert.equal(resolveModel('free'), 'nvidia/nemotron-nano-9b-v2');
+  assert.equal(resolveModel('free'), 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
   // Maverick left the gateway catalog 2026-07-14 — its aliases now follow the
   // retired-free-id pattern and resolve to the current free default.
-  assert.equal(resolveModel('llama'), 'nvidia/nemotron-nano-9b-v2');
-  assert.equal(resolveModel('llama-4-maverick'), 'nvidia/nemotron-nano-9b-v2');
-  assert.equal(resolveModel('maverick'), 'nvidia/nemotron-nano-9b-v2');
-  assert.equal(resolveModel('nemotron'), 'nvidia/mistral-nemotron');
+  assert.equal(resolveModel('llama'), 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
+  assert.equal(resolveModel('llama-4-maverick'), 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
+  assert.equal(resolveModel('maverick'), 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
+  assert.equal(resolveModel('nemotron'), 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
 });
 
 test('resolveModel: full provider/model id is passed through', () => {
@@ -40,7 +40,7 @@ test('resolveModelStrict: shortcut maps to canonical id and flags viaShortcut', 
   const r = resolveModelStrict('llama');
   assert.equal(r.ok, true);
   if (r.ok) {
-    assert.equal(r.id, 'nvidia/nemotron-nano-9b-v2');
+    assert.equal(r.id, 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
     assert.equal(r.viaShortcut, true);
   }
 });
@@ -78,6 +78,6 @@ test('resolveModelStrict: case-insensitive shortcut lookup', () => {
   const r = resolveModelStrict('  FrEe  ');
   assert.equal(r.ok, true);
   if (r.ok) {
-    assert.equal(r.id, 'nvidia/nemotron-nano-9b-v2');
+    assert.equal(r.id, 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
   }
 });

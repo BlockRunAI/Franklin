@@ -30,6 +30,7 @@
 import type { ModelClient } from './llm.js';
 import type { MarketCode } from '../trading/providers/standard-models.js';
 import type { Tier } from '../router/index.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -73,8 +74,17 @@ const CONSERVATIVE_DEFAULT: TurnAnalysis = {
 const MAX_CURRENT_CHARS = 800;
 const MAX_PREV_REPLY_CHARS = 300;
 const MAX_GOAL_CHARS = 200;
-const TIMEOUT_MS = 2_500;
-const MAX_ANALYZER_TOKENS = 128;
+// 2.5s did not leave a reasoning model room to finish and emit its JSON; the
+// abort landed mid-thought and the analyzer silently degraded. See
+// MAX_ANALYZER_TOKENS below.
+const TIMEOUT_MS = 8_000;
+// Raised from 128 on 2026-08-31. The free pool is reasoning models now: cut
+// off mid-thought they emit a partial trace instead of the single-line JSON
+// this parser needs, and a parse failure here is SILENT — it disables pushback
+// handling, ticker/live-data prefetch and planning detection with no error
+// surfaced. Same truncation bug the router classifier had; fixing it there and
+// not here left two thirds of the lesson unapplied. Costs nothing at $0.
+const MAX_ANALYZER_TOKENS = 1_024;
 const CACHE_TTL_MS = 30_000;
 const CACHE_MAX_SIZE = 64;
 
@@ -83,11 +93,13 @@ const CACHE_MAX_SIZE = 64;
 // Design: one compact prompt, a few precise examples, instruct the model to
 // emit a single-line JSON. The backbone must produce plain-text structured
 // output under tight max_tokens (thinking-first models leave text empty).
-// Nemotron Nano 9B took over 2026-08-12: qwen3-next-80b-a3b-instruct hit
-// NVIDIA's EOL (410) and mistral-nemotron is DEGRADED upstream (stream calls
-// 400). Nano 9B verifiably serves itself — verified live through the binary.
+// Follows FREE_DEFAULT_MODEL since 2026-08-31 (the ids this comment used to
+// name were all retired in the 2026-08-30 pool rotation). NOTE: the free pool
+// is now reasoning models that need room — see the TRUNCATION note in
+// src/free-models.ts. MAX_ANALYZER_TOKENS/TIMEOUT_MS below have NOT been
+// re-tuned for that and may truncate; see the review finding on this file.
 
-const ANALYZER_MODEL_DEFAULT = process.env.FRANKLIN_ANALYZER_MODEL || 'nvidia/nemotron-nano-9b-v2';
+const ANALYZER_MODEL_DEFAULT = process.env.FRANKLIN_ANALYZER_MODEL || FREE_DEFAULT_MODEL;
 
 const ANALYZER_SYSTEM = `You analyze ONE user message for Franklin's routing + prefetch harness. Output ONE LINE of compact JSON — no explanation, no markdown, no code fences.
 

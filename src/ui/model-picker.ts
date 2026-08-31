@@ -6,6 +6,7 @@
 import readline from 'node:readline';
 import chalk from 'chalk';
 import { getGatewayModels, type GatewayModel } from '../gateway-models.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // ─── Model Shortcuts (same as proxy) ───────────────────────────────────────
 
@@ -141,66 +142,60 @@ export const MODEL_SHORTCUTS: Record<string, string> = {
   // The free nvidia/deepseek-v4-flash SKU was EOL'd by the gateway (410).
   // Point the deepseek-free aliases at the current free default so muscle
   // memory keeps working without handing back a dead id.
-  'deepseek-v4': 'nvidia/nemotron-nano-9b-v2',
-  'deepseek-v4-flash': 'nvidia/nemotron-nano-9b-v2',
-  dsv4: 'nvidia/nemotron-nano-9b-v2',
-  'deepseek-v3.2': 'nvidia/nemotron-nano-9b-v2',
-  'deepseek-v3': 'nvidia/nemotron-nano-9b-v2',
-  // Free (agent-tested BlockRun gateway free tier — refreshed 2026-08-12 after
-  // qwen3-next-80b-a3b-instruct hit NVIDIA's EOL, 410). `free` follows the
-  // current free default (nemotron-nano-9b-v2: the one free model that
-  // verifiably serves itself on the streaming path — mistral-nemotron is
-  // DEGRADED upstream and 400s on stream). The qwen3-next / qwen3.5 aliases
-  // follow the retired-free-id pattern and resolve here too. NOTE: every free
-  // alias resolves to a $0 nvidia model — the free tier NEVER falls back to a
-  // paid model.
-  free: 'nvidia/nemotron-nano-9b-v2',
-  qwen: 'nvidia/nemotron-nano-9b-v2',
-  qwen3: 'nvidia/nemotron-nano-9b-v2',
-  'qwen3-next': 'nvidia/nemotron-nano-9b-v2',
-  'qwen3.5': 'nvidia/nemotron-nano-9b-v2',
-  glm4: 'nvidia/nemotron-nano-9b-v2',
-  'deepseek-free': 'nvidia/nemotron-nano-9b-v2',
-  'qwen-coder': 'nvidia/nemotron-nano-9b-v2',
-  'qwen-think': 'nvidia/nemotron-nano-9b-v2',
-  'gpt-oss': 'nvidia/nemotron-nano-9b-v2',
-  'gpt-oss-small': 'nvidia/nemotron-nano-9b-v2',
-  'mistral-small': 'nvidia/mistral-nemotron',
-  'mistral-nemotron': 'nvidia/mistral-nemotron',
-  // Verified-self-serving free secondaries (2026-08-12): the nano line answers
-  // as itself on live probes, unlike the pooled 30B omni model.
-  'nano-9b': 'nvidia/nemotron-nano-9b-v2',
-  'nano-vl': 'nvidia/nemotron-nano-12b-v2-vl',
-  'free-vision': 'nvidia/nemotron-nano-12b-v2-vl',
-  // Nemotron 3 Nano Omni started answering as ITSELF (re-probed 2026-08-19,
-  // stream and non-stream) — it was pooled behind gpt-oss-120b when it was
-  // last checked, which is why it had no alias until now. 31B/3.2B MoE,
-  // text + image + video + audio in, 256K context.
-  omni: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
-  'free-omni': 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
-  'nano-omni': 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
-  // Deliberately NOT aliased: nvidia/step-3.7-flash. It is in the catalog and
-  // billed at $0, but live probes (2026-08-19) come back served by
-  // nvidia/nemotron-3-super-120b — pointing users at it would promise a model
-  // they don't get. Same rule that retired the maverick and qwen3-next ids.
-  // Maverick left the gateway catalog on/before 2026-07-14. The id still
-  // answers, but only because the free pool silently substitutes another model
-  // for it — so pointing users at it would be promising a model they don't get.
-  // Follow the established retired-free-id pattern instead: resolve to the
-  // current free default so muscle memory keeps working.
-  llama: 'nvidia/nemotron-nano-9b-v2',
-  'llama-4': 'nvidia/nemotron-nano-9b-v2',
-  'llama-4-maverick': 'nvidia/nemotron-nano-9b-v2',
-  maverick: 'nvidia/nemotron-nano-9b-v2',
-  // Backward-compatibility aliases for models the gateway retired or exposes
-  // unreliably on /v1/messages. Map to agent-tested free models so shortcuts
-  // keep working without silent paid fallback or empty tool-use turns.
-  // Map to the closest current free model so old session records + user
-  // muscle memory keep working.
-  // `nemotron` resolves to the real Mistral Nemotron (in-catalog; currently
-  // DEGRADED upstream, non-stream calls ride a disclosed gateway fallback).
-  nemotron: 'nvidia/mistral-nemotron',
-  devstral: 'nvidia/nemotron-nano-9b-v2',
+  'deepseek-v4': FREE_DEFAULT_MODEL,
+  'deepseek-v4-flash': FREE_DEFAULT_MODEL,
+  dsv4: FREE_DEFAULT_MODEL,
+  'deepseek-v3.2': FREE_DEFAULT_MODEL,
+  'deepseek-v3': FREE_DEFAULT_MODEL,
+  // Free tier. On 2026-08-30 the gateway rotated the ENTIRE free pool: every
+  // id these aliases used to name (nemotron-nano-9b-v2, mistral-nemotron,
+  // nemotron-nano-12b-v2-vl, step-3.7-flash) left the catalog and is now
+  // answered by a substitute. They all resolve to the current free default
+  // instead — the retired-free-id pattern this list has followed since the
+  // qwen3-next EOL. Evidence and ordering: src/free-models.ts.
+  //
+  // NOTE: every free alias resolves to a $0 model. The free tier NEVER falls
+  // back to a paid model.
+  free: FREE_DEFAULT_MODEL,
+  qwen: FREE_DEFAULT_MODEL,
+  qwen3: FREE_DEFAULT_MODEL,
+  'qwen3-next': FREE_DEFAULT_MODEL,
+  'qwen3.5': FREE_DEFAULT_MODEL,
+  glm4: FREE_DEFAULT_MODEL,
+  'deepseek-free': FREE_DEFAULT_MODEL,
+  'qwen-coder': FREE_DEFAULT_MODEL,
+  'qwen-think': FREE_DEFAULT_MODEL,
+  'gpt-oss': FREE_DEFAULT_MODEL,
+  'gpt-oss-small': FREE_DEFAULT_MODEL,
+  'mistral-small': FREE_DEFAULT_MODEL,
+  'mistral-nemotron': FREE_DEFAULT_MODEL,
+  'nano-9b': FREE_DEFAULT_MODEL,
+  // Free vision aliases kept as muscle memory, but they no longer promise
+  // vision: the gateway serves both free vision ids from a text-only model
+  // (see router/vision.ts). They resolve to the free default like every other
+  // retired free id.
+  'nano-vl': FREE_DEFAULT_MODEL,
+  'free-vision': FREE_DEFAULT_MODEL,
+  // omni IS the free default now (the only free id on both chains), so these
+  // are the same target rather than a redirect.
+  omni: FREE_DEFAULT_MODEL,
+  'free-omni': FREE_DEFAULT_MODEL,
+  'nano-omni': FREE_DEFAULT_MODEL,
+  // Base-only free ids. They 400 on Solana, which is a clear error rather than
+  // a silent wrong model, so the shortcuts stay honest and resolve to the id
+  // the user typed.
+  'nano-30b': 'nvidia/nemotron-3-nano-30b',
+  laguna: 'poolside/laguna-xs-2.1',
+  'ultra-550b': 'nvidia/nemotron-3-ultra-550b',
+  // Maverick left the gateway catalog on/before 2026-07-14 and the free pool
+  // silently substitutes for it, so pointing users at it would promise a model
+  // they don't get. Resolve to the current free default instead.
+  llama: FREE_DEFAULT_MODEL,
+  'llama-4': FREE_DEFAULT_MODEL,
+  'llama-4-maverick': FREE_DEFAULT_MODEL,
+  maverick: FREE_DEFAULT_MODEL,
+  nemotron: FREE_DEFAULT_MODEL,
+  devstral: FREE_DEFAULT_MODEL,
   // Others
   minimax: 'minimax/minimax-m3',
   'm3': 'minimax/minimax-m3',
@@ -451,20 +446,26 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       // hit NVIDIA's EOL (410). All rows are $0 — the free tier never falls
       // back to paid.
       //
-      // Caveat worth knowing before editing this list: the NVIDIA free pool
-      // silently substitutes or degrades, so every row here is re-probed
-      // before it ships. Re-probed 2026-08-19: the nano pair and the 30B omni
-      // model all answer as THEMSELVES on both the streaming and non-streaming
-      // paths (omni was pooled behind gpt-oss-120b in August and has since
-      // been fixed upstream — hence its new row). mistral-nemotron still
-      // comes back served by `nvidia/nemotron-3-super-120b`; it keeps its row
-      // and its `nemotron` alias but must never lead a chain. The catalog's
-      // fifth free id, nvidia/step-3.7-flash, is substituted the same way and
-      // is deliberately absent from both this list and MODEL_SHORTCUTS.
-      { id: 'nvidia/nemotron-nano-9b-v2',     shortcut: 'free',     label: 'Nemotron Nano 9B',   price: 'FREE', highlight: true },
-      { id: 'nvidia/nemotron-nano-12b-v2-vl', shortcut: 'nano-vl',  label: 'Nemotron Nano VL',   price: 'FREE' },
-      { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', shortcut: 'omni', label: 'Nemotron 3 Nano Omni', price: 'FREE' },
-      { id: 'nvidia/mistral-nemotron',        shortcut: 'nemotron', label: 'Mistral Nemotron',   price: 'FREE' },
+      // Caveat worth knowing before editing this list: only the FIRST row is
+      // available on both chains. The Solana gateway lists exactly one free
+      // model and 400s ("Unknown model") on the other three, which are
+      // Base-only as of the 2026-08-30 rotation. That is why `free` — and
+      // every legacy free alias — points at the chain-safe id, and why the
+      // ROUTER upgrades to the 550B at runtime from the live catalog rather
+      // than from this list (see src/free-models.ts, freeChain).
+      //
+      // The rows are still worth showing on both chains: the picker hydrates
+      // against the gateway catalog, and a user who pins a Base-only id on
+      // Solana gets a clear "Unknown model" rather than a silent wrong model.
+      //
+      // Deliberately absent (NOT quarantined — QUARANTINED_FREE_MODELS is
+      // empty): nemotron-3.5-lightning is merely slow, cohere/north-mini-code
+      // is a routable chain rung with no picker row, and llama-3.2-11b-vision
+      // is vision-only. Reasons per id live in src/free-models.ts.
+      { id: FREE_DEFAULT_MODEL,               shortcut: 'free',      label: 'Nemotron 3 Nano Omni', price: 'FREE', highlight: true },
+      { id: 'nvidia/nemotron-3-ultra-550b',   shortcut: 'ultra-550b', label: 'Nemotron 3 Ultra 550B', price: 'FREE' },
+      { id: 'nvidia/nemotron-3-nano-30b',     shortcut: 'nano-30b',  label: 'Nemotron 3 Nano 30B',  price: 'FREE' },
+      { id: 'poolside/laguna-xs-2.1',         shortcut: 'laguna',    label: 'Laguna XS 2.1',        price: 'FREE' },
     ],
   },
 ];

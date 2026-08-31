@@ -37,7 +37,7 @@ The shortcut → canonical-model-id table at `src/ui/model-picker.ts` and `src/p
 _Avoid_: Model registry, model list.
 
 **Picker shortcut**:
-A short alias (e.g. `free`, `kimi`, `sonnet-4.6`) that resolves to a canonical gateway model id (`nvidia/qwen3-coder-480b`).
+A short alias (e.g. `free`, `kimi`, `sonnet-4.6`) that resolves to a canonical gateway model id (e.g. `anthropic/claude-sonnet-4.6`).
 _Avoid_: Alias (used in code), nickname.
 
 **Tier**:
@@ -53,7 +53,7 @@ The `blockrun/auto` profile: the router classifies the turn into a tier and reso
 _Avoid_: Smart mode, dynamic mode.
 
 **Free tier matrix**:
-The agent-tested set of free gateway models that pass both the echo and Bash-tool live probes; current members are `nvidia/qwen3-coder-480b` and `nvidia/llama-4-maverick`.
+The agent-tested set of free gateway models that pass both the echo and Bash-tool live probes. Members rotate with the gateway's free pool — `FREE_PREFERENCE_ORDER` in `src/free-models.ts` is the source of truth, never this line.
 _Avoid_: Free models (use this only for the broader picker category).
 
 **Fallback chain**:
@@ -117,7 +117,7 @@ A nested Franklin agent invocation; spawning a paid sub-model from a free parent
 _Avoid_: Child agent, helper agent.
 
 **MOA**:
-The Mixture-of-Agents tool that runs several free reference models in parallel and aggregates with a single aggregator model (currently `nvidia/qwen3-coder-480b`).
+The Mixture-of-Agents tool that runs several free reference models in parallel and aggregates with a single aggregator model (`FREE_DEFAULT_MODEL`; see `src/tools/moa.ts`).
 _Avoid_: Ensemble, multi-model.
 
 **Content piece**:

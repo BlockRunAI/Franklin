@@ -4,6 +4,7 @@
  */
 
 import { logger } from '../logger.js';
+import { FREE_DEFAULT_MODEL, isFreeModelId } from '../free-models.js';
 
 export interface FallbackConfig {
   /** Models to try in order of priority */
@@ -20,7 +21,7 @@ export const DEFAULT_FALLBACK_CONFIG: FallbackConfig = {
   chain: [
     'deepseek/deepseek-chat', // Direct fallback — cheap & reliable
     'google/gemini-2.5-flash', // Fast & capable
-    'nvidia/nemotron-nano-9b-v2', // Free model as ultimate fallback (reliable instruction-follower)
+    FREE_DEFAULT_MODEL, // Free model as ultimate fallback — see src/free-models.ts
   ],
   retryOn: [429, 500, 502, 503, 504, 529],
   maxRetries: 5,
@@ -163,6 +164,13 @@ export const ROUTING_PROFILES = new Set([
  * Build fallback chain starting from a specific model.
  * Filters out routing profiles (blockrun/auto etc.) since the backend
  * doesn't recognize them — they must be resolved by the smart router first.
+ *
+ * A FREE start model never falls back to a paid one. The default chain leads
+ * with paid rungs (deepseek, gemini), so a proxy client that explicitly asked
+ * for a free model and hit a 429 or a 5xx used to have its next attempt signed
+ * as an x402 payment — a wallet charge the caller never asked for, triggered by
+ * nothing more than provider overload. `blockrun/free` was already handled;
+ * a concrete free id was not.
  */
 export function buildFallbackChain(
   startModel: string,
@@ -170,6 +178,12 @@ export function buildFallbackChain(
 ): string[] {
   // Never include routing profiles in the chain — they'd cause 400s
   const safeChain = config.chain.filter(m => !ROUTING_PROFILES.has(m));
+
+  // Free start model → free-only chain. Ends the walk rather than reaching for
+  // a paid rung; the caller gets the failure instead of a surprise charge.
+  if (isFreeModelId(startModel)) {
+    return [startModel, ...safeChain.filter(m => m !== startModel && isFreeModelId(m))];
+  }
 
   const index = safeChain.indexOf(startModel);
   if (index >= 0) {

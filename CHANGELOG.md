@@ -1,5 +1,95 @@
 # Changelog
 
+## Franklin Agent 3.43.0 — the free tier stops naming ghosts
+
+**Every free model Franklin asked for had left the catalog.** On 2026-08-30
+the gateway rotated the entire free pool. All four ids Franklin named —
+`nemotron-nano-9b-v2` (the default), `mistral-nemotron`,
+`nemotron-nano-12b-v2-vl` and `step-3.7-flash` — were gone from
+`/api/v1/models` and still answering, because the gateway routes around dead
+free models on purpose: NVIDIA's on-demand tier EOLs and hangs them, so
+blockrun runs a self-healing breaker that substitutes a live one and names it
+in the response's `model` field. The mechanism is sound. Reading it was our
+job, and Franklin never did — so nothing looked broken, you just got a model
+you did not ask for, with a different context window and a different
+temperament.
+
+**The chains are not in sync, and that is the part that actually breaks.**
+When this landed, the Base gateway listed 7 free models and the Solana
+gateway listed exactly one — `nemotron-3-nano-omni` — returning 400 "Unknown
+model" on the other six. Any free default chosen from the Base catalog is a
+hard failure on a Solana user's first turn during a window like that, and the
+two gateways deploy independently, so it will recur. The committed default is
+therefore the id that survived on *both* chains, and the Base-only models are
+applied at runtime as an upgrade read from the live catalog — never as a
+literal that the next rotation invalidates. (Solana caught up hours later;
+the availability probe below then dropped `ultra-550b` from the chain
+entirely, so the runtime upgrade is `nemotron-3-nano-30b`.)
+
+**One source of truth.** The free default was a bare string repeated 63
+times across 21 files. This was the sixth pool rotation in three months, and
+each one had shipped with a few stale copies left behind. It is now
+`src/free-models.ts`: one constant, one preference order, one quarantine
+list, each id carrying the evidence for why it is in or out.
+
+**A probe is only evidence for the conditions it ran under.** Several
+conclusions inverted mid-investigation, which is the finding worth keeping.
+The "chain-of-thought leak" the free pool gets blamed for is truncation:
+`nemotron-3-nano-30b` returns truncated thinking in `content` with
+`finish_reason: length` at 120 tokens and a clean answer with the trace in
+`reasoning_content` at 300, and `cohere/north-mini-code`'s "empty stream"
+(6 of 8 calls) is the same bug wearing a different hat — 6 of 6 clean once
+given room. The cause is the gateway's extractor falling back to reasoning
+text when the answer field is empty, so `finish_reason: length` is the real
+discriminator and a bigger budget only stops triggering it. Availability
+inverted too: `ultra-550b` looked like the strongest free model, then went
+0 for 5 with hard 40s timeouts, so the chain now orders on availability
+first and leads with the pool's own backing model. Thanks to the andy and
+clawrouter sessions — the latter nearly shipped a textual `<tool_call>`
+extractor for a model that returns a clean structured array at a larger
+budget.
+
+**No free vision, and it took five measurement passes to be sure — four of
+which pointed the wrong way.** A 2x2 test PNG (rejected upstream, proves
+nothing). Then 5 of 5 on Solana with a valid 64x64 fixture, shipped. Then 5
+of 10 on a bigger sample, reverted. Then 30 of 30 across both HTTP paths and
+three runs once the gateway's `image_url` allow-list fix had settled,
+re-enabled. Then the measurement that actually mattered: the whole feature,
+end to end through the binary, **1 of 5**.
+
+`llama-3.2-11b-vision` is reliable as a vision *call* and too weak to drive
+an agent *turn*. Handed the full tool set it re-called `Read` on the same
+path until the repeat guard fired; handed no tools once the image was in
+history, it ended the turn after `Read` without answering. So the blocker
+stopped being the gateway and became Franklin's own wiring, which swaps the
+agent model for the whole turn. A capability that works 30/30 in isolation
+and 1/5 in the product is not a capability, so Franklin declines and says
+the image was not seen, on the free tier, without falling back to a paid
+model. The fix is recorded in `free-models.ts`: make the vision turn a
+one-shot side-call and let the normal agent model finish.
+`FRANKLIN_FREE_VISION_MODEL` exercises the whole path without a code change.
+
+Also worth carrying forward: a hand-rolled PNG that `file` accepts can still
+be corrupt, and a model politely saying it cannot see an image is
+indistinguishable from the gateway having dropped it. Validate the fixture
+with a real decoder and check the chunk CRCs before trusting a negative.
+
+**Two money bugs found on the way.** `m.startsWith('nvidia/')` was standing
+in for "is this model free" in three places. It was wrong in both
+directions: `nvidia/kimi-k2.5` is paid at $0.55/$2.50 per 1M and was
+skipping the "charges from your wallet" warning on `/model`, while the new
+free `poolside/` and `cohere/` ids were treated as paid. Separately, a
+free-tier turn that mentioned an image was silently swapped to paid
+`claude-sonnet-4.6` by the vision guard — the free tier now never falls back
+to a paid model, which was always the rule.
+
+**Also.** The router's tier classifier had been silently failing every
+classification and falling through to keyword routing since the previous
+rotation: no free model returns a bare tier word under `max_tokens: 8` any
+more. It now budgets 1024 tokens for the model to think out loud and parses
+the last tier word rather than the first. Brand numbers synced (76
+chat-visible models, 7 free).
+
 ## Franklin Agent 3.42.2 — an aborted payment is not a refund
 
 **A paid call that timed out could quietly hand its money back to the

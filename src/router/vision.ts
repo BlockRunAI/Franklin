@@ -19,6 +19,8 @@
  * `Image file: <path>` description string. Expensive AND wrong.
  */
 
+import { freeVisionModel } from '../free-models.js';
+
 const VISION_MODELS = new Set<string>([
   // Anthropic — native vision across the line
   'anthropic/claude-fable-5',
@@ -82,21 +84,44 @@ const VISION_MODELS = new Set<string>([
   // Z.AI — GLM-5.3 Flash is the one GLM SKU the catalog tags as vision
   // (2026-08-29 sync); GLM-5.3 / 5.2 / 5.1 are text + reasoning only.
   'zai/glm-5.3-flash',
-  // NVIDIA inference — Nemotron Nano VL is multimodal; deepseek/qwen-coder are
-  // not. Llama 4 Maverick dropped 2026-07-14: it left the gateway catalog, and
-  // listing it here contradicted routeRequest()'s own "maverick is text-only"
-  // note — the free profile would route a vision turn to a text-only model.
-  'nvidia/nemotron-nano-12b-v2-vl',
-  // Nemotron 3 Nano Omni accepts text, images, video and audio, and now serves
-  // itself (2026-08-19 probe) — it is the strongest free vision option in the
-  // catalog on ChartQA / DocVQA / MMMU.
-  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+  // ── The free vision model is NOT here, on purpose ──
+  // isVisionModel() consults freeVisionModel() instead of this static set,
+  // because that answer depends on gateway deploy state and an env override
+  // rather than on a fixed capability. See the note below and free-models.ts.
+  //
+  // ── Why no free vision id is listed (2026-08-31) ──
+  // Listing an id here is a promise isVisionModel() callers act on: the agent
+  // loop and the proxy both use it to decide whether an image can be sent at
+  // all. Neither free vision id earns that promise, for two DIFFERENT reasons:
+  //
+  //   nemotron-3-nano-omni    — the gateway now REFUSES image input for this
+  //                             id on /v1/messages with an explicit 400 and no
+  //                             charge ("served text-only on NVIDIA"). Before
+  //                             that it silently saw the image 6/10 and was
+  //                             substituted 7/10 on /chat/completions by a
+  //                             model with no vision at all. The loud refusal
+  //                             is the better failure and needs no guard here.
+  //   llama-3.2-11b-vision    — reads the image reliably as a bare call
+  //                             (30/30) but only 1/5 end-to-end through the
+  //                             agent loop, which is Franklin's own wiring
+  //                             problem, not the model's.
+  //
+  // Full measurement history and the acceptance bar for re-adding either:
+  // freeVisionModel() in src/free-models.ts.
+  //
+  // nvidia/nemotron-nano-12b-v2-vl held this slot until it left the catalog on
+  // 2026-08-30; Llama 4 Maverick before that (dropped 2026-07-14).
 ]);
 
 /** Does this concrete gateway model accept image input? */
 export function isVisionModel(modelId: string | undefined | null): boolean {
   if (!modelId) return false;
-  return VISION_MODELS.has(modelId);
+  if (VISION_MODELS.has(modelId)) return true;
+  // The free tier's vision model is resolved at runtime, not fixed: it depends
+  // on gateway deploy state and on FRANKLIN_FREE_VISION_MODEL. freeVisionModel()
+  // returns null when no free model can be trusted with an image, and this
+  // stays false there.
+  return modelId === freeVisionModel();
 }
 
 /** Lower-cased copy used for prefix family matching in pickVisionSibling. */

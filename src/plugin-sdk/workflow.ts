@@ -7,6 +7,9 @@
 
 import type { SearchResult } from './search.js';
 import type { ChannelMessage } from './channel.js';
+// Zero-import leaf: naming the free default must not drag core's config
+// module (and its module-load filesystem reads) into the public SDK.
+import { FREE_DEFAULT_MODEL } from '../free-models.constants.js';
 
 // ─── Model Tiers ──────────────────────────────────────────────────────────
 
@@ -15,14 +18,14 @@ export type ModelTier = 'free' | 'cheap' | 'premium' | 'none';
 
 /** Maps tier names to actual model identifiers */
 export interface ModelTierConfig {
-  free: string;      // e.g. "nvidia/nemotron-nano-9b-v2"
+  free: string;      // resolved from FREE_DEFAULT_MODEL in src/free-models.ts
   cheap: string;     // e.g. "zai/glm-5.1"
   premium: string;   // e.g. "anthropic/claude-sonnet-5"
 }
 
 export const DEFAULT_MODEL_TIERS: ModelTierConfig = {
-  free: 'nvidia/nemotron-nano-9b-v2',
-  cheap: 'nvidia/nemotron-nano-9b-v2', // Free by default; opt-in to paid flat-rate via 'zai/glm-5.1'.
+  free: FREE_DEFAULT_MODEL,
+  cheap: FREE_DEFAULT_MODEL, // Free by default; opt-in to paid flat-rate via 'zai/glm-5.1'.
   premium: 'anthropic/claude-sonnet-5',
 };
 

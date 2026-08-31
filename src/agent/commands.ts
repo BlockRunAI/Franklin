@@ -17,6 +17,7 @@ import { getStatsSummary, recordUsage } from '../stats/tracker.js';
 import { resolveModel } from '../ui/model-picker.js';
 import type { ModelClient } from './llm.js';
 import type { AgentConfig, Dialogue, StreamEvent } from './types.js';
+import { isFreeModelId } from '../free-models.js';
 import {
   listSessions,
   loadSessionHistory,
@@ -1096,8 +1097,7 @@ export async function handleSlashCommand(
       ctx.config.baseModel = newModel; // Update recovery target so loop doesn't reset
       ctx.config.onModelChange?.(newModel, 'user');
       // Warn when switching from free to paid so users know charges start now
-      const isFree = (m: string) => m.startsWith('nvidia/') || m === 'blockrun/free';
-      const paidWarning = !isFree(newModel)
+      const paidWarning = !isFreeModelId(newModel)
         ? ` ⚠️  (paid — charges from your wallet per call)`
         : '';
       ctx.onEvent({ kind: 'text_delta', text: `Model → **${newModel}**${paidWarning}\n` });

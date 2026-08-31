@@ -30,6 +30,7 @@ import { runX, type RunResult } from '../social/x.js';
 import { getStats } from '../social/db.js';
 import { loadChain, API_URLS } from '../config.js';
 import { loadConfig as loadAppConfig } from './config.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 export interface SocialCommandOptions {
   dryRun?: boolean;
@@ -196,7 +197,7 @@ async function runCommand(options: SocialCommandOptions): Promise<void> {
   const apiUrl = API_URLS[chain];
   const appConfig = loadAppConfig();
   const model =
-    options.model || appConfig['default-model'] || 'nvidia/nemotron-nano-9b-v2';
+    options.model || appConfig['default-model'] || FREE_DEFAULT_MODEL;
 
   console.log(chalk.dim(`  Model: ${model}`));
   console.log('');

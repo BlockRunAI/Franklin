@@ -6,6 +6,7 @@
 
 import type { Dialogue, ContentPart, UserContentPart } from './types.js';
 import { peekGatewayModel, warmGatewayModelsCache } from '../gateway-models.js';
+import { FREE_POOL_CONTEXT_FLOOR } from '../free-models.js';
 
 const DEFAULT_BYTES_PER_TOKEN = 4;
 
@@ -301,17 +302,33 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'moonshot/kimi-k2.5': 128_000,
   'minimax/minimax-m3': 1_000_000,
   'minimax/minimax-m2.7': 128_000,
-  // NVIDIA-hosted free tier (refreshed 2026-08-12 to match live /api/v1/models).
-  // Dead ids (qwen3-next, qwen3.5-122b, seed-oss, maverick, mistral-large) are
-  // kept so legacy session records still get a sane window.
+  // Free tier (refreshed 2026-08-30 — the gateway rotated the whole pool).
+  //
+  // Every current free id is pinned to FREE_POOL_CONTEXT_FLOOR rather than its
+  // catalogued window, deliberately. A request for the 1M-context default is
+  // served by the 131K nemotron-3-nano-30b whenever the pool is under load,
+  // with no signal to the client — so sizing compaction off 1M would build a
+  // prompt the substitute cannot accept, and it would fail mid-session on a
+  // user who never picked the substitute. The catalogued windows are recorded
+  // in free-models.ts (FREE_MODEL_CONTEXT_WINDOWS) for display.
+  //
+  // Dead and substituted ids are kept so legacy session records still get a
+  // sane window.
+  'nvidia/nemotron-3-ultra-550b': FREE_POOL_CONTEXT_FLOOR,      // catalogued 1M; pool floor applies
+  'nvidia/nemotron-3-nano-30b': FREE_POOL_CONTEXT_FLOOR,
+  'nvidia/nemotron-3.5-lightning': FREE_POOL_CONTEXT_FLOOR,     // catalogued 1M; pool floor applies
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': FREE_POOL_CONTEXT_FLOOR,
+  'nvidia/llama-3.2-11b-vision': 128_000,
+  'cohere/north-mini-code': FREE_POOL_CONTEXT_FLOOR,
+  'poolside/laguna-xs-2.1': FREE_POOL_CONTEXT_FLOOR,
   'nvidia/qwen3-next-80b-a3b-instruct': 262_144, // NVIDIA EOL 410, 2026-07-27
   'nvidia/qwen3.5-122b-a10b': 131_072,
-  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': 256_000,
   'nvidia/mistral-nemotron': 131_072,
   'nvidia/step-3.7-flash': 131_072,
   'nvidia/seed-oss-36b': 131_072,
-  'nvidia/nemotron-nano-9b-v2': 131_072, // current free default
+  'nvidia/nemotron-nano-9b-v2': 131_072,
   'nvidia/nemotron-nano-12b-v2-vl': 131_072,
+  'nvidia/nemotron-3-super-120b-a12b-free': 131_072,
   'nvidia/llama-4-maverick': 131_072,
   'nvidia/mistral-large-3-675b': 131_072,
   // Qwen (paid) — Max tier is 1M ctx; the generic `qwen` fallback below is

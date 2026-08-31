@@ -33,6 +33,7 @@ import {
 } from '../router/index.js';
 import { classifyAgentError } from '../agent/error-classifier.js';
 import { estimateCost } from '../pricing.js';
+import { freeVisionModel, isFreeModelId } from '../free-models.js';
 import { getMaxOutputTokens } from '../agent/optimize.js';
 import { VERSION } from '../config.js';
 
@@ -448,12 +449,24 @@ export function createProxy(options: ProxyOptions): http.Server {
               // sending the image would tokenize as base64 text and produce
               // a hallucinated answer. Same swap policy as the agent loop's
               // interactive path so behavior is consistent across surfaces.
+              //
+              // Exception: a FREE model is never swapped for a paid one. There
+              // is no free vision model (router/vision.ts), so the sibling
+              // lookup returns the paid default — swapping would start
+              // charging a user who explicitly chose the free tier.
               const original = requestModel;
-              const visionSwap = pickVisionSibling(original);
+              const visionSwap = isFreeModelId(original)
+                ? (freeVisionModel() ?? original)
+                : pickVisionSibling(original);
               parsed.model = visionSwap;
               requestModel = visionSwap;
               logger.warn(
-                `[franklin] 👁️  Vision swap: ${original} can't see images → ${visionSwap}`
+                visionSwap === original
+                  // Free tier with no free vision model: nothing to swap to, and
+                  // we must not reach for a paid one. Say that, rather than
+                  // logging a swap that did not happen.
+                  ? `[franklin] 👁️  ${original} can't see images and no free vision model is available — answering from text only`
+                  : `[franklin] 👁️  Vision swap: ${original} can't see images → ${visionSwap}`
               );
             }
 

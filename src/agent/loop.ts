@@ -45,7 +45,7 @@ import { writeLiveAgent } from '../session/live-registry.js';
 import { estimateCost, OPUS_PRICING } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
-import { routeRequest, parseRoutingProfile, getFallbackChain, pickFreeFallback, isVisionModel, messageNeedsVision, pickVisionSibling, markModelUnavailable } from '../router/index.js';
+import { routeRequest, parseRoutingProfile, getFallbackChain, pickFreeFallback, isVisionModel, messageNeedsVision, messagesNeedVision, pickVisionSibling, markModelUnavailable } from '../router/index.js';
 import type { Tier, RoutingProfile, RoutingResult } from '../router/index.js';
 import { recordOutcome } from '../router/local-elo.js';
 import { shouldPlan, getPlanningPrompt, getExecutorModel, isExecutorStuck, toolCallSignature } from './planner.js';
@@ -85,6 +85,7 @@ import type {
   ThinkingSegment,
   UserContentPart,
 } from './types.js';
+import { FREE_DEFAULT_MODEL, freeVisionModel, isFreeModelId } from '../free-models.js';
 
 /**
  * Atomically replace all elements in a history array.
@@ -549,9 +550,10 @@ function formatModelSwitch(
  */
 export function isWeakModel(model: string): boolean {
   const m = model.toLowerCase();
-  // NVIDIA-hosted open models have been observed confabulating tool calls.
-  // `blockrun/free` resolves to an NVIDIA model before the API call, so
-  // catching the `nvidia/` prefix also catches the free-profile path.
+  // Free-tier open models have been observed confabulating tool calls. The
+  // whole free pool qualifies, including the non-NVIDIA rungs (poolside,
+  // cohere) added when the pool rotated on 2026-08-30.
+  if (isFreeModelId(model)) return true;
   if (m.startsWith('nvidia/')) return true;
   if (m.includes('nemotron-ultra')) return true;
   if (m.includes('qwen3-coder')) return true;
@@ -1510,11 +1512,27 @@ export async function interactiveSession(
         lastRoutedModel = routing.model;
         lastRoutedCategory = routing.category || '';
         if (loopCount === 1) {
-          const visionTag = turnNeedsVision ? ' 👁️' : '';
+          // A free-profile vision turn is routed to a TEXT model on purpose:
+          // the gateway has no free model that honours an image (see
+          // router/vision.ts). Say so instead of showing the 👁️ tag over a
+          // model that will answer from the text stub alone — and never fall
+          // back to a paid model, which the free profile must not do.
+          const visionUnavailable = routing.signals.includes('free-vision-unavailable');
+          const visionTag = turnNeedsVision && !visionUnavailable ? ' 👁️' : '';
           onEvent({
             kind: 'text_delta',
             text: `*Auto → ${routing.model}${visionTag}*\n\n`,
           });
+          if (visionUnavailable) {
+            onEvent({
+              kind: 'text_delta',
+              text:
+                '*⚠️ No free vision model is available — the free vision ids drop the ' +
+                'image on about half of all calls and answer anyway. This turn answers ' +
+                'from text only, so treat anything said about the image as a guess. ' +
+                'Switch to a paid model (e.g. `/model haiku`) to send it.*\n\n',
+            });
+          }
         }
       } else if (turnNeedsVision && !isVisionModel(resolvedModel)) {
         // ── Manual-mode guard ──
@@ -1526,13 +1544,41 @@ export async function interactiveSession(
         // overridden). Always emit a visible notice so the user knows their
         // pick was overridden and why.
         const original = resolvedModel;
-        const visionSwap = pickVisionSibling(original);
-        resolvedModel = visionSwap;
-        config.model = visionSwap;
-        onEvent({
-          kind: 'text_delta',
-          text: `*⚠️ ${original} can't see images — using ${visionSwap} for this turn.*\n\n`,
-        });
+        // A free-tier model must NEVER be swapped for a paid one. There is no
+        // free vision model (router/vision.ts), so pickVisionSibling would
+        // return the paid default and start charging a user who explicitly
+        // chose the free tier — silently, mid-turn. Say so and stay free.
+        if (isFreeModelId(original)) {
+          // Stay on the free tier: swap to the chain's free vision model if it
+          // has one, otherwise say so. Never swap a free model for a paid one.
+          const freeVision = freeVisionModel();
+          if (freeVision) {
+            resolvedModel = freeVision;
+            config.model = freeVision;
+            onEvent({
+              kind: 'text_delta',
+              text: `*⚠️ ${original} can't see images — using ${freeVision} for this turn (still free).*\n\n`,
+            });
+          } else {
+            onEvent({
+              kind: 'text_delta',
+              text:
+                `*⚠️ ${original} can't see images, and no free vision model ` +
+                'is reliable right now — the free vision ids drop the image on ' +
+                'about half of all calls and answer anyway. Answering from ' +
+                'text only, so treat anything said about the image as a guess; ' +
+                'switch to a paid model (e.g. `/model haiku`) to send it.*\n\n',
+            });
+          }
+        } else {
+          const visionSwap = pickVisionSibling(original);
+          resolvedModel = visionSwap;
+          config.model = visionSwap;
+          onEvent({
+            kind: 'text_delta',
+            text: `*⚠️ ${original} can't see images — using ${visionSwap} for this turn.*\n\n`,
+          });
+        }
       }
 
       // The pre-routing cap was calculated from the virtual profile name.
@@ -1590,6 +1636,25 @@ export async function interactiveSession(
       // answer (and waste the spend). Opt-in per config. Ordered last so a
       // forced turn intentionally rebuilds the prompt from the base (dropping
       // the skill hints above); normal turns keep them.
+      // ── Free vision is a ONE-SHOT ──
+      // llama-3.2-11b-vision reads an image reliably as a bare call (30/30 on
+      // a validated fixture) and confabulates in a tool loop: handed the full
+      // tool set it re-called `Read` on the same path until the repeat guard
+      // stopped the turn, in one run out of two. Once the image is actually in
+      // the history there is nothing left to fetch, so take the tools away and
+      // let it answer. Read still runs on the first pass — this only fires
+      // after an image block exists.
+      if (
+        resolvedModel === freeVisionModel() &&
+        callToolDefs.length > 0 &&
+        messagesNeedVision(history as Array<{ role?: string; content?: unknown }>)
+      ) {
+        callToolDefs = [];
+        callSystemPrompt = systemPrompt +
+          '\n\nThe image is already included above. Answer the question about it ' +
+          'directly. Do not call any tools.';
+      }
+
       const onFinalTurn = config.forceAnswerOnFinalTurn && loopCount === maxTurns;
       const toolBudgetSpent = config.maxToolCalls != null && turnToolCalls >= config.maxToolCalls;
       if ((onFinalTurn || toolBudgetSpent) && callToolDefs.length > 0) {
@@ -1735,8 +1800,13 @@ export async function interactiveSession(
         if (!hasText && !hasTools && !hasThinking) {
           // Free-only recovery chain — a free/empty-response session must NEVER
           // fall back to a paid model (would silently charge the wallet). Both
-          // entries are $0 nvidia models.
-          const EMPTY_FALLBACK_MODELS = ['nvidia/nemotron-nano-9b-v2', 'nvidia/mistral-nemotron'];
+          // entries are $0 free-tier ids; the second is deliberately a different
+          // PROVIDER (poolside), not another NVIDIA id.
+          // Built from the live chain, not a literal list: the second rung used
+          // to be a hardcoded `poolside/laguna-xs-2.1`, which is absent from
+          // some gateways and 400s there — so the rescue was guaranteed to fail
+          // on exactly the chains it was meant to rescue.
+          const EMPTY_FALLBACK_MODELS = getFallbackChain('SIMPLE', 'free');
           const nextModel = EMPTY_FALLBACK_MODELS.find(m => m !== config.model && !turnFailedModels.has(m));
           if (nextModel && recoveryAttempts < 2 && !config.disableModelFallback) {
             recoveryAttempts++;

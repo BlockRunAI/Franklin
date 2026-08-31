@@ -24,6 +24,7 @@
 
 import type { CapabilityHandler, Dialogue } from './types.js';
 import { ModelClient } from './llm.js';
+import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // ─── Evaluator system prompt ─────────────────────────────────────────────
 //
@@ -270,7 +271,7 @@ export function parseGroundingResponse(raw: string): GroundingResult {
  *  choice so both quality gates have the same cost profile. Override via
  *  `FRANKLIN_EVALUATOR_MODEL` to experiment with accuracy/cost trade-offs. */
 export function evaluatorModel(): string {
-  return process.env.FRANKLIN_EVALUATOR_MODEL || 'nvidia/nemotron-nano-9b-v2';
+  return process.env.FRANKLIN_EVALUATOR_MODEL || FREE_DEFAULT_MODEL;
 }
 
 // ─── Run grounding check ─────────────────────────────────────────────────
