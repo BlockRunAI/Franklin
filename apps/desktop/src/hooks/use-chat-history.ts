@@ -24,6 +24,8 @@ export interface Conversation {
   messages: ChatMessage[];
   /** Missing on older records, which are migrated as personal conversations. */
   space?: ChatSpace;
+  /** Unix timestamp used to order conversations pinned in the sidebar. */
+  pinnedAt?: number;
 }
 
 type Setter = ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]);
@@ -120,11 +122,31 @@ export function useChatHistory(address: string | null, space: ChatSpace = "perso
   }, [conversations, signedIn]);
 
   const visibleConversations = conversations.filter((c) => conversationSpace(c) === space);
+  const personalConversations = conversations.filter((c) => conversationSpace(c) === "personal");
   const activeConversation = visibleConversations.find((c) => c.id === activeId) ?? null;
   const messages = activeConversation?.messages ?? [];
 
   const newChat = useCallback(() => setActiveId(null), [setActiveId]);
   const selectChat = useCallback((id: string) => setActiveId(id), [setActiveId]);
+
+  const setActiveChatForSpace = useCallback((targetSpace: ChatSpace, id: string | null) => {
+    activeBySpaceRef.current = { ...activeBySpaceRef.current, [targetSpace]: id };
+    setActiveBySpace((prev) => ({ ...prev, [targetSpace]: id }));
+  }, []);
+
+  const newChatInSpace = useCallback((targetSpace: ChatSpace) => {
+    setActiveChatForSpace(targetSpace, null);
+  }, [setActiveChatForSpace]);
+
+  const selectChatInSpace = useCallback((targetSpace: ChatSpace, id: string) => {
+    setActiveChatForSpace(targetSpace, id);
+  }, [setActiveChatForSpace]);
+
+  const togglePinned = useCallback((id: string) => {
+    setConversations((prev) => prev.map((conversation) => conversation.id === id
+      ? { ...conversation, pinnedAt: conversation.pinnedAt ? undefined : Date.now() }
+      : conversation));
+  }, []);
 
   const renameChat = useCallback((id: string, title: string) => {
     const clean = title.trim().slice(0, 80) || "New chat";
@@ -134,9 +156,10 @@ export function useChatHistory(address: string | null, space: ChatSpace = "perso
   const deleteChat = useCallback(
     (id: string) => {
       setConversations((prev) => prev.filter((c) => c.id !== id));
-      if (activeBySpaceRef.current[space] === id) setActiveId(null);
+      if (activeBySpaceRef.current.personal === id) setActiveChatForSpace("personal", null);
+      if (activeBySpaceRef.current.team === id) setActiveChatForSpace("team", null);
     },
-    [setActiveId, space],
+    [setActiveChatForSpace],
   );
 
   const deleteMedia = useCallback(
@@ -214,5 +237,22 @@ export function useChatHistory(address: string | null, space: ChatSpace = "perso
     [setActiveId, space],
   );
 
-  return { conversations, visibleConversations, activeId, activeConversation, messages, setMessages, ensureConvId, newChat, selectChat, deleteChat, renameChat, deleteMedia };
+  return {
+    conversations,
+    visibleConversations,
+    personalConversations,
+    activeId,
+    activeConversation,
+    messages,
+    setMessages,
+    ensureConvId,
+    newChat,
+    newChatInSpace,
+    selectChat,
+    selectChatInSpace,
+    togglePinned,
+    deleteChat,
+    renameChat,
+    deleteMedia,
+  };
 }

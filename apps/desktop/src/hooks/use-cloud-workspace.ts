@@ -193,3 +193,5 @@ export function useCloudWorkspace() {
     refreshActive,
   };
 }
+
+export type CloudWorkspaceController = ReturnType<typeof useCloudWorkspace>;

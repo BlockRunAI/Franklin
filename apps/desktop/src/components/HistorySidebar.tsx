@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Plus, MessageSquare, Trash2, Phone, Blocks, Images, Wallet, Sparkles, Search,
-  Grid2x2, ChevronRight, Terminal, Server, UserRound, Users, Bot, Cloud,
+  Grid2x2, ChevronRight, Terminal, Server, Bot, Folder, FolderPlus, Pin, PinOff,
 } from "lucide-react";
 import type { ChatSpace, Conversation } from "../hooks/use-chat-history";
 import type { WalletInfo } from "../lib/wire";
@@ -21,9 +21,11 @@ const PORTRAIT_URL = franklinAvatar;
 interface Props {
   conversations: Conversation[];
   activeId: string | null;
-  onNew: () => void;
+  onNewChat: () => void;
+  onNewProject: () => void;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
+  onTogglePinned: (id: string) => void;
   view: TryView;
   onView: (v: TryView) => void;
   open: boolean;
@@ -35,7 +37,6 @@ interface Props {
   switchingWalletChain?: "base" | "solana" | null;
   onSwitchWalletChain?: (chain: "base" | "solana") => void | Promise<void>;
   chatSpace: ChatSpace;
-  onChatSpace: (space: ChatSpace) => void;
   teamModeEnabled?: boolean;
   teamWorkspaces?: TeamWorkspaceNavItem[];
   activeTeamWorkspaceId?: string | null;
@@ -43,7 +44,7 @@ interface Props {
   onTeamWorkspace?: (id: string) => void;
 }
 
-export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDelete, view, onView, open, wallet, walletLoading, walletError, walletConnectionState, switchingWalletChain, onSwitchWalletChain, chatSpace, onChatSpace, teamModeEnabled = true, teamWorkspaces = [], activeTeamWorkspaceId = null, teamLoading = false, onTeamWorkspace }: Props) {
+export function HistorySidebar({ conversations, activeId, onNewChat, onNewProject, onSelect, onDelete, onTogglePinned, view, onView, open, wallet, walletLoading, walletError, walletConnectionState, switchingWalletChain, onSwitchWalletChain, chatSpace, teamModeEnabled = true, teamWorkspaces = [], activeTeamWorkspaceId = null, teamLoading = false, onTeamWorkspace }: Props) {
   const { t } = useTryLang();
   const { visibleItems } = useSidebarPreferences();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -58,9 +59,10 @@ export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDel
   };
 
   const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+  const pinned = sorted.filter((conversation) => conversation.pinnedAt).sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
+  const recent = sorted.filter((conversation) => !conversation.pinnedAt);
 
   const navItems: { key: TryView; icon: React.ReactNode; label: string }[] = [
-    { key: "agents", icon: <Bot className="h-4 w-4" />, label: "Agents" },
     { key: "tools", icon: <Blocks className="h-4 w-4" />, label: t.marketplace },
     { key: "gallery", icon: <Images className="h-4 w-4" />, label: t.gallery },
     { key: "cli", icon: <Terminal className="h-4 w-4" />, label: t.cli },
@@ -85,104 +87,103 @@ export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDel
         <span className="try-brand-name">Franklin</span>
       </button>
 
-      <div className="try-space-switch" role="group" aria-label="Conversation mode">
-        <button
-          className={chatSpace === "personal" ? "is-active" : ""}
-          onClick={() => onChatSpace("personal")}
-          title="Your private conversations"
-        >
-          <UserRound className="h-4 w-4" />
-          Personal
-        </button>
-        <button
-          className={chatSpace === "team" ? "is-active" : ""}
-          onClick={() => onChatSpace("team")}
-          disabled={!teamModeEnabled}
-          title="Shared BlockRun team conversations"
-        >
-          <Users className="h-4 w-4" />
-          Team
-          <span className="try-team-beta">Beta</span>
-        </button>
-      </div>
-
-      {!teamModeEnabled && <button className="try-team-disabled-note" onClick={() => onView("agents")}>Team Mode is off · Manage modules</button>}
-
-      {chatSpace === "team" && <div className="try-team-workspaces">
-        <div className="try-team-workspaces-head"><span>WORKSPACES</span><em>{teamWorkspaces.length}</em></div>
-        {teamLoading ? <div className="try-team-workspace-loading">Connecting to Franklin Cloud…</div> : teamWorkspaces.length === 0 ? <div className="try-team-workspace-loading">No team workspaces yet</div> : teamWorkspaces.map((workspace) => (
-          <button key={workspace.id} className={`try-team-workspace${activeTeamWorkspaceId === workspace.id && view === "chat" ? " is-active" : ""}`} onClick={() => onTeamWorkspace?.(workspace.id)}>
-            <span className="try-team-mark"><Cloud className="h-4 w-4" /></span>
-            <span><strong>{workspace.name}</strong><small>{workspace.memberCount} members · {workspace.role}</small></span>
-            <i aria-label={`Workspace version ${workspace.version}`}>v{workspace.version}</i>
-          </button>
-        ))}
-      </div>}
-
-      <button className="try-nav-item" onClick={onNew}>
+      <button className="try-nav-item" onClick={onNewChat}>
         <Plus className="h-4 w-4" />
-        {chatSpace === "team" ? "New workspace" : t.newChat}
+        {t.newChat}
       </button>
 
-      {chatSpace === "personal" && <button className="try-nav-item" onClick={() => setSearchOpen(true)}>
+      <button className="try-nav-item" onClick={() => setSearchOpen(true)}>
         <Search className="h-4 w-4" />
         {t.searchChats}
-      </button>}
+      </button>
 
       <div className="try-scroll">
-      {nav.map((n) => (
-        <button
-          key={n.key}
-          className={`try-nav-item${view === n.key ? " is-active" : ""}`}
-          onClick={() => onView(n.key)}
-        >
-          {n.icon}
-          {n.label}
+        <button className={`try-nav-item${view === "agents" ? " is-active" : ""}`} onClick={() => onView("agents")}>
+          <Bot className="h-4 w-4" />
+          Agents
         </button>
-      ))}
 
-      {moreNav.length > 0 && <button
-        ref={moreBtnRef}
-        className={`try-nav-item try-more-btn${moreActive ? " is-active" : ""}`}
-        onClick={() => (moreOpen ? setMoreOpen(false) : openMore())}
-      >
-        <Grid2x2 className="h-4 w-4" />
-        <span className="try-more-label">{t.more}</span>
-        <ChevronRight className="try-more-chevron h-4 w-4" />
-      </button>}
+        <button
+          className="try-nav-item try-project-create"
+          onClick={onNewProject}
+          disabled={!teamModeEnabled}
+          title={teamModeEnabled ? "Create or join a project" : "Enable Team Mode in Agents"}
+        >
+          <FolderPlus className="h-4 w-4" />
+          New project
+        </button>
 
-      {chatSpace === "personal" && <div className="try-history">
-        {sorted.length === 0 ? (
-          <p className="try-history-empty">{t.noConversations}</p>
-        ) : (
-          <div className="try-history-group">
-            <div className="try-history-group-label">{t.history}</div>
-            {sorted.map((c) => (
-              <div
-                key={c.id}
-                className={`try-history-item${c.id === activeId && view === "chat" ? " is-active" : ""}`}
-                onClick={() => {
-                  onSelect(c.id);
-                  onView("chat");
-                }}
-              >
-                <MessageSquare className="try-history-icon" />
-                <span className="try-history-title">{c.title || "New chat"}</span>
-                <button
-                  className="try-history-del"
-                  aria-label="Delete conversation"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(c.id);
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>}
+        {!teamModeEnabled && <button className="try-team-disabled-note" onClick={() => onView("agents")}>Team Mode is off · Manage modules</button>}
+
+        <SidebarSection label="Pinned" count={pinned.length}>
+          {pinned.map((conversation) => (
+            <ConversationRow
+              key={conversation.id}
+              conversation={conversation}
+              active={chatSpace === "personal" && conversation.id === activeId && view === "chat"}
+              onSelect={onSelect}
+              onDelete={onDelete}
+              onTogglePinned={onTogglePinned}
+            />
+          ))}
+        </SidebarSection>
+
+        <SidebarSection label="Projects" count={teamWorkspaces.length}>
+          {teamLoading ? (
+            <p className="try-section-empty">Connecting…</p>
+          ) : teamWorkspaces.length === 0 ? (
+            <p className="try-section-empty">No projects</p>
+          ) : teamWorkspaces.map((workspace) => (
+            <button
+              key={workspace.id}
+              className={`try-team-workspace${chatSpace === "team" && activeTeamWorkspaceId === workspace.id && view === "chat" ? " is-active" : ""}`}
+              onClick={() => onTeamWorkspace?.(workspace.id)}
+              disabled={!teamModeEnabled}
+              title={teamModeEnabled ? `${workspace.memberCount} members · ${workspace.role}` : "Enable Team Mode in Agents"}
+            >
+              <Folder className="h-4 w-4" />
+              <span>{workspace.name}</span>
+            </button>
+          ))}
+        </SidebarSection>
+
+        <SidebarSection label="Recent" count={recent.length}>
+          {recent.length === 0 && sorted.length === 0 ? (
+            <p className="try-section-empty">{t.noConversations}</p>
+          ) : recent.map((conversation) => (
+            <ConversationRow
+              key={conversation.id}
+              conversation={conversation}
+              active={chatSpace === "personal" && conversation.id === activeId && view === "chat"}
+              onSelect={onSelect}
+              onDelete={onDelete}
+              onTogglePinned={onTogglePinned}
+            />
+          ))}
+        </SidebarSection>
+
+        <div className="try-sidebar-secondary">
+          {nav.map((n) => (
+            <button
+              key={n.key}
+              className={`try-nav-item${view === n.key ? " is-active" : ""}`}
+              onClick={() => onView(n.key)}
+            >
+              {n.icon}
+              {n.label}
+            </button>
+          ))}
+
+          {moreNav.length > 0 && <button
+            ref={moreBtnRef}
+            className={`try-nav-item try-more-btn${moreActive ? " is-active" : ""}`}
+            onClick={() => (moreOpen ? setMoreOpen(false) : openMore())}
+          >
+            <Grid2x2 className="h-4 w-4" />
+            <span className="try-more-label">{t.more}</span>
+            <ChevronRight className="try-more-chevron h-4 w-4" />
+          </button>}
+        </div>
       </div>
 
       <div className="try-sidebar-footer">
@@ -226,12 +227,64 @@ export function HistorySidebar({ conversations, activeId, onNew, onSelect, onDel
           setSearchOpen(false);
         }}
         onNew={() => {
-          onNew();
+          onNewChat();
           setSearchOpen(false);
         }}
       />
     )}
     </>
+  );
+}
+
+function SidebarSection({ label, count, children }: { label: string; count: number; children: React.ReactNode }) {
+  return (
+    <section className="try-sidebar-section">
+      <div className="try-sidebar-section-head">
+        <span>{label}</span>
+        {count > 0 && <em>{count}</em>}
+      </div>
+      <div className="try-sidebar-section-items">{children}</div>
+    </section>
+  );
+}
+
+function ConversationRow({ conversation, active, onSelect, onDelete, onTogglePinned }: {
+  conversation: Conversation;
+  active: boolean;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
+  onTogglePinned: (id: string) => void;
+}) {
+  const isPinned = !!conversation.pinnedAt;
+  return (
+    <div className={`try-history-item${active ? " is-active" : ""}`} onClick={() => onSelect(conversation.id)}>
+      <MessageSquare className="try-history-icon" />
+      <span className="try-history-title">{conversation.title || "New chat"}</span>
+      <span className="try-history-actions">
+        <button
+          className={`try-history-action${isPinned ? " is-pinned" : ""}`}
+          aria-label={isPinned ? "Unpin conversation" : "Pin conversation"}
+          title={isPinned ? "Unpin" : "Pin"}
+          onClick={(event) => {
+            event.stopPropagation();
+            onTogglePinned(conversation.id);
+          }}
+        >
+          {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+        </button>
+        <button
+          className="try-history-action try-history-del"
+          aria-label="Delete conversation"
+          title="Delete"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete(conversation.id);
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </span>
+    </div>
   );
 }
 
