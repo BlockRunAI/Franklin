@@ -7,7 +7,11 @@ import { fileURLToPath } from "node:url";
 // HTTP RPC to the Franklin CLI (or the mock dev server) running on 3737.
 // Prod mode: the build is served directly by the CLI's embedded HTTP server
 // — no Vite involved, no proxy needed (same-origin).
-const AGENT_PORT = Number(process.env.FRANKLIN_AGENT_PORT) || 3737;
+const requestedAgentPort = Number(process.env.FRANKLIN_AGENT_PORT || 3737);
+if (!Number.isInteger(requestedAgentPort) || requestedAgentPort < 1 || requestedAgentPort > 65_535) {
+  throw new Error("FRANKLIN_AGENT_PORT must be an integer from 1 to 65535");
+}
+const AGENT_PORT = requestedAgentPort;
 
 export default defineConfig({
   // Relative asset paths so the build works when loaded from file:// inside the
@@ -38,7 +42,7 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    sourcemap: true,
+    sourcemap: false,
     // Browsers Franklin CLI users have are recent — Node 20+ era. Skip the
     // legacy fallbacks Vite ships by default to keep the bundle slim.
     target: "es2022",

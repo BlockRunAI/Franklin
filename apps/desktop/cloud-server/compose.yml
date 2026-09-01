@@ -1,0 +1,20 @@
+services:
+  control-plane:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${FRANKLIN_CLOUD_BIND:-127.0.0.1}:3740:3740"
+    environment:
+      FRANKLIN_CLOUD_HOST: 0.0.0.0
+      FRANKLIN_CLOUD_PORT: 3740
+      FRANKLIN_CLOUD_DATA_DIR: /data
+      FRANKLIN_CLOUD_BOOTSTRAP_KEY: "${FRANKLIN_CLOUD_BOOTSTRAP_KEY:?Set FRANKLIN_CLOUD_BOOTSTRAP_KEY}"
+      FRANKLIN_CLOUD_ALLOWED_ORIGINS: "${FRANKLIN_CLOUD_ALLOWED_ORIGINS:-https://desktop.blockrun.ai}"
+      FRANKLIN_CLOUD_SANDBOX_PROVIDER: directory
+    volumes:
+      - franklin-cloud-data:/data
+
+volumes:
+  franklin-cloud-data:

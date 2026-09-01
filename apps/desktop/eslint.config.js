@@ -3,6 +3,7 @@ import typescriptParser from "@typescript-eslint/parser";
 import reactHooks from "eslint-plugin-react-hooks";
 
 const browserGlobals = {
+  AbortSignal: "readonly",
   Blob: "readonly",
   File: "readonly",
   FileReader: "readonly",

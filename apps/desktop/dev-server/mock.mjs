@@ -14,7 +14,19 @@
 import { WebSocketServer } from "ws";
 import http from "node:http";
 
-const PORT = Number(process.env.FRANKLIN_AGENT_PORT) || 3737;
+const requestedPort = Number(process.env.FRANKLIN_AGENT_PORT || 3737);
+if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65_535) throw new Error("FRANKLIN_AGENT_PORT must be an integer from 0 to 65535");
+const PORT = requestedPort;
+
+function allowedOrigin(origin) {
+  if (!origin) return true;
+  try {
+    const url = new URL(origin);
+    return (url.protocol === "http:" || url.protocol === "https:") && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1" || url.hostname === "[::1]");
+  } catch {
+    return false;
+  }
+}
 
 // ── Fake state ─────────────────────────────────────────────────────────────
 
@@ -31,14 +43,15 @@ const wallet = {
 };
 
 const models = [
-  { id: "nvidia/deepseek-v4-flash", label: "DeepSeek V4 Flash", free: true, group: "Free" },
-  { id: "nvidia/qwen3-coder-480b", label: "Qwen3 Coder 480B", free: true, group: "Free" },
-  { id: "nvidia/llama-4-maverick", label: "Llama 4 Maverick", free: true, group: "Free" },
+  { id: "nvidia/nemotron-nano-9b-v2", label: "Nemotron Nano 9B v2", free: true, group: "Free" },
+  { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", label: "Nemotron 3 Nano Omni", free: true, group: "Free" },
+  { id: "nvidia/mistral-nemotron", label: "Mistral Nemotron", free: true, group: "Free" },
   { id: "anthropic/claude-opus-4.8", label: "Claude Opus 4.8", free: false, group: "Premium frontier" },
   { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", free: false, group: "Premium frontier" },
+  { id: "qwen/qwen3.7-max", label: "Qwen3.7 Max", free: false, group: "Premium frontier", contextWindow: 1000000 },
   { id: "openai/gpt-5.5", label: "GPT-5.5", free: false, group: "Premium frontier" },
   { id: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash", free: false, group: "Reasoning" },
-  { id: "anthropic/claude-haiku-4.5-20251001", label: "Claude Haiku 4.5", free: false, group: "Budget" },
+  { id: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5", free: false, group: "Budget" },
 ];
 
 function mkSession(title, lastUser) {
@@ -67,7 +80,12 @@ const server = http.createServer((req, res) => {
 
 // ── WebSocket router ───────────────────────────────────────────────────────
 
-const wss = new WebSocketServer({ server, path: "/agent" });
+const wss = new WebSocketServer({
+  server,
+  path: "/agent",
+  maxPayload: 8 * 1024 * 1024,
+  verifyClient: (info) => allowedOrigin(info.origin || info.req.headers.origin),
+});
 
 wss.on("connection", (ws) => {
   console.log("[mock] client connected");
@@ -226,12 +244,12 @@ function chunkText(s, size) {
 }
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
   const address = server.address();
-  const effectivePort = address && typeof address === 'object' ? address.port : PORT;
-  if (typeof process.send === 'function') process.send({ type: 'franklin:server-ready', port: effectivePort });
-  console.log(`[mock] franklin agent server on http://localhost:${effectivePort}`);
-  console.log(`[mock] WebSocket: ws://localhost:${effectivePort}/agent`);
+  const readyPort = address && typeof address !== "string" ? address.port : PORT;
+  console.log(`[mock] franklin agent server on http://localhost:${readyPort}`);
+  console.log(`[mock] WebSocket: ws://localhost:${readyPort}/agent`);
   console.log(`[mock] Vite dev server proxies /agent → here. Run \`npm run dev:vite\` in another terminal,`);
   console.log(`[mock] then open http://localhost:5173.`);
+  if (typeof process.send === "function") process.send({ type: "franklin:server-ready", port: readyPort });
 });

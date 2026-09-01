@@ -4,10 +4,10 @@
 // wallet is the local CLI wallet (read-only, no connect flow).
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, PanelLeft, ImageIcon, Clapperboard, Music, X, Plus, Check, ChevronDown, Gauge, BarChart3, TrendingUp, MoreHorizontal } from "lucide-react";
+import { ArrowUp, PanelLeft, ImageIcon, Clapperboard, Music, X, Plus, Check, ChevronDown, Gauge, BarChart3, TrendingUp, MoreHorizontal, Users, Laptop2, ShieldAlert } from "lucide-react";
 import { TopBarMenu } from "./TopBarMenu";
 import { ModelSelect } from "./ModelSelect";
-import { HistorySidebar, type TryView, type WorkspaceMode } from "./HistorySidebar";
+import { HistorySidebar, type TryView } from "./HistorySidebar";
 import { MessageContent } from "./MessageContent";
 import { ActivitySummary } from "./ActivitySummary";
 import { MessageActions } from "./MessageActions";
@@ -18,15 +18,20 @@ import { ToolsPanel, type TryAction } from "./ToolsPanel";
 import { GalleryPanel } from "./GalleryPanel";
 import { WalletPanel } from "./WalletPanel";
 import { SkillsPanel } from "./SkillsPanel";
+import { McpPanel } from "./McpPanel";
 import { CLIPanel } from "./CLIPanel";
-import { TeamPanel } from "./TeamPanel";
+import { AgentsPanel } from "./AgentsPanel";
+import { CloudWorkspacePanel } from "./CloudWorkspacePanel";
 import { useFranklinChat } from "../hooks/use-franklin-chat";
-import { useChatHistory } from "../hooks/use-chat-history";
+import { useChatHistory, type ChatSpace } from "../hooks/use-chat-history";
 import { useSpend } from "../hooks/use-spend";
 import { useAuth } from "../hooks/use-auth";
 import { useWallet } from "../hooks/use-wallet";
 import { useTryLang } from "../lib/i18n";
 import { prepareImageForUpload } from "../lib/image-compress";
+import { useStudioRegistry } from "../hooks/use-studio-registry";
+import { requestTeamWorkspace, subscribeTeamWorkspaceNav, type TeamWorkspaceNavState } from "../lib/team-workspace-events";
+import { safeExternalHttpUrl } from "../lib/external-url";
 
 // Composer "focus" modes — force a specific live-data tool (server tool_choice).
 type ToolFocus = "search_prediction_markets" | "web_search" | "get_market_price";
@@ -62,11 +67,29 @@ function EmphTitle({ text }: { text: string }) {
 export function FranklinChat() {
   const { t } = useTryLang();
   const auth = useAuth();
-  const { wallet, connectionState: walletConnectionState, isLoading: walletLoading, error: walletError } = useWallet();
-  const history = useChatHistory(auth.address);
+  const {
+    wallet,
+    isLoading: walletLoading,
+    error: walletError,
+    connectionState: walletConnectionState,
+    switchingChain: switchingWalletChain,
+    switchChain: switchWalletChain,
+  } = useWallet();
+  const [chatSpace, setChatSpaceState] = useState<ChatSpace>(() => {
+    if (typeof window === "undefined") return "personal";
+    try {
+      return localStorage.getItem("franklin-desktop-chat-space-v1") === "team" ? "team" : "personal";
+    } catch {
+      return "personal";
+    }
+  });
+  const history = useChatHistory(auth.address, chatSpace);
   const usage = useSpend();
+  const studio = useStudioRegistry();
+  const [teamNav, setTeamNav] = useState<TeamWorkspaceNavState>({ items: [], activeId: null, loading: true });
+  useEffect(() => subscribeTeamWorkspaceNav(setTeamNav), []);
   const chat = useFranklinChat(history.messages, history.setMessages, history.ensureConvId);
-  const { mode, setMode, model, setModel, models, selectedModel, status, activeTool, needsToolWallet, genConvId, mediaJobs, error, isBusy, isConnected, send, stop, stopMedia, regenerate, imageSize, setImageSize, imageSizes, videoRatio, setVideoRatio, videoRatios, videoResolution, setVideoResolution, videoResolutions } = chat;
+  const { mode, setMode, model, setModel, models, selectedModel, status, activeTool, needsToolWallet, genConvId, mediaJobs, error, pendingPermission, respondToPermission, isBusy, isConnected, send, stop, stopMedia, regenerate, imageSize, setImageSize, imageSizes, videoRatio, setVideoRatio, videoRatios, videoResolution, setVideoResolution, videoResolutions } = chat;
   const genHere = genConvId === null || genConvId === history.activeId;
   const activeMediaJob = history.activeId ? mediaJobs[history.activeId] : undefined;
   const busy = isBusy || !!activeMediaJob;
@@ -76,7 +99,6 @@ export function FranklinChat() {
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [view, setView] = useState<TryView>("chat");
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("personal");
   const MOBILE_BP = 880;
   const closeSidebarOnMobile = () => {
     if (typeof window !== "undefined" && window.innerWidth <= MOBILE_BP) setSidebarOpen(false);
@@ -89,6 +111,14 @@ export function FranklinChat() {
   const [resOpen, setResOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const setChatSpace = (next: ChatSpace) => {
+    if (next === "team" && !studio.teamModeEnabled) return;
+    setChatSpaceState(next);
+    try { localStorage.setItem("franklin-desktop-chat-space-v1", next); } catch { /* local cache unavailable */ }
+    setEditingTitle(false);
+    setView("chat");
+    closeSidebarOnMobile();
+  };
   // Image mode → aspect-ratio whitelist (value = size like "1536x1024"); video
   // mode → ratio list (value = the ratio itself). Picker hidden when ≤1 option.
   const ratioOptions: { ratio: string; value: string }[] =
@@ -203,21 +233,22 @@ export function FranklinChat() {
           ? t.phMusic
           : activeFocus
             ? activeFocus.ph
-            : t.phMessage;
+            : chatSpace === "team"
+              ? "Message the BlockRun team agent…"
+              : t.phMessage;
 
   return (
     <div className="try-shell">
       <HistorySidebar
-        conversations={history.conversations}
+        conversations={history.visibleConversations}
         activeId={history.activeId}
         onNew={() => {
-          setWorkspaceMode("personal");
-          history.newChat();
+          if (chatSpace === "team") requestTeamWorkspace(null);
+          else history.newChat();
           setView("chat");
           closeSidebarOnMobile();
         }}
         onSelect={(id) => {
-          setWorkspaceMode("personal");
           history.selectChat(id);
           setView("chat");
           closeSidebarOnMobile();
@@ -229,16 +260,23 @@ export function FranklinChat() {
           closeSidebarOnMobile();
         }}
         open={sidebarOpen}
-        workspaceMode={workspaceMode}
-        onWorkspaceMode={(next) => {
-          setWorkspaceMode(next);
-          setView(next === "team" ? "team" : "chat");
-          closeSidebarOnMobile();
-        }}
         wallet={wallet}
-        walletConnectionState={walletConnectionState}
         walletLoading={walletLoading}
         walletError={walletError}
+        walletConnectionState={walletConnectionState}
+        switchingWalletChain={switchingWalletChain}
+        onSwitchWalletChain={switchWalletChain}
+        chatSpace={chatSpace}
+        onChatSpace={setChatSpace}
+        teamModeEnabled={studio.teamModeEnabled}
+        teamWorkspaces={teamNav.items}
+        activeTeamWorkspaceId={teamNav.activeId}
+        teamLoading={teamNav.loading}
+        onTeamWorkspace={(id) => {
+          requestTeamWorkspace(id);
+          setView("chat");
+          closeSidebarOnMobile();
+        }}
       />
 
       {sidebarOpen && <div className="try-sidebar-scrim" onClick={() => setSidebarOpen(false)} />}
@@ -253,9 +291,12 @@ export function FranklinChat() {
             <PanelLeft className="h-[18px] w-[18px]" />
           </button>
 
-          {view === "chat" && activeConvo && (
+          {view === "chat" && (activeConvo || chatSpace === "team") && (
             <div className="try-bar-title">
-              {editingTitle ? (
+              <div className="try-bar-title-line">
+              {chatSpace === "team" ? (
+                <span className="try-bar-title-static">Team workspaces</span>
+              ) : activeConvo && editingTitle ? (
                 <input
                   className="try-bar-title-input"
                   value={titleDraft}
@@ -271,7 +312,7 @@ export function FranklinChat() {
                     }
                   }}
                 />
-              ) : (
+              ) : activeConvo ? (
                 <button
                   className="try-bar-title-btn"
                   onClick={() => {
@@ -282,7 +323,13 @@ export function FranklinChat() {
                 >
                   {activeConvo.title}
                 </button>
+              ) : (
+                <span className="try-bar-title-static">BlockRun Team</span>
               )}
+              {chatSpace === "team" && teamNav.activeId && (
+                <span className="try-team-mode-pill is-local"><Laptop2 className="h-3.5 w-3.5" /> Local runtime</span>
+              )}
+              </div>
             </div>
           )}
 
@@ -309,8 +356,25 @@ export function FranklinChat() {
           )}
         </div>
 
-        {view === "team" ? (
-          <TeamPanel onPersonal={() => { setWorkspaceMode("personal"); setView("chat"); }} />
+        {chatSpace === "team" && view === "chat" ? (
+          <CloudWorkspacePanel />
+        ) : view === "agents" ? (
+          <AgentsPanel
+            agents={studio.agents}
+            installedCount={studio.installedCount}
+            connectedCount={studio.connectedCount}
+            teamModeEnabled={studio.teamModeEnabled}
+            scanning={studio.scanning}
+            onScan={studio.scanRuntimes}
+            onImport={studio.importAgent}
+            onRemove={studio.removeAgent}
+            onRunning={studio.setRunning}
+            onBlockRun={studio.setBlockRun}
+            onTeamMode={(enabled) => {
+              studio.setTeamModeEnabled(enabled);
+              if (!enabled && chatSpace === "team") setChatSpace("personal");
+            }}
+          />
         ) : view === "phone" ? (
           <PhonePanel />
         ) : view === "tools" ? (
@@ -319,8 +383,10 @@ export function FranklinChat() {
           <CLIPanel />
         ) : view === "skills" ? (
           <SkillsPanel onPick={pickSkill} />
+        ) : view === "mcp" ? (
+          <McpPanel />
         ) : view === "gallery" ? (
-          <GalleryPanel conversations={history.conversations} onZoom={setLightbox} onDelete={history.deleteMedia} />
+          <GalleryPanel conversations={history.visibleConversations} onZoom={setLightbox} onDelete={history.deleteMedia} />
         ) : view === "wallet" ? (
           <WalletPanel usage={usage} />
         ) : (
@@ -328,9 +394,25 @@ export function FranklinChat() {
         <div className="try-messages" ref={scrollRef}>
           {messages.length === 0 ? (
             <div className="try-empty">
-              <h2 className="try-empty-title">
-                <EmphTitle text={mode === "image" ? t.emptyImage : mode === "video" ? t.emptyVideo : mode === "music" ? t.emptyMusic : t.emptyChat} />
-              </h2>
+              {chatSpace === "team" && mode === "chat" ? (
+                <div className="try-team-empty">
+                  <div className="try-team-empty-icon"><Users className="h-6 w-6" /></div>
+                  <div className="try-team-avatars" aria-label="Team members">
+                    <span className="is-andy">A</span>
+                    <span className="is-vicky">V</span>
+                    <span className="is-franklin">F</span>
+                  </div>
+                  <h2 className="try-empty-title">Talk with your <em>Team Agent</em></h2>
+                  <p className="try-team-empty-copy">Preview a shared room for BlockRun. Franklin is presented as the team agent while this demo keeps its data on this device.</p>
+                  <div className="try-team-capabilities">
+                    <span>Shared conversation</span><span>Team knowledge</span><span>Reusable workflows</span>
+                  </div>
+                </div>
+              ) : (
+                <h2 className="try-empty-title">
+                  <EmphTitle text={mode === "image" ? t.emptyImage : mode === "video" ? t.emptyVideo : mode === "music" ? t.emptyMusic : t.emptyChat} />
+                </h2>
+              )}
               <div className="try-suggestions">
                 {mode === "chat"
                   ? CASES.map((c) => (
@@ -350,7 +432,7 @@ export function FranklinChat() {
               m.kind === "tools" ? (
                 <ToolGroup key={i} steps={m.tools ?? []} busy={busy} />
               ) : (
-              <div key={i} className={`try-msg try-msg-${m.role}`}>
+              <div key={i} className={`try-msg try-msg-${m.role}${chatSpace === "team" ? " is-team" : ""}`}>
                 {/* Show the role label only on the FIRST bubble of a turn — scan
                     back past tool groups; if an assistant text/media bubble
                     already showed it this turn, skip (one "Franklin" per turn). */}
@@ -361,7 +443,7 @@ export function FranklinChat() {
                     if (messages[j].role === "assistant" && messages[j].kind !== "tools") return false;
                   }
                   return true;
-                })() && <div className="try-msg-role">{m.role === "user" ? "You" : "Franklin"}</div>}
+                })() && <div className="try-msg-role">{m.role === "user" ? (chatSpace === "team" ? "Andy · You" : "You") : (chatSpace === "team" ? "Franklin · Team Agent" : "Franklin")}</div>}
                 {m.kind === "image" && m.image ? (
                   <div className="try-msg-media">
                     <img
@@ -371,23 +453,23 @@ export function FranklinChat() {
                       className="try-zoomable"
                       onClick={() => setLightbox(m.image!)}
                     />
-                    <a className="try-media-link" href={m.image} target="_blank" rel="noreferrer">
+                    {safeExternalHttpUrl(m.image) && <a className="try-media-link" href={safeExternalHttpUrl(m.image)!} target="_blank" rel="noopener noreferrer">
                       {t.openFull}
-                    </a>
+                    </a>}
                   </div>
                 ) : m.kind === "video" && m.video ? (
                   <div className="try-msg-media">
                     <video src={m.video} controls playsInline preload="metadata" />
-                    <a className="try-media-link" href={m.video} target="_blank" rel="noreferrer">
+                    {safeExternalHttpUrl(m.video) && <a className="try-media-link" href={safeExternalHttpUrl(m.video)!} target="_blank" rel="noopener noreferrer">
                       {t.downloadMp4}
-                    </a>
+                    </a>}
                   </div>
                 ) : m.kind === "music" && m.music ? (
                   <div className="try-msg-media try-msg-audio">
                     <audio src={m.music} controls preload="metadata" />
-                    <a className="try-media-link" href={m.music} target="_blank" rel="noreferrer">
+                    {safeExternalHttpUrl(m.music) && <a className="try-media-link" href={safeExternalHttpUrl(m.music)!} target="_blank" rel="noopener noreferrer">
                       {t.downloadAudio}
-                    </a>
+                    </a>}
                   </div>
                 ) : (
                   <>
@@ -473,6 +555,9 @@ export function FranklinChat() {
         </div>
 
         <div className="try-input-wrap">
+          {chatSpace === "team" && (
+            <div className="try-team-sharing-note"><Users className="h-3.5 w-3.5" /> Shared with BlockRun Team · demo data stays on this device</div>
+          )}
           {needsToolWallet && (
             <div className="try-input-hint try-input-hint-action">
               <span>{t.hintToolWallet}</span>
@@ -677,6 +762,25 @@ export function FranklinChat() {
           <button className="try-lightbox-x" onClick={() => setLightbox(null)} aria-label="Close">
             <X className="h-5 w-5" />
           </button>
+        </div>
+      )}
+
+      {pendingPermission && (
+        <div className="try-mkt-overlay" role="presentation">
+          <div className="try-mkt-modal" role="dialog" aria-modal="true" aria-labelledby="franklin-permission-title">
+            <div className="try-mkt-modal-head">
+              <span className="try-mkt-modal-icon"><ShieldAlert /></span>
+              <div>
+                <div id="franklin-permission-title" className="try-mkt-modal-name">Franklin needs your approval</div>
+                <div className="try-mkt-modal-by">Tool <strong>{pendingPermission.toolName}</strong></div>
+              </div>
+            </div>
+            <p className="try-mkt-modal-detail">{pendingPermission.description}</p>
+            <div className="try-mkt-modal-foot">
+              <button className="cloud-secondary" onClick={() => respondToPermission("n")}>Deny</button>
+              <button className="try-mkt-try" onClick={() => respondToPermission("y")}>Allow once</button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -2,6 +2,7 @@
 
 import { Fragment, useState } from "react";
 import { Copy, Check, Maximize2, X, Download } from "lucide-react";
+import { safeExternalHttpUrl } from "../lib/external-url";
 
 // Lightweight Markdown renderer for assistant replies (no external deps):
 // splits fenced ``` code blocks out, renders the rest with minimal inline
@@ -42,17 +43,15 @@ function renderInline(line: string, key: string) {
     } else if (m[3] !== undefined) {
       nodes.push(<code key={`${key}-c${i}`} className="try-inline-code">{m[3]}</code>);
     } else if (m[4] !== undefined && m[5] !== undefined) {
-      nodes.push(
-        <a key={`${key}-l${i}`} className="try-md-link" href={m[5]} target="_blank" rel="noreferrer">
-          {m[4]}
-        </a>,
-      );
+      const href = safeExternalHttpUrl(m[5]);
+      nodes.push(href
+        ? <a key={`${key}-l${i}`} className="try-md-link" href={href} target="_blank" rel="noopener noreferrer">{m[4]}</a>
+        : m[4]);
     } else if (m[6] !== undefined) {
-      nodes.push(
-        <a key={`${key}-u${i}`} className="try-md-link" href={m[6]} target="_blank" rel="noreferrer">
-          {m[6].replace(/^https?:\/\//, "")}
-        </a>,
-      );
+      const href = safeExternalHttpUrl(m[6]);
+      nodes.push(href
+        ? <a key={`${key}-u${i}`} className="try-md-link" href={href} target="_blank" rel="noopener noreferrer">{m[6].replace(/^https?:\/\//, "")}</a>
+        : m[6]);
     }
     last = re.lastIndex;
     i++;

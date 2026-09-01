@@ -12,7 +12,7 @@
 import { useCallback, useRef, useState } from "react";
 import { agent } from "../lib/ws";
 import { useModels } from "./use-models";
-import type { AgentPermissionAsk, AgentSendPayload, AgentStep, ServerMsg } from "../lib/wire";
+import type { AgentSendPayload, AgentStep, ServerMsg } from "../lib/wire";
 
 export type ChatMode = "chat" | "image" | "video" | "music";
 
@@ -30,18 +30,19 @@ export interface ChatModel {
 // Curated fallback lineup (mirrors Franklin's /model picker) used until the CLI
 // returns its live catalog over models.list.
 export const CHAT_MODELS: ChatModel[] = [
-  { id: "nvidia/deepseek-v4-flash", label: "DeepSeek V4 Flash", free: true, group: "Free" },
-  { id: "nvidia/qwen3-coder-480b", label: "Qwen3 Coder 480B", free: true, group: "Free" },
-  { id: "nvidia/llama-4-maverick", label: "Llama 4 Maverick", free: true, group: "Free" },
+  { id: "nvidia/nemotron-nano-9b-v2", label: "Nemotron Nano 9B v2", free: true, group: "Free" },
+  { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", label: "Nemotron 3 Nano Omni", free: true, group: "Free" },
+  { id: "nvidia/mistral-nemotron", label: "Mistral Nemotron", free: true, group: "Free" },
   { id: "anthropic/claude-opus-4.8", label: "Claude Opus 4.8", group: "Premium frontier" },
   { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", group: "Premium frontier" },
+  { id: "qwen/qwen3.7-max", label: "Qwen3.7 Max", group: "Premium frontier", contextWindow: 1_000_000 },
   { id: "openai/gpt-5.5", label: "GPT-5.5", group: "Premium frontier" },
   { id: "google/gemini-3.1-pro", label: "Gemini 3.1 Pro", group: "Premium frontier" },
   { id: "openai/o3", label: "OpenAI O3", group: "Reasoning" },
   { id: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro", group: "Reasoning" },
-  { id: "anthropic/claude-haiku-4.5-20251001", label: "Claude Haiku 4.5", group: "Budget" },
+  { id: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5", group: "Budget" },
   { id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash", group: "Budget" },
-  { id: "moonshot/kimi-k2.6", label: "Kimi K2.6", group: "Budget" },
+  { id: "moonshot/kimi-k3", label: "Kimi K3", group: "Premium frontier", contextWindow: 1_048_576 },
 ];
 
 // GPT Image 2 leads — the only one here that supports non-square ratios, so it
@@ -140,6 +141,12 @@ export interface MediaJob {
   phase: "signing" | "generating";
 }
 
+export interface PendingPermission {
+  askId: string;
+  toolName: string;
+  description: string;
+}
+
 type Setter = ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]);
 
 export function useFranklinChat(
@@ -163,6 +170,7 @@ export function useFranklinChat(
   const [error, setError] = useState<string | null>(null);
   const [genConvId, setGenConvId] = useState<string | null>(null);
   const [mediaJobs, setMediaJobs] = useState<Record<string, MediaJob>>({});
+  const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
 
   const cancelRef = useRef<(() => void) | null>(null);
   const recordRef = useRef(recordSpend);
@@ -231,6 +239,8 @@ export function useFranklinChat(
       setGenConvId(convId);
 
       const media = m === "image" || m === "video" || m === "music";
+      let streamedChars = 0;
+      const maxStreamChars = 1_000_000;
       if (media) {
         setMediaJobs((p) => ({ ...p, [convId]: { kind: m, phase: "generating" } }));
         setStatus("generating");
@@ -242,49 +252,64 @@ export function useFranklinChat(
         switch (msg.kind) {
           case "agent.text": {
             const p = msg.payload as { text: string };
+            const incoming = String(p.text || "");
+            const remaining = maxStreamChars - streamedChars;
+            if (remaining <= 0) break;
+            const chunk = incoming.slice(0, remaining);
+            streamedChars += chunk.length;
             // Append to the current assistant text bubble, OR start a fresh one
             // if the previous segment was a tool group — that keeps the order
             // narration → tools → answer (Codex-style ordered parts).
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               if (last && last.role === "assistant" && last.kind === "text") {
-                return [...prev.slice(0, -1), { ...last, content: last.content + p.text }];
+                return [...prev.slice(0, -1), { ...last, content: last.content + chunk }];
               }
-              return [...prev, { role: "assistant", content: p.text, kind: "text" }];
+              return [...prev, { role: "assistant", content: chunk, kind: "text" }];
             }, convId);
+            if (incoming.length > remaining) {
+              cancelRef.current?.();
+              cancelRef.current = null;
+              setError("Franklin response exceeded the 1,000,000-character display limit");
+              setStatus("error");
+              setGenConvId(null);
+              break;
+            }
             if (!media) setStatus("thinking");
             break;
           }
           case "agent.step": {
             const p = msg.payload as AgentStep;
+            const label = String(p.label || "Tool").slice(0, 500);
             const st: ToolStep["state"] = p.state === "done" ? "done" : p.state === "sign" ? "sign" : "run";
             setStatus(p.state === "sign" ? "signing" : media ? "generating" : "thinking");
-            if (p.state === "run") setActiveTool(p.label);
+            if (p.state === "run") setActiveTool(label);
             else if (p.state === "done") setActiveTool(null);
             // Upsert into a trailing "tools" segment, creating one inline if the
             // last item isn't already a tool group.
             setMessages((prev) => {
               const last = prev[prev.length - 1];
-              const detail = p.detail?.trim() || undefined;
+              const detail = p.detail?.trim().slice(0, 2_000) || undefined;
               if (last && last.kind === "tools" && last.tools) {
                 const prior = last.tools.find((s) => s.id === p.stepId);
                 // Keep the detail from the start event if a later done event
                 // arrives without one.
-                const step: ToolStep = { id: p.stepId, label: p.label, detail: detail ?? prior?.detail, state: st };
+                const step: ToolStep = { id: p.stepId, label, detail: detail ?? prior?.detail, state: st };
                 const tools = prior
                   ? last.tools.map((s) => (s.id === p.stepId ? step : s))
                   : [...last.tools, step];
                 return [...prev.slice(0, -1), { ...last, tools }];
               }
-              return [...prev, { role: "assistant", content: "", kind: "tools", tools: [{ id: p.stepId, label: p.label, detail, state: st }] }];
+              return [...prev, { role: "assistant", content: "", kind: "tools", tools: [{ id: p.stepId, label, detail, state: st }] }];
             }, convId);
             break;
           }
           case "agent.tool_result": {
             const p = msg.payload as { artifacts?: Array<{ path: string; mediaType: string }>; isError?: boolean; preview?: string };
-            if (p.isError && p.preview) setError(p.preview);
+            if (p.isError && p.preview) setError(String(p.preview).slice(0, 4_000));
             if (p.artifacts) {
-              for (const a of p.artifacts) {
+              for (const a of p.artifacts.slice(0, 20)) {
+                if (typeof a.path !== "string" || a.path.length > 5_500_000 || typeof a.mediaType !== "string") continue;
                 if (a.mediaType.startsWith("image/")) {
                   setMessages((prev) => [...prev, { role: "assistant", content: text, kind: "image", image: a.path }], convId);
                 } else if (a.mediaType.startsWith("video/")) {
@@ -300,6 +325,15 @@ export function useFranklinChat(
           case "agent.payment": {
             const p = msg.payload as { model?: string; usd?: number };
             if (p.usd) recordRef.current?.(p.model || modelId || "", p.usd);
+            break;
+          }
+          case "agent.permissionAsk": {
+            const p = msg.payload as PendingPermission;
+            if (p.askId && p.toolName) setPendingPermission({
+              askId: String(p.askId),
+              toolName: String(p.toolName),
+              description: String(p.description || "Franklin requested permission to continue."),
+            });
             break;
           }
           case "agent.done": {
@@ -318,6 +352,7 @@ export function useFranklinChat(
             }, convId);
             clearMediaJob(convId);
             cancelRef.current = null;
+            setPendingPermission(null);
             break;
           }
           case "agent.error": {
@@ -327,17 +362,7 @@ export function useFranklinChat(
             setGenConvId(null);
             clearMediaJob(convId);
             cancelRef.current = null;
-            break;
-          }
-          case "agent.permissionAsk": {
-            const p = msg.payload as AgentPermissionAsk;
-            const approved = window.confirm(
-              `Franklin wants to use ${p.toolName}.\n\n${p.description}\n\nAllow this action?`,
-            );
-            agent.emit("agent.permissionResponse", {
-              askId: p.askId,
-              decision: approved ? "y" : "n",
-            });
+            setPendingPermission(null);
             break;
           }
           default:
@@ -369,6 +394,10 @@ export function useFranklinChat(
   const send = useCallback(
     (text: string, attachment?: string, modeOverride?: ChatMode, modelOverride?: string, forceTool?: string) => {
       const trimmed = text.trim();
+      if (trimmed.length > 100_000) {
+        setError("Message is too large (maximum 100,000 characters)");
+        return;
+      }
       if (!trimmed && !attachment) return;
       if (isBusy) return;
       const m = modeOverride ?? mode;
@@ -402,21 +431,31 @@ export function useFranklinChat(
   );
 
   const stop = useCallback(() => {
+    if (pendingPermission) agent.emit("agent.permissionResponse", { askId: pendingPermission.askId, decision: "n" });
     cancelRef.current?.();
     cancelRef.current = null;
     setStatus("idle");
     setGenConvId(null);
-  }, []);
+    setPendingPermission(null);
+  }, [pendingPermission]);
+
+  const respondToPermission = useCallback((decision: "y" | "n") => {
+    if (!pendingPermission) return;
+    agent.emit("agent.permissionResponse", { askId: pendingPermission.askId, decision });
+    setPendingPermission(null);
+  }, [pendingPermission]);
 
   const stopMedia = useCallback(
     (convId: string) => {
+      if (pendingPermission) agent.emit("agent.permissionResponse", { askId: pendingPermission.askId, decision: "n" });
       cancelRef.current?.();
       cancelRef.current = null;
       clearMediaJob(convId);
       setStatus("idle");
       setGenConvId(null);
+      setPendingPermission(null);
     },
-    [clearMediaJob],
+    [clearMediaJob, pendingPermission],
   );
 
   const regenerate = useCallback(() => {
@@ -446,6 +485,8 @@ export function useFranklinChat(
     genConvId,
     mediaJobs,
     error,
+    pendingPermission,
+    respondToPermission,
     isBusy,
     send,
     stop,

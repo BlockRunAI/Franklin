@@ -1,9 +1,11 @@
-import { Wallet, ArrowDownToLine, Coins, ArrowLeftRight, ExternalLink } from "lucide-react";
+import { Wallet, ArrowDownToLine, Coins, ArrowLeftRight, ExternalLink, Check, RefreshCw } from "lucide-react";
 import type { Usage } from "../hooks/use-usage-stats";
 import { useUsdcBalance } from "../hooks/use-usdc-balance";
 import { useWalletTokens } from "../hooks/use-wallet-tokens";
 import { useWalletSwaps } from "../hooks/use-wallet-swaps";
 import { useTryLang } from "../lib/i18n";
+import { useWallet } from "../hooks/use-wallet";
+import { safeExternalHttpUrl } from "../lib/external-url";
 
 const HOLDINGS_LABEL: Record<string, string> = { en: "Holdings", zh: "持仓", es: "Tenencias" };
 const SWAPS_LABEL: Record<string, string> = { en: "Swaps", zh: "换币记录", es: "Intercambios" };
@@ -26,11 +28,12 @@ function shortModel(id: string): string {
 
 // Wallet & receipts (Franklin's differentiator): USDC balance + everything
 // spent, per model/tool, with a per-request receipt log. Locally the balance
-// comes from the CLI wallet (useUsdcBalance → useWallet), and the receipts are
-// tracked client-side in useUsageStats.
+// comes from the CLI wallet (useUsdcBalance → useWallet), and receipts come
+// from the CLI's authoritative settlement ledger through useSpend.
 export function WalletPanel({ usage }: { usage: Usage }) {
   const { t, lang } = useTryLang();
   const { balance } = useUsdcBalance();
+  const { wallet, switchingChain, switchChain, error: walletError } = useWallet();
   const { tokens } = useWalletTokens();
   const swaps = useWalletSwaps();
   const byModel = Object.entries(usage.byModel).sort((a, b) => b[1].usd - a[1].usd);
@@ -40,6 +43,14 @@ export function WalletPanel({ usage }: { usage: Usage }) {
     <div className="try-wallet-panel">
       <div className="try-wallet-inner">
         <h2 className="try-tools-h">{t.walletTitle}</h2>
+
+        <section className="try-wallet-network-card">
+          <div><strong>Payment network</strong><small>Franklin keeps a separate local wallet for each network. Switching restarts the local agent, never exports a key.</small></div>
+          <div className="try-wallet-network-options" role="group" aria-label="Payment network">
+            {(["base", "solana"] as const).map((chain) => <button key={chain} className={wallet?.chain === chain ? "is-active" : ""} disabled={!!switchingChain || !wallet} onClick={() => void switchChain(chain)}>{switchingChain === chain ? <RefreshCw className="spin" /> : wallet?.chain === chain ? <Check /> : null}{chain === "base" ? "Base" : "Solana"}</button>)}
+          </div>
+        </section>
+        {walletError && <div className="cloud-error">{walletError}</div>}
 
         <div className="try-wallet-stats">
           <div className="try-wallet-stat">
@@ -89,8 +100,8 @@ export function WalletPanel({ usage }: { usage: Usage }) {
                     {fmtAmt(s.sellAmount)} {s.sellSym} → {fmtAmt(s.buyAmount)} {s.buySym}
                   </span>
                   <span className="try-wallet-swap-time">{new Date(s.ts).toLocaleDateString()}</span>
-                  {s.explorer && (
-                    <a className="try-wallet-swap-link" href={s.explorer} target="_blank" rel="noreferrer" title={s.txHash}>
+                  {safeExternalHttpUrl(s.explorer) && (
+                    <a className="try-wallet-swap-link" href={safeExternalHttpUrl(s.explorer)!} target="_blank" rel="noopener noreferrer" title={s.txHash}>
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
                   )}

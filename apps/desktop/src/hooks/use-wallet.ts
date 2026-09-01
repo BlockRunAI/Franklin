@@ -16,6 +16,7 @@ let current: WalletInfo | null = null;
 let loading = true;
 let lastError: string | null = null;
 let connectionState: AgentConnectionState = agent.state;
+let switchingChain: "base" | "solana" | null = null;
 let started = false;
 const subs = new Set<() => void>();
 
@@ -67,6 +68,8 @@ export function useWallet(): {
   isLoading: boolean;
   error: string | null;
   connectionState: AgentConnectionState;
+  switchingChain: "base" | "solana" | null;
+  switchChain: (chain: "base" | "solana") => Promise<void>;
 } {
   ensureStarted();
   const [, force] = useState(0);
@@ -75,5 +78,22 @@ export function useWallet(): {
     subs.add(fn);
     return () => { subs.delete(fn); };
   }, []);
-  return { wallet: current, isLoading: loading, error: lastError, connectionState };
+  const switchChain = async (chain: "base" | "solana") => {
+    if (switchingChain || current?.chain === chain) return;
+    const switchWallet = window.__FRANKLIN__?.switchWalletChain;
+    if (!switchWallet) throw new Error("Wallet switching is available in Franklin Desktop");
+    switchingChain = chain;
+    lastError = null;
+    emit();
+    try {
+      await switchWallet(chain);
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : "Failed to switch wallet network";
+      throw err;
+    } finally {
+      switchingChain = null;
+      emit();
+    }
+  };
+  return { wallet: current, isLoading: loading, error: lastError, connectionState, switchingChain, switchChain };
 }

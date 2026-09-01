@@ -53,9 +53,10 @@ class AgentSocket {
     if (injected) {
       this.url = injected;
     } else if (location.protocol === "file:") {
-      // Packaged Electron without an injected URL — fall back to the default
-      // local agent port.
-      this.url = "ws://127.0.0.1:3737/agent";
+      // A packaged renderer must receive its per-process tokenized URL from
+      // preload. Falling back to an unauthenticated fixed port would silently
+      // discard that boundary if preload failed.
+      throw new Error("Franklin Desktop agent bridge is unavailable");
     } else {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       this.url = `${proto}//${location.host}/agent`;
