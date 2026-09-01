@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Cloud, FileText, FolderOpen, Laptop2, Loader2, MessageSquare, Plus, RefreshCw, Send, ShieldCheck, Users, X } from "lucide-react";
-import { useCloudWorkspace } from "../hooks/use-cloud-workspace";
+import type { CloudWorkspaceController } from "../hooks/use-cloud-workspace";
 import { MessageContent } from "./MessageContent";
-import { publishTeamWorkspaceNav, subscribeTeamWorkspaceRequest } from "../lib/team-workspace-events";
 import { CloudWorkspaceDrawer } from "./CloudWorkspaceDrawer";
 
 const friendlyCloudError = (message: string) => message.toLowerCase().includes("fetch failed")
@@ -13,8 +12,7 @@ function CloudRetryError({ message, className = "", onRetry }: { message: string
   return <div className={`cloud-error cloud-retry-error ${className}`.trim()}><span>{friendlyCloudError(message)}</span><button onClick={onRetry}><RefreshCw /> Retry</button></div>;
 }
 
-export function CloudWorkspacePanel() {
-  const cloud = useCloudWorkspace();
+export function CloudWorkspacePanel({ cloud }: { cloud: CloudWorkspaceController }) {
   const [workspaceName, setWorkspaceName] = useState("BlockRun Cloud Workspace");
   const [inviteInput, setInviteInput] = useState("");
   const [message, setMessage] = useState("");
@@ -29,12 +27,6 @@ export function CloudWorkspacePanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [cloud.messages, cloud.sending]);
-  useEffect(() => publishTeamWorkspaceNav({
-    items: cloud.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name, role: workspace.role, memberCount: workspace.members.length, version: workspace.version })),
-    activeId: cloud.activeId,
-    loading: cloud.loading && !cloud.session,
-  }), [cloud.activeId, cloud.loading, cloud.session, cloud.workspaces]);
-  useEffect(() => subscribeTeamWorkspaceRequest(cloud.setActiveId), [cloud.setActiveId]);
 
   const openFile = async (path: string) => {
     setSelectedFile(path);

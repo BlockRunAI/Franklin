@@ -30,7 +30,7 @@ import { useWallet } from "../hooks/use-wallet";
 import { useTryLang } from "../lib/i18n";
 import { prepareImageForUpload } from "../lib/image-compress";
 import { useStudioRegistry } from "../hooks/use-studio-registry";
-import { requestTeamWorkspace, subscribeTeamWorkspaceNav, type TeamWorkspaceNavState } from "../lib/team-workspace-events";
+import { useCloudWorkspace } from "../hooks/use-cloud-workspace";
 import { safeExternalHttpUrl } from "../lib/external-url";
 
 // Composer "focus" modes — force a specific live-data tool (server tool_choice).
@@ -86,8 +86,18 @@ export function FranklinChat() {
   const history = useChatHistory(auth.address, chatSpace);
   const usage = useSpend();
   const studio = useStudioRegistry();
-  const [teamNav, setTeamNav] = useState<TeamWorkspaceNavState>({ items: [], activeId: null, loading: true });
-  useEffect(() => subscribeTeamWorkspaceNav(setTeamNav), []);
+  const cloud = useCloudWorkspace();
+  const teamNav = {
+    items: cloud.workspaces.map((workspace) => ({
+      id: workspace.id,
+      name: workspace.name,
+      role: workspace.role,
+      memberCount: workspace.members.length,
+      version: workspace.version,
+    })),
+    activeId: cloud.activeId,
+    loading: cloud.loading && !cloud.session,
+  };
   const chat = useFranklinChat(history.messages, history.setMessages, history.ensureConvId);
   const { mode, setMode, model, setModel, models, selectedModel, status, activeTool, needsToolWallet, genConvId, mediaJobs, error, pendingPermission, respondToPermission, isBusy, isConnected, send, stop, stopMedia, regenerate, imageSize, setImageSize, imageSizes, videoRatio, setVideoRatio, videoRatios, videoResolution, setVideoResolution, videoResolutions } = chat;
   const genHere = genConvId === null || genConvId === history.activeId;
@@ -240,20 +250,28 @@ export function FranklinChat() {
   return (
     <div className="try-shell">
       <HistorySidebar
-        conversations={history.visibleConversations}
+        conversations={history.personalConversations}
         activeId={history.activeId}
-        onNew={() => {
-          if (chatSpace === "team") requestTeamWorkspace(null);
-          else history.newChat();
+        onNewChat={() => {
+          setChatSpace("personal");
+          history.newChatInSpace("personal");
+          setView("chat");
+          closeSidebarOnMobile();
+        }}
+        onNewProject={() => {
+          setChatSpace("team");
+          cloud.setActiveId(null);
           setView("chat");
           closeSidebarOnMobile();
         }}
         onSelect={(id) => {
-          history.selectChat(id);
+          setChatSpace("personal");
+          history.selectChatInSpace("personal", id);
           setView("chat");
           closeSidebarOnMobile();
         }}
         onDelete={history.deleteChat}
+        onTogglePinned={history.togglePinned}
         view={view}
         onView={(v) => {
           setView(v);
@@ -267,13 +285,13 @@ export function FranklinChat() {
         switchingWalletChain={switchingWalletChain}
         onSwitchWalletChain={switchWalletChain}
         chatSpace={chatSpace}
-        onChatSpace={setChatSpace}
         teamModeEnabled={studio.teamModeEnabled}
         teamWorkspaces={teamNav.items}
         activeTeamWorkspaceId={teamNav.activeId}
         teamLoading={teamNav.loading}
         onTeamWorkspace={(id) => {
-          requestTeamWorkspace(id);
+          setChatSpace("team");
+          cloud.setActiveId(id);
           setView("chat");
           closeSidebarOnMobile();
         }}
@@ -357,7 +375,7 @@ export function FranklinChat() {
         </div>
 
         {chatSpace === "team" && view === "chat" ? (
-          <CloudWorkspacePanel />
+          <CloudWorkspacePanel cloud={cloud} />
         ) : view === "agents" ? (
           <AgentsPanel
             agents={studio.agents}
