@@ -143,8 +143,9 @@ export function useChatHistory(address: string | null, space: ChatSpace = "perso
   }, [setActiveChatForSpace]);
 
   const togglePinned = useCallback((id: string) => {
+    const now = Date.now();
     setConversations((prev) => prev.map((conversation) => conversation.id === id
-      ? { ...conversation, pinnedAt: conversation.pinnedAt ? undefined : Date.now() }
+      ? { ...conversation, pinnedAt: conversation.pinnedAt ? undefined : now, updatedAt: now }
       : conversation));
   }, []);
 

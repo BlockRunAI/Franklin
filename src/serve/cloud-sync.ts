@@ -25,6 +25,7 @@ export interface CloudConversation {
   createdAt: number;
   updatedAt: number;
   messages: unknown[];
+  pinnedAt?: number;
 }
 
 export function isCloudSyncEnabled(): boolean {
