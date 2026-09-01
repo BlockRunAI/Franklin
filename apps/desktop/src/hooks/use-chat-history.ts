@@ -14,12 +14,16 @@ import { agent } from "../lib/ws";
 
 const LOCAL_KEY = "franklin-webui-history-v1";
 
+export type ChatSpace = "personal" | "team";
+
 export interface Conversation {
   id: string;
   title: string;
   createdAt: number;
   updatedAt: number;
   messages: ChatMessage[];
+  /** Missing on older records, which are migrated as personal conversations. */
+  space?: ChatSpace;
 }
 
 type Setter = ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]);
@@ -30,6 +34,10 @@ function uid() {
 function titleFrom(messages: ChatMessage[]): string {
   const firstUser = messages.find((m) => m.role === "user");
   return firstUser?.content.slice(0, 48) || "New chat";
+}
+
+function conversationSpace(conversation: Conversation): ChatSpace {
+  return conversation.space === "team" ? "team" : "personal";
 }
 
 function loadLocal(): Conversation[] {
@@ -50,23 +58,32 @@ function saveLocal(convos: Conversation[]) {
   }
 }
 
-export function useChatHistory(address: string | null) {
+export function useChatHistory(address: string | null, space: ChatSpace = "personal") {
   // Lazy-init FROM localStorage on the very first render. Doing this in an
   // effect instead caused the save effect to fire once with the still-empty
   // initial state and wipe storage before hydration (history vanished on every
   // launch, esp. under StrictMode's double-invoke).
   const [conversations, setConversations] = useState<Conversation[]>(() => loadLocal());
-  const [activeId, setActiveIdState] = useState<string | null>(() => loadLocal()[0]?.id ?? null);
-  const activeIdRef = useRef<string | null>(activeId);
+  const [activeBySpace, setActiveBySpace] = useState<Record<ChatSpace, string | null>>(() => {
+    const loaded = loadLocal();
+    return {
+      personal: loaded.find((c) => conversationSpace(c) === "personal")?.id ?? null,
+      team: loaded.find((c) => conversationSpace(c) === "team")?.id ?? null,
+    };
+  });
+  const activeBySpaceRef = useRef(activeBySpace);
+  activeBySpaceRef.current = activeBySpace;
+  const pendingSpaceRef = useRef<Record<string, ChatSpace>>({});
+  const activeId = activeBySpace[space];
   const conversationsRef = useRef<Conversation[]>(conversations);
   conversationsRef.current = conversations;
   // Local mode always: the CLI owns the wallet, there is no SIWE backend.
   const signedIn = !!address;
 
   const setActiveId = useCallback((id: string | null) => {
-    activeIdRef.current = id;
-    setActiveIdState(id);
-  }, []);
+    activeBySpaceRef.current = { ...activeBySpaceRef.current, [space]: id };
+    setActiveBySpace((prev) => ({ ...prev, [space]: id }));
+  }, [space]);
 
   // Source of truth is a FILE on disk (~/.blockrun via the agent) — reliable in
   // both dev and the packaged app, where file:// localStorage doesn't persist.
@@ -80,14 +97,17 @@ export function useChatHistory(address: string | null) {
         const server = Array.isArray(r?.conversations) ? r.conversations : [];
         if (server.length > 0) {
           setConversations(server);
-          if (!activeIdRef.current) setActiveId(server[0]?.id ?? null);
+          setActiveBySpace((prev) => ({
+            personal: prev.personal ?? server.find((c) => conversationSpace(c) === "personal")?.id ?? null,
+            team: prev.team ?? server.find((c) => conversationSpace(c) === "team")?.id ?? null,
+          }));
         } else if (conversationsRef.current.length > 0) {
           void agent.request("history.save", { conversations: conversationsRef.current });
         }
       } catch { /* keep local cache */ }
     });
     return off;
-  }, [setActiveId]);
+  }, []);
 
   // Persist on change → localStorage cache (instant) + the file (debounced).
   useEffect(() => {
@@ -99,7 +119,8 @@ export function useChatHistory(address: string | null) {
     return () => clearTimeout(t);
   }, [conversations, signedIn]);
 
-  const activeConversation = conversations.find((c) => c.id === activeId) ?? null;
+  const visibleConversations = conversations.filter((c) => conversationSpace(c) === space);
+  const activeConversation = visibleConversations.find((c) => c.id === activeId) ?? null;
   const messages = activeConversation?.messages ?? [];
 
   const newChat = useCallback(() => setActiveId(null), [setActiveId]);
@@ -113,9 +134,9 @@ export function useChatHistory(address: string | null) {
   const deleteChat = useCallback(
     (id: string) => {
       setConversations((prev) => prev.filter((c) => c.id !== id));
-      if (activeIdRef.current === id) setActiveId(null);
+      if (activeBySpaceRef.current[space] === id) setActiveId(null);
     },
-    [setActiveId],
+    [setActiveId, space],
   );
 
   const deleteMedia = useCallback(
@@ -126,30 +147,32 @@ export function useChatHistory(address: string | null) {
         const msgs = cur.messages.filter((m) => m.image !== url && m.video !== url);
         if (msgs.length === cur.messages.length) return prev;
         if (msgs.length === 0) {
-          if (activeIdRef.current === convId) setActiveId(null);
+          if (activeBySpaceRef.current[space] === convId) setActiveId(null);
           return prev.filter((c) => c.id !== convId);
         }
         const updated = { ...cur, messages: msgs, updatedAt: Date.now() };
         return prev.map((c) => (c.id === convId ? updated : c));
       });
     },
-    [setActiveId],
+    [setActiveId, space],
   );
 
   const ensureConvId = useCallback(() => {
-    let id = activeIdRef.current;
+    let id = activeBySpaceRef.current[space];
     if (!id) {
       id = uid();
+      pendingSpaceRef.current[id] = space;
       setActiveId(id);
     }
     return id;
-  }, [setActiveId]);
+  }, [setActiveId, space]);
 
   const setMessages = useCallback(
     (next: Setter, targetId?: string) => {
-      let resolved = targetId ?? activeIdRef.current;
+      let resolved = targetId ?? activeBySpaceRef.current[space];
       if (!resolved) {
         resolved = uid();
+        pendingSpaceRef.current[resolved] = space;
         setActiveId(resolved);
       }
       const id = resolved;
@@ -159,14 +182,22 @@ export function useChatHistory(address: string | null) {
         const msgs = typeof next === "function" ? next(prevMsgs) : next;
         const now = Date.now();
         if (cur && msgs.length === 0) {
-          if (activeIdRef.current === id) setActiveId(null);
+          if (activeBySpaceRef.current[space] === id) setActiveId(null);
           return prev.filter((c) => c.id !== id);
         }
         let updated: Conversation;
         let arr: Conversation[];
         if (!cur) {
           if (msgs.length === 0) return prev;
-          updated = { id, title: titleFrom(msgs), createdAt: now, updatedAt: now, messages: msgs };
+          updated = {
+            id,
+            title: titleFrom(msgs),
+            createdAt: now,
+            updatedAt: now,
+            messages: msgs,
+            space: pendingSpaceRef.current[id] ?? space,
+          };
+          delete pendingSpaceRef.current[id];
           arr = [updated, ...prev];
         } else {
           updated = {
@@ -180,8 +211,8 @@ export function useChatHistory(address: string | null) {
         return arr;
       });
     },
-    [setActiveId],
+    [setActiveId, space],
   );
 
-  return { conversations, activeId, activeConversation, messages, setMessages, ensureConvId, newChat, selectChat, deleteChat, renameChat, deleteMedia };
+  return { conversations, visibleConversations, activeId, activeConversation, messages, setMessages, ensureConvId, newChat, selectChat, deleteChat, renameChat, deleteMedia };
 }

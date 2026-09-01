@@ -1,83 +1,83 @@
 # Franklin Desktop
 
-Franklin Desktop is the native macOS and Windows workspace for the
-[Franklin agent](https://github.com/BlockRunAI/Franklin). It packages the real
-Franklin runtime inside an Electron shell; it is not a hosted web client or a
-mock of the CLI.
+Franklin Desktop is the native Electron interface for the Franklin agent. It
+lives in the main Franklin repository so every Desktop release is built from a
+reviewed Franklin runtime and the matching UI.
 
-> **Status: Beta.** CI produces unsigned test installers for macOS Apple silicon
-> and Windows x64. Signed public downloads and automatic updates are not live yet.
-> Team Mode and Studio adapters for additional agent CLIs are being developed
-> separately and are not included in this stable integration.
+## Current beta
 
-## What is included
+- Franklin chat with streaming tool activity and inline permission requests
+- local Base and Solana wallets with in-app network switching
+- model catalog, skills, MCP, media generation, wallet activity, and market tools
+- Agent Studio for discovering and importing supported local agent runtimes
+- personal and Team conversation spaces
+- Team projects with members, shared conversations, and versioned files
+- local Team sidecar protected by per-launch tokens and strict loopback access
 
-- Franklin chat with streaming tool activity and permission requests
-- Persistent local conversations and search
-- Model selection through the BlockRun router
-- Local wallet, spend, media gallery, tools, skills, and CLI panels
-- Collapsible navigation and light/dark themes
-- The same Franklin agent loop and tool registry used by the CLI
-
-## Workspace and security
-
-Packaged builds use `Documents/Franklin` as the default workspace. Workspace
-files are available to Franklin normally. A direct or symlinked path outside the
-workspace is still usable, but the app asks for explicit approval first. Shell
-commands also ask for approval in the current beta.
-
-The Desktop shell creates a private credential for each local agent launch,
-restricts local service origins and file URLs, and does not silently inherit
-ambient API keys from the launching shell. Cloud session sync is disabled in
-packaged Desktop builds unless the user explicitly enables it.
+Private keys remain in the local Franklin process. The renderer receives only
+the wallet address, balance, network, and the narrow operations exposed by the
+Electron preload bridge.
 
 ## Development
 
-Use Node.js 22 LTS (22.12 or newer is recommended), then run these commands from
-the repository root:
+Run commands from the Franklin repository root:
 
 ```bash
-npm install
+npm ci
 npm run build
-npm run desktop:real --workspace @blockrun/franklin-desktop
+npm run desktop:real
 ```
 
-For visual work that does not need a live agent, start the Electron app with the
-mock backend:
+For UI development with the mock agent backend:
 
 ```bash
 npm run desktop:dev
 ```
 
-## Check and package
+The Vite renderer, Franklin agent, and Team sidecar use loopback-only services.
+Packaged builds select ephemeral ports and pass unguessable credentials through
+the isolated preload bridge.
+
+## Validation
 
 ```bash
-npm run desktop:build
+npm run typecheck --workspace @blockrun/franklin-desktop
+npm run lint --workspace @blockrun/franklin-desktop
+npm test --workspace @blockrun/franklin-desktop
+npm run build --workspace @blockrun/franklin-desktop
+```
+
+The test suite covers Electron URL and IPC boundaries, hostile WebSocket
+origins, the Team control plane, sandbox staging, SIWE authentication, and the
+Team-to-Franklin agent proxy.
+
+## Packaging
+
+```bash
 npm run desktop:package:mac
 npm run desktop:package:win
 ```
 
-Installers are written to `apps/desktop/release/`. Local and CI packages are
-unsigned test builds, so operating systems may show a developer verification
-warning. The CI workflow uploads its installers for seven days.
+`scripts/prepare-runtime.mjs` copies the main repository's built Franklin
+runtime into the application before `electron-builder` creates the installer.
+The release workflow builds macOS Apple Silicon and Windows x64 installers from
+tags matching `desktop-v*`, then publishes them as a GitHub prerelease with
+SHA-256 checksums.
 
-## Repository structure
+Beta installers are currently unsigned. Users may need to confirm the first
+launch through their operating system's security prompt.
 
-```text
-apps/desktop/
-├── electron/          Electron main process and preload bridge
-├── franklin-agent/   Packaged launcher for the Franklin runtime
-├── src/              React renderer, panels, hooks, and styles
-├── build/            Desktop icons and packaging assets
-└── release/          Local packaging output (not committed)
+## Team service
 
-src/serve/             Authenticated local Franklin service shared by Desktop
-```
+Electron starts `cloud-server/server.mjs` as a local sidecar. It accepts only an
+explicit action allowlist and requires the per-process Desktop token. A private
+remote Team endpoint can be configured with `FRANKLIN_TEAM_CLOUD_URL` or
+`~/.blockrun/franklin-team-cloud-url`.
 
-The renderer communicates with the local service over an authenticated WebSocket
-protocol. Shared message types live in `apps/desktop/src/lib/wire.ts` and the
-server implementation lives in `src/serve/`.
+The included standalone control-plane and sandbox provider are development
+testbeds. Production Team execution must use an isolated remote worker and
+wallet broker rather than exposing a local runtime or Docker socket.
 
 ## License
 
-Apache-2.0, the same license as Franklin.
+Apache-2.0

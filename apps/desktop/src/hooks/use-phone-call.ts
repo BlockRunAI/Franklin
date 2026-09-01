@@ -10,7 +10,6 @@
 // CLI exposes those RPCs.
 
 import { useCallback, useState } from "react";
-import { useWallet } from "./use-wallet";
 
 export interface PhoneNumber {
   phone_number: string;
@@ -18,7 +17,6 @@ export interface PhoneNumber {
 }
 
 export function usePhoneCall() {
-  const { wallet } = useWallet();
   const [numbers] = useState<PhoneNumber[]>([]);
   const [numbersError] = useState<string | null>(null);
   const [loadingNumbers] = useState(false);
@@ -32,7 +30,7 @@ export function usePhoneCall() {
   const renewNumber = useCallback(async (_phone: string) => {}, []);
 
   return {
-    isConnected: !!wallet,
+    isConnected: false,
     numbers,
     numbersError,
     loadingNumbers,

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Settings, BookOpen, FileText, Globe, ArrowUpRight, Check, ChevronRight, Languages, Palette, Terminal, Github, PiggyBank } from "lucide-react";
+import { Settings, BookOpen, FileText, Globe, ArrowUpRight, Check, ChevronRight, Languages, Palette, Terminal, Github, PiggyBank, PanelLeft, RotateCcw } from "lucide-react";
 import { useTryLang, TRY_LANGS } from "../lib/i18n";
 import { useTheme, type Theme } from "../hooks/use-theme";
 import { useCostSaver } from "../hooks/use-cost-saver";
 import { copyText } from "../lib/clipboard";
+import { SIDEBAR_ITEMS, useSidebarPreferences } from "../hooks/use-sidebar-preferences";
 
 const SAVER_LABELS: Record<string, { label: string; desc: string }> = {
   en: { label: "Cost saver", desc: "Auto-compress history on long, tool-heavy turns to cut token cost" },
@@ -17,6 +18,7 @@ export function MoreMenu() {
   const { t, lang, setLang } = useTryLang();
   const { theme, setTheme } = useTheme();
   const costSaver = useCostSaver();
+  const sidebar = useSidebarPreferences();
   const SL = SAVER_LABELS[lang] ?? SAVER_LABELS.en;
   const [copied, setCopied] = useState(false);
   const copyInstall = async () => {
@@ -103,6 +105,21 @@ export function MoreMenu() {
                     {active && <Check className="try-select-check" />}
                   </button>
                 );
+              })}
+            </div>
+          </div>
+
+          <div className="try-sub">
+            <button type="button" className="try-select-option try-sub-row">
+              <PanelLeft className="h-4 w-4" />
+              <span className="try-select-option-label">Sidebar</span>
+              <ChevronRight className="h-4 w-4 try-sub-caret" />
+            </button>
+            <div className="try-submenu try-sidebar-settings">
+              <div className="try-sidebar-settings-head"><strong>Show in sidebar</strong><button type="button" onClick={sidebar.reset}><RotateCcw /> Reset</button></div>
+              {SIDEBAR_ITEMS.map((item) => {
+                const visible = sidebar.visibleItems.includes(item.id);
+                return <button key={item.id} type="button" className={`try-select-option${visible ? " is-active" : ""}`} onClick={() => sidebar.setItemVisible(item.id, !visible)}><span className="try-select-option-label">{item.label}</span>{visible && <Check className="try-select-check" />}</button>;
               })}
             </div>
           </div>

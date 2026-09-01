@@ -29,6 +29,11 @@ export type ClientMsgKind =
   | "history.load"
   | "history.save"
   | "models.list"
+  | "mcp.list"
+  | "skills.list"
+  | "skills.toggle"
+  | "skills.create"
+  | "skills.upload"
   | "settings.get"
   | "settings.set";
 

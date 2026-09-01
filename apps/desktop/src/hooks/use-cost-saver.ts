@@ -11,17 +11,21 @@ export function useCostSaver() {
 
   useEffect(() => {
     let alive = true;
-    agent
-      .request<undefined, { costSaver?: boolean }>("settings.get")
-      .then((r) => {
-        if (alive) {
-          setEnabled(r?.costSaver !== false);
-          setReady(true);
-        }
-      })
-      .catch(() => alive && setReady(true));
+    const off = agent.onState((state) => {
+      if (state !== "open") return;
+      agent
+        .request<undefined, { costSaver?: boolean }>("settings.get")
+        .then((r) => {
+          if (alive) {
+            setEnabled(r?.costSaver !== false);
+            setReady(true);
+          }
+        })
+        .catch(() => alive && setReady(true));
+    });
     return () => {
       alive = false;
+      off();
     };
   }, []);
 

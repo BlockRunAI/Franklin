@@ -18,7 +18,7 @@ export function useModels(): { models: ModelInfo[]; isLoading: boolean } {
       if (state !== "open" || models.length > 0) return;
       try {
         const resp = await agent.request<undefined, { models: ModelInfo[] }>("models.list");
-        setModels(resp?.models ?? []);
+        setModels(Array.isArray(resp?.models) ? resp.models.slice(0, 1_000) : []);
       } catch {
         // Non-fatal; UI falls back to a single "default" entry and the CLI
         // resolves whatever the user picked at runtime.

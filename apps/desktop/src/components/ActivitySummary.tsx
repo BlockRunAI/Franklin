@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown, Search, Globe } from "lucide-react";
 import type { ChatActivity } from "../hooks/use-franklin-chat";
 import { useTryLang } from "../lib/i18n";
+import { safeExternalHttpUrl } from "../lib/external-url";
 
 // Collapsed recap of a finished tool run — "searched N keywords · M sources",
 // expandable to show the queries and the pages Franklin referenced.
@@ -34,12 +35,13 @@ export function ActivitySummary({ activity }: { activity: ChatActivity }) {
           )}
           {activity.sources.length > 0 && (
             <div className="try-activity-sources">
-              {activity.sources.map((s) => (
-                <a key={s.url} className="try-activity-source" href={s.url} target="_blank" rel="noreferrer">
+              {activity.sources.map((s) => {
+                const href = safeExternalHttpUrl(s.url);
+                return href ? <a key={s.url} className="try-activity-source" href={href} target="_blank" rel="noopener noreferrer">
                   <Globe className="h-3.5 w-3.5" />
                   <span className="try-activity-source-title">{s.title}</span>
-                </a>
-              ))}
+                </a> : null;
+              })}
             </div>
           )}
         </div>

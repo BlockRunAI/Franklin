@@ -35,7 +35,7 @@ export function PhonePanel() {
   return (
     <div className="try-phone">
       <div className="try-phone-card">
-        {!isConnected && <p className="try-phone-hint">The local CLI wallet manages phone numbers.</p>}
+        {!isConnected && <p className="try-phone-hint">Phone-number management is not available in Desktop yet. You can still ask Franklin in chat to place a call.</p>}
 
         <div className="try-phone-section-head">
           <h2 className="try-phone-title">Your numbers</h2>
