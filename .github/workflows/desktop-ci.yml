@@ -85,14 +85,24 @@ jobs:
           merge-multiple: true
 
       - name: Generate checksums
-        run: sha256sum release/* > release/SHA256SUMS.txt
+        shell: bash
+        run: |
+          for file in release/*; do
+            normalized="${file// /.}"
+            if [[ "$file" != "$normalized" ]]; then mv "$file" "$normalized"; fi
+          done
+          sha256sum release/* | sed 's#  release/#  #' > release/SHA256SUMS.txt
+
+      - name: Prepare release metadata
+        id: release-meta
+        shell: bash
+        run: echo "name=Franklin Desktop ${GITHUB_REF_NAME#desktop-v}" >> "$GITHUB_OUTPUT"
 
       - name: Publish Desktop prerelease
         uses: softprops/action-gh-release@v2
         with:
-          name: Franklin Desktop ${{ github.ref_name }}
+          name: ${{ steps.release-meta.outputs.name }}
           prerelease: true
-          generate_release_notes: true
           body: |
             Franklin Desktop beta for macOS Apple Silicon and Windows x64.
 
