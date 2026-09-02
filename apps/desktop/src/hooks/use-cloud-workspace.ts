@@ -6,6 +6,15 @@ export interface CloudWorkspace {
   id: string; name: string; createdAt: string; updatedAt?: string; version: number; runtime: string;
   role: CloudMember["role"]; members: CloudMember[];
 }
+/** Flattened workspace shape the sidebar renders. */
+export interface TeamWorkspaceNavItem {
+  id: string;
+  name: string;
+  role: CloudMember["role"];
+  memberCount: number;
+  version: number;
+}
+
 export interface CloudMessage {
   id: string; role: "user" | "assistant"; authorId: string; authorName: string; content: string; createdAt: string;
 }

@@ -3,14 +3,14 @@ import {
   Plus, MessageSquare, Trash2, Phone, Blocks, Images, Wallet, Sparkles, Search,
   Grid2x2, ChevronRight, Terminal, Server, Bot, Folder, FolderPlus, Pin, PinOff,
 } from "lucide-react";
-import type { ChatSpace, Conversation } from "../hooks/use-chat-history";
+import { conversationActivityAt, type ChatSpace, type Conversation } from "../hooks/use-chat-history";
 import type { WalletInfo } from "../lib/wire";
 import type { AgentConnectionState } from "../lib/ws";
 import { useTryLang } from "../lib/i18n";
 import { MoreMenu } from "./MoreMenu";
 import { WalletPill } from "./WalletPill";
 import franklinAvatar from "../assets/franklin-avatar.png";
-import type { TeamWorkspaceNavItem } from "../lib/team-workspace-events";
+import type { TeamWorkspaceNavItem } from "../hooks/use-cloud-workspace";
 import { useSidebarPreferences } from "../hooks/use-sidebar-preferences";
 
 export type TryView = "chat" | "agents" | "phone" | "tools" | "gallery" | "wallet" | "skills" | "cli" | "mcp";
@@ -58,7 +58,7 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
     setMoreOpen(true);
   };
 
-  const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+  const sorted = [...conversations].sort((a, b) => conversationActivityAt(b) - conversationActivityAt(a));
   const pinned = sorted.filter((conversation) => conversation.pinnedAt).sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
   const recent = sorted.filter((conversation) => !conversation.pinnedAt);
 
@@ -100,22 +100,22 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
       <div className="try-scroll">
         {visibleItems.includes("agents") && <button className={`try-nav-item${view === "agents" ? " is-active" : ""}`} onClick={() => onView("agents")}>
           <Bot className="h-4 w-4" />
-          Agents
+          {t.agents}
         </button>}
 
         <button
           className="try-nav-item try-project-create"
           onClick={onNewProject}
           disabled={!teamModeEnabled}
-          title={teamModeEnabled ? "Create or join a project" : "Enable Team Mode in Agents"}
+          title={teamModeEnabled ? t.createOrJoinProject : t.enableTeamMode}
         >
           <FolderPlus className="h-4 w-4" />
-          New project
+          {t.newProject}
         </button>
 
-        {!teamModeEnabled && <button className="try-team-disabled-note" onClick={() => onView("agents")}>Team Mode is off · Manage modules</button>}
+        {!teamModeEnabled && <button className="try-team-disabled-note" onClick={() => onView("agents")}>{t.teamModeOff}</button>}
 
-        <SidebarSection label="Pinned" count={pinned.length}>
+        {pinned.length > 0 && <SidebarSection label={t.pinned} count={pinned.length}>
           {pinned.map((conversation) => (
             <ConversationRow
               key={conversation.id}
@@ -126,20 +126,20 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
               onTogglePinned={onTogglePinned}
             />
           ))}
-        </SidebarSection>
+        </SidebarSection>}
 
-        <SidebarSection label="Projects" count={teamWorkspaces.length}>
+        <SidebarSection label={t.projects} count={teamWorkspaces.length}>
           {teamLoading ? (
-            <p className="try-section-empty">Connecting…</p>
+            <p className="try-section-empty">{t.connectingProjects}</p>
           ) : teamWorkspaces.length === 0 ? (
-            <p className="try-section-empty">No projects</p>
+            <p className="try-section-empty">{t.noProjects}</p>
           ) : teamWorkspaces.map((workspace) => (
             <button
               key={workspace.id}
               className={`try-team-workspace${chatSpace === "team" && activeTeamWorkspaceId === workspace.id && view === "chat" ? " is-active" : ""}`}
               onClick={() => onTeamWorkspace?.(workspace.id)}
               disabled={!teamModeEnabled}
-              title={teamModeEnabled ? `${workspace.memberCount} members · ${workspace.role}` : "Enable Team Mode in Agents"}
+              title={teamModeEnabled ? `${workspace.memberCount} members · ${workspace.role}` : t.enableTeamMode}
             >
               <Folder className="h-4 w-4" />
               <span>{workspace.name}</span>
@@ -147,8 +147,8 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
           ))}
         </SidebarSection>
 
-        <SidebarSection label="Recent" count={recent.length}>
-          {recent.length === 0 && sorted.length === 0 ? (
+        <SidebarSection label={t.recent} count={recent.length}>
+          {recent.length === 0 ? (
             <p className="try-section-empty">{t.noConversations}</p>
           ) : recent.map((conversation) => (
             <ConversationRow
@@ -255,16 +255,17 @@ function ConversationRow({ conversation, active, onSelect, onDelete, onTogglePin
   onDelete: (id: string) => void;
   onTogglePinned: (id: string) => void;
 }) {
+  const { t } = useTryLang();
   const isPinned = !!conversation.pinnedAt;
   return (
     <div className={`try-history-item${active ? " is-active" : ""}`} onClick={() => onSelect(conversation.id)}>
       <MessageSquare className="try-history-icon" />
-      <span className="try-history-title">{conversation.title || "New chat"}</span>
+      <span className="try-history-title">{conversation.title || t.newChat}</span>
       <span className="try-history-actions">
         <button
           className={`try-history-action${isPinned ? " is-pinned" : ""}`}
-          aria-label={isPinned ? "Unpin conversation" : "Pin conversation"}
-          title={isPinned ? "Unpin" : "Pin"}
+          aria-label={isPinned ? t.unpinConversation : t.pinConversation}
+          title={isPinned ? t.unpinConversation : t.pinConversation}
           onClick={(event) => {
             event.stopPropagation();
             onTogglePinned(conversation.id);
@@ -274,8 +275,8 @@ function ConversationRow({ conversation, active, onSelect, onDelete, onTogglePin
         </button>
         <button
           className="try-history-action try-history-del"
-          aria-label="Delete conversation"
-          title="Delete"
+          aria-label={t.deleteConversation}
+          title={t.deleteConversation}
           onClick={(event) => {
             event.stopPropagation();
             onDelete(conversation.id);
@@ -305,7 +306,7 @@ function SearchModal({
   const q = query.trim().toLowerCase();
   const results = q
     ? conversations.filter((c) => c.title.toLowerCase().includes(q))
-    : [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+    : [...conversations].sort((a, b) => conversationActivityAt(b) - conversationActivityAt(a));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -339,7 +340,7 @@ function SearchModal({
             results.map((c) => (
               <button key={c.id} className="try-search-result" onClick={() => onPick(c.id)}>
                 <MessageSquare className="try-history-icon" />
-                <span className="try-history-title">{c.title || "New chat"}</span>
+                <span className="try-history-title">{c.title || t.newChat}</span>
               </button>
             ))
           )}
