@@ -49,7 +49,16 @@ async function agentTurn(workspaceId: string, content: string): Promise<void> {
   if (!response.ok) throw new Error(result.error || `Team Franklin failed (${response.status})`);
 }
 
-export function useCloudWorkspace() {
+export interface CloudWorkspaceOptions {
+  /** Team Mode toggle. When off, Franklin never reaches the cloud service. */
+  enabled?: boolean;
+  /** True while the team workspace UI is on screen. Gates the snapshot fetch and
+   *  drives the connect retry, so a service that started after the app did is
+   *  still reachable without a restart. */
+  viewing?: boolean;
+}
+
+export function useCloudWorkspace({ enabled = true, viewing = false }: CloudWorkspaceOptions = {}) {
   const [connected, setConnected] = useState(false);
   const [session, setSession] = useState<CloudUser | null>(null);
   const [workspaces, setWorkspaces] = useState<CloudWorkspace[]>([]);
@@ -108,6 +117,10 @@ export function useCloudWorkspace() {
   }, [activeId]);
 
   const connect = useCallback(async () => {
+    // Guarded here rather than at each call site: `connect` is exposed on the
+    // controller (the panel's Retry button calls it), so Team Mode has to hold
+    // at the one place every path routes through.
+    if (!enabled) return;
     setLoading(true); setError(null);
     try {
       const base = window.__FRANKLIN__?.cloudUrl || "http://127.0.0.1:3740";
@@ -124,15 +137,37 @@ export function useCloudWorkspace() {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
     finally { setLoading(false); }
-  }, [refreshWorkspaces]);
+  }, [enabled, refreshWorkspaces]);
 
-  useEffect(() => { void connect(); }, [connect]);
-
+  // `session` is the liveness signal: it is set only after a successful
+  // workspace.list. A failed attempt leaves it null, so opening the team UI
+  // retries instead of stranding the user on a dead controller until restart.
   useEffect(() => {
+    if (!enabled || session) return;
+    void connect();
+  }, [connect, enabled, session, viewing]);
+
+  // Team Mode off means off: drop anything already fetched so the sidebar does
+  // not keep listing projects the user just disabled.
+  useEffect(() => {
+    if (enabled) return;
+    setConnected(false);
+    setSession(null);
+    setWorkspaces([]);
+    setMessages([]);
+    setFiles([]);
+    setError(null);
+    contentWorkspaceRef.current = null;
+  }, [enabled]);
+
+  // Pulling a full snapshot (every message + file) is deferred until the team UI
+  // is actually open — booting the app should not fetch a project nobody opened.
+  useEffect(() => {
+    if (!enabled || !viewing) return;
     if (!connected || !session || !activeId) return;
     setLoading(true);
     refreshActive().finally(() => setLoading(false));
-  }, [activeId, connected, refreshActive, session]);
+  }, [activeId, connected, enabled, refreshActive, session, viewing]);
 
   const createWorkspace = async (name: string) => {
     setLoading(true); setError(null);

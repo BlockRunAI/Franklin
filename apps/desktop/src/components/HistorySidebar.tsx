@@ -67,7 +67,7 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
     { key: "gallery", icon: <Images className="h-4 w-4" />, label: t.gallery },
     { key: "cli", icon: <Terminal className="h-4 w-4" />, label: t.cli },
   ];
-  const nav = navItems.filter((item) => visibleItems.includes(item.key as "agents" | "tools" | "gallery" | "cli"));
+  const nav = navItems.filter((item) => visibleItems.includes(item.key as "tools" | "gallery" | "cli"));
   const moreNavItems: { key: TryView; icon: React.ReactNode; label: string }[] = [
     { key: "mcp", icon: <Server className="h-4 w-4" />, label: "MCP" },
     { key: "skills", icon: <Sparkles className="h-4 w-4" />, label: t.skills },
@@ -98,10 +98,10 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
       </button>
 
       <div className="try-scroll">
-        <button className={`try-nav-item${view === "agents" ? " is-active" : ""}`} onClick={() => onView("agents")}>
+        {visibleItems.includes("agents") && <button className={`try-nav-item${view === "agents" ? " is-active" : ""}`} onClick={() => onView("agents")}>
           <Bot className="h-4 w-4" />
           Agents
-        </button>
+        </button>}
 
         <button
           className="try-nav-item try-project-create"

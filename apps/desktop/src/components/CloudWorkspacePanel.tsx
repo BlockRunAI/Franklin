@@ -65,8 +65,8 @@ export function CloudWorkspacePanel({ cloud }: { cloud: CloudWorkspaceController
           <div className="cloud-kicker">FRANKLIN CLOUD · TEAM WORKSPACE</div>
           <h2>{cloud.connected ? "Connect your Franklin wallet" : "Start Franklin to continue"}</h2>
           <p>Your local Franklin signs in to franklin.run with SIWE. The wallet key never leaves this computer; Team data is stored in the existing Franklin Cloud.</p>
-          <button className="cloud-primary" disabled={!cloud.connected || cloud.loading} onClick={() => void cloud.connect()}>
-            {cloud.loading ? <Loader2 className="spin" /> : <ShieldCheck />} {cloud.connected ? "Connect Franklin Cloud" : "Franklin is offline"}
+          <button className="cloud-primary" disabled={cloud.loading} onClick={() => void cloud.connect()}>
+            {cloud.loading ? <Loader2 className="spin" /> : <ShieldCheck />} {cloud.connected ? "Connect Franklin Cloud" : "Retry connection"}
           </button>
           {cloud.error && <div className="cloud-error">{friendlyCloudError(cloud.error)}</div>}
         </div>
