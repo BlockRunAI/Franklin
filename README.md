@@ -458,13 +458,13 @@ Core is workflow-agnostic. Add new verticals without touching the loop. Discover
 │  Intent → Smart Router → Tool Use → Spend Control → Result   │
 ├──────────────────────────────────────────────────────────────┤
 │  Learned Router                                              │
-│  2M+ requests · <!-- br:models.chatVisible -->66<!-- /br:models.chatVisible --> models · category detection · Elo scores │
+│  2M+ requests · <!-- br:models.chatVisible@live -->76<!-- /br:models.chatVisible@live --> models · category detection · Elo scores │
 ├──────────────────────────────────────────────────────────────┤
 │  Agent Loop                                                  │
 │  16 tools · Sessions · Compaction · Pricing · Plugin SDK     │
 ├──────────────────────────────────────────────────────────────┤
 │  BlockRun Gateway                                            │
-│  <!-- br:models.chatVisible -->66<!-- /br:models.chatVisible --> LLMs · CoinGecko · Search · Image APIs · paid services  │
+│  <!-- br:models.chatVisible@live -->76<!-- /br:models.chatVisible@live --> LLMs · CoinGecko · Search · Image APIs · paid services  │
 ├──────────────────────────────────────────────────────────────┤
 │  x402 Micropayment Protocol                                  │
 │  HTTP 402 · USDC on Base & Solana · signed payment payloads  │
@@ -508,7 +508,7 @@ src/
 ├── stats/             Usage tracking + insights engine
 ├── ui/                Ink-based terminal UI
 ├── proxy/             Payment proxy for external tools
-├── router/            Learned model router (<!-- br:models.chatVisible -->66<!-- /br:models.chatVisible --> models, Elo scoring)
+├── router/            Learned model router (<!-- br:models.chatVisible@live -->76<!-- /br:models.chatVisible@live --> models, Elo scoring)
 ├── wallet/            Wallet management (Base + Solana)
 ├── mcp/               MCP server auto-discovery
 └── commands/          CLI subcommands
