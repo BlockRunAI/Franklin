@@ -77,12 +77,27 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out release notes
+        uses: actions/checkout@v4
+
       - name: Download installers
         uses: actions/download-artifact@v4
         with:
           pattern: franklin-desktop-*
           path: release
           merge-multiple: true
+
+      - name: Verify both installers are present
+        shell: bash
+        run: |
+          shopt -s nullglob
+          dmg=(release/*.dmg)
+          exe=(release/*.exe)
+          if (( ${#dmg[@]} != 1 || ${#exe[@]} != 1 )); then
+            echo "::error::expected exactly one .dmg and one .exe, got ${#dmg[@]} dmg / ${#exe[@]} exe"
+            ls -la release/
+            exit 1
+          fi
 
       - name: Generate checksums
         shell: bash
@@ -96,15 +111,26 @@ jobs:
       - name: Prepare release metadata
         id: release-meta
         shell: bash
-        run: echo "name=Franklin Desktop ${GITHUB_REF_NAME#desktop-v}" >> "$GITHUB_OUTPUT"
+        run: |
+          version="${GITHUB_REF_NAME#desktop-v}"
+          echo "name=Franklin Desktop $version" >> "$GITHUB_OUTPUT"
+          notes="apps/desktop/release-notes/${version}.md"
+          if [[ -f "$notes" ]]; then
+            echo "using $notes"
+            cp "$notes" release-body.md
+          else
+            echo "no $notes, falling back to the generic blurb"
+            cat > release-body.md <<'EOF'
+          Franklin Desktop beta for macOS Apple Silicon and Windows x64.
+
+          These beta installers are currently unsigned. On first launch, your operating system may ask you to confirm that you want to open the app.
+          EOF
+          fi
 
       - name: Publish Desktop prerelease
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ steps.release-meta.outputs.name }}
           prerelease: true
-          body: |
-            Franklin Desktop beta for macOS Apple Silicon and Windows x64.
-
-            These beta installers are currently unsigned. On first launch, your operating system may ask you to confirm that you want to open the app.
+          body_path: release-body.md
           files: release/*
