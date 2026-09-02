@@ -3,7 +3,7 @@
 // rewired to the local agent: useFranklinChat streams over the WebSocket, the
 // wallet is the local CLI wallet (read-only, no connect flow).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, PanelLeft, ImageIcon, Clapperboard, Music, X, Plus, Check, ChevronDown, Gauge, BarChart3, TrendingUp, MoreHorizontal, Users, Laptop2, ShieldAlert } from "lucide-react";
 import { TopBarMenu } from "./TopBarMenu";
 import { ModelSelect } from "./ModelSelect";
@@ -86,8 +86,8 @@ export function FranklinChat() {
   const history = useChatHistory(auth.address, chatSpace);
   const usage = useSpend();
   const studio = useStudioRegistry();
-  const cloud = useCloudWorkspace();
-  const teamNav = {
+  const cloud = useCloudWorkspace({ enabled: studio.teamModeEnabled, viewing: chatSpace === "team" });
+  const teamNav = useMemo(() => ({
     items: cloud.workspaces.map((workspace) => ({
       id: workspace.id,
       name: workspace.name,
@@ -97,7 +97,7 @@ export function FranklinChat() {
     })),
     activeId: cloud.activeId,
     loading: cloud.loading && !cloud.session,
-  };
+  }), [cloud.workspaces, cloud.activeId, cloud.loading, cloud.session]);
   const chat = useFranklinChat(history.messages, history.setMessages, history.ensureConvId);
   const { mode, setMode, model, setModel, models, selectedModel, status, activeTool, needsToolWallet, genConvId, mediaJobs, error, pendingPermission, respondToPermission, isBusy, isConnected, send, stop, stopMedia, regenerate, imageSize, setImageSize, imageSizes, videoRatio, setVideoRatio, videoRatios, videoResolution, setVideoResolution, videoResolutions } = chat;
   const genHere = genConvId === null || genConvId === history.activeId;
@@ -374,7 +374,7 @@ export function FranklinChat() {
           )}
         </div>
 
-        {chatSpace === "team" && view === "chat" ? (
+        {chatSpace === "team" && studio.teamModeEnabled && view === "chat" ? (
           <CloudWorkspacePanel cloud={cloud} />
         ) : view === "agents" ? (
           <AgentsPanel
@@ -404,7 +404,7 @@ export function FranklinChat() {
         ) : view === "mcp" ? (
           <McpPanel />
         ) : view === "gallery" ? (
-          <GalleryPanel conversations={history.visibleConversations} onZoom={setLightbox} onDelete={history.deleteMedia} />
+          <GalleryPanel conversations={history.personalConversations} onZoom={setLightbox} onDelete={history.deleteMedia} />
         ) : view === "wallet" ? (
           <WalletPanel usage={usage} />
         ) : (
