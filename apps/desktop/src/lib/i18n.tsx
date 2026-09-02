@@ -13,7 +13,19 @@ export const TRY_LANGS: { id: TryLang; label: string }[] = [
 export interface TryDict {
   newChat: string;
   noConversations: string;
-  history: string;
+  pinned: string;
+  recent: string;
+  projects: string;
+  agents: string;
+  newProject: string;
+  noProjects: string;
+  connectingProjects: string;
+  createOrJoinProject: string;
+  enableTeamMode: string;
+  teamModeOff: string;
+  pinConversation: string;
+  unpinConversation: string;
+  deleteConversation: string;
   connectWallet: string;
   connecting: string;
   installWallet: string;
@@ -151,7 +163,19 @@ export interface TryDict {
 const en: TryDict = {
   newChat: "New chat",
   noConversations: "No conversations yet.",
-  history: "History",
+  pinned: "Pinned",
+  recent: "Recent",
+  projects: "Projects",
+  agents: "Agents",
+  newProject: "New project",
+  noProjects: "No projects",
+  connectingProjects: "Connecting…",
+  createOrJoinProject: "Create or join a project",
+  enableTeamMode: "Enable Team Mode in Agents",
+  teamModeOff: "Team Mode is off · Manage modules",
+  pinConversation: "Pin conversation",
+  unpinConversation: "Unpin conversation",
+  deleteConversation: "Delete conversation",
   connectWallet: "Connect wallet",
   connecting: "Connecting…",
   installWallet: "Install a wallet",
@@ -290,7 +314,19 @@ const en: TryDict = {
 const zh: TryDict = {
   newChat: "新对话",
   noConversations: "还没有对话。",
-  history: "历史记录",
+  pinned: "已置顶",
+  recent: "最近",
+  projects: "项目",
+  agents: "智能体",
+  newProject: "新建项目",
+  noProjects: "暂无项目",
+  connectingProjects: "连接中…",
+  createOrJoinProject: "创建或加入项目",
+  enableTeamMode: "在「智能体」中开启团队模式",
+  teamModeOff: "团队模式已关闭 · 管理模块",
+  pinConversation: "置顶对话",
+  unpinConversation: "取消置顶",
+  deleteConversation: "删除对话",
   connectWallet: "连接钱包",
   connecting: "连接中…",
   installWallet: "安装钱包",
@@ -429,7 +465,19 @@ const zh: TryDict = {
 const es: TryDict = {
   newChat: "Nuevo chat",
   noConversations: "Aún no hay conversaciones.",
-  history: "Historial",
+  pinned: "Fijados",
+  recent: "Recientes",
+  projects: "Proyectos",
+  agents: "Agentes",
+  newProject: "Nuevo proyecto",
+  noProjects: "Sin proyectos",
+  connectingProjects: "Conectando…",
+  createOrJoinProject: "Crear o unirse a un proyecto",
+  enableTeamMode: "Activa el Modo Equipo en Agentes",
+  teamModeOff: "Modo Equipo desactivado · Gestionar módulos",
+  pinConversation: "Fijar conversación",
+  unpinConversation: "Dejar de fijar",
+  deleteConversation: "Eliminar conversación",
   connectWallet: "Conectar billetera",
   connecting: "Conectando…",
   installWallet: "Instalar billetera",

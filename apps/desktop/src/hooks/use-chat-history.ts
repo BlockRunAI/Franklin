@@ -26,6 +26,18 @@ export interface Conversation {
   space?: ChatSpace;
   /** Unix timestamp used to order conversations pinned in the sidebar. */
   pinnedAt?: number;
+  /**
+   * Last time the conversation itself changed (messages, title, media).
+   * Distinct from `updatedAt`, which doubles as the cloud-sync revision and so
+   * has to move for metadata-only edits like pinning. Sidebar ordering reads
+   * this; records written before it existed fall back to `updatedAt`.
+   */
+  activityAt?: number;
+}
+
+/** Sidebar ordering key. Falls back for conversations saved before `activityAt`. */
+export function conversationActivityAt(conversation: Conversation): number {
+  return conversation.activityAt ?? conversation.updatedAt;
 }
 
 type Setter = ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]);
@@ -151,7 +163,8 @@ export function useChatHistory(address: string | null, space: ChatSpace = "perso
 
   const renameChat = useCallback((id: string, title: string) => {
     const clean = title.trim().slice(0, 80) || "New chat";
-    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title: clean, updatedAt: Date.now() } : c)));
+    const now = Date.now();
+    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title: clean, updatedAt: now, activityAt: now } : c)));
   }, []);
 
   const deleteChat = useCallback(
@@ -174,7 +187,7 @@ export function useChatHistory(address: string | null, space: ChatSpace = "perso
           if (activeBySpaceRef.current[space] === convId) setActiveId(null);
           return prev.filter((c) => c.id !== convId);
         }
-        const updated = { ...cur, messages: msgs, updatedAt: Date.now() };
+        const updated = { ...cur, messages: msgs, updatedAt: Date.now(), activityAt: Date.now() };
         return prev.map((c) => (c.id === convId ? updated : c));
       });
     },
@@ -218,6 +231,7 @@ export function useChatHistory(address: string | null, space: ChatSpace = "perso
             title: titleFrom(msgs),
             createdAt: now,
             updatedAt: now,
+            activityAt: now,
             messages: msgs,
             space: pendingSpaceRef.current[id] ?? space,
           };
@@ -229,6 +243,7 @@ export function useChatHistory(address: string | null, space: ChatSpace = "perso
             messages: msgs,
             title: cur.title && cur.title !== "New chat" ? cur.title : titleFrom(msgs),
             updatedAt: now,
+            activityAt: now,
           };
           arr = prev.map((c) => (c.id === id ? updated : c));
         }

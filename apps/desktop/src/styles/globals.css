@@ -4630,39 +4630,6 @@ h2.dark-h,
 }
 
 /* Personal / Team workspace demo switcher. */
-.try-space-switch {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  padding: 3px;
-  margin: 2px 2px 8px;
-  background: color-mix(in oklch, var(--fg) 5%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 11px;
-}
-.try-space-switch button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 7px 8px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--fg-subtle);
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.14s, color 0.14s, box-shadow 0.14s;
-}
-.try-space-switch button:hover { color: var(--fg); }
-.try-space-switch button.is-active {
-  background: var(--bg);
-  color: var(--fg);
-  box-shadow: 0 1px 4px rgba(31, 28, 22, 0.09);
-}
-.try-space-switch button.is-active svg { color: var(--gold-dim); }
 .try-team-beta {
   padding: 1px 4px;
   border: 1px solid color-mix(in oklch, var(--gold-dim) 35%, transparent);
@@ -5181,19 +5148,6 @@ h2.dark-h,
 .try-search-result.is-new svg { color: var(--gold-dim); }
 
 /* History date groups */
-.try-history-group { margin-bottom: 6px; }
-.try-history-group-label {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--bg-alt);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--fg-subtle);
-  padding: 6px 6px 6px;
-}
 
 /* Wallet panel */
 .try-wallet-panel {
@@ -5799,7 +5753,6 @@ h2.dark-h,
 .try-sidebar-secondary { display: grid; gap: 1px; margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border); }
 .try-project-create { color: var(--fg); }
 .try-project-create svg { color: var(--gold-dim); }
-.try-history { display: flex; flex-direction: column; gap: 1px; }
 .try-history-empty {
   font-size: 13px;
   color: var(--fg-subtle);
@@ -6729,7 +6682,6 @@ html.is-mac .try-brand {
   text-transform: uppercase;
   color: var(--fg-subtle);
 }
-.try-space-switch button:disabled { opacity: .38; cursor: not-allowed; }
 .try-team-disabled-note {
   width: 100%;
   margin: -2px 0 8px;
