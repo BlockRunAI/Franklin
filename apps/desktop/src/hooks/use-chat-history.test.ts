@@ -156,6 +156,21 @@ describe("deleteChat", () => {
     expect(result.current.activeId).toBeNull();
   });
 
+  // The sidebar only ever hands deleteChat a personal conversation, so this
+  // branch is unreachable through the UI and a mutation sweep found no test
+  // killed it. It still guards the hook's public API, so it gets a fixture that
+  // reaches it directly rather than being deleted as dead weight.
+  it("clears the team active id when a team chat is deleted", () => {
+    seed([{ id: "p" }, { id: "t", space: "team" }]);
+    const { result } = renderHook(() => useChatHistory(null, "team"));
+
+    act(() => result.current.selectChatInSpace("team", "t"));
+    expect(result.current.activeId).toBe("t");
+
+    act(() => result.current.deleteChat("t"));
+    expect(result.current.activeId).toBeNull();
+  });
+
   it("leaves the active id alone when another chat is deleted", () => {
     seed([{ id: "a" }, { id: "b" }]);
     const { result } = render();
