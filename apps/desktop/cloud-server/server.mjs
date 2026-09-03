@@ -331,11 +331,9 @@ async function runtimeModules() {
 
 async function signingModules() {
   if (!signingModulesPromise) {
-    const packageRoot = path.dirname(path.dirname(runtimeEntry));
-    const modulesRoot = path.join(packageRoot, "node_modules", "@noble");
     signingModulesPromise = Promise.all([
-      import(pathToFileURL(path.join(modulesRoot, "curves", "secp256k1.js")).href),
-      import(pathToFileURL(path.join(modulesRoot, "hashes", "sha3.js")).href),
+      import("@noble/curves/secp256k1.js"),
+      import("@noble/hashes/sha3.js"),
     ]).then(([curves, hashes]) => ({ secp256k1: curves.secp256k1, keccak256: hashes.keccak_256 }));
   }
   return signingModulesPromise;
@@ -343,13 +341,11 @@ async function signingModules() {
 
 async function localWallet() {
   const { secp256k1, keccak256 } = await signingModules();
-  const walletDir = path.join(os.homedir(), ".blockrun");
-  const walletFile = path.join(walletDir, ".session");
-  const legacyFile = path.join(walletDir, "wallet.key");
-  let privateKey = process.env.BLOCKRUN_WALLET_KEY || process.env.BASE_CHAIN_WALLET_KEY || "";
-  if (!privateKey) privateKey = await fsp.readFile(walletFile, "utf8").then((value) => value.trim()).catch(() => "");
-  if (!privateKey) privateKey = await fsp.readFile(legacyFile, "utf8").then((value) => value.trim()).catch(() => "");
-  if (!privateKey) throw new Error("No local Franklin wallet is configured; create one in Franklin before connecting Team Cloud");
+  // Team Cloud uses an EVM SIWE identity even when the active payment chain is
+  // Solana. The SDK creates the same local Base wallet Franklin uses elsewhere
+  // without changing the user's selected payment chain.
+  const { getOrCreateWallet } = await import("@blockrun/llm");
+  const { privateKey } = getOrCreateWallet();
   const privateBytes = Buffer.from(privateKey.replace(/^0x/, ""), "hex");
   if (privateBytes.length !== 32) throw new Error("Franklin wallet key is invalid");
   const publicKey = secp256k1.getPublicKey(privateBytes, false);

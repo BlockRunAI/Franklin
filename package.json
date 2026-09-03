@@ -108,6 +108,10 @@
   },
   "overrides": {
     "ws@>=8.0.0 <=8.20.1": "^8.21.1",
-    "@polymarket/builder-signing-sdk": "1.0.0"
+    "@polymarket/builder-signing-sdk": "1.0.0",
+    "@polymarket/builder-relayer-client": {
+      "axios": "^1.18.1"
+    },
+    "qs": "^6.16.0"
   }
 }

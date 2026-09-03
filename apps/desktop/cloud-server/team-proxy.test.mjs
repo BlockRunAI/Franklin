@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import fsp from "node:fs/promises";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const walletHome = await fsp.mkdtemp(path.join(os.tmpdir(), ".franklin-team-wallet-"));
 const token = "desktop-team-test-token";
 const workspace = {
   id: "tw_test", name: "Proxy Test", createdAt: new Date().toISOString(), version: 1,
@@ -59,9 +62,11 @@ const child = spawn(process.execPath, [path.join(here, "server.mjs")], {
     FRANKLIN_CLOUD_TOKEN: token,
     FRANKLIN_TEAM_CLOUD_URL: `http://127.0.0.1:${remotePort}`,
     FRANKLIN_TEAM_FAKE_AGENT: "1",
-    BLOCKRUN_WALLET_KEY: `0x${"11".repeat(32)}`,
+    HOME: walletHome,
+    BLOCKRUN_HOME: walletHome,
     FRANKLIN_RUNTIME_ENTRY: process.env.FRANKLIN_TEST_RUNTIME_ENTRY
-      || path.join(here, "..", "..", "..", "dist", "index.js"),
+      // Mirror the packaged layout: the runtime has no sibling node_modules.
+      || path.join(here, ".packaged-layout", "franklin-agent", "dist", "index.js"),
   },
   stdio: ["ignore", "pipe", "pipe", "ipc"],
 });
@@ -112,4 +117,5 @@ try {
 } finally {
   child.kill("SIGTERM");
   await new Promise((resolve) => mockCloud.close(resolve));
+  await fsp.rm(walletHome, { recursive: true, force: true });
 }
