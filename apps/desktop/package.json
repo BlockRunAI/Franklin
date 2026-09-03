@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/franklin-desktop",
-  "version": "0.2.0-beta.2",
+  "version": "0.2.0-beta.3",
   "author": "BlockRun <hello@blockrun.ai>",
   "description": "Franklin Desktop — native desktop app for the Franklin agent (Electron). Same agent, wallet and tools as the CLI, in a polished window.",
   "license": "Apache-2.0",
