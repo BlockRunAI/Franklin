@@ -1,6 +1,7 @@
 {
   "name": "@blockrun/franklin-desktop",
   "version": "0.2.0-beta.2",
+  "author": "BlockRun <hello@blockrun.ai>",
   "description": "Franklin Desktop — native desktop app for the Franklin agent (Electron). Same agent, wallet and tools as the CLI, in a polished window.",
   "license": "Apache-2.0",
   "type": "module",
@@ -35,7 +36,10 @@
   },
   "dependencies": {
     "@blockrun/franklin": "*",
+    "@blockrun/llm": "^3.13.1",
     "@fontsource/poppins": "^5.2.7",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
     "html-to-image": "^1.11.13",
     "https-proxy-agent": "^9.1.0",
     "lucide-react": "^0.469.0",
@@ -85,7 +89,11 @@
       "cloud-server/server.mjs",
       "package.json",
       "!node_modules/@blockrun/franklin",
-      "!node_modules/@blockrun/franklin/**"
+      "!node_modules/@blockrun/franklin/**",
+      "!node_modules/@colbymchenry/codegraph",
+      "!node_modules/@colbymchenry/codegraph/**",
+      "!node_modules/@colbymchenry/codegraph-*",
+      "!node_modules/@colbymchenry/codegraph-*/**"
     ],
     "asar": true,
     "mac": {

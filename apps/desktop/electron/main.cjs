@@ -25,6 +25,7 @@ const {
   sameOriginUrl,
   trustedRendererUrl,
 } = require("./security.cjs");
+const { createStudioRuntimeManager } = require("./studio-runtime.cjs");
 
 // Is something already listening on a local port? Used so we don't double-spawn
 // Franklin Canvas (a second `npm start` would hit EADDRINUSE on :3100 and, per
@@ -198,6 +199,8 @@ if (hasSingleInstanceLock) {
 const STUDIO_RUNTIME_SPECS = {
   codex: {
     command: "codex",
+    args: ["app-server", "--stdio"],
+    lifecycleSupported: true,
     candidates: [
       process.env.CODEX_PATH,
       "/Applications/ChatGPT.app/Contents/Resources/codex",
@@ -213,6 +216,7 @@ const STUDIO_RUNTIME_SPECS = {
   hermes: { command: "hermes", candidates: [process.env.HERMES_PATH] },
   deepseek: { command: "dsh", candidates: [process.env.DSH_PATH] },
 };
+const studioRuntimes = createStudioRuntimeManager();
 
 function execFileText(file, args, timeout = 5000) {
   return new Promise((resolve) => {
@@ -240,17 +244,19 @@ async function resolveStudioRuntime(id) {
 }
 
 async function inspectStudioRuntime(id) {
+  const spec = STUDIO_RUNTIME_SPECS[id];
+  if (!spec) return { id, available: false, running: false };
   const executable = await resolveStudioRuntime(id);
   if (!executable) return { id, available: false, running: false };
   const versionResult = await execFileText(executable, ["--version"], 5000);
-  const running = false;
+  const running = studioRuntimes.isRunning(id);
   return {
     id,
     available: true,
     running,
     path: executable,
     version: versionResult.output.split("\n")[0] || "Detected",
-    lifecycleSupported: false,
+    lifecycleSupported: spec.lifecycleSupported === true,
   };
 }
 
@@ -260,11 +266,34 @@ async function scanStudioRuntimes() {
 
 async function startStudioRuntime(id) {
   const detected = await inspectStudioRuntime(id);
-  return { ok: false, running: false, ...detected, error: "Runtime detected, but the Desktop protocol adapter is not implemented yet." };
+  const spec = STUDIO_RUNTIME_SPECS[id];
+  if (!detected.available) return { ok: false, ...detected, error: "CLI not found." };
+  if (!spec?.lifecycleSupported) {
+    return { ok: false, ...detected, error: "Runtime detected, but the Desktop protocol adapter is not implemented yet." };
+  }
+  const workDir = process.env.FRANKLIN_WORK_DIR
+    ? path.resolve(process.env.FRANKLIN_WORK_DIR)
+    : path.join(app.getPath("documents"), "Franklin");
+  fs.mkdirSync(workDir, { recursive: true, mode: 0o700 });
+  const result = await studioRuntimes.start({
+    id,
+    executable: detected.path,
+    args: spec.args,
+    cwd: workDir,
+    env: {
+      ...backendBaseEnvironment(),
+      ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}),
+    },
+  });
+  return { ...detected, ...result, endpoint: result.running ? "stdio" : undefined };
 }
 
 async function stopStudioRuntime(id) {
-  return { ok: false, running: false, error: `The ${id} Desktop protocol adapter is not implemented yet.` };
+  const spec = STUDIO_RUNTIME_SPECS[id];
+  if (!spec?.lifecycleSupported) {
+    return { ok: false, running: false, error: `The ${id} Desktop protocol adapter is not implemented yet.` };
+  }
+  return studioRuntimes.stop(id);
 }
 
 // Auto-start Franklin Canvas (its own backend :3100 + Vite UI :5173) so the
@@ -637,6 +666,7 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => { quitting = true; });
 
 app.on("quit", () => {
+  studioRuntimes.stopAll();
   if (backend) backend.kill();
   if (cloudBackend) cloudBackend.kill();
   if (canvas) canvas.kill();
