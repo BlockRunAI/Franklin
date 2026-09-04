@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * PredictionMarket — unified access to Polymarket / Kalshi / Limitless /
  * Opinion / Predict.Fun / cross-platform / smart-money / wallet endpoints
@@ -105,7 +106,7 @@ async function getWithPayment<T>(path: string, query: Record<string, string | nu
   try {
     let response = await fetch(endpoint, { method: 'GET', signal: controller.signal, headers });
 
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       const paymentHeaders = await signPayment(response, chain, endpoint);
       if (!paymentHeaders) {
         throw new Error('Payment signing failed — check wallet balance');

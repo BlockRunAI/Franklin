@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 import http from 'node:http';
 import {
   getOrCreateWallet,
@@ -264,9 +265,9 @@ export function createProxy(options: ProxyOptions): http.Server {
   // happen regardless; only the live stderr mirror is gated.
   setDebugMode(!!options.debug);
 
-  const chain = options.chain || 'base';
+  const chain = options.chain || 'solana';
   let currentModel: string | null = options.modelOverride || DEFAULT_MODEL;
-  const fallbackEnabled = options.fallbackEnabled !== false; // Default true
+  const fallbackEnabled = !accountMode() && options.fallbackEnabled !== false; // Default true
   // Resolve timeouts once at construction. The option wins over the env var
   // so callers (esp. tests) can configure a single proxy without polluting
   // process.env for the rest of the process — and for any sibling proxy.
@@ -276,14 +277,14 @@ export function createProxy(options: ProxyOptions): http.Server {
   let baseWallet: { privateKey: string; address: string } | null = null;
   let solanaWallet: { privateKey: string; address: string } | null = null;
 
-  if (chain === 'base') {
+  if (!accountMode() && chain === 'base') {
     const w = getOrCreateWallet();
     baseWallet = { privateKey: w.privateKey, address: w.address };
   }
 
   let solanaInitPromise: Promise<void> | null = null;
   const initSolana = () => {
-    if (chain !== 'solana' || solanaWallet) return Promise.resolve();
+    if (accountMode() || chain !== 'solana' || solanaWallet) return Promise.resolve();
     if (!solanaInitPromise) {
       solanaInitPromise = getOrCreateSolanaWallet().then((w) => {
         solanaWallet = { privateKey: w.privateKey, address: w.address };
@@ -877,7 +878,7 @@ async function fetchModelAttempt(
   );
 
   // Non-402 path: free model or cached response — no payment, paidUsd = 0.
-  if (response.status !== 402) return { response, paidUsd: 0 };
+  if (accountMode() || response.status !== 402) return { response, paidUsd: 0 };
 
   if (payment.chain === 'solana' && payment.solanaWallet) {
     return handleSolanaPayment(
@@ -1043,7 +1044,7 @@ async function handleBasePayment(
     body: body || undefined,
   }, timeoutMs, `Paid proxy request for ${model}`);
 
-  if (paid.status === 402) return { response: paid, paidUsd: 0 };
+  if (paid.status === 402 && !accountMode()) return { response: paid, paidUsd: 0 };
   appendSettlementRow(endpoint, paidUsd, settlementMeta);
   return { response: paid, paidUsd };
 }
@@ -1107,7 +1108,7 @@ async function handleSolanaPayment(
     body: body || undefined,
   }, timeoutMs, `Paid proxy request for ${model}`);
 
-  if (paid.status === 402) return { response: paid, paidUsd: 0 };
+  if (paid.status === 402 && !accountMode()) return { response: paid, paidUsd: 0 };
   appendSettlementRow(endpoint, paidUsd, settlementMeta);
   return { response: paid, paidUsd };
 }

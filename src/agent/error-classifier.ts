@@ -1,3 +1,4 @@
+import { ACCOUNT_PORTAL } from '../payments/account.js';
 /**
  * Classify model/runtime errors so recovery and UX can be more consistent.
  *
@@ -52,6 +53,7 @@ function includesAny(text: string, patterns: string[]): boolean {
 
 export function classifyAgentError(message: string): AgentErrorInfo {
   const err = message.toLowerCase();
+  if (err.includes("account credits exhausted")) return { category: "payment", label: "Payment", isTransient: false, maxRetries: 0, suggestion: `Top up at ${ACCOUNT_PORTAL}/dashboard/credits.` };
 
   // Extract Retry-After hint that streaming-client appended (see llm.ts
   // 429 path). Surfaces on the AgentErrorInfo so the loop can honor the

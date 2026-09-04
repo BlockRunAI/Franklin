@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../../../payments/account.js';
 /**
  * Shared BlockRun Gateway HTTP client + short-TTL cache.
  *
@@ -45,9 +46,9 @@ const cache = new Map<string, CacheEntry<unknown>>();
 
 export async function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
   const hit = cache.get(key) as CacheEntry<T> | undefined;
-  if (hit && hit.expiry > Date.now()) return hit.data;
+  if (!accountMode() && hit && hit.expiry > Date.now()) return hit.data;
   const data = await fn();
-  cache.set(key, { data, expiry: Date.now() + ttlMs });
+  if (!accountMode()) cache.set(key, { data, expiry: Date.now() + ttlMs });
   return data;
 }
 
@@ -87,7 +88,7 @@ export async function blockrunGet(
       recordFetch({ provider: 'blockrun', endpoint: opts.endpoint, ok: false, latencyMs });
       return { kind: 'not-found', message: `BlockRun Gateway 404 for ${path}` };
     }
-    if (res.status === 402) {
+    if (res.status === 402 && !accountMode()) {
       // Free-path client should never see a 402. If the Gateway starts
       // charging for an endpoint that was free, surface an actionable
       // error and let the caller migrate to `blockrunGetPaid`.
@@ -222,7 +223,7 @@ export async function blockrunGetPaid(
   };
   try {
     let res = await fetch(url, { headers, signal: ctrl.signal });
-    if (res.status === 402) {
+    if (res.status === 402 && !accountMode()) {
       try {
         const paid = await signGatewayPayment(res, chain, url);
         if (!paid) {

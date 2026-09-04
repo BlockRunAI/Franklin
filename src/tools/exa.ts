@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * Exa research capabilities — neural web search, cited Q&A, and batch
  * URL content fetch via the BlockRun `/v1/exa/*` endpoints.
@@ -73,7 +74,7 @@ async function postWithPayment<T>(
     });
 
     let settled = false;
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       const paymentHeaders = await signPayment(response, chain, endpoint);
       if (!paymentHeaders) {
         throw new Error('Payment signing failed — check wallet balance');

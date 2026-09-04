@@ -1,3 +1,4 @@
+import { accountMode, ACCOUNT_PORTAL } from '../payments/account.js';
 /**
  * Wallet capability — direct read of Franklin's wallet status.
  *
@@ -32,6 +33,7 @@ export function formatWalletReport(input: WalletReportInput): string {
 }
 
 async function execute(): Promise<CapabilityResult> {
+  if (accountMode()) return { output: `Account API mode. Balance, usage and credits: ${ACCOUNT_PORTAL}/dashboard. No payment wallet is required.` };
   const chain = loadChain();
   try {
     if (chain === 'solana') {

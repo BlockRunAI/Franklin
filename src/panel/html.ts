@@ -1194,6 +1194,14 @@ async function loadLearnings() {
 async function loadWallet() {
   const w = await api('wallet');
   if (!w) return;
+  if (w.authMode === 'api-key') {
+    document.getElementById('wallet-address-full').textContent = 'Account API key';
+    document.getElementById('wallet-balance-big').textContent = 'Account credits';
+    document.getElementById('wallet-chain-pill').textContent = 'API';
+    document.getElementById('wallet-qr').innerHTML = '<a href="https://user.blockrun.ai/dashboard/credits" target="_blank" rel="noopener">Manage account credits and usage</a>';
+    document.getElementById('wallet-qr-hint').textContent = 'No wallet is required for API requests.';
+    return;
+  }
   const addr = w.address || '';
   document.getElementById('wallet-address-full').textContent = addr || 'not set';
   document.getElementById('wallet-balance-big').textContent = usdBig(w.balance) + ' USDC';

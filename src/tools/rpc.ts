@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * Multi-chain RPC — read-only JSON-RPC across 40+ chains via the BlockRun
  * `/v1/rpc/{network}` endpoint (Tatum gateway). x402-paid against the user's
@@ -100,7 +101,7 @@ async function postRpcWithPayment(
       body: bodyStr,
     });
 
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       const signed = await signPayment(response, chain, endpoint);
       if (!signed) {
         throw new Error('Payment signing failed — check wallet balance');

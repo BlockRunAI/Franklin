@@ -1,3 +1,4 @@
+import { accountMode, accountStatus, ACCOUNT_PORTAL } from '../payments/account.js';
 /**
  * Franklin agent server (local WebSocket — drives the desktop app & browser UI).
  *
@@ -512,6 +513,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   // ── Wallet balance (cached client) + post-turn broadcast ──
   let walletClient: Awaited<ReturnType<typeof setupAgentSolanaWallet>> | ReturnType<typeof setupAgentWallet> | null = null;
   async function getWallet() {
+    if (accountMode()) throw new Error(`This operation requires a transaction wallet; account billing is at ${ACCOUNT_PORTAL}/dashboard`);
     if (walletClient) return walletClient;
     const c = chain === 'solana'
       ? await setupAgentSolanaWallet({ silent: true })
@@ -520,6 +522,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
     return c;
   }
   async function fetchBalanceUsd(): Promise<number | undefined> {
+    if (accountMode()) return undefined;
     try {
       const client = await getWallet();
       return await retryFetchBalance(() => client.getBalance());
@@ -715,6 +718,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         break;
       }
       case 'wallet.info': {
+        if (accountMode()) { send(ws, id, 'response', accountStatus()); break; }
         try {
           const client = await getWallet();
           // Solana resolves its public key asynchronously while Base returns it

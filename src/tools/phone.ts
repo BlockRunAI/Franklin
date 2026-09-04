@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * Phone number management — buy / list / renew / release / lookup wallet-
  * owned phone numbers via the BlockRun gateway `/v1/phone/*` endpoints.
@@ -72,7 +73,7 @@ async function postWithPayment<T>(
       body: bodyStr,
     });
 
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       const paymentHeaders = await signPayment(response, chain, endpoint, 'Franklin phone');
       if (!paymentHeaders) throw new Error('Payment signing failed — check wallet balance');
       response = await fetch(endpoint, {

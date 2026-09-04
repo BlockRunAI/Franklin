@@ -1,3 +1,4 @@
+import { accountMode } from '../payments/account.js';
 /**
  * Cloud sync for desktop chat history — the local agent acts as the bridge.
  *
@@ -47,6 +48,7 @@ function getSetCookie(res: Response, name: string): string | null {
 }
 
 async function login(): Promise<void> {
+  if (accountMode()) throw new Error("Wallet-signed cloud sync is unavailable in account mode; local sessions remain available.");
   const nonceRes = await fetch(`${CLOUD_BASE}/api/try/auth/nonce`, { signal: AbortSignal.timeout(TIMEOUT) });
   if (!nonceRes.ok) throw new Error(`nonce ${nonceRes.status}`);
   const nonceCookie = getSetCookie(nonceRes, NONCE_COOKIE);

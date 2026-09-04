@@ -1,3 +1,4 @@
+import { accountMode, accountStatus, ACCOUNT_PORTAL } from '../payments/account.js';
 /**
  * Franklin Panel — local HTTP server.
  * Serves the dashboard HTML + JSON API endpoints + SSE for real-time updates.
@@ -124,6 +125,7 @@ function broadcast(data: unknown): void {
  * empty state with a "Create wallet" CTA before any phone calls can be made.
  */
 async function currentWalletAddress(): Promise<string> {
+  if (accountMode()) throw new Error(`This action requires a transaction wallet; account billing is at ${ACCOUNT_PORTAL}/dashboard`);
   const chain = loadChain();
   if (chain === 'solana') {
     const { setupAgentSolanaWallet } = await import('@blockrun/llm');
@@ -298,6 +300,7 @@ export function createPanelServer(port: number): http.Server {
       }
 
       if (p === '/api/wallet') {
+        if (accountMode()) { json(res, accountStatus()); return; }
         try {
           const chain = loadChain();
           let address = '', balance = 0;
@@ -375,6 +378,7 @@ export function createPanelServer(port: number): http.Server {
       // Hardened: loopback-only (belt-and-suspenders on the 127.0.0.1 bind),
       // same-origin for browser requests, no-store cache header, JSON only.
       if (p === '/api/wallet/secret') {
+        if (accountMode()) { json(res, { error: 'Account keys are configured via BLOCKRUN_API_KEY and never exposed by the panel.' }, 409); return; }
         if (!isLocalPanelRequest(req)) {
           json(res, { error: 'forbidden' }, 403);
           return;

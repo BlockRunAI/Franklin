@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * Modal Sandbox capabilities — spin up GPU/CPU compute on Modal Labs via the
  * BlockRun gateway's x402-paid passthrough at /v1/modal/sandbox/{create, exec,
@@ -214,7 +215,7 @@ export async function postWithPayment(
     const payload = JSON.stringify(body);
     let response = await fetch(endpoint, { method: 'POST', signal: ctrl.signal, headers, body: payload });
 
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       const paymentHeaders = await paymentSigner(response, chain, endpoint, resourceDescription);
       if (!paymentHeaders) {
         return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '' };

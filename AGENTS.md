@@ -1,6 +1,6 @@
 # Franklin Agent
 
-Open-source AI agent with a wallet. <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> models. Pay per use with USDC via x402.
+Open-source AI agent with a wallet. <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> models. Account API keys or pay per use with USDC via x402 on Solana and Base.
 
 ## Commands
 
@@ -15,6 +15,7 @@ npm start                # launch agent
 
 ```
 src/
+├── payments/account.ts  # Shared account auth for direct gateway calls
 ├── index.ts             # CLI entry point
 ├── agent/               # Agent loop and orchestration
 ├── commands/            # Built-in agent commands

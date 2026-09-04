@@ -1,3 +1,4 @@
+import { accountMode, ACCOUNT_PORTAL, validateAccountConfig, accountBaseURL } from '../payments/account.js';
 /**
  * Proxy-only mode — runs the BlockRun payment proxy for Anthropic-compatible CLI agents.
  * The proxy translates requests and handles x402 payments so any compatible client can use any model.
@@ -32,6 +33,13 @@ export async function proxyCommand(options: ProxyOptions) {
   }
 
   const model = options.model || config['default-model'];
+
+  if (accountMode()) {
+    validateAccountConfig();
+    console.log(`Account API proxy: http://localhost:${port} — ${ACCOUNT_PORTAL}/dashboard`);
+    launchProxy(createProxy({ port, apiUrl: accountBaseURL(), chain, modelOverride: model, debug: options.debug, fallbackEnabled: false }), port, options.debug);
+    return;
+  }
 
   if (chain === 'solana') {
     const wallet = await getOrCreateSolanaWallet();

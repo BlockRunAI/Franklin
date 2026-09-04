@@ -1,3 +1,4 @@
+import { accountMode, ACCOUNT_PORTAL, validateAccountConfig } from '../payments/account.js';
 import chalk from 'chalk';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -226,8 +227,11 @@ export async function startCommand(options: StartOptions) {
   console.log(chalk.dim(`  Model: ${model}\n`));
 
   // Auto-create wallet if needed (no interruption — free models work without funding)
+  validateAccountConfig();
   let walletAddress = '';
-  if (chain === 'solana') {
+  if (accountMode()) {
+    console.log(chalk.cyan(`  Account API key • ${ACCOUNT_PORTAL}/dashboard`));
+  } else if (chain === 'solana') {
     const wallet = await getOrCreateSolanaWallet();
     walletAddress = wallet.address;
     if (wallet.isNew) {
@@ -263,7 +267,7 @@ export async function startCommand(options: StartOptions) {
 
   // Session info — aligned, minimal. Model + balance live in the input bar below.
   // Full wallet address is shown so the user can copy-paste it to fund the wallet.
-  console.log(chalk.dim('  Wallet:    ') + (walletAddress || chalk.yellow('not set')));
+  console.log(chalk.dim(accountMode() ? '  Account:   ' : '  Wallet:    ') + (accountMode() ? ACCOUNT_PORTAL : walletAddress || chalk.yellow('not set')));
   console.log(chalk.dim('  Dir:       ') + workDir);
   console.log(chalk.dim('  Dashboard: ') + (panelUrl ? chalk.cyan(panelUrl) : chalk.cyan('franklin panel') + chalk.dim(' → http://localhost:3100')));
   console.log(chalk.dim('  Help:      ') + chalk.cyan('/help'));
@@ -277,6 +281,7 @@ export async function startCommand(options: StartOptions) {
   // is provably non-empty. retryFetchBalance does one extra round-trip on a
   // zero result; genuinely empty wallets still resolve to $0.00 quickly.
   const fetchBalance = async (): Promise<string> => {
+    if (accountMode()) return "Account credits · user.blockrun.ai";
     try {
       const bal = await retryFetchBalance(async () => {
         if (chain === 'solana') {
@@ -297,8 +302,8 @@ export async function startCommand(options: StartOptions) {
   // Fetch balance in background (don't block startup)
   const walletInfo: { address: string; balance: string; chain: string } = {
     address: walletAddress,
-    balance: 'checking...',
-    chain,
+    balance: accountMode() ? 'Account credits · user.blockrun.ai' : 'checking...',
+    chain: accountMode() ? 'account' : chain,
   };
   // Balance fetch callback — will update Ink UI once resolved
   let onBalanceFetched: ((bal: string) => void) | undefined;

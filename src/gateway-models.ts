@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch } from './payments/account.js';
 /**
  * Dynamic model catalog from BlockRun Gateway.
  *

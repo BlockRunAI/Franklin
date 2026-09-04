@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode, pollAccountJob } from '../payments/account.js';
 /**
  * BlockRun primitive — the generic x402-paid gateway capability.
  *
@@ -163,7 +164,7 @@ async function callGateway(
     let response = await fetch(url, { method, signal: ctrl.signal, headers, body: payload });
 
     let paidUsd = 0;
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       const signed = await signPayment(response, chain, url, resourceDescription);
       if (!signed) {
         return {
@@ -186,6 +187,7 @@ async function callGateway(
     // claim a paid amount the wallet didn't actually spend.
     if (!response.ok) paidUsd = 0;
 
+    response = await pollAccountJob(response, ctrl.signal);
     const raw = await response.text().catch(() => '');
     let parsed: Record<string, unknown> | unknown[] = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { /* leave as {} */ }
@@ -337,7 +339,7 @@ export const blockrunCapability: CapabilityHandler = {
       };
     }
 
-    const head = `BlockRun ${method} ${path} → ${fmtUsd(result.paidUsd)}${result.txHash ? ` · tx ${result.txHash.slice(0, 10)}…` : ''} · ${result.latencyMs}ms`;
+    const head = `BlockRun ${method} ${path} → ${accountMode() ? "account billing (see user.blockrun.ai)" : fmtUsd(result.paidUsd)}${result.txHash ? ` · tx ${result.txHash.slice(0, 10)}…` : ''} · ${result.latencyMs}ms`;
     const payload = typeof result.body === 'object' ? JSON.stringify(result.body, null, 2) : String(result.body);
     return {
       output: `${head}\n${payload}`,

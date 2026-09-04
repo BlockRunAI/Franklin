@@ -746,7 +746,7 @@ function InputBox({ input, setInput, onSubmit, model, balance, chain, walletTail
             return balance;
           })()}
           {chain ? <Text>  ·  <Text color="magenta">{chain}</Text>{walletTail ? <Text dimColor>:{walletTail}</Text> : ''}</Text> : ''}
-          {sessionCost > 0.00001 ? <Text color="yellow">  -${sessionCost.toFixed(4)}</Text> : ''}
+          {sessionCost > 0.00001 ? <Text color="yellow">  {chain === "account" ? "~$" : "-$"}{sessionCost.toFixed(4)}</Text> : ''}
           {contextPct !== undefined && contextPct > 0 ? (() => {
             // Visual context bar: ▓▓▓▓▓▓░░░░ 75%
             const filled = Math.round(contextPct / 10);

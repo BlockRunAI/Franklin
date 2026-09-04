@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * Image Generation capability — generate images via BlockRun API.
  * Uses x402 payment on Solana or Base.
@@ -468,7 +469,7 @@ function buildExecute(deps: ImageGenDeps) {
     // re-presents the same authorization (the gateway settles on the
     // first completed poll, same contract as videogen.ts:251).
     let paymentHeaders: Record<string, string> | null = null;
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       paymentHeaders = await signPayment(response, chain, endpoint);
       if (!paymentHeaders) {
         return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };
@@ -707,7 +708,7 @@ async function saveImageDataToFile(
     const dlCtrl = new AbortController();
     const dlTimeout = setTimeout(() => dlCtrl.abort(), 30_000);
     try {
-      const imgResp = await fetch(imageData.url, { signal: dlCtrl.signal });
+      const imgResp = await globalThis.fetch(imageData.url, { signal: dlCtrl.signal });
       fs.writeFileSync(destPath, Buffer.from(await imgResp.arrayBuffer()));
     } finally {
       clearTimeout(dlTimeout);

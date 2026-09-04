@@ -48,6 +48,13 @@ export function WalletPill({ wallet, connectionState, isLoading, error, switchin
     );
   }
 
+  if (wallet.authMode === "api-key") return (
+    <div className="try-wallet"><div className="try-wallet-info">
+      <span className="try-wallet-net">Account API key</span>
+      <a className="try-wallet-addr" href="https://user.blockrun.ai/dashboard/credits" target="_blank" rel="noopener noreferrer">Manage credits and usage</a>
+    </div></div>
+  );
+
   const net = wallet.chain === "base" ? "Base" : "Solana";
   // RPC values are runtime data, even when the TypeScript contract says
   // `string`. Keep a malformed wallet response from taking down the whole UI.

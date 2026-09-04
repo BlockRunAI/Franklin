@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode, pollAccountJob } from './account.js';
 /**
  * Shared x402 POST helper.
  *
@@ -120,7 +121,7 @@ export async function postWithPayment(
       body: payload,
     });
 
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       const paymentHeaders = await signPayment(response, chain, endpoint, resourceDescription);
       if (!paymentHeaders) {
         return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '' };
@@ -133,6 +134,7 @@ export async function postWithPayment(
       });
     }
 
+    response = await pollAccountJob(response, ctrl.signal);
     const raw = await response.text().catch(() => '');
     let parsed: Record<string, unknown> = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { /* leave as {} */ }

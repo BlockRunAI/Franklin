@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * Proactive prefetch for live-world questions.
  *
@@ -222,7 +223,7 @@ async function exaAnswerTry(query: string, client: ModelClient): Promise<{ text:
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query }),
     });
-    if (res.status === 402) {
+    if (res.status === 402 && !accountMode()) {
       const payHdr = await extractPaymentReq(res);
       if (!payHdr) return { text: null, costUsd: 0 };
       const { getOrCreateWallet, getOrCreateSolanaWallet, createPaymentPayload, createSolanaPaymentPayload,

@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch } from '../payments/account.js';
 /**
  * Fallback chain for Franklin
  * Automatically switches to backup models when primary fails (429, 5xx, etc.)

@@ -1,8 +1,10 @@
+import { accountMode, ACCOUNT_PORTAL, validateAccountConfig } from '../payments/account.js';
 import chalk from 'chalk';
 import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
 import { loadChain } from '../config.js';
 
 export async function balanceCommand() {
+  if (accountMode()) { validateAccountConfig(); console.log(`Account API mode. Balance and credits: ${ACCOUNT_PORTAL}/dashboard/credits`); return; }
   const chain = loadChain();
 
   try {

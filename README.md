@@ -44,7 +44,7 @@
 
 ## The pitch in one paragraph
 
-Franklin Agent is an **autonomous economic agent** — an AI that holds a USDC wallet and spends it to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from 55+ providers. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
+Franklin Agent is an **autonomous economic agent** — an AI that holds a USDC wallet and spends it to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from 55+ providers. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. Access models, media, search and data with a BlockRun account API key, or use [x402](https://x402.org) USDC payments on Solana or Base. Actual on-chain trades still use your transaction wallet.
 
 Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships as one npm package.
 
@@ -55,6 +55,32 @@ Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships
 > in USDC. No monthly fees. No rate limits. No overdraft.
 
 ---
+
+## Account API key
+
+Register at [user.blockrun.ai](https://user.blockrun.ai), create an
+[API key](https://user.blockrun.ai/dashboard/keys), and add
+[credits](https://user.blockrun.ai/dashboard/credits).
+
+```bash
+export BLOCKRUN_API_KEY="brk_live_..."
+franklin start
+# Or: franklin proxy / franklin serve
+```
+
+The account endpoint defaults to `https://api.blockrun.ai/v1`; optionally set
+`BLOCKRUN_API_BASE_URL`. API mode covers the agent and its subagents, proxy,
+media generation/polling, search and gateway data tools. It does not create a
+payment wallet. `franklin balance`, the Wallet tool, and desktop/panel account
+status point to the account portal. Keys are never returned by status endpoints.
+HTTP 402 asks you to top up account credits and never switches to wallet payment.
+
+Local cost totals and `--max-spend` use estimates in API mode; account usage in
+the portal is authoritative. Wallet-signed cloud sync and wallet-owned asset
+listings require wallet mode; local sessions remain available. Trading and
+marketplace wallet signatures still require a separate transaction wallet.
+Unset `BLOCKRUN_API_KEY` to return to wallet billing. New wallet users default
+to Solana; existing chain choices and Base-only wallets are preserved.
 
 ## Quick start
 
@@ -352,7 +378,7 @@ No single model is best at everything. Sonnet writes better code, Gemini handles
 
 ### 🔐 &nbsp;Wallet is identity
 
-No email. No phone. No KYC. Your Base or Solana address is your account — portable, permissionless, global. API keys require US banking and account approval. A wallet requires only USDC.
+Choose an account API key, or wallet authentication on Solana or Base. Register and create account keys at [user.blockrun.ai](https://user.blockrun.ai).
 
 </td>
 </tr>
@@ -467,7 +493,7 @@ Core is workflow-agnostic. Add new verticals without touching the loop. Discover
 │  <!-- br:models.chatVisible@live -->76<!-- /br:models.chatVisible@live --> LLMs · CoinGecko · Search · Image APIs · paid services  │
 ├──────────────────────────────────────────────────────────────┤
 │  x402 Micropayment Protocol                                  │
-│  HTTP 402 · USDC on Base & Solana · signed payment payloads  │
+│  HTTP 402 · USDC on Solana & Base · signed payment payloads  │
 └──────────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -509,7 +535,7 @@ src/
 ├── ui/                Ink-based terminal UI
 ├── proxy/             Payment proxy for external tools
 ├── router/            Learned model router (<!-- br:models.chatVisible@live -->76<!-- /br:models.chatVisible@live --> models, Elo scoring)
-├── wallet/            Wallet management (Base + Solana)
+├── wallet/            Wallet management (Solana + Base)
 ├── mcp/               MCP server auto-discovery
 └── commands/          CLI subcommands
 ```

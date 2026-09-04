@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * DefiLlama capabilities — TVL, yield pools, protocol metadata, and token
  * prices via the BlockRun `/v1/defillama/*` endpoints. Each tool handles
@@ -59,7 +60,7 @@ async function getWithPayment<T>(path: string, ctx: ExecutionScope): Promise<T> 
       headers,
     });
 
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       const signed = await signPayment(response, chain, endpoint);
       if (!signed) {
         throw new Error('Payment signing failed — check wallet balance');

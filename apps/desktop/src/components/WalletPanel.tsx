@@ -31,6 +31,18 @@ function shortModel(id: string): string {
 // comes from the CLI wallet (useUsdcBalance → useWallet), and receipts come
 // from the CLI's authoritative settlement ledger through useSpend.
 export function WalletPanel({ usage }: { usage: Usage }) {
+  const { wallet } = useWallet();
+  if (wallet?.authMode === "api-key") return <div className="try-wallet-panel"><div className="try-wallet-inner">
+    <h2 className="try-tools-h">BlockRun account</h2>
+    <p>Models, media, search and data use your API key. Local cost totals are estimates.</p>
+    <a href="https://user.blockrun.ai/dashboard/credits" target="_blank" rel="noopener noreferrer">Manage credits and account usage</a>
+    <p>On-chain transactions require a separate transaction wallet.</p>
+  </div></div>;
+  if (!wallet) return <p>Loading account status…</p>;
+  return <WalletTransactionPanel usage={usage} />;
+}
+
+function WalletTransactionPanel({ usage }: { usage: Usage }) {
   const { t, lang } = useTryLang();
   const { balance } = useUsdcBalance();
   const { wallet, switchingChain, switchChain, error: walletError } = useWallet();
@@ -47,7 +59,7 @@ export function WalletPanel({ usage }: { usage: Usage }) {
         <section className="try-wallet-network-card">
           <div><strong>Payment network</strong><small>Franklin keeps a separate local wallet for each network. Switching restarts the local agent, never exports a key.</small></div>
           <div className="try-wallet-network-options" role="group" aria-label="Payment network">
-            {(["base", "solana"] as const).map((chain) => <button key={chain} className={wallet?.chain === chain ? "is-active" : ""} disabled={!!switchingChain || !wallet} onClick={() => void switchChain(chain)}>{switchingChain === chain ? <RefreshCw className="spin" /> : wallet?.chain === chain ? <Check /> : null}{chain === "base" ? "Base" : "Solana"}</button>)}
+            {(["solana", "base"] as const).map((chain) => <button key={chain} className={wallet?.chain === chain ? "is-active" : ""} disabled={!!switchingChain || !wallet} onClick={() => void switchChain(chain)}>{switchingChain === chain ? <RefreshCw className="spin" /> : wallet?.chain === chain ? <Check /> : null}{chain === "base" ? "Base" : "Solana"}</button>)}
           </div>
         </section>
         {walletError && <div className="cloud-error">{walletError}</div>}

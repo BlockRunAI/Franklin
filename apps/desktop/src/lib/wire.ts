@@ -184,8 +184,10 @@ export interface SessionSummary {
 
 export interface WalletInfo {
   address: string;
-  chain: "base" | "solana";
+  chain: "base" | "solana" | "account";
   balanceUsd?: number;
+  authMode?: "wallet" | "api-key";
+  portalUrl?: string;
 }
 
 export interface ModelInfo {

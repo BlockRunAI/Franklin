@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * Outbound AI voice calls via Bland.ai through the BlockRun `/v1/voice/*`
  * gateway. Two tools:
@@ -98,7 +99,7 @@ async function postWithPayment<T>(
       body: bodyStr,
     });
 
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       const paymentHeaders = await signPayment(response, chain, endpoint);
       if (!paymentHeaders) throw new Error('Payment signing failed — check wallet balance');
       response = await fetch(endpoint, {

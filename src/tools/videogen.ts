@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * Video Generation capability — generate short MP4 videos via the BlockRun
  * /v1/videos/generations endpoint. Uses x402 payment (Base or Solana).
@@ -269,7 +270,7 @@ function buildExecute(deps: VideoGenDeps) {
         body,
       });
 
-      if (response.status === 402) {
+      if (response.status === 402 && !accountMode()) {
         paymentHeaders = await signPayment(response, chain, endpoint);
         if (!paymentHeaders) {
           return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };
@@ -305,7 +306,7 @@ function buildExecute(deps: VideoGenDeps) {
       ctx.abortSignal.removeEventListener('abort', submitAbort);
     }
 
-    if (!submitResult.poll_url || !paymentHeaders) {
+    if (!submitResult.poll_url || (!paymentHeaders && !accountMode())) {
       // Surface any diagnostic the body contained — same rationale as
       // imagegen.ts: "missing field" tells the agent nothing about
       // whether it was moderation, quota, or upstream model failure.
@@ -330,13 +331,13 @@ function buildExecute(deps: VideoGenDeps) {
       return {
         output:
           `Video generation did not complete within ${Math.round(POLL_MAX_WAIT_MS / 1000)}s. ` +
-          `No USDC was charged (settlement only fires on completion).`,
+          (accountMode() ? `Check job status and account usage before resubmitting.` : `No USDC was charged (settlement only fires on completion).`),
         isError: true,
       };
     }
     if (outcome.kind === 'failed') {
       return {
-        output: `Video generation failed upstream: ${outcome.error ?? 'unknown error'}. No USDC was charged.`,
+        output: `Video generation failed upstream: ${outcome.error ?? 'unknown error'}. ${accountMode() ? 'Check account usage in the portal.' : 'No USDC was charged.'}`,
         isError: true,
       };
     }
@@ -361,7 +362,7 @@ function buildExecute(deps: VideoGenDeps) {
       ctx.abortSignal.addEventListener('abort', dlAbort, { once: true });
       let vidResp: Response;
       try {
-        vidResp = await fetch(videoUrl, { signal: dlCtrl.signal });
+        vidResp = await globalThis.fetch(videoUrl, { signal: dlCtrl.signal });
       } finally {
         clearTimeout(dlTimeout);
         ctx.abortSignal.removeEventListener('abort', dlAbort);

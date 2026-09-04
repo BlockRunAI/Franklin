@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * RealFace — enroll a real person's face as a reusable video avatar.
  *
@@ -212,7 +213,7 @@ async function actionEnroll(
 
   let res = await timedFetch(url, { method: 'POST', headers, body }, ctx);
   let paidUsd = 0;
-  if (res.status === 402) {
+  if (res.status === 402 && !accountMode()) {
     const signed = await signPayment(res, chain, url, `RealFace enrollment — "${name.slice(0, 32)}"`);
     if (!signed) return { output: 'RealFace enroll: payment signing failed. Check wallet balance with `franklin balance`.', isError: true };
     paidUsd = signed.amountUsd;
@@ -240,6 +241,7 @@ async function actionEnroll(
 }
 
 async function actionList(base: string, chain: 'base' | 'solana', ctx: ExecutionScope): Promise<CapabilityResult> {
+  if (accountMode()) return { output: 'Wallet RealFace listing requires a wallet address; account enroll/status requests work with the API key.', isError: true };
   const addr = await walletAddress(chain);
   const res = await timedFetch(`${base}/v1/wallet/${addr}/realfaces`, {
     method: 'GET',

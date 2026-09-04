@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode, pollAccountJob } from '../payments/account.js';
 /**
  * Music Generation capability — generate ~3-minute MP3 tracks via the
  * BlockRun `/v1/audio/generations` endpoint. Uses x402 payment (Base
@@ -152,7 +153,7 @@ function buildExecute(deps: MusicGenDeps) {
         body,
       });
 
-      if (response.status === 402) {
+      if (response.status === 402 && !accountMode()) {
         const paymentHeaders = await signPayment(response, chain, endpoint);
         if (!paymentHeaders) {
           return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };
@@ -165,6 +166,7 @@ function buildExecute(deps: MusicGenDeps) {
         });
       }
 
+      response = await pollAccountJob(response, ctx.abortSignal);
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
         return {
@@ -189,7 +191,7 @@ function buildExecute(deps: MusicGenDeps) {
       // CDN URLs expire in ~24h — download NOW.
       const dlCtrl = new AbortController();
       const dlTimeout = setTimeout(() => dlCtrl.abort(), DOWNLOAD_TIMEOUT_MS);
-      const mp3Resp = await fetch(track.url, { signal: dlCtrl.signal });
+      const mp3Resp = await globalThis.fetch(track.url, { signal: dlCtrl.signal });
       clearTimeout(dlTimeout);
       if (!mp3Resp.ok) {
         return {

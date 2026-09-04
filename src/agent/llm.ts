@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * LLM Client for Franklin
  * Calls BlockRun API directly with x402 payment handling and streaming.
@@ -806,7 +807,7 @@ export class ModelClient {
       );
 
       // Handle x402 payment
-      if (response.status === 402) {
+      if (response.status === 402 && !accountMode()) {
         if (this.debug) console.error('[franklin] Payment required — signing...');
         const signedPayment = await this.signPayment(response, request.model);
         if (!signedPayment) {
@@ -897,7 +898,7 @@ export class ModelClient {
             createModelTimeoutError('request', request.model, requestTimeoutMs),
             requestTimeoutMs,
           );
-          if (response.status === 402) {
+          if (response.status === 402 && !accountMode()) {
             const signedPayment = await this.signPayment(response, request.model);
             if (!signedPayment) {
               yield { kind: 'error', payload: { message: 'Payment signing failed' } };
@@ -1393,7 +1394,7 @@ export class ModelClient {
     // A post-signature 402 means the gateway rejected the payment rather than
     // settling it. Keep both the session cost and cost_log anchored to calls
     // the gateway accepted after the paid retry returned.
-    if (response.status === 402) return;
+    if (response.status === 402 && !accountMode()) return;
     this.lastPaidUsd += payment.amountUsd;
     appendSettlementRow(payment.endpoint, payment.amountUsd, payment.meta);
   }

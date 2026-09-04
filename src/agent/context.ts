@@ -1,3 +1,4 @@
+import { accountMode, ACCOUNT_PORTAL } from '../payments/account.js';
 /**
  * Context Manager for Franklin
  * Assembles system instructions, reads project config, injects environment info.
@@ -181,6 +182,7 @@ Do NOT check access before acting. Do NOT explain what you tried. Just deliver, 
 }
 
 function getWalletKnowledgeSection(): string {
+  if (accountMode()) return `# BlockRun account billing\nModel, media, search and data requests use the configured API key. No wallet is needed. Account balance/usage: ${ACCOUNT_PORTAL}/dashboard; top up: ${ACCOUNT_PORTAL}/dashboard/credits. Never inspect or print BLOCKRUN_API_KEY. Actual on-chain transactions still require a separately configured transaction wallet. Local cost totals are estimates, not the account ledger.`;
   // Read the panel URL persisted by startPanelBackground (start.ts) so we
   // surface the actual bound port — the panel auto-increments past 3100
   // when the default is taken (e.g. a second franklin running). Falls back
@@ -213,7 +215,7 @@ Franklin stores wallet keys in ~/.blockrun/. When the user asks about wallet loc
   - Use \`franklin stats\` / \`franklin content list\` instead of parsing files when the user asks "how much did I spend".
 - Programmatic access: import { getWalletAddress, getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm'
 
-When the user asks about "my wallet" without qualifier, default to Base (it's the primary chain shown at launch). Only mention Solana if the chain file says solana or the user explicitly asks.
+When the user asks about "my wallet", use the saved active chain. New users default to Solana; preserve existing Base selections.
 
 ## Funding the wallet ("how do I deposit / recharge / fund / top up", in any language)
 

@@ -1,3 +1,4 @@
+import { accountMode, ACCOUNT_PORTAL } from '../payments/account.js';
 /**
  * Slash command registry for Franklin.
  * Extracted from loop.ts for maintainability.
@@ -1227,6 +1228,12 @@ export async function handleSlashCommand(
       } catch (err) {
         ctx.onEvent({ kind: 'text_delta', text: `Import error: ${(err as Error).message}\n` });
       }
+      emitDone(ctx);
+      return { handled: true };
+    }
+
+    if (accountMode()) {
+      ctx.onEvent({ kind: "text_delta", text: `Account API mode. Balance and usage: ${ACCOUNT_PORTAL}/dashboard\n` });
       emitDone(ctx);
       return { handled: true };
     }

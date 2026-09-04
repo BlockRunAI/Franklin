@@ -1,3 +1,4 @@
+import { gatewayFetch as fetch, accountMode } from '../payments/account.js';
 /**
  * Surf — function-call tools for BlockRun's crypto data API.
  *
@@ -234,7 +235,7 @@ async function callSurf(
   try {
     let response = await fetch(url, { method: entry.method, signal: ctrl.signal, headers, body: payload });
     let paidUsd = 0;
-    if (response.status === 402) {
+    if (response.status === 402 && !accountMode()) {
       const signed = await signPayment(response, chain, url, resourceDescription);
       if (!signed) return { output: `${toolName} ${endpoint}: payment signing failed`, isError: true };
       paidUsd = signed.amountUsd;
