@@ -391,7 +391,7 @@ export const PICKER_CATEGORIES: ModelCategory[] = [
       // superseded sibling listed directly under its successor is choice
       // paralysis, not choice. `gemini-2.5` still resolves to it.
       { id: 'google/gemini-3.1-pro',       shortcut: 'gemini',    label: 'Gemini 3.1 Pro',    price: '$2/$12' },
-      { id: 'xai/grok-4.5',                shortcut: 'grok',      label: 'Grok 4.5',          price: '$2.5/$9' },
+      { id: 'xai/grok-4.5',                shortcut: 'grok',      label: 'Grok 4.5',          price: '$2/$6' },
       // Kimi K3 (2026-07): 2.8T open MoE, 1M context, multimodal + reasoning.
       // Replaced the budget K2.7 line — now premium-priced ($3/$15).
       { id: 'moonshot/kimi-k3',            shortcut: 'kimi',      label: 'Kimi K3',           price: '$3/$15' },
