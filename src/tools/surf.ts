@@ -28,7 +28,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, USER_AGENT} from '../config.js';
-import { resolveCharge } from '../payments/price-catalog.js';
+import { chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -251,7 +251,7 @@ async function callSurf(
     // Fall back to the catalog price so Surf spend still counts against
     // --max-spend and shows in stats.
     const charge = response.ok
-      ? resolveCharge({ apiPath: url, settledUsd: paidUsd })
+      ? resolveCharge({ apiPath: url, chargedUsd: chargeFromResponse(response), settledUsd: paidUsd })
       : { usd: 0, estimated: false };
     try { recordUsage(`${toolName}:${entry.path}`, 0, 0, charge.usd, Date.now() - start, false, charge.estimated); } catch { /* best-effort */ }
 

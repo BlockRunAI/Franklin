@@ -29,7 +29,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
-import { resolveCharge } from '../payments/price-catalog.js';
+import { chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -127,7 +127,7 @@ async function postRpcWithPayment(
     // `paidUsd` is only ever set by the 402 branch, so in API-key mode — where
     // the gateway settles silently and never sends a 402 — it stays 0. Price the
     // call from the published catalog instead of recording a free call.
-    const charge = resolveCharge({ apiPath: endpoint, settledUsd: paidUsd });
+    const charge = resolveCharge({ apiPath: endpoint, chargedUsd: chargeFromResponse(response), settledUsd: paidUsd });
     try { recordUsage(`MultiChainRPC:${network}`, 0, 0, charge.usd, Date.now() - startedAt, false, charge.estimated); } catch { /* best-effort */ }
     return {
       body: await response.json(),

@@ -28,7 +28,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
-import { resolveCharge } from '../payments/price-catalog.js';
+import { chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -84,7 +84,7 @@ async function getWithPayment<T>(path: string, ctx: ExecutionScope): Promise<T> 
     // stats / audit AND count against the --max-spend ceiling (parity with surf.ts).
     // See rpc.ts — `paidUsd` is 0 whenever no 402 happened, which is every
     // call in API-key mode.
-    const charge = resolveCharge({ apiPath: endpoint, settledUsd: paidUsd });
+    const charge = resolveCharge({ apiPath: endpoint, chargedUsd: chargeFromResponse(response), settledUsd: paidUsd });
     try { recordUsage(`DeFiLlama:${path}`, 0, 0, charge.usd, Date.now() - startedAt, false, charge.estimated); } catch { /* best-effort */ }
     return (await response.json()) as T;
   } finally {

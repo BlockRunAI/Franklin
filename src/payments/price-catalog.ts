@@ -354,6 +354,61 @@ export function priceForPath(apiPath: string): number | null {
 }
 
 /**
+ * The exact amount BlockRun charged for this call, from
+ * `x-blockrun-cost-usd`, or null when the response does not state one.
+ *
+ * Live on the pre-priced service families (exa, surf, pm, phone, modal,
+ * speech, images, rpc, defillama). Deliberately and permanently ABSENT on
+ * chat, which settles after the answer is on the wire (`x-settlement-async`)
+ * — at header-writing time the amount does not exist yet, and waiting for it
+ * would mean holding the customer's response until the money lands. Chat is
+ * reconstructed from tokens x published rate instead.
+ *
+ * Absent means "no charge settled at response time", NOT "free" — reading it
+ * as $0 would zero out chat, the largest spend category. A charge that really
+ * did settle at zero is written explicitly as `0.000000`, so 0 is a value and
+ * missing is not.
+ *
+ * Empty, malformed and negative are all treated as absent. `Number('')` is 0
+ * in JS, which would book $0 against a billed call.
+ */
+export function chargeFromResponse(res: HeaderBag): number | null {
+  return usdHeader(res, 'x-blockrun-cost-usd');
+}
+
+/**
+ * Credit left on the account after this call, from
+ * `x-blockrun-credit-remaining-usd`. Absent on ungated accounts, which have no
+ * ceiling and so nothing to report — that is correct, not a failure.
+ *
+ * It can understate and never overstates: the figure is read inside the
+ * reservation transaction, already net of concurrent in-flight holds. That is
+ * the right error direction for a pre-run low-balance warning (warn early
+ * rather than fail to warn), and the wrong one for display — GET /v1/credits
+ * is the authority for a number shown to a user.
+ */
+export function remainingCreditFromResponse(res: HeaderBag): number | null {
+  return usdHeader(res, 'x-blockrun-credit-remaining-usd');
+}
+
+interface HeaderBag { headers: { get(name: string): string | null } }
+
+/**
+ * Shared parse for both money headers. 0 is a value; empty, malformed and
+ * negative are all absence. `Number('')` is 0 in JS, which would book $0
+ * against a billed call.
+ */
+function usdHeader(res: HeaderBag, name: string): number | null {
+  const raw = res.headers.get(name);
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+/**
  * The amount to record for a completed paid call.
  *
  * `settledUsd` is the exact figure from an x402 settlement and always wins.
@@ -368,16 +423,29 @@ export interface ResolvedCharge {
 
 export function resolveCharge(opts: {
   apiPath: string;
+  /** From `x-blockrun-cost-usd` — what BlockRun actually charged. Wins outright. */
+  chargedUsd?: number | null;
   settledUsd?: number;
   reportedUsd?: number;
   fallbackUsd?: number;
 }): ResolvedCharge {
-  const { apiPath, settledUsd, reportedUsd, fallbackUsd } = opts;
+  const { apiPath, chargedUsd, settledUsd, reportedUsd, fallbackUsd } = opts;
+  // The gateway stating its own charge beats every other source, including a
+  // settled x402 amount. 0 is a real answer here, so test for null, not truth.
+  if (typeof chargedUsd === 'number') {
+    return { usd: chargedUsd, estimated: false };
+  }
   if (typeof settledUsd === 'number' && settledUsd > 0) {
     return { usd: settledUsd, estimated: false };
   }
+  // An upstream provider's self-reported cost is NOT what BlockRun charged.
+  // Measured 2026-09-05: Exa reported costDollars $0.007 on a call BlockRun
+  // charged $0.010 for. Treating it as exact booked a wrong number with false
+  // confidence, which is worse than a hedged one — so it now ranks below the
+  // catalog price and is tagged estimated like any other guess.
   if (typeof reportedUsd === 'number' && reportedUsd > 0) {
-    return { usd: reportedUsd, estimated: false };
+    const listed = priceForPath(apiPath);
+    return { usd: listed !== null && listed > 0 ? listed : reportedUsd, estimated: true };
   }
   const listed = priceForPath(apiPath);
   if (listed !== null) return { usd: listed, estimated: true };

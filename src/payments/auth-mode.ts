@@ -168,6 +168,69 @@ export function gatewayHeaders(mode: PayMode = resolvePayMode()): Record<string,
 }
 
 /**
+ * A key's credit standing, from GET /v1/credits. The authoritative figure for
+ * display — the per-response `x-blockrun-credit-remaining-usd` header can
+ * understate under concurrency and is for warnings, not for showing a user.
+ */
+export interface CreditBalance {
+  accountId: string;
+  /**
+   * `ungated` accounts have NO ceiling, so `remainingUsd` is legitimately null.
+   * Never coalesce that to 0 — it would tell a paying customer they are broke.
+   * Branch on this field instead.
+   */
+  billingMode: string;
+  currency: string;
+  grantedUsd: number;
+  spentUsd: number;
+  remainingUsd: number | null;
+  blocked: boolean;
+  /**
+   * A stable CODE to map, not a string to show: ACCOUNT_SUSPENDED,
+   * CREDIT_LIMIT_REACHED, BALANCE_EXHAUSTED. Treated as append-only, so an
+   * unrecognised value must degrade gracefully rather than throw.
+   */
+  blockedReason: string | null;
+}
+
+/**
+ * Fetch the key's credit standing. Null when there is no key, the gateway is
+ * unreachable, or it answers with something unexpected — callers show what they
+ * do know rather than inventing a number.
+ *
+ * `blocked` describes what the gateway would do with the NEXT call, so it is
+ * safe to gate an autonomous run on.
+ */
+export async function fetchCreditBalance(timeoutMs = 15_000): Promise<CreditBalance | null> {
+  const key = loadApiKey();
+  if (!key) return null;
+  try {
+    const res = await fetch(`${KEY_API_URL}/v1/credits`, {
+      headers: { Authorization: `Bearer ${key}`, 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return null;
+    const b = (await res.json()) as Record<string, unknown>;
+    const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    return {
+      accountId: typeof b.account_id === 'string' ? b.account_id : 'unknown',
+      billingMode: typeof b.billing_mode === 'string' ? b.billing_mode : 'unknown',
+      currency: typeof b.currency === 'string' ? b.currency : 'USD',
+      grantedUsd: num(b.granted_usd),
+      spentUsd: num(b.spent_usd),
+      // Explicitly preserve null — the whole point of this field.
+      remainingUsd: typeof b.remaining_usd === 'number' && Number.isFinite(b.remaining_usd)
+        ? b.remaining_usd
+        : null,
+      blocked: b.blocked === true,
+      blockedReason: typeof b.blocked_reason === 'string' ? b.blocked_reason : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Merge this mode's auth into a header bag that may already carry a client's
  * own credential, in place.
  *

@@ -48,7 +48,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
-import { resolveCharge } from '../payments/price-catalog.js';
+import { chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordFetch } from '../trading/providers/telemetry.js';
@@ -135,6 +135,7 @@ async function getWithPayment<T>(path: string, query: Record<string, string | nu
     // to this module's own price table, then to the published catalog.
     const charge = resolveCharge({
       apiPath: endpoint,
+      chargedUsd: chargeFromResponse(response),
       settledUsd: costRecorded,
       fallbackUsd: priceForPath(path),
     });

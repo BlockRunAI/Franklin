@@ -270,7 +270,7 @@ test('free endpoints price at zero, unknown endpoints price as null', () => {
   assert.equal(catalog.priceForPath('/v1/chat/completions'), null);
 });
 
-test('resolveCharge prefers a settled amount, then a reported one, then the catalog', () => {
+test('resolveCharge prefers a gateway charge, then a settlement, then the catalog', () => {
   catalog.__resetPriceCatalog();
 
   const settled = catalog.resolveCharge({
@@ -279,11 +279,14 @@ test('resolveCharge prefers a settled amount, then a reported one, then the cata
   assert.equal(settled.usd, 0.0085);
   assert.equal(settled.estimated, false, 'a settled x402 amount is exact');
 
-  const reported = catalog.resolveCharge({
-    apiPath: '/v1/exa/search', reportedUsd: 0.007,
+  // This used to assert reportedUsd was exact. It is not: an upstream's own
+  // costDollars is its cost, not BlockRun's charge — see the dedicated test
+  // below. x-blockrun-cost-usd replaced it as the authority.
+  const charged = catalog.resolveCharge({
+    apiPath: '/v1/exa/search', chargedUsd: 0.01, reportedUsd: 0.007,
   });
-  assert.equal(reported.usd, 0.007);
-  assert.equal(reported.estimated, false, 'a gateway-reported charge is exact');
+  assert.equal(charged.usd, 0.01);
+  assert.equal(charged.estimated, false, 'the gateway stating its charge is exact');
 
   const listed = catalog.resolveCharge({ apiPath: '/v1/surf/market/ranking' });
   assert.ok(listed.usd > 0, 'key-mode calls must never record zero for paid work');
@@ -318,6 +321,57 @@ test('the price catalog is read from the Base origin, the only host that publish
   );
   // A 200 carrying no services[] must be reported, never swallowed.
   assert.match(src, /returned no services/);
+});
+
+
+// ─── The gateway's own charge header ────────────────────────────────────
+
+const hdr = (v) => ({ headers: { get: (n) => (n === 'x-blockrun-cost-usd' && v !== undefined ? v : null) } });
+
+test('chargeFromResponse treats 0 as a value and everything malformed as absent', () => {
+  assert.equal(catalog.chargeFromResponse(hdr('0.010000')), 0.01);
+  // A charge that genuinely settled at zero is written explicitly, and must be
+  // distinguishable from a response that states no charge at all.
+  assert.equal(catalog.chargeFromResponse(hdr('0.000000')), 0);
+  assert.equal(catalog.chargeFromResponse(hdr(undefined)), null, 'absent');
+  // Number('') is 0 in JS — booking that against a billed call is the bug.
+  assert.equal(catalog.chargeFromResponse(hdr('')), null, 'empty is absent, not zero');
+  assert.equal(catalog.chargeFromResponse(hdr('   ')), null);
+  assert.equal(catalog.chargeFromResponse(hdr('abc')), null, 'malformed is absent');
+  assert.equal(catalog.chargeFromResponse(hdr('-1')), null, 'negative is absent');
+});
+
+test('remainingCreditFromResponse follows the same rules', () => {
+  const rc = (v) => ({ headers: { get: (n) => (n === 'x-blockrun-credit-remaining-usd' ? v : null) } });
+  assert.equal(catalog.remainingCreditFromResponse(rc('41.998000')), 41.998);
+  assert.equal(catalog.remainingCreditFromResponse(rc('0.000000')), 0, 'a real zero balance');
+  // Absent on ungated accounts, which have no ceiling. Correct, not a failure.
+  assert.equal(catalog.remainingCreditFromResponse(rc(null)), null);
+  assert.equal(catalog.remainingCreditFromResponse(rc('')), null);
+});
+
+test('a gateway-stated charge outranks every other source, including zero', () => {
+  catalog.__resetPriceCatalog();
+  const c = catalog.resolveCharge({
+    apiPath: '/v1/exa/search', chargedUsd: 0.01, settledUsd: 0.02, reportedUsd: 0.007,
+  });
+  assert.equal(c.usd, 0.01);
+  assert.equal(c.estimated, false);
+
+  // 0 must not be swallowed by a truthiness check.
+  const zero = catalog.resolveCharge({ apiPath: '/v1/exa/search', chargedUsd: 0, fallbackUsd: 0.05 });
+  assert.equal(zero.usd, 0, 'an explicit zero charge is authoritative');
+  assert.equal(zero.estimated, false);
+});
+
+test("an upstream's self-reported cost is not what BlockRun charged", () => {
+  catalog.__resetPriceCatalog();
+  // Measured 2026-09-05: Exa reported costDollars $0.007 on a call the gateway
+  // charged $0.010 for. Booking $0.007 as exact was a wrong number carrying
+  // false confidence — worse than a hedged one.
+  const c = catalog.resolveCharge({ apiPath: '/v1/exa/search', reportedUsd: 0.007 });
+  assert.equal(c.estimated, true, 'a provider-reported cost is an estimate, not a charge');
+  assert.ok(c.usd > 0);
 });
 
 test('cleanup', () => {

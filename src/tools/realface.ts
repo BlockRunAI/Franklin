@@ -38,7 +38,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, USER_AGENT} from '../config.js';
-import { resolveCharge } from '../payments/price-catalog.js';
+import { chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
@@ -224,7 +224,7 @@ async function actionEnroll(
   if (!res.ok) paidUsd = 0;
   // 0 whenever no 402 was settled, which is every call in API-key mode.
   const charge = res.ok
-    ? resolveCharge({ apiPath: url, settledUsd: paidUsd })
+    ? resolveCharge({ apiPath: url, chargedUsd: chargeFromResponse(res), settledUsd: paidUsd })
     : { usd: 0, estimated: false };
   try { recordUsage('RealFace:enroll', 0, 0, charge.usd, Date.now() - start, false, charge.estimated); } catch { /* best-effort */ }
 
