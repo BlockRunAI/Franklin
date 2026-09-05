@@ -25,7 +25,9 @@ const { API_URLS, KEY_API_URL, BLOCKRUN_DIR, saveChain } = await import('../dist
 const { redactSecrets } = await import('../dist/agent/secret-redact.js');
 const catalog = await import('../dist/payments/price-catalog.js');
 
-const VALID_KEY = 'brk_live_H4OzmQQDX09FElTg06Gv3Wh7i6C5jIozzVH0QBW5';
+// Synthetic — shaped like a real key so the format checks are meaningful, but
+// not a credential. Never put a live key in a tracked file.
+const VALID_KEY = 'brk_live_0000TESTKEYNOTREAL0000000000000000000';
 const KEY_FILE = join(BLOCKRUN_DIR, 'api-key');
 
 function clean() {
