@@ -16,7 +16,8 @@
  * is the safe direction for budget tracking).
  */
 
-import { loadChain, API_URLS, USER_AGENT, type Chain } from './config.js';
+import { loadChain, USER_AGENT, type Chain} from './config.js';
+import { gatewayBase, gatewayHeaders } from './payments/auth-mode.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -146,18 +147,22 @@ export function warmGatewayModelsCache(): void {
 
 async function doFetch(): Promise<GatewayModel[]> {
   const chain = loadChain();
-  const base = API_URLS[chain].replace(/\/api$/, '');
+  // `gatewayBase()` already carries the `/api` segment on the x402 hosts and
+  // deliberately omits it on the API-key host, so append `/v1/...` to it
+  // directly rather than stripping and re-adding a prefix that only one of the
+  // two hosts has.
+  //
   // The schema/JSON gate: without ?format=json the gateway returns a
   // typed schema placeholder instead of the data envelope. Documented
   // quirk across other endpoints too.
-  const url = `${base}/api/v1/models?format=json`;
+  const url = `${gatewayBase()}/v1/models?format=json`;
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
       signal: ctrl.signal,
-      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+      headers: { ...gatewayHeaders(), 'User-Agent': USER_AGENT, Accept: 'application/json' },
     });
     if (!res.ok) throw new Error(`Gateway models list returned HTTP ${res.status}`);
     const body = (await res.json()) as { data?: unknown };

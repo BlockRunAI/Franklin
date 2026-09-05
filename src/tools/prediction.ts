@@ -47,7 +47,9 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadChain, VERSION} from '../config.js';
+import { resolveCharge } from '../payments/price-catalog.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordFetch } from '../trading/providers/telemetry.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -82,7 +84,7 @@ function priceForPath(path: string): number {
 
 async function getWithPayment<T>(path: string, query: Record<string, string | number | undefined>, ctx: ExecutionScope): Promise<T> {
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
     if (v == null || v === '') continue;
@@ -91,6 +93,7 @@ async function getWithPayment<T>(path: string, query: Record<string, string | nu
   const queryStr = qs.toString();
   const endpoint = `${apiUrl}${path}${queryStr ? `?${queryStr}` : ''}`;
   const headers: Record<string, string> = {
+    ...gatewayHeaders(),
     Accept: 'application/json',
     'User-Agent': `franklin/${VERSION}`,
   };
@@ -127,17 +130,26 @@ async function getWithPayment<T>(path: string, query: Record<string, string | nu
       throw new Error(`PredictionMarket ${path} failed (${response.status}): ${errText.slice(0, 600)}`);
     }
 
+    // `costRecorded` is only set on the post-402 settlement, so it is 0 for
+    // every call in API-key mode, where the gateway charges silently. Fall back
+    // to this module's own price table, then to the published catalog.
+    const charge = resolveCharge({
+      apiPath: endpoint,
+      settledUsd: costRecorded,
+      fallbackUsd: priceForPath(path),
+    });
+
     recordFetch({
       provider: 'blockrun',
       endpoint: path,
       ok: true,
       latencyMs: Date.now() - startedAt,
-      costUsd: costRecorded > 0 ? costRecorded : undefined,
+      costUsd: charge.usd > 0 ? charge.usd : undefined,
     });
     // ALSO persist to franklin-stats (recordFetch is in-memory only, lost on
     // restart). Without this, Predexon spend is absent from `franklin stats`
     // and invisible to the --max-spend ceiling (parity with surf.ts).
-    try { recordUsage(`PredictionMarket:${path}`, 0, 0, costRecorded, Date.now() - startedAt); } catch { /* best-effort */ }
+    try { recordUsage(`PredictionMarket:${path}`, 0, 0, charge.usd, Date.now() - startedAt, false, charge.estimated); } catch { /* best-effort */ }
     return (await response.json()) as T;
   } finally {
     clearTimeout(timeout);

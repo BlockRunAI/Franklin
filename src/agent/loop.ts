@@ -2253,9 +2253,12 @@ export async function interactiveSession(
       // promo pricing, prompt-cache discounts, or per-call flat fees
       // (verified 2026-05-09 against cost_log.jsonl: token-based
       // estimate said $34.79 across the same calls the wallet only
-      // paid $2.24 for — a 15× drift). estimateCost only fills in
-      // when no payment was made (free model / cached / pre-stream
-      // failure), where the gateway charge is genuinely 0.
+      // paid $2.24 for — a 15× drift). estimateCost fills in when no x402
+      // payment was made: a free model / cached / pre-stream failure, where
+      // the gateway charge is genuinely 0 — and every call in API-key mode,
+      // where the gateway settles against the prepaid balance and returns no
+      // charge amount at all. The estimate is flagged as such so `franklin
+      // stats` does not present it as a settled figure.
       //
       // Pass the fallback flag so franklin-stats.json's totalFallbacks +
       // per-model fallbackCount stay in sync with the audit log a few
@@ -2266,7 +2269,11 @@ export async function interactiveSession(
         ? paidUsd
         : estimateCost(resolvedModel, inputTokens, usage.outputTokens, 1);
       const llmLatencyMs = Date.now() - llmCallStartedAt;
-      recordUsage(resolvedModel, inputTokens, usage.outputTokens, callCost, llmLatencyMs, turnFailedModels.size > 0);
+      recordUsage(
+        resolvedModel, inputTokens, usage.outputTokens, callCost, llmLatencyMs,
+        turnFailedModels.size > 0,
+        paidUsd <= 0,
+      );
 
       // ── Circuit breakers: prevent infinite-loop wallet drain ──
       // Per-turn $-cap was removed in v3.11.0 — runaway loops are caught by

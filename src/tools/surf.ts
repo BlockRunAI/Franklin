@@ -27,7 +27,9 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, USER_AGENT } from '../config.js';
+import { loadChain, USER_AGENT} from '../config.js';
+import { resolveCharge } from '../payments/price-catalog.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
@@ -207,7 +209,7 @@ async function callSurf(
   }
 
   const chain = loadChain();
-  const base = API_URLS[chain]; // ends in /api
+  const base = gatewayBase(); // wallet host ends in /api; the key host does not
   let url = `${base}/v1/surf/${entry.path}`;
   const body = entry.method === 'POST'
     ? (input.body && typeof input.body === 'object' ? input.body as Record<string, unknown> : query)
@@ -226,7 +228,7 @@ async function callSurf(
   const onAbort = () => ctrl.abort();
   ctx.abortSignal.addEventListener('abort', onAbort, { once: true });
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  const headers: Record<string, string> = { Accept: 'application/json', 'User-Agent': USER_AGENT };
+  const headers: Record<string, string> = { ...gatewayHeaders(), Accept: 'application/json', 'User-Agent': USER_AGENT };
   if (entry.method === 'POST') headers['Content-Type'] = 'application/json';
   const payload = body !== undefined ? JSON.stringify(body) : undefined;
   const resourceDescription = `Surf ${entry.method} /v1/surf/${entry.path}`;
@@ -245,7 +247,13 @@ async function callSurf(
     }
     if (!response.ok) paidUsd = 0;
     const raw = await response.text().catch(() => '');
-    try { recordUsage(`${toolName}:${entry.path}`, 0, 0, paidUsd, Date.now() - start); } catch { /* best-effort */ }
+    // `paidUsd` is 0 unless a 402 was settled — i.e. always 0 in API-key mode.
+    // Fall back to the catalog price so Surf spend still counts against
+    // --max-spend and shows in stats.
+    const charge = response.ok
+      ? resolveCharge({ apiPath: url, settledUsd: paidUsd })
+      : { usd: 0, estimated: false };
+    try { recordUsage(`${toolName}:${entry.path}`, 0, 0, charge.usd, Date.now() - start, false, charge.estimated); } catch { /* best-effort */ }
 
     if (!response.ok) {
       return {

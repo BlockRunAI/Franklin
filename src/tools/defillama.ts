@@ -27,7 +27,9 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadChain, VERSION} from '../config.js';
+import { resolveCharge } from '../payments/price-catalog.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
 import { frameUntrusted } from './untrusted.js';
@@ -38,9 +40,10 @@ const TIMEOUT_MS = 30_000;
 
 async function getWithPayment<T>(path: string, ctx: ExecutionScope): Promise<T> {
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const endpoint = `${apiUrl}${path}`;
   const headers: Record<string, string> = {
+    ...gatewayHeaders(),
     Accept: 'application/json',
     'User-Agent': `franklin/${VERSION}`,
   };
@@ -79,7 +82,10 @@ async function getWithPayment<T>(path: string, ctx: ExecutionScope): Promise<T> 
 
     // Record the settled x402 spend so DeFiLlama calls show up in franklin
     // stats / audit AND count against the --max-spend ceiling (parity with surf.ts).
-    try { recordUsage(`DeFiLlama:${path}`, 0, 0, paidUsd, Date.now() - startedAt); } catch { /* best-effort */ }
+    // See rpc.ts — `paidUsd` is 0 whenever no 402 happened, which is every
+    // call in API-key mode.
+    const charge = resolveCharge({ apiPath: endpoint, settledUsd: paidUsd });
+    try { recordUsage(`DeFiLlama:${path}`, 0, 0, charge.usd, Date.now() - startedAt, false, charge.estimated); } catch { /* best-effort */ }
     return (await response.json()) as T;
   } finally {
     clearTimeout(timeout);

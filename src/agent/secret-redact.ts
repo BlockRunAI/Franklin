@@ -124,6 +124,18 @@ const SECRET_PATTERNS: SecretPattern[] = [
   },
 
   // ── Stripe ──
+  // ── BlockRun ──
+  // Prepaid API keys for the api.blockrun.ai gateway. Franklin reads these
+  // from BLOCKRUN_API_KEY / ~/.blockrun/api-key, so without this pattern a
+  // key can reach transcripts, `franklin logs`, and any model prompt that
+  // echoes the environment.
+  {
+    label: 'blockrun_api_key',
+    pattern: /\bbrk_(?:live|test)_[A-Za-z0-9]{20,}\b/g,
+    description: 'BlockRun gateway API key',
+    envVar: 'BLOCKRUN_API_KEY',
+  },
+
   {
     label: 'stripe_live',
     pattern: /\bsk_live_[A-Za-z0-9]{20,}\b/g,

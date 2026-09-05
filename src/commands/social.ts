@@ -28,7 +28,8 @@ import {
 import { SocialBrowser, SOCIAL_PROFILE_DIR } from '../social/browser.js';
 import { runX, type RunResult } from '../social/x.js';
 import { getStats } from '../social/db.js';
-import { loadChain, API_URLS } from '../config.js';
+import { loadChain} from '../config.js';
+import { gatewayBase } from '../payments/auth-mode.js';
 import { loadConfig as loadAppConfig } from './config.js';
 import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
@@ -194,7 +195,7 @@ async function runCommand(options: SocialCommandOptions): Promise<void> {
   console.log('');
 
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const appConfig = loadAppConfig();
   const model =
     options.model || appConfig['default-model'] || FREE_DEFAULT_MODEL;

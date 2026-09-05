@@ -8,7 +8,8 @@
 import chalk from 'chalk';
 import readline from 'node:readline';
 import { ModelClient } from '../agent/llm.js';
-import { loadChain, API_URLS } from '../config.js';
+import { loadChain} from '../config.js';
+import { gatewayBase } from '../payments/auth-mode.js';
 import { loadAllPlugins, getPlugin, listWorkflowPlugins } from '../plugins/registry.js';
 import {
   loadWorkflowConfig,
@@ -52,7 +53,7 @@ export async function pluginCommand(
 
   const workflow = workflowFactory();
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const client = new ModelClient({ apiUrl, chain, debug: options.debug });
 
   const existingConfig = loadWorkflowConfig(workflow.id);

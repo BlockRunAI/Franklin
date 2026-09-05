@@ -28,7 +28,9 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadChain, VERSION} from '../config.js';
+import { resolveCharge } from '../payments/price-catalog.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
 
@@ -76,10 +78,11 @@ async function postRpcWithPayment(
   ctx: ExecutionScope,
 ): Promise<RpcCallResult> {
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const endpoint = `${apiUrl}/v1/rpc/${network}`;
   const bodyStr = JSON.stringify(jsonRpcBody);
   const headers: Record<string, string> = {
+    ...gatewayHeaders(),
     'Content-Type': 'application/json',
     Accept: 'application/json',
     'User-Agent': `franklin/${VERSION}`,
@@ -121,7 +124,11 @@ async function postRpcWithPayment(
 
     // Record the settled x402 spend so RPC calls show up in franklin stats /
     // audit AND count against the --max-spend ceiling (parity with surf.ts).
-    try { recordUsage(`MultiChainRPC:${network}`, 0, 0, paidUsd, Date.now() - startedAt); } catch { /* best-effort */ }
+    // `paidUsd` is only ever set by the 402 branch, so in API-key mode — where
+    // the gateway settles silently and never sends a 402 — it stays 0. Price the
+    // call from the published catalog instead of recording a free call.
+    const charge = resolveCharge({ apiPath: endpoint, settledUsd: paidUsd });
+    try { recordUsage(`MultiChainRPC:${network}`, 0, 0, charge.usd, Date.now() - startedAt, false, charge.estimated); } catch { /* best-effort */ }
     return {
       body: await response.json(),
       network: response.headers.get('x-network') || network,

@@ -37,7 +37,9 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, USER_AGENT } from '../config.js';
+import { loadChain, USER_AGENT} from '../config.js';
+import { resolveCharge } from '../payments/price-catalog.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
 
@@ -146,7 +148,7 @@ async function actionInit(base: string, input: Record<string, unknown>, ctx: Exe
   const body = JSON.stringify(groupId ? { name, groupId } : { name });
   const res = await timedFetch(`${base}/v1/realface/init`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': USER_AGENT },
+    headers: { ...gatewayHeaders(), 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': USER_AGENT },
     body,
   }, ctx);
   const raw = await res.text().catch(() => '');
@@ -172,7 +174,7 @@ async function actionStatus(base: string, input: Record<string, unknown>, ctx: E
     if (ctx.abortSignal.aborted) break;
     const res = await timedFetch(`${base}/v1/realface/status?groupId=${encodeURIComponent(groupId)}`, {
       method: 'GET',
-      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+      headers: { ...gatewayHeaders(), Accept: 'application/json', 'User-Agent': USER_AGENT },
     }, ctx);
     raw = await res.text().catch(() => '');
     if (!res.ok) return { output: `RealFace status failed (status ${res.status}).\n${raw.slice(0, 600)}`, isError: true };
@@ -207,7 +209,7 @@ async function actionEnroll(
 
   const url = `${base}/v1/realface/enroll`;
   const body = JSON.stringify({ name, image_url: imageUrl, group_id: groupId });
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': USER_AGENT };
+  const headers: Record<string, string> = { ...gatewayHeaders(), 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': USER_AGENT };
   const start = Date.now();
 
   let res = await timedFetch(url, { method: 'POST', headers, body }, ctx);
@@ -220,7 +222,11 @@ async function actionEnroll(
   }
   const raw = await res.text().catch(() => '');
   if (!res.ok) paidUsd = 0;
-  try { recordUsage('RealFace:enroll', 0, 0, paidUsd, Date.now() - start); } catch { /* best-effort */ }
+  // 0 whenever no 402 was settled, which is every call in API-key mode.
+  const charge = res.ok
+    ? resolveCharge({ apiPath: url, settledUsd: paidUsd })
+    : { usd: 0, estimated: false };
+  try { recordUsage('RealFace:enroll', 0, 0, charge.usd, Date.now() - start, false, charge.estimated); } catch { /* best-effort */ }
 
   if (res.status === 425) {
     return { output: `RealFace enroll: the group isn't active yet — the person must finish the phone liveness check first. No payment taken. Poll action="status" until active, then retry.\n${raw.slice(0, 600)}`, isError: true };
@@ -233,7 +239,7 @@ async function actionEnroll(
   }
   return {
     output:
-      `RealFace enrolled → $${paidUsd.toFixed(4)} · ${Date.now() - start}ms. ` +
+      `RealFace enrolled → $${charge.usd.toFixed(4)} · ${Date.now() - start}ms. ` +
       `Use the returned \`asset_id\` (ta_xxx) as \`real_face_asset_id\` on a VideoGen call with ` +
       `bytedance/seedance-2.0 or -fast for a real-person clip.${fence(raw)}`,
   };
@@ -243,7 +249,7 @@ async function actionList(base: string, chain: 'base' | 'solana', ctx: Execution
   const addr = await walletAddress(chain);
   const res = await timedFetch(`${base}/v1/wallet/${addr}/realfaces`, {
     method: 'GET',
-    headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+    headers: { ...gatewayHeaders(), Accept: 'application/json', 'User-Agent': USER_AGENT },
   }, ctx);
   const raw = await res.text().catch(() => '');
   if (!res.ok) return { output: `RealFace list failed (status ${res.status}).\n${raw.slice(0, 600)}`, isError: true };
@@ -253,7 +259,7 @@ async function actionList(base: string, chain: 'base' | 'solana', ctx: Execution
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
   const action = typeof input.action === 'string' ? input.action.trim() : '';
   const chain = loadChain();
-  const base = API_URLS[chain]; // ends in /api
+  const base = gatewayBase(); // wallet host ends in /api; the key host does not
   switch (action) {
     case 'init': return actionInit(base, input, ctx);
     case 'status': return actionStatus(base, input, ctx);

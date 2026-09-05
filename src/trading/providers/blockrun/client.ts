@@ -16,6 +16,7 @@
 
 import type { ProviderError } from '../standard-models.js';
 import { USER_AGENT, loadChain } from '../../../config.js';
+import { gatewayHeaders, resolvePayMode } from '../../../payments/auth-mode.js';
 import { recordFetch } from '../telemetry.js';
 import {
   getOrCreateWallet,
@@ -30,10 +31,20 @@ import {
 
 const TIMEOUT_MS = 10_000;
 
-function baseUrl(): string {
-  // `loadChain()` dispatches on env / ~/.blockrun/payment-chain. We match it
-  // every call so mid-session chain switches take effect without restart.
-  return loadChain() === 'solana' ? 'https://sol.blockrun.ai' : 'https://blockrun.ai';
+/**
+ * Absolute URL for a gateway path. Callers pass `/api/v1/...` because that is
+ * the shape the x402 hosts serve; the API-key host serves the same routes at
+ * `/v1/...`, so the `/api` segment is stripped in key mode.
+ *
+ * `loadChain()` dispatches on env / ~/.blockrun/payment-chain and is read every
+ * call so mid-session chain switches take effect without a restart. In key mode
+ * the chain is irrelevant — the credit balance is chainless.
+ */
+function gatewayUrl(path: string): string {
+  const mode = resolvePayMode();
+  if (mode.kind === 'key') return mode.apiBase + path.replace(/^\/api/, '');
+  const origin = loadChain() === 'solana' ? 'https://sol.blockrun.ai' : 'https://blockrun.ai';
+  return origin + path;
 }
 
 interface CacheEntry<T> {
@@ -67,11 +78,11 @@ export async function blockrunGet(
 ): Promise<unknown | ProviderError> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  const url = `${baseUrl()}${path}`;
+  const url = gatewayUrl(path);
   const startedAt = Date.now();
   try {
     const res = await fetch(url, {
-      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+      headers: { ...gatewayHeaders(), 'User-Agent': USER_AGENT, Accept: 'application/json' },
       signal: ctrl.signal,
     });
     const latencyMs = Date.now() - startedAt;
@@ -213,10 +224,11 @@ export async function blockrunGetPaid(
 ): Promise<unknown | ProviderError> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  const url = `${baseUrl()}${path}`;
+  const url = gatewayUrl(path);
   const chain = loadChain();
   const startedAt = Date.now();
   const headers: Record<string, string> = {
+    ...gatewayHeaders(),
     'User-Agent': USER_AGENT,
     Accept: 'application/json',
   };

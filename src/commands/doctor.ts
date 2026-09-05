@@ -19,7 +19,8 @@ import {
   setupAgentWallet,
   setupAgentSolanaWallet,
 } from '@blockrun/llm';
-import { loadChain, API_URLS, VERSION, BLOCKRUN_DIR } from '../config.js';
+import { loadChain, VERSION, BLOCKRUN_DIR, DASHBOARD_URL, KEY_API_URL, USER_AGENT } from '../config.js';
+import { gatewayBase, isKeyMode, loadApiKey, maskApiKey } from '../payments/auth-mode.js';
 import { isTelemetryEnabled, readAllRecords, telemetryPaths } from '../telemetry/store.js';
 import { getAvailableUpdateFresh, kickoffVersionCheck } from '../version-check.js';
 
@@ -28,6 +29,23 @@ interface Check {
   status: 'ok' | 'warn' | 'fail';
   detail: string;
   remedy?: string;
+}
+
+/** Free, auth-gated probe — proves the key works without spending credit. */
+async function verifyKeyReachable(): Promise<{ ok: boolean; detail: string }> {
+  const key = loadApiKey();
+  if (!key) return { ok: false, detail: 'no key resolved' };
+  try {
+    const res = await fetch(`${KEY_API_URL}/v1/models`, {
+      headers: { Authorization: `Bearer ${key}`, 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (res.status === 401) return { ok: false, detail: 'gateway returned 401' };
+    if (!res.ok) return { ok: false, detail: `gateway returned HTTP ${res.status}` };
+    return { ok: true, detail: 'authenticated' };
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : 'unreachable' };
+  }
 }
 
 async function runChecks(): Promise<Check[]> {
@@ -106,6 +124,31 @@ async function runChecks(): Promise<Check[]> {
 
   // ── 5. Wallet ─────────────────────────────────────────────────────
   let walletBalance: number | null = null;
+  // ── Pay mode ──────────────────────────────────────────────────────
+  // Which credential will actually be spent matters more than any single
+  // check below — a user with a key set but an unfunded wallet is healthy,
+  // and vice versa, so name the mode before reporting on either.
+  if (isKeyMode()) {
+    const key = loadApiKey();
+    const verdict = await verifyKeyReachable();
+    out.push({
+      name: 'Pay mode',
+      status: verdict.ok ? 'ok' : 'fail',
+      detail: verdict.ok
+        ? `api-key ${key ? maskApiKey(key) : ''} → ${gatewayBase()}`
+        : `api-key rejected — ${verdict.detail}`,
+      remedy: verdict.ok
+        ? undefined
+        : `Check the key at ${DASHBOARD_URL}/dashboard, or run \`franklin logout\` to fall back to the wallet`,
+    });
+  } else {
+    out.push({
+      name: 'Pay mode',
+      status: 'ok',
+      detail: `wallet (${chain ?? 'unset'}) → ${gatewayBase()}`,
+    });
+  }
+
   let walletAddress = '';
   if (chain) {
     try {
@@ -164,7 +207,7 @@ async function runChecks(): Promise<Check[]> {
 
   // ── 6. Gateway reachability ───────────────────────────────────────
   if (chain) {
-    const apiUrl = API_URLS[chain];
+    const apiUrl = gatewayBase();
     try {
       const ctl = new AbortController();
       const t = setTimeout(() => ctl.abort(), 5000);

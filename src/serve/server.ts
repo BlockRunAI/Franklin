@@ -24,7 +24,8 @@ import path from 'node:path';
 // `ws` 8 moved the server class off the default export onto a named one. The
 // default import stays for the `WebSocket` type and its `OPEN` constant.
 import WebSocket, { WebSocketServer } from 'ws';
-import { loadChain, API_URLS, BLOCKRUN_DIR } from '../config.js';
+import { loadChain, BLOCKRUN_DIR} from '../config.js';
+import { gatewayBase, isKeyMode, loadApiKey, maskApiKey } from '../payments/auth-mode.js';
 import { loadConfig, setConfigValue } from '../commands/config.js';
 import { assembleInstructions } from '../agent/context.js';
 import { interactiveSession } from '../agent/loop.js';
@@ -392,7 +393,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   let { port } = opts;
   const { workDir, debug } = opts;
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const userConfig = loadConfig();
   const desktopBoundary = process.env.FRANKLIN_DESKTOP_WORKSPACE_BOUNDARY === '1';
   const desktopPermissionPolicy = desktopBoundary
@@ -722,7 +723,13 @@ export async function startServer(opts: ServerOptions): Promise<void> {
           // string instead of accidentally serializing a pending Promise as {}.
           const address = await client.getWalletAddress();
           const balanceUsd = await fetchBalanceUsd(); // best-effort; undefined on failure
-          send(ws, id, 'response', { address, chain, balanceUsd });
+          // The wallet still exists in API-key mode, but it is not what pays.
+          // Ship the active mode so the panel does not present a wallet balance
+          // as the spending source when spend is coming out of prepaid credit.
+          const key = loadApiKey();
+          const payMode = isKeyMode() ? 'api-key' : 'wallet';
+          const apiKeyMasked = isKeyMode() && key ? maskApiKey(key) : undefined;
+          send(ws, id, 'response', { address, chain, balanceUsd, payMode, apiKeyMasked });
         } catch (err) {
           send(ws, id, 'error', { message: err instanceof Error ? err.message : 'wallet error' });
         }

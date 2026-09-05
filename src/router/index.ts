@@ -633,9 +633,10 @@ export async function llmClassifyRequest(prompt: string): Promise<Tier | null> {
   try {
     const llmMod = await import('../agent/llm.js');
     const cfgMod = await import('../config.js');
+    const authMod = await import('../payments/auth-mode.js');
     ModelClientCtor = llmMod.ModelClient;
     chain = cfgMod.loadChain();
-    apiUrl = cfgMod.API_URLS[chain];
+    apiUrl = authMod.gatewayBase();
   } catch {
     return null;
   }

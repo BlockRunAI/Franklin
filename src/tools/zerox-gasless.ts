@@ -31,7 +31,8 @@ import { createWalletClient, http, publicActions } from 'viem';
 import { getOrCreateWallet } from '@blockrun/llm';
 
 import { loadConfig } from '../commands/config.js';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { loadChain, VERSION} from '../config.js';
 import { appendSwap } from '../stats/swap-log.js';
 import { logger } from '../logger.js';
 import type { CapabilityHandler, ExecutionScope } from '../agent/types.js';
@@ -215,7 +216,7 @@ async function gatewayGet<T>(
   timeoutMs: number,
   ctx: ExecutionScope,
 ): Promise<T> {
-  const apiUrl = API_URLS[loadChain()];
+  const apiUrl = gatewayBase();
   const url = `${apiUrl}${ZEROX_GATEWAY_PATH}/${pathSuffix}?${query.toString()}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -224,7 +225,7 @@ async function gatewayGet<T>(
   try {
     const res = await fetch(url, {
       method: 'GET',
-      headers: { Accept: 'application/json', 'User-Agent': `franklin/${VERSION}` },
+      headers: { ...gatewayHeaders(), Accept: 'application/json', 'User-Agent': `franklin/${VERSION}` },
       signal: controller.signal,
     });
     if (!res.ok) {
@@ -244,7 +245,7 @@ async function gatewayPost<T>(
   timeoutMs: number,
   ctx: ExecutionScope,
 ): Promise<T> {
-  const apiUrl = API_URLS[loadChain()];
+  const apiUrl = gatewayBase();
   const url = `${apiUrl}${ZEROX_GATEWAY_PATH}/${pathSuffix}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -254,6 +255,7 @@ async function gatewayPost<T>(
     const res = await fetch(url, {
       method: 'POST',
       headers: {
+        ...gatewayHeaders(),
         Accept: 'application/json',
         'Content-Type': 'application/json',
         'User-Agent': `franklin/${VERSION}`,

@@ -1,7 +1,7 @@
 # API-key auth alongside the wallet — design
 
 **Date:** 2026-09-05
-**Status:** proposed
+**Status:** implemented on `feat/api-key-auth` (2026-09-05)
 **Scope:** `@blockrun/franklin` (this repo) + README. Gateway-side asks are listed but out of repo scope.
 
 ---
@@ -238,7 +238,8 @@ They operate on an estimate, and that is stated plainly rather than hidden.
 | `src/commands/balance.ts` | in key mode print key status + dashboard link (§5.5) |
 | `src/commands/doctor.ts` | report active pay mode, key validity, resolved gateway host |
 | `src/proxy/server.ts` | forward in key mode so the Anthropic-compatible proxy works |
-| `apps/desktop` panel | API-key field in settings |
+| `src/proxy/server.ts` | `applyGatewayAuth` on the forwarded header bag |
+| `apps/desktop` panel | wallet page states when spend comes from a key (see §9) |
 
 ### 5.3 Backward compatibility — the guarantee for wallet users
 
@@ -280,7 +281,7 @@ Live, against the real key (`npm run test:e2e` gated on `BLOCKRUN_API_KEY`):
 - 401 fallback: bad key + funded wallet completes via the wallet path
 - unsupported endpoint falls back for that call only
 
-Dashboard reconciliation — **this is the answer to "钱数对不对" and must be done by
+Dashboard reconciliation — **this is how we answer "are the amounts right" and must be done by
 hand**, because there is no usage API to automate it against:
 
 1. Note the dashboard credit balance and the last activity row.
@@ -290,9 +291,19 @@ hand**, because there is no usage API to automate it against:
    minutes before calling a discrepancy real.
 5. Confirm each call appears as an activity row with the right endpoint and model.
 
-Expected outcome: an exact match on flat-rate endpoints, and a small drift on
-token-metered chat where `estimateCost()` diverges from the gateway's real rate. If the
-drift is material, §7 becomes a hard blocker rather than a nice-to-have.
+Expected outcome: **Franklin's tally reads high**, by a known and predictable amount.
+user.blockrun.ai states that key mode bills provider list price with no markup and no
+per-call fee (the only charge is 5.5% + $0.30 at top-up), whereas the x402 rate card
+Franklin prices from carries a 5% margin plus a $0.001 per-transaction fee
+(`GATEWAY_MARGIN` / `GATEWAY_TRANSACTION_FEE_USD` in `src/gateway-models.ts`). So the
+estimate over-counts by roughly 5% plus $0.001 per call.
+
+That direction is deliberate — over-counting is the safe side of a spend ceiling — and it
+is disclosed rather than hidden. It is not worth "correcting" by guessing at a key-mode
+formula we have only seen stated in marketing copy; §7's charge header removes the
+guesswork entirely and should be the fix. Reconciliation should confirm the drift is
+about that size and no larger. A drift in the other direction (Franklin under-counting)
+would be a real bug and a blocker.
 
 ---
 
@@ -327,9 +338,44 @@ drift is material, §7 becomes a hard blocker rather than a nice-to-have.
 
 ---
 
-## 9. Out of scope
+## 9. What shipped, and what did not
+
+Built and verified against the live gateway:
+
+- `resolvePayMode()` / `gatewayHeaders()` / `applyGatewayAuth()` and the host swap
+  across all 43 gateway callers, including the Anthropic-compatible payment proxy.
+- `franklin login` / `logout`, the `--wallet` override, key-aware `balance`, `doctor`
+  and `setup`, and `brk_` redaction.
+- The price catalog, so key-mode calls record a real amount instead of $0.
+- 23 unit tests plus live runs of chat, Exa, Surf and the proxy in both modes.
+
+**One bug was found and fixed during live testing.** The proxy forwards the client's
+headers with Node's lowercased names, and `gatewayHeaders()` returns the canonical
+`Authorization`. A plain object holds both, `fetch` sent two Authorization headers, the
+gateway read the client's and answered 401. `applyGatewayAuth` now strips every case
+variant first; covered by a regression test.
+
+**Not done — deliberately deferred:**
+
+- **An editable API-key field in the desktop panel.** The desktop talks to the CLI over
+  a websocket RPC that is read-only for credentials by design — the CLI owns everything
+  in `~/.blockrun/` and never exports a key. Adding a write path for secrets is a
+  larger security decision than this change should make on its own. What did ship is
+  the honest half: `wallet.info` now reports `payMode`, and the wallet page says spend
+  is coming from a key rather than presenting the USDC balance as the budget. Keys are
+  set from the terminal with `franklin login`.
+
+## 10. Out of scope
 
 - Removing the four dead `/v1/…` paths (separate cleanup).
 - Any change to the x402 protocol handling itself.
 - Team/multi-key management.
 - Auto top-up from a wallet into credit.
+
+## 11. Unrelated defect noticed while testing
+
+`SurfMarket` fails on the Solana wallet path with
+`{"error":"Payment verification failed","reason":"verification_failed"}` — the signature
+is produced and sent, and the gateway rejects it. **This reproduces identically on
+`main`**, so it predates this change and is not a regression from it. It needs its own
+investigation.

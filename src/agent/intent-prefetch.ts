@@ -213,13 +213,14 @@ async function exaAnswerTry(query: string, client: ModelClient): Promise<{ text:
     // We inline the request rather than invoke the capability through the full
     // tool framework because prefetch runs outside the agent loop — no
     // permission prompt, no streaming.
-    const { loadChain, API_URLS } = await import('../config.js');
+    const { loadChain } = await import('../config.js');
+    const { gatewayBase, gatewayHeaders } = await import('../payments/auth-mode.js');
     const chain = loadChain();
-    const apiUrl = API_URLS[chain];
+    const apiUrl = gatewayBase();
     void client; // (future: unify the paid-endpoint client so we reuse wallet caching)
     const res = await fetch(`${apiUrl}/v1/exa/answer`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...gatewayHeaders() },
       body: JSON.stringify({ query }),
     });
     if (res.status === 402) {

@@ -29,7 +29,9 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadChain, VERSION} from '../config.js';
+import { resolveCharge } from '../payments/price-catalog.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
@@ -50,10 +52,11 @@ async function postWithPayment<T>(
   ctx: ExecutionScope,
 ): Promise<PaidResponse<T>> {
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const endpoint = `${apiUrl}${path}`;
   const bodyStr = JSON.stringify(body);
   const headers: Record<string, string> = {
+    ...gatewayHeaders(),
     'Content-Type': 'application/json',
     'User-Agent': `franklin/${VERSION}`,
   };
@@ -100,14 +103,24 @@ async function postWithPayment<T>(
   }
 }
 
-// Fold a settled Exa charge into the live-spend accumulator so it counts against
+// Fold an Exa charge into the live-spend accumulator so it counts against
 // --max-spend and shows in stats — exactly like surf.ts / blockrun.ts. Without
-// this, every Exa tool spent real USDC invisibly to the budget ceiling. Use the
-// gateway-reported charge when present, else the tool's list price as a floor.
+// this, every Exa tool spent real USDC invisibly to the budget ceiling.
+//
+// `settled` is true only when an x402 handshake happened. It is false on two
+// very different paths: a genuinely free 200, and every API-key call, where the
+// gateway charges the prepaid balance without a 402. Exa itself returns
+// `costDollars`, so prefer that; otherwise price from the catalog. Returning
+// early on !settled — as this did before key mode — would record $0 for real
+// spend.
 function recordExaSpend(path: string, settled: boolean, reportedUsd: number | undefined, fallbackUsd: number, latencyMs: number): void {
-  if (!settled) return; // free/already-paid (200-first) path — no charge to record
-  const usd = typeof reportedUsd === 'number' && reportedUsd > 0 ? reportedUsd : fallbackUsd;
-  try { recordUsage(`Exa:${path}`, 0, 0, usd, latencyMs); } catch { /* best-effort accounting */ }
+  const charge = settled
+    // Settled through x402: the gateway-reported charge, else the list price.
+    // Either way it reflects money that demonstrably moved.
+    ? { usd: reportedUsd && reportedUsd > 0 ? reportedUsd : fallbackUsd, estimated: false }
+    : resolveCharge({ apiPath: path, reportedUsd, fallbackUsd });
+  if (charge.usd <= 0) return;
+  try { recordUsage(`Exa:${path}`, 0, 0, charge.usd, latencyMs, false, charge.estimated); } catch { /* best-effort accounting */ }
 }
 
 async function signPayment(

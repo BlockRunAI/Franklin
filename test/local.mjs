@@ -11697,8 +11697,15 @@ test('Exa tools record their settled USDC charge (was invisible to --max-spend)'
   }
   // The recordExaSpend helper is called for each endpoint (3 paths + 1 def = >=4).
   assert.ok((src.match(/recordExaSpend/g) || []).length >= 4, 'all three Exa paths must call recordExaSpend');
-  // Only record when a payment actually settled (avoid double-count on free path).
-  assert.match(src, /if \(!settled\)\s*return/, 'recordExaSpend must skip the un-paid path');
+  // The original guard here was `if (!settled) return` — skip anything that did
+  // not settle through x402. API-key mode broke that assumption: the gateway
+  // charges the prepaid balance and answers 200 without ever sending a 402, so
+  // `settled` is false for real spend and the early return recorded $0,
+  // silently disabling --max-spend. The guard is now on the resolved amount, so
+  // a genuinely free call is still skipped while a key-mode charge is counted.
+  assert.match(src, /if \(charge\.usd <= 0\)\s*\n?\s*return/, 'recordExaSpend must skip only genuinely zero charges');
+  assert.doesNotMatch(src, /if \(!settled\)\s*\n?\s*return/, 'an un-settled call is not necessarily an unpaid one');
+  assert.match(src, /resolveCharge/, 'un-settled calls must be priced from the catalog');
 });
 
 test('external-content tools frame attacker text as UNTRUSTED (searchx, voice join the convention)', async () => {

@@ -2,7 +2,8 @@ import chalk from 'chalk';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
-import { BLOCKRUN_DIR, loadChain, API_URLS } from '../config.js';
+import { BLOCKRUN_DIR, loadChain} from '../config.js';
+import { gatewayBase } from '../payments/auth-mode.js';
 import { retryFetchBalance } from './balance-retry.js';
 import { flushStats, loadStats, getLiveSpendUsd } from '../stats/tracker.js';
 import { OPUS_PRICING } from '../pricing.js';
@@ -96,7 +97,7 @@ export async function startCommand(options: StartOptions) {
       chain = sessMeta.chain;
     }
   }
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const config = loadConfig();
 
   // Resolve model. Priority: explicit --model > resumed session's model > user

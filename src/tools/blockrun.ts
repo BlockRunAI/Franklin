@@ -29,7 +29,9 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, USER_AGENT } from '../config.js';
+import { loadChain, USER_AGENT} from '../config.js';
+import { resolveCharge } from '../payments/price-catalog.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
 
@@ -148,6 +150,7 @@ async function callGateway(
   const start = Date.now();
   const chain = loadChain();
   const headers: Record<string, string> = {
+    ...gatewayHeaders(),
     'Accept': 'application/json',
     'User-Agent': USER_AGENT,
   };
@@ -201,7 +204,7 @@ async function callGateway(
 
 function buildUrl(path: string, params: Record<string, unknown> | undefined): string {
   const chain = loadChain();
-  const base = API_URLS[chain]; // ends in /api
+  const base = gatewayBase(); // wallet host ends in /api; the key host does not
   const clean = path.startsWith('/') ? path : `/${path}`;
   const url = `${base}${clean}`;
   if (!params || Object.keys(params).length === 0) return url;
@@ -313,7 +316,11 @@ export const blockrunCapability: CapabilityHandler = {
 
     // Telemetry — show in the panel Audit tab regardless of success
     try {
-      recordUsage(`BlockRun:${path}`, 0, 0, result.paidUsd, result.latencyMs);
+      // `paidUsd` comes from the 402 settlement and is 0 in API-key mode,
+      // where the gateway charges without a handshake. Price from the catalog
+      // so raw gateway calls still count against --max-spend.
+      const charge = resolveCharge({ apiPath: path, settledUsd: result.paidUsd });
+      recordUsage(`BlockRun:${path}`, 0, 0, charge.usd, result.latencyMs, false, charge.estimated);
     } catch { /* best-effort */ }
 
     if (!result.ok) {

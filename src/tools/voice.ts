@@ -26,7 +26,8 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadChain, VERSION} from '../config.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
 import { frameUntrusted } from './untrusted.js';
@@ -77,10 +78,11 @@ async function postWithPayment<T>(
 ): Promise<T> {
   const startMs = Date.now();
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const endpoint = `${apiUrl}${path}`;
   const bodyStr = JSON.stringify(body);
   const headers: Record<string, string> = {
+    ...gatewayHeaders(),
     'Content-Type': 'application/json',
     'User-Agent': `franklin/${VERSION}`,
   };
@@ -129,7 +131,7 @@ async function postWithPayment<T>(
 async function getNoPayment<T>(path: string, ctx: ExecutionScope, meta: PaidCallMeta, record = true): Promise<T> {
   const startMs = Date.now();
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const endpoint = `${apiUrl}${path}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), VOICE_TIMEOUT_MS);
@@ -139,7 +141,7 @@ async function getNoPayment<T>(path: string, ctx: ExecutionScope, meta: PaidCall
     const resp = await fetch(endpoint, {
       method: 'GET',
       signal: controller.signal,
-      headers: { 'User-Agent': `franklin/${VERSION}` },
+      headers: { ...gatewayHeaders(), 'User-Agent': `franklin/${VERSION}` },
     });
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
