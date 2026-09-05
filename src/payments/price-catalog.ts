@@ -28,25 +28,40 @@ import { BLOCKRUN_DIR, USER_AGENT } from '../config.js';
 import { logger } from '../logger.js';
 
 /**
- * Always the Base origin, and NOT because the hosts agree — they do not.
+ * Always the Base origin — because it is the only host serving the SHAPE this
+ * module parses, not because it is the only one that publishes prices.
  *
- * Measured 2026-09-05: blockrun.ai serves a 68KB doc with a `services` array
- * carrying per-endpoint prices. sol.blockrun.ai serves a 4KB doc with only
- * `version` and `resources` — no `services`, no prices at all. api.blockrun.ai
- * does not serve the path.
+ * Measured 2026-09-05:
+ *   blockrun.ai/.well-known/x402      68KB, `services[]` with per-endpoint prices
+ *   sol.blockrun.ai/.well-known/x402   4KB, x402scan v1 fallback shape:
+ *                                      {version: 1, resources: [114 strings]},
+ *                                      no `services`, no prices
+ *   sol.blockrun.ai/openapi.json      34 paths priced under `x-payment-info`
+ *   api.blockrun.ai/.well-known/x402  404
  *
- * So the Base origin is the only one that publishes a priced catalog. Do not
- * "fix" this to fetch per-host: fetchCatalog bails on a missing `services`
- * array, so pointing it at the sol origin would silently freeze every price at
- * the static floor below, with no error anywhere.
+ * So sol does publish prices, just in a different document and schema that
+ * parsePricing does not read. Do not "fix" this to fetch /.well-known per host:
+ * fetchCatalog bails on a missing `services[]`, so the sol origin would freeze
+ * every price at the static floor below with nothing reporting it.
  *
- * The prices it publishes are Base prices, which is a real caveat rather than
- * a technicality — Solana settles with no service fee (SERVICE_FEE_USD = 0 in
- * the sol gateway), so a Solana call costs $0.001 less than this card says.
- * That does not affect the recorded amount on a settled wallet call, which
- * always uses the exact 402 figure and never reaches this module; it only bounds
- * how precise a catalog-priced estimate can be. Verified against a real
- * settlement: Surf quoted and charged $0.0075 on Solana against $0.0085 here.
+ * Do not switch to sol's openapi prices either, which is the tempting move once
+ * you know they exist. They currently disagree with what sol itself quotes and
+ * settles. For /v1/surf/market/fear-greed on 2026-09-05:
+ *
+ *   sol openapi.json publishes   $0.001
+ *   sol 402 quotes and settles   $0.0075   (measured against a funded wallet)
+ *   this Base card publishes     $0.0085
+ *
+ * The payment layer charges one flat rate across Surf while sol's sheet still
+ * lists three tiers, so nine Surf endpoints publish 7.5x under what they
+ * charge. Until that is reconciled the Base card is the closer predictor of a
+ * real sol Surf charge, which is the opposite of what you would assume.
+ *
+ * The remaining Base-vs-Solana gap is the service fee: Solana charges none
+ * (SERVICE_FEE_USD = 0 in the sol gateway), so a settled Solana call runs
+ * $0.001 under this card. None of this touches the amount recorded for a
+ * settled wallet call, which uses the exact 402 figure and never reaches this
+ * module — it only bounds how precise a catalog-priced estimate can be.
  */
 const CATALOG_URL = 'https://blockrun.ai/.well-known/x402';
 const CACHE_FILE = path.join(BLOCKRUN_DIR, 'price-catalog.json');

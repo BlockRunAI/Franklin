@@ -300,10 +300,14 @@ test('resolveCharge falls back to a caller list price for an uncatalogued path',
 
 
 test('the price catalog is read from the Base origin, the only host that publishes one', async () => {
-  // Not a style assertion. sol.blockrun.ai serves /.well-known/x402 with no
-  // services[] and api.blockrun.ai does not serve it at all, so repointing this
-  // per-host would silently pin every estimate to the static floor. Measured
-  // 2026-09-05; the comment on CATALOG_URL carries the evidence.
+  // Not a style assertion, and not "Base is the only one with prices" — sol
+  // publishes prices too, in openapi.json under x-payment-info. Base is the
+  // only host serving the services[] shape parsePricing reads, and sol's
+  // published numbers currently disagree with what sol quotes and settles
+  // ($0.001 published vs $0.0075 charged for surf fear-greed, measured
+  // 2026-09-05). Repointing this per-host pins every estimate to the static
+  // floor; switching to sol's sheet makes estimates worse. The comment on
+  // CATALOG_URL carries all three numbers.
   const src = await readFile(
     new URL('../dist/payments/price-catalog.js', import.meta.url), 'utf-8'
   );
