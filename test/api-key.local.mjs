@@ -42,6 +42,31 @@ function writeKeyFile(key) {
   auth.resetPayModeCache();
 }
 
+test('Messages API credit refusal never invokes wallet signing', async () => {
+  clean();
+  process.env.BLOCKRUN_API_KEY = VALID_KEY;
+  const { ModelClient } = await import('../dist/agent/llm.js');
+  const client = new ModelClient({ apiUrl: KEY_API_URL, chain: 'solana' });
+  const nativeFetch = globalThis.fetch;
+  let signed = false;
+  let requests = 0;
+  client.signPayment = async () => { signed = true; return null; };
+  globalThis.fetch = async () => {
+    requests++;
+    return Response.json({ error: { message: 'Account credits exhausted' } }, { status: 402 });
+  };
+  try {
+    const events = [];
+    for await (const event of client.streamCompletion({ model: 'anthropic/claude-haiku-4.5', messages: [{ role: 'user', content: 'Hello' }], max_tokens: 8 })) events.push(event);
+    assert.equal(signed, false);
+    assert.equal(requests, 1);
+    assert.match(events.find(event => event.kind === 'error')?.payload.message ?? '', /credits exhausted/);
+  } finally {
+    globalThis.fetch = nativeFetch;
+    clean();
+  }
+});
+
 // ─── Backward compatibility: no key means nothing changes ───────────────
 //
 // This is the guarantee the whole feature rests on. If it ever fails, every
