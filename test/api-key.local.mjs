@@ -18,6 +18,7 @@ delete process.env.RUNCODE_CHAIN;
 process.env.FRANKLIN_NO_AUDIT = '1';
 
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
 const auth = await import('../dist/payments/auth-mode.js');
@@ -295,6 +296,24 @@ test('resolveCharge falls back to a caller list price for an uncatalogued path',
   assert.equal(charge.usd, 0.05);
   assert.equal(charge.estimated, true);
   catalog.__resetPriceCatalog();
+});
+
+
+test('the price catalog is read from the Base origin, the only host that publishes one', async () => {
+  // Not a style assertion. sol.blockrun.ai serves /.well-known/x402 with no
+  // services[] and api.blockrun.ai does not serve it at all, so repointing this
+  // per-host would silently pin every estimate to the static floor. Measured
+  // 2026-09-05; the comment on CATALOG_URL carries the evidence.
+  const src = await readFile(
+    new URL('../dist/payments/price-catalog.js', import.meta.url), 'utf-8'
+  );
+  assert.match(src, /https:\/\/blockrun\.ai\/\.well-known\/x402/);
+  assert.doesNotMatch(
+    src, /https:\/\/sol\.blockrun\.ai\/\.well-known/,
+    'the sol origin publishes no prices — fetching it yields a permanently stale catalog'
+  );
+  // A 200 carrying no services[] must be reported, never swallowed.
+  assert.match(src, /returned no services/);
 });
 
 test('cleanup', () => {

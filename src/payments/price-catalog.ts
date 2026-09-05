@@ -25,11 +25,28 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BLOCKRUN_DIR, USER_AGENT } from '../config.js';
+import { logger } from '../logger.js';
 
 /**
- * The discovery doc is public, unauthenticated, and identical across the
- * payment hosts, so it is always read from the Base origin — including in key
- * mode, where `api.blockrun.ai` does not serve it.
+ * Always the Base origin, and NOT because the hosts agree — they do not.
+ *
+ * Measured 2026-09-05: blockrun.ai serves a 68KB doc with a `services` array
+ * carrying per-endpoint prices. sol.blockrun.ai serves a 4KB doc with only
+ * `version` and `resources` — no `services`, no prices at all. api.blockrun.ai
+ * does not serve the path.
+ *
+ * So the Base origin is the only one that publishes a priced catalog. Do not
+ * "fix" this to fetch per-host: fetchCatalog bails on a missing `services`
+ * array, so pointing it at the sol origin would silently freeze every price at
+ * the static floor below, with no error anywhere.
+ *
+ * The prices it publishes are Base prices, which is a real caveat rather than
+ * a technicality — Solana settles with no service fee (SERVICE_FEE_USD = 0 in
+ * the sol gateway), so a Solana call costs $0.001 less than this card says.
+ * That does not affect the recorded amount on a settled wallet call, which
+ * always uses the exact 402 figure and never reaches this module; it only bounds
+ * how precise a catalog-priced estimate can be. Verified against a real
+ * settlement: Surf quoted and charged $0.0075 on Solana against $0.0085 here.
  */
 const CATALOG_URL = 'https://blockrun.ai/.well-known/x402';
 const CACHE_FILE = path.join(BLOCKRUN_DIR, 'price-catalog.json');
@@ -222,7 +239,18 @@ async function fetchCatalog(): Promise<void> {
     });
     if (!res.ok) return;
     const body = (await res.json()) as { services?: unknown };
-    if (!Array.isArray(body.services)) return;
+    if (!Array.isArray(body.services)) {
+      // The one failure that would otherwise be invisible: a 200 with no
+      // priced catalog leaves every estimate pinned to the static floor
+      // forever, and nothing else in the product would ever say so. The sol
+      // origin's discovery doc has exactly this shape, so this fires the
+      // moment someone repoints CATALOG_URL at it.
+      logger.warn(
+        `[franklin] price catalog at ${CATALOG_URL} returned no services[] — ` +
+        'estimates will stay on the built-in floor'
+      );
+      return;
+    }
 
     const entries: CatalogEntry[] = [];
     for (const svc of body.services) {
