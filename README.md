@@ -167,7 +167,7 @@ interchangeable. Everything else about the agent is identical.
 | Settlement | On-chain, per call, via [x402](https://x402.org) | Against a prepaid balance |
 | Gateway | `sol.blockrun.ai` / `blockrun.ai` | `api.blockrun.ai` |
 | Where the money lives | A wallet only you hold the key to | Your BlockRun account |
-| Spend visibility | `franklin stats` — exact settled amounts | [Dashboard](https://user.blockrun.ai/dashboard) — see the note below |
+| Spend visibility | `franklin stats` — exact settled amounts | `franklin balance` + [dashboard](https://user.blockrun.ai/dashboard); exact except chat |
 
 **The wallet is still Franklin's identity.** Memory, the trading journal and goals are
 keyed to it, and the wallet route is the one that needs nothing from us — no signup, no
@@ -208,23 +208,33 @@ If the key is rejected, or a tool needs an endpoint the key gateway does not ser
 Franklin falls back to the wallet for that call and tells you. It never falls back on a
 malformed request — a bad call is never retried with your USDC.
 
-### One honest caveat about spend tracking
+### Spend tracking, and the one thing that stays an estimate
 
 In wallet mode every charge is exact: the gateway states the price in the x402 handshake
 and Franklin records the amount that actually settled.
 
-In API-key mode the gateway settles silently against your balance and **returns no charge
-amount**. Franklin prices those calls locally from BlockRun's published x402 rate card, so
-`--max-spend`, `PreSpend` hooks and budgets all keep working — but the figures are
-estimates, and they lean high. The x402 rate card includes a 5% margin and a $0.001
-per-transaction fee that key mode does not charge (key mode bills provider list price;
-the fee is taken when you top up). Expect Franklin's local tally to read a few percent
-above what the dashboard shows.
+In API-key mode most calls now report what they cost. The gateway returns an
+`x-blockrun-cost-usd` header on the pre-priced service families — search, images, RPC,
+market data, phone, sandboxes — and Franklin records that figure exactly.
 
-Over-counting is the safe direction for a spend ceiling, and Franklin is explicit about
-it: `franklin stats` marks estimated totals with `~` and reports the estimated portion
-separately, and `franklin balance` will not invent a credit balance it cannot read. For
-the authoritative number, use the [dashboard](https://user.blockrun.ai/dashboard).
+**Chat is the exception, permanently.** Chat settles *after* the answer is on the wire, so
+a slow settlement never becomes a slow answer, which means the amount does not exist yet
+when the headers are written. Franklin reconstructs chat spend from token counts and the
+published rate, so chat rows are estimates. `franklin stats` marks estimated totals with
+`~` and reports the estimated portion separately, so you can always see which is which.
+
+`franklin balance` reads your real credit standing from the gateway:
+
+```
+Account:   acme (gated)
+Remaining: $41.9980 of $50.00 granted
+Spent:     $8.0020  (BlockRun, authoritative)
+Local:     ~$8.0431  (Franklin's own tally, all time, both pay modes — expected to differ)
+```
+
+The two numbers differ on purpose: Franklin's tally covers both pay modes and estimates
+chat, while BlockRun's is what you were actually billed. For the full per-call history,
+use the [dashboard](https://user.blockrun.ai/dashboard).
 
 ---
 

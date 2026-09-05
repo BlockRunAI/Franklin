@@ -1,7 +1,7 @@
 /**
  * Multi-chain RPC — read-only JSON-RPC across 40+ chains via the BlockRun
  * `/v1/rpc/{network}` endpoint (Tatum gateway). x402-paid against the user's
- * USDC wallet, flat $0.002 per call.
+ * USDC wallet, flat $0.0020 base + $0.001 settlement fee (measured 2026-09-05).
  *
  * For a trading agent this covers the on-chain reads the dedicated tools don't:
  * native + ERC-20 balances on any chain, contract reads (eth_call), gas price,
@@ -29,7 +29,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
-import { resolveCharge } from '../payments/price-catalog.js';
+import { chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -127,7 +127,7 @@ async function postRpcWithPayment(
     // `paidUsd` is only ever set by the 402 branch, so in API-key mode — where
     // the gateway settles silently and never sends a 402 — it stays 0. Price the
     // call from the published catalog instead of recording a free call.
-    const charge = resolveCharge({ apiPath: endpoint, settledUsd: paidUsd });
+    const charge = resolveCharge({ apiPath: endpoint, chargedUsd: chargeFromResponse(response), settledUsd: paidUsd });
     try { recordUsage(`MultiChainRPC:${network}`, 0, 0, charge.usd, Date.now() - startedAt, false, charge.estimated); } catch { /* best-effort */ }
     return {
       body: await response.json(),
@@ -220,7 +220,7 @@ export const multiChainRpcCapability: CapabilityHandler = {
     name: 'MultiChainRPC',
     description:
       'Read-only JSON-RPC against 40+ chains through the BlockRun gateway (one endpoint, no per-chain key). ' +
-      '$0.002 per call (USDC). Use for on-chain reads the other tools do not cover: native/token balances on any ' +
+      '$0.0020 per call, plus a $0.001 settlement fee when paying from a wallet. Use for on-chain reads the other tools do not cover: native/token balances on any ' +
       'chain, contract reads (eth_call), gas price, nonce, block height, and tx receipt checks ("did my swap land?"). ' +
       'EVM chains speak eth_* (eth_blockNumber, eth_getBalance, eth_call, eth_gasPrice, eth_getTransactionReceipt, ...); ' +
       'Solana speaks getSlot/getBalance/getAccountInfo/getTransaction; Bitcoin-family speaks getblockcount etc. ' +

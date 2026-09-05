@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BLOCKRUN_DIR, USER_AGENT } from '../config.js';
 import { logger } from '../logger.js';
+import { GATEWAY_TRANSACTION_FEE_USD } from '../gateway-models.js';
 
 /**
  * Always the Base origin — because it is the only host serving the SHAPE this
@@ -353,6 +354,91 @@ export function priceForPath(apiPath: string): number | null {
   return best ? best.usd : null;
 }
 
+
+/**
+ * The base price for an endpoint — what the API-key rail charges — or null
+ * when the endpoint is not catalogued.
+ *
+ * There are two real prices per endpoint and one literal cannot serve both.
+ * The catalog and the 402 challenge both state the WALLET price, which is the
+ * base plus a settlement fee. The key rail charges the base and no fee, which
+ * is why it issues no 402 at all.
+ *
+ * Measured 2026-09-05 via x-blockrun-cost-usd against the unsigned 402:
+ *
+ *   endpoint    402 / catalog    key rail charges
+ *   surf        $0.0085          $0.0075
+ *   rpc         $0.0030          $0.0020
+ *   exa search  $0.0110          $0.0100
+ *   defillama   $0.0060          $0.0050
+ *
+ * Exactly one fee apart, every time. Quoting the 402 figure to a key-mode user
+ * overstates every call by $0.001 — small in absolute terms and 50% on a
+ * $0.002 RPC call.
+ */
+export function basePriceForPath(apiPath: string): number | null {
+  const wallet = priceForPath(apiPath);
+  if (wallet === null) return null;
+  if (wallet <= 0) return wallet; // free stays free on both rails
+  const base = wallet - GATEWAY_TRANSACTION_FEE_USD;
+  return base > 0 ? +base.toFixed(6) : wallet;
+}
+
+/**
+ * The exact amount BlockRun charged for this call, from
+ * `x-blockrun-cost-usd`, or null when the response does not state one.
+ *
+ * Live on the pre-priced service families (exa, surf, pm, phone, modal,
+ * speech, images, rpc, defillama). Deliberately and permanently ABSENT on
+ * chat, which settles after the answer is on the wire (`x-settlement-async`)
+ * — at header-writing time the amount does not exist yet, and waiting for it
+ * would mean holding the customer's response until the money lands. Chat is
+ * reconstructed from tokens x published rate instead.
+ *
+ * Absent means "no charge settled at response time", NOT "free" — reading it
+ * as $0 would zero out chat, the largest spend category. A charge that really
+ * did settle at zero is written explicitly as `0.000000`, so 0 is a value and
+ * missing is not.
+ *
+ * Empty, malformed and negative are all treated as absent. `Number('')` is 0
+ * in JS, which would book $0 against a billed call.
+ */
+export function chargeFromResponse(res: HeaderBag): number | null {
+  return usdHeader(res, 'x-blockrun-cost-usd');
+}
+
+/**
+ * Credit left on the account after this call, from
+ * `x-blockrun-credit-remaining-usd`. Absent on ungated accounts, which have no
+ * ceiling and so nothing to report — that is correct, not a failure.
+ *
+ * It can understate and never overstates: the figure is read inside the
+ * reservation transaction, already net of concurrent in-flight holds. That is
+ * the right error direction for a pre-run low-balance warning (warn early
+ * rather than fail to warn), and the wrong one for display — GET /v1/credits
+ * is the authority for a number shown to a user.
+ */
+export function remainingCreditFromResponse(res: HeaderBag): number | null {
+  return usdHeader(res, 'x-blockrun-credit-remaining-usd');
+}
+
+interface HeaderBag { headers: { get(name: string): string | null } }
+
+/**
+ * Shared parse for both money headers. 0 is a value; empty, malformed and
+ * negative are all absence. `Number('')` is 0 in JS, which would book $0
+ * against a billed call.
+ */
+function usdHeader(res: HeaderBag, name: string): number | null {
+  const raw = res.headers.get(name);
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
 /**
  * The amount to record for a completed paid call.
  *
@@ -368,16 +454,29 @@ export interface ResolvedCharge {
 
 export function resolveCharge(opts: {
   apiPath: string;
+  /** From `x-blockrun-cost-usd` — what BlockRun actually charged. Wins outright. */
+  chargedUsd?: number | null;
   settledUsd?: number;
   reportedUsd?: number;
   fallbackUsd?: number;
 }): ResolvedCharge {
-  const { apiPath, settledUsd, reportedUsd, fallbackUsd } = opts;
+  const { apiPath, chargedUsd, settledUsd, reportedUsd, fallbackUsd } = opts;
+  // The gateway stating its own charge beats every other source, including a
+  // settled x402 amount. 0 is a real answer here, so test for null, not truth.
+  if (typeof chargedUsd === 'number') {
+    return { usd: chargedUsd, estimated: false };
+  }
   if (typeof settledUsd === 'number' && settledUsd > 0) {
     return { usd: settledUsd, estimated: false };
   }
+  // An upstream provider's self-reported cost is NOT what BlockRun charged.
+  // Measured 2026-09-05: Exa reported costDollars $0.007 on a call BlockRun
+  // charged $0.010 for. Treating it as exact booked a wrong number with false
+  // confidence, which is worse than a hedged one — so it now ranks below the
+  // catalog price and is tagged estimated like any other guess.
   if (typeof reportedUsd === 'number' && reportedUsd > 0) {
-    return { usd: reportedUsd, estimated: false };
+    const listed = priceForPath(apiPath);
+    return { usd: listed !== null && listed > 0 ? listed : reportedUsd, estimated: true };
   }
   const listed = priceForPath(apiPath);
   if (listed !== null) return { usd: listed, estimated: true };

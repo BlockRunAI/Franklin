@@ -25,6 +25,7 @@ const auth = await import('../dist/payments/auth-mode.js');
 const { API_URLS, KEY_API_URL, BLOCKRUN_DIR, saveChain } = await import('../dist/config.js');
 const { redactSecrets } = await import('../dist/agent/secret-redact.js');
 const catalog = await import('../dist/payments/price-catalog.js');
+const { GATEWAY_TRANSACTION_FEE_USD } = await import('../dist/gateway-models.js');
 
 // Synthetic — shaped like a real key so the format checks are meaningful, but
 // not a credential. Never put a live key in a tracked file.
@@ -270,7 +271,7 @@ test('free endpoints price at zero, unknown endpoints price as null', () => {
   assert.equal(catalog.priceForPath('/v1/chat/completions'), null);
 });
 
-test('resolveCharge prefers a settled amount, then a reported one, then the catalog', () => {
+test('resolveCharge prefers a gateway charge, then a settlement, then the catalog', () => {
   catalog.__resetPriceCatalog();
 
   const settled = catalog.resolveCharge({
@@ -279,11 +280,14 @@ test('resolveCharge prefers a settled amount, then a reported one, then the cata
   assert.equal(settled.usd, 0.0085);
   assert.equal(settled.estimated, false, 'a settled x402 amount is exact');
 
-  const reported = catalog.resolveCharge({
-    apiPath: '/v1/exa/search', reportedUsd: 0.007,
+  // This used to assert reportedUsd was exact. It is not: an upstream's own
+  // costDollars is its cost, not BlockRun's charge — see the dedicated test
+  // below. x-blockrun-cost-usd replaced it as the authority.
+  const charged = catalog.resolveCharge({
+    apiPath: '/v1/exa/search', chargedUsd: 0.01, reportedUsd: 0.007,
   });
-  assert.equal(reported.usd, 0.007);
-  assert.equal(reported.estimated, false, 'a gateway-reported charge is exact');
+  assert.equal(charged.usd, 0.01);
+  assert.equal(charged.estimated, false, 'the gateway stating its charge is exact');
 
   const listed = catalog.resolveCharge({ apiPath: '/v1/surf/market/ranking' });
   assert.ok(listed.usd > 0, 'key-mode calls must never record zero for paid work');
@@ -318,6 +322,138 @@ test('the price catalog is read from the Base origin, the only host that publish
   );
   // A 200 carrying no services[] must be reported, never swallowed.
   assert.match(src, /returned no services/);
+});
+
+
+// ─── The gateway's own charge header ────────────────────────────────────
+
+const hdr = (v) => ({ headers: { get: (n) => (n === 'x-blockrun-cost-usd' && v !== undefined ? v : null) } });
+
+test('chargeFromResponse treats 0 as a value and everything malformed as absent', () => {
+  assert.equal(catalog.chargeFromResponse(hdr('0.010000')), 0.01);
+  // A charge that genuinely settled at zero is written explicitly, and must be
+  // distinguishable from a response that states no charge at all.
+  assert.equal(catalog.chargeFromResponse(hdr('0.000000')), 0);
+  assert.equal(catalog.chargeFromResponse(hdr(undefined)), null, 'absent');
+  // Number('') is 0 in JS — booking that against a billed call is the bug.
+  assert.equal(catalog.chargeFromResponse(hdr('')), null, 'empty is absent, not zero');
+  assert.equal(catalog.chargeFromResponse(hdr('   ')), null);
+  assert.equal(catalog.chargeFromResponse(hdr('abc')), null, 'malformed is absent');
+  assert.equal(catalog.chargeFromResponse(hdr('-1')), null, 'negative is absent');
+});
+
+test('remainingCreditFromResponse follows the same rules', () => {
+  const rc = (v) => ({ headers: { get: (n) => (n === 'x-blockrun-credit-remaining-usd' ? v : null) } });
+  assert.equal(catalog.remainingCreditFromResponse(rc('41.998000')), 41.998);
+  assert.equal(catalog.remainingCreditFromResponse(rc('0.000000')), 0, 'a real zero balance');
+  // Absent on ungated accounts, which have no ceiling. Correct, not a failure.
+  assert.equal(catalog.remainingCreditFromResponse(rc(null)), null);
+  assert.equal(catalog.remainingCreditFromResponse(rc('')), null);
+});
+
+test('a gateway-stated charge outranks every other source, including zero', () => {
+  catalog.__resetPriceCatalog();
+  const c = catalog.resolveCharge({
+    apiPath: '/v1/exa/search', chargedUsd: 0.01, settledUsd: 0.02, reportedUsd: 0.007,
+  });
+  assert.equal(c.usd, 0.01);
+  assert.equal(c.estimated, false);
+
+  // 0 must not be swallowed by a truthiness check.
+  const zero = catalog.resolveCharge({ apiPath: '/v1/exa/search', chargedUsd: 0, fallbackUsd: 0.05 });
+  assert.equal(zero.usd, 0, 'an explicit zero charge is authoritative');
+  assert.equal(zero.estimated, false);
+});
+
+test("an upstream's self-reported cost is not what BlockRun charged", () => {
+  catalog.__resetPriceCatalog();
+  // Measured 2026-09-05: Exa reported costDollars $0.007 on a call the gateway
+  // charged $0.010 for. Booking $0.007 as exact was a wrong number carrying
+  // false confidence — worse than a hedged one.
+  const c = catalog.resolveCharge({ apiPath: '/v1/exa/search', reportedUsd: 0.007 });
+  assert.equal(c.estimated, true, 'a provider-reported cost is an estimate, not a charge');
+  assert.ok(c.usd > 0);
+});
+
+
+// ─── Prices restated in model-facing tool descriptions ──────────────────
+
+test('a price quoted in a tool description is the base, not the wallet quote', async () => {
+  // These strings are what the AGENT reads to decide whether a call is worth
+  // making, so a stale one changes spending behaviour, not just docs.
+  //
+  // There are TWO real prices per endpoint and one literal cannot serve both:
+  // the API-key rail charges the base, the wallet rail adds a settlement fee,
+  // and the 402 challenge / catalog both quote the wallet figure. Measured
+  // 2026-09-05 via x-blockrun-cost-usd — surf $0.0075 vs $0.0085, rpc $0.0020
+  // vs $0.0030, exa $0.0100 vs $0.0110, defillama $0.0050 vs $0.0060 — exactly
+  // one fee apart every time. The descriptions state the base and name the fee
+  // separately, which is true on either rail.
+  //
+  // Reads the built spec.description rather than the source file, so a comment
+  // recording what a price USED to be does not trip it.
+  catalog.__resetPriceCatalog();
+
+  const rpc = await import('../dist/tools/rpc.js');
+  const llama = await import('../dist/tools/defillama.js');
+  const exa = await import('../dist/tools/exa.js');
+
+  const cases = [
+    [rpc.multiChainRpcCapability, '/v1/rpc/base'],
+    [llama.defiLlamaProtocolsCapability, '/v1/defillama/protocols'],
+    [exa.exaSearchCapability, '/v1/exa/search'],
+    [exa.exaReadUrlsCapability, '/v1/exa/contents'],
+  ].filter(([cap]) => cap && cap.spec);
+  assert.ok(cases.length >= 3, 'found the capabilities to check');
+
+  for (const [cap, probePath] of cases) {
+    const base = catalog.basePriceForPath(probePath);
+    assert.ok(base > 0, `${probePath} should have a base price`);
+    // The fee is named as its own figure, so ignore it when checking the price.
+    const quoted = [...cap.spec.description.matchAll(/\$(\d+\.\d{3,4})/g)]
+      .map((m) => Number(m[1]))
+      .filter((n) => Math.abs(n - 0.001) > 1e-9);
+    for (const q of quoted) {
+      assert.ok(
+        Math.abs(q - base) < 0.0005,
+        `${cap.spec.name} quotes $${q}; the base price for ${probePath} is $${base}`
+      );
+    }
+    assert.match(cap.spec.description, /settlement fee/, `${cap.spec.name} names the wallet-rail fee`);
+    // The fee figure needs an owner too. The gateway's constant has moved
+    // before — 0.001 to 0.002 and back — so a description that bakes it drifts
+    // on the next move exactly like the prices did.
+    const feeQuoted = [...cap.spec.description.matchAll(/\$(\d+\.\d{3,4})\s*settlement fee/g)]
+      .map((m) => Number(m[1]));
+    for (const f of feeQuoted) {
+      assert.ok(
+        Math.abs(f - GATEWAY_TRANSACTION_FEE_USD) < 1e-9,
+        `${cap.spec.name} states a $${f} settlement fee; the constant is $${GATEWAY_TRANSACTION_FEE_USD}`
+      );
+    }
+  }
+});
+
+test('basePriceForPath is the catalog price less exactly one settlement fee', () => {
+  catalog.__resetPriceCatalog();
+  const wallet = catalog.priceForPath('/v1/surf/market/ranking');
+  const base = catalog.basePriceForPath('/v1/surf/market/ranking');
+  assert.ok(Math.abs((wallet - base) - 0.001) < 1e-9, 'one fee apart');
+  // Free endpoints stay free on both rails rather than going negative.
+  assert.equal(catalog.basePriceForPath('/v1/models'), 0);
+});
+
+test('surf quotes one flat price, computed rather than typed', async () => {
+  catalog.__resetPriceCatalog();
+  const surf = await import('../dist/tools/surf.js');
+  const desc = surf.surfMarketCapability.spec.description;
+
+  // The tier sentence was wrong in both directions at once: 8.5x under on
+  // tier 1, 2.4x over on tier 3.
+  assert.doesNotMatch(desc, /Tier-1/, 'the stale tier sentence is gone from the live description');
+  const base = catalog.basePriceForPath('/v1/surf/market/ranking');
+  assert.match(desc, new RegExp(`\\$${base.toFixed(4)}`), 'states the base price');
+  assert.match(desc, /settlement fee/, 'and names the wallet-rail fee separately');
 });
 
 test('cleanup', () => {

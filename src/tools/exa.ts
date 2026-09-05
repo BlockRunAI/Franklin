@@ -5,7 +5,7 @@
  * Three tools:
  *  - ExaSearch     — semantic search for URLs ($0.01/call)
  *  - ExaAnswer     — synthesized answer with citations ($0.01/call)
- *  - ExaReadUrls   — batch-fetch clean Markdown from URLs ($0.002/URL)
+ *  - ExaReadUrls   — batch-fetch clean Markdown from URLs ($0.0030/URL)
  *
  * Why these matter for an economic agent: ExaAnswer is Perplexity-in-a-
  * tool — the agent gets a grounded reply with sources, avoiding the
@@ -30,7 +30,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
-import { resolveCharge } from '../payments/price-catalog.js';
+import { chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -43,6 +43,8 @@ const GEN_TIMEOUT_MS = 30_000;
 interface PaidResponse<T> {
   data: T;
   settled: boolean;  // true when a 402 payment was signed AND the retry succeeded
+  /** From `x-blockrun-cost-usd`. Null when the gateway stated no charge. */
+  chargedUsd: number | null;
   latencyMs: number;
 }
 
@@ -96,7 +98,12 @@ async function postWithPayment<T>(
       throw new Error(`Exa ${path} failed (${response.status}): ${errText.slice(0, 200)}`);
     }
 
-    return { data: (await response.json()) as T, settled, latencyMs: Date.now() - start };
+    return {
+      data: (await response.json()) as T,
+      settled,
+      chargedUsd: chargeFromResponse(response),
+      latencyMs: Date.now() - start,
+    };
   } finally {
     clearTimeout(timeout);
     ctx.abortSignal.removeEventListener('abort', onAbort);
@@ -113,11 +120,15 @@ async function postWithPayment<T>(
 // `costDollars`, so prefer that; otherwise price from the catalog. Returning
 // early on !settled — as this did before key mode — would record $0 for real
 // spend.
-function recordExaSpend(path: string, settled: boolean, reportedUsd: number | undefined, fallbackUsd: number, latencyMs: number): void {
-  const charge = settled
-    // Settled through x402: the gateway-reported charge, else the list price.
-    // Either way it reflects money that demonstrably moved.
-    ? { usd: reportedUsd && reportedUsd > 0 ? reportedUsd : fallbackUsd, estimated: false }
+function recordExaSpend(path: string, settled: boolean, chargedUsd: number | null, reportedUsd: number | undefined, fallbackUsd: number, latencyMs: number): void {
+  // `reportedUsd` is Exa's own costDollars — its upstream cost, NOT what
+  // BlockRun charged. Measured 2026-09-05: Exa said $0.007 on a call the
+  // gateway charged $0.010 for. It is no longer treated as exact anywhere;
+  // x-blockrun-cost-usd is the authority when present.
+  const charge = chargedUsd !== null
+    ? { usd: chargedUsd, estimated: false }
+    : settled
+    ? { usd: fallbackUsd, estimated: false }
     : resolveCharge({ apiPath: path, reportedUsd, fallbackUsd });
   if (charge.usd <= 0) return;
   try { recordUsage(`Exa:${path}`, 0, 0, charge.usd, latencyMs, false, charge.estimated); } catch { /* best-effort accounting */ }
@@ -219,7 +230,7 @@ export const exaSearchCapability: CapabilityHandler = {
   spec: {
     name: 'ExaSearch',
     description:
-      'Neural web search via Exa ($0.01/call). Returns a ranked list of ' +
+      'Neural web search via Exa ($0.0100/call base, plus a $0.001 settlement fee on a wallet). Returns a ranked list of ' +
       'URLs + titles for a natural-language query. Understands meaning, ' +
       'not just keywords. Optional `category` narrows to github / news / ' +
       '`research paper` / tweet / pdf / company / etc. Prefer this over ' +
@@ -249,10 +260,10 @@ export const exaSearchCapability: CapabilityHandler = {
     if (!params.query) return { output: 'Error: query is required', isError: true };
 
     try {
-      const { data: res, settled, latencyMs } = await postWithPayment<ExaSearchResponse>('/v1/exa/search', params, ctx);
+      const { data: res, settled, chargedUsd, latencyMs } = await postWithPayment<ExaSearchResponse>('/v1/exa/search', params, ctx);
       const body = res.data ?? res;
       const cost = body.costDollars?.total;
-      recordExaSpend('/v1/exa/search', settled, cost, 0.01, latencyMs);
+      recordExaSpend('/v1/exa/search', settled, chargedUsd, cost, 0.01, latencyMs);
       const hits = body.results ?? [];
       if (hits.length === 0) {
         return { output: `No Exa results for "${params.query}".` };
@@ -293,7 +304,7 @@ export const exaAnswerCapability: CapabilityHandler = {
     name: 'ExaAnswer',
     description:
       "Ask a factual question, get a synthesized answer with real source " +
-      "citations ($0.01/call). Like Perplexity in a tool — grounded in " +
+      "citations ($0.0100/call base, plus a $0.001 settlement fee on a wallet). Like Perplexity in a tool — grounded in " +
       "live web content, not LLM memory. Best for 'what is X?', 'how does " +
       "Y work?', 'what's the current state of Z?'. Prefer this over " +
       "chaining ExaSearch + ExaReadUrls + LLM synthesis when the user " +
@@ -311,10 +322,10 @@ export const exaAnswerCapability: CapabilityHandler = {
     if (!params.query) return { output: 'Error: query is required', isError: true };
 
     try {
-      const { data: res, settled, latencyMs } = await postWithPayment<ExaAnswerResponse>('/v1/exa/answer', params, ctx);
+      const { data: res, settled, chargedUsd, latencyMs } = await postWithPayment<ExaAnswerResponse>('/v1/exa/answer', params, ctx);
       const body = res.data ?? res;
       const cost = body.costDollars?.total;
-      recordExaSpend('/v1/exa/answer', settled, cost, 0.01, latencyMs);
+      recordExaSpend('/v1/exa/answer', settled, chargedUsd, cost, 0.01, latencyMs);
       const ans = body.answer ?? '';
       const cites = body.citations ?? [];
       const lines: string[] = [ans];
@@ -356,7 +367,7 @@ export const exaReadUrlsCapability: CapabilityHandler = {
   spec: {
     name: 'ExaReadUrls',
     description:
-      "Batch-fetch clean Markdown content from a list of URLs ($0.002/URL). " +
+      "Batch-fetch clean Markdown content from a list of URLs ($0.0020/URL base, plus a $0.001 settlement fee on a wallet). " +
       "Up to 100 URLs per call. Much cheaper than chaining 100× WebFetch, " +
       "and returns text already stripped of HTML/boilerplate — ready to " +
       "feed into an LLM context window. Prefer over WebFetch when reading " +
@@ -383,11 +394,11 @@ export const exaReadUrlsCapability: CapabilityHandler = {
     }
 
     try {
-      const { data: res, settled, latencyMs } = await postWithPayment<ExaContentsResponse>('/v1/exa/contents', params, ctx);
+      const { data: res, settled, chargedUsd, latencyMs } = await postWithPayment<ExaContentsResponse>('/v1/exa/contents', params, ctx);
       const body = res.data ?? res;
       const cost = body.costDollars?.total;
       // $0.002/URL list price as the floor when the gateway omits costDollars.
-      recordExaSpend('/v1/exa/contents', settled, cost, 0.002 * params.urls.length, latencyMs);
+      recordExaSpend('/v1/exa/contents', settled, chargedUsd, cost, 0.002 * params.urls.length, latencyMs);
       const results = body.results ?? [];
       if (results.length === 0) {
         return { output: `No readable content returned for the ${params.urls.length} URL(s).` };
