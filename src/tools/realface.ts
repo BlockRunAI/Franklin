@@ -234,7 +234,7 @@ async function actionEnroll(
   }
   return {
     output:
-      `RealFace enrolled → $${paidUsd.toFixed(4)} · ${Date.now() - start}ms. ` +
+      `RealFace enrolled → ${accountMode() ? "account credits (see Activity at user.blockrun.ai)" : `$${paidUsd.toFixed(4)}`} · ${Date.now() - start}ms. ` +
       `Use the returned \`asset_id\` (ta_xxx) as \`real_face_asset_id\` on a VideoGen call with ` +
       `bytedance/seedance-2.0 or -fast for a real-person clip.${fence(raw)}`,
   };

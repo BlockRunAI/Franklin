@@ -341,7 +341,7 @@ export const voiceCallCapability: CapabilityHandler = {
   },
   execute: async (input, ctx): Promise<CapabilityResult> => {
     if (typeof input.to !== 'string') return { output: 'to (E.164) required', isError: true };
-    if (typeof input.from !== 'string') return { output: 'from (wallet-owned E.164) required — use ListPhoneNumbers / BuyPhoneNumber', isError: true };
+    if (typeof input.from !== 'string') return { output: 'from (provisioned BlockRun E.164) required — use ListPhoneNumbers / BuyPhoneNumber', isError: true };
     if (typeof input.task !== 'string' || input.task.length < 10) {
       return { output: 'task required (10–4000 chars natural-language description)', isError: true };
     }

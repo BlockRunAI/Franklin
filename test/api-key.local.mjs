@@ -19,6 +19,33 @@ afterEach(()=>{globalThis.fetch=originalFetch;if(savedKey===undefined)delete pro
 const ctx=()=>({workingDir:process.cwd(),abortSignal:new AbortController().signal});
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
 
+test('removing account configuration restores the original wallet request unchanged', async () => {
+ const {gatewayFetch}=await import('../dist/payments/account.js');
+ const seen=[];
+ globalThis.fetch=async(u,o)=>{seen.push([u,o]);return json({ok:true});};
+ await gatewayFetch('https://sol.blockrun.ai/api/v1/search', {headers:{'payment-signature':'fixture-wallet-proof'}});
+ assert.equal(String(seen[0][0]),'https://api.blockrun.ai/v1/search');
+ assert.equal(seen[0][1].headers.get('authorization'),`Bearer ${key}`);
+ assert.equal(seen[0][1].headers.get('payment-signature'),null);
+ delete process.env.BLOCKRUN_API_KEY;
+ const request=new Request('https://sol.blockrun.ai/api/v1/search',{method:'POST',body:'{}',headers:{'payment-signature':'fixture-wallet-proof'}});
+ await gatewayFetch(request);
+ assert.equal(seen[1][0],request);
+ assert.equal(seen[1][0].headers.get('payment-signature'),'fixture-wallet-proof');
+ assert.equal(seen[1][0].headers.get('authorization'),null);
+ assert.equal(seen[1][1],undefined);
+});
+
+test('malformed account environment stops before wallet or network access', async () => {
+ const {gatewayFetch}=await import('../dist/payments/account.js');
+ let calls=0;globalThis.fetch=async()=>{calls++;return json({ok:true});};
+ for(const invalid of ['', '  ', 'bad']){
+  process.env.BLOCKRUN_API_KEY=invalid;
+  await assert.rejects(()=>gatewayFetch('https://sol.blockrun.ai/api/v1/search'),/Invalid BLOCKRUN_API_KEY/);
+ }
+ assert.equal(calls,0);
+});
+
 test('shared account auth rewrites gateways, strips wallet headers and refuses other origins',async()=>{
  const {gatewayFetch}=await import('../dist/payments/account.js');
  const seen=[];globalThis.fetch=async(u,o)=>{seen.push([String(u),o]);return json({ok:true});};
@@ -102,4 +129,112 @@ test('VideoGen accepts first 202 without payment headers, polls, and downloads w
   assert.equal(url,'https://cdn.example/video.mp4');assert.equal(new Headers(o.headers).get('authorization'),null);return new Response(new Uint8Array([1,2,3]));
  };
  try{const result=await videoGenCapability.execute({prompt:'cat',output_path:'video.mp4',duration_seconds:5},{workingDir:dir,abortSignal:new AbortController().signal});assert.notEqual(result.isError,true,result.output);assert.ok(existsSync(join(dir,'video.mp4')));assert.equal(calls.filter(u=>u.endsWith('/videos/generations')).length,1);}finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+// Public tool handlers against an in-memory gateway. These never place calls,
+// purchase phone numbers, enroll people, or provision cloud resources.
+const serviceCases = [
+ ['phone','phoneLookupCapability',{phone_number:'+12025550123'},'/v1/phone/lookup'],
+ ['phone','phoneFraudCheckCapability',{phone_number:'+12025550123'},'/v1/phone/lookup/fraud'],
+ ['phone','listPhoneNumbersCapability',{},'/v1/phone/numbers/list'],
+ ['phone','buyPhoneNumberCapability',{country:'US',area_code:'202'},'/v1/phone/numbers/buy'],
+ ['phone','renewPhoneNumberCapability',{phone_number:'+12025550123'},'/v1/phone/numbers/renew'],
+ ['phone','releasePhoneNumberCapability',{phone_number:'+12025550123'},'/v1/phone/numbers/release'],
+ ['voice','voiceCallCapability',{to:'+12025550123',from:'+12025550124',task:'Read the test message'},'/v1/voice/call'],
+ ['rpc','multiChainRpcCapability',{network:'solana',method:'getSlot'},'/v1/rpc/solana'],
+ ['surf','surfMarketCapability',{endpoint:'market/ranking'},'/v1/surf/market/ranking'],
+ ['surf','surfChainCapability',{endpoint:'onchain/sql',body:{query:'SELECT 1'}},'/v1/surf/onchain/sql'],
+ ['surf','surfSocialCapability',{endpoint:'social/user',params:{handle:'fixture'}},'/v1/surf/social/user'],
+ ['defillama','defiLlamaChainsCapability',{},'/v1/defillama/chains'],
+ ['realface','realFaceCapability',{action:'init',name:'fixture'},'/v1/realface/init'],
+ ['realface','realFaceCapability',{action:'status',group_id:'legacy_rf_123'},'/v1/realface/status'],
+ ['realface','realFaceCapability',{action:'enroll',group_id:'legacy_rf_123',name:'fixture',image_url:'https://example.com/fixture.png'},'/v1/realface/enroll'],
+ ['blockrun','blockrunCapability',{path:'/v1/audio/speech',method:'POST',body:{input:'hello'}},'/v1/audio/speech'],
+ ['blockrun','blockrunCapability',{path:'/v1/crypto/price/BTC-USD'},'/v1/crypto/price/BTC-USD'],
+ ['blockrun','blockrunCapability',{path:'/v1/pm/polymarket/markets'},'/v1/pm/polymarket/markets'],
+];
+for (const [module,name,input,path] of serviceCases) {
+ test(`account error contract ${name} ${path}`,async()=>{
+  const tool=(await import(`../dist/tools/${module}.js`))[name];
+  for(const status of [401,402,429]){
+   const calls=[];
+   globalThis.fetch=async(u,o)=>{
+    const url=new URL(u instanceof Request?u.url:String(u));calls.push(url.pathname);
+    assert.equal(url.origin,'https://api.blockrun.ai');assert.equal(url.pathname,path);
+    assert.equal(o.headers.get('authorization'),`Bearer ${key}`);
+    assert.equal(o.headers.get('payment-signature'),null);
+    return new Response(JSON.stringify({error:{message:key,code:'fixture_limit'}}),{status,headers:{'content-type':'application/json','payment-required':'must-not-sign','retry-after':'17'}});
+   };
+   const result=await tool.execute(input,ctx());
+   assert.equal(result.isError,true,JSON.stringify(result));
+   assert.ok(!JSON.stringify(result).includes(key));
+   assert.equal(calls.length,1,`${name}: request missing or retried: ${JSON.stringify(result)}`);
+  }
+ });
+}
+
+for(const kind of ['image','music']){
+ test(`${kind} tool creates once, polls with account auth, and downloads without it`,async()=>{
+  const tool=(await import(`../dist/tools/${kind}gen.js`))[`${kind}GenCapability`];
+  const dir=mkdtempSync(join(tmpdir(),`franklin-account-${kind}-`));
+  const endpoint=kind==='image'?'/v1/images/generations':'/v1/audio/generations';
+  const file=kind==='image'?'image.png':'music.mp3';
+  const urls=[];
+  globalThis.fetch=async(u,o)=>{
+   const url=String(u);urls.push(url);
+   if(url.includes('/models'))return json({data:[]});
+   if(url.endsWith(endpoint))return json({id:'fixture',status:'queued',poll_url:`/api${endpoint}/fixture`},202);
+   if(url.endsWith(`${endpoint}/fixture`)){
+    assert.equal(o.headers.get('authorization'),`Bearer ${key}`);
+    return json({status:'completed',data:[{url:`https://cdn.example/${file}`,duration_seconds:3}]});
+   }
+   assert.equal(url,`https://cdn.example/${file}`);
+   assert.equal(new Headers(o?.headers).get('authorization'),null);
+   return new Response(new Uint8Array([1,2,3]));
+  };
+  try{
+   const result=await tool.execute({prompt:'test fixture',output_path:file},{workingDir:dir,abortSignal:new AbortController().signal});
+   assert.notEqual(result.isError,true,result.output);assert.ok(existsSync(join(dir,file)));
+   assert.equal(urls.filter(u=>u.endsWith(endpoint)).length,1);
+  }finally{rmSync(dir,{recursive:true,force:true});}
+ });
+}
+
+for(const [module,name,input] of [
+ ['surf','surfMarketCapability',{endpoint:'market/ranking'}],
+ ['realface','realFaceCapability',{action:'enroll',group_id:'legacy_rf_123',name:'fixture',image_url:'https://example.com/fixture.png'}],
+ ['phone','phoneLookupCapability',{phone_number:'+12025550123'}],
+]){
+ test(`${name} success identifies account billing instead of zero cost or USDC settlement`,async()=>{
+  globalThis.fetch=async()=>json({data:[],asset_id:'ta_fixture'});
+  const tool=(await import(`../dist/tools/${module}.js`))[name];
+  const result=await tool.execute(input,ctx());
+  assert.notEqual(result.isError,true,result.output);
+  assert.match(result.output,/account|Activity/i);
+  assert.doesNotMatch(result.output,/\$0\.0000|USDC charged/);
+ });
+}
+
+
+for (const status of [502, 503, 504, 522, 524]) {
+ test(`account polling recovers an existing job after ${status}`, async () => {
+  const {pollAccountJob} = await import('../dist/payments/account.js');
+  const seen = [];
+  globalThis.fetch = async (url, options) => {
+   seen.push([String(url), options.method || 'GET']);
+   return seen.length === 1 ? json({error:{message:'temporary gateway failure'}}, status) : json({status:'completed',id:'existing'});
+  };
+  const result = await pollAccountJob(json({poll_url:'/v1/jobs/existing?token=signed'},202), undefined, 1);
+  assert.equal((await result.json()).status, 'completed');
+  assert.deepEqual(seen, Array(2).fill(['https://api.blockrun.ai/v1/jobs/existing?token=signed','GET']));
+ });
+}
+
+test('CLI help presents account credits and registration alongside wallets', async () => {
+ const {execFileSync} = await import('node:child_process');
+ const help = execFileSync(process.execPath, ['dist/index.js', '--help'], {encoding:'utf8'});
+ assert.match(help, /BlockRun API key/);
+ assert.match(help, /https:\/\/user\.blockrun\.ai/);
+ assert.match(help, /Solana or Base/);
+ assert.doesNotMatch(help, /No accounts\./);
 });

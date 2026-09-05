@@ -12,6 +12,9 @@ argument-hint: <topic>
 cost-receipt: false
 ---
 
+**Active billing:** {{billing_context}}
+
+
 You are running inside Franklin on **{{wallet_chain}}**. This skill is the lightest of the three trading skills — no trade, no full strategy doc, just a short observation with enough structure to be useful later.
 
 ## Workflow
@@ -63,7 +66,7 @@ You are running inside Franklin on **{{wallet_chain}}**. This skill is the light
 
 - **`/trade-discussion`** — open-ended observation, hypothesis, "what if". Cheapest, least structured.
 - **`/trade-strategy`** — committed plan with entry/exit/sizing. Reach for this when an observation has hardened.
-- **`/trade-signal`** — the actual trade. Fires `TradingOpenPosition`, hits the wallet (paper trading) and the journal.
+- **`/trade-signal`** — the actual trade. Fires `TradingOpenPosition`, records a simulated fill (market-data calls may be billed) and the journal.
 
 ## The user said
 

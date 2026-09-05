@@ -248,18 +248,20 @@ function getBlockRunApiSection(): string {
 You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun API", "check all endpoints", or call the gateway directly, use ONLY the paths below. **Never invent, pluralize, or singularize an endpoint** — \`/v1/image/generate\` (singular) is wrong, \`/v1/images/generations\` (plural) is correct. If a path you have in mind isn't in this list, fetch the canonical discovery endpoints before calling it.
 
 **Base URLs**
-- Base chain: \`https://blockrun.ai/api\` (alias: \`https://api.blockrun.ai\`)
-- Solana chain: \`https://sol.blockrun.ai/api\`
+- Account API: \`https://api.blockrun.ai\` with the configured BlockRun bearer key; no payment chain. This is a separate account service, not an alias of the Base wallet gateway.
+- Solana x402 wallet: \`https://sol.blockrun.ai/api\`
+- Base x402 wallet: \`https://blockrun.ai/api\`
+Use the built-in tools so they apply the active authentication. Never print credentials, switch billing modes to recover from an API error, or attach wallet payment proofs to account requests.
 
 **Discovery (always free, GET) — fetch these BEFORE guessing a path**
 - \`GET /openapi.json\` (or \`/.well-known/openapi.json\`) — full OpenAPI 3.1 contract, every route + request schema
 - \`GET /.well-known/x402\` — x402 resource list with prices
 
-**LLM (POST, x402-paid)**
+**LLM (POST, billed to account credits or x402 wallet)**
 - \`POST /v1/chat/completions\` — OpenAI-compatible. Body: \`{ model, messages, stream?, tools?, max_tokens?, temperature? }\`. \`model\` MUST come from \`GET /v1/models\` (real frontier examples on the gateway, verified live 2026-08-30: \`anthropic/claude-sonnet-5\`, \`anthropic/claude-opus-5\`, \`openai/gpt-5.6-sol\`, \`deepseek/deepseek-v4-pro\`, \`zai/glm-5.3\`, \`zai/glm-5.3-flash\`, \`xai/grok-4.5\`, \`qwen/qwen3.7-flash\`, \`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning\` (free, the only free id on BOTH the Base and Solana gateways — the other free models are Base-only)). Do NOT invent versions like \`openai/gpt-5.1\` or \`xai/grok-5\` — those don't exist; the gateway 400s with the valid list in the error body, so when in doubt fetch \`GET /v1/models\` first.
 - \`POST /v1/messages\` — Anthropic-compatible. Body: \`{ model, messages, max_tokens, system?, tools? }\`.
 
-**Media (POST, x402-paid; GET to poll async jobs)**
+**Media (POST, billed to account credits or x402 wallet; GET to poll async jobs)**
 - \`POST /v1/images/generations\` — text-to-image. Body: \`{ model, prompt, size?, n?, response_format? }\`.
 - \`POST /v1/images/image2image\` — image-to-image. Body: \`{ model, prompt, image, ... }\`.
 - \`GET  /v1/images/generations/{id}\` — fetch a generated image by id.
@@ -267,7 +269,7 @@ You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun
 - \`GET  /v1/videos/generations/{id}\` — poll video job (settles payment when complete).
 - \`POST /v1/audio/generations\` — music/audio. Body: \`{ model, prompt, ... }\`. Default \`model\`: \`minimax/music-2.5+\`.
 
-**Search (POST, x402-paid)**
+**Search (POST, billed to account credits or x402 wallet)**
 - \`POST /v1/search\` — Exa-backed web search. Body: \`{ query }\` (1–1000 chars).
 - \`/v1/exa/{...path}\` — Exa passthrough (answer / search / contents).
 

@@ -82,7 +82,7 @@ const CHAIN_ENDPOINTS: SurfEndpoint[] = [
   { path: 'onchain/tx', method: 'GET', required: ['hash', 'chain'], desc: 'Transaction details by hash.' },
   { path: 'onchain/schema', method: 'GET', required: [], desc: 'Schema introspection for the SQL tables.' },
   { path: 'onchain/query', method: 'POST', required: [], desc: 'Structured chain query (POST body).' },
-  { path: 'onchain/sql', method: 'POST', required: [], desc: 'Raw SQL against 80+ indexed chain tables (POST body, Tier-3 $0.02).' },
+  { path: 'onchain/sql', method: 'POST', required: [], desc: 'Raw SQL against 80+ indexed chain tables (POST body, Tier-3 $0.0075).' },
   { path: 'token/tokenomics', method: 'GET', required: [], desc: 'Token supply / unlock / distribution.' },
   { path: 'token/dex-trades', method: 'GET', required: ['address'], desc: 'Recent DEX trades for a token.' },
   { path: 'token/holders', method: 'GET', required: ['address', 'chain'], desc: 'Top holders / concentration.' },
@@ -254,7 +254,7 @@ async function callSurf(
         isError: true,
       };
     }
-    const head = `Surf /v1/surf/${entry.path} → $${paidUsd.toFixed(4)} · ${Date.now() - start}ms`;
+    const head = `Surf /v1/surf/${entry.path} → ${accountMode() ? "account credits (see Activity at user.blockrun.ai)" : `$${paidUsd.toFixed(4)}`} · ${Date.now() - start}ms`;
     return { output: frameUntrusted('Surf web/API result', `${head}\n\n\`\`\`json\n${raw}\n\`\`\``) };
   } catch (err) {
     return { output: `${toolName} ${endpoint} error: ${(err as Error).message}`, isError: true };
@@ -277,8 +277,8 @@ function makeSurfTool(
     spec: {
       name,
       description:
-        `${blurb} Picks an endpoint from a fixed list and signs the x402 USDC payment from the wallet automatically — ` +
-        `you do not build paths or handle payment. Tier-1 $0.001, Tier-2 $0.005, Tier-3 $0.02.\n\nEndpoints:\n${endpointList}`,
+        `${blurb} Picks an endpoint from a fixed list and uses account API credits or signs the selected x402 wallet payment — ` +
+        `you do not build paths or handle payment. All tiers currently $0.0075/call; gateway billing is authoritative.\n\nEndpoints:\n${endpointList}`,
       input_schema: {
         type: 'object',
         properties: {

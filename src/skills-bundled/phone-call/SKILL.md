@@ -1,6 +1,6 @@
 ---
 name: phone-call
-description: Place an outbound AI-driven voice call (Bland.ai via BlockRun). Walks through intent capture, caller-ID selection, task scripting, and confirmation; fires VoiceCall, then auto-polls VoiceStatus until completion and surfaces the transcript. $0.54 per call, US/CA destinations only, charged from your wallet. Real-world action — use with prior consent.
+description: Place an outbound AI-driven voice call (Bland.ai via BlockRun). Walks through intent capture, caller-ID selection, task scripting, and confirmation; fires VoiceCall, then auto-polls VoiceStatus until completion and surfaces the transcript. $0.54 per call, US/CA destinations only, charged to the active billing source. Real-world action — use with prior consent.
 triggers:
   - "make a phone call"
   - "call this number"
@@ -13,7 +13,10 @@ argument-hint: <recipient + what to say>
 cost-receipt: true
 ---
 
-You are running inside Franklin on **{{wallet_chain}}**. This skill is Franklin's real-world action surface — it picks up a real phone, charges a real $0.54 from the user's wallet, and the recipient is a real human (or their voicemail). Be deliberate.
+**Active billing:** {{billing_context}}
+
+
+You are running inside Franklin on **{{wallet_chain}}**. This skill is Franklin's real-world action surface — it picks up a real phone, incurs a real charge through the active billing source, and the recipient is a real human (or their voicemail). Be deliberate.
 
 ## Workflow
 
@@ -53,7 +56,7 @@ Show the user, in plain text:
 
 - **To:** \`<recipient E.164>\`
 - **From:** \`<caller-ID E.164>\` (\<days-left\> days on lease)
-- **Cost:** $0.54 from wallet
+- **Cost:** use the current quote and state whether account credits or an x402 wallet will be charged
 - **Voice:** \`<preset>\` (default \`maya\`)
 - **Max duration:** \<N\> minutes (default 5)
 - **Task summary:** first 1–2 sentences

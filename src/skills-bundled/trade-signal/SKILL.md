@@ -13,6 +13,9 @@ argument-hint: <symbol or thesis>
 cost-receipt: false
 ---
 
+**Active billing:** {{billing_context}}
+
+
 You are running inside Franklin on **{{wallet_chain}}**. This is paper trading — fills are simulated against a live mark — so the value is the discipline, not the dollars. Every trade entered through this skill carries a rationale that the journal scorer evaluates on five dimensions:
 
 | Dimension | Weight | Earned by |
@@ -27,7 +30,7 @@ Total is a 0–5 score, persisted with the trade and averaged across the last 10
 
 ## Workflow
 
-1. **Read the request.** The user's argument is below under "The user said". If it's a complete thesis (symbol + direction + reasoning + numbers), proceed to step 3. If anything's vague, ask **one** clarifying question — the cheapest call you have on the wallet is "tell me more before I burn $0.001 on a market quote."
+1. **Read the request.** The user's argument is below under "The user said". If it's a complete thesis (symbol + direction + reasoning + numbers), proceed to step 3. If anything's vague, ask **one** clarifying question — the cheapest step is "tell me more before I burn $0.001 on a market quote."
 
 2. **Optional context** — if you don't already have a recent quote, call `TradingMarket({ ticker, assetClass })` (free for crypto, $0.001 for stocks). For thesis support beyond price, the `/surf-market`, `/surf-chain`, or `/surf-social` skills can be invoked, each documenting their own endpoint costs.
 

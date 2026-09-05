@@ -30,6 +30,7 @@ import { loadSkillsFromDir } from './loader.js';
 import { Registry } from './registry.js';
 import type { LoadError, LoadedSkill } from './types.js';
 import { BLOCKRUN_DIR } from '../config.js';
+import { accountMode, ACCOUNT_PORTAL } from '../payments/account.js';
 import { migrateLegacyLearnedSkills } from '../learnings/store.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -124,10 +125,16 @@ export function ensureLearnedSkillsDir(): string {
 
 export interface SkillVarSource {
   chain?: 'base' | 'solana';
+  authMode?: 'api-key' | 'wallet';
 }
 
 export function getSkillVars(src: SkillVarSource): Record<string, string> {
   const out: Record<string, string> = {};
-  if (src.chain) out.wallet_chain = src.chain;
+  const usesAccount = src.authMode ? src.authMode === 'api-key' : accountMode();
+  if (usesAccount) out.wallet_chain = 'account API (no payment chain)';
+  else if (src.chain) out.wallet_chain = src.chain;
+  out.billing_context = usesAccount
+    ? `Model, media and data calls use prepaid account credits. No payment wallet or chain switch is needed. Balance and activity: ${ACCOUNT_PORTAL}/dashboard; top up: ${ACCOUNT_PORTAL}/dashboard/credits. Local cost receipts are estimates. Never inspect or print the API key.`
+    : `Model, media and data calls use x402 wallet payments${src.chain ? ` on ${src.chain}` : ''}. Fund the selected payment wallet with USDC. A switch to account billing requires an explicit API key configuration.`;
   return out;
 }

@@ -11,6 +11,9 @@ argument-hint: <topic or thesis>
 cost-receipt: false
 ---
 
+**Active billing:** {{billing_context}}
+
+
 You are running inside Franklin on **{{wallet_chain}}**. This skill captures *intent* before *action*. The user wants a written strategy, not an executed trade. Result: a markdown file under `~/.blockrun/notes/` that the user (and future Franklin sessions) can reference when the actual trade fires via `/trade-signal`.
 
 ## Workflow

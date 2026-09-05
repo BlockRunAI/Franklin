@@ -231,7 +231,7 @@ export const buyPhoneNumberCapability: CapabilityHandler = {
       );
       return {
         output:
-          `## Number provisioned ($5 USDC charged)\n\n` +
+          `## Number provisioned (${accountMode() ? "account credits; see Activity at user.blockrun.ai" : "$5 USDC charged"})\n\n` +
           '```json\n' + JSON.stringify(res, null, 2) + '\n```',
       };
     } catch (err) {
@@ -279,7 +279,7 @@ export const renewPhoneNumberCapability: CapabilityHandler = {
       );
       return {
         output:
-          `## Lease renewed (+30 days, $5 USDC charged)\n\n` +
+          `## Lease renewed (+30 days, ${accountMode() ? "account credits; see Activity at user.blockrun.ai" : "$5 USDC charged"})\n\n` +
           '```json\n' + JSON.stringify(res, null, 2) + '\n```',
       };
     } catch (err) {
@@ -354,7 +354,7 @@ export const phoneLookupCapability: CapabilityHandler = {
       );
       return {
         output:
-          `## Phone lookup ($0.01 USDC charged)\n\n` +
+          `## Phone lookup (${accountMode() ? "account credits; see Activity at user.blockrun.ai" : "$0.01 USDC charged"})\n\n` +
           '```json\n' + JSON.stringify(res, null, 2) + '\n```',
       };
     } catch (err) {
@@ -391,7 +391,7 @@ export const phoneFraudCheckCapability: CapabilityHandler = {
       );
       return {
         output:
-          `## Fraud check ($0.05 USDC charged)\n\n` +
+          `## Fraud check (${accountMode() ? "account credits; see Activity at user.blockrun.ai" : "$0.05 USDC charged"})\n\n` +
           '```json\n' + JSON.stringify(res, null, 2) + '\n```',
       };
     } catch (err) {

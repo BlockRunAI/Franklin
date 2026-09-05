@@ -7,12 +7,12 @@
 <br><br>
 
 <h1>Franklin Agent</h1>
-<h3>The AI agent with a wallet.</h3>
+<h3>The AI agent with a budget.</h3>
 
 <p>
-  Other agents just talk. Franklin Agent holds your USDC <em>and puts it to work</em> —<br>
+  Franklin Agent uses account credits or your USDC wallet to get work done —<br>
   trading, research, and autonomous tasks with real budgets, real guardrails, real outcomes.<br>
-  One wallet. Every model. Every paid API. Pay only for outcomes — not subscriptions.
+  One interface for models and paid APIs. Pay for usage as you go.
 </p>
 
 <p>
@@ -44,19 +44,30 @@
 
 ## The pitch in one paragraph
 
-Franklin Agent is an **autonomous economic agent** — an AI that holds a USDC wallet and spends it to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from 55+ providers. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. Access models, media, search and data with a BlockRun account API key, or use [x402](https://x402.org) USDC payments on Solana or Base. Actual on-chain trades still use your transaction wallet.
+Franklin Agent is an **autonomous economic agent** — an AI that uses account credits or a USDC wallet to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from 55+ providers. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. Access models, media, search and data with a BlockRun account API key, or use [x402](https://x402.org) USDC payments on Solana or Base. Actual on-chain trades still use your transaction wallet.
 
 Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships as one npm package.
 
 > **YOPO — You Only Pay Outcome**
 >
-> Not a subscription (pay for access). Not a generic pay-per-call (pay for trying).
-> You pay only for the work Franklin Agent delivers. Provider cost + 5%, settled per action
-> in USDC. No monthly fees. No rate limits. No overdraft.
+> Model and tool calls are billed by usage through account credits or x402 USDC payments.
+> Rates depend on the service and your account. Account credit limits, provider limits,
+> and rate limits apply; completing your overall task is not a billing guarantee.
 
 ---
 
 ## Account API key
+
+Until this integration is released on npm, build the API-enabled source checkout:
+
+```bash
+npm ci
+npm run build
+export BLOCKRUN_API_KEY="brk_live_..."
+node dist/index.js start
+```
+
+Use the CLI command below after installing a release containing this integration.
 
 Register at [user.blockrun.ai](https://user.blockrun.ai), create an
 [API key](https://user.blockrun.ai/dashboard/keys), and add
@@ -70,7 +81,7 @@ franklin start
 
 The account endpoint defaults to `https://api.blockrun.ai/v1`; optionally set
 `BLOCKRUN_API_BASE_URL`. API mode covers the agent and its subagents, proxy,
-media generation/polling, search and gateway data tools. It does not create a
+media generation/polling, search and gateway data tools, subject to gateway availability. It does not create a
 payment wallet. `franklin balance`, the Wallet tool, and desktop/panel account
 status point to the account portal. Keys are never returned by status endpoints.
 HTTP 402 asks you to top up account credits and never switches to wallet payment.
@@ -79,10 +90,12 @@ Local cost totals and `--max-spend` use estimates in API mode; account usage in
 the portal is authoritative. Wallet-signed cloud sync and wallet-owned asset
 listings require wallet mode; local sessions remain available. Trading and
 marketplace wallet signatures still require a separate transaction wallet.
-Unset `BLOCKRUN_API_KEY` to return to wallet billing. New wallet users default
+Unset `BLOCKRUN_API_KEY` and restart Franklin to return to wallet billing. New wallet users default
 to Solana; existing chain choices and Base-only wallets are preserved.
 
 ## Quick start
+
+> **Release status:** As of September 4, 2026, npm `@blockrun/franklin@3.43.1` does not include this account API integration. The API instructions in this README apply to this source checkout; the global npm installation needs a release containing these changes.
 
 > **Requires Node.js 20.19+ (Node 22 LTS recommended).** Check with `node -v`. Older Node crashes at startup with `ERR_REQUIRE_ESM`.
 
@@ -94,11 +107,11 @@ npm install -g @blockrun/franklin
 franklin
 
 # 3. (optional) Fund a wallet to unlock Sonnet, Opus, GPT, Gemini, Grok, + paid APIs
-franklin setup base        # or: franklin setup solana
+franklin setup solana      # preferred for new wallets; or: franklin setup base
 franklin balance           # show address + USDC balance
 ```
 
-That's it. Zero signup, zero credit card, zero phone verification. Send **$5 of USDC** to the wallet and you've unlocked every frontier model and every paid tool in the BlockRun gateway.
+For wallet mode, no BlockRun signup is required: fund the wallet with USDC to use paid models and tools. For account mode, register at [user.blockrun.ai](https://user.blockrun.ai), add credits, and launch Franklin with `BLOCKRUN_API_KEY`. Prices and availability depend on the service.
 
 **No global install? Just run it directly** — no permissions, no `-g`:
 
@@ -130,7 +143,7 @@ npm install -g @blockrun/franklin
 
 [![Franklin for VS Code — Beta is here](assets/franklin-vscode-banner.png)](https://marketplace.visualstudio.com/items?itemName=blockrun.franklin-vscode)
 
-The same agent ships as a [VS Code extension](https://marketplace.visualstudio.com/items?itemName=blockrun.franklin-vscode) — chat panel, model picker, wallet balance, image / video generation, inline diff cards — all driven by the wallet you already funded for the CLI.
+The same agent ships as a [VS Code extension](https://marketplace.visualstudio.com/items?itemName=blockrun.franklin-vscode) — chat panel, model picker, wallet balance, image / video generation, inline diff cards — using account API billing or the wallet configured for the CLI.
 
 ```
 VS Code → Extensions  (Cmd+Shift+X / Ctrl+Shift+X)
@@ -138,7 +151,7 @@ VS Code → Extensions  (Cmd+Shift+X / Ctrl+Shift+X)
         → click the Franklin icon in the Activity Bar
 ```
 
-Free models work immediately. Paid models, image gen, and video gen activate the moment your wallet has USDC. The CLI and the extension share the same `~/.blockrun/` config and session history, so jumping between terminal and VS Code is seamless.
+Free models work immediately. Paid models and media require account credits or a funded wallet, plus availability of the requested service. The CLI and the extension share the same `~/.blockrun/` config and session history, so jumping between terminal and VS Code is seamless.
 
 ### Franklin Desktop (Beta)
 
@@ -178,13 +191,13 @@ packaging instructions.
 | ----------------------- | -------------------------------------------- | ------------------------------------ |
 | AI subscription       | Access. Paid whether you use it or not. | $20–200/month, rate-limited.         |
 | Pay-per-call (OpenAI API, etc.) | Every attempt — even failed ones.    | Hidden cost from retries, dead ends. |
-| **Franklin Agent (YOPO)**     | **The outcome.** Each signed micropayment.  | **Provider cost + 5%. No more.**     |
+| **Franklin Agent (YOPO)** | Model and tool usage, charged to account credits or an x402 wallet. | Service-specific pricing and account settings. |
 
 Three consequences fall out of this:
 
 1. **No subscriptions.** Use Franklin for $0.50 one week and $50 the next — you pay for compute actually consumed, nothing more.
-2. **No rate limits.** Subscriptions throttle you when you need AI most. YOPO has no artificial caps — if you have USDC, you have access.
-3. **No overdraft.** The wallet balance IS the hard limit. When it's empty, Franklin stops. No surprise bills, no 3 a.m. rate-limit walls.
+2. **Pay as you go.** Account and provider rate limits still apply. On HTTP 429, respect `Retry-After` and reduce concurrency.
+3. **Separate balances.** API calls use prepaid account credits; x402 calls use the selected wallet. An exhausted account returns a credit error and does not fall back to charging your wallet.
 
 Concretely — $1 in USDC gets you roughly:
 - ~400K GPT-4o input tokens
@@ -271,7 +284,7 @@ Every trade journals itself: thesis on open, P&L on close, written to a **wallet
   Saved: generated-logo-1713052800.png (1024x1024)
 ```
 
-Generates images via DALL-E / GPT Image directly from the CLI. Paid from your wallet — no OpenAI API key needed.
+Generates images via DALL-E / GPT Image directly from the CLI, billed to account credits or your wallet. No separate OpenAI API key is needed.
 
 ### 📱 Remote control via Telegram
 
@@ -306,7 +319,7 @@ Run `franklin telegram` on an always-on machine (set `TELEGRAM_BOT_TOKEN` + `TEL
 
 Code is still first-class. It is just **one workload**, not the category.
 
-Every tool call is itemized. Every token is priced. When the wallet hits zero, Franklin stops. No overdraft, no surprise bill, no rate-limit wall at 3 a.m. — this is YOPO in practice.
+Local cost views help track a session. In account mode, check Activity for authoritative charges; local estimates may differ, especially for media and service calls. Wallet and account balances remain separate.
 
 ---
 
@@ -343,7 +356,7 @@ Every response shows which model was chosen, why, and how much you saved vs. alw
 | `premium` | Highest quality regardless of cost | Mission-critical |
 | `free` | Free NVIDIA models only | Zero wallet balance |
 
-**Per-session breakdown** — run `/cost` to see exactly where your USDC went:
+**Per-session breakdown** — run `/cost` for local usage estimates; use account Activity for billed API usage:
 
 ```text
 Session Cost: $0.0847 (23 requests)
@@ -364,7 +377,7 @@ The router also learns from **your** usage. If you keep retrying a model for cod
 
 ### 💳 &nbsp;AI is utility, not SaaS
 
-You don't subscribe to electricity, you pay for what you use. Franklin brings the same model to AI. YOPO settlement means Franklin never bills you for access, only for outcomes. No monthly fees, no rate limits, no overdraft.
+Franklin charges for model and tool usage through account credits or x402 payments. Account and provider limits apply. Check the service price and your account settings before a large run.
 
 </td>
 <td width="33%" valign="top">
@@ -391,14 +404,14 @@ Choose an account API key, or wallet authentication on Solana or Base. Register 
 |                                        | Coding agents    | Editor IDEs      | Chatbots         | **Franklin**                    |
 | -------------------------------------- | ---------------- | ---------------- | ---------------- | ------------------------------- |
 | Writes code                            | ✅               | ✅               | ⚠️                | ✅                              |
-| **Spends money for you**               | ❌               | ❌               | ❌               | ✅ **USDC wallet, x402**        |
-| **Buys data + APIs + images + search** | ❌               | ❌               | ❌               | ✅ **55+ APIs, one wallet**     |
+| **Spends money for you**               | ❌               | ❌               | ❌               | ✅ **Account credits or USDC wallet**        |
+| **Buys data + APIs + images + search** | ❌               | ❌               | ❌               | ✅ **Paid APIs through one interface**     |
 | Picks best model per task              | ❌ single-vendor | ❌ plan-tied    | ❌               | ✅ **Smart Router, <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> models** |
-| Pricing model                          | Subscription     | Subscription     | Subscription     | **YOPO** — per outcome, USDC    |
+| Pricing model                          | Subscription     | Subscription     | Subscription     | Usage-based account credits or x402 USDC    |
 | Monthly fee                            | $20–$200         | $20–$40          | $20+             | **$0**                          |
-| Rate-limited                           | Yes              | Yes              | Yes              | No — limited only by wallet     |
+| Rate-limited                           | Yes              | Yes              | Yes              | Account and provider limits apply     |
 | Works when provider goes down          | ❌               | ❌               | ❌               | ✅ **routes to another**        |
-| Identity                               | Vendor account   | Vendor account   | Account / email  | ✅ **wallet, no signup**        |
+| Identity                               | Vendor account   | Vendor account   | Account / email  | ✅ **Account login or wallet**        |
 | Start free, no KYC                     | ❌               | ❌               | ❌               | ✅                              |
 | Source                                 | Closed           | Closed           | Closed           | **Apache 2.0, local-first**     |
 
@@ -419,13 +432,13 @@ Franklin can decide what is worth paying for, route the call, sign the micropaym
 Ask "what's BTC looking like?" — Franklin fetches live price data, computes RSI/MACD/Bollinger/volatility, and synthesizes a signal.
 
 **🎨 AI image generation**
-Ask "generate a logo" — Franklin calls DALL-E / GPT Image, saves the result locally, paid from your wallet.
+Ask "generate a logo" — Franklin calls DALL-E / GPT Image, saves the result locally, billed to account credits or your wallet.
 
-**🧠 <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> models via one wallet**
-Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, NVIDIA free tier. One wallet, one interface, automatic fallback.
+**🧠 <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> models via one account key or wallet**
+Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, NVIDIA free tier. One account key or wallet, one interface, automatic model fallback.
 
 **💳 x402 micropayments (YOPO)**
-HTTP 402 native. Every paid action is a signed USDC micropayment via EIP-712 — non-custodial, your keys never leave your machine. YOPO: you pay only for outcomes.
+Account mode sends a Bearer API key to the account gateway and charges credits. Wallet mode signs x402 USDC payments locally on Solana or Base; private keys remain local. Model fallback keeps the selected billing mode.
 
 **🧠 Learned model router**
 Trained on 2M+ real requests. Classifies your task and picks the best model from <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> LLMs. Four profiles (auto/eco/premium/free). Adapts to your usage over time.
@@ -492,21 +505,21 @@ Core is workflow-agnostic. Add new verticals without touching the loop. Discover
 │  BlockRun Gateway                                            │
 │  <!-- br:models.chatVisible@live -->76<!-- /br:models.chatVisible@live --> LLMs · CoinGecko · Search · Image APIs · paid services  │
 ├──────────────────────────────────────────────────────────────┤
-│  x402 Micropayment Protocol                                  │
-│  HTTP 402 · USDC on Solana & Base · signed payment payloads  │
+│  Account API credits or x402 wallet payments                 │
+│  Bearer API key · or signed USDC on Solana & Base             │
 └──────────────────────────────────────────────────────────────┘
                             │
                             ▼
                      ┌─────────────┐
-                     │ Your wallet │
-                     │  (you own)  │
+                     │  Credits or │
+                     │ your wallet │
                      └─────────────┘
 ```
 
 The loop is simple:
 1. You state an outcome.
 2. Franklin chooses what to read, call, and pay for.
-3. The payment settles against your wallet.
+3. The call is billed to account credits or the selected x402 wallet.
 4. Franklin reports the result and the spend.
 
 That economic loop is the product.
@@ -550,7 +563,7 @@ Start with **zero dollars**. Franklin defaults to free NVIDIA models that need n
 franklin --model free
 ```
 
-When you fund the wallet, Franklin gets more purchasing power: Sonnet, Opus, GPT, Gemini, Grok, and paid tools like Exa, DALL-E, and CoinGecko Pro.
+With account credits or a funded wallet, Franklin can access paid services: Sonnet, Opus, GPT, Gemini, Grok, and paid tools like Exa, DALL-E, and CoinGecko Pro.
 
 ---
 
@@ -653,11 +666,23 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 <div align="center">
 
-**The AI agent with a wallet.**<br>
-<sub>YOPO — You Only Pay Outcome. Your wallet. Your budget. Your results.</sub>
+**The AI agent with a budget.**<br>
+<sub>Account credits or your wallet. Your budget. Your results.</sub>
 
 <br>
 
 <sub>From the team at <a href="https://blockrun.ai">BlockRun</a>.</sub>
 
 </div>
+
+
+## Account setup, billing, and switching back to wallets
+
+1. [Sign in to BlockRun](https://user.blockrun.ai), open [Billing](https://user.blockrun.ai/dashboard/credits), and add prepaid account credits. The checkout shows both the credit amount and the total card charge, including any processing fee; these amounts can differ.
+2. Create a key on [API Keys](https://user.blockrun.ai/dashboard/keys). Keep it in your server or local process environment as `BLOCKRUN_API_KEY`; never put it in browser code, logs, or a repository. Follow this README's client configuration example.
+3. Check [Activity](https://user.blockrun.ai/dashboard/activity) after a call. Chat uses reported token usage; media and data services can use per-image, duration, or per-request prices. Account credits and an on-chain USDC wallet are separate balances. Local wallet spend counters are not account receipts.
+4. A 401 means check the API key, 402 means check account credits or account status, and 429 means respect `Retry-After`. Poll an accepted media job using the complete returned `poll_url`, including its query parameters, with the same account key. Do not reconstruct the URL from the job ID. If polling times out, check that job and Activity before submitting another paid job.
+
+Accepted account jobs recover from temporary gateway polling errors by querying the same job within the original deadline. They do not resubmit the paid creation request. Authentication, credit, and rate-limit errors remain visible to the caller.
+
+To return to wallet billing, unset `BLOCKRUN_API_KEY` in the environment that launches Franklin, then restart it. The existing wallet and saved chain selection remain in place. Changing the wallet chain while an API key is configured does not switch the billing source.

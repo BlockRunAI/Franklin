@@ -71,6 +71,10 @@ export async function pollAccountJob(response: Response, signal?: AbortSignal, i
       if (abort.aborted) onAbort();
     });
     const polled = await gatewayFetch(endpoint, { signal: abort });
+    if ([502, 503, 504, 522, 524].includes(polled.status)) {
+      await polled.body?.cancel();
+      continue;
+    }
     if (!polled.ok) return polled;
     const data = await polled.clone().json() as { status?: string };
     if (data.status === 'completed') return polled;

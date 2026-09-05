@@ -619,3 +619,19 @@ test('legacy flat ~/.blockrun/skills/<name>.md migrates to learned/<name>/SKILL.
     rmSync(fakeHome, { recursive: true, force: true });
   }
 });
+
+
+test('account skills identify account credit even with a saved Solana preference', () => {
+  const vars = getSkillVars({ chain: 'solana', authMode: 'api-key' });
+  assert.match(vars.wallet_chain, /account API/);
+  assert.match(vars.billing_context, /prepaid account credits/);
+  assert.match(vars.billing_context, /user.blockrun.ai\/dashboard\/credits/);
+  for (const name of ['budget-grill', 'surf-market', 'surf-chain', 'surf-social', 'phone-call']) {
+    const skill = loadBundledSkills().registry.lookup(name);
+    const rendered = substituteVariables(skill.skill.body, vars, 'customer acceptance');
+    assert.match(rendered, /prepaid account credits/, name);
+    assert.doesNotMatch(rendered, /\{\{billing_context\}\}/, name);
+  }
+  assert.equal(getSkillVars({ chain: 'base', authMode: 'wallet' }).wallet_chain, 'base');
+  assert.equal(getSkillVars({ chain: 'solana', authMode: 'wallet' }).wallet_chain, 'solana');
+});

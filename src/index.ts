@@ -41,9 +41,9 @@ const program = new Command();
 program
   .name('franklin')
   .description(
-    'Franklin Agent — The AI agent with a wallet.\n\n' +
-      'While others chat, Franklin Agent spends — turning your USDC into real work.\n\n' +
-      'Pay per action in USDC on Base or Solana. No subscriptions. No accounts.'
+    'Franklin Agent — AI with account credits or a payment wallet.\n\n' +
+      'Use a BlockRun API key, or pay per action in USDC on Solana or Base.\n\n' +
+      'Register, create an API key, and add credits at https://user.blockrun.ai.'
   )
   .version(version);
 
@@ -158,7 +158,7 @@ program
 
 program
   .command('balance')
-  .description('Check wallet USDC balance')
+  .description('Show account billing information or wallet USDC balance')
   .action(balanceCommand);
 
 program
