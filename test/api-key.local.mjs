@@ -18,6 +18,7 @@ delete process.env.RUNCODE_CHAIN;
 process.env.FRANKLIN_NO_AUDIT = '1';
 
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
 const auth = await import('../dist/payments/auth-mode.js');
@@ -295,6 +296,28 @@ test('resolveCharge falls back to a caller list price for an uncatalogued path',
   assert.equal(charge.usd, 0.05);
   assert.equal(charge.estimated, true);
   catalog.__resetPriceCatalog();
+});
+
+
+test('the price catalog is read from the Base origin, the only host that publishes one', async () => {
+  // Not a style assertion, and not "Base is the only one with prices" — sol
+  // publishes prices too, in openapi.json under x-payment-info. Base is the
+  // only host serving the services[] shape parsePricing reads, and sol's
+  // published numbers currently disagree with what sol quotes and settles
+  // ($0.001 published vs $0.0075 charged for surf fear-greed, measured
+  // 2026-09-05). Repointing this per-host pins every estimate to the static
+  // floor; switching to sol's sheet makes estimates worse. The comment on
+  // CATALOG_URL carries all three numbers.
+  const src = await readFile(
+    new URL('../dist/payments/price-catalog.js', import.meta.url), 'utf-8'
+  );
+  assert.match(src, /https:\/\/blockrun\.ai\/\.well-known\/x402/);
+  assert.doesNotMatch(
+    src, /https:\/\/sol\.blockrun\.ai\/\.well-known/,
+    'the sol origin publishes no prices — fetching it yields a permanently stale catalog'
+  );
+  // A 200 carrying no services[] must be reported, never swallowed.
+  assert.match(src, /returned no services/);
 });
 
 test('cleanup', () => {
