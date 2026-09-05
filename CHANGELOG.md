@@ -1,5 +1,74 @@
 # Changelog
 
+## Franklin Agent 3.45.0 — the gateway now says what it charged, and the price the agent read was wrong
+
+**Paid calls are booked exactly instead of estimated.** The BlockRun gateway
+started returning `x-blockrun-cost-usd` on the pre-priced service families —
+search, images, RPC, market data, phone, sandboxes — and Franklin records that
+figure rather than a guess.
+
+**Chat is the permanent exception.** It settles *after* the answer is on the
+wire (`x-settlement-async`), so the amount does not exist when the headers are
+written; producing it would mean holding your response until the money lands.
+Chat stays reconstructed from tokens and stays tagged `estimated`. Absence is
+not zero — reading a missing header as $0 would silently zero out the largest
+spend category, so a charge that really settled at zero is written explicitly
+as `0.000000` and everything malformed is treated as absent.
+
+**`franklin balance` reads your real credit standing** from `GET /v1/credits`:
+
+```
+Account:   acme (gated)
+Remaining: $41.9980 of $50.00 granted
+Spent:     $8.0020  (BlockRun, authoritative)
+Local:     ~$8.0431  (Franklin's own tally, both pay modes — expected to differ)
+```
+
+An `ungated` account has no ceiling and reports `remaining_usd: null`. Franklin
+branches on `billing_mode` rather than coalescing that to 0, which would tell a
+paying customer they are broke.
+
+### Two bugs this found in 3.44.0
+
+**Exa's self-reported cost is not what you were charged.** Franklin read Exa's
+`costDollars` and booked it as *exact*. Exa reported $0.007 on a call the
+gateway charged $0.010 for — that field is Exa's upstream cost, not BlockRun's
+price. The ledger carried a wrong number with false confidence, which is worse
+than a hedged one. A provider's self-reported cost is now an estimate.
+
+**Every paid tool quoted the agent a wrong price.** These strings are not
+documentation — the agent reads them to decide whether a call is worth making:
+
+| tool said | 402 quotes | key rail charges |
+|---|---|---|
+| surf `Tier-1 $0.001 / T2 $0.005 / T3 $0.02` | $0.0085 | $0.0075 |
+| rpc `$0.002 per call` | $0.0030 | $0.0020 |
+| exa search `$0.01/call` | $0.0110 | $0.0100 |
+| defillama `$0.005/call` | $0.0060 | $0.0050 |
+
+Surf's is worth naming precisely: the payment layer collapsed three tiers into
+one flat rate and the sentence did not follow, so it understated tier 1 by
+**8.5x** and overstated tier 3 by **2.4x** at the same time. A flattened
+schedule is wrong in both directions at once, so no single correction factor
+recovers it.
+
+There are also **two real prices per endpoint** and one literal cannot serve
+both: the 402 and the catalog state the wallet price, the API-key rail charges
+the base and no fee. Descriptions now state the base and name the fee
+separately — true on either rail — with both figures sourced from
+`GATEWAY_TRANSACTION_FEE_USD` rather than typed in. A guard test reads the built
+`spec.description` and owns them; it was mutation-checked rather than trusted.
+
+### Also
+
+The price catalog's comment claimed the discovery doc was identical across
+payment hosts. It is not — `sol.blockrun.ai` serves the x402scan v1 fallback
+shape with no prices, and publishes them in `openapi.json` instead, where they
+currently disagree with what that gateway itself quotes. The comment invited a
+"fix" that would have frozen every estimate at the built-in floor with nothing
+reporting it; it now carries the measurements and a warning, and the silent path
+logs.
+
 ## Franklin Agent 3.44.0 — a second way to pay, and the ledger that nearly went blind
 
 **You can now fund Franklin with a prepaid BlockRun API key instead of a USDC
