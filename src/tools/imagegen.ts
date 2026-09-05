@@ -16,7 +16,8 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadChain, VERSION} from '../config.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import type { ContentLibrary } from '../content/library.js';
 import { checkImageBudget, recordImageAsset } from '../content/record-image.js';
 import { estimateImageCostUsd } from '../content/image-pricing.js';
@@ -393,7 +394,7 @@ function buildExecute(deps: ImageGenDeps) {
     }
 
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   // Reference-image mode hits the dedicated /v1/images/image2image endpoint;
   // otherwise stay on text-to-image generations.
   const endpoint = editMode
@@ -433,6 +434,7 @@ function buildExecute(deps: ImageGenDeps) {
   );
 
   const headers: Record<string, string> = {
+    ...gatewayHeaders(),
     'Content-Type': 'application/json',
     'User-Agent': `franklin/${VERSION}`,
   };

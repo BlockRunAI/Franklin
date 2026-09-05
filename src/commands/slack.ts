@@ -9,7 +9,8 @@
  */
 
 import chalk from 'chalk';
-import { loadChain, API_URLS } from '../config.js';
+import { loadChain} from '../config.js';
+import { gatewayBase } from '../payments/auth-mode.js';
 import { assembleInstructions } from '../agent/context.js';
 import { allCapabilities } from '../tools/index.js';
 import { loadMcpConfig } from '../mcp/config.js';
@@ -53,7 +54,7 @@ export async function slackCommand(opts: SlackCommandOptions): Promise<void> {
   }
 
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const config = loadConfig();
 
   const model =

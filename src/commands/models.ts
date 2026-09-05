@@ -1,5 +1,6 @@
 import chalk from 'chalk';
-import { loadChain, API_URLS } from '../config.js';
+import { loadChain} from '../config.js';
+import { gatewayBase } from '../payments/auth-mode.js';
 import {
   getGatewayModels,
   GATEWAY_MARGIN,
@@ -119,7 +120,7 @@ function printSection(heading: string, models: GatewayModel[], render: (m: Gatew
 
 export async function modelsCommand() {
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
 
   console.log(chalk.bold('Available Models\n'));
   console.log(`Chain: ${chalk.magenta(chain)} — ${chalk.dim(apiUrl)}\n`);

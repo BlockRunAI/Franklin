@@ -44,6 +44,23 @@ export function WalletPanel({ usage }: { usage: Usage }) {
       <div className="try-wallet-inner">
         <h2 className="try-tools-h">{t.walletTitle}</h2>
 
+        {wallet?.payMode === "api-key" && (
+          // The wallet card below still renders an address and a USDC balance.
+          // Neither is what pays in this mode, and the prepaid credit balance is
+          // not readable from here, so say so plainly rather than let the number
+          // read as the budget.
+          <section className="try-wallet-network-card">
+            <div>
+              <strong>Paying by API key{wallet.apiKeyMasked ? ` · ${wallet.apiKeyMasked}` : ""}</strong>
+              <small>
+                Spend comes out of your prepaid balance, not the wallet below. Franklin cannot
+                read that balance — check it at user.blockrun.ai/dashboard. Run `franklin logout`
+                in a terminal to go back to paying from the wallet.
+              </small>
+            </div>
+          </section>
+        )}
+
         <section className="try-wallet-network-card">
           <div><strong>Payment network</strong><small>Franklin keeps a separate local wallet for each network. Switching restarts the local agent, never exports a key.</small></div>
           <div className="try-wallet-network-options" role="group" aria-label="Payment network">

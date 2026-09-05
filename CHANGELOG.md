@@ -1,5 +1,65 @@
 # Changelog
 
+## Franklin Agent 3.44.0 — a second way to pay, and the ledger that nearly went blind
+
+**You can now fund Franklin with a prepaid BlockRun API key instead of a USDC
+wallet.** Sign up at [user.blockrun.ai](https://user.blockrun.ai), top up, then:
+
+```bash
+franklin login brk_live_...
+```
+
+The wallet is still Franklin's identity — memory, the trading journal and goals
+are keyed to it, and it remains the route that needs nothing from us. The key is
+for people who would rather not hold crypto to try an agent.
+
+**Wallet users are untouched, structurally.** The two gateways share no auth: a
+bearer key sent to `blockrun.ai/api` is ignored and still 402s, and
+`api.blockrun.ai` 401s with no x402 fallback. With no key configured Franklin
+resolves the same host and the same headers it always did — asserted per chain
+by test, not by inspection. Both can be configured at once; the key wins, and
+`--wallet` forces the wallet back for a single run.
+
+**The hard part was accounting, not routing.** The key gateway settles silently
+and returns *no charge amount* — not in `payment-response`, not in a header, not
+in the body. Franklin derives its entire ledger from the 402 handshake:
+
+```ts
+// before — src/tools/exa.ts
+if (!settled) return; // free/already-paid (200-first) path — no charge to record
+```
+
+`settled` is false for two very different things: a genuinely free call, and
+every API-key call. So every paid call in key mode would have recorded **$0**,
+silently disabling `--max-spend`, `PreSpend` hooks and every budget in the
+product. Paid calls are now priced from BlockRun's published rate card at
+`/.well-known/x402`, and each row is tagged exact or estimated.
+
+| | wallet | API key |
+|---|---|---|
+| `SurfMarket` | $0.0085 settled, exact | $0.0085 catalog, estimated |
+| `ExaSearch` | $0.007 settled, exact | $0.007 Exa-reported, exact |
+| chat | amount the wallet paid | `estimateCost()` from returned tokens |
+
+Estimates lean high on purpose: the x402 rate card carries a 5% margin and
+$0.001 per call that key mode does not charge. Over-counting is the safe side of
+a spend ceiling. `franklin stats` marks estimated totals with `~` and reports the
+estimated portion separately, and `franklin balance` refuses to invent a credit
+balance it cannot read.
+
+**A bug the proxy only revealed under live traffic.** Node lowercases a proxied
+client's `authorization`; `gatewayHeaders()` returns the canonical
+`Authorization`. A plain object held both, `fetch` sent two, the gateway read the
+client's — and every proxied call 401'd. `applyGatewayAuth()` strips every case
+variant before adding ours.
+
+**`brk_` keys are now redacted.** The secret redactor covered GitHub, Anthropic,
+OpenAI, AWS, Slack and Stripe but had no BlockRun pattern, so a key could reach
+transcripts and `franklin logs`.
+
+Solana leads Base throughout the CLI copy and README, matching the code default
+`loadChain()` has used for some time.
+
 ## Franklin Agent 3.43.1 — a guard that only runs on the happy path is not a guard
 
 **A vision request could fall back onto a model that cannot read images, and

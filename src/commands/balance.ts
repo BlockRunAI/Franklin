@@ -1,9 +1,39 @@
 import chalk from 'chalk';
 import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
-import { loadChain } from '../config.js';
+import { loadChain, DASHBOARD_URL } from '../config.js';
+import { isKeyMode, loadApiKey, maskApiKey } from '../payments/auth-mode.js';
+import { loadStats } from '../stats/tracker.js';
 
 export async function balanceCommand() {
   const chain = loadChain();
+
+  // API-key mode settles against a prepaid credit balance. The gateway exposes
+  // no key-scoped balance or usage endpoint, so there is no number to print
+  // that would be true — report what is known (the key works, what Franklin
+  // has spent locally) and send the user to the authority for the rest, rather
+  // than inventing a figure.
+  if (isKeyMode()) {
+    const key = loadApiKey();
+    console.log(`Pay mode:  ${chalk.green('api-key')}`);
+    console.log(`Key:       ${chalk.cyan(key ? maskApiKey(key) : 'unknown')}`);
+    try {
+      const stats = loadStats();
+      const spent = stats.totalCostUsd ?? 0;
+      const est = stats.totalEstimatedCostUsd ?? 0;
+      console.log(
+        `Spent:     ${chalk.yellow((est > 0 ? '~$' : '$') + spent.toFixed(4))}` +
+        chalk.dim('  (Franklin\'s local tally, all time)')
+      );
+    } catch { /* stats are best-effort */ }
+    console.log(
+      chalk.dim(`\nCredit balance and full activity: ${DASHBOARD_URL}/dashboard`)
+    );
+    console.log(
+      chalk.dim('Franklin cannot read the credit balance — the gateway exposes no endpoint for it.')
+    );
+    console.log(chalk.dim('To spend from a USDC wallet instead: franklin --wallet, or franklin logout.'));
+    return;
+  }
 
   try {
     if (chain === 'solana') {

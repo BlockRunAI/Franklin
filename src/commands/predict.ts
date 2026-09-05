@@ -17,7 +17,8 @@
 import { interactiveSession } from '../agent/loop.js';
 import type { AgentConfig, StreamEvent, StreamTurnDone } from '../agent/types.js';
 import { predictionCapabilities, resetToolSessionState } from '../tools/index.js';
-import { loadChain, API_URLS } from '../config.js';
+import { loadChain} from '../config.js';
+import { gatewayBase } from '../payments/auth-mode.js';
 import { resolveModel } from '../ui/model-picker.js';
 
 export interface PredictOptions {
@@ -68,7 +69,7 @@ export async function predictCommand(options: PredictOptions): Promise<void> {
   }
 
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const model = resolveModel(options.model);
   const asJson = options.json !== false;
 

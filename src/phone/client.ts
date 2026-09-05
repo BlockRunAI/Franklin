@@ -13,13 +13,17 @@
  *   - future Phone/Call tools surfaced to the agent
  */
 
-import { API_URLS, loadChain, type Chain } from '../config.js';
+import { loadChain, type Chain } from '../config.js';
+import { gatewayBase } from '../payments/auth-mode.js';
 import { postWithPayment } from '../payments/post-with-payment.js';
 import { recordUsage } from '../stats/tracker.js';
 import { writeCache, type PhoneNumberRecord } from './cache.js';
 
 function phoneEndpoint(chain: Chain, path: string): string {
-  return `${API_URLS[chain]}/v1/phone/${path}`;
+  // `chain` is retained for call-site clarity; the host itself comes from the
+  // active pay mode, which is chainless in API-key mode.
+  void chain;
+  return `${gatewayBase()}/v1/phone/${path}`;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────

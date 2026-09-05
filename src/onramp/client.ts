@@ -16,7 +16,8 @@
  * helper.
  */
 
-import { API_URLS, loadChain } from '../config.js';
+import { loadChain } from '../config.js';
+import { gatewayBase } from '../payments/auth-mode.js';
 import { postWithPayment } from '../payments/post-with-payment.js';
 
 export interface OnrampLinkResult {
@@ -31,7 +32,7 @@ export interface OnrampLinkResult {
  */
 export async function getOnrampUrl(address: string): Promise<OnrampLinkResult> {
   const chain = loadChain();
-  const endpoint = `${API_URLS[chain]}/v1/onramp/token`;
+  const endpoint = `${gatewayBase()}/v1/onramp/token`;
   const result = await postWithPayment(
     endpoint,
     { address, network: chain, asset: 'USDC' },

@@ -33,8 +33,22 @@ import { proxyCommand } from './commands/proxy.js';
 import { buildTaskCommand } from './commands/task.js';
 import { buildContentCommand } from './commands/content.js';
 import { predictCommand } from './commands/predict.js';
+import { loginCommand, logoutCommand } from './commands/login.js';
+import { useWalletMode } from './payments/auth-mode.js';
 
 import { VERSION as version } from './config.js';
+
+// `--wallet` is process-global rather than a per-command option: it has to take
+// effect before anything resolves a pay mode, and it belongs on `balance`,
+// `doctor` and `models` too, not just `start`. Applying it straight from argv
+// is the only way to get it in ahead of commander's dispatch; it is then
+// removed so per-command parsers do not reject it as unknown. Stripping it also
+// leaves a bare `franklin --wallet` with no args, which falls through to the
+// default `start` action exactly as a bare `franklin` does.
+if (process.argv.includes('--wallet')) {
+  useWalletMode();
+  process.argv = process.argv.filter((a) => a !== '--wallet');
+}
 
 const program = new Command();
 
@@ -43,13 +57,15 @@ program
   .description(
     'Franklin Agent — The AI agent with a wallet.\n\n' +
       'While others chat, Franklin Agent spends — turning your USDC into real work.\n\n' +
-      'Pay per action in USDC on Base or Solana. No subscriptions. No accounts.'
+      'Pay per action — a USDC wallet on Solana or Base, or a prepaid API key\n' +
+      'from user.blockrun.ai. No subscriptions.'
   )
+  .option('--wallet', 'Pay from the USDC wallet even when an API key is configured')
   .version(version);
 
 program
   .command('setup [chain]')
-  .description('Create a new wallet for payments (base or solana)')
+  .description('Create a new wallet for payments (solana or base)')
   .action((chain) => setupCommand(chain));
 
 program
@@ -158,8 +174,18 @@ program
 
 program
   .command('balance')
-  .description('Check wallet USDC balance')
+  .description('Check wallet USDC balance, or API-key status in key mode')
   .action(balanceCommand);
+
+program
+  .command('login [key]')
+  .description('Store a BlockRun API key (brk_live_...) — omit the key to show current pay mode')
+  .action((key) => loginCommand(key));
+
+program
+  .command('logout')
+  .description('Remove the stored BlockRun API key and fall back to the wallet')
+  .action(logoutCommand);
 
 program
   .command('config <action> [key] [value]')

@@ -27,7 +27,8 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadChain, VERSION} from '../config.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
 import { isWalletKeyPath } from './sensitive-paths.js';
@@ -114,7 +115,7 @@ function buildExecute(deps: MusicGenDeps) {
     }
 
     const chain = loadChain();
-    const apiUrl = API_URLS[chain];
+    const apiUrl = gatewayBase();
     const endpoint = `${apiUrl}/v1/audio/generations`;
 
     const outPath = output_path
@@ -134,6 +135,7 @@ function buildExecute(deps: MusicGenDeps) {
     });
 
     const headers: Record<string, string> = {
+      ...gatewayHeaders(),
       'Content-Type': 'application/json',
       'User-Agent': `franklin/${VERSION}`,
     };

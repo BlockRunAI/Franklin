@@ -10,6 +10,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { Chain } from '../config.js';
+import { applyGatewayAuth } from '../payments/auth-mode.js';
 import { recordUsage } from '../stats/tracker.js';
 // Single source of truth for shortcuts — shared with the /model picker so the
 // proxy can never drift from the interactive UI (it did before: grok→grok-3).
@@ -529,6 +530,17 @@ export function createProxy(options: ProxyOptions): http.Server {
             headers[key] = Array.isArray(value) ? value[0] : value;
           }
         }
+
+        // Applied AFTER the forwarding loop so our credential wins over
+        // whatever the proxied client sent. Anthropic-compatible clients
+        // routinely set their own `authorization` / `x-api-key`; in API-key
+        // mode those must not reach the gateway in place of Franklin's key.
+        // In wallet mode this contributes no auth at all and payment still
+        // rides on the PAYMENT-SIGNATURE header added on the 402 retry.
+        // applyGatewayAuth also strips the client's own Authorization header
+        // in every case variant — without that, fetch sends two of them and
+        // the gateway reads the wrong one (verified: 401 through the proxy).
+        applyGatewayAuth(headers);
 
         // Safety net: if requestModel is still a routing profile (blockrun/auto etc.)
         // after all resolution attempts, force-route it to a concrete model.

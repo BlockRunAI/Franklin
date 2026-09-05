@@ -6,7 +6,8 @@
 import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { createProxy } from '../proxy/server.js';
-import { loadChain, API_URLS, DEFAULT_PROXY_PORT } from '../config.js';
+import { loadChain, DEFAULT_PROXY_PORT} from '../config.js';
+import { gatewayBase } from '../payments/auth-mode.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
 
@@ -21,7 +22,7 @@ interface ProxyOptions {
 export async function proxyCommand(options: ProxyOptions) {
   const version = options.version ?? '1.0.0';
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const fallbackEnabled = options.fallback !== false;
   const config = loadConfig();
 

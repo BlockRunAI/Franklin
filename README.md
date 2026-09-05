@@ -28,6 +28,7 @@
 
 <p>
   <a href="#quick-start">Quick&nbsp;start</a> ·
+  <a href="#two-ways-to-pay">Two&nbsp;ways&nbsp;to&nbsp;pay</a> ·
   <a href="#franklin-desktop-beta">Desktop</a> ·
   <a href="#yopo">YOPO</a> ·
   <a href="#a-new-category">Category</a> ·
@@ -44,7 +45,9 @@
 
 ## The pitch in one paragraph
 
-Franklin Agent is an **autonomous economic agent** — an AI that holds a USDC wallet and spends it to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from 55+ providers. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. Every paid action routes through the [x402](https://x402.org) micropayment protocol and settles against your own wallet. No subscriptions. No API keys. No account. The wallet is the identity.
+Franklin Agent is an **autonomous economic agent** — an AI that holds a USDC wallet and spends it to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from 55+ providers. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. No subscriptions, no seats, no rate limits.
+
+Funding it is your choice. Fund a **USDC wallet** and every paid action routes through the [x402](https://x402.org) micropayment protocol, settling on-chain against a wallet only you control — no signup, no account, the wallet is the identity. Or top up a **prepaid balance** at [user.blockrun.ai](https://user.blockrun.ai) and hand Franklin an API key. Same models, same tools, same agent. See [Two ways to pay](#two-ways-to-pay).
 
 Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships as one npm package.
 
@@ -67,12 +70,18 @@ npm install -g @blockrun/franklin
 # 2. Run (free — uses NVIDIA Nemotron & Qwen3 Coder out of the box)
 franklin
 
-# 3. (optional) Fund a wallet to unlock Sonnet, Opus, GPT, Gemini, Grok, + paid APIs
-franklin setup base        # or: franklin setup solana
+# 3. (optional) Unlock Sonnet, Opus, GPT, Gemini, Grok + every paid API.
+#    Pick ONE — a USDC wallet, or a prepaid API key.
+
+#    a) Wallet — no signup, no account
+franklin setup solana      # or: franklin setup base
 franklin balance           # show address + USDC balance
+
+#    b) API key — sign up and top up at https://user.blockrun.ai
+franklin login brk_live_...
 ```
 
-That's it. Zero signup, zero credit card, zero phone verification. Send **$5 of USDC** to the wallet and you've unlocked every frontier model and every paid tool in the BlockRun gateway.
+Either route unlocks the same thing: **$5** buys you every frontier model and every paid tool in the BlockRun gateway. The wallet route needs zero signup, zero credit card, zero phone verification. The key route needs an account but no crypto.
 
 **No global install? Just run it directly** — no permissions, no `-g`:
 
@@ -141,6 +150,81 @@ The stable beta currently runs the Franklin agent. Team Mode and Studio adapters
 for additional agent CLIs are being developed separately and are not included in
 this release. See the [Desktop guide](apps/desktop/README.md) for development and
 packaging instructions.
+
+---
+
+## Two ways to pay
+
+Franklin needs money to work — it buys model calls, market data, search and media
+generation on your behalf. There are two ways to give it that money, and they are
+interchangeable. Everything else about the agent is identical.
+
+| | **USDC wallet** (x402) | **API key** (prepaid credit) |
+| --- | --- | --- |
+| Setup | `franklin setup solana` | Sign up, top up, `franklin login brk_...` |
+| Account required | No | Yes |
+| Crypto required | Yes — USDC on Solana or Base | No — top up with a card |
+| Settlement | On-chain, per call, via [x402](https://x402.org) | Against a prepaid balance |
+| Gateway | `sol.blockrun.ai` / `blockrun.ai` | `api.blockrun.ai` |
+| Where the money lives | A wallet only you hold the key to | Your BlockRun account |
+| Spend visibility | `franklin stats` — exact settled amounts | [Dashboard](https://user.blockrun.ai/dashboard) — see the note below |
+
+**The wallet is still Franklin's identity.** Memory, the trading journal and goals are
+keyed to it, and the wallet route is the one that needs nothing from us — no signup, no
+KYC, no account to suspend. The API key exists because not everyone wants to hold crypto
+to try an agent.
+
+### Getting an API key
+
+1. Sign up at **[user.blockrun.ai](https://user.blockrun.ai)**.
+2. Top up your balance from the dashboard.
+3. Create a key — it looks like `brk_live_...`.
+4. Give it to Franklin:
+
+```bash
+franklin login brk_live_...     # verifies the key, then stores it at ~/.blockrun/api-key (0600)
+franklin login                  # show the active pay mode without changing it
+franklin logout                 # remove the key and fall back to the wallet
+```
+
+Or set it in the environment instead, which takes precedence over the stored key and is
+the right choice for CI and servers:
+
+```bash
+export BLOCKRUN_API_KEY=brk_live_...
+```
+
+### Running both
+
+You can have a wallet **and** a key configured at once. The key wins by default. To spend
+from the wallet for a single run, add `--wallet` to any command:
+
+```bash
+franklin --wallet                 # this session pays from the wallet
+franklin balance --wallet         # show the wallet balance, not the key status
+```
+
+If the key is rejected, or a tool needs an endpoint the key gateway does not serve,
+Franklin falls back to the wallet for that call and tells you. It never falls back on a
+malformed request — a bad call is never retried with your USDC.
+
+### One honest caveat about spend tracking
+
+In wallet mode every charge is exact: the gateway states the price in the x402 handshake
+and Franklin records the amount that actually settled.
+
+In API-key mode the gateway settles silently against your balance and **returns no charge
+amount**. Franklin prices those calls locally from BlockRun's published x402 rate card, so
+`--max-spend`, `PreSpend` hooks and budgets all keep working — but the figures are
+estimates, and they lean high. The x402 rate card includes a 5% margin and a $0.001
+per-transaction fee that key mode does not charge (key mode bills provider list price;
+the fee is taken when you top up). Expect Franklin's local tally to read a few percent
+above what the dashboard shows.
+
+Over-counting is the safe direction for a spend ceiling, and Franklin is explicit about
+it: `franklin stats` marks estimated totals with `~` and reports the estimated portion
+separately, and `franklin balance` will not invent a credit balance it cannot read. For
+the authoritative number, use the [dashboard](https://user.blockrun.ai/dashboard).
 
 ---
 
@@ -352,7 +436,7 @@ No single model is best at everything. Sonnet writes better code, Gemini handles
 
 ### 🔐 &nbsp;Wallet is identity
 
-No email. No phone. No KYC. Your Base or Solana address is your account — portable, permissionless, global. API keys require US banking and account approval. A wallet requires only USDC.
+No email. No phone. No KYC. Your Solana or Base address is your account — portable, permissionless, global. A wallet requires only USDC. (Prefer an account and a card? [Two ways to pay](#two-ways-to-pay) — the key route exists, it just is not the one that makes the agent sovereign.)
 
 </td>
 </tr>
@@ -467,7 +551,7 @@ Core is workflow-agnostic. Add new verticals without touching the loop. Discover
 │  <!-- br:models.chatVisible@live -->76<!-- /br:models.chatVisible@live --> LLMs · CoinGecko · Search · Image APIs · paid services  │
 ├──────────────────────────────────────────────────────────────┤
 │  x402 Micropayment Protocol                                  │
-│  HTTP 402 · USDC on Base & Solana · signed payment payloads  │
+│  HTTP 402 · USDC on Solana & Base · signed payment payloads  │
 └──────────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -518,13 +602,13 @@ src/
 
 ## Free tier, for real
 
-Start with **zero dollars**. Franklin defaults to free NVIDIA models that need no wallet funding.
+Start with **zero dollars**. Franklin defaults to free NVIDIA models that need **no wallet and no API key** — nothing to fund, nothing to sign up for.
 
 ```bash
 franklin --model free
 ```
 
-When you fund the wallet, Franklin gets more purchasing power: Sonnet, Opus, GPT, Gemini, Grok, and paid tools like Exa, DALL-E, and CoinGecko Pro.
+Once you fund it — [either way](#two-ways-to-pay) — Franklin gets more purchasing power: Sonnet, Opus, GPT, Gemini, Grok, and paid tools like Exa, image generation, and live market data.
 
 ---
 

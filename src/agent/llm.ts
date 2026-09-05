@@ -15,6 +15,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import { USER_AGENT, type Chain } from '../config.js';
+import { gatewayHeaders } from '../payments/auth-mode.js';
 import { appendSettlementRow, type SettlementMeta } from '../stats/cost-log.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import type {
@@ -774,8 +775,12 @@ export class ModelClient {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'anthropic-version': '2023-06-01',
+      // Placeholder for Anthropic-shaped clients — the real credential is
+      // either the x402 signature added on the 402 retry, or the bearer key
+      // that gatewayHeaders() contributes in API-key mode.
       'x-api-key': 'x402-agent-handles-auth',
       'User-Agent': USER_AGENT,
+      ...gatewayHeaders(),
     };
 
     // Enable prompt caching + extended thinking betas for Anthropic models

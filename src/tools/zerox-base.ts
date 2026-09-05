@@ -42,7 +42,8 @@ import { base } from 'viem/chains';
 import { getOrCreateWallet } from '@blockrun/llm';
 
 import { loadConfig } from '../commands/config.js';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { loadChain, VERSION} from '../config.js';
 import { appendSwap } from '../stats/swap-log.js';
 import type { CapabilityHandler, ExecutionScope } from '../agent/types.js';
 
@@ -236,9 +237,10 @@ async function gatewayGet<T>(
   ctx: ExecutionScope,
 ): Promise<T> {
   const chain = loadChain();
-  const apiUrl = API_URLS[chain];
+  const apiUrl = gatewayBase();
   const endpoint = `${apiUrl}${ZEROX_GATEWAY_PATH}/${path}?${params.toString()}`;
   const headers: Record<string, string> = {
+    ...gatewayHeaders(),
     Accept: 'application/json',
     'User-Agent': `franklin/${VERSION}`,
   };

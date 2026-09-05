@@ -60,3 +60,23 @@ export function loadChain(): Chain {
   const hasSolanaWallet = fs.existsSync(path.join(BLOCKRUN_DIR, '.solana-session'));
   return hasBaseWallet && !hasSolanaWallet ? 'base' : 'solana';
 }
+
+// ── API-key mode ──────────────────────────────────────────────────────────
+// BlockRun runs a second, prepaid-credit gateway that authenticates with a
+// bearer key instead of an x402 signature. It shares no auth with the x402
+// hosts above: a bearer key sent to blockrun.ai/api is ignored (still 402),
+// and this host 401s when the key is missing or bad — there is no x402
+// fallback on it. That isolation is what lets key mode ship without touching
+// wallet users.
+//
+// Note the path shape differs: API_URLS entries end in `/api`, this one does
+// not — api.blockrun.ai serves `/v1/...` at the root and returns a
+// `wrong_host` 404 for `/api/v1/...`. Callers that build `${base}/v1/...`
+// work unchanged in both modes; callers that assume the `/api` suffix do not.
+export const KEY_API_URL = 'https://api.blockrun.ai';
+
+/** Where `franklin login` persists the key (0600). */
+export const API_KEY_FILE = path.join(BLOCKRUN_DIR, 'api-key');
+
+/** Dashboard host — signup, top-up, activity. Not an API surface. */
+export const DASHBOARD_URL = 'https://user.blockrun.ai';

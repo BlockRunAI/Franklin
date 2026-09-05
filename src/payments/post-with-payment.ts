@@ -23,6 +23,13 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import { loadChain, USER_AGENT, type Chain } from '../config.js';
+import {
+  classifyKeyFailure,
+  gatewayHeaders,
+  invalidateKey,
+  resolvePayMode,
+  toWalletUrl,
+} from './auth-mode.js';
 
 async function extractPaymentReq(response: Response): Promise<string | null> {
   let header = response.headers.get('payment-required');
@@ -90,6 +97,12 @@ export interface PostResult {
   status: number;
   body: Record<string, unknown>;
   raw: string;
+  /**
+   * True only when this call completed an x402 handshake, i.e. a wallet
+   * signature actually moved USDC. False in key mode and on free endpoints —
+   * callers must price those locally rather than recording zero spend.
+   */
+  settled: boolean;
 }
 
 /**
@@ -104,15 +117,45 @@ export async function postWithPayment(
   timeoutMs = 30_000,
 ): Promise<PostResult> {
   const chain = loadChain();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'User-Agent': USER_AGENT,
-  };
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
 
   try {
     const payload = JSON.stringify(body);
+    const mode = resolvePayMode();
+
+    // Key mode: one authenticated POST, no 402 dance. The gateway settles
+    // against the prepaid balance and answers 200 directly.
+    if (mode.kind === 'key') {
+      const keyHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...gatewayHeaders(mode),
+      };
+      const keyResponse = await fetch(endpoint, {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: keyHeaders,
+        body: payload,
+      });
+      const keyRaw = await keyResponse.text().catch(() => '');
+      const failure = classifyKeyFailure(keyResponse.status, keyRaw);
+
+      // Only a bad key or a path the key host does not serve is worth retrying
+      // on the wallet. Anything else (400, 402, 5xx) is returned as-is so a
+      // malformed request never silently spends wallet USDC on a second try.
+      if (!failure) {
+        let parsedKey: Record<string, unknown> = {};
+        try { parsedKey = keyRaw ? JSON.parse(keyRaw) : {}; } catch { /* leave as {} */ }
+        return { ok: keyResponse.ok, status: keyResponse.status, body: parsedKey, raw: keyRaw, settled: false };
+      }
+      if (failure === 'invalid-key') invalidateKey();
+      endpoint = toWalletUrl(endpoint, chain);
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'User-Agent': USER_AGENT,
+    };
     let response = await fetch(endpoint, {
       method: 'POST',
       signal: ctrl.signal,
@@ -120,10 +163,11 @@ export async function postWithPayment(
       body: payload,
     });
 
+    let settled = false;
     if (response.status === 402) {
       const paymentHeaders = await signPayment(response, chain, endpoint, resourceDescription);
       if (!paymentHeaders) {
-        return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '' };
+        return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '', settled: false };
       }
       response = await fetch(endpoint, {
         method: 'POST',
@@ -131,12 +175,13 @@ export async function postWithPayment(
         headers: { ...headers, ...paymentHeaders },
         body: payload,
       });
+      settled = response.ok;
     }
 
     const raw = await response.text().catch(() => '');
     let parsed: Record<string, unknown> = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { /* leave as {} */ }
-    return { ok: response.ok, status: response.status, body: parsed, raw };
+    return { ok: response.ok, status: response.status, body: parsed, raw, settled };
   } finally {
     clearTimeout(timer);
   }

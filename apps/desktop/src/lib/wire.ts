@@ -186,6 +186,15 @@ export interface WalletInfo {
   address: string;
   chain: "base" | "solana";
   balanceUsd?: number;
+  /**
+   * Which credential actually pays. In "api-key" mode the wallet below still
+   * exists and still holds USDC, but spend comes out of a prepaid balance the
+   * desktop cannot read — so the balance must not be presented as the budget.
+   * Absent on older CLIs; treat that as "wallet".
+   */
+  payMode?: "wallet" | "api-key";
+  /** e.g. `brk_live_H4Oz…QBW5`. Only set in api-key mode. */
+  apiKeyMasked?: string;
 }
 
 export interface ModelInfo {

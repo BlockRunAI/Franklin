@@ -4,6 +4,8 @@
  */
 
 import chalk from 'chalk';
+import { DASHBOARD_URL } from '../config.js';
+import { isKeyMode } from '../payments/auth-mode.js';
 import { loadStats, clearStats, getStatsSummary } from '../stats/tracker.js';
 import { summarizeSdkSettlements } from '../stats/cost-log.js';
 
@@ -105,10 +107,21 @@ export function statsCommand(options: StatsOptions): void {
   console.log(
     `    Requests:       ${chalk.cyan(stats.totalRequests.toLocaleString())}`
   );
+  // In API-key mode the gateway settles against a prepaid balance and returns
+  // no per-call charge, so spend is priced locally from the published catalog.
+  // Mark that plainly rather than presenting an estimate as a settled figure.
+  const estimatedUsd = stats.totalEstimatedCostUsd ?? 0;
+  const mostlyEstimated = estimatedUsd > 0 && estimatedUsd >= stats.totalCostUsd * 0.5;
   console.log(
-    `    Recorded Cost:  ${chalk.green('$' + stats.totalCostUsd.toFixed(4))}` +
+    `    Recorded Cost:  ${chalk.green((mostlyEstimated ? '~$' : '$') + stats.totalCostUsd.toFixed(4))}` +
       chalk.gray('  (franklin-stats.json — main loop + proxy + tools that call recordUsage)')
   );
+  if (estimatedUsd > 0) {
+    console.log(
+      `    of which est.:  ${chalk.yellow('$' + estimatedUsd.toFixed(4))}` +
+        chalk.gray('  (priced from the published catalog, not a settled x402 amount)')
+    );
+  }
   if (sdkTotal > 0) {
     const ledgerColor = significantGap ? chalk.yellow : chalk.green;
     console.log(
@@ -239,6 +252,14 @@ export function statsCommand(options: StatsOptions): void {
   }
 
   console.log('\n' + '─'.repeat(55));
+  if (isKeyMode()) {
+    // The key gateway reports no per-call charge, so nothing Franklin prints
+    // here can be authoritative. Say where the real number lives.
+    console.log(
+      chalk.gray(`  Paying by API key — the authoritative balance and activity log live at\n`) +
+      chalk.gray(`  ${DASHBOARD_URL}/dashboard\n`)
+    );
+  }
   console.log(
     chalk.gray('  Run `franklin stats --clear` to reset statistics\n')
   );

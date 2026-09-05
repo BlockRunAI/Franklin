@@ -37,7 +37,8 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, API_URLS, VERSION } from '../config.js';
+import { loadChain, VERSION} from '../config.js';
+import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { walletReservation, AMBIGUOUS_GRACE_MS, type ReservationToken } from '../wallet/reservation.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
@@ -201,6 +202,7 @@ export async function postWithPayment(
 ): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; raw: string }> {
   const chain = loadChain();
   const headers: Record<string, string> = {
+    ...gatewayHeaders(),
     'Content-Type': 'application/json',
     'User-Agent': `franklin/${VERSION}`,
   };
@@ -302,7 +304,7 @@ function definitelyNotSent(err: unknown): boolean {
 
 function modalEndpoint(path: string): string {
   const chain = loadChain();
-  return `${API_URLS[chain]}/v1/modal/sandbox/${path}`;
+  return `${gatewayBase()}/v1/modal/sandbox/${path}`;
 }
 
 /**

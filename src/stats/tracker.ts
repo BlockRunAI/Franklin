@@ -8,6 +8,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { OPUS_PRICING } from '../pricing.js';
 import { BLOCKRUN_DIR } from '../config.js';
+import { isKeyMode } from '../payments/auth-mode.js';
 import { isTestFixtureModel } from './test-fixture.js';
 import { atomicWriteFileSync } from '../storage/atomic.js';
 
@@ -93,6 +94,12 @@ export interface Stats {
   version: number;
   totalRequests: number;
   totalCostUsd: number;
+  /**
+   * Portion of totalCostUsd that is a list-price estimate rather than a
+   * settled x402 amount. Non-zero only in API-key mode, where the gateway
+   * reports no per-call charge.
+   */
+  totalEstimatedCostUsd: number;
   totalInputTokens: number;
   totalOutputTokens: number;
   totalFallbacks: number;
@@ -107,6 +114,7 @@ const EMPTY_STATS: Stats = {
   version: 1,
   totalRequests: 0,
   totalCostUsd: 0,
+  totalEstimatedCostUsd: 0,
   totalInputTokens: 0,
   totalOutputTokens: 0,
   totalFallbacks: 0,
@@ -125,7 +133,7 @@ function parseStatsFile(file: string): Stats | null {
     // every downstream `history.push` / `Object.values(byModel)` would throw.
     if (!Array.isArray(merged.history)) merged.history = [];
     if (!merged.byModel || typeof merged.byModel !== 'object' || Array.isArray(merged.byModel)) merged.byModel = {};
-    const numKeys = ['totalRequests', 'totalCostUsd', 'totalInputTokens', 'totalOutputTokens', 'totalFallbacks'] as const;
+    const numKeys = ['totalRequests', 'totalCostUsd', 'totalEstimatedCostUsd', 'totalInputTokens', 'totalOutputTokens', 'totalFallbacks'] as const;
     for (const k of numKeys) {
       if (!Number.isFinite(merged[k])) merged[k] = 0;
     }
@@ -233,7 +241,15 @@ export function recordUsage(
   outputTokens: number,
   costUsd: number,
   latencyMs: number,
-  fallback: boolean = false
+  fallback: boolean = false,
+  /**
+   * Whether `costUsd` is a list-price estimate rather than an exact settled
+   * amount. Defaults to the active pay mode: an x402 settlement reports the
+   * real figure, while the API-key gateway returns no charge at all, so every
+   * key-mode row is priced locally. Surfaced by `franklin stats` so the ledger
+   * never claims more precision than it has.
+   */
+  estimated: boolean = isKeyMode()
 ): void {
   // Count real spend BEFORE the test/audit gates — the --max-spend ceiling must
   // see every paid tool call even when history persistence is suppressed.
@@ -256,6 +272,7 @@ export function recordUsage(
   // Update totals
   stats.totalRequests++;
   stats.totalCostUsd += costUsd;
+  if (estimated) stats.totalEstimatedCostUsd += costUsd;
   stats.totalInputTokens += inputTokens;
   stats.totalOutputTokens += outputTokens;
   if (fallback) stats.totalFallbacks++;
