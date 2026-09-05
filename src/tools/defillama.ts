@@ -5,11 +5,11 @@
  *
  * Five tools, each filtered + formatted on the way back so we don't dump
  * 5–10 MB of raw DefiLlama JSON into agent context:
- *  - DeFiLlamaProtocols   $0.0050/call base (+$0.001 on a wallet) — top-N protocols by TVL
- *  - DeFiLlamaProtocol    $0.0050/call base (+$0.001 on a wallet) — single protocol detail
- *  - DeFiLlamaChains      $0.0050/call base (+$0.001 on a wallet) — TVL ranked by chain
- *  - DeFiLlamaYields      $0.0050/call base (+$0.001 on a wallet) — yield pools, filtered + ranked
- *  - DeFiLlamaPrice       $0.0050/call base (+$0.001 on a wallet) — token price lookup
+ *  - DeFiLlamaProtocols   $0.0050/call base (plus a $0.001 settlement fee on a wallet) — top-N protocols by TVL
+ *  - DeFiLlamaProtocol    $0.0050/call base (plus a $0.001 settlement fee on a wallet) — single protocol detail
+ *  - DeFiLlamaChains      $0.0050/call base (plus a $0.001 settlement fee on a wallet) — TVL ranked by chain
+ *  - DeFiLlamaYields      $0.0050/call base (plus a $0.001 settlement fee on a wallet) — yield pools, filtered + ranked
+ *  - DeFiLlamaPrice       $0.0050/call base (plus a $0.001 settlement fee on a wallet) — token price lookup
  *
  * DefiLlama is Apache 2.0 / "free for public and commercial use" — the
  * BlockRun gateway adds metering + (future) caching/reliability layers,

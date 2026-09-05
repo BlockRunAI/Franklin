@@ -25,6 +25,7 @@ const auth = await import('../dist/payments/auth-mode.js');
 const { API_URLS, KEY_API_URL, BLOCKRUN_DIR, saveChain } = await import('../dist/config.js');
 const { redactSecrets } = await import('../dist/agent/secret-redact.js');
 const catalog = await import('../dist/payments/price-catalog.js');
+const { GATEWAY_TRANSACTION_FEE_USD } = await import('../dist/gateway-models.js');
 
 // Synthetic — shaped like a real key so the format checks are meaningful, but
 // not a credential. Never put a live key in a tracked file.
@@ -419,6 +420,17 @@ test('a price quoted in a tool description is the base, not the wallet quote', a
       );
     }
     assert.match(cap.spec.description, /settlement fee/, `${cap.spec.name} names the wallet-rail fee`);
+    // The fee figure needs an owner too. The gateway's constant has moved
+    // before — 0.001 to 0.002 and back — so a description that bakes it drifts
+    // on the next move exactly like the prices did.
+    const feeQuoted = [...cap.spec.description.matchAll(/\$(\d+\.\d{3,4})\s*settlement fee/g)]
+      .map((m) => Number(m[1]));
+    for (const f of feeQuoted) {
+      assert.ok(
+        Math.abs(f - GATEWAY_TRANSACTION_FEE_USD) < 1e-9,
+        `${cap.spec.name} states a $${f} settlement fee; the constant is $${GATEWAY_TRANSACTION_FEE_USD}`
+      );
+    }
   }
 });
 

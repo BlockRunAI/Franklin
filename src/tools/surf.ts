@@ -29,6 +29,7 @@ import {
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, USER_AGENT} from '../config.js';
 import { basePriceForPath, chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
+import { GATEWAY_TRANSACTION_FEE_USD } from '../gateway-models.js';
 import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -297,7 +298,8 @@ function surfPriceBlurb(): string {
   const base = basePriceForPath('/v1/surf/market/ranking');
   return base === null || base <= 0
     ? 'Each call is charged per request; the 402 quote states the exact price.'
-    : `Flat $${base.toFixed(4)} per call, plus a $0.001 settlement fee when paying from a wallet.`;
+    : `Flat $${base.toFixed(4)} per call, plus a $${GATEWAY_TRANSACTION_FEE_USD.toFixed(3)} `
+      + 'settlement fee when paying from a wallet.';
 }
 
 function makeSurfTool(
