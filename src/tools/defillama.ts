@@ -5,11 +5,11 @@
  *
  * Five tools, each filtered + formatted on the way back so we don't dump
  * 5–10 MB of raw DefiLlama JSON into agent context:
- *  - DeFiLlamaProtocols   $0.005/call — top-N protocols by TVL
- *  - DeFiLlamaProtocol    $0.005/call — single protocol detail
- *  - DeFiLlamaChains      $0.005/call — TVL ranked by chain
- *  - DeFiLlamaYields      $0.005/call — yield pools, filtered + ranked
- *  - DeFiLlamaPrice       $0.001/call — token price lookup
+ *  - DeFiLlamaProtocols   $0.0050/call base (+$0.001 on a wallet) — top-N protocols by TVL
+ *  - DeFiLlamaProtocol    $0.0050/call base (+$0.001 on a wallet) — single protocol detail
+ *  - DeFiLlamaChains      $0.0050/call base (+$0.001 on a wallet) — TVL ranked by chain
+ *  - DeFiLlamaYields      $0.0050/call base (+$0.001 on a wallet) — yield pools, filtered + ranked
+ *  - DeFiLlamaPrice       $0.0050/call base (+$0.001 on a wallet) — token price lookup
  *
  * DefiLlama is Apache 2.0 / "free for public and commercial use" — the
  * BlockRun gateway adds metering + (future) caching/reliability layers,
@@ -202,7 +202,7 @@ export const defiLlamaProtocolsCapability: CapabilityHandler = {
     description:
       'Rank DeFi protocols by total value locked (TVL) across all chains, optionally filtered by category, chain, or minimum TVL. ' +
       'Returns the top-N protocols (default 20), each with TVL, 24h/7d change, chain breakdown, and slug. ' +
-      'Uses BlockRun gateway → DefiLlama. $0.005 per call. ' +
+      'Uses BlockRun gateway → DefiLlama. $0.0050 per call base, plus a $0.001 settlement fee when paying from a wallet. ' +
       'Categories include: Lending, Liquid Staking, Bridge, Dexes, CDP, Yield, Yield Aggregator, Derivatives, Stablecoins, Insurance, etc.',
     input_schema: {
       type: 'object',
@@ -286,7 +286,7 @@ export const defiLlamaProtocolCapability: CapabilityHandler = {
       'Detailed TVL + chain breakdown for a single DeFi protocol identified by DefiLlama slug ' +
       '(e.g. "aave", "uniswap", "lido", "jito", "marinade-finance"). ' +
       'Returns TVL across each chain it operates on, recent change, audits, social. ' +
-      '$0.005 per call. To find a slug, run DeFiLlamaProtocols first.',
+      '$0.0050 per call base, plus a $0.001 settlement fee when paying from a wallet. To find a slug, run DeFiLlamaProtocols first.',
     input_schema: {
       type: 'object',
       properties: {
@@ -355,7 +355,7 @@ export const defiLlamaChainsCapability: CapabilityHandler = {
   spec: {
     name: 'DeFiLlamaChains',
     description:
-      'TVL ranking across every chain DefiLlama tracks. Default returns top 20 by TVL. $0.005 per call.',
+      'TVL ranking across every chain DefiLlama tracks. Default returns top 20 by TVL. $0.0050 per call base, plus a $0.001 settlement fee when paying from a wallet.',
     input_schema: {
       type: 'object',
       properties: {
@@ -419,7 +419,7 @@ export const defiLlamaYieldsCapability: CapabilityHandler = {
     name: 'DeFiLlamaYields',
     description:
       'Search DeFi yield pools (lending, LPs, vaults, staking) by symbol/chain/project, ranked by APY. ' +
-      'Returns top-N pools (default 10). $0.005 per call. ' +
+      'Returns top-N pools (default 10). $0.0050 per call base, plus a $0.001 settlement fee when paying from a wallet. ' +
       'Default filters: TVL > $1M (avoid microcaps), APY > 0. Override via params. ' +
       'Use stablecoin_only=true for "where can my USDC earn?" queries.',
     input_schema: {
@@ -515,7 +515,7 @@ export const defiLlamaPriceCapability: CapabilityHandler = {
   spec: {
     name: 'DeFiLlamaPrice',
     description:
-      'Token price lookup via DefiLlama (covers thousands of tokens — anything DEX-listed). $0.001 per call. ' +
+      'Token price lookup via DefiLlama (covers thousands of tokens — anything DEX-listed). $0.0050 per call base, plus a $0.001 settlement fee when paying from a wallet. ' +
       'Coin identifier syntax: "{platform}:{address}" or "coingecko:{slug}". ' +
       'Examples: "coingecko:bitcoin" (BTC USD), "ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" (WETH), ' +
       '"solana:So11111111111111111111111111111111111111112" (SOL/wSOL), ' +

@@ -5,7 +5,7 @@
  * Three tools:
  *  - ExaSearch     — semantic search for URLs ($0.01/call)
  *  - ExaAnswer     — synthesized answer with citations ($0.01/call)
- *  - ExaReadUrls   — batch-fetch clean Markdown from URLs ($0.002/URL)
+ *  - ExaReadUrls   — batch-fetch clean Markdown from URLs ($0.0030/URL)
  *
  * Why these matter for an economic agent: ExaAnswer is Perplexity-in-a-
  * tool — the agent gets a grounded reply with sources, avoiding the
@@ -230,7 +230,7 @@ export const exaSearchCapability: CapabilityHandler = {
   spec: {
     name: 'ExaSearch',
     description:
-      'Neural web search via Exa ($0.01/call). Returns a ranked list of ' +
+      'Neural web search via Exa ($0.0100/call base, +$0.001 settlement fee on a wallet). Returns a ranked list of ' +
       'URLs + titles for a natural-language query. Understands meaning, ' +
       'not just keywords. Optional `category` narrows to github / news / ' +
       '`research paper` / tweet / pdf / company / etc. Prefer this over ' +
@@ -304,7 +304,7 @@ export const exaAnswerCapability: CapabilityHandler = {
     name: 'ExaAnswer',
     description:
       "Ask a factual question, get a synthesized answer with real source " +
-      "citations ($0.01/call). Like Perplexity in a tool — grounded in " +
+      "citations ($0.0100/call base, +$0.001 settlement fee on a wallet). Like Perplexity in a tool — grounded in " +
       "live web content, not LLM memory. Best for 'what is X?', 'how does " +
       "Y work?', 'what's the current state of Z?'. Prefer this over " +
       "chaining ExaSearch + ExaReadUrls + LLM synthesis when the user " +
@@ -367,7 +367,7 @@ export const exaReadUrlsCapability: CapabilityHandler = {
   spec: {
     name: 'ExaReadUrls',
     description:
-      "Batch-fetch clean Markdown content from a list of URLs ($0.002/URL). " +
+      "Batch-fetch clean Markdown content from a list of URLs ($0.0020/URL base, +$0.001 settlement fee on a wallet). " +
       "Up to 100 URLs per call. Much cheaper than chaining 100× WebFetch, " +
       "and returns text already stripped of HTML/boilerplate — ready to " +
       "feed into an LLM context window. Prefer over WebFetch when reading " +

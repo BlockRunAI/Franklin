@@ -374,6 +374,76 @@ test("an upstream's self-reported cost is not what BlockRun charged", () => {
   assert.ok(c.usd > 0);
 });
 
+
+// ─── Prices restated in model-facing tool descriptions ──────────────────
+
+test('a price quoted in a tool description is the base, not the wallet quote', async () => {
+  // These strings are what the AGENT reads to decide whether a call is worth
+  // making, so a stale one changes spending behaviour, not just docs.
+  //
+  // There are TWO real prices per endpoint and one literal cannot serve both:
+  // the API-key rail charges the base, the wallet rail adds a settlement fee,
+  // and the 402 challenge / catalog both quote the wallet figure. Measured
+  // 2026-09-05 via x-blockrun-cost-usd — surf $0.0075 vs $0.0085, rpc $0.0020
+  // vs $0.0030, exa $0.0100 vs $0.0110, defillama $0.0050 vs $0.0060 — exactly
+  // one fee apart every time. The descriptions state the base and name the fee
+  // separately, which is true on either rail.
+  //
+  // Reads the built spec.description rather than the source file, so a comment
+  // recording what a price USED to be does not trip it.
+  catalog.__resetPriceCatalog();
+
+  const rpc = await import('../dist/tools/rpc.js');
+  const llama = await import('../dist/tools/defillama.js');
+  const exa = await import('../dist/tools/exa.js');
+
+  const cases = [
+    [rpc.multiChainRpcCapability, '/v1/rpc/base'],
+    [llama.defiLlamaProtocolsCapability, '/v1/defillama/protocols'],
+    [exa.exaSearchCapability, '/v1/exa/search'],
+    [exa.exaReadUrlsCapability, '/v1/exa/contents'],
+  ].filter(([cap]) => cap && cap.spec);
+  assert.ok(cases.length >= 3, 'found the capabilities to check');
+
+  for (const [cap, probePath] of cases) {
+    const base = catalog.basePriceForPath(probePath);
+    assert.ok(base > 0, `${probePath} should have a base price`);
+    // The fee is named as its own figure, so ignore it when checking the price.
+    const quoted = [...cap.spec.description.matchAll(/\$(\d+\.\d{3,4})/g)]
+      .map((m) => Number(m[1]))
+      .filter((n) => Math.abs(n - 0.001) > 1e-9);
+    for (const q of quoted) {
+      assert.ok(
+        Math.abs(q - base) < 0.0005,
+        `${cap.spec.name} quotes $${q}; the base price for ${probePath} is $${base}`
+      );
+    }
+    assert.match(cap.spec.description, /settlement fee/, `${cap.spec.name} names the wallet-rail fee`);
+  }
+});
+
+test('basePriceForPath is the catalog price less exactly one settlement fee', () => {
+  catalog.__resetPriceCatalog();
+  const wallet = catalog.priceForPath('/v1/surf/market/ranking');
+  const base = catalog.basePriceForPath('/v1/surf/market/ranking');
+  assert.ok(Math.abs((wallet - base) - 0.001) < 1e-9, 'one fee apart');
+  // Free endpoints stay free on both rails rather than going negative.
+  assert.equal(catalog.basePriceForPath('/v1/models'), 0);
+});
+
+test('surf quotes one flat price, computed rather than typed', async () => {
+  catalog.__resetPriceCatalog();
+  const surf = await import('../dist/tools/surf.js');
+  const desc = surf.surfMarketCapability.spec.description;
+
+  // The tier sentence was wrong in both directions at once: 8.5x under on
+  // tier 1, 2.4x over on tier 3.
+  assert.doesNotMatch(desc, /Tier-1/, 'the stale tier sentence is gone from the live description');
+  const base = catalog.basePriceForPath('/v1/surf/market/ranking');
+  assert.match(desc, new RegExp(`\\$${base.toFixed(4)}`), 'states the base price');
+  assert.match(desc, /settlement fee/, 'and names the wallet-rail fee separately');
+});
+
 test('cleanup', () => {
   clean();
   rmSync(TEST_HOME, { recursive: true, force: true });

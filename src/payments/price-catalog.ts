@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BLOCKRUN_DIR, USER_AGENT } from '../config.js';
 import { logger } from '../logger.js';
+import { GATEWAY_TRANSACTION_FEE_USD } from '../gateway-models.js';
 
 /**
  * Always the Base origin — because it is the only host serving the SHAPE this
@@ -351,6 +352,36 @@ export function priceForPath(apiPath: string): number | null {
     if (!best || score > best.score) best = { usd: entry.usd, score };
   }
   return best ? best.usd : null;
+}
+
+
+/**
+ * The base price for an endpoint — what the API-key rail charges — or null
+ * when the endpoint is not catalogued.
+ *
+ * There are two real prices per endpoint and one literal cannot serve both.
+ * The catalog and the 402 challenge both state the WALLET price, which is the
+ * base plus a settlement fee. The key rail charges the base and no fee, which
+ * is why it issues no 402 at all.
+ *
+ * Measured 2026-09-05 via x-blockrun-cost-usd against the unsigned 402:
+ *
+ *   endpoint    402 / catalog    key rail charges
+ *   surf        $0.0085          $0.0075
+ *   rpc         $0.0030          $0.0020
+ *   exa search  $0.0110          $0.0100
+ *   defillama   $0.0060          $0.0050
+ *
+ * Exactly one fee apart, every time. Quoting the 402 figure to a key-mode user
+ * overstates every call by $0.001 — small in absolute terms and 50% on a
+ * $0.002 RPC call.
+ */
+export function basePriceForPath(apiPath: string): number | null {
+  const wallet = priceForPath(apiPath);
+  if (wallet === null) return null;
+  if (wallet <= 0) return wallet; // free stays free on both rails
+  const base = wallet - GATEWAY_TRANSACTION_FEE_USD;
+  return base > 0 ? +base.toFixed(6) : wallet;
 }
 
 /**

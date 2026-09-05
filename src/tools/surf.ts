@@ -28,7 +28,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, USER_AGENT} from '../config.js';
-import { chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
+import { basePriceForPath, chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -83,7 +83,7 @@ const CHAIN_ENDPOINTS: SurfEndpoint[] = [
   { path: 'onchain/tx', method: 'GET', required: ['hash', 'chain'], desc: 'Transaction details by hash.' },
   { path: 'onchain/schema', method: 'GET', required: [], desc: 'Schema introspection for the SQL tables.' },
   { path: 'onchain/query', method: 'POST', required: [], desc: 'Structured chain query (POST body).' },
-  { path: 'onchain/sql', method: 'POST', required: [], desc: 'Raw SQL against 80+ indexed chain tables (POST body, Tier-3 $0.02).' },
+  { path: 'onchain/sql', method: 'POST', required: [], desc: 'Raw SQL against 80+ indexed chain tables (POST body).' },
   { path: 'token/tokenomics', method: 'GET', required: [], desc: 'Token supply / unlock / distribution.' },
   { path: 'token/dex-trades', method: 'GET', required: ['address'], desc: 'Recent DEX trades for a token.' },
   { path: 'token/holders', method: 'GET', required: ['address', 'chain'], desc: 'Top holders / concentration.' },
@@ -273,6 +273,33 @@ async function callSurf(
 
 // ── Tool specs ───────────────────────────────────────────────────────────────
 
+/**
+ * Price sentence for the tool description, read from the catalog rather than
+ * typed in.
+ *
+ * This used to read "Tier-1 $0.001, Tier-2 $0.005, Tier-3 $0.02", which the
+ * payment layer had long since replaced with one flat rate. Measured against
+ * the authoritative 402 on 2026-09-05: every Surf endpoint quotes $0.0085, so
+ * the description understated tier-1 by 8.5x and overstated tier-3 by 2.4x.
+ *
+ * That matters more than an inaccurate comment, because the agent reads this
+ * string to decide whether a call is worth making — it was being told the
+ * cheapest Surf call costs about a tenth of what it does. A hand-typed price
+ * is a published number with no owner; sourcing it from the catalog gives it
+ * one, and the guard test keeps literals from creeping back in.
+ *
+ * It states the BASE price and names the fee separately because there are two
+ * real prices per endpoint: the key rail charges the base, the wallet rail adds
+ * a settlement fee. One number cannot be right for both, and this phrasing is
+ * true on either.
+ */
+function surfPriceBlurb(): string {
+  const base = basePriceForPath('/v1/surf/market/ranking');
+  return base === null || base <= 0
+    ? 'Each call is charged per request; the 402 quote states the exact price.'
+    : `Flat $${base.toFixed(4)} per call, plus a $0.001 settlement fee when paying from a wallet.`;
+}
+
 function makeSurfTool(
   name: string,
   blurb: string,
@@ -285,7 +312,7 @@ function makeSurfTool(
       name,
       description:
         `${blurb} Picks an endpoint from a fixed list and signs the x402 USDC payment from the wallet automatically — ` +
-        `you do not build paths or handle payment. Tier-1 $0.001, Tier-2 $0.005, Tier-3 $0.02.\n\nEndpoints:\n${endpointList}`,
+        `you do not build paths or handle payment. ${surfPriceBlurb()}\n\nEndpoints:\n${endpointList}`,
       input_schema: {
         type: 'object',
         properties: {
