@@ -3183,6 +3183,34 @@ test('complete: bare roleplayed-JSON tool call is held from UI but kept for scav
   assert.equal(text, json, 'roleplayed JSON must be kept in content for scavenge');
 });
 
+test('complete: unsigned native thinking is streamed but not saved for replay', async () => {
+  const { ModelClient } = await import('../dist/agent/llm.js');
+  const client = new ModelClient({ apiUrl: 'http://test.invalid', chain: 'base' });
+  client.streamCompletion = async function* () {
+    yield { kind: 'message_start', payload: { message: { usage: { input_tokens: 3, output_tokens: 0 } } } };
+    yield { kind: 'content_block_start', payload: { content_block: { type: 'thinking' } } };
+    yield { kind: 'content_block_delta', payload: { delta: { type: 'thinking_delta', thinking: 'private plan' } } };
+    yield { kind: 'content_block_stop', payload: {} };
+    yield { kind: 'content_block_start', payload: { content_block: { type: 'text' } } };
+    yield { kind: 'content_block_delta', payload: { delta: { type: 'text_delta', text: 'done' } } };
+    yield { kind: 'content_block_stop', payload: {} };
+    yield { kind: 'message_delta', payload: { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } } };
+  };
+
+  const streamedThinking = [];
+  const res = await client.complete(
+    { model: 'anthropic/claude-sonnet-4.6', messages: [] },
+    undefined,
+    undefined,
+    (d) => { if (d.type === 'thinking') streamedThinking.push(d.text); },
+  );
+
+  assert.deepEqual(streamedThinking, ['private plan'], 'thinking still streams to the UI');
+  assert.equal(res.content.some((p) => p.type === 'thinking'), false,
+    'unsigned thinking must not be persisted into replayable history');
+  assert.equal(res.content.filter((p) => p.type === 'text').map((p) => p.text).join(''), 'done');
+});
+
 // ─── payment_rejected category: signed payment verified-and-rejected ──
 //
 // Verified 2026-05-04 in a screenshot: ExaSearch failed with
@@ -6785,6 +6813,50 @@ test('budgetToolResults: bare-string content path still truncates as before', as
   const tr = out[0].content[0];
   assert.equal(typeof tr.content, 'string', 'string-content path should stay a string');
   assert.match(tr.content, /Output truncated/);
+});
+
+test('stripOldThinking removes unsigned thinking even on recent turns', async () => {
+  const { stripOldThinking } = await import('../dist/agent/optimize.js');
+  const history = [
+    { role: 'user', content: 'start' },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'old signed thinking', signature: 'sig-old' },
+        { type: 'text', text: 'old answer' },
+      ],
+    },
+    { role: 'user', content: 'continue' },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'recent unsigned thinking' },
+        { type: 'text', text: 'recent answer' },
+      ],
+    },
+    { role: 'user', content: 'again' },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'recent signed thinking', signature: 'sig-recent' },
+        { type: 'text', text: 'final answer' },
+      ],
+    },
+  ];
+
+  const out = stripOldThinking(history);
+  assert.notEqual(out, history, 'history should be rewritten');
+  assert.deepEqual(
+    out
+      .filter((msg) => msg.role === 'assistant')
+      .flatMap((msg) => Array.isArray(msg.content) ? msg.content.filter((p) => p.type === 'thinking') : []),
+    [{ type: 'thinking', thinking: 'recent signed thinking', signature: 'sig-recent' }],
+    'only signed thinking from the recent keep window may survive',
+  );
+  assert.ok(
+    JSON.stringify(out).includes('recent answer') && JSON.stringify(out).includes('final answer'),
+    'assistant text should survive thinking cleanup',
+  );
 });
 
 // ─── Regression: sibling sites in reduce.ts must not destroy images ─────────

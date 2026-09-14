@@ -1206,11 +1206,18 @@ export class ModelClient {
             currentToolName = '';
             currentToolInput = '';
           } else if (currentThinking) {
-            collected.push({
-              type: 'thinking',
-              thinking: currentThinking,
-              ...(currentThinkingSignature ? { signature: currentThinkingSignature } : {}),
-            } as ThinkingSegment);
+            if (currentThinkingSignature) {
+              collected.push({
+                type: 'thinking',
+                thinking: currentThinking,
+                signature: currentThinkingSignature,
+              } as ThinkingSegment);
+            } else if (this.debug) {
+              console.error(
+                `[franklin] Dropped unsigned native thinking block from ${request.model}; ` +
+                'provider requires thinking.signature on replay.',
+              );
+            }
             currentThinking = '';
             currentThinkingSignature = '';
           } else {

@@ -3,7 +3,7 @@
  *
  * Five layers of optimization to minimize token usage:
  * 1. Tool result size budgeting — cap large outputs, keep preview
- * 2. Thinking block stripping — remove old thinking from history
+ * 2. Thinking block stripping — remove old/invalid thinking from history
  * 3. Time-based cleanup — clear stale tool results after idle gap
  * 4. Adaptive max_tokens — start low (8K), escalate on hit
  * 5. Pre-compact stripping — remove images/docs before summarization
@@ -228,9 +228,14 @@ export function budgetToolResults(history: Dialogue[]): Dialogue[] {
 // ─── 2. Thinking Block Stripping ───────────────────────────────────────────
 
 /**
- * Remove thinking blocks from older assistant messages.
- * Keeps thinking only in the most recent N assistant messages (default: last 2 turns).
- * Older thinking blocks are large and not needed after the decision is made.
+ * Remove thinking blocks from older assistant messages and any unsigned native
+ * thinking blocks. Anthropic-compatible APIs require `thinking.signature` when
+ * a prior assistant thinking block is replayed; an unsigned block poisons the
+ * next request with a 400, so it must never survive into outbound history.
+ *
+ * Keeps only signed thinking in the most recent N assistant messages (default:
+ * last 2 turns). Older thinking blocks are large and not needed after the
+ * decision is made.
  */
 const KEEP_THINKING_TURNS = 2;
 
@@ -253,11 +258,13 @@ export function stripOldThinking(history: Dialogue[]): Dialogue[] {
   for (let i = 0; i < history.length; i++) {
     const msg = history[i];
 
-    // Strip thinking from assistant messages NOT in the keep set
-    if (msg.role === 'assistant' && !keepSet.has(i) && Array.isArray(msg.content)) {
-      const filtered = (msg.content as ContentPart[]).filter(
-        (part) => part.type !== 'thinking'
-      );
+    // Strip old thinking, plus unsigned thinking even on recent turns.
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      const filtered = (msg.content as ContentPart[]).filter((part) => {
+        if (part.type !== 'thinking') return true;
+        const signature = (part as { signature?: unknown }).signature;
+        return keepSet.has(i) && typeof signature === 'string' && signature.trim().length > 0;
+      });
 
       if (filtered.length < (msg.content as ContentPart[]).length) {
         modified = true;

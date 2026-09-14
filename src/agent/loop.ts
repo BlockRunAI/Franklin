@@ -1620,6 +1620,7 @@ export async function interactiveSession(
       let callToolDefs = buildCallToolDefs();
       let callMaxTokens = maxTokens;
       let callSystemPrompt = systemPrompt;
+      const toolCapFinalRound = toolCapWarned && turnToolCalls >= MAX_TOOL_CALLS_PER_TURN;
       if (planActive && loopCount === 1) {
         callToolDefs = [];  // No tools during planning
         callMaxTokens = 2048;  // Short plan output
@@ -1653,6 +1654,14 @@ export async function interactiveSession(
         callSystemPrompt = systemPrompt +
           '\n\nThe image is already included above. Answer the question about it ' +
           'directly. Do not call any tools.';
+      }
+
+      if (toolCapFinalRound && callToolDefs.length > 0) {
+        callToolDefs = [];
+        callSystemPrompt = callSystemPrompt + '\n\n# Tool budget exhausted\n' +
+          `You already used ${turnToolCalls} tool calls this turn and received a system stop signal. ` +
+          'No more tools are available. Based only on the results already in the conversation, ' +
+          'give the user a concise status/update now. If the work is incomplete, say exactly what remains.';
       }
 
       const onFinalTurn = config.forceAnswerOnFinalTurn && loopCount === maxTurns;
@@ -1701,7 +1710,7 @@ export async function interactiveSession(
       // Consume any pending forced tool_choice from the previous round's
       // grounding-retry decision. `tool_choice` is dropped automatically in
       // llm.ts if `tools` ended up empty, so it's safe to attach here.
-      const callToolChoice = forceToolChoiceNextRound;
+      const callToolChoice = toolCapFinalRound ? null : forceToolChoiceNextRound;
       forceToolChoiceNextRound = null;
 
       // Wall-clock start of the model call. Used by the recordUsage call
@@ -1766,17 +1775,21 @@ export async function interactiveSession(
             .filter((p): p is TextSegment => p.type === 'text')
             .map(p => p.text)
             .join('\n');
-          const repaired = callRepair.process(
-            declaredCalls,
-            reasoningText || null,
-            contentText || null,
-          );
-          if (repaired.report.scavenged > 0) {
-            const novelCalls = repaired.calls.slice(declaredCalls.length);
-            responseParts = [...responseParts, ...novelCalls];
-            logger.warn(
-              `[franklin] scavenged ${repaired.report.scavenged} leaked tool call(s) from ${config.model}: ${repaired.report.notes.join('; ')}`,
+          if (callToolDefs.length > 0) {
+            const repaired = callRepair.process(
+              declaredCalls,
+              reasoningText || null,
+              contentText || null,
             );
+            if (repaired.report.scavenged > 0) {
+              const novelCalls = repaired.calls.slice(declaredCalls.length);
+              responseParts = [...responseParts, ...novelCalls];
+              logger.warn(
+                `[franklin] scavenged ${repaired.report.scavenged} leaked tool call(s) from ${config.model}: ${repaired.report.notes.join('; ')}`,
+              );
+            }
+          } else if (declaredCalls.length > 0) {
+            logger.warn(`[franklin] Dropping ${declaredCalls.length} tool call(s) because tools are disabled for this round`);
           }
 
           // Strip pure roleplayed-JSON tool-call text parts. The LLM client
@@ -1789,6 +1802,9 @@ export async function interactiveSession(
           responseParts = responseParts.filter(
             p => !(p.type === 'text' && isRoleplayedJsonToolCallText((p as TextSegment).text)),
           );
+          if (callToolDefs.length === 0) {
+            responseParts = responseParts.filter(p => p.type !== 'tool_use');
+          }
         }
 
         // ── Empty response recovery ──
@@ -1797,6 +1813,18 @@ export async function interactiveSession(
         const hasText = responseParts.some(p => p.type === 'text' && (p as any).text?.trim());
         const hasTools = responseParts.some(p => p.type === 'tool_use');
         const hasThinking = responseParts.some(p => p.type === 'thinking');
+        if (toolCapFinalRound && !hasText) {
+          const spendNote = turnCostUsd > 0
+            ? `${turnToolCalls} tool calls, $${turnCostUsd.toFixed(4)} spent this turn`
+            : `${turnToolCalls} tool calls this turn`;
+          logger.error(`[franklin] Tool cap final-answer round produced no text after tools were disabled — ending turn`);
+          onEvent({
+            kind: 'text_delta',
+            text: `\n\n⚠️ Tool loop stopped: ${spendNote}. Franklin disabled tools after the cap warning, but the model did not produce a final status. Try rephrasing or use \`/model\` to switch.\n`,
+          });
+          onEvent({ kind: 'turn_done', reason: 'cap_exceeded' });
+          break;
+        }
         if (!hasText && !hasTools && !hasThinking) {
           // Free-only recovery chain — a free/empty-response session must NEVER
           // fall back to a paid model (would silently charge the wallet). Both
