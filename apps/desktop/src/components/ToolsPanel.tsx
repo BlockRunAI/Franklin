@@ -36,9 +36,9 @@ const GROUPS: Group[] = [
     cards: [
       {
         icon: <MessageSquare />, name: "Chat", price: "Free models + pay-per-message",
-        desc: "41+ frontier models — Claude, GPT, Gemini, DeepSeek and more.",
+        desc: "80+ frontier models — Claude, GPT, Gemini, DeepSeek and more.",
         poweredBy: "BlockRun Router",
-        detail: "One endpoint, 41+ frontier models. The router picks the right model per request and you pay per message in USDC — free models cost nothing.",
+        detail: "One endpoint, 80+ frontier models. The router picks the right model per request and you pay per message in USDC — free models cost nothing.",
         examples: ["Explain x402 like I'm five", "Draft a launch tweet for Franklin"],
         action: { mode: "chat" },
       },

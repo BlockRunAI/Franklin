@@ -16,7 +16,7 @@ NC='\033[0m'
 
 echo ""
 echo -e "${BOLD}franklin — the AI agent with a wallet${NC}"
-echo -e "Spends USDC autonomously across 55+ models. Pay per outcome."
+echo -e "Spends USDC autonomously across 82 models. Pay per outcome."
 echo ""
 
 # ======================================================================
