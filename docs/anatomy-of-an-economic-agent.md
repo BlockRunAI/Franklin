@@ -326,7 +326,7 @@ seamlessly.
                              │ signed USDC (HTTP 402)
                              ▼
                       BlockRun Gateway
-                 <!-- br:models.chatVisible@live -->79<!-- /br:models.chatVisible@live --> models / paid APIs
+                 <!-- br:models.chatVisible@live -->82<!-- /br:models.chatVisible@live --> models / paid APIs
                              │
                              ▼
                        User Wallet
