@@ -1,6 +1,6 @@
 /** Shared model facts and policy; payment credentials stay in Franklin. */
 import { createCatalogClient, type CatalogState, type Network } from '@blockrun/model-catalog';
-import { API_URLS, loadChain } from './config.js';
+import { API_URLS, loadChain, USER_AGENT } from './config.js';
 import { gatewayHeaders, resolvePayMode } from './payments/auth-mode.js';
 
 const clients = new Map<string, ReturnType<typeof createCatalogClient>>();
@@ -23,7 +23,7 @@ function activeClient() {
   const identity = JSON.stringify([network, gatewayUrl, catalogUrl, mode.kind === 'key' ? mode.key : '']);
   let client = clients.get(identity);
   if (!client) {
-    const headers = gatewayHeaders(mode);
+    const headers = { ...gatewayHeaders(mode), 'User-Agent': USER_AGENT };
     client = createCatalogClient({
       network, gatewayUrl, catalogUrl,
       fetch: (url, init) => globalThis.fetch(url, {

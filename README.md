@@ -715,25 +715,7 @@ For the recommended live validation order and failure triage, see [docs/live-e2e
 
 ---
 
-## License
-
-Apache-2.0. See [LICENSE](LICENSE).
-
----
-
-<div align="center">
-
-**The AI agent with a wallet.**<br>
-<sub>YOPO — You Only Pay Outcome. Your wallet. Your budget. Your results.</sub>
-
-<br>
-
-<sub>From the team at <a href="https://blockrun.ai">BlockRun</a>.</sub>
-
-</div>
-
-
-### Shared model catalog
+## Shared model catalog
 
 Franklin uses [BlockRun Model Core](https://github.com/BlockRunAI/model-catalog)
 for model metadata, picker policy and price estimates. The runtime dependency
@@ -751,3 +733,20 @@ Existing free shortcuts remain free. Historical explicit IDs and cost records
 remain usable; rolling aliases may select newer models at different prices.
 Payment signing and settlement remain in Franklin and its payment SDK. Auto
 routing's candidate policy remains separate from the shared catalog pilot.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
+
+---
+
+<div align="center">
+
+**The AI agent with a wallet.**<br>
+<sub>YOPO — You Only Pay Outcome. Your wallet. Your budget. Your results.</sub>
+
+<br>
+
+<sub>From the team at <a href="https://blockrun.ai">BlockRun</a>.</sub>
+
+</div>

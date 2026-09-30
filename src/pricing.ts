@@ -189,7 +189,7 @@ export const OPUS_PRICING = { input: 5, output: 25 };
 function updatePrices(state: ReturnType<typeof getModelCatalog>): void {
   for (const key of Object.keys(MODEL_PRICING)) delete MODEL_PRICING[key];
   Object.assign(MODEL_PRICING, LEGACY_PRICING, state.pricing);
-  const opus = MODEL_PRICING[state.shortcuts.opus];
+  const opus = MODEL_PRICING['anthropic/claude-opus-5'];
   if (opus) Object.assign(OPUS_PRICING, opus);
 }
 updatePrices(getModelCatalog());

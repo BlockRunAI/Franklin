@@ -363,23 +363,23 @@ export const PICKER_MODELS_FLAT: ModelEntry[] = [];
 
 function updateCatalogView(state: ReturnType<typeof getModelCatalog>): void {
   for (const key of Object.keys(MODEL_SHORTCUTS)) delete MODEL_SHORTCUTS[key];
-  Object.assign(MODEL_SHORTCUTS, LEGACY_SHORTCUTS, state.shortcuts);
-  // Existing free shortcuts must never become paid when products share policy.
-  for (const [alias, id] of Object.entries(LEGACY_SHORTCUTS)) {
-    if (id === FREE_DEFAULT_MODEL) MODEL_SHORTCUTS[alias] = FREE_DEFAULT_MODEL;
-  }
-  // Preserve Franklin's established explicit pins and retired routing profiles.
-  for (const alias of ['eco', 'premium', 'k2.5', 'k2.6', 'k2.7', 'kimi-k2.5', 'nano', 'mini', 'nano-30b', 'deepseek-v4-pro', 'v4-pro']) {
-    MODEL_SHORTCUTS[alias] = LEGACY_SHORTCUTS[alias];
-  }
+  // Franklin's own aliases win over the shared policy: a remote catalog edit may
+  // add new shortcuts, but never retarget one a user already relies on (that
+  // would change which model runs, and what it costs, without a release). The
+  // same rule keeps every existing free shortcut free.
+  Object.assign(MODEL_SHORTCUTS, state.shortcuts, LEGACY_SHORTCUTS);
   const categories: ModelCategory[] = [{
     category: '🧠 Smart routing (auto-pick)',
     models: [{ id: 'blockrun/auto', shortcut: 'auto', label: 'Auto', price: 'routed' }],
-  }, ...state.groups.map(group => ({
+  }, ...state.groups.filter(group => group.id !== 'other').map(group => ({
     category: group.title,
     models: group.models.map(model => ({
       id: model.id, label: model.name,
-      shortcut: Object.entries(MODEL_SHORTCUTS).find(([key, target]) => target === model.id && !key.includes('/'))?.[0] ?? model.id,
+      // Shortest alias reads best in the picker column (`opus`, not `opus-5`).
+      shortcut: Object.entries(MODEL_SHORTCUTS)
+        .filter(([key, target]) => target === model.id && !key.includes('/'))
+        .map(([key]) => key)
+        .reduce<string | undefined>((best, key) => !best || key.length < best.length ? key : best, undefined) ?? model.id,
       price: formatPrice(model as GatewayModel),
     })),
   }))];

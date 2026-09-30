@@ -30,8 +30,9 @@ test('Franklin refreshes central catalog, picker, aliases and pricing without a 
     let state = await catalog.refreshModelCatalog({ force: true });
     assert.equal(state.source, 'live');
     assert.equal(state.lastError, undefined);
-    assert.equal(list.length, rows.filter(m => m.categories.includes('chat')).length + 1);
-    assert.ok(list.some(m => m.id === 'openai/gpt-6-astra'));
+    assert.equal(list.length, state.groups.filter(g => g.id !== 'other').flatMap(g => g.models).length + 1);
+    assert.ok(!list.some(m => m.id === 'openai/gpt-6-astra'), 'uncurated models stay behind +more');
+    assert.equal(picker.resolveModel('openai/gpt-6-astra'), 'openai/gpt-6-astra');
     assert.ok(!list.some(m => m.id === 'openai/o3'), 'Solana category overlay must apply');
     assert.equal(picker.resolveModel('kimi'), 'moonshot/kimi-k3');
 
@@ -44,7 +45,11 @@ test('Franklin refreshes central catalog, picker, aliases and pricing without a 
       bundle.catalog.catalog_version = bundle.picker_policy.catalog_version = bundle.router_policy.catalog_version = version;
     };
     bump('2026.09.29.2');
-    bundle.picker_policy.views.default_chat.shortcuts.future = id;
+    const view = bundle.picker_policy.views.default_chat;
+    view.shortcuts.future = id;
+    // Curation is policy data too: promoting the model into a group reaches the picker live.
+    view.model_ids.push(id);
+    view.groups[0].model_ids.push(id);
     state = await catalog.refreshModelCatalog({ force: true });
     assert.equal(state.lastError, undefined);
     assert.equal(state.version, '2026.09.29.2');
@@ -65,7 +70,9 @@ test('Franklin refreshes central catalog, picker, aliases and pricing without a 
     broken = false;
     rows = rows.filter(m => m.id !== id);
     bundle.catalog.models = bundle.catalog.models.filter(m => m.id !== id);
-    delete bundle.picker_policy.views.default_chat.shortcuts.future;
+    delete view.shortcuts.future;
+    view.model_ids = view.model_ids.filter(x => x !== id);
+    view.groups[0].model_ids = view.groups[0].model_ids.filter(x => x !== id);
     bump('2026.09.29.3');
     state = await catalog.refreshModelCatalog({ force: true });
     assert.equal(state.lastError, undefined);
@@ -127,9 +134,9 @@ test('catalog isolates Base, Solana and API accounts and keeps credentials off p
     releaseBase();
     assert.equal((await basePending).models[0].id, 'test/base-only');
     assert.equal(catalog.getModelCatalog().models[0].id, 'test/solana-only');
-    const { PICKER_MODELS_FLAT } = await import('../dist/ui/model-picker.js');
-    assert.ok(PICKER_MODELS_FLAT.some(row => row.id === 'test/solana-only'));
-    assert.ok(!PICKER_MODELS_FLAT.some(row => row.id === 'test/base-only'));
+    const { MODEL_SHORTCUTS } = await import('../dist/ui/model-picker.js');
+    assert.equal(MODEL_SHORTCUTS['test/solana-only'], 'test/solana-only');
+    assert.equal(MODEL_SHORTCUTS['test/base-only'], undefined);
 
     for (const suffix of ['A', 'B']) {
       process.env.BLOCKRUN_API_KEY = `brk_test_${'x'.repeat(24)}${suffix}`;

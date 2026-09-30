@@ -130,6 +130,10 @@ export function warmGatewayModelsCache(): void {
 
 async function doFetch(): Promise<GatewayModel[]> {
   const state = await refreshModelCatalog();
+  // Bundled rows are not gateway evidence. Surface the failure so callers keep
+  // their existing fallbacks (stale cache, static picker) instead of treating
+  // the packaged snapshot as a live catalog for five minutes.
+  if (state.source !== 'live') throw new Error(state.lastError ?? 'Gateway model catalog unavailable');
   return state.models as GatewayModel[];
 }
 

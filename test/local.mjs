@@ -404,9 +404,9 @@ test('proxy server handles OPTIONS and local model switching without backend cal
     });
     assert.equal(switchRes.status, 200, `Expected switch response 200, got ${switchRes.status}`);
     const payload = await switchRes.json();
-    assert.equal(payload.model, 'anthropic/claude-sonnet-5.5');
+    assert.equal(payload.model, 'anthropic/claude-sonnet-5');
     assert.ok(
-      payload.content?.[0]?.text?.includes('Switched to **anthropic/claude-sonnet-5.5**'),
+      payload.content?.[0]?.text?.includes('Switched to **anthropic/claude-sonnet-5**'),
       `Unexpected switch payload: ${JSON.stringify(payload)}`
     );
 
@@ -7347,16 +7347,31 @@ test('proxy max-token cap uses the same table as the agent loop', async () => {
 
 // ─── picker trim (v3.9.3) ─────────────────────────────────────────────────
 
-test('catalog picker contains all available chat models plus Auto', async () => {
+test('catalog picker shows Auto plus curated groups; uncurated models stay behind +more', async () => {
   const { PICKER_MODELS_FLAT } = await import('../dist/ui/model-picker.js');
   const { getModelCatalog } = await import('../dist/model-catalog.js');
-  const ids = getModelCatalog().models.filter(m => m.categories.includes('chat')).map(m => m.id);
-  assert.deepEqual(PICKER_MODELS_FLAT.map(m => m.id).sort(), ['blockrun/auto', ...ids].sort());
+  const { groups } = getModelCatalog();
+  const curated = groups.filter(g => g.id !== 'other').flatMap(g => g.models.map(m => m.id));
+  assert.deepEqual(PICKER_MODELS_FLAT.map(m => m.id), ['blockrun/auto', ...curated]);
+  const uncurated = groups.find(g => g.id === 'other')?.models ?? [];
+  for (const m of uncurated) assert.ok(!PICKER_MODELS_FLAT.some(row => row.id === m.id), `${m.id} belongs behind +more`);
+});
+
+test('shared policy may add shortcuts but never retargets or un-frees a Franklin alias', async () => {
+  const { MODEL_SHORTCUTS, resolveModel } = await import('../dist/ui/model-picker.js');
+  const { getModelCatalog } = await import('../dist/model-catalog.js');
+  const { FREE_DEFAULT_MODEL } = await import('../dist/free-models.js');
+  const remote = getModelCatalog().shortcuts;
+  assert.equal(remote.opus, 'anthropic/claude-opus-5.5', 'fixture: remote policy retargets opus');
+  assert.equal(resolveModel('opus'), 'anthropic/claude-opus-5');
+  assert.equal(resolveModel('free'), FREE_DEFAULT_MODEL);
+  const added = Object.keys(remote).find(k => !k.includes('/') && MODEL_SHORTCUTS[k] === remote[k]);
+  assert.ok(added, 'at least one remote-only alias is available');
 });
 
 test('picker trim: shortcuts for hidden models still resolve (muscle-memory preserved)', async () => {
   const { resolveModel } = await import('../dist/ui/model-picker.js');
-  assert.equal(resolveModel('claude'), 'anthropic/claude-sonnet-5.5');
+  assert.equal(resolveModel('claude'), 'anthropic/claude-opus-5');
   // Opus 4.8 left the visible picker when Opus 5 superseded it at the same
   // price — the explicit pin must keep resolving.
   assert.equal(resolveModel('opus-4.8'), 'anthropic/claude-opus-4.8');
@@ -7368,7 +7383,7 @@ test('picker trim: shortcuts for hidden models still resolve (muscle-memory pres
   assert.equal(resolveModel('nano'), 'openai/gpt-5-nano');
   // grok promoted to the public flagship grok-4.5 (2026-07-14) — same
   // flagship-promotion pattern as kimi → k2.7. Explicit pins still resolve.
-  assert.equal(resolveModel('grok'), 'xai/grok-4.7');
+  assert.equal(resolveModel('grok'), 'xai/grok-4.5');
   assert.equal(resolveModel('grok-4.3'), 'xai/grok-4.3');
   // grok-3 / grok-4-0709 / grok-4-1-fast are hidden from /v1/models but
   // still served (probed 2026-08-29) — explicit pins resolve to the real ids.
@@ -11918,7 +11933,7 @@ test('catalog sync 2026-08-29: GLM-5.3 Flash is priced, sized, vision-tagged and
   assert.equal(resolveModel('glm-5.3-flash'), 'zai/glm-5.3-flash');
   const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
   assert.ok(ids.includes('zai/glm-5.3-flash'), 'GLM-5.3 Flash earns a budget row');
-  assert.ok(ids.includes('google/gemini-2.5-flash'), 'All available chat models remain discoverable');
+  assert.ok(!ids.includes('google/gemini-2.5-flash'), 'Gemini 2.5 Flash gave up its row (shortcut stays)');
   assert.equal(resolveModel('gemini-2.5-flash'), 'google/gemini-2.5-flash');
 });
 

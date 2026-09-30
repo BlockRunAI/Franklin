@@ -98,7 +98,9 @@ export async function startCommand(options: StartOptions) {
       chain = sessMeta.chain;
     }
   }
-  await refreshModelCatalog({ network: chain });
+  // Warm in the background: bundled data already covers startup, and the picker
+  // and pricing tables update in place when the refresh lands.
+  refreshModelCatalog({ network: chain }).catch(() => {});
   const apiUrl = gatewayBase();
   const config = loadConfig();
 
