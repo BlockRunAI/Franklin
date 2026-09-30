@@ -1,3 +1,4 @@
+process.env.FRANKLIN_CATALOG_OFFLINE = '1';
 /**
  * Deterministic local tests (no live model dependency).
  * These should run fast and reliably in CI/local environments.
@@ -403,9 +404,9 @@ test('proxy server handles OPTIONS and local model switching without backend cal
     });
     assert.equal(switchRes.status, 200, `Expected switch response 200, got ${switchRes.status}`);
     const payload = await switchRes.json();
-    assert.equal(payload.model, 'anthropic/claude-sonnet-5');
+    assert.equal(payload.model, 'anthropic/claude-sonnet-5.5');
     assert.ok(
-      payload.content?.[0]?.text?.includes('Switched to **anthropic/claude-sonnet-5**'),
+      payload.content?.[0]?.text?.includes('Switched to **anthropic/claude-sonnet-5.5**'),
       `Unexpected switch payload: ${JSON.stringify(payload)}`
     );
 
@@ -6005,7 +6006,8 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
 
   const freeCategory = PICKER_CATEGORIES.find((category) => /Free/.test(category.category));
   assert.ok(freeCategory, 'Expected a free model picker category');
-  assert.ok(freeCategory.models.length >= 2, `Expected agent-tested free model catalog, got ${freeCategory.models.length}`);
+  const { getModelCatalog } = await import('../dist/model-catalog.js');
+  assert.equal(freeCategory.models.length, getModelCatalog().models.filter(m => m.billing_mode === 'free' && m.categories.includes('chat')).length);
 
   for (const entry of freeCategory.models) {
     assert.equal(entry.price, 'FREE', `${entry.id} must render as FREE in the picker`);
@@ -7345,24 +7347,16 @@ test('proxy max-token cap uses the same table as the agent loop', async () => {
 
 // ─── picker trim (v3.9.3) ─────────────────────────────────────────────────
 
-test('picker trim: hidden entries are gone from the visible list', async () => {
-  const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
-  const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
-  // Premium frontier — superseded / awkward middle / niche-premium
-  assert.ok(!ids.includes('anthropic/claude-opus-4.6'), 'Opus 4.6 should be hidden (Opus 4.7 strictly better)');
-  assert.ok(!ids.includes('openai/gpt-5.4'), 'GPT-5.4 should be hidden (5.5 is flagship, 5.3 Codex covers reasoning)');
-  assert.ok(!ids.includes('openai/gpt-5.4-pro'), 'GPT-5.4 Pro should be hidden (niche $30/$180)');
-  assert.ok(!ids.includes('xai/grok-3'), 'Grok 3 should be hidden (Grok 4 + Grok-fast cover the use case)');
-  // Reasoning — superseded
-  assert.ok(!ids.includes('openai/o1'), 'O1 should be hidden (O3 strictly replaces)');
-  assert.ok(!ids.includes('openai/o4-mini'), 'O4 Mini should be hidden (overlaps with O3 + Grok-fast)');
-  // Budget — overlapping with sibling
-  assert.ok(!ids.includes('openai/gpt-5-nano'), 'GPT-5 Nano should be hidden (Mini covers budget end, DeepSeek covers cheaper)');
+test('catalog picker contains all available chat models plus Auto', async () => {
+  const { PICKER_MODELS_FLAT } = await import('../dist/ui/model-picker.js');
+  const { getModelCatalog } = await import('../dist/model-catalog.js');
+  const ids = getModelCatalog().models.filter(m => m.categories.includes('chat')).map(m => m.id);
+  assert.deepEqual(PICKER_MODELS_FLAT.map(m => m.id).sort(), ['blockrun/auto', ...ids].sort());
 });
 
 test('picker trim: shortcuts for hidden models still resolve (muscle-memory preserved)', async () => {
   const { resolveModel } = await import('../dist/ui/model-picker.js');
-  assert.equal(resolveModel('claude'), 'anthropic/claude-opus-5');
+  assert.equal(resolveModel('claude'), 'anthropic/claude-sonnet-5.5');
   // Opus 4.8 left the visible picker when Opus 5 superseded it at the same
   // price — the explicit pin must keep resolving.
   assert.equal(resolveModel('opus-4.8'), 'anthropic/claude-opus-4.8');
@@ -7374,7 +7368,7 @@ test('picker trim: shortcuts for hidden models still resolve (muscle-memory pres
   assert.equal(resolveModel('nano'), 'openai/gpt-5-nano');
   // grok promoted to the public flagship grok-4.5 (2026-07-14) — same
   // flagship-promotion pattern as kimi → k2.7. Explicit pins still resolve.
-  assert.equal(resolveModel('grok'), 'xai/grok-4.5');
+  assert.equal(resolveModel('grok'), 'xai/grok-4.7');
   assert.equal(resolveModel('grok-4.3'), 'xai/grok-4.3');
   // grok-3 / grok-4-0709 / grok-4-1-fast are hidden from /v1/models but
   // still served (probed 2026-08-29) — explicit pins resolve to the real ids.
@@ -7385,30 +7379,11 @@ test('picker trim: shortcuts for hidden models still resolve (muscle-memory pres
   assert.equal(resolveModel('grok-build'), 'xai/grok-build-0.1');
 });
 
-test('picker trim: hero shortcuts (opus, sonnet, gpt, gemini-3, grok) still in visible list', async () => {
-  const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
-  const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
-  assert.ok(ids.includes('anthropic/claude-opus-5'));
-  assert.ok(ids.includes('anthropic/claude-sonnet-5'));
-  assert.ok(ids.includes('openai/gpt-5.6-sol'));
-  assert.ok(ids.includes('google/gemini-3.1-pro'));
-  // Gemini 2.5 Pro lost its row in the 2026-08-19 sync (superseded sibling
-  // directly under 3.1 Pro). `gemini-2.5` still resolves — same "hide the row,
-  // keep the shortcut" pattern the rest of this trim uses.
-  assert.ok(!ids.includes('google/gemini-2.5-pro'));
-  assert.ok(ids.includes('xai/grok-4.5')); // grok-4-0709 hidden on gateway; 4.5 is the public flagship row
-});
-
-test('picker trim: total visible entries dropped meaningfully', async () => {
-  const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
-  const total = PICKER_CATEGORIES.reduce((sum, c) => sum + c.models.length, 0);
-  // Sanity bounds. Current shape after the 2026-08-19 catalog sync is
-  // 1 routing + 8 premium + 6 reasoning + 5 budget + 4 free = 24. The upper
-  // bound is the point: new models earn a row by displacing one (GLM-5 and
-  // Gemini 2.5 Pro made way for Qwen3.7 Flash and the free omni model), never
-  // by growing the list.
-  assert.ok(total >= 20, `expected >= 20 visible entries, got ${total}`);
-  assert.ok(total <= 24, `expected <= 24 visible entries (33 → ~24), got ${total}`);
+test('catalog picker includes current flagship aliases without duplicate rows', async () => {
+  const { PICKER_MODELS_FLAT, resolveModel } = await import('../dist/ui/model-picker.js');
+  const ids = new Set(PICKER_MODELS_FLAT.map(m => m.id));
+  assert.equal(ids.size, PICKER_MODELS_FLAT.length);
+  for (const alias of ['opus', 'sonnet', 'gpt', 'gemini-3', 'grok']) assert.ok(ids.has(resolveModel(alias)), alias);
 });
 
 // ─── picker ↔ gateway reconciliation ──────────────────────────────────────
@@ -7480,7 +7455,7 @@ test('reconcilePicker: refreshes price from the gateway but keeps the curated la
 
 test('reconcilePicker: free models render FREE, and uncurated chat models stay behind +more', async () => {
   const { reconcilePicker, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
-  const free = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.shortcut === 'free');
+  const free = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.price === 'FREE');
   const catalog = [
     gwModel(free.id, {}),
     gwModel('someprovider/brand-new-flagship', { input: 5, output: 25 }),
@@ -7498,7 +7473,7 @@ test('reconcilePicker: free models render FREE, and uncurated chat models stay b
 
 test('reconcileExpandedPicker: uncurated chat models are provider-grouped', async () => {
   const { reconcileExpandedPicker, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
-  const free = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.shortcut === 'free');
+  const free = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.price === 'FREE');
   const catalog = [
     gwModel(free.id, {}),
     gwModel('someprovider/brand-new-flagship', { input: 5, output: 25 }),
@@ -11943,7 +11918,7 @@ test('catalog sync 2026-08-29: GLM-5.3 Flash is priced, sized, vision-tagged and
   assert.equal(resolveModel('glm-5.3-flash'), 'zai/glm-5.3-flash');
   const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
   assert.ok(ids.includes('zai/glm-5.3-flash'), 'GLM-5.3 Flash earns a budget row');
-  assert.ok(!ids.includes('google/gemini-2.5-flash'), 'Gemini 2.5 Flash gave up its row (shortcut stays)');
+  assert.ok(ids.includes('google/gemini-2.5-flash'), 'All available chat models remain discoverable');
   assert.equal(resolveModel('gemini-2.5-flash'), 'google/gemini-2.5-flash');
 });
 

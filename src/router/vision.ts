@@ -19,6 +19,8 @@
  * `Image file: <path>` description string. Expensive AND wrong.
  */
 
+import { hasHistoricalPrice } from '../pricing.js';
+import { getModelCatalog } from '../model-catalog.js';
 import { freeVisionModel } from '../free-models.js';
 
 const VISION_MODELS = new Set<string>([
@@ -121,7 +123,11 @@ export function isVisionModel(modelId: string | undefined | null): boolean {
   // on gateway deploy state and on FRANKLIN_FREE_VISION_MODEL. freeVisionModel()
   // returns null when no free model can be trusted with an image, and this
   // stays false there.
-  return modelId === freeVisionModel();
+  if (modelId === freeVisionModel()) return true;
+  // Preserve vetted exclusions for existing models; use metadata for new IDs.
+  if (hasHistoricalPrice(modelId)) return false;
+  const model = getModelCatalog().models.find(entry => entry.id === modelId);
+  return model?.billing_mode !== 'free' && model?.categories.includes('vision') === true;
 }
 
 /** Lower-cased copy used for prefix family matching in pickVisionSibling. */

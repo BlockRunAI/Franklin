@@ -7,10 +7,11 @@ import readline from 'node:readline';
 import chalk from 'chalk';
 import { getGatewayModels, type GatewayModel } from '../gateway-models.js';
 import { FREE_DEFAULT_MODEL } from '../free-models.js';
+import { getModelCatalog, onModelCatalogChange } from '../model-catalog.js';
 
 // ─── Model Shortcuts (same as proxy) ───────────────────────────────────────
 
-export const MODEL_SHORTCUTS: Record<string, string> = {
+const LEGACY_SHORTCUTS: Record<string, string> = {
   // Routing profiles — Auto is the only profile surfaced in the picker.
   // `eco` / `premium` were retired 2026-05-03 (V4 Pro launch made Auto cheap
   // enough that separate profiles for "cheap" and "best" were redundant).
@@ -287,7 +288,7 @@ export function resolveModelStrict(
   }
   const lower = trimmed.toLowerCase();
   if (Object.prototype.hasOwnProperty.call(MODEL_SHORTCUTS, lower)) {
-    return { ok: true, id: MODEL_SHORTCUTS[lower]!, viaShortcut: true };
+    return { ok: true, id: MODEL_SHORTCUTS[lower]!, viaShortcut: MODEL_SHORTCUTS[lower] !== trimmed };
   }
   if (trimmed.includes('/')) {
     return { ok: true, id: trimmed, viaShortcut: false };
@@ -356,122 +357,38 @@ const PROVIDER_LABELS: Record<string, string> = {
  * (pickModel() below) import from this array. To add or remove models,
  * edit this one place.
  */
-export const PICKER_CATEGORIES: ModelCategory[] = [
-  {
-    category: '🧠 Smart routing (auto-pick)',
-    models: [
-      // Auto is the only routing profile surfaced in the picker. Eco and
-      // Premium are kept as shortcut aliases (`eco`, `premium`) and resolve
-      // through the router for back-compat with older configs/sessions, but
-      // they're hidden from new users — Auto already covers the cheap end
-      // (V4 Pro at $0.435/$0.87 for SIMPLE/MEDIUM) and the quality end (Opus
-      // for COMPLEX), so a separate Eco/Premium picker entry just adds
-      // choice paralysis without distinct value.
-      { id: 'blockrun/auto', shortcut: 'auto', label: 'Auto', price: 'routed' },
-    ],
-  },
-  {
-    // Picker trim (v3.9.3): hide superseded / awkward-middle / niche-premium
-    // entries to bring choice paralysis down. Their shortcuts (`opus-4.6`,
-    // `gpt-5.4`, `gpt-5.4-pro`, `grok`, `o1`, `o4`, `nano`) all stay live in
-    // MODEL_SHORTCUTS, so muscle memory keeps working — they just aren't
-    // listed in the visible picker. Same pattern v3.9.0 used to retire dead
-    // free-tier entries and v3.9.2 used to retire Kimi K2.5.
-    category: '✨ Premium frontier',
-    models: [
-      { id: 'anthropic/claude-fable-5',    shortcut: 'fable',     label: 'Claude Fable 5',    price: '$10/$50' },
-      // Opus 5 supersedes 4.8 at the same $5/$25 — 4.8 drops out of the visible
-      // list (its `opus-4.8` shortcut stays live) rather than sitting next to a
-      // strictly-better entry at an identical price.
-      { id: 'anthropic/claude-opus-5',     shortcut: 'opus',      label: 'Claude Opus 5',     price: '$5/$25', highlight: true },
-      { id: 'anthropic/claude-sonnet-5',   shortcut: 'sonnet',    label: 'Claude Sonnet 5',   price: '$3/$15' },
-      { id: 'qwen/qwen3.7-max',            shortcut: 'qwen-max',  label: 'Qwen3.7 Max',       price: '$1.475/$4.425', highlight: true },
-      { id: 'openai/gpt-5.6-sol',          shortcut: 'gpt',       label: 'GPT-5.6 Sol',       price: '$5/$30', highlight: true },
-      // Gemini 2.5 Pro's row retired here the same way Opus 4.8's did: a
-      // superseded sibling listed directly under its successor is choice
-      // paralysis, not choice. `gemini-2.5` still resolves to it.
-      { id: 'google/gemini-3.1-pro',       shortcut: 'gemini',    label: 'Gemini 3.1 Pro',    price: '$2/$12' },
-      { id: 'xai/grok-4.5',                shortcut: 'grok',      label: 'Grok 4.5',          price: '$2/$6' },
-      // Kimi K3 (2026-07): 2.8T open MoE, 1M context, multimodal + reasoning.
-      // Replaced the budget K2.7 line — now premium-priced ($3/$15).
-      { id: 'moonshot/kimi-k3',            shortcut: 'kimi',      label: 'Kimi K3',           price: '$3/$15' },
-    ],
-  },
-  {
-    category: '🔬 Reasoning',
-    models: [
-      { id: 'openai/o3',                     shortcut: 'o3',           label: 'O3',                    price: '$2/$8' },
-      { id: 'openai/gpt-5.3-codex',          shortcut: 'codex',        label: 'GPT-5.3 Codex',         price: '$1.75/$14' },
-      // V4 Pro: the 75% launch promo became DeepSeek's permanent list price
-      // after 2026-05-31. 1M context, 1.6T MoE → punches up to GPT-5.5/Opus
-      // on hard tasks at <1/10 the price.
-      { id: 'deepseek/deepseek-v4-pro',      shortcut: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro',    price: '$0.435/$0.87', highlight: true },
-      { id: 'deepseek/deepseek-reasoner',    shortcut: 'r1',           label: 'DeepSeek V4 Flash R.',  price: '$0.2/$0.4' },
-      // Terra Pro took the row grok-4-1-fast-reasoning used to hold: the xAI
-      // fast family is hidden from /v1/models, so reconcilePicker dropped that
-      // row on every live render anyway (`grok-fast` still resolves). Terra
-      // Pro is GPT-5.6 Terra with pro reasoning on, at HALF Terra's price.
-      { id: 'openai/gpt-5.6-terra-pro',      shortcut: 'terra-pro',    label: 'GPT-5.6 Terra Pro',     price: '$1/$6', highlight: true },
-      // GLM-5.3: Z.AI's flagship — 1M context, always-on reasoning, strong on
-      // long-horizon coding. `glm`/`glm5` shortcuts pin it.
-      { id: 'zai/glm-5.3',                   shortcut: 'glm-5.3',      label: 'GLM-5.3',               price: '$1.4/$4.4' },
-    ],
-  },
-  {
-    category: '💰 Budget',
-    models: [
-      { id: 'anthropic/claude-haiku-4.5',          shortcut: 'haiku',    label: 'Claude Haiku 4.5',    price: '$1/$5' },
-      { id: 'openai/gpt-5-mini',                   shortcut: 'mini',     label: 'GPT-5 Mini',          price: '$0.25/$2' },
-      // GLM-5.3 Flash took Gemini 2.5 Flash's row 2026-08-29: half the price,
-      // the same 1M context and vision, plus reasoning. `gemini-2.5-flash`
-      // still resolves — hide the row, keep the shortcut.
-      { id: 'zai/glm-5.3-flash',                   shortcut: 'glm-flash', label: 'GLM-5.3 Flash',      price: '$0.15/$0.5' },
-      // Re-aliased to V4 Flash Chat upstream — context 1M, price 30% lower.
-      { id: 'deepseek/deepseek-chat',              shortcut: 'deepseek', label: 'DeepSeek V4 Flash Chat', price: '$0.14/$0.28' },
-      // Cheapest paid model on the gateway, and it still carries 1M context
-      // with reasoning — the budget slot GLM-5 used to hold (its flat-rate
-      // promo ended 2026-06-06 and it now lists at $1/$3.2, no longer a budget
-      // number; the `glm-5` shortcut stays live).
-      { id: 'qwen/qwen3.7-flash',                  shortcut: 'qwen-flash', label: 'Qwen3.7 Flash',     price: '$0.03/$0.13', highlight: true },
-      // Minimax M2.7 hidden to make room for V4 Pro in Reasoning + V4 Flash
-      // (free) without exceeding the picker's 24-entry cap. Shortcut `minimax`
-      // still resolves to it.
-    ],
-  },
-  {
-    category: '🆓 Free (no USDC needed)',
-    models: [
-      // Nemotron Nano 9B leads: it's what the `free` shortcut + free routing
-      // profile resolve to, promoted 2026-08-12 when qwen3-next-80b-a3b-instruct
-      // hit NVIDIA's EOL (410). All rows are $0 — the free tier never falls
-      // back to paid.
-      //
-      // Caveat worth knowing before editing this list: only the FIRST row is
-      // available on both chains. The Solana gateway lists exactly one free
-      // model and 400s ("Unknown model") on the other three, which are
-      // Base-only as of the 2026-08-30 rotation. That is why `free` — and
-      // every legacy free alias — points at the chain-safe id, and why the
-      // ROUTER upgrades to the 550B at runtime from the live catalog rather
-      // than from this list (see src/free-models.ts, freeChain).
-      //
-      // The rows are still worth showing on both chains: the picker hydrates
-      // against the gateway catalog, and a user who pins a Base-only id on
-      // Solana gets a clear "Unknown model" rather than a silent wrong model.
-      //
-      // Deliberately absent (NOT quarantined — QUARANTINED_FREE_MODELS is
-      // empty): nemotron-3.5-lightning is merely slow, cohere/north-mini-code
-      // is a routable chain rung with no picker row, and llama-3.2-11b-vision
-      // is vision-only. Reasons per id live in src/free-models.ts.
-      { id: FREE_DEFAULT_MODEL,               shortcut: 'free',      label: 'Nemotron 3 Nano Omni', price: 'FREE', highlight: true },
-      { id: 'nvidia/nemotron-3-ultra-550b',   shortcut: 'ultra-550b', label: 'Nemotron 3 Ultra 550B', price: 'FREE' },
-      { id: 'nvidia/nemotron-3-nano-30b',     shortcut: 'nano-30b',  label: 'Nemotron 3 Nano 30B',  price: 'FREE' },
-      { id: 'poolside/laguna-xs-2.1',         shortcut: 'laguna',    label: 'Laguna XS 2.1',        price: 'FREE' },
-    ],
-  },
-];
+export const MODEL_SHORTCUTS: Record<string, string> = {};
+export const PICKER_CATEGORIES: ModelCategory[] = [];
+export const PICKER_MODELS_FLAT: ModelEntry[] = [];
 
-/** Flat list of all picker models (for index-based navigation). */
-export const PICKER_MODELS_FLAT: ModelEntry[] = PICKER_CATEGORIES.flatMap(c => c.models);
+function updateCatalogView(state: ReturnType<typeof getModelCatalog>): void {
+  for (const key of Object.keys(MODEL_SHORTCUTS)) delete MODEL_SHORTCUTS[key];
+  Object.assign(MODEL_SHORTCUTS, LEGACY_SHORTCUTS, state.shortcuts);
+  // Existing free shortcuts must never become paid when products share policy.
+  for (const [alias, id] of Object.entries(LEGACY_SHORTCUTS)) {
+    if (id === FREE_DEFAULT_MODEL) MODEL_SHORTCUTS[alias] = FREE_DEFAULT_MODEL;
+  }
+  // Preserve Franklin's established explicit pins and retired routing profiles.
+  for (const alias of ['eco', 'premium', 'k2.5', 'k2.6', 'k2.7', 'kimi-k2.5', 'nano', 'mini', 'nano-30b', 'deepseek-v4-pro', 'v4-pro']) {
+    MODEL_SHORTCUTS[alias] = LEGACY_SHORTCUTS[alias];
+  }
+  const categories: ModelCategory[] = [{
+    category: '🧠 Smart routing (auto-pick)',
+    models: [{ id: 'blockrun/auto', shortcut: 'auto', label: 'Auto', price: 'routed' }],
+  }, ...state.groups.map(group => ({
+    category: group.title,
+    models: group.models.map(model => ({
+      id: model.id, label: model.name,
+      shortcut: Object.entries(MODEL_SHORTCUTS).find(([key, target]) => target === model.id && !key.includes('/'))?.[0] ?? model.id,
+      price: formatPrice(model as GatewayModel),
+    })),
+  }))];
+  PICKER_CATEGORIES.splice(0, PICKER_CATEGORIES.length, ...categories);
+  PICKER_MODELS_FLAT.splice(0, PICKER_MODELS_FLAT.length, ...categories.flatMap(c => c.models));
+}
+updateCatalogView(getModelCatalog());
+onModelCatalogChange(updateCatalogView);
+
 
 // ─── Live hydration against the gateway catalog ────────────────────────────
 

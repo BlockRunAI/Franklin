@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { refreshModelCatalog } from '../model-catalog.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
@@ -97,6 +98,7 @@ export async function startCommand(options: StartOptions) {
       chain = sessMeta.chain;
     }
   }
+  await refreshModelCatalog({ network: chain });
   const apiUrl = gatewayBase();
   const config = loadConfig();
 

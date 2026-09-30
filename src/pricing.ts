@@ -1,9 +1,10 @@
+import { getModelCatalog, onModelCatalogChange } from './model-catalog.js';
 /**
  * Single source of truth for model pricing (per 1M tokens).
  * Used by agent loop, proxy server, stats tracker, and router.
  */
 
-export const MODEL_PRICING: Record<string, { input: number; output: number; perCall?: number }> = {
+const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: number }> = {
   // Routing profiles (blended averages). Auto + Free are the only profiles
   // surfaced after the 2026-05-03 collapse; eco/premium were retired and
   // their parser mapping promotes them to Auto upstream of cost estimation.
@@ -180,8 +181,19 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; perC
   'zai/glm-5.1-turbo': { input: 1.2, output: 4.0 }, // was a client alias for zai/glm-5-turbo
 };
 
-/** Opus pricing for savings calculations — tracks the current flagship. */
-export const OPUS_PRICING = MODEL_PRICING['anthropic/claude-opus-5'];
+export function hasHistoricalPrice(model: string): boolean { return model in LEGACY_PRICING; }
+
+/** Gateway prices override historical fallbacks without replacing map identities. */
+export const MODEL_PRICING: Record<string, { input: number; output: number; perCall?: number }> = {};
+export const OPUS_PRICING = { input: 5, output: 25 };
+function updatePrices(state: ReturnType<typeof getModelCatalog>): void {
+  for (const key of Object.keys(MODEL_PRICING)) delete MODEL_PRICING[key];
+  Object.assign(MODEL_PRICING, LEGACY_PRICING, state.pricing);
+  const opus = MODEL_PRICING[state.shortcuts.opus];
+  if (opus) Object.assign(OPUS_PRICING, opus);
+}
+updatePrices(getModelCatalog());
+onModelCatalogChange(updatePrices);
 
 /**
  * Estimate cost in USD for a request.
