@@ -17,7 +17,8 @@ function activeClient() {
   const mode = resolvePayMode();
   const network = sessionNetwork ?? loadChain();
   const gatewayUrl = `${mode.kind === 'key' ? mode.apiBase : API_URLS[network]}/v1/models?format=json`;
-  const catalogUrl = process.env.BLOCKRUN_MODEL_CATALOG_URL;
+  const catalogUrl = process.env.BLOCKRUN_MODEL_CATALOG_URL
+    ?? 'https://raw.githubusercontent.com/BlockRunAI/model-catalog/main/dist/snapshot.v1.json';
   // Separate caches for each chain, endpoint and API account; keys never leave memory.
   const identity = JSON.stringify([network, gatewayUrl, catalogUrl, mode.kind === 'key' ? mode.key : '']);
   let client = clients.get(identity);
