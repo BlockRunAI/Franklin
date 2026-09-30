@@ -1,5 +1,37 @@
 # Changelog
 
+## Franklin Agent 3.47.0 — new models reach the picker without a Franklin release
+
+**Model lists and prices now refresh without waiting on a Franklin release.**
+Picker rows, price estimates and the model list used to be hand-edited here and
+drifted every time the gateway rotated a model. Franklin now reads the shared
+[BlockRun Model Core](https://github.com/BlockRunAI/model-catalog): the runtime
+is pinned to a commit, and on refresh it pulls the public policy snapshot plus
+the active gateway's live `/v1/models`. New chat models and price changes show
+up within five minutes. Base, Solana and account keys keep separate caches, and
+the account key is only ever sent to the account gateway, never to the public
+snapshot host.
+
+**Your shortcuts still mean what they meant.** Shared policy may add aliases,
+but it cannot retarget one Franklin already ships — `opus`, `sonnet`, `claude`,
+`grok`, `gemini` and every free shortcut resolve exactly as in 3.46.0. A remote
+catalog edit cannot change which model runs, or what it costs, behind your back.
+
+**The picker stays curated.** Auto plus the policy's curated groups are in the
+main list; every other available chat model is one keystroke away behind +more
+(Ctrl+A), not dumped into the default view.
+
+**If the snapshot host is down, you still get the live gateway.** An unreachable
+policy host (a GitHub outage, a network that blocks `raw.githubusercontent.com`)
+keeps the last good policy and still refreshes gateway rows; the two fetches
+run in parallel, so the worst case is one 4-second timeout, not two. With no
+network at all the bundled snapshot is used and the picker says it is offline.
+Startup warms the catalog in the background rather than waiting on it.
+
+`FRANKLIN_CATALOG_OFFLINE=1` skips catalog network requests entirely;
+`BLOCKRUN_MODEL_CATALOG_URL` overrides the snapshot URL (empty disables remote
+policy updates).
+
 ## Franklin Agent 3.46.0 — the account key could be read out of the agent, and key mode kept talking about a wallet
 
 **The account key was one auto-approved command away from your transcript.**
