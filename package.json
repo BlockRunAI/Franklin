@@ -100,7 +100,7 @@
     "sharp": "^0.35.3",
     "viem": "^2.48.1",
     "ws": "^8.21.1",
-    "@blockrun/model-catalog": "https://codeload.github.com/BlockRunAI/model-catalog/tar.gz/b5d4dc477bcb10fe0a1fc02e8ca317b56bc3d56a"
+    "@blockrun/model-catalog": "https://codeload.github.com/BlockRunAI/model-catalog/tar.gz/2b55804b109cd132bd988096fb3617fb48e67cfb"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
