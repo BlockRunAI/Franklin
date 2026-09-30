@@ -715,6 +715,25 @@ For the recommended live validation order and failure triage, see [docs/live-e2e
 
 ---
 
+## Shared model catalog
+
+Franklin uses [BlockRun Model Core](https://github.com/BlockRunAI/model-catalog)
+for model metadata, picker policy and price estimates. The runtime dependency
+is pinned to an immutable commit. On refresh, Franklin reads the public current
+snapshot and the active gateway's catalog, so new models and prices can appear
+without a Franklin release. Base, Solana and API accounts have separate caches.
+
+Updates are validated before use. Requests have a four-second deadline each,
+refreshes are cached for five minutes, and failures retain the last valid data
+(or the bundled snapshot on first launch). `BLOCKRUN_MODEL_CATALOG_URL` can
+override the public snapshot URL; an empty value disables remote policy updates.
+`FRANKLIN_CATALOG_OFFLINE=1` uses bundled data without catalog network requests.
+
+Existing free shortcuts remain free. Historical explicit IDs and cost records
+remain usable; rolling aliases may select newer models at different prices.
+Payment signing and settlement remain in Franklin and its payment SDK. Auto
+routing's candidate policy remains separate from the shared catalog pilot.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

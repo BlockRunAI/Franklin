@@ -1,3 +1,4 @@
+process.env.FRANKLIN_CATALOG_OFFLINE = '1';
 /**
  * Unit tests for the tool-call repair pipeline ported from reasonix.
  *

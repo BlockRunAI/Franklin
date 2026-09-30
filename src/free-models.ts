@@ -60,6 +60,7 @@
  *   4. No free vision — see freeVisionModel().
  */
 
+import { getModelCatalog } from './model-catalog.js';
 import { peekGatewayModel } from './gateway-models.js';
 import {
   FREE_DEFAULT_MODEL,
@@ -368,7 +369,7 @@ export function isFreeModelId(id: string | undefined | null): boolean {
   // with no prompt and no fail-closed path.
   if (id === '' || id === 'blockrun/free') return true;
   if (!id) return false;
-  const entry = peekGatewayModel(id);
+  const entry = peekGatewayModel(id) ?? getModelCatalog().models.find(model => model.id === id);
   if (entry) return entry.billing_mode === 'free';
   if (id in FREE_MODEL_CONTEXT_WINDOWS) return true;
   return LEGACY_FREE_MODEL_IDS.includes(id);

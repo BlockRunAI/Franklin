@@ -16,8 +16,7 @@
  * is the safe direction for budget tracking).
  */
 
-import { loadChain, USER_AGENT, type Chain} from './config.js';
-import { gatewayBase, gatewayHeaders } from './payments/auth-mode.js';
+import { refreshModelCatalog, clearModelCatalogCache, getModelCatalogIdentity } from './model-catalog.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -75,23 +74,15 @@ export interface GatewayModel {
 // ─── Cache ──────────────────────────────────────────────────────────────
 
 const CACHE_TTL_MS = 5 * 60_000;   // 5 min — gateway rotates models, but not often
-const FETCH_TIMEOUT_MS = 4_000;    // one-shot on init; don't let a slow gateway hang startup
-
-// Keyed by chain. The Base and Solana gateways ship independent catalogs — an
-// id free on one can be absent on the other — and loadChain() can change
-// in-process (the panel writes it at runtime). A single unkeyed cache meant a
-// Base catalog kept answering after a switch to Solana, so free-models.ts
-// "confirmed" a Base-only id and routed to something that 400s there. Worse
-// than a cold cache, because peekGatewayModel deliberately ignores the TTL, so
-// the poisoned entry never aged out.
-interface CacheEntry { models: GatewayModel[]; expiresAt: number; chain: Chain; }
-let cache: CacheEntry | null = null;
-let inflight: Promise<GatewayModel[]> | null = null;
+interface CacheEntry { models: GatewayModel[]; expiresAt: number; }
+const cache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<GatewayModel[]>>();
 
 /** Test / reset helper. */
 export function clearGatewayModelsCache(): void {
-  cache = null;
-  inflight = null;
+  cache.clear();
+  inflight.clear();
+  clearModelCatalogCache();
 }
 
 /**
@@ -119,20 +110,12 @@ export function clearGatewayModelsCache(): void {
  * Treat this as "better than a blind default", nothing more.
  */
 export function peekGatewayModel(id: string): GatewayModel | null {
-  if (!cache) return null;
-  // A catalog fetched for a different chain is not evidence about this one.
-  if (cache.chain !== currentChain()) return null;
-  return cache.models.find(m => m.id === id) ?? null;
-}
-
-/** loadChain() with the throw swallowed — this is a hot, sync path. */
-function currentChain(): Chain {
-  try { return loadChain(); } catch { return 'base'; }
+  return cache.get(getModelCatalogIdentity())?.models.find(m => m.id === id) ?? null;
 }
 
 /** Test helper — seed the cache without a network call. */
 export function __primeGatewayModelsCache(models: GatewayModel[]): void {
-  cache = { models, expiresAt: Date.now() + CACHE_TTL_MS, chain: currentChain() };
+  cache.set(getModelCatalogIdentity(), { models, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
 /**
@@ -146,31 +129,12 @@ export function warmGatewayModelsCache(): void {
 // ─── Fetch ──────────────────────────────────────────────────────────────
 
 async function doFetch(): Promise<GatewayModel[]> {
-  const chain = loadChain();
-  // `gatewayBase()` already carries the `/api` segment on the x402 hosts and
-  // deliberately omits it on the API-key host, so append `/v1/...` to it
-  // directly rather than stripping and re-adding a prefix that only one of the
-  // two hosts has.
-  //
-  // The schema/JSON gate: without ?format=json the gateway returns a
-  // typed schema placeholder instead of the data envelope. Documented
-  // quirk across other endpoints too.
-  const url = `${gatewayBase()}/v1/models?format=json`;
-
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      headers: { ...gatewayHeaders(), 'User-Agent': USER_AGENT, Accept: 'application/json' },
-    });
-    if (!res.ok) throw new Error(`Gateway models list returned HTTP ${res.status}`);
-    const body = (await res.json()) as { data?: unknown };
-    if (!Array.isArray(body.data)) throw new Error('Gateway models list missing data[]');
-    return body.data as GatewayModel[];
-  } finally {
-    clearTimeout(timer);
-  }
+  const state = await refreshModelCatalog();
+  // Bundled rows are not gateway evidence. Surface the failure so callers keep
+  // their existing fallbacks (stale cache, static picker) instead of treating
+  // the packaged snapshot as a live catalog for five minutes.
+  if (state.source !== 'live') throw new Error(state.lastError ?? 'Gateway model catalog unavailable');
+  return state.models as GatewayModel[];
 }
 
 /**
@@ -179,21 +143,23 @@ async function doFetch(): Promise<GatewayModel[]> {
  * the gateway at process start.
  */
 export async function getGatewayModels(): Promise<GatewayModel[]> {
-  if (cache && cache.chain === currentChain() && cache.expiresAt > Date.now()) return cache.models;
-  if (inflight) return inflight;
-  inflight = doFetch()
-    .then(models => {
-      cache = { models, expiresAt: Date.now() + CACHE_TTL_MS, chain: currentChain() };
-      return models;
-    })
-    .catch(err => {
-      // On failure, keep the last good cache if we have one (serve stale
-      // rather than break the agent). Only hard-fail cold start.
-      if (cache) return cache.models;
-      throw err;
-    })
-    .finally(() => { inflight = null; });
-  return inflight;
+  const identity = getModelCatalogIdentity();
+  const previous = cache.get(identity);
+  if (previous && previous.expiresAt > Date.now()) return previous.models;
+  const pending = inflight.get(identity);
+  if (pending) return pending;
+  const request = doFetch().then(models => {
+    // A request completing after an account/chain switch only updates its own cache.
+    cache.set(identity, { models, expiresAt: Date.now() + CACHE_TTL_MS });
+    return models;
+  }).catch(err => {
+    if (previous) return previous.models;
+    throw err;
+  }).finally(() => {
+    if (inflight.get(identity) === request) inflight.delete(identity);
+  });
+  inflight.set(identity, request);
+  return request;
 }
 
 /** Return models filtered to a specific category (e.g. 'image', 'video', 'music'). */

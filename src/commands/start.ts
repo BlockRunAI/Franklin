@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { refreshModelCatalog } from '../model-catalog.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
@@ -97,6 +98,9 @@ export async function startCommand(options: StartOptions) {
       chain = sessMeta.chain;
     }
   }
+  // Warm in the background: bundled data already covers startup, and the picker
+  // and pricing tables update in place when the refresh lands.
+  refreshModelCatalog({ network: chain }).catch(() => {});
   const apiUrl = gatewayBase();
   const config = loadConfig();
 

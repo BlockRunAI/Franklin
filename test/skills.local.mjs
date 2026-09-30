@@ -1,3 +1,4 @@
+process.env.FRANKLIN_CATALOG_OFFLINE = '1';
 /**
  * Skills MVP — deterministic local tests (no live model dependency).
  *
