@@ -719,20 +719,30 @@ For the recommended live validation order and failure triage, see [docs/live-e2e
 
 Franklin uses [BlockRun Model Core](https://github.com/BlockRunAI/model-catalog)
 for model metadata, picker policy and price estimates. The runtime dependency
-is pinned to an immutable commit. On refresh, Franklin reads the public current
+is pinned to an immutable commit. On refresh, Franklin reads the public policy
 snapshot and the active gateway's catalog, so new models and prices can appear
 without a Franklin release. Base, Solana and API accounts have separate caches.
+The default picker shows Auto and curated groups; other available chat models
+remain accessible through +more / Ctrl+A.
 
-Updates are validated before use. Requests have a four-second deadline each,
-refreshes are cached for five minutes, and failures retain the last valid data
-(or the bundled snapshot on first launch). `BLOCKRUN_MODEL_CATALOG_URL` can
-override the public snapshot URL; an empty value disables remote policy updates.
-`FRANKLIN_CATALOG_OFFLINE=1` uses bundled data without catalog network requests.
+Existing Franklin shortcuts, including free aliases, retain their model targets.
+Shared policy can add new shortcuts but cannot retarget one Franklin already
+ships. Gateway price estimates still refresh for the selected model; a stable
+shortcut does not freeze that model's price. Historical explicit IDs and cost
+records remain usable.
 
-Existing free shortcuts remain free. Historical explicit IDs and cost records
-remain usable; rolling aliases may select newer models at different prices.
-Payment signing and settlement remain in Franklin and its payment SDK. Auto
-routing's candidate policy remains separate from the shared catalog pilot.
+Policy and gateway requests run concurrently, each with a four-second deadline.
+Successful refreshes are cached for five minutes. If the policy host is
+unreachable, Franklin keeps the last good policy and still refreshes live gateway
+rows. If the gateway fails, the last valid catalog is retained; a cold start can
+use the bundled snapshot, which is not presented as live gateway data. CLI
+startup warms the catalog in the background.
+
+`BLOCKRUN_MODEL_CATALOG_URL` overrides the policy snapshot URL; an empty value
+disables remote policy updates. `FRANKLIN_CATALOG_OFFLINE=1` uses bundled data
+without catalog network requests. Payment signing and settlement remain in
+Franklin and its payment SDK. Auto routing's candidate policy remains separate
+from the shared catalog.
 
 ## License
 
