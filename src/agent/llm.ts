@@ -904,7 +904,8 @@ export class ModelClient {
             createModelTimeoutError('request', request.model, requestTimeoutMs),
             requestTimeoutMs,
           );
-          if (response.status === 402) {
+          // A retry must preserve the request's original payment rail too.
+          if (response.status === 402 && !headers.Authorization) {
             const signedPayment = await this.signPayment(response, request.model);
             if (!signedPayment) {
               yield { kind: 'error', payload: { message: 'Payment signing failed' } };

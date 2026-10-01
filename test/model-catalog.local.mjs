@@ -176,3 +176,40 @@ test('metadata can load before --wallet overrides an invalid configured API key'
     catalog.clearModelCatalogCache();
   }
 });
+
+test('malformed remote picker policy retains usable state while live gateway prices refresh', async () => {
+  const catalog = await import('../dist/model-catalog.js');
+  const originalFetch = globalThis.fetch;
+  const originalPolicyUrl = process.env.BLOCKRUN_MODEL_CATALOG_URL;
+  const policyUrl = 'https://catalog.example.test/malformed-policy.json';
+  process.env.BLOCKRUN_MODEL_CATALOG_URL = policyUrl;
+  auth.useWalletMode();
+  catalog.clearModelCatalogCache();
+  let policy = structuredClone(snapshot);
+  let price = 1;
+  globalThis.fetch = async url => Response.json(String(url) === policyUrl ? policy : {
+    data: [{ id: 'test/policy-fallback', name: 'Policy fallback', categories: ['chat'], billing_mode: 'paid', pricing: { input: price, output: 2 } }],
+  });
+  try {
+    const good = await catalog.refreshModelCatalog({ network: 'base', force: true });
+    assert.equal(good.lastError, undefined);
+    assert.equal(good.source, 'live');
+    delete policy.picker_policy.views.default_chat.shortcuts;
+    price = 3;
+    const retained = await catalog.refreshModelCatalog({ force: true });
+    assert.match(retained.lastError ?? '', /policy/i);
+    assert.equal(retained.source, 'live');
+    assert.equal(retained.version, good.version);
+    assert.equal(retained.pricing['test/policy-fallback'].input, 3);
+    assert.deepEqual(catalog.getModelCatalog().shortcuts, retained.shortcuts);
+    assert.ok(retained.groups.some(group => group.models.some(model => model.id === 'test/policy-fallback')));
+    policy = structuredClone(snapshot);
+    const recovered = await catalog.refreshModelCatalog({ force: true });
+    assert.equal(recovered.lastError, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalPolicyUrl === undefined) delete process.env.BLOCKRUN_MODEL_CATALOG_URL;
+    else process.env.BLOCKRUN_MODEL_CATALOG_URL = originalPolicyUrl;
+    catalog.clearModelCatalogCache();
+  }
+});
