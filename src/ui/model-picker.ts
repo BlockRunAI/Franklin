@@ -58,9 +58,9 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'gpt-5.6-terra': 'openai/gpt-5.6-terra',
   'gpt-5.6-luna': 'openai/gpt-5.6-luna',
   // GPT-5.6 pro reasoning tier (gateway, 2026-08). Same base models with pro
-  // reasoning mode on: Sol Pro matches Sol at $4/$20, while Terra Pro ($1/$6)
-  // and Luna Pro ($0.1/$0.6) come in UNDER their own base tiers — so the pro
-  // ids are the better pick for anything reasoning-shaped. `gpt` stays pinned
+  // reasoning mode on, each at its base tier's price (Sol Pro $4/$20, Terra
+  // Pro $2/$12, Luna Pro $0.2/$1.2 — live 2026-10-02) — so the pro ids are the
+  // better pick for anything reasoning-shaped. `gpt` stays pinned
   // to Sol: bare aliases track the gateway's flagship, not the cheapest
   // sibling.
   'gpt-5.6-sol-pro': 'openai/gpt-5.6-sol-pro',
@@ -149,7 +149,7 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   // Flash modes upstream); free tier routes through nvidia/*.
   deepseek: 'deepseek/deepseek-chat',     // V4 Flash Chat (paid, $0.20/$0.40)
   r1: 'deepseek/deepseek-reasoner',       // V4 Flash Reasoner (paid)
-  // V4 Pro: paid flagship, 1.6T MoE / 49B active, 1M ctx, 75% launch promo.
+  // V4 Pro: paid flagship, 1.6T MoE / 49B active, 1M ctx, $1.32/$3.96 (live 2026-10-02).
   'deepseek-v4-pro': 'deepseek/deepseek-v4-pro',
   'dsv4-pro': 'deepseek/deepseek-v4-pro',
   'v4-pro': 'deepseek/deepseek-v4-pro',

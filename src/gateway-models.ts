@@ -9,8 +9,10 @@
  *
  * Per gateway team (2026-04-22): every model returns `billing_mode` and
  * a mode-specific `pricing` object. Dispatch on billing_mode to compute
- * an estimated charge. x402 adds a fixed 5% margin on top of base price,
- * plus a flat $0.001 per-transaction fee on paid calls (Base since
+ * an estimated charge. Token-metered chat is billed at the provider's list
+ * rate with no margin (since 2026-09-04); media (image/video/music/speech/
+ * sfx) and Live Search carry a 5% platform fee. Every paid call adds a flat
+ * $0.001 per-transaction fee (Base since
  * 2026-07-10; Solana instead enforces a $0.001 minimum per call with no
  * service fee — the flat-fee estimate over-counts there by ≤$0.001, which
  * is the safe direction for budget tracking).
@@ -176,12 +178,16 @@ export async function findModel(id: string): Promise<GatewayModel | null> {
 
 // ─── Cost estimation ────────────────────────────────────────────────────
 
-/** x402 gateway's fixed margin percentage applied on top of the base price. */
+/**
+ * Platform fee multiplier on MEDIA (per_image / per_second / per_track /
+ * per_character / per_generation / flat) list prices. Token-metered chat
+ * carries no margin — the gateway bills it at the provider's list rate.
+ */
 export const GATEWAY_MARGIN = 1.05;
 
 /**
  * Flat per-transaction fee (USD) the gateway adds on top of the margined
- * price on every PAID call (no-op on $0 calls). Introduced upstream
+ * (media) or list (chat) price on every PAID call (no-op on $0 calls). Introduced upstream
  * 2026-07-10, briefly $0.002, back to $0.001 since 2026-07-29
  * (blockrun src/lib/transaction-fee.ts).
  */
@@ -198,7 +204,7 @@ export interface EstimateContext {
 
 /**
  * Estimated USD charge to generate one response from this model under the
- * given context. Includes the 5% gateway margin and the flat $0.001
+ * given context. Includes the 5% media platform fee and the flat $0.001
  * per-transaction fee on paid calls. Returns 0 for free and token-metered
  * (paid) models where a pre-call estimate isn't meaningful.
  */
