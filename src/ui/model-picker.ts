@@ -31,6 +31,11 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'sonnet-4.5': 'anthropic/claude-sonnet-4.5',
   opus: 'anthropic/claude-opus-5',
   'opus-5': 'anthropic/claude-opus-5',
+  // 2026-10 additions — explicit version pins only. The bare `opus` /
+  // `sonnet` / `fable` / `claude` aliases above are deliberately NOT moved.
+  'opus-5.5': 'anthropic/claude-opus-5.5',
+  'sonnet-5.5': 'anthropic/claude-sonnet-5.5',
+  'fable-5.1': 'anthropic/claude-fable-5.1',
   'opus-4.8': 'anthropic/claude-opus-4.8',
   'opus-4.7': 'anthropic/claude-opus-4.7',
   // Hidden from /v1/models since 2026-08, still served (probed 2026-08-29).
@@ -44,11 +49,16 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   gpt5: 'openai/gpt-5.6-sol',
   'gpt-5': 'openai/gpt-5.6-sol',
   'gpt-5.6': 'openai/gpt-5.6-sol',
+  // GPT-6 family + GPT-5.1 (2026-10) — explicit pins; `gpt` is NOT moved.
+  'gpt-6-astra': 'openai/gpt-6-astra',
+  'gpt-6-sol': 'openai/gpt-6-sol',
+  'gpt-6-luna': 'openai/gpt-6-luna',
+  'gpt-5.1': 'openai/gpt-5.1',
   'gpt-5.6-sol': 'openai/gpt-5.6-sol',
   'gpt-5.6-terra': 'openai/gpt-5.6-terra',
   'gpt-5.6-luna': 'openai/gpt-5.6-luna',
   // GPT-5.6 pro reasoning tier (gateway, 2026-08). Same base models with pro
-  // reasoning mode on: Sol Pro matches Sol at $5/$30, while Terra Pro ($1/$6)
+  // reasoning mode on: Sol Pro matches Sol at $4/$20, while Terra Pro ($1/$6)
   // and Luna Pro ($0.1/$0.6) come in UNDER their own base tiers — so the pro
   // ids are the better pick for anything reasoning-shaped. `gpt` stays pinned
   // to Sol: bare aliases track the gateway's flagship, not the cheapest
@@ -122,6 +132,9 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   // hidden on the gateway; explicit IDs still resolve.)
   grok: 'xai/grok-4.5',
   'grok-4.5': 'xai/grok-4.5',
+  // Grok 4.7 / 4.6 (2026-10) — explicit pins; `grok` is NOT moved.
+  'grok-4.7': 'xai/grok-4.7',
+  'grok-4.6': 'xai/grok-4.6',
   'grok-4.3': 'xai/grok-4.3',
   'grok-build': 'xai/grok-build-0.1',
   // grok-3 / grok-4-0709 / the grok-4-1-fast pair are hidden from

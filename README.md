@@ -544,6 +544,12 @@ Core is workflow-agnostic. Add new verticals without touching the loop. Discover
 | `/insights [--days N]`           | Rich usage analytics                                 |
 | `/help`                          | Full command list                                    |
 
+`/model` takes a shortcut or any full gateway id. The newest models have
+explicit version shortcuts: `opus-5.5`, `sonnet-5.5`, `fable-5.1`,
+`gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.1`, `grok-4.7` and `grok-4.6`
+(e.g. `/model gpt-6-sol` or `/model anthropic/claude-opus-5.5`). Bare aliases
+like `opus`, `gpt` and `grok` keep their current targets.
+
 ---
 
 ## How it works
