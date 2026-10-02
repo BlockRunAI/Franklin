@@ -219,6 +219,11 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // a real >200k call has been verified end-to-end.
   // Fable 5 / Sonnet 5 advertise 1M at the gateway; keep the 200k safe baseline
   // (same rationale as Opus above) until a real >200k call is verified.
+  // Fable 5.1 / Opus 5.5 / Sonnet 5.5 (2026-10) also advertise 1M; same
+  // 200k baseline. Without a row the live catalog's 1M would win here.
+  'anthropic/claude-fable-5.1': 200_000,
+  'anthropic/claude-opus-5.5': 200_000,
+  'anthropic/claude-sonnet-5.5': 200_000,
   'anthropic/claude-fable-5': 200_000,
   'anthropic/claude-opus-5': 200_000,
   'anthropic/claude-opus-4.8': 200_000,
@@ -237,6 +242,12 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // gpt-5.5 advertises 1.05M context at the gateway, but Franklin keeps the
   // conservative 128k baseline matching every other gpt-5.x line — bump in
   // a separate change once a real >128k call has been verified end-to-end.
+  // GPT-6 (1.05M advertised; input above 272K bills at 2x) and GPT-5.1 (400K
+  // advertised) take the same 128k baseline until verified end-to-end.
+  'openai/gpt-6-astra': 128_000,
+  'openai/gpt-6-sol': 128_000,
+  'openai/gpt-6-luna': 128_000,
+  'openai/gpt-5.1': 128_000,
   'openai/gpt-5.6-sol': 128_000,
   'openai/gpt-5.6-terra': 128_000,
   'openai/gpt-5.6-luna': 128_000,
@@ -276,6 +287,8 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // xAI. grok-4.5 / 4.3 / build were missing until 2026-08-20: neither matches
   // any inference pattern below, so a cold catalog cache fell through to the
   // blind 128k default and compacted a 500K–1M window ~4-8x too early.
+  'xai/grok-4.7': 500_000,
+  'xai/grok-4.6': 500_000,
   'xai/grok-4.5': 500_000,
   'xai/grok-4.3': 1_000_000,
   'xai/grok-build-0.1': 256_000,

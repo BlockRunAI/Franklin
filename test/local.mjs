@@ -3256,7 +3256,7 @@ test('classifier: Payment verification failed → payment_rejected, transient wi
 // surface "this model is slow" or "fallback was faster". 3.15.61 wraps
 // the model call with Date.now() and passes the delta to recordUsage.
 
-test('agent context: chat-completions example uses real model names (no fictional gpt-5.1 / grok-5)', async () => {
+test('agent context: chat-completions example uses real model names (no fictional gpt-7 / grok-5)', async () => {
   // Verified 2026-05-05: the BlockRun API doc block in the agent
   // system prompt cited `openai/gpt-5.1` and `xai/grok-5` as
   // example model names. Neither exists on the gateway. If the
@@ -3291,7 +3291,9 @@ test('agent context: chat-completions example uses real model names (no fictiona
   assert.ok(para, 'must contain the chat-completions API paragraph');
   // Real model `openai/gpt-5-nano` IS valid — only the fictional ones
   // need to be confined to the warning context.
-  const fakeModelGpt = /openai\/gpt-5\.1/g;
+  // openai/gpt-5.1 was the fictional example until the gateway listed it
+  // (2026-10), so the warning now names openai/gpt-7 instead.
+  const fakeModelGpt = /openai\/gpt-7\b/g;
   const fakeModelGrok = /xai\/grok-5\b/g;
   // Each fictional name should appear at most once (in the "Do NOT
   // invent" warning) and must NOT appear standalone as a recommended
@@ -3299,9 +3301,10 @@ test('agent context: chat-completions example uses real model names (no fictiona
   // single allowed mention.
   const gptMatches = para[0].match(fakeModelGpt) ?? [];
   const grokMatches = para[0].match(fakeModelGrok) ?? [];
-  assert.equal(gptMatches.length, 1, 'openai/gpt-5.1 must appear exactly once (in the warning)');
+  assert.equal(gptMatches.length, 1, 'openai/gpt-7 must appear exactly once (in the warning)');
   assert.equal(grokMatches.length, 1, 'xai/grok-5 must appear exactly once (in the warning)');
-  assert.match(para[0], /Do NOT invent.*gpt-5\.1.*grok-5/i,
+  assert.ok(!/Do NOT invent[^.]*gpt-5\.1/.test(para[0]), 'openai/gpt-5.1 is a real gateway model now');
+  assert.match(para[0], /Do NOT invent.*gpt-7.*grok-5/i,
     'must explicitly warn against inventing those names');
 });
 
@@ -12000,4 +12003,42 @@ test('proxy: a gateway-rejected routed id feeds the dead-rung kill-switch', asyn
   assert.match(src, /routerCandidates\.length > 0 && classifyAgentError\(String\(errorMsg\)\)\.modelUnavailable/,
     'the 4xx intercept must classify the error and only act on routed requests');
   assert.match(src, /markModelUnavailable\(finalModel\)/);
+});
+
+test('2026-10 gateway models: explicit shortcuts, prices, context windows, vision', async () => {
+  // Facts from live GET /api/v1/models, 2026-10-02.
+  const { resolveModel } = await import('../dist/ui/model-picker.js');
+  const { MODEL_PRICING, hasHistoricalPrice } = await import('../dist/pricing.js');
+  const { getContextWindow } = await import('../dist/agent/tokens.js');
+  const { isVisionModel } = await import('../dist/router/vision.js');
+  const models = {
+    'openai/gpt-6-astra': ['gpt-6-astra', 10, 50, 128_000],
+    'openai/gpt-6-sol': ['gpt-6-sol', 2, 10, 128_000],
+    'openai/gpt-6-luna': ['gpt-6-luna', 0.1, 0.5, 128_000],
+    'openai/gpt-5.1': ['gpt-5.1', 1.25, 10, 128_000],
+    'anthropic/claude-fable-5.1': ['fable-5.1', 10, 50, 200_000],
+    'anthropic/claude-opus-5.5': ['opus-5.5', 4, 20, 200_000],
+    'anthropic/claude-sonnet-5.5': ['sonnet-5.5', 2, 10, 200_000],
+    'xai/grok-4.6': ['grok-4.6', 2, 6, 500_000],
+    'xai/grok-4.7': ['grok-4.7', 2, 6, 500_000],
+  };
+  for (const [id, [shortcut, input, output, ctx]] of Object.entries(models)) {
+    assert.equal(resolveModel(shortcut), id, `${shortcut} -> ${id}`);
+    assert.ok(hasHistoricalPrice(id), `${id} has a fallback price row`);
+    assert.equal(MODEL_PRICING[id].input, input, `${id} input`);
+    assert.equal(MODEL_PRICING[id].output, output, `${id} output`);
+    assert.equal(getContextWindow(id), ctx, `${id} context window`);
+    // A fallback price row makes isVisionModel stop consulting the catalog,
+    // so every priced vision model must also be on the static allowlist.
+    assert.equal(isVisionModel(id), true, `${id} is vision-capable`);
+  }
+  // Bare aliases are not retargeted by this change.
+  assert.equal(resolveModel('opus'), 'anthropic/claude-opus-5');
+  assert.equal(resolveModel('sonnet'), 'anthropic/claude-sonnet-5');
+  assert.equal(resolveModel('fable'), 'anthropic/claude-fable-5');
+  assert.equal(resolveModel('gpt'), 'openai/gpt-5.6-sol');
+  assert.equal(resolveModel('grok'), 'xai/grok-4.5');
+  // GPT-5.6 Sol / Sol Pro were cut to $4/$20 on 2026-08-21.
+  assert.equal(MODEL_PRICING['openai/gpt-5.6-sol'].input, 4);
+  assert.equal(MODEL_PRICING['openai/gpt-5.6-sol-pro'].output, 20);
 });

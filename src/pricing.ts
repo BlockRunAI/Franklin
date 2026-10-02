@@ -49,6 +49,11 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'nvidia/nemotron-3-super-120b': { input: 0, output: 0 },
   'nvidia/nemotron-super-49b': { input: 0, output: 0 },
   // Anthropic
+  // 2026-10 gateway additions (live /api/v1/models, 2026-10-02). Opus 5.5 and
+  // Sonnet 5.5 come in BELOW the 5.0 line; Fable 5.1 holds Fable 5's price.
+  'anthropic/claude-fable-5.1': { input: 10.0, output: 50.0 },
+  'anthropic/claude-opus-5.5': { input: 4.0, output: 20.0 },
+  'anthropic/claude-sonnet-5.5': { input: 2.0, output: 10.0 },
   'anthropic/claude-fable-5': { input: 10.0, output: 50.0 }, // Mythos-class tier above Opus, 1M ctx
   // Opus 5 lands at the same $5/$25 as the 4.x Opus line — a straight upgrade
   // with no cost delta, so nothing downstream needs a pricing carve-out.
@@ -64,6 +69,13 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   // Kept for cost lookup on sessions recorded before the switch.
   'anthropic/claude-haiku-4.5-20251001': { input: 1.0, output: 5.0 },
   // OpenAI
+  // GPT-6 family + GPT-5.1 (live catalog 2026-10-02). Base rates only: GPT-6
+  // bills 2x input / 1.5x output above 272K input tokens, which a flat
+  // per-1M table cannot express — the catalog's long_context tiers carry that.
+  'openai/gpt-6-astra': { input: 10.0, output: 50.0 },
+  'openai/gpt-6-sol': { input: 2.0, output: 10.0 },
+  'openai/gpt-6-luna': { input: 0.1, output: 0.5 },
+  'openai/gpt-5.1': { input: 1.25, output: 10.0 },
   'openai/gpt-4.1-nano': { input: 0.1, output: 0.4 },
   'openai/gpt-4o-mini': { input: 0.15, output: 0.6 },
   'openai/gpt-5.4-nano': { input: 0.2, output: 1.25 },
@@ -85,12 +97,12 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'openai/o4-mini': { input: 1.1, output: 4.4 },
   'openai/o1': { input: 15.0, output: 60.0 },
   'openai/gpt-5.5': { input: 5.0, output: 30.0 },
-  'openai/gpt-5.6-sol': { input: 5.0, output: 30.0 }, // GPT-5.6 flagship, deepest reasoning, 1M ctx
+  'openai/gpt-5.6-sol': { input: 4.0, output: 20.0 }, // GPT-5.6 flagship, 1M ctx — cut from $5/$30 on 2026-08-21
   // GPT-5.6 Pro tiers + 5.5 Pro + chat-latest, added upstream 2026-08-03
   // (base #329) — priced from the live catalog 2026-08-12.
   'openai/gpt-5.6-luna-pro': { input: 0.1, output: 0.6 },
   'openai/gpt-5.6-terra-pro': { input: 1.0, output: 6.0 },
-  'openai/gpt-5.6-sol-pro': { input: 5.0, output: 30.0 },
+  'openai/gpt-5.6-sol-pro': { input: 4.0, output: 20.0 }, // cut from $5/$30 on 2026-08-21
   'openai/gpt-5.5-pro': { input: 30.0, output: 180.0 },
   'openai/chat-latest': { input: 5.0, output: 30.0 },
   'openai/gpt-5.2-pro': { input: 21.0, output: 168.0 },
@@ -109,7 +121,9 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'google/gemini-3.1-pro': { input: 2.0, output: 12.0 },
   // xAI
   'xai/grok-4.3': { input: 1.25, output: 2.5 },        // 1M ctx; demoted from flagship 2026-07-14
-  'xai/grok-4.5': { input: 2.0, output: 6.0 },        // xAI flagship — 500K ctx (note: less than 4.3's 1M)
+  'xai/grok-4.7': { input: 2.0, output: 6.0 },        // newest Grok, 500K ctx (2x at >=200K input)
+  'xai/grok-4.6': { input: 2.0, output: 6.0 },        // 500K ctx (2x at >=200K input)
+  'xai/grok-4.5': { input: 2.0, output: 6.0 },        // 500K ctx (note: less than 4.3's 1M)
   'xai/grok-build-0.1': { input: 1.0, output: 2.0 },  // agentic coding, OpenRouter resale
   // DeepSeek (gateway re-aliased these to V4 Flash on 2026-05-03; price cut
   // again upstream 2026-08-07 to $0.14/$0.28 — mirrored here 2026-08-12).
@@ -126,7 +140,7 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'qwen/qwen3.7-plus': { input: 0.32, output: 1.28 },
   'qwen/qwen3.7-flash': { input: 0.03, output: 0.13 },
   // New providers added upstream 2026-08 — priced from the live catalog.
-  'tencent/hy3': { input: 0.132, output: 0.528 },
+  'tencent/hy3': { input: 0.132, output: 0.528 }, // retired upstream (hidden) — kept for session-cost records
   'xiaomi/mimo-v2.5-pro': { input: 0.435, output: 0.87 },
   // Moonshot — K3 is the gateway flagship (2026-07): 2.8T open MoE, 1M
   // context, multimodal (image+text), returns reasoning_content. Pricier

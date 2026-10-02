@@ -38,6 +38,11 @@ const VISION_MODELS = new Set<string>([
   'anthropic/claude-sonnet-4.6',
   'anthropic/claude-sonnet-4.5',
   'anthropic/claude-haiku-4.5',
+  // 2026-10 additions — vision-tagged in the live catalog. Listed after the
+  // existing rows so pickVisionSibling's same-family pick is unchanged.
+  'anthropic/claude-fable-5.1',
+  'anthropic/claude-opus-5.5',
+  'anthropic/claude-sonnet-5.5',
   // OpenAI — multimodal flagships + o3 (Codex 5.3 is text-only, excluded).
   // GPT-5.6 family + 5.4-mini are vision; 5.4-nano is text-only.
   'openai/gpt-5.6-sol',
@@ -61,6 +66,11 @@ const VISION_MODELS = new Set<string>([
   'openai/gpt-4.1',
   'openai/gpt-4o',
   'openai/o3',
+  // GPT-6 family + GPT-5.1 (2026-10, vision-tagged in the live catalog).
+  'openai/gpt-6-astra',
+  'openai/gpt-6-sol',
+  'openai/gpt-6-luna',
+  'openai/gpt-5.1',
   // Google — vision baked into every Gemini SKU we surface (flash-lite excepted)
   'google/gemini-3.1-pro',
   'google/gemini-3.6-flash',
@@ -77,6 +87,9 @@ const VISION_MODELS = new Set<string>([
   'xai/grok-4.3',
   'xai/grok-4-0709',
   'xai/grok-3',
+  // Grok 4.7 / 4.6 (2026-10, vision-tagged in the live catalog).
+  'xai/grok-4.7',
+  'xai/grok-4.6',
   // Moonshot — K3 is the flagship; the K2.x line is hidden from /v1/models
   // but still served (probed 2026-08-29) and is catalogued as multimodal.
   'moonshot/kimi-k3',
