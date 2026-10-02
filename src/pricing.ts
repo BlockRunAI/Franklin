@@ -61,7 +61,7 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'anthropic/claude-opus-4.8': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.7': { input: 5.0, output: 25.0 },
   'anthropic/claude-opus-4.5': { input: 5.0, output: 25.0 },
-  'anthropic/claude-sonnet-5': { input: 3.0, output: 15.0 }, // near-Opus at Sonnet cost, 1M ctx
+  'anthropic/claude-sonnet-5': { input: 2.0, output: 10.0 }, // near-Opus at Sonnet cost, 1M ctx (live list 2026-10-02)
   'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
   'anthropic/claude-sonnet-4.5': { input: 3.0, output: 15.0 },
   'anthropic/claude-haiku-4.5': { input: 1.0, output: 5.0 },
@@ -100,8 +100,8 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'openai/gpt-5.6-sol': { input: 4.0, output: 20.0 }, // GPT-5.6 flagship, 1M ctx — cut from $5/$30 on 2026-08-21
   // GPT-5.6 Pro tiers + 5.5 Pro + chat-latest, added upstream 2026-08-03
   // (base #329) — priced from the live catalog 2026-08-12.
-  'openai/gpt-5.6-luna-pro': { input: 0.1, output: 0.6 },
-  'openai/gpt-5.6-terra-pro': { input: 1.0, output: 6.0 },
+  'openai/gpt-5.6-luna-pro': { input: 0.2, output: 1.2 }, // = Luna list (live 2026-10-02)
+  'openai/gpt-5.6-terra-pro': { input: 2.0, output: 12.0 }, // = Terra list (live 2026-10-02)
   'openai/gpt-5.6-sol-pro': { input: 4.0, output: 20.0 }, // cut from $5/$30 on 2026-08-21
   'openai/gpt-5.5-pro': { input: 30.0, output: 180.0 },
   'openai/chat-latest': { input: 5.0, output: 30.0 },
@@ -116,7 +116,7 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   // Google's rate and corrected upstream (base #304) — mirror the real price.
   'google/gemini-3.5-flash': { input: 1.5, output: 9.0 }, // latest Flash w/ thinking, 1M ctx
   'google/gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
-  'google/gemini-3.6-flash': { input: 1.5, output: 7.5 }, // added upstream 2026-08-03 (base #329)
+  'google/gemini-3.6-flash': { input: 0.75, output: 3.75 }, // added upstream 2026-08-03 (base #329); live promo rate 2026-10-02
   'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
   'google/gemini-3.1-pro': { input: 2.0, output: 12.0 },
   // xAI
@@ -129,9 +129,9 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   // again upstream 2026-08-07 to $0.14/$0.28 — mirrored here 2026-08-12).
   'deepseek/deepseek-chat': { input: 0.14, output: 0.28 },
   'deepseek/deepseek-reasoner': { input: 0.14, output: 0.28 },
-  // V4 Pro (1.6T MoE / 49B active, 1M ctx, 65K out). 75% launch promo
-  // through 2026-05-31 — list is $2.00/$4.00, promo is $0.50/$1.00.
-  'deepseek/deepseek-v4-pro': { input: 0.435, output: 0.87 }, // 75% promo became permanent list after 2026-05-31
+  // V4 Pro (1.6T MoE / 49B active, 1M ctx, 65K out). Live list 2026-10-02;
+  // the old $0.435/$0.87 promo figure no longer matches the gateway.
+  'deepseek/deepseek-v4-pro': { input: 1.32, output: 3.96 },
   // Minimax
   'minimax/minimax-m3': { input: 0.3, output: 1.2 },
   'minimax/minimax-m2.7': { input: 0.3, output: 1.2 },

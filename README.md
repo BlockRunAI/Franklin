@@ -54,8 +54,8 @@ Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships
 > **YOPO — You Only Pay Outcome**
 >
 > Not a subscription (pay for access). Not a generic pay-per-call (pay for trying).
-> You pay only for the work Franklin Agent delivers. Provider cost + 5%, settled per action
-> in USDC. No monthly fees. No rate limits. No overdraft.
+> You pay only for the work Franklin Agent delivers. Chat is provider cost with no markup, plus $0.001
+> per call; media carries 5%. Settled per action in USDC. No monthly fees. No rate limits. No overdraft.
 
 ---
 
@@ -248,7 +248,7 @@ use the [dashboard](https://user.blockrun.ai/dashboard).
 | ----------------------- | -------------------------------------------- | ------------------------------------ |
 | AI subscription       | Access. Paid whether you use it or not. | $20–200/month, rate-limited.         |
 | Pay-per-call (OpenAI API, etc.) | Every attempt — even failed ones.    | Hidden cost from retries, dead ends. |
-| **Franklin Agent (YOPO)**     | **The outcome.** Each signed micropayment.  | **Provider cost + 5%. No more.**     |
+| **Franklin Agent (YOPO)**     | **The outcome.** Each signed micropayment.  | **Provider cost on chat, no markup, + $0.001/call. Media +5%.** |
 
 Three consequences fall out of this:
 

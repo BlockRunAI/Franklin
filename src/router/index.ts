@@ -55,7 +55,7 @@ function loadLearnedWeights(): LearnedWeights | null {
 
 export type Tier = 'SIMPLE' | 'MEDIUM' | 'COMPLEX' | 'REASONING';
 // 2026-05-03: collapsed Eco / Premium routing profiles into Auto. With V4 Pro
-// at $0.435/$0.87 (the launch promo became permanent list) covering SIMPLE+MEDIUM and Opus covering
+// (now $1.32/$3.96 list, 2026-10-02) covering SIMPLE+MEDIUM and Opus covering
 // COMPLEX, separate Eco ("free models everywhere") and Premium ("Opus
 // everywhere") profiles became redundant — Auto already spans the cost/
 // quality spectrum. `blockrun/eco` and `blockrun/premium` still parse to
@@ -212,8 +212,9 @@ function normalizeRoutingContext(context: boolean | RoutingContext): RoutingCont
 // ─── Tier Model Configs ───
 
 // Auto-routing strategy (post-DeepSeek-V4-Pro launch promo, 2026-05-03):
-// V4 Pro at $0.435/$0.87 with 1M context is the new sweet spot for SIMPLE +
-// MEDIUM agent work — Sonnet-quality reasoning at ~1/6 the price. Reserve
+// V4 Pro (launched at $0.435/$0.87; $1.32/$3.96 list as of 2026-10-02) with
+// 1M context is the sweet spot for SIMPLE + MEDIUM agent work — Sonnet-quality
+// reasoning at well under Sonnet's price. Reserve
 // Opus only for genuinely complex multi-file/multi-decision tasks where
 // the model's wider context handling and tighter tool-use discipline still
 // pay for themselves. Sonnet drops to fallback because V4 Pro covers most
@@ -261,7 +262,7 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
  * if none of them have vision, escalates to COMPLEX (Opus is always vision).
  *
  * Note: only applied when the caller signals needsVision=true. Without that
- * hint the classic per-tier defaults still rule — V4 Pro's $0.435/$0.87 price
+ * hint the classic per-tier defaults still rule — V4 Pro's $1.32/$3.96 price
  * is the right SIMPLE/MEDIUM pick for text-only turns and we don't want to
  * blanket-upgrade everyone to a vision model.
  */

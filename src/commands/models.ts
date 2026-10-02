@@ -4,6 +4,7 @@ import { gatewayBase } from '../payments/auth-mode.js';
 import {
   getGatewayModels,
   GATEWAY_MARGIN,
+  GATEWAY_TRANSACTION_FEE_USD,
   type GatewayModel,
   type BillingMode,
 } from '../gateway-models.js';
@@ -203,7 +204,8 @@ export async function modelsCommand() {
   const margin = Math.round((GATEWAY_MARGIN - 1) * 100);
   console.log(
     chalk.dim(
-      `${models.length} models available. Prices are gateway list — x402 settlement adds ~${margin}%.`
+      `${models.length} models available. Prices are gateway list — chat adds only the ` +
+        `$${GATEWAY_TRANSACTION_FEE_USD} per-call fee; media adds ${margin}% + $${GATEWAY_TRANSACTION_FEE_USD}.`
     )
   );
   console.log(`${chalk.dim('Use:')} ${chalk.bold('franklin start --model <model-id>')}`);
