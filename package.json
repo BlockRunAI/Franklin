@@ -87,7 +87,7 @@
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@types/react": "^19.2.14",
-    "axios": "^1.18.1",
+    "axios": "^1.20.0",
     "bs58": "^6.0.0",
     "chalk": "^5.4.0",
     "commander": "^15.0.0",
@@ -98,7 +98,7 @@
     "playwright-core": "^1.49.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.4",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.5",
     "viem": "^2.48.1",
     "ws": "^8.21.1"
   },
@@ -112,7 +112,7 @@
     "ws@>=8.0.0 <=8.20.1": "^8.21.1",
     "@polymarket/builder-signing-sdk": "1.0.0",
     "@polymarket/builder-relayer-client": {
-      "axios": "^1.18.1"
+      "axios": "^1.20.0"
     },
     "qs": "^6.16.0"
   }
