@@ -37,7 +37,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, USER_AGENT} from '../config.js';
+import { loadChain, USER_AGENT, type Chain } from '../config.js';
 import { chargeFromResponse, requestIdFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -71,7 +71,7 @@ async function extractPaymentReq(response: Response): Promise<string | null> {
 
 async function signPayment(
   response: Response,
-  chain: 'base' | 'solana',
+  chain: Chain,
   endpoint: string,
   resourceDescription: string,
 ): Promise<SignedPayment | null> {
@@ -114,7 +114,7 @@ async function signPayment(
   }
 }
 
-function walletAddress(chain: 'base' | 'solana'): Promise<string> {
+function walletAddress(chain: Chain): Promise<string> {
   if (chain === 'solana') return getOrCreateSolanaWallet().then((w) => w.address);
   return Promise.resolve(getOrCreateWallet().address);
 }
@@ -194,7 +194,7 @@ async function actionStatus(base: string, input: Record<string, unknown>, ctx: E
 
 async function actionEnroll(
   base: string,
-  chain: 'base' | 'solana',
+  chain: Chain,
   input: Record<string, unknown>,
   ctx: ExecutionScope,
 ): Promise<CapabilityResult> {
@@ -245,7 +245,7 @@ async function actionEnroll(
   };
 }
 
-async function actionList(base: string, chain: 'base' | 'solana', ctx: ExecutionScope): Promise<CapabilityResult> {
+async function actionList(base: string, chain: Chain, ctx: ExecutionScope): Promise<CapabilityResult> {
   const addr = await walletAddress(chain);
   const res = await timedFetch(`${base}/v1/wallet/${addr}/realfaces`, {
     method: 'GET',

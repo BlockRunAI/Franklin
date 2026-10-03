@@ -19,10 +19,11 @@ import {
   setupAgentWallet,
   setupAgentSolanaWallet,
 } from '@blockrun/llm';
-import { loadChain, VERSION, BLOCKRUN_DIR, DASHBOARD_URL, KEY_API_URL, USER_AGENT } from '../config.js';
+import { loadChain, VERSION, BLOCKRUN_DIR, DASHBOARD_URL, KEY_API_URL, USER_AGENT, type Chain } from '../config.js';
 import { gatewayBase, isKeyMode, loadApiKey, maskApiKey } from '../payments/auth-mode.js';
 import { isTelemetryEnabled, readAllRecords, telemetryPaths } from '../telemetry/store.js';
 import { getAvailableUpdateFresh, kickoffVersionCheck } from '../version-check.js';
+import { readEvmBalance } from '../wallet/manager.js';
 
 interface Check {
   name: string;
@@ -105,7 +106,7 @@ async function runChecks(): Promise<Check[]> {
   }
 
   // ── 4. Chain configuration ────────────────────────────────────────
-  let chain: 'base' | 'solana' | null = null;
+  let chain: Chain | null = null;
   try {
     chain = loadChain();
     out.push({
@@ -118,7 +119,7 @@ async function runChecks(): Promise<Check[]> {
       name: 'Chain',
       status: 'fail',
       detail: `failed to load — ${(err as Error).message}`,
-      remedy: 'Run: franklin setup base  (or: franklin setup solana)',
+      remedy: 'Run: franklin setup solana  (or: franklin setup base / franklin setup arc)',
     });
   }
 
@@ -159,7 +160,7 @@ async function runChecks(): Promise<Check[]> {
       } else {
         const client = setupAgentWallet({ silent: true });
         walletAddress = client.getWalletAddress();
-        walletBalance = await client.getBalance();
+        walletBalance = await readEvmBalance(chain, client);
       }
       out.push({
         name: 'Wallet',

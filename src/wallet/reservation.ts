@@ -32,6 +32,7 @@
 import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
 import { loadChain } from '../config.js';
 import { fetchCreditBalance, isKeyMode } from '../payments/auth-mode.js';
+import { readEvmBalance } from './manager.js';
 
 export interface ReservationToken {
   id: string;
@@ -97,12 +98,13 @@ async function readSpendableBalance(): Promise<number> {
     const credit = await fetchCreditBalance().catch(() => null);
     return credit?.remainingUsd ?? Number.POSITIVE_INFINITY;
   }
-  if (loadChain() === 'solana') {
+  const chain = loadChain();
+  if (chain === 'solana') {
     const client = await setupAgentSolanaWallet({ silent: true });
     return readSolanaBalance(() => client.getBalance());
   }
   const client = setupAgentWallet({ silent: true });
-  return client.getBalance();
+  return readEvmBalance(chain, client);
 }
 
 class WalletReservationManager {

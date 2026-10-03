@@ -6,7 +6,7 @@
 import chalk from 'chalk';
 import { getOrCreateWallet, getOrCreateSolanaWallet } from '@blockrun/llm';
 import { createProxy } from '../proxy/server.js';
-import { loadChain, DEFAULT_PROXY_PORT} from '../config.js';
+import { loadChain, CHAIN_LABELS, DEFAULT_PROXY_PORT} from '../config.js';
 import { gatewayBase } from '../payments/auth-mode.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
@@ -69,14 +69,14 @@ export async function proxyCommand(options: ProxyOptions) {
       console.log(chalk.yellow('No wallet found — created a new one.'));
       console.log(`Address: ${chalk.cyan(wallet.address)}`);
       console.log(
-        `\nSend USDC on Base to this address, then run ${chalk.bold('franklin proxy')} again.\n`
+        `\nSend USDC on ${CHAIN_LABELS[chain]} to this address, then run ${chalk.bold('franklin proxy')} again.\n`
       );
       return;
     }
 
     printBanner(version);
     console.log(`Mode:     ${chalk.bold('proxy')}`);
-    console.log(`Chain:    ${chalk.magenta('base')}`);
+    console.log(`Chain:    ${chalk.magenta(chain)}`);
     console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
     if (model) console.log(`Model:    ${chalk.green(model)}`);
     console.log(`Fallback: ${fallbackEnabled ? chalk.green('enabled') : chalk.yellow('disabled')}`);
@@ -86,7 +86,7 @@ export async function proxyCommand(options: ProxyOptions) {
     const server = createProxy({
       port,
       apiUrl,
-      chain: 'base',
+      chain,
       modelOverride: model,
       debug: options.debug,
       fallbackEnabled,

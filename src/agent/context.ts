@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { BLOCKRUN_DIR } from '../config.js';
+import { API_URLS, BLOCKRUN_DIR, CHAIN_LABELS, CHAINS } from '../config.js';
 import { getWalletAddress as getBaseWalletAddress } from '@blockrun/llm';
 import { Keypair } from '@solana/web3.js';
 import bs58 from 'bs58';
@@ -277,9 +277,9 @@ function getBlockRunApiSection(): string {
   const chargedBy = mode.kind === 'key' ? 'account credits' : 'x402 wallet payment';
   const hosts = mode.kind === 'key'
     ? `- **Your host: \`https://api.blockrun.ai\`** — the account API. Requests carry your configured key; the built-in tools attach it. It is a SEPARATE service, not an alias of the Base gateway.
-- Not yours: \`https://blockrun.ai/api\` (Base x402 wallet) and \`https://sol.blockrun.ai/api\` (Solana x402 wallet). They ignore an account key and answer 402. Never send one there, and never attach a wallet payment proof to an account request.`
-    : `- **Your host: \`${mode.apiBase}\`** — the ${mode.chain === 'solana' ? 'Solana' : 'Base'} x402 wallet gateway. Paid calls answer 402 and the tools sign from your ${mode.chain === 'solana' ? 'Solana' : 'Base'} wallet.
-- Not yours: \`${mode.chain === 'solana' ? 'https://blockrun.ai/api' : 'https://sol.blockrun.ai/api'}\` (the other chain's wallet gateway) and \`https://api.blockrun.ai\` (the account API, which needs a key and 401s without one — it is not an alias of either wallet host).`;
+- Not yours: ${CHAINS.map(c => `\`${API_URLS[c]}\` (${CHAIN_LABELS[c]} x402 wallet)`).join(', ')}. They ignore an account key and answer 402. Never send one there, and never attach a wallet payment proof to an account request.`
+    : `- **Your host: \`${mode.apiBase}\`** — the ${CHAIN_LABELS[mode.chain]} x402 wallet gateway. Paid calls answer 402 and the tools sign from your ${CHAIN_LABELS[mode.chain]} wallet.
+- Not yours: ${CHAINS.filter(c => c !== mode.chain).map(c => `\`${API_URLS[c]}\` (the ${CHAIN_LABELS[c]} wallet gateway)`).join(', ')} and \`https://api.blockrun.ai\` (the account API, which needs a key and 401s without one — it is not an alias of any wallet host).`;
 
   return `# BlockRun Gateway API (the network you live on)
 You run on the BlockRun AI Gateway. When the user asks you to "test the BlockRun API", "check all endpoints", or call the gateway directly, use ONLY the paths below. **Never invent, pluralize, or singularize an endpoint** — \`/v1/image/generate\` (singular) is wrong, \`/v1/images/generations\` (plural) is correct. If a path you have in mind isn't in this list, fetch the canonical discovery endpoints before calling it.
@@ -782,7 +782,7 @@ function buildEnvironmentSection(workingDir: string): string {
     lines.push('');
     lines.push('# Franklin Runtime Wallet');
     if (wallet.chain) lines.push(`- Active chain: ${wallet.chain}`);
-    if (wallet.base) lines.push(`- Base wallet address: ${wallet.base} (private key at ~/.blockrun/.session)`);
+    if (wallet.base) lines.push(`- EVM wallet address (Base and Arc): ${wallet.base} (private key at ~/.blockrun/.session)`);
     if (wallet.solana) lines.push(`- Solana wallet address: ${wallet.solana} (private key at ~/.blockrun/.solana-session)`);
   }
 

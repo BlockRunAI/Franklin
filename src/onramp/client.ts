@@ -32,6 +32,11 @@ export interface OnrampLinkResult {
  */
 export async function getOnrampUrl(address: string): Promise<OnrampLinkResult> {
   const chain = loadChain();
+  // Coinbase Onramp cannot deliver to Arc, and the Arc gateway refuses any
+  // network but Base. Fail before the x402 handshake rather than after it.
+  if (chain === 'arc') {
+    throw new Error('Card purchase is not available on Arc. Send USDC on Arc (chain 5042) to this wallet, or switch to Base or Solana to buy with a card.');
+  }
   const endpoint = `${gatewayBase()}/v1/onramp/token`;
   const result = await postWithPayment(
     endpoint,

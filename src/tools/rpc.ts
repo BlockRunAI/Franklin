@@ -28,7 +28,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, VERSION} from '../config.js';
+import { loadChain, VERSION, type Chain } from '../config.js';
 import { chargeFromResponse, requestIdFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
@@ -143,7 +143,7 @@ async function postRpcWithPayment(
 
 async function signPayment(
   response: Response,
-  chain: 'base' | 'solana',
+  chain: Chain,
   endpoint: string,
 ): Promise<{ headers: Record<string, string>; amountUsd: number } | null> {
   try {

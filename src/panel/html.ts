@@ -695,6 +695,7 @@ a:hover { text-decoration:underline; }
     <div class="chain-switcher" role="tablist" aria-label="Payment chain">
       <button type="button" data-chain="base" id="chain-btn-base" role="tab">Base</button>
       <button type="button" data-chain="solana" id="chain-btn-solana" role="tab">Solana</button>
+      <button type="button" data-chain="arc" id="chain-btn-arc" role="tab">Arc</button>
     </div>
     <span class="chain-switcher-note" id="chain-switcher-note"></span>
 
@@ -736,7 +737,7 @@ a:hover { text-decoration:underline; }
           <strong>This overwrites your existing wallet file.</strong>
           Make sure the current key is backed up first, or you will lose access to any funds still on it.
         </p>
-        <textarea id="wallet-import-input" class="wallet-import-input" placeholder="0x… (Base) or base58 key (Solana)"></textarea>
+        <textarea id="wallet-import-input" class="wallet-import-input" placeholder="0x… (Base / Arc) or base58 key (Solana)"></textarea>
         <div class="wallet-actions">
           <button class="btn btn-danger" id="wallet-import-btn">Import &amp; replace</button>
           <span class="wallet-import-status" id="wallet-import-status"></span>
@@ -1191,6 +1192,8 @@ async function loadLearnings() {
     }).join('');
 }
 
+// Payment-chain switcher buttons, in display order.
+const CHAIN_BUTTON_IDS = ['chain-btn-base', 'chain-btn-solana', 'chain-btn-arc'];
 async function loadWallet() {
   const w = await api('wallet');
   if (!w) return;
@@ -1200,56 +1203,71 @@ async function loadWallet() {
   document.getElementById('wallet-chain-pill').textContent = w.chain || '—';
 
   // Chain switcher — highlight active button
-  const baseBtn = document.getElementById('chain-btn-base');
-  const solanaBtn = document.getElementById('chain-btn-solana');
-  if (baseBtn && solanaBtn) {
-    baseBtn.classList.toggle('active', w.chain === 'base');
-    solanaBtn.classList.toggle('active', w.chain === 'solana');
-  }
+  CHAIN_BUTTON_IDS.forEach((id) => {
+    const b = document.getElementById(id);
+    if (b) b.classList.toggle('active', b.getAttribute('data-chain') === w.chain);
+  });
 
-  // Coinbase Onramp works on both chains — the gateway of the active chain
-  // mints the link, so the buy button stays visible on Base and Solana alike.
+  // Coinbase Onramp funds Base and Solana — the gateway of the active chain
+  // mints the link. It cannot deliver to Arc (the Arc gateway refuses any
+  // network but Base), so on Arc the card button is replaced by a hint.
+  const onrampActions = document.getElementById('wallet-onramp-actions');
+  const onrampHint = document.getElementById('wallet-onramp-hint');
+  const onrampOk = w.chain !== 'arc';
+  if (onrampActions) onrampActions.style.display = onrampOk ? 'flex' : 'none';
+  if (onrampHint) onrampHint.textContent = onrampOk
+    ? 'Powered by Coinbase Onramp \u00b7 60+ fiat currencies'
+    : 'Card purchase is not available on Arc \u2014 send USDC on Arc (chain 5042) to this address.';
 
   // QR via server — never leak address to third parties.
   // Encode chain + USDC token in the QR payload so wallet apps land
   // directly on the right network/token instead of a bare address:
   //   Base   → EIP-681:  ethereum:<USDC>@8453/transfer?address=<addr>
+  //   Arc    → EIP-681:  ethereum:<USDC>@5042/transfer?address=<addr>
   //   Solana → Solana Pay: solana:<addr>?spl-token=<USDC mint>
   const qrBox = document.getElementById('wallet-qr');
   const hint = document.getElementById('wallet-qr-hint');
   if (addr && addr !== 'not set') {
     const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+    const USDC_ARC = '0x3600000000000000000000000000000000000000';
     const USDC_SOL_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
     const payload = w.chain === 'solana'
       ? 'solana:' + addr + '?spl-token=' + USDC_SOL_MINT
-      : 'ethereum:' + USDC_BASE + '@8453/transfer?address=' + addr;
+      : w.chain === 'arc'
+        ? 'ethereum:' + USDC_ARC + '@5042/transfer?address=' + addr
+        : 'ethereum:' + USDC_BASE + '@8453/transfer?address=' + addr;
     const svg = await fetch('/api/wallet/qr?data=' + encodeURIComponent(payload)).then(r => r.ok ? r.text() : null);
     qrBox.innerHTML = svg || '';
     hint.textContent = w.chain === 'solana'
       ? 'Scan with a Solana wallet (Phantom, Solflare) to send USDC SPL.'
-      : 'Scan with an EVM wallet (MetaMask, Coinbase) to send USDC on Base.';
+      : w.chain === 'arc'
+        ? 'Scan with an EVM wallet to send USDC on Arc (chain 5042). Same address as your Base wallet.'
+        : 'Scan with an EVM wallet (MetaMask, Coinbase) to send USDC on Base.';
   } else {
     qrBox.innerHTML = '';
     hint.textContent = 'No wallet set yet — run: franklin setup';
   }
 }
 
-// Chain switcher — click "Base" or "Solana" to flip payment chain.
-// Creates a wallet on the target chain if one does not exist yet.
-// Note: a currently-running franklin agent reads its chain at startup,
-// so a mid-session switch only affects the next agent invocation.
-['chain-btn-base', 'chain-btn-solana'].forEach((id) => {
+// Chain switcher — click "Base", "Solana" or "Arc" to flip payment chain.
+// Creates a wallet on the target chain if one does not exist yet (Base and
+// Arc share one EVM wallet). Note: a currently-running franklin agent reads
+// its chain at startup, so a mid-session switch only affects the next run.
+function setChainButtonsDisabled(disabled) {
+  CHAIN_BUTTON_IDS.forEach((id) => {
+    const b = document.getElementById(id);
+    if (b) b.disabled = disabled;
+  });
+}
+CHAIN_BUTTON_IDS.forEach((id) => {
   const btn = document.getElementById(id);
   if (!btn) return;
   btn.addEventListener('click', async () => {
     const target = btn.getAttribute('data-chain');
     const note = document.getElementById('chain-switcher-note');
-    const baseBtn = document.getElementById('chain-btn-base');
-    const solanaBtn = document.getElementById('chain-btn-solana');
     // Skip if already active
     if (btn.classList.contains('active')) return;
-    baseBtn.disabled = true;
-    solanaBtn.disabled = true;
+    setChainButtonsDisabled(true);
     note.textContent = 'Switching to ' + target + '…';
     // The onramp status (e.g. a popup-blocked Coinbase link) belongs to the
     // previous chain's wallet — a stale link would fund the wrong chain.
@@ -1274,8 +1292,7 @@ async function loadWallet() {
     } catch (err) {
       note.textContent = 'Error: ' + (err && err.message ? err.message : 'network error');
     } finally {
-      baseBtn.disabled = false;
-      solanaBtn.disabled = false;
+      setChainButtonsDisabled(false);
     }
   });
 });

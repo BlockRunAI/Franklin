@@ -1048,9 +1048,10 @@ test('every gateway 402 handler that can sign is gated on the request rail', asy
     ['src/market/client.ts', 'third-party marketplace, wallet-only'],
     ['src/proxy/server.ts', 'wallet-only payment proxy'],
     ['src/payments/post-with-payment.ts', 'key mode returns before the 402 branch'],
-    ['src/trading/providers/blockrun/client.ts:101', 'free-path client, never signs'],
-    ['src/agent/llm.ts:1410', 'post-signature 402, not a challenge'],
   ]);
+  // Only a branch that goes on to sign matters; a 402 that is merely reported
+  // (a post-signature rejection, a free-path client) has nothing to gate.
+  const SIGNS = /sign[A-Za-z]*Payment|signPayment|paymentSigner|PaymentPayload|extractPaymentReq/;
   const { readdir } = await import('node:fs/promises');
   const files = (await readdir(new URL('../src', import.meta.url), { recursive: true }))
     .filter(f => f.endsWith('.ts')).map(f => `src/${f}`);
@@ -1058,10 +1059,10 @@ test('every gateway 402 handler that can sign is gated on the request rail', asy
   for (const file of files) {
     if (exempt.has(file)) continue;
     const src = await readFile(new URL(`../${file}`, import.meta.url), 'utf-8');
-    src.split('\n').forEach((line, i) => {
-      if (/\.status === 402\)? *(&&|\{)/.test(line) && !/walletMayPay\(/.test(line) && !exempt.has(`${file}:${i + 1}`)) {
-        offenders.push(`${file}:${i + 1}: ${line.trim()}`);
-      }
+    const lines = src.split('\n');
+    lines.forEach((line, i) => {
+      if (!/\.status === 402\)? *(&&|\{)/.test(line) || /walletMayPay\(/.test(line)) return;
+      if (SIGNS.test(lines.slice(i + 1, i + 8).join('\n'))) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
     });
   }
   assert.deepEqual(offenders, [], `gate these on walletMayPay(headers):\n${offenders.join('\n')}`);

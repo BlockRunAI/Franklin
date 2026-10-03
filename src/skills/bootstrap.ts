@@ -29,7 +29,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { loadSkillsFromDir } from './loader.js';
 import { Registry } from './registry.js';
 import type { LoadError, LoadedSkill } from './types.js';
-import { BLOCKRUN_DIR } from '../config.js';
+import { BLOCKRUN_DIR, type Chain } from '../config.js';
 import { migrateLegacyLearnedSkills } from '../learnings/store.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -123,7 +123,7 @@ export function ensureLearnedSkillsDir(): string {
 }
 
 export interface SkillVarSource {
-  chain?: 'base' | 'solana';
+  chain?: Chain;
 }
 
 export function getSkillVars(src: SkillVarSource): Record<string, string> {

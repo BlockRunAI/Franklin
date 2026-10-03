@@ -1,26 +1,36 @@
 /** Shared model facts and policy; payment credentials stay in Franklin. */
 import { createCatalogClient, type CatalogState, type Network } from '@blockrun/model-catalog';
-import { API_URLS, loadChain, USER_AGENT } from './config.js';
+import { API_URLS, loadChain, USER_AGENT, type Chain } from './config.js';
 import { gatewayHeaders, resolvePayMode } from './payments/auth-mode.js';
 
 const clients = new Map<string, ReturnType<typeof createCatalogClient>>();
 const bundled = new Map<Network, CatalogState>();
+/**
+ * Model Core's policy and bundled snapshot know Base and Solana. The Arc
+ * gateway is a fork of the Base gateway serving the same catalog, so Arc reads
+ * Base's policy and offline snapshot, while its live rows and prices come from
+ * arc.blockrun.ai itself (the gateway URL below), cached apart from Base's.
+ */
+function catalogNetwork(chain: Chain): Network {
+  return chain === 'arc' ? 'base' : chain;
+}
 function bundledState(): CatalogState {
-  const network = sessionNetwork ?? loadChain();
+  const network = catalogNetwork(sessionChain ?? loadChain());
   let state = bundled.get(network);
   if (!state) { state = createCatalogClient({ network }).current(); bundled.set(network, state); }
   return state;
 }
 const listeners = new Set<(state: CatalogState) => void>();
-let sessionNetwork: Network | undefined;
+let sessionChain: Chain | undefined;
 function activeClient() {
   const mode = resolvePayMode();
-  const network = sessionNetwork ?? loadChain();
-  const gatewayUrl = `${mode.kind === 'key' ? mode.apiBase : API_URLS[network]}/v1/models?format=json`;
+  const chain = sessionChain ?? loadChain();
+  const network = catalogNetwork(chain);
+  const gatewayUrl = `${mode.kind === 'key' ? mode.apiBase : API_URLS[chain]}/v1/models?format=json`;
   const catalogUrl = process.env.BLOCKRUN_MODEL_CATALOG_URL
     ?? 'https://raw.githubusercontent.com/BlockRunAI/model-catalog/main/dist/snapshot.v1.json';
   // Separate caches for each chain, endpoint and API account; keys never leave memory.
-  const identity = JSON.stringify([network, gatewayUrl, catalogUrl, mode.kind === 'key' ? mode.key : '']);
+  const identity = JSON.stringify([chain, gatewayUrl, catalogUrl, mode.kind === 'key' ? mode.key : '']);
   let client = clients.get(identity);
   if (!client) {
     const headers = { ...gatewayHeaders(mode), 'User-Agent': USER_AGENT };
@@ -37,7 +47,7 @@ function activeClient() {
   return { identity, client };
 }
 export function getModelCatalogIdentity(): string {
-  try { return activeClient().identity; } catch { return `unconfigured:${sessionNetwork ?? loadChain()}`; }
+  try { return activeClient().identity; } catch { return `unconfigured:${sessionChain ?? loadChain()}`; }
 }
 export function getModelCatalog(): CatalogState {
   // Metadata imports precede CLI flag parsing. An invalid saved key must not
@@ -48,8 +58,8 @@ export function onModelCatalogChange(listener: (state: CatalogState) => void): (
   listeners.add(listener);
   return () => { listeners.delete(listener); };
 }
-export async function refreshModelCatalog(options: { network?: Network; force?: boolean } = {}): Promise<CatalogState> {
-  if (options.network) sessionNetwork = options.network;
+export async function refreshModelCatalog(options: { network?: Chain; force?: boolean } = {}): Promise<CatalogState> {
+  if (options.network) sessionChain = options.network;
   const { identity, client } = activeClient();
   const state = process.env.FRANKLIN_CATALOG_OFFLINE === '1'
     ? client.current() : await client.refresh({ force: options.force });
@@ -58,5 +68,5 @@ export async function refreshModelCatalog(options: { network?: Network; force?: 
 }
 export function clearModelCatalogCache(): void {
   clients.clear();
-  sessionNetwork = undefined;
+  sessionChain = undefined;
 }

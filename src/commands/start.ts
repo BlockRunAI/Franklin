@@ -20,6 +20,7 @@ import { loadMcpConfig } from '../mcp/config.js';
 import { connectMcpServers, disconnectMcpServers, getMcpServerInstructions } from '../mcp/client.js';
 import { ensureCodegraphIndex } from '../mcp/codegraph.js';
 import type { AgentConfig, Dialogue, StreamTurnDone } from '../agent/types.js';
+import { readEvmBalance } from '../wallet/manager.js';
 
 interface StartOptions {
   model?: string;
@@ -283,15 +284,16 @@ export async function startCommand(options: StartOptions) {
   // zero result; genuinely empty wallets still resolve to $0.00 quickly.
   const fetchBalance = async (): Promise<string> => {
     try {
+      const payChain = chain;
       const bal = await retryFetchBalance(async () => {
-        if (chain === 'solana') {
+        if (payChain === 'solana') {
           const { setupAgentSolanaWallet } = await import('@blockrun/llm');
           const client = await setupAgentSolanaWallet({ silent: true });
           return client.getBalance();
         }
         const { setupAgentWallet } = await import('@blockrun/llm');
         const client = setupAgentWallet({ silent: true });
-        return client.getBalance();
+        return readEvmBalance(payChain, client);
       });
       return `$${bal.toFixed(2)} USDC`;
     } catch {

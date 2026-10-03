@@ -7,7 +7,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadChain, saveChain, type Chain } from '../config.js';
+import { loadChain, saveChain, isChain, CHAIN_LABELS } from '../config.js';
 import {
   listNumbers as gatewayListNumbers,
   renewNumber as gatewayRenewNumber,
@@ -39,6 +39,7 @@ import { isTerminalTaskStatus } from '../tasks/types.js';
 import { readLiveAgents } from '../session/live-registry.js';
 import { BLOCKRUN_DIR } from '../config.js';
 import { getHTML } from './html.js';
+import { readEvmBalance } from '../wallet/manager.js';
 
 const sseClients = new Set<http.ServerResponse>();
 
@@ -116,7 +117,7 @@ function broadcast(data: unknown): void {
 }
 
 /**
- * Resolve the current active wallet address (Base or Solana, depending on
+ * Resolve the current active wallet address (EVM for Base/Arc, or Solana, depending on
  * the active chain). Used by phone endpoints that key the cache by wallet,
  * and that must sign x402 payments out of the wallet the user owns.
  *
@@ -310,7 +311,7 @@ export function createPanelServer(port: number): http.Server {
             const { setupAgentWallet } = await import('@blockrun/llm');
             const client = setupAgentWallet({ silent: true });
             address = client.getWalletAddress();
-            balance = await client.getBalance();
+            balance = await readEvmBalance(chain, client);
           }
           json(res, { address, balance, chain });
         } catch {
@@ -435,7 +436,7 @@ export function createPanelServer(port: number): http.Server {
             // Base: 0x + 64 hex chars
             const normalized = pk.startsWith('0x') ? pk : `0x${pk}`;
             if (!/^0x[0-9a-fA-F]{64}$/.test(normalized)) {
-              json(res, { error: 'invalid Base private key — expected 0x + 64 hex chars' }, 400);
+              json(res, { error: `invalid ${CHAIN_LABELS[chain]} private key — expected 0x + 64 hex chars` }, 400);
               return;
             }
             saveWallet(normalized);
@@ -469,11 +470,11 @@ export function createPanelServer(port: number): http.Server {
           const raw = await readBody(req);
           const body = JSON.parse(raw) as { chain?: string };
           const target = body.chain;
-          if (target !== 'base' && target !== 'solana') {
-            json(res, { error: 'chain must be "base" or "solana"' }, 400);
+          if (!isChain(target)) {
+            json(res, { error: 'chain must be "base", "solana" or "arc"' }, 400);
             return;
           }
-          saveChain(target as Chain);
+          saveChain(target);
           // Creates-or-loads the wallet on the target chain.
           let address = '';
           let balance = 0;
@@ -486,7 +487,7 @@ export function createPanelServer(port: number): http.Server {
             const { setupAgentWallet } = await import('@blockrun/llm');
             const client = setupAgentWallet({ silent: true });
             address = client.getWalletAddress();
-            balance = await client.getBalance();
+            balance = await readEvmBalance(target, client);
           }
           json(res, { ok: true, chain: target, address, balance });
         } catch (err) {

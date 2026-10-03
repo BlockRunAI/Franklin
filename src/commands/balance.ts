@@ -1,8 +1,9 @@
 import chalk from 'chalk';
 import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
-import { loadChain, DASHBOARD_URL } from '../config.js';
+import { loadChain, CHAIN_LABELS, DASHBOARD_URL } from '../config.js';
 import { fetchCreditBalance, isKeyMode, loadApiKey, maskApiKey } from '../payments/auth-mode.js';
 import { loadStats } from '../stats/tracker.js';
+import { readEvmBalance } from '../wallet/manager.js';
 
 export async function balanceCommand() {
   const chain = loadChain();
@@ -86,9 +87,9 @@ export async function balanceCommand() {
     } else {
       const client = setupAgentWallet({ silent: true });
       const address = client.getWalletAddress();
-      const balance = await client.getBalance();
+      const balance = await readEvmBalance(chain, client);
 
-      console.log(`Chain:  ${chalk.magenta('base')}`);
+      console.log(`Chain:  ${chalk.magenta(chain)}`);
       console.log(`Wallet: ${chalk.cyan(address)}`);
       console.log(
         `USDC Balance: ${chalk.green(`$${balance.toFixed(2)}`)}`
@@ -96,7 +97,7 @@ export async function balanceCommand() {
 
       if (balance === 0) {
         console.log(
-          chalk.dim(`\nSend USDC on Base to ${address} to get started.`)
+          chalk.dim(`\nSend USDC on ${CHAIN_LABELS[chain]} to ${address} to get started.`)
         );
       }
     }

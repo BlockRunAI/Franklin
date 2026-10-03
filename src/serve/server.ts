@@ -42,6 +42,7 @@ import { bus } from '../events/bus.js';
 import type { FranklinEvent } from '../events/types.js';
 import type { AgentConfig, StreamEvent, Dialogue, ContentPart, UserContentPart } from '../agent/types.js';
 import { FREE_DEFAULT_MODEL } from '../free-models.js';
+import { readEvmBalance } from '../wallet/manager.js';
 
 
 // Curated Base (chainId 8453) tokens for the wallet "holdings" view. Plain RPC
@@ -523,7 +524,9 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   async function fetchBalanceUsd(): Promise<number | undefined> {
     try {
       const client = await getWallet();
-      return await retryFetchBalance(() => client.getBalance());
+      return await retryFetchBalance(() => chain === 'solana'
+        ? client.getBalance()
+        : readEvmBalance(chain, client as ReturnType<typeof setupAgentWallet>));
     } catch { return undefined; }
   }
   // After each turn, push the fresh balance to the UI (settlement may have
