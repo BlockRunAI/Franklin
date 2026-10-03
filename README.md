@@ -74,7 +74,7 @@ franklin
 #    Pick ONE — a USDC wallet, or a prepaid API key.
 
 #    a) Wallet — no signup, no account
-franklin setup solana      # or: franklin setup base
+franklin setup solana      # or: franklin setup base / franklin setup arc
 franklin balance           # show address + USDC balance
 
 #    b) API key — sign up and top up at https://user.blockrun.ai
@@ -163,11 +163,17 @@ interchangeable. Everything else about the agent is identical.
 | --- | --- | --- |
 | Setup | `franklin setup solana` | Sign up, top up, `franklin login brk_...` |
 | Account required | No | Yes |
-| Crypto required | Yes — USDC on Solana or Base | No — top up with a card |
+| Crypto required | Yes — USDC on Solana, Base or Arc | No — top up with a card |
 | Settlement | On-chain, per call, via [x402](https://x402.org) | Against a prepaid balance |
-| Gateway | `sol.blockrun.ai` / `blockrun.ai` | `api.blockrun.ai` |
+| Gateway | `sol.blockrun.ai` / `blockrun.ai` / `arc.blockrun.ai` | `api.blockrun.ai` |
 | Where the money lives | A wallet only you hold the key to | Your BlockRun account |
 | Spend visibility | `franklin stats` — exact settled amounts | `franklin balance` + [dashboard](https://user.blockrun.ai/dashboard); exact except chat |
+
+**Three wallet chains.** Solana (the default), Base, or Circle's [Arc](https://arc.network)
+(chain 5042). Switch with `franklin solana` / `franklin base` / `franklin arc`, or the chain
+buttons on the panel's wallet page. Base and Arc share one EVM key, so the same address
+receives USDC on both; Solana has its own key. Card purchase (Coinbase Onramp) funds Base
+and Solana only — on Arc, send USDC to the address directly.
 
 **The wallet is still Franklin's identity.** Memory, the trading journal and goals are
 keyed to it, and the wallet route is the one that needs nothing from us — no signup, no
@@ -448,7 +454,7 @@ No single model is best at everything. Sonnet writes better code, Gemini handles
 
 ### 🔐 &nbsp;Wallet is identity
 
-No email. No phone. No KYC. Your Solana or Base address is your account — portable, permissionless, global. A wallet requires only USDC. (Prefer an account and a card? [Two ways to pay](#two-ways-to-pay) — the key route exists, it just is not the one that makes the agent sovereign.)
+No email. No phone. No KYC. Your Solana, Base or Arc address is your account — portable, permissionless, global. A wallet requires only USDC. (Prefer an account and a card? [Two ways to pay](#two-ways-to-pay) — the key route exists, it just is not the one that makes the agent sovereign.)
 
 </td>
 </tr>
@@ -569,7 +575,7 @@ like `opus`, `gpt` and `grok` keep their current targets.
 │  <!-- br:models.chatVisible@live -->82<!-- /br:models.chatVisible@live --> LLMs · CoinGecko · Search · Image APIs · paid services  │
 ├──────────────────────────────────────────────────────────────┤
 │  x402 Micropayment Protocol                                  │
-│  HTTP 402 · USDC on Solana & Base · signed payment payloads  │
+│  HTTP 402 · USDC on Solana, Base & Arc · signed payloads     │
 └──────────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -611,7 +617,7 @@ src/
 ├── ui/                Ink-based terminal UI
 ├── proxy/             Payment proxy for external tools
 ├── router/            Learned model router (<!-- br:models.chatVisible@live -->82<!-- /br:models.chatVisible@live --> models, Elo scoring)
-├── wallet/            Wallet management (Base + Solana)
+├── wallet/            Wallet management (Base/Arc + Solana)
 ├── mcp/               MCP server auto-discovery
 └── commands/          CLI subcommands
 ```
@@ -727,7 +733,8 @@ Franklin uses [BlockRun Model Core](https://github.com/BlockRunAI/model-catalog)
 for model metadata, picker policy and price estimates. The runtime dependency
 is pinned to an immutable commit. On refresh, Franklin reads the public policy
 snapshot and the active gateway's catalog, so new models and prices can appear
-without a Franklin release. Base, Solana and API accounts have separate caches.
+without a Franklin release. Base, Solana, Arc and API accounts have separate caches.
+Arc reads Base's policy and offline snapshot, with live rows from `arc.blockrun.ai`.
 The default picker shows Auto and curated groups; other available chat models
 remain accessible through +more / Ctrl+A.
 
