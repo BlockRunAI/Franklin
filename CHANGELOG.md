@@ -1,5 +1,38 @@
 # Changelog
 
+## Franklin Agent 3.48.0 — an account refusal can no longer spend from your wallet
+
+**Out of account credit no longer means "pay from the wallet instead."**
+With an API key set, a 402 from the account gateway is a credit refusal. The
+agent loop already treated it that way on the first request, but its
+tool_choice retry did not, and neither did thirteen paid tools (ExaSearch,
+MultiChainRPC, Surf, PredictionMarket, DeFiLlama, ImageGen, VideoGen,
+MusicGen, Voice, Phone, Modal, RealFace, the BlockRun gateway tool), the
+prefetch research call or the trading data client. Each one handed any 402 to
+the wallet signer. If that 402 carried an x402 challenge, the wallet signed
+and paid for a request you had routed to your account. Every gateway call now
+checks which rail its own request went out on before it answers a 402, and
+an account refusal surfaces as the gateway's error. Use `--wallet` when you
+want the wallet to pay. A source-level test fails if any new gateway 402
+handler skips the check.
+
+**A broken remote picker policy can no longer break the model list.** A
+policy snapshot missing its default view, shortcut map or group membership used
+to pass validation, replace the cached policy and make later reads throw.
+Model Core now validates the picker structure before accepting a snapshot.
+Franklin keeps the last good policy and its ETag, still applies live gateway
+prices, and recovers on the next valid snapshot without a restart.
+
+**Nine new gateway models are priced and pinned.** GPT-6 Astra / Sol / Luna,
+GPT-5.1, Claude Fable 5.1 / Opus 5.5 / Sonnet 5.5 and Grok 4.6 / 4.7 have
+fallback prices, context windows, vision support where it applies, and
+explicit version shortcuts. Bare aliases are unchanged.
+
+**Pricing copy matches what the gateway charges.** Chat is provider cost with
+no markup, plus $0.001 per call; the 5% applies only to media. Fallback prices
+for Sonnet 5, DeepSeek V4 Pro, GPT-5.6 Terra Pro / Luna Pro and Gemini 3.6
+Flash now match the live catalog. Auto-routing decisions are unchanged.
+
 ## Franklin Agent 3.47.0 — new models reach the picker without a Franklin release
 
 **Model lists and prices now refresh without waiting on a Franklin release.**

@@ -15,7 +15,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import { USER_AGENT, type Chain } from '../config.js';
-import { gatewayHeaders } from '../payments/auth-mode.js';
+import { gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { appendSettlementRow, type SettlementMeta } from '../stats/cost-log.js';
 import { routeRequest, parseRoutingProfile } from '../router/index.js';
 import type {
@@ -810,10 +810,9 @@ export class ModelClient {
         requestTimeoutMs,
       );
 
-      // Handle x402 payment
-      // Account 402 is a credit refusal. Only a request that started on
-      // the wallet rail may initiate a signing handshake.
-      if (response.status === 402 && !headers.Authorization) {
+      // Handle x402 payment. An account 402 is a credit refusal, never a
+      // challenge the wallet may answer.
+      if (response.status === 402 && walletMayPay(headers)) {
         if (this.debug) console.error('[franklin] Payment required — signing...');
         const signedPayment = await this.signPayment(response, request.model);
         if (!signedPayment) {
@@ -905,7 +904,7 @@ export class ModelClient {
             requestTimeoutMs,
           );
           // A retry must preserve the request's original payment rail too.
-          if (response.status === 402 && !headers.Authorization) {
+          if (response.status === 402 && walletMayPay(headers)) {
             const signedPayment = await this.signPayment(response, request.model);
             if (!signedPayment) {
               yield { kind: 'error', payload: { message: 'Payment signing failed' } };

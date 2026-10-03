@@ -166,6 +166,18 @@ export function gatewayHeaders(mode: PayMode = resolvePayMode()): Record<string,
 }
 
 /**
+ * Whether a 402 on a request sent with these headers may be answered from the
+ * wallet. A request that carried an account key gets a credit refusal, not an
+ * x402 challenge, and an account failure is never permission to spend from a
+ * wallet — the 402 must surface as an error. Branch on the request's own
+ * headers rather than re-resolving the mode, so the decision always matches the
+ * rail the request actually went out on.
+ */
+export function walletMayPay(requestHeaders: Record<string, string>): boolean {
+  return !requestHeaders['Authorization'];
+}
+
+/**
  * A key's credit standing, from GET /v1/credits. The authoritative figure for
  * display — the per-response `x-blockrun-credit-remaining-usd` header can
  * understate under concurrency and is for warnings, not for showing a user.

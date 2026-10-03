@@ -214,16 +214,17 @@ async function exaAnswerTry(query: string, client: ModelClient): Promise<{ text:
     // tool framework because prefetch runs outside the agent loop — no
     // permission prompt, no streaming.
     const { loadChain } = await import('../config.js');
-    const { gatewayBase, gatewayHeaders } = await import('../payments/auth-mode.js');
+    const { gatewayBase, gatewayHeaders, walletMayPay } = await import('../payments/auth-mode.js');
     const chain = loadChain();
     const apiUrl = gatewayBase();
     void client; // (future: unify the paid-endpoint client so we reuse wallet caching)
+    const requestHeaders: Record<string, string> = { 'Content-Type': 'application/json', ...gatewayHeaders() };
     const res = await fetch(`${apiUrl}/v1/exa/answer`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...gatewayHeaders() },
+      headers: requestHeaders,
       body: JSON.stringify({ query }),
     });
-    if (res.status === 402) {
+    if (res.status === 402 && walletMayPay(requestHeaders)) {
       const payHdr = await extractPaymentReq(res);
       if (!payHdr) return { text: null, costUsd: 0 };
       const { getOrCreateWallet, getOrCreateSolanaWallet, createPaymentPayload, createSolanaPaymentPayload,

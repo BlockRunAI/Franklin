@@ -38,7 +38,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION, DASHBOARD_URL } from '../config.js';
-import { gatewayBase, gatewayHeaders, isKeyMode } from '../payments/auth-mode.js';
+import { gatewayBase, gatewayHeaders, isKeyMode, walletMayPay } from '../payments/auth-mode.js';
 import { walletReservation, AMBIGUOUS_GRACE_MS, type ReservationToken } from '../wallet/reservation.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
@@ -217,7 +217,7 @@ export async function postWithPayment(
     const payload = JSON.stringify(body);
     let response = await fetch(endpoint, { method: 'POST', signal: ctrl.signal, headers, body: payload });
 
-    if (response.status === 402) {
+    if (response.status === 402 && walletMayPay(headers)) {
       const paymentHeaders = await paymentSigner(response, chain, endpoint, resourceDescription);
       if (!paymentHeaders) {
         return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '' };

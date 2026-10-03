@@ -39,7 +39,7 @@ import {
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, USER_AGENT} from '../config.js';
 import { chargeFromResponse, requestIdFromResponse, resolveCharge } from '../payments/price-catalog.js';
-import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
 
@@ -214,7 +214,7 @@ async function actionEnroll(
 
   let res = await timedFetch(url, { method: 'POST', headers, body }, ctx);
   let paidUsd = 0;
-  if (res.status === 402) {
+  if (res.status === 402 && walletMayPay(headers)) {
     const signed = await signPayment(res, chain, url, `RealFace enrollment — "${name.slice(0, 32)}"`);
     if (!signed) return { output: 'RealFace enroll: payment signing failed. Check wallet balance with `franklin balance`.', isError: true };
     paidUsd = signed.amountUsd;

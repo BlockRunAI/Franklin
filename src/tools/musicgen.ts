@@ -28,7 +28,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
-import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
 import { isWalletKeyPath } from './sensitive-paths.js';
@@ -155,7 +155,7 @@ function buildExecute(deps: MusicGenDeps) {
         body,
       });
 
-      if (response.status === 402) {
+      if (response.status === 402 && walletMayPay(headers)) {
         const paymentHeaders = await signPayment(response, chain, endpoint);
         if (!paymentHeaders) {
           return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };

@@ -31,7 +31,7 @@ import {
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, USER_AGENT} from '../config.js';
 import { resolveCharge } from '../payments/price-catalog.js';
-import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
 
@@ -166,7 +166,7 @@ async function callGateway(
     let response = await fetch(url, { method, signal: ctrl.signal, headers, body: payload });
 
     let paidUsd = 0;
-    if (response.status === 402) {
+    if (response.status === 402 && walletMayPay(headers)) {
       const signed = await signPayment(response, chain, url, resourceDescription);
       if (!signed) {
         return {
