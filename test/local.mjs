@@ -6623,6 +6623,57 @@ test('imagegen: image2image rejects unsupported edit model, mask+google, mask+mu
   assert.match(r.output, /n must be an integer between 1 and 4/);
 });
 
+// #185: the media model never sees the conversation, so the agent has to put
+// earlier figures into the prompt itself, and the user must be able to see
+// exactly what was sent.
+test('media tools: prompt spec says the model sees only the prompt, not the conversation', async () => {
+  const { createImageGenCapability } = await import('../dist/tools/imagegen.js');
+  const { createVideoGenCapability } = await import('../dist/tools/videogen.js');
+  const { createMusicGenCapability } = await import('../dist/tools/musicgen.js');
+  for (const cap of [createImageGenCapability(), createVideoGenCapability(), createMusicGenCapability()]) {
+    const desc = cap.spec.input_schema.properties.prompt.description;
+    assert.match(desc, /Self-contained/, `${cap.spec.name} prompt must be described as self-contained`);
+    assert.match(desc, /never the conversation/, `${cap.spec.name} must say the model cannot see the chat`);
+  }
+});
+
+test('imagegen: result echoes the exact prompt sent to the image model', async () => {
+  const { createImageGenCapability } = await import('../dist/tools/imagegen.js');
+  const tmp = mkdtempSync(join(tmpdir(), 'imagegen-echo-'));
+  const prompt = 'Infographic: 75.41M transactions, $24.24M volume, 94.06K buyers';
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const originalFetch = globalThis.fetch;
+  let sentPrompt = null;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/v1/images/generations')) {
+      sentPrompt = JSON.parse(init.body).prompt;
+      return new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response('not found', { status: 404 });
+  };
+  try {
+    const r = await createImageGenCapability().execute(
+      { prompt, output_path: join(tmp, 'out.png') },
+      { workingDir: tmp, onAskUser: undefined },
+    );
+    assert.ok(!r.isError, r.output);
+    assert.equal(sentPrompt, prompt, 'the prompt must reach the gateway unchanged');
+    assert.ok(r.output.includes(`Prompt sent: ${prompt}`), r.output);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('desktop media mode tells the agent to resolve earlier context, not pass text through', () => {
+  const src = readFileSync(new URL('../apps/desktop/src/hooks/use-franklin-chat.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /from this prompt:/, 'the old pass-through wording caused #185');
+  assert.match(src, /sees only the prompt you pass it, not this conversation/);
+  assert.match(src, /never invent data/);
+});
+
 // ─── wallet tool ──────────────────────────────────────────────────────────
 
 test('Wallet: formatWalletReport produces a stable two-line USDC summary', async () => {

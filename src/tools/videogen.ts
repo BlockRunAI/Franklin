@@ -419,7 +419,8 @@ function buildExecute(deps: VideoGenDeps) {
 
       return {
         output:
-          `Video saved to ${outPath} (${sizeMB}MB, ${dur}s, ${videoModel})\n\n` +
+          `Video saved to ${outPath} (${sizeMB}MB, ${dur}s, ${videoModel})\n` +
+          `Prompt sent: ${prompt}\n\n` +
           `Open with: open ${outPath}${contentSummary}`,
       };
     } catch (err) {
@@ -605,7 +606,9 @@ export function createVideoGenCapability(deps: VideoGenDeps = {}): CapabilityHan
       input_schema: {
         type: 'object',
         properties: {
-          prompt: { type: 'string', description: 'Text description of the video to generate' },
+          prompt: { type: 'string', description: 'Self-contained text description of the video to generate. ' +
+            'The video model sees ONLY this text, never the conversation: when the user refers to earlier messages, ' +
+            'write those details (scenes, names, quoted text) into the prompt verbatim.' },
           output_path: { type: 'string', description: 'Where to save the MP4. Default: generated-<timestamp>.mp4 in working directory' },
           model: {
             type: 'string',

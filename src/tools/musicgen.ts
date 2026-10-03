@@ -238,7 +238,8 @@ function buildExecute(deps: MusicGenDeps) {
 
       return {
         output:
-          `Track saved to ${outPath} (${sizeMB}MB, ${dur}s, ${musicModel})\n\n` +
+          `Track saved to ${outPath} (${sizeMB}MB, ${dur}s, ${musicModel})\n` +
+          `Prompt sent: ${prompt}\n\n` +
           `Open with: open ${outPath}${lyricsPreview}${contentSummary}`,
       };
     } catch (err) {
@@ -340,7 +341,9 @@ export function createMusicGenCapability(deps: MusicGenDeps = {}): CapabilityHan
       input_schema: {
         type: 'object',
         properties: {
-          prompt: { type: 'string', description: 'Music style / mood / description' },
+          prompt: { type: 'string', description: 'Self-contained music style / mood / description. ' +
+            'The music model sees ONLY this text, never the conversation: when the user refers to earlier messages, ' +
+            'write those details into the prompt.' },
           output_path: { type: 'string', description: 'Where to save the MP3. Default: generated-<timestamp>.mp3' },
           model: { type: 'string', description: 'Music model. Default: minimax/music-2.5+' },
           instrumental: { type: 'boolean', description: 'No vocals. Cannot combine with `lyrics`.' },

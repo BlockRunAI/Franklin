@@ -418,7 +418,14 @@ export function useFranklinChat(
         const specs =
           m === "image" ? `, size ${imageSize}` :
           m === "video" ? `, aspect ratio ${videoRatio}, resolution ${videoResolution}` : "";
-        const instructed = `${verb} with the ${mediaModel} model${specs} from this prompt:\n\n${trimmed}`;
+        // The media model sees only the tool's prompt, never this chat, so a
+        // request like "turn these numbers into an infographic" must be resolved
+        // against earlier turns before the call, not passed through (#185).
+        const instructed =
+          `${verb} with the ${mediaModel} model${specs} for the request below. ` +
+          `The ${m} model sees only the prompt you pass it, not this conversation: if the request refers to ` +
+          `earlier messages, write those details (figures, names, labels, quoted text) into the prompt verbatim, ` +
+          `and never invent data. Request:\n\n${trimmed}`;
         runTurn(instructed, attachment, m, undefined, undefined, true, trimmed);
         return;
       }
