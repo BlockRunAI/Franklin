@@ -1,5 +1,38 @@
 # Changelog
 
+## Franklin Agent 3.49.1 — music on Arc, media prompts keep their context, dependency patches
+
+**Slow music tracks no longer fail.** For a track that outruns the inline
+window, the gateway answers 202 with a job to poll and charges nothing until
+the track is ready. MusicGen read that 202 as the final answer and reported
+"No track URL returned from API" on every chain. It now polls the job, like
+ImageGen and VideoGen.
+
+**Music works on Arc.** Arc's facilitator (Circle) refused the music poll
+because the gateway signs the music request and its poll with different time
+windows. When a poll refuses the original authorization, MusicGen signs the
+poll's own challenge. A job settles once, so this cannot charge twice.
+Verified live on Arc: a 79-second track, charged $0.1585 once.
+
+**Image, video and music prompts carry the context they refer to (#185).**
+Asking for "an infographic of these numbers" sent the image model no
+numbers, so it invented some. The media model sees only the prompt, never
+the chat; the desktop media modes and the tool descriptions now tell the
+agent to write the referenced figures, names and text into the prompt and
+never to invent data. Every result shows `Prompt sent: …`, so you can see
+exactly what the model was given.
+
+**Dependency advisories patched (#186).** sharp 0.35.5, axios 1.20.0,
+undici, fast-uri, js-yaml, brace-expansion, hono and ip-address move to
+patched releases within their current ranges. `npm audit` drops from 50
+entries (25 high) to 42 (19 high). The remaining six have no upstream fix;
+each is documented on #194 as unreachable or deferred.
+
+**Every Arc payment path checked live.** Chat, ExaSearch, ExaReadUrls,
+DeFiLlama, prediction markets, MultiChainRPC, phone lookup, the BlockRun
+tool, ImageGen, MusicGen, VideoGen and a headless agent turn all paid on Arc:
+each was signed for Arc USDC and charged exactly its quoted price.
+
 ## Franklin Agent 3.49.0 — pay on Arc
 
 **Arc is a third payment chain.** Circle's Arc (chain 5042) joins Base and
