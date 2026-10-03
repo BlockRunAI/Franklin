@@ -660,7 +660,7 @@ function buildExecute(deps: ImageGenDeps) {
         : `\n\nOpen with: open ${savedPaths.join(' ')}`;
 
     return {
-      output: `${header}${revisedPrompt}${openHint}${contentSummary}`,
+      output: `${header}\nPrompt sent: ${chosenPrompt}${revisedPrompt}${openHint}${contentSummary}`,
     };
   } catch (err) {
     const msg = (err as Error).message || '';
@@ -819,7 +819,9 @@ export function createImageGenCapability(deps: ImageGenDeps = {}): CapabilityHan
       input_schema: {
         type: 'object',
         properties: {
-          prompt: { type: 'string', description: 'Text description of the image to generate, or edit instructions when a reference image is provided' },
+          prompt: { type: 'string', description: 'Self-contained text description of the image to generate, or edit instructions when a reference image is provided. ' +
+            'The image model sees ONLY this text, never the conversation: when the user refers to earlier messages ("these numbers", "that chart"), ' +
+            'write those details (figures, names, labels, quoted text) into the prompt verbatim. Never invent data the user did not give.' },
           output_path: { type: 'string', description: 'Where to save the image. Default: generated-<timestamp>.png in working directory. With n>1, a -1/-2/... suffix is appended before the extension.' },
           size: { type: 'string', description: 'Image size. gpt-image-1/2: 1024x1024, 1536x1024, 1024x1536. google/nano-banana: 1024x1024. google/nano-banana-pro: 1024x1024, 2048x2048, 4096x4096. Default: 1024x1024. Note: openai/gpt-image-2 is forced to 1024x1024 (other sizes time out at the gateway).' },
           model: { type: 'string', description: 'Image model to use. Default: openai/gpt-image-1 (text-to-image) / openai/gpt-image-2 (image-to-image).' },
