@@ -12042,3 +12042,12 @@ test('2026-10 gateway models: explicit shortcuts, prices, context windows, visio
   assert.equal(MODEL_PRICING['openai/gpt-5.6-sol'].input, 4);
   assert.equal(MODEL_PRICING['openai/gpt-5.6-sol-pro'].output, 20);
 });
+
+test('session ids from the panel URL cannot escape the sessions dir (GHSA-jx74-262x-94p3)', async () => {
+  const { loadSessionHistory, getSessionFilePath } = await import('../dist/session/storage.js');
+  for (const id of ['../franklin-audit', '..%2Ffranklin-audit', '../../etc/passwd', 'a/b', '..', '']) {
+    assert.throws(() => getSessionFilePath(decodeURIComponent(id)), /Invalid session id/);
+    assert.deepEqual(loadSessionHistory(decodeURIComponent(id)), []);
+  }
+  assert.match(getSessionFilePath('session-2026-10-03-abcd1234'), /session-2026-10-03-abcd1234\.jsonl$/);
+});
