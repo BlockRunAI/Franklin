@@ -6674,6 +6674,45 @@ test('desktop media mode tells the agent to resolve earlier context, not pass te
   assert.match(src, /never invent data/);
 });
 
+// A slow track outruns the gateway's inline window: 202 + poll_url, settled on
+// the first completed poll. MusicGen used to read the 202 body as the result and
+// fail with "No track URL returned" (found live on Arc, 2026-10-03).
+test('musicgen: polls a 202 job to completion and saves the track', async () => {
+  const { createMusicGenCapability } = await import('../dist/tools/musicgen.js');
+  const tmp = mkdtempSync(join(tmpdir(), 'musicgen-202-'));
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let polls = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    calls.push(`${init.method ?? 'GET'} ${u.replace(/^https?:\/\/[^/]+/, '')}`);
+    if (u.endsWith('/v1/audio/generations') && init.method === 'POST') {
+      return Response.json({ id: 'job-1', status: 'queued', poll_url: '/api/v1/audio/generations/job-1' }, { status: 202 });
+    }
+    if (u.endsWith('/api/v1/audio/generations/job-1')) {
+      polls++;
+      if (polls === 1) return Response.json({ status: 'in_progress' }, { status: 202 });
+      return Response.json({ status: 'completed', data: [{ url: 'https://cdn.test/track.mp3', duration_seconds: 12 }] });
+    }
+    if (u === 'https://cdn.test/track.mp3') return new Response(Buffer.from('ID3fake-mp3'), { status: 200 });
+    return new Response('not found', { status: 404 });
+  };
+  try {
+    const r = await createMusicGenCapability().execute(
+      { prompt: 'calm lofi piano', instrumental: true, output_path: join(tmp, 'song.mp3') },
+      { workingDir: tmp, onAskUser: undefined, abortSignal: new AbortController().signal },
+    );
+    assert.ok(!r.isError, r.output);
+    assert.equal(polls, 2, 'must keep polling while the job is in progress');
+    assert.match(r.output, /Track saved to .*song\.mp3/);
+    assert.equal(readFileSync(join(tmp, 'song.mp3'), 'utf8'), 'ID3fake-mp3');
+    assert.ok(calls.some(c => c.startsWith('GET /api/v1/audio/generations/job-1')), calls.join('\n'));
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 // ─── wallet tool ──────────────────────────────────────────────────────────
 
 test('Wallet: formatWalletReport produces a stable two-line USDC summary', async () => {

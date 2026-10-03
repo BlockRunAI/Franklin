@@ -199,6 +199,63 @@ test('`franklin setup arc` saves Arc and reuses the EVM wallet', async () => {
   assert.doesNotMatch(lines.join('\n'), /Solana wallet/);
 });
 
+// Found live 2026-10-03: the music POST signs a 300s requirement, the poll
+// verifies against 600s, and Circle refuses the POST's authorization on poll
+// (invalid_payment_requirements). MusicGen must sign the poll's own challenge.
+test('MusicGen on Arc re-signs against the poll challenge when the poll refuses the POST payment', async () => {
+  useChain('arc');
+  const challenge = (url, maxTimeoutSeconds) => Buffer.from(JSON.stringify({
+    x402Version: 2,
+    accepts: [{
+      scheme: 'exact', network: 'eip155:5042', amount: '158500', asset: USDC_ARC, payTo: PAY_TO,
+      maxTimeoutSeconds, extra: { name: 'USDC', version: '2', assetTransferMethod: 'eip3009' },
+    }],
+    resource: { url, description: 'music' },
+  })).toString('base64');
+  const post = `${ARC_HOST}/v1/audio/generations`;
+  const poll = `https://arc.blockrun.ai/api/v1/audio/generations/job-arc`;
+  const sigs = { post: null, refused: null, fresh: null };
+  const tmp = join(TEST_HOME, 'music');
+  try {
+    const { createMusicGenCapability } = await import('../dist/tools/musicgen.js');
+    const result = await withFetch(async (url, init = {}) => {
+      const u = String(url);
+      const sig = new Headers(init.headers).get('payment-signature');
+      const payReq = (body, c) => new Response(JSON.stringify(body), { status: 402, headers: { 'payment-required': c } });
+      if (u === post) {
+        if (!sig) return payReq({ error: 'Payment Required' }, challenge(post, 300));
+        sigs.post = sig;
+        return Response.json({ id: 'job-arc', status: 'queued', poll_url: '/api/v1/audio/generations/job-arc' }, { status: 202 });
+      }
+      if (u === poll) {
+        if (!sig) return payReq({ error: 'Payment Required' }, challenge(post, 600));
+        const accepted = JSON.parse(Buffer.from(sig, 'base64').toString()).accepted;
+        if (accepted.maxTimeoutSeconds !== 600) {
+          sigs.refused = sig;
+          return payReq({ error: 'Payment verification failed', details: 'invalid_payment_requirements' }, challenge(post, 600));
+        }
+        sigs.fresh = sig;
+        return Response.json({ status: 'completed', data: [{ url: 'https://cdn.test/arc.mp3' }] });
+      }
+      if (u === 'https://cdn.test/arc.mp3') return new Response(Buffer.from('ID3arc'), { status: 200 });
+      return new Response('not found', { status: 404 });
+    }, () => createMusicGenCapability().execute(
+      { prompt: 'lofi', instrumental: true, output_path: join(tmp, 'arc.mp3') },
+      { workingDir: TEST_HOME, onAskUser: undefined, abortSignal: new AbortController().signal },
+    ));
+
+    assert.ok(!result.isError, result.output);
+    assert.equal(sigs.refused, sigs.post, 'the first poll presents the POST authorization');
+    assert.ok(sigs.fresh && sigs.fresh !== sigs.post, 'the retry must carry a fresh signature');
+    const fresh = JSON.parse(Buffer.from(sigs.fresh, 'base64').toString());
+    assert.equal(fresh.accepted.network, 'eip155:5042');
+    assert.equal(fresh.accepted.extra.name, 'USDC');
+    assert.match(result.output, /Track saved to/);
+  } finally {
+    useChain(undefined);
+  }
+});
+
 test('cleanup', () => {
   useChain(undefined);
   rmSync(TEST_HOME, { recursive: true, force: true });
