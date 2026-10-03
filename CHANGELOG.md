@@ -1,5 +1,28 @@
 # Changelog
 
+## Franklin Agent 3.49.0 — pay on Arc
+
+**Arc is a third payment chain.** Circle's Arc (chain 5042) joins Base and
+Solana. `franklin setup arc`, `franklin arc`, or the Arc button on the panel's
+wallet page at localhost:3100 selects it. Arc uses the same wallet key as Base,
+so the address you already funded on Base also receives USDC on Arc; Solana
+keeps its own key.
+
+**Balances read Arc USDC, not Base.** `franklin balance`, the Wallet tool,
+`/wallet`, the panel, `franklin doctor`, Slack and Telegram, and the spend
+guard all show the Arc balance on Arc, read through the Arc gateway. A failed
+read is reported as unknown, never as an empty wallet.
+
+**Payments sign for the right chain.** Franklin now requires `@blockrun/llm`
+3.19. Older versions signed every payment over Base's USDC domain whatever the
+gateway asked, which Arc rejects. Verified live: a paid call on Arc settled
+$0.004073 from the wallet.
+
+**Smaller fixes.** `/wallet import` validated an EVM key as a Solana key on any
+chain other than Base. The panel shows an Arc funding QR code; card purchase
+(Coinbase) cannot deliver to Arc, so on Arc the panel says so instead of
+offering it.
+
 ## Franklin Agent 3.48.0 — an account refusal can no longer spend from your wallet
 
 **Out of account credit no longer means "pay from the wallet instead."**
