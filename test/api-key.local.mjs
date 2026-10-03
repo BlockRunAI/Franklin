@@ -69,6 +69,51 @@ test('Messages API credit refusal never invokes wallet signing', async () => {
   }
 });
 
+for (const chain of ['base', 'solana']) {
+  for (const keyMode of [true, false]) {
+    test(`tool_choice retry preserves ${keyMode ? 'API credit' : 'wallet'} payment rail (${chain})`, async () => {
+      clean();
+      if (keyMode) process.env.BLOCKRUN_API_KEY = VALID_KEY;
+      else auth.useWalletMode();
+      const { ModelClient } = await import('../dist/agent/llm.js');
+      const client = new ModelClient({ apiUrl: keyMode ? KEY_API_URL : API_URLS[chain], chain });
+      const nativeFetch = globalThis.fetch;
+      let signed = 0;
+      let requests = 0;
+      client.signPayment = async () => { signed++; return null; };
+      globalThis.fetch = async (_url, init) => {
+        requests++;
+        assert.equal(new Headers(init.headers).has('Authorization'), keyMode);
+        const payload = JSON.parse(init.body);
+        if (requests === 1) {
+          assert.deepEqual(payload.tool_choice, { type: 'auto' });
+          return Response.json({ error: { message: 'unsupported tool_choice' } }, { status: 400 });
+        }
+        assert.equal(payload.tool_choice, undefined);
+        return Response.json({ error: { message: 'Account credits exhausted' } }, { status: 402 });
+      };
+      try {
+        const events = [];
+        for await (const event of client.streamCompletion({
+          model: 'anthropic/claude-haiku-4.5', messages: [{ role: 'user', content: 'Hello' }], max_tokens: 8,
+          tools: [{ name: 'noop', description: 'No operation', input_schema: { type: 'object', properties: {} } }],
+          tool_choice: { type: 'auto' },
+        })) events.push(event);
+        assert.equal(signed, keyMode ? 0 : 1);
+        assert.equal(requests, 2);
+        const error = events.find(event => event.kind === 'error');
+        if (keyMode) {
+          assert.equal(error?.payload.status, 402);
+          assert.match(error?.payload.message ?? '', /credits exhausted/);
+        } else assert.equal(error?.payload.message, 'Payment signing failed');
+      } finally {
+        globalThis.fetch = nativeFetch;
+        clean();
+      }
+    });
+  }
+}
+
 // ─── Backward compatibility: no key means nothing changes ───────────────
 //
 // This is the guarantee the whole feature rests on. If it ever fails, every
