@@ -35,6 +35,7 @@ import { isWalletKeyPath } from './sensitive-paths.js';
 import { findModel, estimateCostUsd, type GatewayModel } from '../gateway-models.js';
 import { recordUsage } from '../stats/tracker.js';
 import { noChargeNote } from '../payments/billing-copy.js';
+import { pollImageJob } from './imagegen.js';
 
 interface MusicGenInput {
   prompt: string;
@@ -155,8 +156,9 @@ function buildExecute(deps: MusicGenDeps) {
         body,
       });
 
+      let paymentHeaders: Record<string, string> | null = null;
       if (response.status === 402 && walletMayPay(headers)) {
-        const paymentHeaders = await signPayment(response, chain, endpoint);
+        paymentHeaders = await signPayment(response, chain, endpoint);
         if (!paymentHeaders) {
           return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };
         }
@@ -176,9 +178,59 @@ function buildExecute(deps: MusicGenDeps) {
         };
       }
 
-      const result = (await response.json()) as {
+      let result = (await response.json()) as {
         data?: { url?: string; duration_seconds?: number; lyrics?: string }[];
+        status?: string;
+        poll_url?: string;
       };
+
+      // Slow tracks outrun the gateway's inline window: it answers 202 +
+      // poll_url and settles on the first completed poll, so nothing is charged
+      // until then. Same contract (and same signed header on each poll) as the
+      // ImageGen async path.
+      if (response.status === 202 && result.poll_url) {
+        const pollEndpoint = result.poll_url.startsWith('http')
+          ? result.poll_url
+          : `${new URL(apiUrl).origin}${result.poll_url}`;
+        clearTimeout(timeout);
+        let outcome = await pollImageJob(
+          pollEndpoint,
+          paymentHeaders ? { ...headers, ...paymentHeaders } : headers,
+          controller.signal,
+        );
+        // The poll may refuse the POST's authorization: the gateway builds the
+        // poll's requirements with a longer timeout than the music POST's, and a
+        // strict facilitator (Circle, on Arc) rejects the mismatch as
+        // invalid_payment_requirements. The poll publishes its own 402 challenge
+        // and accepts a fresh signature from the same wallet, so sign that one.
+        // The job settles once, on the first completed poll: no double charge.
+        if (outcome.kind === 'poll_http_error' && outcome.status === 402 && paymentHeaders && walletMayPay(headers)) {
+          const challenge = await fetch(pollEndpoint, { method: 'GET', headers, signal: controller.signal });
+          const fresh = challenge.status === 402 ? await signPayment(challenge, chain, pollEndpoint) : null;
+          if (fresh) {
+            outcome = await pollImageJob(pollEndpoint, { ...headers, ...fresh }, controller.signal);
+          }
+        }
+        if (outcome.kind === 'failed') {
+          return {
+            output: `Music generation failed upstream: ${JSON.stringify(outcome.error ?? '').slice(0, 240)}. ${noChargeNote()}`,
+            isError: true,
+          };
+        }
+        if (outcome.kind === 'poll_http_error') {
+          return { output: `Music poll failed (${outcome.status}): ${outcome.bodyPreview}`, isError: true };
+        }
+        if (outcome.kind === 'timed_out') {
+          return {
+            output:
+              'Music generation was queued but did not complete within 5 minutes. ' +
+              'The gateway only charges when a poll sees the finished track.',
+            isError: true,
+          };
+        }
+        result = outcome.body as typeof result;
+      }
+
       const track = result.data?.[0];
       if (!track?.url) {
         return { output: 'No track URL returned from API', isError: true };
