@@ -173,7 +173,9 @@ interchangeable. Everything else about the agent is identical.
 (chain 5042). Switch with `franklin solana` / `franklin base` / `franklin arc`, or the chain
 buttons on the panel's wallet page. Base and Arc share one EVM key, so the same address
 receives USDC on both; Solana has its own key. Card purchase (Coinbase Onramp) funds Base
-and Solana only — on Arc, send USDC to the address directly.
+and Solana only — on Arc, send USDC to the address directly. `franklin balance` always
+reports the active chain's USDC, so after switching to Arc it shows your Arc balance, not
+Base's. Arc's gateway adds models after Base does; the picker lists what Arc serves today.
 
 **The wallet is still Franklin's identity.** Memory, the trading journal and goals are
 keyed to it, and the wallet route is the one that needs nothing from us — no signup, no
@@ -501,7 +503,7 @@ Ask "generate a logo" — Franklin calls DALL-E / GPT Image, saves the result lo
 Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, NVIDIA free tier. One wallet, one interface, automatic fallback.
 
 **💳 x402 micropayments (YOPO)**
-HTTP 402 native. Every paid action is a signed USDC micropayment via EIP-712 — non-custodial, your keys never leave your machine. YOPO: you pay only for outcomes.
+HTTP 402 native. Every paid action is a signed USDC micropayment — an EIP-712 authorization on Base and Arc, a signed SPL transfer on Solana. Non-custodial: your keys never leave your machine. YOPO: you pay only for outcomes.
 
 **🧠 Learned model router**
 Trained on 2M+ real requests. Classifies your task and picks the best model from <!-- br:models.chatVisible -->82<!-- /br:models.chatVisible --> LLMs. Four profiles (auto/eco/premium/free). Adapts to your usage over time.
