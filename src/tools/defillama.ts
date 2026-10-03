@@ -29,7 +29,7 @@ import {
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
 import { chargeFromResponse, requestIdFromResponse, resolveCharge } from '../payments/price-catalog.js';
-import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
 import { frameUntrusted } from './untrusted.js';
@@ -62,7 +62,7 @@ async function getWithPayment<T>(path: string, ctx: ExecutionScope): Promise<T> 
       headers,
     });
 
-    if (response.status === 402) {
+    if (response.status === 402 && walletMayPay(headers)) {
       const signed = await signPayment(response, chain, endpoint);
       if (!signed) {
         throw new Error('Payment signing failed — check wallet balance');

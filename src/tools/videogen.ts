@@ -34,7 +34,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
-import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import type { ContentLibrary } from '../content/library.js';
 import { resolveReferenceImage } from './imagegen.js';
@@ -272,7 +272,7 @@ function buildExecute(deps: VideoGenDeps) {
         body,
       });
 
-      if (response.status === 402) {
+      if (response.status === 402 && walletMayPay(headers)) {
         paymentHeaders = await signPayment(response, chain, endpoint);
         if (!paymentHeaders) {
           return { output: 'Payment failed. Check wallet balance with: franklin balance', isError: true };

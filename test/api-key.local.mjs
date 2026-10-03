@@ -959,6 +959,114 @@ test('the request id is captured into the local journal', async () => {
     'an absurd value is refused rather than stored');
 });
 
+// ── An account 402 never reaches the wallet ───────────────────────────────
+// The challenge below is a real, signable x402 requirement, so an unguarded
+// tool WOULD sign it and re-send with PAYMENT-SIGNATURE. The wallet-mode
+// control proves the fixture is signable; the key-mode runs prove nothing is.
+
+const SIGNABLE_CHALLENGE = Buffer.from(JSON.stringify({
+  x402Version: 2,
+  accepts: [{
+    scheme: 'exact',
+    network: 'eip155:8453',
+    asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    amount: '1',
+    payTo: '0x0000000000000000000000000000000000000001',
+    maxTimeoutSeconds: 300,
+  }],
+  resource: { url: 'https://blockrun.ai/api/v1/test', description: 'test' },
+})).toString('base64');
+
+const PAID_TOOL_CALLS = [
+  ['ExaSearch', async () => (await import('../dist/tools/exa.js')).exaSearchCapability, { query: 'x402' }],
+  ['MultiChainRPC', async () => (await import('../dist/tools/rpc.js')).multiChainRpcCapability, { network: 'base', method: 'eth_blockNumber' }],
+  ['SurfMarket', async () => (await import('../dist/tools/surf.js')).surfMarketCapability, { endpoint: 'market/fear-greed' }],
+  ['PredictionMarket', async () => (await import('../dist/tools/prediction.js')).predictionMarketCapability, { action: 'leaderboard' }],
+];
+
+async function runAgainstChallenge(load, input) {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const headers = new Headers(init.headers);
+    calls.push({ url: String(url), headers });
+    if (headers.has('payment-signature')) return Response.json({ ok: true });
+    return new Response(JSON.stringify({ error: 'Account credits exhausted' }), {
+      status: 402,
+      headers: { 'content-type': 'application/json', 'payment-required': SIGNABLE_CHALLENGE },
+    });
+  };
+  try {
+    const capability = await load();
+    const result = await capability.execute(input, { workingDir: TEST_HOME, abortSignal: new AbortController().signal });
+    return { calls, result };
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test('walletMayPay is false exactly when the request carried an account key', () => {
+  assert.equal(auth.walletMayPay({ 'User-Agent': 'x' }), true);
+  assert.equal(auth.walletMayPay({ Authorization: `Bearer ${VALID_KEY}` }), false);
+});
+
+test('control: a wallet-mode tool does sign this challenge', async () => {
+  clean();
+  auth.useWalletMode();
+  saveChain('base');
+  try {
+    const [, load, input] = PAID_TOOL_CALLS[0];
+    const { calls } = await runAgainstChallenge(load, input);
+    assert.equal(calls.length, 2, 'fixture must be signable, or the key-mode tests prove nothing');
+    assert.ok(calls[1].headers.has('payment-signature'));
+  } finally { clean(); }
+});
+
+for (const [name, load, input] of PAID_TOOL_CALLS) {
+  test(`${name}: an account 402 surfaces as an error and never signs from the wallet`, async () => {
+    clean();
+    process.env.BLOCKRUN_API_KEY = VALID_KEY;
+    try {
+      const { calls, result } = await runAgainstChallenge(load, input);
+      assert.ok(calls.length >= 1);
+      for (const call of calls) {
+        assert.equal(call.headers.get('authorization'), `Bearer ${VALID_KEY}`);
+        assert.equal(call.headers.has('payment-signature'), false, `${name} signed a wallet payment in key mode`);
+        assert.ok(call.url.startsWith(KEY_API_URL), `${name} left the account host: ${call.url}`);
+      }
+      assert.equal(result.isError, true);
+    } finally { clean(); }
+  });
+}
+
+test('every gateway 402 handler that can sign is gated on the request rail', async () => {
+  // Regression fence for the class: a new paid call site that answers a 402
+  // must check walletMayPay(headers) first. Wallet-only clients that never send
+  // an account key, and the shared helper that returns before its 402 branch in
+  // key mode, are listed with the reason they are exempt.
+  const exempt = new Map([
+    ['src/market/client.ts', 'third-party marketplace, wallet-only'],
+    ['src/proxy/server.ts', 'wallet-only payment proxy'],
+    ['src/payments/post-with-payment.ts', 'key mode returns before the 402 branch'],
+    ['src/trading/providers/blockrun/client.ts:101', 'free-path client, never signs'],
+    ['src/agent/llm.ts:1410', 'post-signature 402, not a challenge'],
+  ]);
+  const { readdir } = await import('node:fs/promises');
+  const files = (await readdir(new URL('../src', import.meta.url), { recursive: true }))
+    .filter(f => f.endsWith('.ts')).map(f => `src/${f}`);
+  const offenders = [];
+  for (const file of files) {
+    if (exempt.has(file)) continue;
+    const src = await readFile(new URL(`../${file}`, import.meta.url), 'utf-8');
+    src.split('\n').forEach((line, i) => {
+      if (/\.status === 402\)? *(&&|\{)/.test(line) && !/walletMayPay\(/.test(line) && !exempt.has(`${file}:${i + 1}`)) {
+        offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+      }
+    });
+  }
+  assert.deepEqual(offenders, [], `gate these on walletMayPay(headers):\n${offenders.join('\n')}`);
+});
+
 test('cleanup', () => {
   clean();
   rmSync(TEST_HOME, { recursive: true, force: true });

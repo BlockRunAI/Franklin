@@ -31,7 +31,7 @@ import {
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
 import { chargeFromResponse, resolveCharge } from '../payments/price-catalog.js';
-import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
@@ -78,7 +78,7 @@ async function postWithPayment<T>(
     });
 
     let settled = false;
-    if (response.status === 402) {
+    if (response.status === 402 && walletMayPay(headers)) {
       const paymentHeaders = await signPayment(response, chain, endpoint);
       if (!paymentHeaders) {
         throw new Error('Payment signing failed — check wallet balance');

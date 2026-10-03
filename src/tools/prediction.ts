@@ -49,7 +49,7 @@ import {
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
 import { chargeFromResponse, requestIdFromResponse, resolveCharge } from '../payments/price-catalog.js';
-import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordFetch } from '../trading/providers/telemetry.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -109,7 +109,7 @@ async function getWithPayment<T>(path: string, query: Record<string, string | nu
   try {
     let response = await fetch(endpoint, { method: 'GET', signal: controller.signal, headers });
 
-    if (response.status === 402) {
+    if (response.status === 402 && walletMayPay(headers)) {
       const paymentHeaders = await signPayment(response, chain, endpoint);
       if (!paymentHeaders) {
         throw new Error('Payment signing failed — check wallet balance');

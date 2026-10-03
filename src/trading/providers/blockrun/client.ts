@@ -16,7 +16,7 @@
 
 import type { ProviderError } from '../standard-models.js';
 import { USER_AGENT, loadChain } from '../../../config.js';
-import { gatewayHeaders, resolvePayMode } from '../../../payments/auth-mode.js';
+import { gatewayHeaders, resolvePayMode, walletMayPay } from '../../../payments/auth-mode.js';
 import { recordFetch } from '../telemetry.js';
 import {
   getOrCreateWallet,
@@ -234,7 +234,7 @@ export async function blockrunGetPaid(
   };
   try {
     let res = await fetch(url, { headers, signal: ctrl.signal });
-    if (res.status === 402) {
+    if (res.status === 402 && walletMayPay(headers)) {
       try {
         const paid = await signGatewayPayment(res, chain, url);
         if (!paid) {

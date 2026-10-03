@@ -27,7 +27,7 @@ import {
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { loadChain, VERSION} from '../config.js';
-import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
 import { frameUntrusted } from './untrusted.js';
@@ -101,7 +101,7 @@ async function postWithPayment<T>(
       body: bodyStr,
     });
 
-    if (response.status === 402) {
+    if (response.status === 402 && walletMayPay(headers)) {
       const paymentHeaders = await signPayment(response, chain, endpoint);
       if (!paymentHeaders) throw new Error('Payment signing failed — check wallet balance');
       response = await fetch(endpoint, {

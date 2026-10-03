@@ -30,7 +30,7 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { loadChain, USER_AGENT} from '../config.js';
 import { basePriceForPath, chargeFromResponse, requestIdFromResponse, resolveCharge } from '../payments/price-catalog.js';
 import { GATEWAY_TRANSACTION_FEE_USD } from '../gateway-models.js';
-import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
+import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
@@ -237,7 +237,7 @@ async function callSurf(
   try {
     let response = await fetch(url, { method: entry.method, signal: ctrl.signal, headers, body: payload });
     let paidUsd = 0;
-    if (response.status === 402) {
+    if (response.status === 402 && walletMayPay(headers)) {
       const signed = await signPayment(response, chain, url, resourceDescription);
       if (!signed) return { output: `${toolName} ${endpoint}: payment signing failed`, isError: true };
       paidUsd = signed.amountUsd;
