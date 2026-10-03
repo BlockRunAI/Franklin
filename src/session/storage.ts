@@ -118,6 +118,10 @@ function getSessionsDir(): string {
 }
 
 function sessionPath(id: string): string {
+  // Ids reach here from URLs (panel /api/sessions/:id); never let one escape the sessions dir.
+  if (!id || id !== path.basename(id) || id.includes('..') || id.includes('\0')) {
+    throw new Error(`Invalid session id: ${JSON.stringify(id)}`);
+  }
   return path.join(getSessionsDir(), `${id}.jsonl`);
 }
 

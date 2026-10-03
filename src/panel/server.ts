@@ -91,6 +91,16 @@ function isTrustedPanelOrigin(req: http.IncomingMessage): boolean {
   }
 }
 
+function isLocalHostHeader(req: http.IncomingMessage): boolean {
+  const host = req.headers.host;
+  if (!host) return false;
+  try {
+    return isLocalHostname(new URL(`http://${host}`).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function isLocalPanelRequest(req: http.IncomingMessage): boolean {
   return isLoopback(req) && isTrustedPanelOrigin(req);
 }
@@ -144,6 +154,16 @@ export function createPanelServer(port: number): http.Server {
     const url = new URL(req.url || '/', `http://localhost:${port}`);
     const p = url.pathname;
 
+    // Every route, read-only ones included: session transcripts and the audit
+    // log are as sensitive as the wallet routes. Loopback alone does not stop
+    // DNS rebinding (a page on attacker.example re-resolved to 127.0.0.1), so
+    // the Host header must name a local host too.
+    if (!isLoopback(req) || !isLocalHostHeader(req)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Forbidden');
+      return;
+    }
+
     // ─── HTML ──
     if (p === '/') {
       res.writeHead(200, {
@@ -180,7 +200,6 @@ export function createPanelServer(port: number): http.Server {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
       });
       res.write('data: {"type":"connected"}\n\n');
       sseClients.add(res);
