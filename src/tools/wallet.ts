@@ -13,11 +13,12 @@
  * signing arbitrary tx) — Wallet is read-only by design.
  */
 
-import { loadChain } from '../config.js';
+import { loadChain, type Chain } from '../config.js';
 import type { CapabilityHandler, CapabilityResult } from '../agent/types.js';
+import { readEvmBalance } from '../wallet/manager.js';
 
 export interface WalletReportInput {
-  chain: 'base' | 'solana';
+  chain: Chain;
   address: string;
   balanceUsd: number;
 }
@@ -44,7 +45,7 @@ async function execute(): Promise<CapabilityResult> {
     const { setupAgentWallet } = await import('@blockrun/llm');
     const c = setupAgentWallet({ silent: true });
     const address = c.getWalletAddress();
-    const balance = await c.getBalance();
+    const balance = await readEvmBalance(chain, c);
     return { output: formatWalletReport({ chain, address, balanceUsd: balance }) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

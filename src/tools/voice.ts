@@ -26,7 +26,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, VERSION} from '../config.js';
+import { loadChain, VERSION, type Chain } from '../config.js';
 import { gatewayBase, gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -166,7 +166,7 @@ async function getNoPayment<T>(path: string, ctx: ExecutionScope, meta: PaidCall
 
 async function signPayment(
   response: Response,
-  chain: 'base' | 'solana',
+  chain: Chain,
   endpoint: string,
 ): Promise<Record<string, string> | null> {
   try {

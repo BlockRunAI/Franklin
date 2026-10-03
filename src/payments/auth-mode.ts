@@ -3,7 +3,8 @@
  *
  * Franklin can reach the BlockRun gateway two ways:
  *
- *   wallet — blockrun.ai/api (Base) or sol.blockrun.ai/api (Solana). Every
+ *   wallet — blockrun.ai/api (Base), sol.blockrun.ai/api (Solana) or
+ *            arc.blockrun.ai/api (Arc). Every
  *            paid call answers a 402 by signing USDC from the local wallet.
  *   key    — api.blockrun.ai with `Authorization: Bearer brk_...`, settled
  *            against a prepaid credit balance. No chain involved.

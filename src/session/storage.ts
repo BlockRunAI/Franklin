@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { BLOCKRUN_DIR } from '../config.js';
+import { BLOCKRUN_DIR, type Chain } from '../config.js';
 import type { Dialogue } from '../agent/types.js';
 
 const MAX_SESSIONS = 20; // Keep last 20 sessions
@@ -59,7 +59,7 @@ export interface SessionMeta {
    * conversation context — switching chains mid-resume is a bug.
    * Optional for back-compat with pre-3.15.35 sessions.
    */
-  chain?: 'base' | 'solana';
+  chain?: Chain;
   // Token & cost tracking (added for per-session insights)
   inputTokens?: number;
   outputTokens?: number;

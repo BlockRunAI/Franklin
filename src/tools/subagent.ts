@@ -14,10 +14,11 @@ import type {
   UserContentPart,
 } from '../agent/types.js';
 import { FREE_DEFAULT_MODEL, isFreeModelId } from '../free-models.js';
+import type { Chain } from '../config.js';
 
 // These will be injected at registration time
 let registeredApiUrl = '';
-let registeredChain: 'base' | 'solana' = 'base';
+let registeredChain: Chain = 'base';
 let registeredParentModel = '';
 let registeredCapabilities: CapabilityHandler[] = [];
 
@@ -178,7 +179,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
 export function createSubAgentCapability(
   apiUrl: string,
-  chain: 'base' | 'solana',
+  chain: Chain,
   capabilities: CapabilityHandler[],
   parentModel?: string
 ): CapabilityHandler {

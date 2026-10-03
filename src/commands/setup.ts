@@ -5,13 +5,14 @@ import {
   getOrCreateSolanaWallet,
   scanSolanaWallets,
 } from '@blockrun/llm';
-import { type Chain, saveChain, DASHBOARD_URL } from '../config.js';
+import { type Chain, CHAIN_LABELS, saveChain, DASHBOARD_URL } from '../config.js';
 import { isKeyMode, loadApiKey, maskApiKey } from '../payments/auth-mode.js';
 
 export async function setupCommand(chainArg?: string) {
-  // Solana is the default chain; `franklin setup base` opts into Base.
+  // Solana is the default chain; `franklin setup base` / `franklin setup arc`
+  // opt into an EVM chain. Base and Arc share one EVM wallet.
   const chain: Chain =
-    chainArg === 'base' ? 'base' : 'solana';
+    chainArg === 'base' || chainArg === 'arc' ? chainArg : 'solana';
 
   // A configured key already pays for everything, so creating a wallet here
   // would be busywork the user did not ask for. Say so and stop, rather than
@@ -57,7 +58,7 @@ export async function setupCommand(chainArg?: string) {
       console.log(chalk.dim('  franklin start        — start coding'));
       console.log(chalk.dim('  franklin balance      — check USDC balance'));
       console.log(chalk.dim('  franklin start -m free — use free models (no USDC needed)'));
-      saveChain('base');
+      saveChain(chain);
       return;
     }
 
@@ -69,7 +70,7 @@ export async function setupCommand(chainArg?: string) {
     }
     console.log(`Address: ${chalk.cyan(address)}`);
     console.log(
-      `\nSend USDC on Base to this address to fund your account.`
+      `\nSend USDC on ${CHAIN_LABELS[chain]} to this address to fund your account.`
     );
   }
 

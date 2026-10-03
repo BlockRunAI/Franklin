@@ -277,7 +277,8 @@ export function createProxy(options: ProxyOptions): http.Server {
   let baseWallet: { privateKey: string; address: string } | null = null;
   let solanaWallet: { privateKey: string; address: string } | null = null;
 
-  if (chain === 'base') {
+  // Base and Arc both pay from the EVM wallet; the 402 names the network.
+  if (chain !== 'solana') {
     const w = getOrCreateWallet();
     baseWallet = { privateKey: w.privateKey, address: w.address };
   }

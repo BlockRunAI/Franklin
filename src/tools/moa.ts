@@ -14,6 +14,7 @@
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { ModelClient } from '../agent/llm.js';
 import { FREE_DEFAULT_MODEL, freeChain } from '../free-models.js';
+import type { Chain } from '../config.js';
 
 // ─── Configuration ────────────────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ const REFERENCE_TIMEOUT_MS = 60_000;
 
 // These will be injected at registration time
 let registeredApiUrl = '';
-let registeredChain: 'base' | 'solana' = 'base';
+let registeredChain: Chain = 'base';
 let registeredParentModel = '';
 
 interface MoAInput {
@@ -212,7 +213,7 @@ Parameters:
 };
 
 /** Register the API URL for MoA tool (called during agent setup). */
-export function registerMoAConfig(apiUrl: string, chain: 'base' | 'solana', parentModel?: string) {
+export function registerMoAConfig(apiUrl: string, chain: Chain, parentModel?: string) {
   registeredApiUrl = apiUrl;
   registeredChain = chain;
   if (parentModel) registeredParentModel = parentModel;

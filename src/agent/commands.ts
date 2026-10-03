@@ -1123,7 +1123,8 @@ export async function handleSlashCommand(
 
   // /wallet — show wallet info, import, or export
   if (input === '/wallet' || input.startsWith('/wallet ')) {
-    const chain = (await import('../config.js')).loadChain();
+    const { loadChain, CHAIN_LABELS } = await import('../config.js');
+    const chain = loadChain();
     const args = input.slice(7).trim();
 
     // /wallet export [--show]  — key masked by default; --show prints the full key
@@ -1154,7 +1155,7 @@ export async function handleSlashCommand(
           if (!key) { ctx.onEvent({ kind: 'text_delta', text: 'No wallet found. Run `/wallet` first.\n' }); emitDone(ctx); return { handled: true }; }
           const w = getOrCreateWallet();
           ctx.onEvent({ kind: 'text_delta', text:
-            `**Wallet Export (Base)**\n` +
+            `**Wallet Export (${CHAIN_LABELS[chain]})**\n` +
             `  Address:     ${w.address}\n` +
             `  Private Key: ${showKey ? key : mask(key)}\n\n` +
             (showKey
@@ -1178,16 +1179,16 @@ export async function handleSlashCommand(
       if (!key) {
         ctx.onEvent({ kind: 'text_delta', text:
           `**Usage:** \`/wallet import <private-key>\`\n\n` +
-          `  Base:   \`/wallet import 0x...\`  (hex, 66 chars)\n` +
-          `  Solana: \`/wallet import <bs58-key>\`  (base58 encoded)\n`
+          `  Base / Arc: \`/wallet import 0x...\`  (hex, 66 chars)\n` +
+          `  Solana:     \`/wallet import <bs58-key>\`  (base58 encoded)\n`
         });
         emitDone(ctx);
         return { handled: true };
       }
-      // Shape-validate before touching disk
-      if (chain === 'base') {
+      // Shape-validate before touching disk. Base and Arc share the EVM key.
+      if (chain !== 'solana') {
         if (!/^0x[0-9a-fA-F]{64}$/.test(key)) {
-          ctx.onEvent({ kind: 'text_delta', text: 'Import error: Base key must be 0x + 64 hex chars (66 total).\n' });
+          ctx.onEvent({ kind: 'text_delta', text: `Import error: ${CHAIN_LABELS[chain]} key must be 0x + 64 hex chars (66 total).\n` });
           emitDone(ctx);
           return { handled: true };
         }
@@ -1217,7 +1218,7 @@ export async function handleSlashCommand(
           const account = privateKeyToAccount(key as `0x${string}`);
           saveWallet(key);
           ctx.onEvent({ kind: 'text_delta', text:
-            `**Wallet Imported (Base)**\n` +
+            `**Wallet Imported (${CHAIN_LABELS[chain]})**\n` +
             `  Address: ${account.address}\n` +
             `  Saved to: ~/.blockrun/wallet.json\n\n` +
             `⚠️  IMPORTANT: This session is still using the OLD wallet.\n` +
@@ -1249,11 +1250,12 @@ export async function handleSlashCommand(
         } catch { balance = '(unavailable)'; }
       } else {
         const { getOrCreateWallet, setupAgentWallet } = await import('@blockrun/llm');
+        const { readEvmBalance } = await import('../wallet/manager.js');
         const w = getOrCreateWallet();
         address = w.address;
         try {
           const client = setupAgentWallet({ silent: true });
-          const bal = await Promise.race([client.getBalance(), fetchTimeout(5000)]) as number;
+          const bal = await Promise.race([readEvmBalance(chain, client), fetchTimeout(5000)]) as number;
           balance = `$${bal.toFixed(2)} USDC`;
         } catch { balance = '(unavailable)'; }
       }

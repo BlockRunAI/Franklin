@@ -15,7 +15,7 @@
  */
 
 import type { ProviderError } from '../standard-models.js';
-import { USER_AGENT, loadChain } from '../../../config.js';
+import { API_URLS, USER_AGENT, loadChain, type Chain } from '../../../config.js';
 import { gatewayHeaders, resolvePayMode, walletMayPay } from '../../../payments/auth-mode.js';
 import { recordFetch } from '../telemetry.js';
 import {
@@ -43,7 +43,8 @@ const TIMEOUT_MS = 10_000;
 function gatewayUrl(path: string): string {
   const mode = resolvePayMode();
   if (mode.kind === 'key') return mode.apiBase + path.replace(/^\/api/, '');
-  const origin = loadChain() === 'solana' ? 'https://sol.blockrun.ai' : 'https://blockrun.ai';
+  // Wallet hosts end in /api and `path` already carries it.
+  const origin = API_URLS[loadChain()].replace(/\/api$/, '');
   return origin + path;
 }
 
@@ -159,7 +160,7 @@ async function extractPaymentReq(response: Response): Promise<string | null> {
 
 async function signGatewayPayment(
   response: Response,
-  chain: 'base' | 'solana',
+  chain: Chain,
   endpoint: string,
 ): Promise<Record<string, string> | null> {
   try {

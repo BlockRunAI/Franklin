@@ -25,6 +25,7 @@ import { interactiveSession } from '../agent/loop.js';
 import { ModelClient } from '../agent/llm.js';
 import { extractBrainEntities } from '../brain/extract.js';
 import { extractLearnings } from '../learnings/extractor.js';
+import { readEvmBalance } from '../wallet/manager.js';
 
 // Per-bot prefs (persisted so a restart keeps the user's choice).
 const PREFS_FILE = path.join(os.homedir(), '.blockrun', 'telegram-prefs.json');
@@ -240,12 +241,13 @@ export async function runTelegramBot(
               `Chain: solana\nWallet: ${addr}\nBalance: $${bal.toFixed(2)} USDC`,
             );
           } else {
+            const chain = agentConfig.chain;
             const c = setupAgentWallet({ silent: true });
             const addr = c.getWalletAddress();
-            const bal = await c.getBalance();
+            const bal = await readEvmBalance(chain, c);
             await sendMessage(
               chatId,
-              `Chain: base\nWallet: ${addr}\nBalance: $${bal.toFixed(2)} USDC`,
+              `Chain: ${chain}\nWallet: ${addr}\nBalance: $${bal.toFixed(2)} USDC`,
             );
           }
         } catch (err) {

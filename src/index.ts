@@ -57,7 +57,7 @@ program
   .description(
     'Franklin Agent — The AI agent with a wallet.\n\n' +
       'While others chat, Franklin Agent spends — turning your USDC into real work.\n\n' +
-      'Pay per action — a USDC wallet on Solana or Base, or a prepaid API key\n' +
+      'Pay per action — a USDC wallet on Solana, Base or Arc, or a prepaid API key\n' +
       'from user.blockrun.ai. No subscriptions.'
   )
   .option('--wallet', 'Pay from the USDC wallet even when an API key is configured')
@@ -65,7 +65,7 @@ program
 
 program
   .command('setup [chain]')
-  .description('Create a new wallet for payments (solana or base)')
+  .description('Create a new wallet for payments (solana, base or arc)')
   .action((chain) => setupCommand(chain));
 
 program
@@ -429,8 +429,8 @@ function parseStartFlags(argv: string[], startIdx = 0): Record<string, unknown> 
   return opts;
 }
 
-// Handle chain shortcuts: `franklin solana` or `franklin base`
-if (firstArg === 'solana' || firstArg === 'base') {
+// Handle chain shortcuts: `franklin solana`, `franklin base` or `franklin arc`
+if (firstArg === 'solana' || firstArg === 'base' || firstArg === 'arc') {
   if (hasAnyFlag(args, HELP_FLAGS)) {
     program.parse(['node', 'franklin', 'start', '--help']);
   }
@@ -439,7 +439,7 @@ if (firstArg === 'solana' || firstArg === 'base') {
     process.exit(0);
   }
   const { saveChain } = await import('./config.js');
-  saveChain(firstArg as 'base' | 'solana');
+  saveChain(firstArg);
   const startOpts = parseStartFlags(args, 1);
   await startCommand(startOpts as Parameters<typeof startCommand>[0]);
   process.exit(process.exitCode ?? 0);

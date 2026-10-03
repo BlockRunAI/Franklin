@@ -30,6 +30,7 @@ import { interactiveSession } from '../agent/loop.js';
 import { ModelClient } from '../agent/llm.js';
 import { extractBrainEntities } from '../brain/extract.js';
 import { extractLearnings } from '../learnings/extractor.js';
+import { readEvmBalance } from '../wallet/manager.js';
 
 // Slack's hard per-message cap is ~40 KB, but readability tanks long before
 // that. Keep chunks small so a long answer arrives as a few tidy messages.
@@ -215,10 +216,11 @@ export async function runSlackBot(
             const bal = await c.getBalance();
             await postMessage(target, `Chain: solana\nWallet: ${addr}\nBalance: $${bal.toFixed(2)} USDC`);
           } else {
+            const chain = agentConfig.chain;
             const c = setupAgentWallet({ silent: true });
             const addr = c.getWalletAddress();
-            const bal = await c.getBalance();
-            await postMessage(target, `Chain: base\nWallet: ${addr}\nBalance: $${bal.toFixed(2)} USDC`);
+            const bal = await readEvmBalance(chain, c);
+            await postMessage(target, `Chain: ${chain}\nWallet: ${addr}\nBalance: $${bal.toFixed(2)} USDC`);
           }
         } catch (err) {
           await postMessage(target, `Couldn't fetch balance: ${(err as Error).message}`);

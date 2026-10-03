@@ -3,6 +3,8 @@
  * All type names and structures are original designs.
  */
 
+import type { Chain } from '../config.js';
+
 // ─── Messages ──────────────────────────────────────────────────────────────
 
 export type Role = 'user' | 'assistant';
@@ -187,7 +189,7 @@ export type StreamEvent =
 export interface AgentConfig {
   model: string;
   apiUrl: string;
-  chain: 'base' | 'solana';
+  chain: Chain;
   systemInstructions: string[];
   capabilities: CapabilityHandler[];
   maxTurns?: number;

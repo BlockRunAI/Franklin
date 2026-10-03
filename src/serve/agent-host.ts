@@ -27,6 +27,7 @@ import { bus, } from '../events/bus.js';
 import { makeEvent, type AgentRunState } from '../events/types.js';
 import { writeLiveAgent } from '../session/live-registry.js';
 import type { AgentConfig, StreamEvent } from '../agent/types.js';
+import type { Chain } from '../config.js';
 
 const RING_BUFFER_SIZE = 200;
 
@@ -78,7 +79,7 @@ export class AgentHost {
   constructor(
     private opts: {
       workDir: string;
-      chain: 'base' | 'solana';
+      chain: Chain;
       apiUrl: string;
       defaultModel: string;
       debug?: boolean;

@@ -37,7 +37,7 @@ import {
   SOLANA_NETWORK,
 } from '@blockrun/llm';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { loadChain, VERSION, DASHBOARD_URL } from '../config.js';
+import { loadChain, VERSION, DASHBOARD_URL, type Chain } from '../config.js';
 import { gatewayBase, gatewayHeaders, isKeyMode, walletMayPay } from '../payments/auth-mode.js';
 import { walletReservation, AMBIGUOUS_GRACE_MS, type ReservationToken } from '../wallet/reservation.js';
 import { recordUsage } from '../stats/tracker.js';
@@ -109,7 +109,7 @@ export function _setPaymentSignerForTests(fn: typeof signPayment | null): void {
 
 async function signPayment(
   response: Response,
-  chain: 'base' | 'solana',
+  chain: Chain,
   endpoint: string,
   resourceDescription: string,
 ): Promise<Record<string, string> | null> {
