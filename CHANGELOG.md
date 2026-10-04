@@ -1,5 +1,31 @@
 # Changelog
 
+## Franklin Agent 3.49.2 — sub-agents obey the spend controls, one swap cap, skill budgets enforced
+
+**Sub-agents can no longer act outside the money controls.** A sub-agent
+(the `Agent` tool) ran its tools directly, skipping permissions, user hooks,
+the PreSpend hook and the trade-plan gate, so in principle it could trade
+without an approved TradePlan. Its own model calls were also never counted,
+so `--max-spend` could not see them. Every tool a sub-agent calls now goes
+through the same checks as a top-level call, and outside an agent session it
+refuses to run tools at all. Its model spend counts toward `--max-spend`, and
+it stops mid-run once it reaches what is left of the budget instead of running
+up to 30 turns.
+
+**The 10-swap safety cap is now 10, not 30.** Jupiter, 0x on Base and 0x
+gasless each kept their own counter, so the "10 live swaps per process" cap
+allowed 10 per venue. They now share one counter (`FRANKLIN_LIVE_SWAP_CAP`
+still overrides it).
+
+**A skill's `budget-cap-usd` is enforced.** It was parsed and shown in
+`franklin skills` but never applied. A turn started with `/skill-name` now
+stops once its spend reaches the skill's cap, and `/retry` keeps the cap.
+
+**Concurrent sessions in `franklin serve` keep their spend separate.** Live
+spend was one process-wide number, so agents running side by side counted
+each other's spend against their own `--max-spend`. Each session now has its
+own counter.
+
 ## Franklin Agent 3.49.1 — music on Arc, media prompts keep their context, dependency patches
 
 **Slow music tracks no longer fail.** For a track that outruns the inline
