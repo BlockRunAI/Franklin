@@ -12271,3 +12271,26 @@ test('a /skill invocation returns the skill so its budget-cap-usd can bound the 
   assert.match(loop, /turnSkillBudgetUsd = cmdResult\.skill\?\.budgetCapUsd/);
   assert.match(loop, /turnCostUsd >= turnSkillBudgetUsd/);
 });
+
+test('session ids from the panel URL cannot escape the sessions dir (GHSA-jx74-262x-94p3)', async () => {
+  const { loadSessionHistory, getSessionFilePath } = await import('../dist/session/storage.js');
+  for (const id of ['../franklin-audit', '..%2Ffranklin-audit', '../../etc/passwd', 'a/b', '..', '']) {
+    assert.throws(() => getSessionFilePath(decodeURIComponent(id)), /Invalid session id/);
+    assert.deepEqual(loadSessionHistory(decodeURIComponent(id)), []);
+  }
+  assert.match(getSessionFilePath('session-2026-10-03-abcd1234'), /session-2026-10-03-abcd1234\.jsonl$/);
+});
+
+test('panel refuses DNS-rebinding hosts and never serves files outside the sessions dir (GHSA-jx74-262x-94p3)', async () => {
+  await withPanelServer(async ({ port }) => {
+    const rebound = await panelRequest(port, '/api/sessions', { headers: { Host: `attacker.example:${port}` } });
+    assert.equal(rebound.status, 403, 'a non-local Host header must be refused on read-only routes too');
+    const events = await panelRequest(port, '/api/events', { headers: { Host: `evil.test:${port}` } });
+    assert.equal(events.status, 403);
+    const traversal = await panelRequest(port, '/api/sessions/..%2Ffranklin-audit');
+    assert.equal(traversal.status, 200);
+    assert.deepEqual(traversal.json(), [], 'a traversal id must not read files next to the sessions dir');
+    const ok = await panelRequest(port, '/api/sessions');
+    assert.equal(ok.status, 200, 'normal local requests still work');
+  });
+});

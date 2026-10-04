@@ -1,5 +1,24 @@
 # Changelog
 
+## Franklin Agent 3.49.3 — security: the local panel only answers local requests
+
+**Fixes GHSA-jx74-262x-94p3 (path traversal in the local panel).** The
+dashboard that `franklin panel` serves on localhost built a file path from the
+session id in `/api/sessions/:id` without checking it, so a request like
+`/api/sessions/..%2Ffranklin-audit` returned other files under `~/.blockrun`:
+the audit log of every model call, the cost log, the trade log. Session ids
+that resolve outside the sessions folder are now refused everywhere sessions
+are read or written.
+
+**Every panel route now answers only local requests.** The wallet routes
+already required a local caller, but read-only routes such as session history
+did not, and the live event stream allowed any website to subscribe. Every
+route now requires a loopback connection and a localhost `Host` header, which
+also blocks DNS-rebinding pages in your browser.
+
+Reported by Rajnish Tiwari through GitHub private vulnerability reporting.
+Thank you.
+
 ## Franklin Agent 3.49.2 — sub-agents obey the spend controls, one swap cap, skill budgets enforced
 
 **Sub-agents can no longer act outside the money controls.** A sub-agent
