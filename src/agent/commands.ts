@@ -25,6 +25,7 @@ import {
 } from '../session/storage.js';
 import type { Registry } from '../skills/registry.js';
 import { matchSkill } from '../skills/invoke.js';
+import type { ParsedSkill } from '../skills/types.js';
 
 type EventEmitter = (event: StreamEvent) => void;
 
@@ -43,6 +44,7 @@ interface CommandContext {
 interface CommandResult {
   handled: boolean;      // true = command fully handled, skip agent loop
   rewritten?: string;    // if set, replace input with this prompt
+  skill?: ParsedSkill;   // set when the rewrite came from a file-loaded skill
 }
 
 // ─── Git helpers ──────────────────────────────────────────────────────────
@@ -1377,7 +1379,7 @@ export async function handleSlashCommand(
   if (ctx.skillRegistry) {
     const skillResult = matchSkill(input, ctx.skillRegistry, ctx.skillVars ?? {});
     if (skillResult) {
-      return { handled: false, rewritten: skillResult.rewritten };
+      return { handled: false, rewritten: skillResult.rewritten, skill: skillResult.skill };
     }
   }
 

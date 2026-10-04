@@ -14,6 +14,8 @@ import type {
   UserContentPart,
 } from '../agent/types.js';
 import { FREE_DEFAULT_MODEL, isFreeModelId } from '../free-models.js';
+import { recordUsage, getLiveSpendUsd } from '../stats/tracker.js';
+import { estimateCost } from '../pricing.js';
 import type { Chain } from '../config.js';
 
 // These will be injected at registration time
@@ -109,14 +111,28 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   const deadline = Date.now() + SUB_AGENT_TIMEOUT_MS;
   let turn = 0;
   let finalText = '';
+  // Everything the child spends (its LLM calls via recordUsage below, plus any
+  // paid tools it runs) lands in the session's live-spend counter, which the
+  // parent loop folds into --max-spend. This bounds the child mid-run too.
+  const spendAtStart = getLiveSpendUsd();
+  const label = description || 'sub-agent';
 
   while (turn < maxTurns) {
     if (Date.now() > deadline) {
-      return { output: `[${description || 'sub-agent'}] timed out after 5 minutes (${turn} turns completed).`, isError: true };
+      return { output: `[${label}] timed out after 5 minutes (${turn} turns completed).`, isError: true };
+    }
+    const spent = getLiveSpendUsd() - spendAtStart;
+    if (ctx.maxSpendRemainingUsd !== undefined && spent >= ctx.maxSpendRemainingUsd) {
+      return {
+        output: `[${label}] stopped: spent $${spent.toFixed(4)}, which reaches the session's remaining --max-spend budget ($${ctx.maxSpendRemainingUsd.toFixed(4)}).` +
+          (finalText ? `\n\nPartial result:\n${finalText}` : ''),
+        isError: true,
+      };
     }
     turn++;
 
-    const { content: parts } = await client.complete(
+    const callStart = Date.now();
+    const { content: parts, usage } = await client.complete(
       {
         model: subModel,
         messages: history,
@@ -126,6 +142,13 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
         stream: true,
       },
       ctx.abortSignal
+    );
+
+    const paidUsd = client.getLastPaidUsd();
+    recordUsage(
+      subModel, usage.inputTokens, usage.outputTokens,
+      paidUsd > 0 ? paidUsd : estimateCost(subModel, usage.inputTokens, usage.outputTokens, 1),
+      Date.now() - callStart, false, paidUsd <= 0,
     );
 
     history.push({ role: 'assistant', content: parts });
@@ -147,9 +170,13 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     for (const inv of invocations) {
       const handler = capabilityMap.get(inv.name);
       let result: CapabilityResult;
-      if (handler) {
+      if (handler && !ctx.runTool) {
+        // Outside the agent loop there is no permission/guard pipeline to run
+        // through. Fail closed rather than let the child act unchecked.
+        result = { output: `Tool ${inv.name} unavailable: sub-agent is not running inside an agent session.`, isError: true };
+      } else if (handler) {
         try {
-          result = await handler.execute(inv.input, ctx);
+          result = await ctx.runTool!(inv, handler);
         } catch (err) {
           result = {
             output: `Error: ${(err as Error).message}`,
@@ -171,7 +198,6 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     history.push({ role: 'user', content: outcomes });
   }
 
-  const label = description || 'sub-agent';
   return {
     output: finalText || `[${label}] completed after ${turn} turn(s) with no text output.`,
   };

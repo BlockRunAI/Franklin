@@ -178,13 +178,14 @@ export class StreamingExecutor {
   private async executeWithPermissions(
     invocation: CapabilityInvocation,
     pendingCount = 1,
-    callStart = true  // false for concurrent tools (already called in onToolReceived)
+    callStart = true,  // false for concurrent tools (already called in onToolReceived)
+    handlerOverride?: CapabilityHandler  // nested (sub-agent) calls bring their own handler
   ): Promise<CapabilityResult> {
     // Canonicalize the tool name and normalize schema-typed values before any
     // hook, guard, or permission boundary. Otherwise an alias such as
     // `detach` or a boolean-like value such as `confirm: "true"` could be
     // authorized under a different shape than the handler later executes.
-    let handler = this.handlers.get(invocation.name);
+    let handler = handlerOverride ?? this.handlers.get(invocation.name);
     if (!handler) {
       const attempted = invocation.name;
       const lower = attempted.toLowerCase();
@@ -279,13 +280,14 @@ export class StreamingExecutor {
       this.onStart(invocation.id, invocation.name, preview);
     }
 
-    // Wire per-invocation progress to onProgress callback
-    const progressScope: ExecutionScope = this.onProgress
-      ? {
-          ...this.scope,
-          onProgress: (text: string) => this.onProgress!(invocation.id, text),
-        }
-      : this.scope;
+    // Wire per-invocation progress to onProgress callback, and hand nested
+    // callers (sub-agents) this same pipeline so they cannot bypass it.
+    const progressScope: ExecutionScope = {
+      ...this.scope,
+      ...(this.onProgress ? { onProgress: (text: string) => this.onProgress!(invocation.id, text) } : {}),
+      // callStart=false: nested calls report through the sub-agent, not as top-level UI rows.
+      runTool: (inv, h) => this.executeWithPermissions(inv, 1, false, h),
+    };
 
     try {
       // Track elapsed for slow-tool forensics. Verified 2026-05-04

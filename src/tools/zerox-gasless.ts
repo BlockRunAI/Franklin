@@ -36,6 +36,7 @@ import { loadChain, VERSION} from '../config.js';
 import { appendSwap } from '../stats/swap-log.js';
 import { logger } from '../logger.js';
 import type { CapabilityHandler, ExecutionScope } from '../agent/types.js';
+import { liveSwapCap, getLiveSwapCount, recordLiveSwap, largeSwapThresholdUsd } from './live-swap-cap.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -49,26 +50,8 @@ const STATUS_POLL_INTERVAL_MS = 3_000;
 // 0x SignatureType.EIP712 = 2 (per @0x/utils/signature.ts)
 const SIGNATURE_TYPE_EIP712 = 2;
 
-// Session safety guards — same pattern as zerox-base.ts
-const DEFAULT_LIVE_SWAP_CAP = 10;
-const liveSwapCap = (() => {
-  const raw = process.env.FRANKLIN_LIVE_SWAP_CAP;
-  if (!raw) return DEFAULT_LIVE_SWAP_CAP;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return DEFAULT_LIVE_SWAP_CAP;
-  if (n <= 0) return Infinity;
-  return Math.floor(n);
-})();
-let liveSwapCount = 0;
-
-const DEFAULT_LARGE_SWAP_USD = 20;
-const largeSwapThresholdUsd = (() => {
-  const raw = process.env.FRANKLIN_LIVE_SWAP_WARN_USD;
-  if (!raw) return DEFAULT_LARGE_SWAP_USD;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return DEFAULT_LARGE_SWAP_USD;
-  return n;
-})();
+// Live-swap session cap + large-swap warning threshold live in ./live-swap-cap.ts
+// (one counter shared by every swap venue).
 
 // ─── Base token map (mirror zerox-base.ts) ────────────────────────────────
 
@@ -354,10 +337,10 @@ async function executeBase0xGaslessSwapUnsafeReference(
   input: SwapInput,
   ctx: ExecutionScope,
 ): Promise<{ output: string; isError?: boolean }> {
-  if (liveSwapCount >= liveSwapCap) {
+  if (getLiveSwapCount() >= liveSwapCap) {
     return {
       output:
-        `Live-swap session cap reached (${liveSwapCount}/${liveSwapCap}). Stopping to protect your wallet.\n` +
+        `Live-swap session cap reached (${getLiveSwapCount()}/${liveSwapCap}). Stopping to protect your wallet.\n` +
         `Override with FRANKLIN_LIVE_SWAP_CAP=20 (or 0 to disable), or restart Franklin to reset.`,
       isError: true,
     };
@@ -444,7 +427,7 @@ async function executeBase0xGaslessSwapUnsafeReference(
     sections.push(
       '',
       `Wallet: ${wallet.address}`,
-      `Live-swap session count: ${liveSwapCount}/${liveSwapCap === Infinity ? '∞' : liveSwapCap}`,
+      `Live-swap session count: ${getLiveSwapCount()}/${liveSwapCap === Infinity ? '∞' : liveSwapCap}`,
     );
     const answer = await ctx.onAskUser(sections.join('\n'), ['Confirm', 'Cancel']);
     if (answer.toLowerCase() !== 'confirm') {
@@ -530,7 +513,7 @@ async function executeBase0xGaslessSwapUnsafeReference(
   // Step 6 — poll status until confirmed / failed / timeout.
   const final = await pollUntilDone(submitRes.tradeHash, ctx);
 
-  liveSwapCount += 1;
+  recordLiveSwap();
   const onChainHash = final.transactions?.[0]?.hash;
   const explorer = onChainHash ? `https://basescan.org/tx/${onChainHash}` : null;
   const statusLine =
@@ -563,7 +546,7 @@ async function executeBase0xGaslessSwapUnsafeReference(
   ];
   if (onChainHash) lines.push(`On-chain tx: ${onChainHash}`);
   if (explorer) lines.push(explorer);
-  lines.push(`(Session live-swap count: ${liveSwapCount}/${liveSwapCap === Infinity ? '∞' : liveSwapCap})`);
+  lines.push(`(Session live-swap count: ${getLiveSwapCount()}/${liveSwapCap === Infinity ? '∞' : liveSwapCap})`);
 
   return {
     output: lines.join('\n'),

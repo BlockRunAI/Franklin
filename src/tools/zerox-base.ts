@@ -46,6 +46,7 @@ import { gatewayBase, gatewayHeaders } from '../payments/auth-mode.js';
 import { loadChain, VERSION} from '../config.js';
 import { appendSwap } from '../stats/swap-log.js';
 import type { CapabilityHandler, ExecutionScope } from '../agent/types.js';
+import { liveSwapCap, getLiveSwapCount, recordLiveSwap, largeSwapThresholdUsd } from './live-swap-cap.js';
 
 // ─── BlockRun affiliate identity on Base ─────────────────────────────────
 // Reuses the existing BlockRun ops wallet that already receives x402
@@ -77,26 +78,8 @@ function resolveBaseRpcUrl(): string {
   );
 }
 
-// ─── Session safety: cumulative live-swap counter ─────────────────────────
-const DEFAULT_LIVE_SWAP_CAP = 10;
-const liveSwapCap = (() => {
-  const raw = process.env.FRANKLIN_LIVE_SWAP_CAP;
-  if (!raw) return DEFAULT_LIVE_SWAP_CAP;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return DEFAULT_LIVE_SWAP_CAP;
-  if (n <= 0) return Infinity;
-  return Math.floor(n);
-})();
-let liveSwapCount = 0;
-
-const DEFAULT_LARGE_SWAP_USD = 20;
-const largeSwapThresholdUsd = (() => {
-  const raw = process.env.FRANKLIN_LIVE_SWAP_WARN_USD;
-  if (!raw) return DEFAULT_LARGE_SWAP_USD;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return DEFAULT_LARGE_SWAP_USD;
-  return n;
-})();
+// Live-swap session cap + large-swap warning threshold live in ./live-swap-cap.ts
+// (one counter shared by every swap venue).
 
 // ─── Base token map ──────────────────────────────────────────────────────
 // EVM addresses are case-sensitive in some libraries — store as checksum.
@@ -380,10 +363,10 @@ async function executeBase0xSwapUnsafeReference(
   input: SwapInput,
   ctx: ExecutionScope,
 ): Promise<{ output: string; isError?: boolean }> {
-  if (liveSwapCount >= liveSwapCap) {
+  if (getLiveSwapCount() >= liveSwapCap) {
     return {
       output:
-        `Live-swap session cap reached (${liveSwapCount}/${liveSwapCap}). Stopping to protect your wallet.\n` +
+        `Live-swap session cap reached (${getLiveSwapCount()}/${liveSwapCap}). Stopping to protect your wallet.\n` +
         `Override with FRANKLIN_LIVE_SWAP_CAP=20 (or 0 to disable), or restart Franklin to reset.`,
       isError: true,
     };
@@ -451,7 +434,7 @@ async function executeBase0xSwapUnsafeReference(
     sections.push(
       '',
       `Wallet: ${wallet.address}`,
-      `Live-swap session count: ${liveSwapCount}/${liveSwapCap === Infinity ? '∞' : liveSwapCap}`,
+      `Live-swap session count: ${getLiveSwapCount()}/${liveSwapCap === Infinity ? '∞' : liveSwapCap}`,
     );
     const answer = await ctx.onAskUser(sections.join('\n'), ['Confirm', 'Cancel']);
     if (answer.toLowerCase() !== 'confirm') {
@@ -550,7 +533,7 @@ async function executeBase0xSwapUnsafeReference(
     };
   }
 
-  liveSwapCount += 1;
+  recordLiveSwap();
   const explorer = `https://basescan.org/tx/${txHash}`;
   // Confirm on-chain before recording: a submitted tx can still revert (e.g.
   // slippage floor exceeded), and the swap log feeds the desktop wallet
@@ -591,7 +574,7 @@ async function executeBase0xSwapUnsafeReference(
       formatQuoteText(quote),
       `Tx hash: ${txHash}`,
       explorer,
-      `(Session live-swap count: ${liveSwapCount}/${liveSwapCap === Infinity ? '∞' : liveSwapCap})`,
+      `(Session live-swap count: ${getLiveSwapCount()}/${liveSwapCap === Infinity ? '∞' : liveSwapCap})`,
     ].join('\n'),
   };
 }

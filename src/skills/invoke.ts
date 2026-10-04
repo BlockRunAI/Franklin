@@ -24,9 +24,12 @@ export function substituteVariables(
 }
 
 import type { Registry } from './registry.js';
+import type { ParsedSkill } from './types.js';
 
 export interface SkillMatch {
   rewritten: string;
+  /** The invoked skill — its budget-cap-usd bounds the turn it kicks off. */
+  skill: ParsedSkill;
 }
 
 /**
@@ -49,5 +52,5 @@ export function matchSkill(
 
   const args = space < 0 ? '' : input.slice(space + 1).trim();
   const rewritten = substituteVariables(skill.skill.body, vars, args);
-  return { rewritten };
+  return { rewritten, skill: skill.skill };
 }

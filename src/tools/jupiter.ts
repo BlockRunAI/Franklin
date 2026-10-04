@@ -23,6 +23,7 @@ import {
 } from '@blockrun/llm';
 
 import type { CapabilityHandler, ExecutionScope } from '../agent/types.js';
+import { liveSwapCap, getLiveSwapCount, recordLiveSwap, largeSwapThresholdUsd } from './live-swap-cap.js';
 
 // ─── BlockRun Referral identity ───────────────────────────────────────────
 // Set up via referral.jup.ag. Owns ATAs for USDC, wSOL, JUP, USDT, etc. Every
@@ -37,34 +38,8 @@ const ULTRA_BASE = 'https://lite-api.jup.ag/ultra/v1';
 const ORDER_TIMEOUT_MS = 15_000;
 const EXECUTE_TIMEOUT_MS = 30_000;
 
-// ─── Session safety: cumulative live-swap counter ─────────────────────────
-// We removed the per-turn $-cap in v3.11.0 because it kept firing on legit
-// LLM workloads — but a live on-chain swap is irreversible, so a cap here is
-// different in kind. Default 10 swaps per Franklin process; user can override
-// via FRANKLIN_LIVE_SWAP_CAP env (set to 0 to disable). Resets on restart.
-const DEFAULT_LIVE_SWAP_CAP = 10;
-const liveSwapCap = (() => {
-  const raw = process.env.FRANKLIN_LIVE_SWAP_CAP;
-  if (!raw) return DEFAULT_LIVE_SWAP_CAP;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return DEFAULT_LIVE_SWAP_CAP;
-  if (n <= 0) return Infinity;
-  return Math.floor(n);
-})();
-let liveSwapCount = 0;
-
-// ─── Large-swap warning threshold ────────────────────────────────────────
-// USD value above which we surface a "Large swap" line in the AskUser
-// confirm — only computable when input is a known stablecoin. Override via
-// FRANKLIN_LIVE_SWAP_WARN_USD env (default $20).
-const DEFAULT_LARGE_SWAP_USD = 20;
-const largeSwapThresholdUsd = (() => {
-  const raw = process.env.FRANKLIN_LIVE_SWAP_WARN_USD;
-  if (!raw) return DEFAULT_LARGE_SWAP_USD;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return DEFAULT_LARGE_SWAP_USD;
-  return n;
-})();
+// Live-swap session cap + large-swap warning threshold live in ./live-swap-cap.ts
+// (one counter shared by every swap venue).
 
 const STABLECOIN_MINTS = new Set<string>([
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
@@ -325,10 +300,10 @@ async function executeJupiterSwapUnsafeReference(
   ctx: ExecutionScope
 ): Promise<{ output: string; isError?: boolean }> {
   // Session-cap pre-check (cheapest, fail fast).
-  if (liveSwapCount >= liveSwapCap) {
+  if (getLiveSwapCount() >= liveSwapCap) {
     return {
       output:
-        `Live-swap session cap reached (${liveSwapCount}/${liveSwapCap}). ` +
+        `Live-swap session cap reached (${getLiveSwapCount()}/${liveSwapCap}). ` +
         `Stopping to protect your wallet — this is a deliberate guardrail, not an error in your prompt.\n\n` +
         `To raise: \`FRANKLIN_LIVE_SWAP_CAP=20 franklin\` (or 0 to disable).\n` +
         `To continue with a fresh count: restart Franklin (\`exit\` then re-launch).`,
@@ -411,7 +386,7 @@ async function executeJupiterSwapUnsafeReference(
     sections.push(
       '',
       `Wallet: ${walletAddress}`,
-      `Live-swap session count: ${liveSwapCount}/${liveSwapCap === Infinity ? '∞' : liveSwapCap}`,
+      `Live-swap session count: ${getLiveSwapCount()}/${liveSwapCap === Infinity ? '∞' : liveSwapCap}`,
     );
 
     const answer = await ctx.onAskUser(sections.join('\n'), ['Confirm', 'Cancel']);
@@ -464,7 +439,7 @@ async function executeJupiterSwapUnsafeReference(
         isError: true,
       };
     }
-    liveSwapCount += 1;
+    recordLiveSwap();
     const sig = exec.signature ?? '<unknown>';
     const explorer = `https://solscan.io/tx/${sig}`;
     return {
@@ -473,7 +448,7 @@ async function executeJupiterSwapUnsafeReference(
         formatQuote(order),
         `Signature: ${sig}`,
         explorer,
-        `(Session live-swap count: ${liveSwapCount}/${liveSwapCap === Infinity ? '∞' : liveSwapCap})`,
+        `(Session live-swap count: ${getLiveSwapCount()}/${liveSwapCap === Infinity ? '∞' : liveSwapCap})`,
       ].join('\n'),
     };
   } catch (err) {
