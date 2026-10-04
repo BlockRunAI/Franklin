@@ -12132,3 +12132,142 @@ test('2026-10 gateway models: explicit shortcuts, prices, context windows, visio
   assert.equal(MODEL_PRICING['openai/gpt-5.6-sol'].input, 4);
   assert.equal(MODEL_PRICING['openai/gpt-5.6-sol-pro'].output, 20);
 });
+
+// ── P0 money safety (2026-10) ──────────────────────────────────────────────
+
+test('live spend is scoped per session: concurrent sessions never see each other\'s spend', async () => {
+  const { recordUsage, getLiveSpendUsd, runWithSpendScope } = await import('../dist/stats/tracker.js');
+  const globalBefore = getLiveSpendUsd();
+  const tick = () => new Promise((r) => setImmediate(r));
+  const [a, b] = await Promise.all([
+    runWithSpendScope(async () => {
+      recordUsage('zai/glm-5.1', 1, 1, 0.25, 1, false, false);
+      await tick();
+      return getLiveSpendUsd();
+    }),
+    runWithSpendScope(async () => {
+      await tick();
+      recordUsage('zai/glm-5.1', 1, 1, 0.5, 1, false, false);
+      await tick();
+      return getLiveSpendUsd();
+    }),
+  ]);
+  assert.equal(a, 0.25, 'session A must only see its own spend');
+  assert.equal(b, 0.5, 'session B must only see its own spend');
+  assert.equal(+(getLiveSpendUsd() - globalBefore).toFixed(6), 0.75, 'process-wide total still sees both');
+});
+
+test('live-swap cap is one counter shared by every swap venue', async () => {
+  const fs = await import('node:fs');
+  for (const f of ['jupiter', 'zerox-base', 'zerox-gasless']) {
+    const src = fs.readFileSync(new URL(`../src/tools/${f}.ts`, import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /let liveSwapCount\b/, `${f}.ts must not keep its own swap counter`);
+    assert.match(src, /from '\.\/live-swap-cap\.js'/, `${f}.ts must use the shared cap`);
+  }
+  const cap = await import('../dist/tools/live-swap-cap.js');
+  cap.resetLiveSwapCount();
+  cap.recordLiveSwap();
+  cap.recordLiveSwap();
+  assert.equal(cap.getLiveSwapCount(), 2);
+  cap.resetLiveSwapCount();
+});
+
+async function withSubAgentBackend(turns, fn) {
+  let requestCount = 0;
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) { /* drain */ }
+    const turn = turns[Math.min(requestCount, turns.length - 1)];
+    requestCount++;
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    send('message_start', { message: { usage: { input_tokens: 100000, output_tokens: 0 } } });
+    if (turn.tool) {
+      send('content_block_start', { content_block: { type: 'tool_use', id: `tool_${requestCount}`, name: turn.tool } });
+      send('content_block_delta', { delta: { type: 'input_json_delta', partial_json: '{}' } });
+    } else {
+      send('content_block_start', { content_block: { type: 'text', text: '' } });
+      send('content_block_delta', { delta: { type: 'text_delta', text: turn.text } });
+    }
+    send('content_block_stop', {});
+    send('message_delta', { delta: { stop_reason: turn.tool ? 'tool_use' : 'end_turn' }, usage: { output_tokens: 1000 } });
+    send('message_stop', {});
+    res.end('data: [DONE]\n\n');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    return await fn(`http://127.0.0.1:${server.address().port}`, () => requestCount);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
+test('sub-agent runs its tools through the parent pipeline and its spend counts toward --max-spend', { timeout: 20_000 }, async () => {
+  const { createSubAgentCapability } = await import('../dist/tools/subagent.js');
+  const { runWithSpendScope, getLiveSpendUsd } = await import('../dist/stats/tracker.js');
+  let directExecutions = 0;
+  const probe = {
+    spec: { name: 'Probe', description: 'probe', input_schema: { type: 'object', properties: {} } },
+    execute: async () => { directExecutions++; return { output: 'probed' }; },
+  };
+  await withSubAgentBackend([{ tool: 'Probe' }, { text: 'child done' }], async (apiUrl) => {
+    const agent = createSubAgentCapability(apiUrl, 'base', [probe], 'zai/glm-5.1');
+    const routed = [];
+    const ctx = {
+      workingDir: process.cwd(),
+      abortSignal: new AbortController().signal,
+      runTool: async (inv, handler) => { routed.push(inv.name); return handler.execute(inv.input, ctx); },
+    };
+    const { result, spent } = await runWithSpendScope(async () => {
+      const result = await agent.execute({ prompt: 'probe it', model: 'zai/glm-5.1' }, ctx);
+      return { result, spent: getLiveSpendUsd() };
+    });
+    assert.equal(result.output, 'child done');
+    assert.deepEqual(routed, ['Probe'], 'every child tool call must go through ctx.runTool');
+    assert.ok(spent > 0, 'the child\'s LLM calls must be recorded as session spend');
+  });
+
+  // Outside an agent session (no runTool) the child must fail closed, not execute.
+  directExecutions = 0;
+  await withSubAgentBackend([{ tool: 'Probe' }, { text: 'gave up' }], async (apiUrl) => {
+    const agent = createSubAgentCapability(apiUrl, 'base', [probe], 'zai/glm-5.1');
+    await agent.execute({ prompt: 'probe it', model: 'zai/glm-5.1' }, {
+      workingDir: process.cwd(), abortSignal: new AbortController().signal,
+    });
+  });
+  assert.equal(directExecutions, 0, 'no tool may run without the permission/guard pipeline');
+});
+
+test('sub-agent stops once it reaches the remaining --max-spend budget', { timeout: 20_000 }, async () => {
+  const { createSubAgentCapability } = await import('../dist/tools/subagent.js');
+  const { runWithSpendScope } = await import('../dist/stats/tracker.js');
+  const probe = {
+    spec: { name: 'Probe', description: 'probe', input_schema: { type: 'object', properties: {} } },
+    execute: async () => ({ output: 'probed' }),
+  };
+  await withSubAgentBackend([{ tool: 'Probe' }], async (apiUrl, requests) => {
+    const agent = createSubAgentCapability(apiUrl, 'base', [probe], 'zai/glm-5.1');
+    const ctx = {
+      workingDir: process.cwd(),
+      abortSignal: new AbortController().signal,
+      maxSpendRemainingUsd: 0.000001,
+      runTool: (inv, handler) => handler.execute(inv.input, ctx),
+    };
+    const result = await runWithSpendScope(() => agent.execute({ prompt: 'loop forever', model: 'zai/glm-5.1' }, ctx));
+    assert.equal(result.isError, true);
+    assert.match(result.output, /remaining --max-spend budget/);
+    assert.equal(requests(), 1, 'must stop after the first paid call, not run 30 turns');
+  });
+});
+
+test('a /skill invocation returns the skill so its budget-cap-usd can bound the turn', async () => {
+  const { matchSkill } = await import('../dist/skills/invoke.js');
+  const skill = { name: 'capped', description: 'd', body: 'do $ARGUMENTS', budgetCapUsd: 0.5 };
+  const registry = { lookup: (n) => (n === 'capped' ? { skill, source: 'user', path: '/x' } : undefined) };
+  const m = matchSkill('/capped thing', registry, {});
+  assert.equal(m.rewritten, 'do thing');
+  assert.equal(m.skill.budgetCapUsd, 0.5);
+  const fs = await import('node:fs');
+  const loop = fs.readFileSync(new URL('../src/agent/loop.ts', import.meta.url), 'utf8');
+  assert.match(loop, /turnSkillBudgetUsd = cmdResult\.skill\?\.budgetCapUsd/);
+  assert.match(loop, /turnCostUsd >= turnSkillBudgetUsd/);
+});

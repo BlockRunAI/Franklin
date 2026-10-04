@@ -33,7 +33,7 @@ import { ToolCallRepair } from './repair/index.js';
 import { resetToolSessionState } from '../tools/index.js';
 import { CORE_TOOL_NAMES, dynamicToolsEnabled } from '../tools/tool-categories.js';
 import { createActivateToolCapability } from '../tools/activate.js';
-import { recordUsage, getLiveSpendUsd } from '../stats/tracker.js';
+import { recordUsage, getLiveSpendUsd, runWithSpendScope } from '../stats/tracker.js';
 import { loadConfig } from '../commands/config.js';
 import { recordSessionUsage } from '../stats/session-tracker.js';
 import { appendAudit, extractLastUserPrompt } from '../stats/audit.js';
@@ -577,6 +577,17 @@ export async function interactiveSession(
   onEvent: (event: StreamEvent) => void,
   onAbortReady?: (abort: () => void) => void
 ): Promise<Dialogue[]> {
+  // Each session gets its own live-spend counter so concurrent sessions in one
+  // serve process never count each other's USDC against their --max-spend.
+  return runWithSpendScope(() => runInteractiveSession(config, getUserInput, onEvent, onAbortReady));
+}
+
+async function runInteractiveSession(
+  config: AgentConfig,
+  getUserInput: () => Promise<string | null>,
+  onEvent: (event: StreamEvent) => void,
+  onAbortReady?: (abort: () => void) => void
+): Promise<Dialogue[]> {
   // Clear module-level tool caches left over from a prior session in the same
   // process. Matters when Franklin is used as a library or driven by tests
   // that call interactiveSession() more than once — stale fileReadTracker /
@@ -680,6 +691,9 @@ export async function interactiveSession(
   const inputMux = createInputMultiplexer(getUserInput);
   const history: Dialogue[] = [];
   let lastUserInput = ''; // For /retry
+  // budget-cap-usd of the skill that kicked off this turn (`/name` invocation);
+  // kept across /retry, which replays the same skill prompt.
+  let turnSkillBudgetUsd: number | undefined;
   config.baseModel = config.model; // User's intended model — /model command updates this
   let turnFailedModels = new Set<string>(); // Models that failed this turn (cleared each new turn)
 
@@ -882,6 +896,7 @@ export async function interactiveSession(
     if (input === '') continue; // Empty input → re-prompt
 
     // ── Slash command dispatch ──
+    if (!input.startsWith('/')) turnSkillBudgetUsd = undefined;
     if (input.startsWith('/')) {
       // /retry re-sends the last user message
       if (input === '/retry') {
@@ -902,6 +917,7 @@ export async function interactiveSession(
           skillVars: getSkillVars({ chain: config.chain }),
         });
         if (cmdResult.handled) continue;
+        turnSkillBudgetUsd = cmdResult.skill?.budgetCapUsd;
         if (cmdResult.rewritten) input = cmdResult.rewritten;
       }
     }
@@ -1463,6 +1479,13 @@ export async function interactiveSession(
           onAskUser: config.onAskUser,
           onApproval: config.approvalPromptFn,
           sessionId,
+          maxSpendRemainingUsd: (() => {
+            const cap = (config as { maxSpendUsd?: number }).maxSpendUsd;
+            const left: number[] = [];
+            if (typeof cap === 'number' && Number.isFinite(cap) && cap > 0) left.push(cap - sessionCostUsd);
+            if (turnSkillBudgetUsd !== undefined) left.push(turnSkillBudgetUsd - turnCostUsd);
+            return left.length > 0 ? Math.max(0, Math.min(...left)) : undefined;
+          })(),
           parentContext: {
             goal: lastUserInput?.slice(0, 200),
             recentFiles: [...readFileCache].slice(-10),
@@ -2928,6 +2951,18 @@ export async function interactiveSession(
           text: `\n\n⚠️ Runaway loop stopped: ${spendNote}, hit hard cap of ${HARD_TOOL_CAP}. Try rephrasing or use \`/model\` to switch.\n`,
         });
         onEvent({ kind: 'turn_done', reason: 'cap_exceeded' });
+        break;
+      }
+      // Skill budget: a `/name` skill with budget-cap-usd bounds the turn it
+      // started. Checked after the tool results are in history, so stopping
+      // here leaves a well-formed transcript.
+      if (turnSkillBudgetUsd !== undefined && turnCostUsd >= turnSkillBudgetUsd) {
+        logger.warn(`[franklin] Skill budget reached: $${turnCostUsd.toFixed(4)} ≥ $${turnSkillBudgetUsd.toFixed(2)} — ending turn`);
+        onEvent({
+          kind: 'text_delta',
+          text: `\n\n_Skill budget reached: ${spendNote} ≥ cap $${turnSkillBudgetUsd.toFixed(2)}. Stopping this turn._\n`,
+        });
+        onEvent({ kind: 'turn_done', reason: 'budget' });
         break;
       }
       // Signature-based hard stop (3.15.30). The original 3.15.28 fired

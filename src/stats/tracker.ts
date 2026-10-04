@@ -4,6 +4,7 @@
  */
 
 import fs from 'node:fs';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import os from 'node:os';
 import { OPUS_PRICING } from '../pricing.js';
@@ -228,9 +229,21 @@ export function flushStats(): void {
 // would otherwise only see LLM token cost. See src/agent/loop.ts.
 let liveSpendUsd = 0;
 
-/** Cumulative USDC recorded via recordUsage this process. */
+// One serve process hosts many concurrent sessions (AgentHost). A single
+// process-global counter made each session's deltas include the others'
+// spend, so concurrent agents tripped each other's --max-spend caps. Each
+// session runs inside its own scope; reads inside a scope see only that
+// session's spend (including sub-agents and background calls it awaits).
+const spendScope = new AsyncLocalStorage<{ usd: number }>();
+
+/** Run `fn` with its own live-spend counter (one per agent session). */
+export function runWithSpendScope<T>(fn: () => T): T {
+  return spendScope.run({ usd: 0 }, fn);
+}
+
+/** USDC recorded via recordUsage in the current session scope (process-wide outside one). */
 export function getLiveSpendUsd(): number {
-  return liveSpendUsd;
+  return spendScope.getStore()?.usd ?? liveSpendUsd;
 }
 
 /** Test helper: reset the live-spend accumulator. */
@@ -261,7 +274,11 @@ export function recordUsage(
 ): void {
   // Count real spend BEFORE the test/audit gates — the --max-spend ceiling must
   // see every paid tool call even when history persistence is suppressed.
-  if (Number.isFinite(costUsd) && costUsd > 0) liveSpendUsd += costUsd;
+  if (Number.isFinite(costUsd) && costUsd > 0) {
+    liveSpendUsd += costUsd;
+    const scope = spendScope.getStore();
+    if (scope) scope.usd += costUsd;
+  }
 
   // Same rationale as appendAudit — tests run in-process with
   // local/test* models and would otherwise mix into franklin-stats.json

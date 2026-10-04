@@ -110,6 +110,14 @@ export interface ExecutionScope {
    * module-global session then.
    */
   sessionId?: string;
+  /**
+   * Run a nested tool call (sub-agent) through the SAME pipeline as a
+   * top-level call: hooks, SessionToolGuard (trade-plan gate), permissions,
+   * PreSpend, redaction and large-result persistence. Set by StreamingExecutor.
+   */
+  runTool?: (invocation: CapabilityInvocation, handler: CapabilityHandler) => Promise<CapabilityResult>;
+  /** USDC left under the session's --max-spend when this tool started. Absent = no cap. */
+  maxSpendRemainingUsd?: number;
   /** Context from parent agent — helps sub-agents avoid duplicate work */
   parentContext?: {
     goal?: string;
