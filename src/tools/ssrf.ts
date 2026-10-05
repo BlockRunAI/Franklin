@@ -1,11 +1,13 @@
 /**
- * Basic SSRF guard for model-driven fetches (WebFetch, reference-image resolve).
+ * SSRF guard for model-driven requests (WebFetch, WebhookPost, BrowserX,
+ * reference-image resolve).
  *
  * Blocks loopback / private / link-local / cloud-metadata hosts so a steered
  * model can't make Franklin fetch `http://169.254.169.254/...` (cloud creds) or
  * `http://127.0.0.1:<port>/...` (the local proxy / panel). Literal-host based:
- * it does NOT resolve DNS or re-validate each redirect hop, so it stops the
- * common direct-IP/localhost cases, not a DNS-rebinding or redirect attack.
+ * it does NOT resolve DNS, so a public name that resolves to a private address
+ * gets through. ssrfSafeFetch re-checks every redirect hop. Every outbound
+ * model-driven request must use these two, not a private copy of the check.
  */
 // Named cloud-metadata endpoints that aren't `*.internal` (AWS legacy alias,
 // GCP short form). They resolve to 169.254.169.254 / a link-local address.

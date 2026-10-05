@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { partiallyReadFiles, fileReadTracker, invalidateFileCache } from './read.js';
-import { isWalletKeyPath } from './sensitive-paths.js';
+import { isHostCredentialPath, isWalletKeyPath } from './sensitive-paths.js';
 
 interface EditInput {
   file_path: string;
@@ -47,6 +47,9 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   // Never let the model modify/substitute the wallet private key.
   if (isWalletKeyPath(resolved)) {
     return { output: `Error: refusing to edit the wallet key store: ${resolved}`, isError: true };
+  }
+  if (isHostCredentialPath(resolved)) {
+    return { output: `Error: refusing to edit a credential store: ${resolved}`, isError: true };
   }
 
   // Enforce read-before-edit: the model must Read the file before editing it

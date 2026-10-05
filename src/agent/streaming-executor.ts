@@ -20,6 +20,7 @@ import type { HookInput } from '../hooks/types.js';
 import { estimateSpendUsd, isSpendTool } from '../tools/spend-tools.js';
 import { BLOCKRUN_DIR } from '../config.js';
 import { redactSecretsInOutput } from './secret-redact.js';
+import { walletSecretLiterals } from '../tools/sensitive-paths.js';
 import { resolvePayMode } from '../payments/auth-mode.js';
 import { logger } from '../logger.js';
 
@@ -347,11 +348,14 @@ export class StreamingExecutor {
       // model, the transcript, and the on-disk overflow file alike.
       //
       // resolvePayMode() is memoised per process, so reading the configured
-      // key here costs nothing per tool call.
+      // key here costs nothing per tool call. walletSecretLiterals() is the
+      // backstop for the path guards: whatever tool a key file leaks through,
+      // its exact value never reaches the model. It re-reads only when a key
+      // file's mtime/size changes.
       const payMode = resolvePayMode();
       const redacted = redactSecretsInOutput(
         result.output,
-        payMode.kind === 'key' ? [payMode.key] : [],
+        [...(payMode.kind === 'key' ? [payMode.key] : []), ...walletSecretLiterals()],
       );
       if (redacted.labels.length > 0) {
         logger.warn(`[franklin] Redacted ${redacted.labels.join(', ')} from ${invocation.name} output`);

@@ -1,5 +1,39 @@
 # Changelog
 
+## Franklin Agent 3.49.4 — security: five ways to reach the wallet key, closed
+
+**A webhook could be redirected into the local panel.** `WebhookPost` used its
+own, weaker host check and followed redirects without re-checking them, so a
+public URL that redirected to `localhost:3100/api/wallet/secret` handed the
+wallet private key back to the model. It now uses the same guard as
+`WebFetch` and re-checks every redirect.
+
+**The panel's wallet and spend routes now need the page's own token.** A
+request with no `Origin` header used to count as trusted. Each panel process
+now creates a random token that only its own page knows. Reading the key,
+importing a wallet, buying a number and every other state change require it.
+Calling those routes with `curl` no longer works.
+
+**Connecting to a malicious MCP server could run commands on your machine.**
+The OAuth sign-in opened the server's authorization URL through a shell, so
+`$(...)` in that URL was executed. The URL is now checked as http(s) and
+handed to the browser opener with no shell in between.
+
+**Grep, Glob and BrowserX could read the wallet key.** `Grep` with an
+explicit path read `~/.blockrun/.session`, and `BrowserX` could open
+`file://` URLs and local servers. Grep and Glob now skip the key files.
+BrowserX opens only public http(s) pages, and checks where the page ended up
+before returning its contents. As a backstop, the exact wallet and account
+key values are scrubbed from every tool result.
+
+**Read no longer returns host credentials without asking.** `Read` is
+auto-approved, and it returned `~/.ssh`, `~/.aws`, `~/.config/solana/id.json`
+and similar files. It now refuses those, from the same list `Write` and
+`Edit` use. If you need one of them, open it yourself or let Bash ask for
+approval.
+
+Reported privately by email. Thank you.
+
 ## Franklin Agent 3.49.3 — security: the local panel only answers local requests
 
 **Fixes GHSA-jx74-262x-94p3 (path traversal in the local panel).** The

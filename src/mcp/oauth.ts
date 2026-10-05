@@ -22,7 +22,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createServer } from 'node:http';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type {
   OAuthClientProvider,
@@ -37,7 +37,7 @@ import { BLOCKRUN_DIR } from '../config.js';
 import { logger } from '../logger.js';
 import type { McpServerConfig } from './client.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const OAUTH_DIR = join(BLOCKRUN_DIR, 'mcp', 'oauth');
 
@@ -70,15 +70,33 @@ function saveState(serverName: string, state: StoredOAuthState): void {
   writeFileSync(p, JSON.stringify(state, null, 2), { mode: 0o600 });
 }
 
-async function openBrowser(url: string): Promise<void> {
+export async function openBrowser(url: string): Promise<void> {
+  // The URL comes from the remote server's OAuth metadata
+  // (authorization_endpoint), so it is attacker-controlled. It must never
+  // reach a shell: `$(...)` survives URL serialization and double quotes do
+  // not stop command substitution. Only http(s), passed as an argv entry.
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    logger.warn(`[mcp:oauth] refusing to open an unparseable authorization URL`);
+    return;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    logger.warn(`[mcp:oauth] refusing to open a non-http(s) authorization URL (${parsed.protocol})`);
+    return;
+  }
+  const href = parsed.href;
   // Prefer the platform native opener so unusual environments (corporate
   // wrappers, WSL, headless ssh-with-X-forward) still work when they have it.
-  const cmd =
-    process.platform === 'darwin' ? `open "${url}"` :
-    process.platform === 'win32' ? `start "" "${url}"` :
-    `xdg-open "${url}"`;
+  // Windows: `start` is a cmd builtin and cmd re-parses `&`/`|`, so use the
+  // URL protocol handler directly.
+  const [cmd, args] =
+    process.platform === 'darwin' ? ['open', [href]] :
+    process.platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', href]] :
+    ['xdg-open', [href]];
   try {
-    await execAsync(cmd);
+    await execFileAsync(cmd, args, { timeout: 10_000 });
   } catch (err) {
     logger.warn(`[mcp:oauth] couldn't open browser automatically: ${(err as Error).message}`);
   }

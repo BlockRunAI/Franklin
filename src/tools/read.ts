@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { isWalletKeyPath } from './sensitive-paths.js';
+import { secretPathRefusal } from './sensitive-paths.js';
 
 interface ReadInput {
   file_path: string;
@@ -76,10 +76,12 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
 
   const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.workingDir, filePath);
 
-  // Never let the model read the wallet private key into context.
-  if (isWalletKeyPath(resolved)) {
-    return { output: `Error: refusing to read the wallet key store: ${resolved}`, isError: true };
-  }
+  // Never let the model read the wallet private key, or the host's own
+  // credential stores (~/.ssh, ~/.aws, ...), into context. Read is
+  // auto-approved, so this check is the only thing between a steered model
+  // and those files.
+  const refusal = secretPathRefusal(resolved);
+  if (refusal) return { output: refusal, isError: true };
 
   try {
     const stat = fs.statSync(resolved);

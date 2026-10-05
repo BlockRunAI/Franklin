@@ -5,7 +5,7 @@
  * Currency-grade watermark + Inter font.
  */
 
-export function getHTML(): string {
+export function getHTML(panelToken = ''): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -914,6 +914,18 @@ a:hover { text-decoration:underline; }
 </div>
 
 <script>
+// Every same-origin request carries the per-process panel token; the server
+// refuses wallet, spend, and state-changing routes without it.
+(() => {
+  const PANEL_TOKEN = ${JSON.stringify(panelToken)};
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    const headers = new Headers(init.headers || {});
+    headers.set('X-Franklin-Panel-Token', PANEL_TOKEN);
+    return nativeFetch(input, { ...init, headers });
+  };
+})();
+
 // Tab switching — supports URL hash (e.g. #tasks) for deep links.
 // Emits a 'tab:activated' / 'tab:deactivated' event so per-tab modules
 // can start/stop their pollers without coupling to the dispatcher.

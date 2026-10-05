@@ -5,6 +5,7 @@
  */
 
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadChain, saveChain, isChain, CHAIN_LABELS } from '../config.js';
@@ -101,8 +102,26 @@ function isLocalHostHeader(req: http.IncomingMessage): boolean {
   }
 }
 
+/**
+ * Per-process token, embedded in the panel page and sent back by its fetch
+ * wrapper as `X-Franklin-Panel-Token`. Loopback + local Host + Origin are not
+ * enough on their own: a request with no Origin passes isTrustedPanelOrigin,
+ * and that is exactly what an SSRF from inside Franklin looks like (a tool
+ * fetching a public URL that 30x-redirects to localhost:3100). A custom
+ * header that only the served page knows closes that, and a cross-origin
+ * browser page cannot set it without a CORS preflight the panel never grants.
+ */
+const PANEL_TOKEN = crypto.randomBytes(32).toString('hex');
+const PANEL_TOKEN_HEADER = 'x-franklin-panel-token';
+
+function hasPanelToken(req: http.IncomingMessage): boolean {
+  const got = req.headers[PANEL_TOKEN_HEADER];
+  if (typeof got !== 'string' || got.length !== PANEL_TOKEN.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(PANEL_TOKEN));
+}
+
 function isLocalPanelRequest(req: http.IncomingMessage): boolean {
-  return isLoopback(req) && isTrustedPanelOrigin(req);
+  return isLoopback(req) && isTrustedPanelOrigin(req) && hasPanelToken(req);
 }
 
 async function readBody(req: http.IncomingMessage, maxBytes = 16 * 1024): Promise<string> {
@@ -147,7 +166,7 @@ async function currentWalletAddress(): Promise<string> {
 }
 
 export function createPanelServer(port: number): http.Server {
-  const html = getHTML();
+  const html = getHTML(PANEL_TOKEN);
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -161,6 +180,13 @@ export function createPanelServer(port: number): http.Server {
     if (!isLoopback(req) || !isLocalHostHeader(req)) {
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end('Forbidden');
+      return;
+    }
+
+    // Anything that changes state needs the page's token, including routes
+    // that only check loopback (task cancel).
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS' && !hasPanelToken(req)) {
+      json(res, { error: 'forbidden' }, 403);
       return;
     }
 
@@ -393,7 +419,9 @@ export function createPanelServer(port: number): http.Server {
       // ─── Wallet secret (loopback only) ──────────────────────────────────
       // Returns the private key so the user can back it up / move it.
       // Hardened: loopback-only (belt-and-suspenders on the 127.0.0.1 bind),
-      // same-origin for browser requests, no-store cache header, JSON only.
+      // same-origin for browser requests, the page token (so no other local
+      // client — including a redirected tool fetch — can read it), no-store
+      // cache header, JSON only.
       if (p === '/api/wallet/secret') {
         if (!isLocalPanelRequest(req)) {
           json(res, { error: 'forbidden' }, 403);

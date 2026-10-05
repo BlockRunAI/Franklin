@@ -20,6 +20,7 @@ import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../age
 import { browserPool } from '../social/browser-pool.js';
 import { frameUntrusted } from './untrusted.js';
 import { isWalletKeyPath } from './sensitive-paths.js';
+import { isBlockedSsrfHost } from './ssrf.js';
 
 type BrowserAction = 'open' | 'snapshot' | 'click' | 'scroll' | 'screenshot' | 'getUrl' | 'wait';
 
@@ -33,6 +34,41 @@ interface BrowserXInput {
 }
 
 const MAX_WAIT_MS = 15_000;
+
+/**
+ * Why a URL may not be loaded (or read back) in the browser, or null if it is
+ * fine. The model picks the URL, so this is WebFetch's rule set: http(s) only
+ * (no file:, so ~/.blockrun/.session can't be rendered and snapshotted) and no
+ * loopback/private/metadata host (the local panel serves the wallet key).
+ * `about:blank` is allowed for the current-page check only.
+ */
+export function browserUrlRefusal(raw: string, { allowBlank = false } = {}): string | null {
+  let u: URL;
+  try { u = new URL(raw); } catch { return `invalid URL: ${raw.slice(0, 200)}`; }
+  if (allowBlank && u.href === 'about:blank') return null;
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return `only http(s) URLs are allowed, got ${u.protocol}`;
+  }
+  if (isBlockedSsrfHost(u.hostname)) {
+    return `refusing a private/loopback/metadata host: ${u.hostname}`;
+  }
+  return null;
+}
+
+/**
+ * A public page can redirect into a blocked one after open() returns, so check
+ * where the browser actually is before reading anything out of it. On a hit,
+ * park the tab on about:blank so the content can't be read on a later call.
+ */
+async function currentPageRefusal(
+  browser: { getUrl(): Promise<string>; open(url: string): Promise<void> },
+): Promise<string | null> {
+  const current = await browser.getUrl();
+  const why = browserUrlRefusal(current, { allowBlank: true });
+  if (!why) return null;
+  await browser.open('about:blank').catch(() => {});
+  return `Error: the page navigated to a blocked location (${why}). It was closed.`;
+}
 
 function summariseTree(tree: string, max = 8000): string {
   if (tree.length <= max) return tree;
@@ -49,6 +85,12 @@ async function execute(
     return { output: 'Error: action is required (open|snapshot|click|scroll|screenshot|getUrl|wait)', isError: true };
   }
 
+  // Refuse before launching Chrome, not after.
+  if (action === 'open' && url) {
+    const refused = browserUrlRefusal(url);
+    if (refused) return { output: `Error: BrowserX ${refused}`, isError: true };
+  }
+
   let browser;
   try {
     browser = await browserPool.getBrowser();
@@ -62,11 +104,15 @@ async function execute(
           const msg = err instanceof Error ? err.message : String(err);
           return { output: `BrowserX open(${url}) failed: ${msg.slice(0, 200)}`, isError: true };
         }
+        const landed = await currentPageRefusal(browser);
+        if (landed) return { output: landed, isError: true };
         return { output: `Opened ${url}. Call action="snapshot" next to inspect the page.` };
       }
 
       case 'snapshot': {
         try {
+          const blocked = await currentPageRefusal(browser);
+          if (blocked) return { output: blocked, isError: true };
           const tree = await browser.snapshot();
           const out = `Page snapshot (${tree.length} chars):\n\n${summariseTree(tree)}\n\n` +
             `Refs are valid until the next snapshot. Use action="click" with a ref to navigate.`;
@@ -84,6 +130,8 @@ async function execute(
           // Give the navigation a moment to start, then return — model can
           // call snapshot next to see the result.
           await browser.waitForTimeout(1500);
+          const blocked = await currentPageRefusal(browser);
+          if (blocked) return { output: blocked, isError: true };
           const newUrl = await browser.getUrl();
           return { output: `Clicked ref [${ref}]. Current URL: ${newUrl}. Call action="snapshot" to see the result.` };
         } catch (err) {
@@ -112,6 +160,8 @@ async function execute(
           return { output: `Error: refusing to write to the wallet key store: ${finalPath}`, isError: true };
         }
         try {
+          const blocked = await currentPageRefusal(browser);
+          if (blocked) return { output: blocked, isError: true };
           const fs = await import('node:fs');
           fs.mkdirSync(path.dirname(finalPath), { recursive: true });
           await browser.screenshot(finalPath);

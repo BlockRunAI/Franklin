@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
+import { isHostCredentialPath, isWalletKeyPath } from './sensitive-paths.js';
 
 interface GlobInput {
   pattern: string;
@@ -74,6 +75,8 @@ function walkDirectory(
     const relativePath = path.relative(baseDir, fullPath);
 
     if (entry.isFile() || (entry.isSymbolicLink() && !isDir)) {
+      // Don't hand the model a map to the key store or host credentials.
+      if (isWalletKeyPath(fullPath) || isHostCredentialPath(fullPath)) continue;
       if (globMatch(pattern, relativePath)) {
         results.push(fullPath);
       }

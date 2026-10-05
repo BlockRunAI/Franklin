@@ -6,6 +6,10 @@ import { execSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
+import { BLOCKRUN_DIR } from '../config.js';
+import {
+  WALLET_KEY_PATHS, hostCredentialDirPaths, isHostCredentialPath, isWalletKeyPath, secretPathRefusal,
+} from './sensitive-paths.js';
 
 interface GrepInput {
   pattern: string;
@@ -51,6 +55,12 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     return { output: `Error: path not found: ${searchPath}`, isError: true };
   }
 
+  // Grep reads file contents, so it carries Read's guard. An explicit file
+  // path makes rg read a hidden file it would skip on a walk — exactly how
+  // the wallet key reached the model before this check.
+  const refusal = secretPathRefusal(path.resolve(searchPath));
+  if (refusal) return { output: refusal, isError: true };
+
   const mode = opts.output_mode || 'files_with_matches';
   const limit = opts.head_limit ?? 250;
 
@@ -58,6 +68,38 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     return runRipgrep(opts, searchPath, mode, limit, ctx.workingDir);
   }
   return runNativeGrep(opts, searchPath, mode, limit, ctx.workingDir);
+}
+
+// Exclusions for a directory walk. Key files and credential stores are hidden
+// or live under hidden dirs, which rg skips by default, but api-key and
+// solana-wallet.json are not hidden and a search rooted at ~/.blockrun reaches
+// them. `**/` anchoring matches whichever root the walk starts from.
+const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
+function secretExcludeGlobs(): string[] {
+  const blockrunName = path.basename(BLOCKRUN_DIR);
+  const home = path.dirname(BLOCKRUN_DIR);
+  const flag = CASE_INSENSITIVE_FS ? '--iglob' : '--glob';
+  const globs = WALLET_KEY_PATHS.map(
+    (f) => `${flag}=!**/${blockrunName}/${path.relative(BLOCKRUN_DIR, f).split(path.sep).join('/')}`,
+  );
+  for (const dir of hostCredentialDirPaths()) {
+    const rel = path.relative(home, dir).split(path.sep).join('/');
+    globs.push(`${flag}=!**/${rel}/**`);
+  }
+  return globs;
+}
+
+/** Second line of defence: drop any result line that names a secret file. */
+function dropSecretLines(lines: string[], searchPath: string): string[] {
+  const isFile = (() => { try { return fs.statSync(searchPath).isFile(); } catch { return false; } })();
+  return lines.filter((line) => {
+    if (isFile) return true; // the explicit path already passed secretPathRefusal
+    // Result lines: `/abs/path`, `/abs/path:12:text`, `/abs/path-12-ctx`, `/abs/path:3`.
+    const m = /^(\/.*?)(?:[:-]\d+[:-]|:\d+$|$)/.exec(line);
+    if (!m) return true;
+    const file = m[1];
+    return !isWalletKeyPath(file) && !isHostCredentialPath(file);
+  });
 }
 
 function toRelative(absPath: string, cwd: string): string {
@@ -103,6 +145,8 @@ function runRipgrep(
   // Always exclude common noise + lock files (huge, rarely useful)
   args.push('--glob=!node_modules', '--glob=!.git', '--glob=!dist',
     '--glob=!*.lock', '--glob=!package-lock.json', '--glob=!pnpm-lock.yaml');
+  // Last, so a caller-supplied glob cannot re-include them.
+  args.push(...secretExcludeGlobs());
 
   args.push('--', opts.pattern);
   args.push(searchPath);
@@ -114,7 +158,7 @@ function runRipgrep(
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    const lines = result.split('\n').filter(Boolean);
+    const lines = dropSecretLines(result.split('\n').filter(Boolean), searchPath);
     const offset = opts.offset ?? 0;
     const sliced = offset > 0 ? lines.slice(offset) : lines;
     const limited = limit > 0 ? sliced.slice(0, limit) : sliced;
@@ -186,6 +230,10 @@ function runNativeGrep(
 
   args.push('--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=dist',
     '--exclude=*.lock', '--exclude=package-lock.json', '--exclude=pnpm-lock.yaml');
+  // grep's --exclude matches basenames only, so this over-excludes any file
+  // that happens to share a key file's name. Acceptable for the fallback path.
+  for (const f of WALLET_KEY_PATHS) args.push(`--exclude=${path.basename(f)}`);
+  for (const d of hostCredentialDirPaths()) args.push(`--exclude-dir=${path.basename(d)}`);
   args.push('-e', opts.pattern, searchPath);
 
   try {
@@ -195,7 +243,7 @@ function runNativeGrep(
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    const lines = result.split('\n').filter(Boolean);
+    const lines = dropSecretLines(result.split('\n').filter(Boolean), searchPath);
     const limited = limit > 0 ? lines.slice(0, limit) : lines;
 
     const relativized = limited.map(line => {
