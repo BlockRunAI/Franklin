@@ -9,15 +9,16 @@
  * channels. If a channel needs a signature header (e.g., Feishu sign
  * mode), the agent passes it in via `headers`.
  *
- * Safety: outbound URLs are a publish surface. We refuse localhost,
- * private ranges, and file schemes so an agent can't be tricked into
- * hitting internal services. A permission prompt fires on first use per
- * session.
+ * Safety: outbound URLs are a publish surface. Hosts go through the same
+ * SSRF guard as WebFetch, and redirects are followed manually with every
+ * hop re-checked: a public URL that 30x-redirects to the local panel would
+ * otherwise hand the panel's response (the wallet key) back to the model.
+ * A permission prompt fires on first use per session.
  */
 
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { isIP } from 'node:net';
 import { VERSION } from '../config.js';
+import { isBlockedSsrfHost, ssrfSafeFetch } from './ssrf.js';
 
 interface WebhookPostInput {
   url: string;
@@ -28,39 +29,6 @@ interface WebhookPostInput {
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_BODY_BYTES = 512 * 1024; // 512 KB is generous for a chat push.
-
-function isPrivateHost(hostname: string): boolean {
-  const h = hostname
-    .trim()
-    .replace(/^\[/, '')
-    .replace(/\]$/, '')
-    .split('%', 1)[0]
-    .toLowerCase();
-
-  if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h === '::' || h === '::1') return true;
-
-  // IPv4 private ranges.
-  if (isIP(h) === 4) {
-    const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(h);
-    if (m) {
-      const [a, b] = [Number(m[1]), Number(m[2])];
-      if (a === 10) return true;
-      if (a === 172 && b >= 16 && b <= 31) return true;
-      if (a === 192 && b === 168) return true;
-      if (a === 169 && b === 254) return true; // link-local
-      if (a === 127) return true;
-    }
-  }
-
-  if (isIP(h) === 6) {
-    if (h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80:')) return true;
-    if (h.startsWith('::ffff:')) {
-      return isPrivateHost(h.slice('::ffff:'.length));
-    }
-  }
-
-  return false;
-}
 
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
   const { url, body, headers, method = 'POST' } = input as unknown as WebhookPostInput;
@@ -77,7 +45,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
     return { output: `Error: only http(s) URLs allowed, got ${parsed.protocol}`, isError: true };
   }
-  if (isPrivateHost(parsed.hostname)) {
+  if (isBlockedSsrfHost(parsed.hostname)) {
     return {
       output: `Error: refusing to post to private/loopback host ${parsed.hostname}. ` +
         `WebhookPost is for public webhook endpoints only.`,
@@ -121,7 +89,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
 
   try {
-    const res = await fetch(url, {
+    const res = await ssrfSafeFetch(url, {
       method,
       headers: finalHeaders,
       body: bodyText || undefined,
@@ -149,7 +117,11 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
       if (ctx.abortSignal.aborted) return { output: 'Webhook POST canceled by user.', isError: true };
       return { output: `Webhook POST timed out after ${DEFAULT_TIMEOUT_MS}ms`, isError: true };
     }
-    return { output: `Webhook POST error: ${(err as Error).message}`, isError: true };
+    const msg = (err as Error).message;
+    if (msg.startsWith('SSRF:')) {
+      return { output: `Error: refusing to follow a redirect to a private/loopback host. ${msg}`, isError: true };
+    }
+    return { output: `Webhook POST error: ${msg}`, isError: true };
   } finally {
     clearTimeout(timer);
     ctx.abortSignal.removeEventListener('abort', onParentAbort);

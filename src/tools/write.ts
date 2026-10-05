@@ -7,7 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { partiallyReadFiles, fileReadTracker, invalidateFileCache } from './read.js';
-import { isWalletKeyPath } from './sensitive-paths.js';
+import { hostCredentialDirPaths, isWalletKeyPath } from './sensitive-paths.js';
 
 interface WriteInput {
   file_path: string;
@@ -66,11 +66,7 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
   const allowedTempDirs = getAllowedTempDirs();
   const dangerousPaths = [
     '/etc/', '/usr/', '/bin/', '/sbin/', '/var/', '/System/',
-    path.join(home, '.ssh') + '/',
-    path.join(home, '.aws') + '/',
-    path.join(home, '.kube') + '/',
-    path.join(home, '.gnupg') + '/',
-    path.join(home, '.config/gcloud') + '/',
+    ...hostCredentialDirPaths().map((d) => d + '/'),
   ];
   // Check both the resolved path and the real path (after symlink resolution)
   const checkPath = (p: string) =>

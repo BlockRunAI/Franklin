@@ -350,6 +350,14 @@ test('panel server rejects cross-origin browser requests to spendful phone route
   }
 });
 
+// The panel page embeds a per-process token that its fetch wrapper sends back.
+async function readPanelToken(port) {
+  const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+  const m = /const PANEL_TOKEN = "([0-9a-f]{64})"/.exec(html);
+  assert.ok(m, 'panel HTML must embed the token');
+  return m[1];
+}
+
 test('panel server allows same-origin browser requests to guarded routes', async () => {
   const panelUrl = new URL('../dist/panel/server.js', import.meta.url);
   const { createPanelServer } = await import(`${panelUrl.href}?t=${Date.now()}`);
@@ -357,9 +365,11 @@ test('panel server allows same-origin browser requests to guarded routes', async
   const port = await listenOnRandomPort(server);
 
   try {
+    const token = await readPanelToken(port);
     const res = await fetch(`http://127.0.0.1:${port}/api/phone/numbers/renew`, {
       method: 'POST',
       headers: {
+        'X-Franklin-Panel-Token': token,
         Origin: `http://127.0.0.1:${port}`,
         'Content-Type': 'application/json',
       },
@@ -368,6 +378,33 @@ test('panel server allows same-origin browser requests to guarded routes', async
     assert.equal(res.status, 400, `Same-origin request should reach handler validation, got ${res.status}`);
     const body = await res.json();
     assert.equal(body.error, 'phoneNumber required');
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve()));
+    unwatchFile(join(homedir(), '.blockrun', 'franklin-stats.json'));
+  }
+});
+
+test('panel: wallet secret and state-changing routes need the page token (no-Origin SSRF shape)', async () => {
+  const panelUrl = new URL('../dist/panel/server.js', import.meta.url);
+  const { createPanelServer } = await import(`${panelUrl.href}?t=${Date.now()}`);
+  const server = createPanelServer(0);
+  const port = await listenOnRandomPort(server);
+  try {
+    // What a redirected tool fetch looks like: loopback, Host localhost, no Origin.
+    const secret = await fetch(`http://localhost:${port}/api/wallet/secret`);
+    assert.equal(secret.status, 403, 'no-Origin request without token must not get the key');
+    const imp = await fetch(`http://localhost:${port}/api/wallet/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"privateKey":"x"}',
+    });
+    assert.equal(imp.status, 403, 'wallet import without token must be refused');
+    const cancel = await fetch(`http://localhost:${port}/api/tasks/x/cancel`, { method: 'POST' });
+    assert.equal(cancel.status, 403, 'any POST without token must be refused');
+    const wrong = await fetch(`http://localhost:${port}/api/wallet/secret`, {
+      headers: { 'X-Franklin-Panel-Token': '0'.repeat(64) },
+    });
+    assert.equal(wrong.status, 403, 'a wrong token must be refused');
+    // Control: read-only routes still work without the token.
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/stats`)).status, 200);
   } finally {
     await new Promise((resolve) => server.close(() => resolve()));
     unwatchFile(join(homedir(), '.blockrun', 'franklin-stats.json'));
@@ -5639,6 +5676,38 @@ test('WebhookPost: POSTs JSON body to public URL and surfaces response', async (
   }
 });
 
+test('WebhookPost: uses the shared SSRF guard (trailing dot, metadata names, CGNAT, mapped v6)', async () => {
+  const { webhookPostCapability } = await import('../dist/tools/webhook.js');
+  const ctx = { workingDir: '/tmp', abortSignal: new AbortController().signal };
+  for (const host of ['localhost.', 'metadata.google.internal', 'foo.internal', 'instance-data',
+    '100.100.100.200', '192.0.0.192', '100.64.0.1', '[::ffff:7f00:1]', '[2002:7f00:1::]', '[64:ff9b::7f00:1]']) {
+    const r = await webhookPostCapability.execute({ url: `http://${host}/hook`, body: {} }, ctx);
+    assert.ok(r.isError, `${host} must be refused`);
+  }
+});
+
+test('WebhookPost: a redirect into loopback is refused, never followed', async () => {
+  const { webhookPostCapability } = await import('../dist/tools/webhook.js');
+  const origFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), redirect: init.redirect });
+    return new Response('', { status: 303, headers: { Location: 'http://localhost:3100/api/wallet/secret' } });
+  };
+  try {
+    const r = await webhookPostCapability.execute(
+      { url: 'https://attacker.example/hook', body: { a: 1 } },
+      { workingDir: '/tmp', abortSignal: new AbortController().signal },
+    );
+    assert.ok(r.isError, 'redirect to loopback must fail: ' + r.output);
+    assert.equal(calls.length, 1, 'the loopback hop must never be fetched');
+    assert.equal(calls[0].redirect, 'manual', 'redirects must be followed manually');
+    assert.ok(!r.output.includes('privateKey'));
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
 test('WebhookPost: refuses bodies larger than 512KB cap', async () => {
   const { webhookPostCapability } = await import('../dist/tools/webhook.js');
 
@@ -8779,13 +8848,17 @@ test('panel /api/tasks/:runId/cancel: rejects already-terminal task; 404 unknown
       workingDir: '/tmp', status: 'succeeded', createdAt: 1, endedAt: 2,
     });
 
-    const res = await panelRequest(port, `/api/tasks/${runId}/cancel`, { method: 'POST' });
+    const page = (await panelRequest(port, '/')).text();
+    const token = /const PANEL_TOKEN = "([0-9a-f]{64})"/.exec(page)[1];
+    const headers = { 'X-Franklin-Panel-Token': token };
+
+    const res = await panelRequest(port, `/api/tasks/${runId}/cancel`, { method: 'POST', headers });
     assert.equal(res.status, 200);
     const body = res.json();
     assert.equal(body.ok, false);
     assert.equal(body.reason, 'already succeeded');
 
-    const missing = await panelRequest(port, '/api/tasks/no-such-task/cancel', { method: 'POST' });
+    const missing = await panelRequest(port, '/api/tasks/no-such-task/cancel', { method: 'POST', headers });
     assert.equal(missing.status, 404);
   });
 });
@@ -11542,6 +11615,105 @@ test('isBlockedSsrfHost: IPv4-mapped IPv6 + trailing-dot blocked; fc/fd public h
     assert.equal(isBlockedSsrfHost(h), true, `${h} must be blocked`);
   for (const h of ['fda.gov', 'fcc.gov', 'fd.io', 'example.com'])
     assert.equal(isBlockedSsrfHost(h), false, `${h} (public) must be allowed`);
+});
+
+test('MCP OAuth openBrowser never passes the URL through a shell', async () => {
+  if (process.platform === 'win32') return;
+  const { openBrowser } = await import('../dist/mcp/oauth.js');
+  const dir = mkdtempSync(join(tmpdir(), 'franklin-opener-'));
+  const marker = join(dir, 'pwned');
+  const argvLog = join(dir, 'argv');
+  const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
+  writeFileSync(join(dir, opener), `#!/bin/sh\nprintf '%s' "$1" > '${argvLog}'\n`);
+  chmodSync(join(dir, opener), 0o755);
+  const origPath = process.env.PATH;
+  process.env.PATH = `${dir}:${origPath}`;
+  try {
+    const url = `https://attacker.example/$(touch$IFS${marker})?state=x`;
+    await openBrowser(url);
+    assert.equal(existsSync(marker), false, 'command substitution must not run');
+    assert.ok(readFileSync(argvLog, 'utf8').includes('$(touch'), 'opener receives the URL verbatim as argv');
+    rmSync(argvLog);
+    await openBrowser('file:///etc/passwd');
+    assert.equal(existsSync(argvLog), false, 'non-http(s) authorization URLs are not opened');
+  } finally {
+    process.env.PATH = origPath;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('BrowserX refuses file:, loopback, and metadata URLs before launching a browser', async () => {
+  const { browserXCapability, browserUrlRefusal } = await import('../dist/tools/browsex.js');
+  const ctx = { workingDir: '/tmp', abortSignal: new AbortController().signal };
+  for (const url of ['file:///home/u/.blockrun/.session', 'http://127.0.0.1:3100/api/wallet/secret',
+    'http://localhost.:3100/', 'http://169.254.169.254/latest/meta-data/', 'javascript:alert(1)',
+    'data:text/html,hi', 'chrome://settings']) {
+    const r = await browserXCapability.execute({ action: 'open', url }, ctx);
+    assert.ok(r.isError, `${url} must be refused`);
+    assert.ok(/BrowserX/.test(r.output) && !/failed/.test(r.output), `${url} refused by validation, not by launch: ${r.output}`);
+  }
+  assert.equal(browserUrlRefusal('https://x.com/home'), null, 'public https is allowed');
+  assert.equal(browserUrlRefusal('about:blank', { allowBlank: true }), null);
+  assert.notEqual(browserUrlRefusal('about:blank'), null, 'about:blank is not an open() target');
+});
+
+test('file tools: Read/Grep/Glob refuse wallet keys and host credentials; key values are redacted', () => {
+  // Child process with a throwaway HOME: BLOCKRUN_DIR and homedir() resolve at import.
+  const home = mkdtempSync(join(tmpdir(), 'franklin-secrets-'));
+  try {
+    const evmKey = '0x' + 'ab'.repeat(32);
+    mkdirSync(join(home, '.blockrun'), { recursive: true });
+    writeFileSync(join(home, '.blockrun', '.session'), evmKey);
+    writeFileSync(join(home, '.blockrun', 'api-key'), 'brk_' + 'k'.repeat(40));
+    writeFileSync(join(home, '.blockrun', 'notes.txt'), 'harmless ' + 'ab'.repeat(32));
+    mkdirSync(join(home, '.ssh'));
+    writeFileSync(join(home, '.ssh', 'id_rsa'), 'SSHSECRET');
+    mkdirSync(join(home, '.aws'));
+    writeFileSync(join(home, '.aws', 'credentials'), 'AWSSECRET');
+    mkdirSync(join(home, '.config', 'solana'), { recursive: true });
+    writeFileSync(join(home, '.config', 'solana', 'id.json'), '[1,2,3]');
+    writeFileSync(join(home, 'readme.md'), 'ok');
+
+    const dist = new URL('../dist/', import.meta.url).href;
+    const script = `
+      const { readCapability } = await import('${dist}tools/read.js');
+      const { grepCapability } = await import('${dist}tools/grep.js');
+      const { globCapability } = await import('${dist}tools/glob.js');
+      const { walletSecretLiterals } = await import('${dist}tools/sensitive-paths.js');
+      const { redactSecretsInOutput } = await import('${dist}agent/secret-redact.js');
+      const H = ${JSON.stringify(home)};
+      const ctx = { workingDir: H, abortSignal: new AbortController().signal };
+      const out = {};
+      for (const f of ['.blockrun/.session', '.blockrun/api-key', '.ssh/id_rsa', '.aws/credentials', '.config/solana/id.json', 'readme.md'])
+        out['read:' + f] = await readCapability.execute({ file_path: H + '/' + f }, ctx);
+      for (const f of ['.blockrun/.session', '.blockrun/api-key', '.ssh/id_rsa', '.ssh'])
+        out['grep:' + f] = await grepCapability.execute({ pattern: '.', path: H + '/' + f, output_mode: 'content' }, ctx);
+      out['grep:blockrun-walk'] = await grepCapability.execute({ pattern: '[a-z]', path: H + '/.blockrun', output_mode: 'content' }, ctx);
+      out['grep:blockrun-walk-glob'] = await grepCapability.execute({ pattern: '[a-z]', path: H + '/.blockrun', glob: '*', output_mode: 'files_with_matches' }, ctx);
+      out['glob:blockrun'] = await globCapability.execute({ pattern: '*', path: H + '/.blockrun' }, ctx);
+      out.redacted = redactSecretsInOutput('leak: ${evmKey} and ' + '${evmKey}'.slice(2), walletSecretLiterals()).text;
+      process.stdout.write(JSON.stringify(out));
+    `;
+    const res = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8',
+    }));
+
+    for (const f of ['.blockrun/.session', '.blockrun/api-key', '.ssh/id_rsa', '.aws/credentials', '.config/solana/id.json'])
+      assert.ok(res['read:' + f].isError && /refusing/.test(res['read:' + f].output), `Read ${f} must be refused`);
+    assert.ok(!res['read:readme.md'].isError, 'control: an ordinary file still reads');
+    for (const f of ['.blockrun/.session', '.blockrun/api-key', '.ssh/id_rsa', '.ssh'])
+      assert.ok(res['grep:' + f].isError && /refusing/.test(res['grep:' + f].output), `Grep ${f} must be refused`);
+    for (const k of ['grep:blockrun-walk', 'grep:blockrun-walk-glob']) {
+      assert.ok(!res[k].output.includes('brk_'), `${k}: api-key must not be searched`);
+      assert.ok(!res[k].output.includes('api-key'), `${k}: api-key must not be listed`);
+    }
+    assert.ok(res['grep:blockrun-walk'].output.includes('notes.txt'), 'control: other files in the dir are still searched');
+    assert.ok(!res['glob:blockrun'].output.includes('api-key'), 'Glob must not list the key files');
+    assert.ok(res['glob:blockrun'].output.includes('notes.txt'), 'control: Glob still lists other files');
+    assert.ok(!res.redacted.includes('ab'.repeat(32)), 'exact wallet key (with or without 0x) is redacted');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('isWalletKeyPath is case-insensitive on case-insensitive filesystems', async () => {
