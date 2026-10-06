@@ -45,7 +45,7 @@
 
 ## The pitch in one paragraph
 
-Franklin Agent is an **autonomous economic agent** — an AI that holds a USDC wallet and spends it to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from 55+ providers. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. No subscriptions, no seats, no rate limits.
+Franklin Agent is an **autonomous economic agent** — an AI that holds a USDC wallet and spends it to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from <!-- br:models.chatVisible -->86<!-- /br:models.chatVisible --> models. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. No subscriptions, no seats, no rate limits.
 
 Funding it is your choice. Fund a **USDC wallet** and every paid action routes through the [x402](https://x402.org) micropayment protocol, settling on-chain against a wallet only you control — no signup, no account, the wallet is the identity. Or top up a **prepaid balance** at [user.blockrun.ai](https://user.blockrun.ai) and hand Franklin an API key. Same models, same tools, same agent. See [Two ways to pay](#two-ways-to-pay).
 
@@ -67,7 +67,7 @@ Built by the [BlockRun](https://blockrun.ai) team. Apache-2.0. TypeScript. Ships
 # 1. Install
 npm install -g @blockrun/franklin
 
-# 2. Run (free — uses NVIDIA Nemotron & Qwen3 Coder out of the box)
+# 2. Run (free — uses the free models out of the box)
 franklin
 
 # 3. (optional) Unlock Sonnet, Opus, GPT, Gemini, Grok + every paid API.
@@ -113,7 +113,7 @@ npm install -g @blockrun/franklin
 
 [![Franklin for VS Code — Beta is here](assets/franklin-vscode-banner.png)](https://marketplace.visualstudio.com/items?itemName=blockrun.franklin-vscode)
 
-The same agent ships as a [VS Code extension](https://marketplace.visualstudio.com/items?itemName=blockrun.franklin-vscode) — chat panel, model picker, wallet balance, image / video generation, inline diff cards — all driven by the wallet you already funded for the CLI.
+The same agent ships as a [VS Code extension](https://marketplace.visualstudio.com/items?itemName=blockrun.franklin-vscode) — chat panel, model picker, wallet balance, image / video generation — all driven by the wallet you already funded for the CLI.
 
 ```
 VS Code → Extensions  (Cmd+Shift+X / Ctrl+Shift+X)
@@ -264,13 +264,11 @@ Three consequences fall out of this:
 2. **No rate limits.** Subscriptions throttle you when you need AI most. YOPO has no artificial caps — if you have USDC, you have access.
 3. **No overdraft.** The wallet balance IS the hard limit. When it's empty, Franklin stops. No surprise bills, no 3 a.m. rate-limit walls.
 
-Concretely — $1 in USDC gets you roughly:
-- ~400K GPT-4o input tokens
-- ~7M DeepSeek tokens
-- ~13M Gemini Flash tokens
-- ~20 DALL-E 3 images
-- ~40 Exa neural web searches
-- Unlimited agent-tested NVIDIA free tier (Qwen3 Coder + Llama 4 Maverick, no wallet needed)
+Concretely — $1 in USDC buys roughly (input tokens at provider list price, before the $0.001 per-call fee):
+- ~330K Claude Sonnet 4.6 tokens
+- ~750K DeepSeek V4 Pro tokens
+- ~3.3M Gemini 2.5 Flash tokens
+- Unlimited use of the free tier — no wallet needed
 
 ---
 
@@ -282,7 +280,7 @@ Concretely — $1 in USDC gets you roughly:
 
 Most AI products fit into one of three buckets: they answer questions, write code, or automate a fixed workflow. None of them can spend money.
 
-Franklin can. It combines **purchasing power** (it pays for models, tools, and APIs), **budget awareness** (cost is part of the loop, not an afterthought), **cross-vertical execution** (code, trading, research, marketing, ops), and **hard stopping conditions** (wallet balance is a real constraint, not a suggestion).
+Franklin can. It combines **purchasing power** (it pays for models, tools, and APIs), **budget awareness** (cost is part of the loop, not an afterthought), **cross-vertical execution** (trading, research, content, operations), and **hard stopping conditions** (wallet balance is a real constraint, not a suggestion).
 
 That is why Franklin is an economic agent, not just a task agent.
 
@@ -353,9 +351,9 @@ Generates images via DALL-E / GPT Image directly from the CLI. Paid from your se
 
 ### 📱 Remote control via Telegram
 
-Run `franklin telegram` on an always-on machine (set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_OWNER_ID`) and drive Franklin from your phone. Owner-locked, session-resumable across restarts, slash commands (`/new`, `/balance`, `/status`). Trading, content, dev work — all reachable from a Telegram chat.
+Run `franklin telegram` on an always-on machine (set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_OWNER_ID`) and drive Franklin from your phone. Owner-locked, session-resumable across restarts, slash commands (`/new`, `/balance`, `/status`). Trading, research, content — all reachable from a Telegram chat.
 
-### 🔎 Research, code, anything with a budget
+### 🔎 Research, analysis, anything with a budget
 
 ```text
 > compare the top 5 AI agent pricing models, summarize the patterns, and save a note for me
@@ -371,18 +369,17 @@ Run `franklin telegram` on an always-on machine (set `TELEGRAM_BOT_TOKEN` + `TEL
 ```
 
 ```text
-> refactor src/auth.ts to use the new jwt helper, then run the tests
+> backtest strategies/sol_breakout.py on the last 90 days and tell me if it beats holding
 
-  ✓ Read   src/auth.ts                    $0.002
-  ✓ Read   src/lib/jwt.ts                 $0.001
-  ✓ Edit   src/auth.ts (-24 +31 lines)    $0.008
-  ✓ Bash   npm test                       $0.000
-    › 142 passing · 0 failing · 2.4s
+  ✓ TradingMarket  SOL · 90d daily candles
+  ✓ Read           strategies/sol_breakout.py
+  ✓ Bash           python strategies/sol_breakout.py --days 90
+  ✓ Write          notes/sol-breakout-90d.md
 
-  Done in 18s · $0.011
+  Strategy +11.4% vs. hold +6.2% · max drawdown −8.9% · 14 trades
 ```
 
-Code is still first-class. It is just **one workload**, not the category.
+Files and shell are there for the work around a strategy — scripts, data, reports. They are tools, not the category.
 
 Every tool call is itemized. Every token is priced. When the wallet hits zero, Franklin stops. No overdraft, no surprise bill, no rate-limit wall at 3 a.m. — this is YOPO in practice.
 
@@ -394,20 +391,20 @@ Every tool call is itemized. Every token is priced. When the wallet hits zero, F
 
 You don't pick models. Franklin picks for you.
 
-The Smart Router classifies every request — coding, trading, reasoning, research — and selects the model with the best quality-to-cost ratio. Trained on **2M+ real requests** from the BlockRun gateway, continuously updated.
+The Smart Router classifies every request — trading, research, reasoning, creative — and selects the model with the best quality-to-cost ratio. Trained on **2M+ real requests** from the BlockRun gateway, continuously updated.
 
 ```text
-> refactor this auth module to use JWT
+> summarize this week's stablecoin news in five bullets
 
-  CODING kimi-k2.5  ·  12.4K in / 2.1K out  ·  $0.0023  saved 84%
+  RESEARCH deepseek-v4-pro  ·  9.6K in / 0.8K out
 
 > what's the BTC outlook for the week?
 
-  TRADING grok-4-1-fast-reasoning  ·  8.2K in / 1.8K out  ·  $0.0008  saved 95%
+  TRADING claude-opus-5  ·  8.2K in / 1.8K out
 
-> prove that this algorithm is O(n log n)
+> is this funding-rate arbitrage actually risk-free? walk through the cases
 
-  REASONING claude-sonnet-4.6  ·  15.1K in / 3.4K out  ·  $0.0312
+  REASONING claude-opus-5  ·  15.1K in / 3.4K out
 ```
 
 Every response shows which model was chosen, why, and how much you saved vs. always using the most expensive option.
@@ -419,18 +416,18 @@ Every response shows which model was chosen, why, and how much you saved vs. alw
 | `auto` | Best quality-to-cost ratio | Default — smart spend |
 | `eco` | Cheapest model with decent quality | Budget-conscious |
 | `premium` | Highest quality regardless of cost | Mission-critical |
-| `free` | Free NVIDIA models only | Zero wallet balance |
+| `free` | Free models only | Zero wallet balance |
 
 **Per-session breakdown** — run `/cost` to see exactly where your USDC went:
 
 ```text
 Session Cost: $0.0847 (23 requests)
-  gemini-2.5-flash       $0.0012   14 req   CODING
-  kimi-k2.5              $0.0423    6 req   CODING
-  claude-sonnet-4.6      $0.0412    3 req   REASONING
+  gemini-2.5-flash       $0.0012   14 req   CHAT
+  deepseek-v4-pro        $0.0201    6 req   RESEARCH
+  claude-opus-5          $0.0634    3 req   TRADING
 ```
 
-The router also learns from **your** usage. If you keep retrying a model for coding tasks, Franklin adapts and picks a better one next time. Your router gets smarter the more you use it.
+The router also learns from **your** usage. If you keep retrying a model for research tasks, Franklin adapts and picks a better one next time. Your router gets smarter the more you use it.
 
 ---
 
@@ -449,7 +446,7 @@ You don't subscribe to electricity, you pay for what you use. Franklin brings th
 
 ### 🧠 &nbsp;Multi-model is the future
 
-No single model is best at everything. Sonnet writes better code, Gemini handles longer context, DeepSeek costs 20x less for simple tasks. The Smart Router routes every request to the optimal model in <1ms — <!-- br:savings.autoVsBaselinePct -->84<!-- /br:savings.autoVsBaselinePct -->% cheaper than pinning Claude Opus 5 for every request.
+No single model is best at everything. Opus reasons deeper, Gemini handles longer context, DeepSeek costs 20x less for simple tasks. The Smart Router routes every request to the optimal model in <1ms — <!-- br:savings.autoVsBaselinePct -->84<!-- /br:savings.autoVsBaselinePct -->% cheaper than pinning Claude Opus 5 for every request.
 
 </td>
 <td width="33%" valign="top">
@@ -466,19 +463,17 @@ No email. No phone. No KYC. Your Solana, Base or Arc address is your account —
 
 ## The comparison
 
-|                                        | Coding agents    | Editor IDEs      | Chatbots         | **Franklin**                    |
-| -------------------------------------- | ---------------- | ---------------- | ---------------- | ------------------------------- |
-| Writes code                            | ✅               | ✅               | ⚠️                | ✅                              |
-| **Spends money for you**               | ❌               | ❌               | ❌               | ✅ **USDC wallet, x402**        |
-| **Buys data + APIs + images + search** | ❌               | ❌               | ❌               | ✅ **55+ APIs, one wallet**     |
-| Picks best model per task              | ❌ single-vendor | ❌ plan-tied    | ❌               | ✅ **Smart Router, <!-- br:models.chatVisible -->86<!-- /br:models.chatVisible --> models** |
-| Pricing model                          | Subscription     | Subscription     | Subscription     | **YOPO** — per outcome, USDC    |
-| Monthly fee                            | $20–$200         | $20–$40          | $20+             | **$0**                          |
-| Rate-limited                           | Yes              | Yes              | Yes              | No — limited only by wallet     |
-| Works when provider goes down          | ❌               | ❌               | ❌               | ✅ **routes to another**        |
-| Identity                               | Vendor account   | Vendor account   | Account / email  | ✅ **wallet, no signup**        |
-| Start free, no KYC                     | ❌               | ❌               | ❌               | ✅                              |
-| Source                                 | Closed           | Closed           | Closed           | **Apache 2.0, local-first**     |
+|                                        | AI chat apps     | Agent frameworks        | Trading bots         | **Franklin**                    |
+| -------------------------------------- | ---------------- | ----------------------- | -------------------- | ------------------------------- |
+| **Spends money for you**               | ❌               | ⚠️ you wire payments     | ⚠️ trades only        | ✅ **USDC wallet or prepaid key** |
+| **Buys data + APIs + images + search** | ❌               | ⚠️ one key per service   | ❌                   | ✅ **one wallet pays for all**    |
+| Picks best model per task              | ❌ single-vendor | ⚠️ you pick              | ❌                   | ✅ **Smart Router, <!-- br:models.chatVisible -->86<!-- /br:models.chatVisible --> models** |
+| **Money moves only on your approval**  | —                | ⚠️ build it yourself     | ❌ runs on rules      | ✅ **trade plan, every mode**     |
+| Spend guardrails                       | —                | ⚠️ build it yourself     | ⚠️ per-bot limits     | ✅ **budget caps + hooks**        |
+| Works when a provider goes down        | ❌               | ⚠️ if you code it        | ❌                   | ✅ **routes to another**          |
+| Pricing                                | Subscription     | Your separate API bills | Subscription or fees | **YOPO** — per outcome          |
+| Identity                               | Vendor account   | A key per vendor        | Exchange account     | ✅ **wallet, no signup**          |
+| Source                                 | Closed           | Mixed                   | Mostly closed        | **Apache 2.0, local-first**     |
 
 **Franklin is the economic agent category in one sentence:** software with a wallet that can spend toward a result.
 
@@ -500,7 +495,7 @@ Ask "what's BTC looking like?" — Franklin fetches live price data, computes RS
 Ask "generate a logo" — Franklin calls DALL-E / GPT Image, saves the result locally, paid from your wallet.
 
 **🧠 <!-- br:models.chatVisible -->86<!-- /br:models.chatVisible --> models via one wallet**
-Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, NVIDIA free tier. One wallet, one interface, automatic fallback.
+Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, plus a free tier. One wallet, one interface, automatic fallback.
 
 **💳 x402 micropayments (YOPO)**
 HTTP 402 native. Every paid action is a signed USDC micropayment — an EIP-712 authorization on Base and Arc, a signed SPL transfer on Solana. Non-custodial: your keys never leave your machine. YOPO: you pay only for outcomes.
@@ -511,8 +506,8 @@ Trained on 2M+ real requests. Classifies your task and picks the best model from
 </td>
 <td width="50%" valign="top">
 
-**🛠 16 built-in tools**
-Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch, Task, ImageGen, VideoGen, MemoryRecall, AskUser, SubAgent, TradingSignal, TradingMarket, TradingPortfolio, TradingOpenPosition, TradingClosePosition, TradingHistory.
+**🛠 60+ built-in tools**
+Trading and DeFi (signals, portfolio, trade plans, Jupiter and 0x swaps, Polymarket, DeFiLlama), research (Exa, web search and fetch, X search, on-chain and market data), media (image, video, music), autonomy (goals, scheduler, monitors, sub-agents, mixture of agents), phone and voice calls, cloud sandboxes, and general files and shell.
 
 **💾 Persistent sessions**
 Every turn is streamed to disk with metadata. Resume any session by ID. Survives crashes, reboots, and compaction.
@@ -525,6 +520,9 @@ Every turn is streamed to disk with metadata. Resume any session by ID. Survives
 
 **⚡ Anthropic prompt caching**
 Multi-turn Sonnet/Opus sessions use ephemeral cache breakpoints to reduce input spend on long conversations.
+
+**🔒 Guarded by default**
+Trades need your approved plan, the wallet key never reaches the model, and every network call the agent makes is checked. See [Safety and security](#safety-and-security).
 
 **🔌 Plugin SDK + MCP**
 Core is workflow-agnostic. Add new verticals without touching the loop. Discover external tools automatically through MCP.
@@ -540,14 +538,16 @@ Core is workflow-agnostic. Add new verticals without touching the loop. Discover
 | Command                          | What it does                                         |
 | -------------------------------- | ---------------------------------------------------- |
 | `/model [name]`                  | Interactive model picker, or switch directly         |
+| `/goal <objective>`              | Work an objective across turns, verified at the end  |
+| `/loop <interval> <prompt>`      | Run a prompt on a schedule (`/loop list`, `cancel`)  |
+| `/market`                        | Browse and hire paid skills from the marketplace     |
+| `/moa`                           | Ask several models the same question, compare        |
 | `/plan` / `/execute`             | Read-only planning mode / execution mode             |
 | `/ultrathink <q>`                | Deep reasoning mode for hard problems                |
+| `/remember` / `/flush` / `/dream`| Save a note / capture learnings / consolidate memory |
 | `/compact`                       | Structured context compression                       |
-| `/search <q>`                    | Search the codebase                                  |
 | `/session-search <q>`            | Search past sessions                                 |
 | `/history` / `/resume [id]`      | Inspect or restore conversation state                |
-| `/commit` / `/push` / `/pr`      | Git workflow helpers                                 |
-| `/review` / `/fix` / `/test`     | One-shot code review, bugfix, or test runs           |
 | `/cost` / `/wallet`              | Session cost, wallet address, and balance            |
 | `/insights [--days N]`           | Rich usage analytics                                 |
 | `/help`                          | Full command list                                    |
@@ -557,6 +557,19 @@ explicit version shortcuts: `opus-5.5`, `sonnet-5.5`, `fable-5.1`,
 `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.1`, `grok-4.7` and `grok-4.6`
 (e.g. `/model gpt-6-sol` or `/model anthropic/claude-opus-5.5`). Bare aliases
 like `opus`, `gpt` and `grok` keep their current targets.
+
+---
+
+## Safety and security
+
+Franklin holds money, so the defaults assume a model can be steered by what it reads — a fetched page, a search result, an MCP response.
+
+- **Money moves only on your approval.** Trades need a trade plan you approve, in every permission mode. `--max-spend` sets a spending ceiling, and [lifecycle hooks](docs/examples/hooks/) can veto any paid action before it runs.
+- **The wallet key never reaches the model.** File, search and browser tools refuse the key store and the machine's own credential stores (`~/.ssh`, `~/.aws`, cloud and Solana CLI keys). The exact key values are also scrubbed from every tool result.
+- **Network calls stay public.** Model-driven requests (web fetch, webhooks, the browser) refuse loopback, private and cloud-metadata addresses, and re-check every redirect.
+- **The local panel answers only you.** It listens on loopback, checks the `Host` header, and its wallet and spend routes require a token that only the page it serves knows.
+
+Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -571,7 +584,7 @@ like `opus`, `gpt` and `grok` keep their current targets.
 │  2M+ requests · <!-- br:models.chatVisible@live -->86<!-- /br:models.chatVisible@live --> models · category detection · Elo scores │
 ├──────────────────────────────────────────────────────────────┤
 │  Agent Loop                                                  │
-│  16 tools · Sessions · Compaction · Pricing · Plugin SDK     │
+│  60+ tools · Sessions · Compaction · Pricing · Plugin SDK    │
 ├──────────────────────────────────────────────────────────────┤
 │  BlockRun Gateway                                            │
 │  <!-- br:models.chatVisible@live -->86<!-- /br:models.chatVisible@live --> LLMs · CoinGecko · Search · Image APIs · paid services  │
@@ -604,10 +617,15 @@ src/
 ├── index.ts           CLI entry (franklin)
 ├── banner.ts          Ben Franklin portrait + FRANKLIN gradient text
 ├── agent/             Agent loop, LLM client, compaction, commands
-├── tools/             20+ built-in tools (Read/Write/Edit/Bash/Glob/Grep/
-│                      WebFetch/WebSearch/Task/ImageGen/VideoGen/
-│                      MemoryRecall/AskUser/SubAgent/Trading*/Content*)
+├── tools/             60+ built-in tools (trading, DeFi, research, media,
+│                      phone, sandboxes, files and shell)
 ├── trading/           Market data (CoinGecko) + technical indicators
+├── goal/              /goal objectives + adversarial verification
+├── hooks/             Lifecycle hooks (PreSpend and friends)
+├── scheduler/         Durable /loop scheduler
+├── memory/            Wallet-keyed memory and trading journal
+├── panel/             Local dashboard (franklin panel)
+├── serve/             Agent host for the panel's Agents tab
 ├── content/           Content library with budget-bound media generation
 ├── brain/             Cross-session entity knowledge graph
 ├── channel/           Non-CLI ingress drivers (Telegram today)
@@ -628,7 +646,7 @@ src/
 
 ## Free tier, for real
 
-Start with **zero dollars**. Franklin defaults to free NVIDIA models that need **no wallet and no API key** — nothing to fund, nothing to sign up for.
+Start with **zero dollars**. Franklin defaults to free models that need **no wallet and no API key** — nothing to fund, nothing to sign up for.
 
 ```bash
 franklin --model free
@@ -698,7 +716,7 @@ npm install
 npm run build
 npm test              # deterministic local tests — no API calls
 npm run test:e2e      # live e2e tests — free smoke works unfunded; paid tools need network + funded wallet
-npm run test:free-models # live matrix across current free NVIDIA models
+npm run test:free-models # live matrix across the current free models
 node dist/index.js --help
 ```
 
@@ -720,7 +738,7 @@ npm run desktop:package:win
 Packaged builds create a private, per-launch credential for the local Franklin
 service, keep cloud session sync off unless the user explicitly enables it, and
 use `Documents/Franklin` as the default workspace. Files outside that workspace
-remain available after an explicit approval, similar to other coding agents.
+remain available after an explicit approval.
 Team Mode is being developed separately and is not part of this stable integration.
 
 For the recommended live validation order and failure triage, see [docs/live-e2e-checklist.md](docs/live-e2e-checklist.md).
