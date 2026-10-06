@@ -1,5 +1,17 @@
 # Changelog
 
+## Franklin Agent 3.49.5 — the README matches what Franklin is
+
+Documentation only; no code changes.
+
+The README now describes Franklin as the agent with a wallet rather than a
+coding tool. The comparison is against chat apps, agent frameworks and trading
+bots, on spending, approvals and guardrails. The demos, router examples and
+price table use current models. The tool and command lists match what ships:
+60+ tools, plus `/goal`, `/loop`, `/market` and `/moa`. A new **Safety and
+security** section explains how trades, the wallet key, network calls and the
+local panel are protected.
+
 ## Franklin Agent 3.49.4 — security: five ways to reach the wallet key, closed
 
 **A webhook could be redirected into the local panel.** `WebhookPost` used its
