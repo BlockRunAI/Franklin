@@ -227,12 +227,11 @@ test('EOA lost broadcast response or receipt timeout retains marker', async () =
     h.calls.length = 0;
     // The RPC still knows the hash (or cannot say): never infer "dropped";
     // re-broadcast the SAME signed bytes and keep the guard.
-    h.publicClient.getTransaction = async () => { h.calls.push('lookup'); return { hash: txHash }; };
     h.wallet.sendRawTransaction = async ({ serializedTransaction }) => { h.calls.push('rebroadcast'); assert.equal(serializedTransaction, signed); return txHash; };
     const result = await withdrawFunds({ amount_usd: 2, confirm: true });
     assert.equal(result.isError, true);
     assert.match(result.text, /may still land.*re-broadcast/);
-    assert.deepEqual(h.calls, ['receipt', 'lookup', 'rebroadcast']);
+    assert.deepEqual(h.calls, ['receipt', 'rebroadcast']);
     assert.equal(loadState().pendingWithdraw.txHash, txHash);
     h.wallet.sendRawTransaction = broadcast;
   }
@@ -244,29 +243,52 @@ function notFound() {
   throw err;
 }
 
-test('EOA guard releases only when the nonce moved past ours AND the RPC does not know our hash', async () => {
-  for (const [latest, release] of [[7, false], [8, true]]) {
-    saveState({ pendingWithdraw: { txHash, nonce: 7, from: agent, serializedTransaction: signed } });
-    h.publicClient.getTransaction = async () => notFound();
-    h.publicClient.getTransactionCount = async ({ blockTag }) => { assert.equal(blockTag, 'latest'); return latest; };
-    h.wallet.sendRawTransaction = async () => { h.calls.push('rebroadcast'); return txHash; };
-    h.publicClient.readContract = async () => 0n;
-    h.calls.length = 0;
-    const result = await withdrawFunds({ confirm: true });
-    if (release) {
-      assert.equal(loadState().pendingWithdraw, undefined);
-      assert.ok(!h.calls.includes('rebroadcast'));
-    } else {
-      assert.match(result.text, /may still land/);
-      assert.ok(h.calls.includes('rebroadcast'), 'a free nonce means the same bytes are re-sent, never new ones');
-      assert.equal(loadState().pendingWithdraw.txHash, txHash);
+test('EOA guard never infers "dropped" from an advanced nonce plus an unknown hash', async () => {
+  saveState({ pendingWithdraw: { txHash, nonce: 7, from: agent, serializedTransaction: signed } });
+  h.publicClient.getTransaction = async () => notFound();
+  h.publicClient.getTransactionCount = async () => 99;
+  h.wallet.sendRawTransaction = async () => { h.calls.push('rebroadcast'); return txHash; };
+  h.calls.length = 0;
+  const result = await withdrawFunds({ amount_usd: 2, confirm: true });
+  assert.equal(result.isError, true);
+  assert.match(result.text, /may still land/);
+  assert.deepEqual(h.calls, ['receipt', 'rebroadcast'], 'only the same bytes are re-sent; no nonce read, no new signature');
+  assert.equal(loadState().pendingWithdraw.txHash, txHash);
+});
+
+test('a retry that resolves the earlier withdrawal ends there and signs nothing new', async () => {
+  const fresh = ['nonce', 'prepare', 'sign', 'broadcast', 'bridge', 'submit', 'batch-sign', 'balance'];
+  const cases = [
+    ['eoa success', () => { saveState({ pendingWithdraw: { txHash, nonce: 7, from: agent, serializedTransaction: signed } });
+      h.publicClient.getTransactionReceipt = async () => ({ status: 'success' }); }, /SETTLED/],
+    ['eoa revert', () => { saveState({ pendingWithdraw: { txHash, nonce: 7, from: agent } });
+      h.publicClient.getTransactionReceipt = async () => ({ status: 'reverted' }); }, /REVERTED/],
+    ['relayer mined', () => { saveState({ pendingWithdraw: { transactionID: 'relay-1', deadline: Math.floor(Date.now() / 1000) + 100 } });
+      relay.getTransaction = async () => [{ state: 'STATE_MINED' }]; }, /SETTLED/],
+    ['relayer failed', () => { saveState({ pendingWithdraw: { transactionID: 'relay-1', deadline: Math.floor(Date.now() / 1000) + 100 } });
+      relay.getTransaction = async () => [{ state: 'STATE_FAILED' }]; }, /FAILED/],
+    ['deadline passed', () => { saveState({ pendingWithdraw: { deadline: Math.floor(Date.now() / 1000) - 61 } }); }, /may or may not have executed/],
+  ];
+  for (const [sigType, label] of [['0', 'eoa'], ['3', 'relayer']]) {
+    process.env.POLYMARKET_SIG_TYPE = sigType;
+    for (const [name, arrange, expected] of cases.filter(([n]) => n.startsWith(label) || n === 'deadline passed')) {
+      arrange();
+      h.calls.length = 0;
+      const result = await withdrawFunds({ amount_usd: 2, confirm: true });
+      assert.equal(result.isError, true, name);
+      assert.match(result.text, expected, name);
+      assert.match(result.text, /Nothing new was signed/, name);
+      assert.ok(!h.calls.some(c => fresh.includes(c)), `${name}: ${h.calls.join(',')}`);
+      assert.equal(loadState().pendingWithdraw, undefined, name);
     }
   }
 });
 
 test('EOA definite broadcast rejection of unknown bytes releases the guard; ambiguous errors keep it', async () => {
   process.env.POLYMARKET_SIG_TYPE = '0';
-  for (const [message, release] of [['insufficient funds for gas * price + value', true], ['socket hang up', false]]) {
+  // "nonce too low" is not proof either: nonce movement says nothing about
+  // which transaction used the nonce.
+  for (const [message, release] of [['insufficient funds for gas * price + value', true], ['socket hang up', false], ['nonce too low', false]]) {
     saveState({ pendingWithdraw: undefined });
     h.publicClient.getTransaction = async () => notFound();
     h.wallet.sendRawTransaction = async () => { throw new Error(message); };
@@ -277,7 +299,7 @@ test('EOA definite broadcast rejection of unknown bytes releases the guard; ambi
   // Even a "definite" rejection keeps the guard if the RPC already knows the hash.
   saveState({ pendingWithdraw: undefined });
   h.publicClient.getTransaction = async () => ({ hash: txHash });
-  h.wallet.sendRawTransaction = async () => { throw new Error('nonce too low'); };
+  h.wallet.sendRawTransaction = async () => { throw new Error('insufficient funds for gas * price + value'); };
   await withdrawFunds({ amount_usd: 2, confirm: true });
   assert.equal(loadState().pendingWithdraw.txHash, txHash);
 });

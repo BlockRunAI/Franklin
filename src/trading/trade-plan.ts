@@ -178,11 +178,15 @@ export function decideTradePlan(
   by: string,
   reason?: string
 ): TradePlan {
+  // Start from the stored plan, not the caller's copy: a plan object held
+  // across an execution would otherwise write back stale consumption and
+  // hand an already reserved or spent line its budget again.
+  const current = loadTradePlan(plan.id) ?? plan;
   const updated: TradePlan = {
-    ...plan,
+    ...current,
     status: decision,
     decidedBy: by,
-    changeRequest: decision === 'rejected' ? reason : plan.changeRequest,
+    changeRequest: decision === 'rejected' ? reason : current.changeRequest,
   };
   saveTradePlan(updated);
   appendApprovalRecord({
@@ -239,7 +243,45 @@ function usdUnits(usd: number): number {
   return Math.round(usd * 1e6);
 }
 
-const authorizations = new WeakMap<CapabilityInvocation, { planId: string; line: number; units: number }>();
+interface Authorization { planId: string; line: number; units: number }
+const authorizations = new WeakMap<CapabilityInvocation, Authorization>();
+// Same reservations by invocation id, for denials that only know the id
+// (permission prompt refused, PreSpend hook veto) before the tool ever ran.
+const authorizationsById = new Map<string, CapabilityInvocation>();
+
+/**
+ * Move a plan's consumption by `deltaUnits` on one line, re-reading the plan
+ * from disk so the write starts from the latest state. Reservation (+) can
+ * mark the plan consumed; a release (-) can only reopen a plan that a
+ * reservation closed, never a cancelled/expired/rejected one.
+ */
+function adjustPlanConsumption(planId: string, line: number, deltaUnits: number): TradePlan | null {
+  const plan = loadTradePlan(planId);
+  if (!plan) return null;
+  const consumedUnits = Math.max(0, usdUnits(plan.consumedUsd) + deltaUnits);
+  const consumedLineUsd = plan.trades.map((_, i) =>
+    Math.max(0, usdUnits(plan.consumedLineUsd?.[i] ?? 0) + (i === line ? deltaUnits : 0)) / 1e6);
+  const full = consumedUnits >= usdUnits(plan.totalSpendUsd);
+  const status = full && plan.status === 'approved' ? 'consumed'
+    : !full && plan.status === 'consumed' ? 'approved'
+    : plan.status;
+  const updated: TradePlan = { ...plan, consumedUsd: consumedUnits / 1e6, consumedLineUsd, status };
+  saveTradePlan(updated);
+  return updated;
+}
+
+/**
+ * Release a reservation for a call that was denied before it executed.
+ * Safe to call for any invocation id; a no-op when nothing was reserved.
+ */
+export function releaseTradeReservation(invocationId: string): void {
+  const invocation = authorizationsById.get(invocationId);
+  if (!invocation) return;
+  authorizationsById.delete(invocationId);
+  const authorization = authorizations.get(invocation);
+  authorizations.delete(invocation);
+  if (authorization) adjustPlanConsumption(authorization.planId, authorization.line, -authorization.units);
+}
 
 function matchesTrade(trade: PlannedTrade, invocation: CapabilityInvocation): boolean {
   const { name, input } = invocation;
@@ -299,6 +341,8 @@ export function checkTradePlanGate(
   invocation: CapabilityInvocation,
   sessionId: string = gateSessionId
 ): CapabilityResult | null {
+  // A re-check of the same invocation must not stack a second reservation.
+  if (authorizations.has(invocation)) releaseTradeReservation(invocation.id);
   authorizations.delete(invocation);
   if (!isGatedInvocation(invocation)) return null;
 
@@ -322,6 +366,18 @@ export function checkTradePlanGate(
         'Real-money trades require prior approval. Call the TradePlan tool with action "propose" — ' +
         'list every intended trade (venue, action, asset, amountUsd, slippage, stop condition) plus a ' +
         'one-paragraph rationale, wait for the user decision, then retry the trade.',
+      isError: true,
+    };
+  }
+
+  // Plans saved before per-line accounting carry spend that cannot be
+  // attributed to a line; treating their lines as unused would let an already
+  // consumed line run again. Require a fresh plan instead.
+  if (usdUnits(plan.consumedUsd) > 0 && !Array.isArray(plan.consumedLineUsd)) {
+    return {
+      output:
+        `Trade blocked: plan ${plan.id} predates per-line budget tracking and has already been drawn on, ` +
+        'so its remaining lines cannot be verified. Propose a new plan via the TradePlan tool.',
       isError: true,
     };
   }
@@ -354,9 +410,22 @@ export function checkTradePlanGate(
     };
   }
 
+  // Reserve BEFORE execution. Debiting only after a clean result let an order
+  // that was accepted upstream but answered with an error (lost
+  // acknowledgement) leave its line unspent, so a retry placed it twice. The
+  // reservation is released only when the tool proves nothing was submitted.
+  try {
+    if (!adjustPlanConsumption(plan.id, matched.line, units)) throw new Error('plan vanished');
+  } catch (err) {
+    return {
+      output: `Trade blocked: could not reserve budget on plan ${plan.id} (${err instanceof Error ? err.message : String(err)}).`,
+      isError: true,
+    };
+  }
   // Keep authorization out of tool inputs and transcripts, and retain the
   // exact plan even if another approval/cancellation occurs while executing.
   authorizations.set(invocation, { planId: plan.id, line: matched.line, units });
+  authorizationsById.set(invocation.id, invocation);
   // Covered: the plan approval already carried the human decision — skip the
   // tool's own per-swap AskUser confirm (all swap tools honor auto_approve).
   if (invocation.name !== 'PolymarketBet') {
@@ -366,32 +435,31 @@ export function checkTradePlanGate(
 }
 
 /**
- * Draw down the plan budget after a successful gated execution. Called from
+ * Settle the reservation made at the gate. Called from
  * SessionToolGuard.afterExecute for every invocation (no-op for non-trades).
+ * The budget stays spent unless the tool reports `notSubmitted`; an error
+ * without that signal may be an accepted order whose response was lost.
  */
 export function recordTradeExecution(
   invocation: CapabilityInvocation,
   result: CapabilityResult,
   sessionId: string = gateSessionId
 ): void {
+  void sessionId;
   const authorization = authorizations.get(invocation);
   authorizations.delete(invocation);
-  if (result.isError || !authorization) return;
+  authorizationsById.delete(invocation.id);
+  if (!authorization) return;
+  if (result.notSubmitted) {
+    adjustPlanConsumption(authorization.planId, authorization.line, -authorization.units);
+    return;
+  }
+  if (result.isError) return;
   const plan = loadTradePlan(authorization.planId);
   if (!plan) return;
   const matched = plan.trades[authorization.line];
   const venue = matched.venue;
   const spent = authorization.units / 1e6;
-  const consumedUnits = usdUnits(plan.consumedUsd) + authorization.units;
-  const consumedLineUsd = plan.trades.map((_, line) =>
-    (usdUnits(plan.consumedLineUsd?.[line] ?? 0) + (line === authorization.line ? authorization.units : 0)) / 1e6);
-  const updated: TradePlan = {
-    ...plan,
-    consumedUsd: consumedUnits / 1e6,
-    consumedLineUsd,
-    status: consumedUnits >= usdUnits(plan.totalSpendUsd) ? 'consumed' : plan.status,
-  };
-  saveTradePlan(updated);
 
   // Journal the real-money execution into wallet-keyed document memory —
   // the trade journal follows the wallet, not the working directory.

@@ -121,9 +121,10 @@ async function readPusdUntil(owner: Hex, minimum: bigint): Promise<bigint> {
 
 // franklin-local: RPC rejections that prove a node refused (and so never
 // relayed) a raw transaction. "already known" is deliberately absent: it means
-// the node HAS the transaction.
+// the node HAS the transaction. So is "nonce too low": nonce movement is not
+// evidence about which transaction used the nonce.
 const DEFINITE_REJECTION_RE =
-  /insufficient funds|nonce too low|intrinsic gas too low|max fee per gas less than block base fee|transaction underpriced|invalid sender/i;
+  /insufficient funds|intrinsic gas too low|max fee per gas less than block base fee|transaction underpriced|invalid sender/i;
 
 function isDefiniteBroadcastRejection(err: unknown): boolean {
   for (let e: unknown = err, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
@@ -146,28 +147,22 @@ async function transactionKnown(hash: Hex): Promise<boolean> {
 type PendingWithdraw = NonNullable<ReturnType<typeof loadState>["pendingWithdraw"]>;
 
 /**
- * franklin-local: decide whether an EOA withdrawal marker can be released.
- * A receipt (success or revert) resolves it. Without one, the nonce having
- * moved past ours while the RPC does not know our hash means another
- * transaction consumed the nonce, so these bytes can never land. Otherwise the
- * same signed bytes are re-broadcast (same nonce, so at most one transfer can
- * ever execute) and the guard holds — never a fresh signature.
+ * franklin-local: the EOA withdrawal's on-chain outcome, or null while unknown.
+ * Only a receipt resolves it. An advanced account nonce plus an RPC that does
+ * not know our hash proves nothing — the RPC may lag, or our transaction may
+ * be the one that used the nonce — so it is never read as "dropped". While
+ * unknown, the same signed bytes are re-broadcast (same nonce, so at most one
+ * transfer can ever execute) — never a fresh signature.
  */
-async function eoaPendingResolved(pending: PendingWithdraw): Promise<boolean> {
-  const client = getPublicClient();
-  const hash = pending.txHash as Hex;
-  const receipt = await client.getTransactionReceipt({ hash }).catch(() => null);
-  if (receipt) return true;
-  if (pending.from && pending.nonce !== undefined && !(await transactionKnown(hash))) {
-    const latest = await client.getTransactionCount({ address: pending.from as Hex, blockTag: "latest" }).catch(() => null);
-    if (latest !== null && latest > Number(pending.nonce)) return true;
-  }
+async function eoaPendingStatus(pending: PendingWithdraw): Promise<"success" | "reverted" | null> {
+  const receipt = await getPublicClient().getTransactionReceipt({ hash: pending.txHash as Hex }).catch(() => null);
+  if (receipt) return receipt.status === "success" ? "success" : "reverted";
   if (pending.serializedTransaction) {
     const account = getPolymarketAccount();
     const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
     await wallet.sendRawTransaction({ serializedTransaction: pending.serializedTransaction as Hex }).catch(() => undefined);
   }
-  return false;
+  return null;
 }
 
 const WITHDRAW_GUIDANCE =
@@ -205,21 +200,32 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
     const pending = loadState().pendingWithdraw;
     if (pending && input.confirm === true) {
       const graceSec = 60; // relayer can mine right at the deadline; don't race it
-      // franklin-local: EOA transfers have no deadline; only a receipt proves resolution.
+      // franklin-local: resolving an earlier withdrawal ENDS this call. The
+      // retry that finds the first transfer settled is the same call that
+      // would otherwise sign a second one on top of it — the double-send this
+      // guard exists to stop. The outcome is reported; another withdrawal
+      // needs a fresh, deliberate call.
+      let resolution: string | null = null;
       if (pending.txHash) {
-        if (!(await eoaPendingResolved(pending))) {
+        // franklin-local: EOA transfers have no deadline; only a receipt proves resolution.
+        const status = await eoaPendingStatus(pending);
+        if (status === null) {
           return {
             text: `A previous withdrawal (${pending.txHash}) has no receipt and may still land — it was re-broadcast ` +
               `as the same signed transaction. Do not retry; check the balance again in a few minutes.`,
             isError: true,
           };
         }
-        saveState({ pendingWithdraw: undefined });
+        resolution = status === "success"
+          ? `The previous withdrawal SETTLED on-chain (tx ${pending.txHash}).`
+          : `The previous withdrawal REVERTED on-chain (tx ${pending.txHash}); no pUSD moved.`;
       // franklin-local: an unacknowledged batch cannot be queried, but can still execute.
       } else if (pending.deadline === undefined || Math.floor(Date.now() / 1000) < pending.deadline + graceSec) {
         const state = pending.transactionID ? await getRelayerTransactionState(pending.transactionID) : undefined;
-        if (state === "STATE_MINED" || state === "STATE_CONFIRMED" || state === "STATE_FAILED" || state === "STATE_INVALID") {
-          saveState({ pendingWithdraw: undefined });
+        if (state === "STATE_MINED" || state === "STATE_CONFIRMED") {
+          resolution = `The previous withdrawal SETTLED (relayer tx ${pending.transactionID}, ${state}).`;
+        } else if (state === "STATE_FAILED" || state === "STATE_INVALID") {
+          resolution = `The previous withdrawal FAILED (relayer tx ${pending.transactionID}, ${state}); no pUSD moved.`;
         } else {
           const waitSecs = pending.deadline === undefined ? "unknown" : pending.deadline + graceSec - Math.floor(Date.now() / 1000);
           return {
@@ -230,8 +236,18 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
           };
         }
       } else {
-        saveState({ pendingWithdraw: undefined }); // deadline long past — expired, safe
+        // Deadline long past: the batch can no longer execute, but it may
+        // already have, so this is not proof that nothing moved.
+        resolution = `The previous withdrawal's signature expired (relayer tx ${pending.transactionID ?? "unacknowledged"}). ` +
+          `It may or may not have executed before its deadline.`;
       }
+      saveState({ pendingWithdraw: undefined });
+      return {
+        text: `${resolution} Nothing new was signed. Check the balances (action:"setup") and the bridge status ` +
+          `before deciding whether ANOTHER withdrawal is wanted; only then call withdraw again.`,
+        isError: true,
+        structured: { previousWithdrawal: resolution },
+      };
     }
 
     // Withdrawable = pUSD + legacy USDC.e (wrapped on demand below).

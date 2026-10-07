@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityInvocation, CapabilityResult, ExecutionScope } from './types.js';
-import { checkTradePlanGate, recordTradeExecution } from '../trading/trade-plan.js';
+import { checkTradePlanGate, recordTradeExecution, releaseTradeReservation } from '../trading/trade-plan.js';
 
 const MAX_WEBSEARCHES_PER_TURN = 8;
 const MAX_SIMILAR_SEARCHES_PER_TURN = 4;
@@ -484,6 +484,11 @@ export class SessionToolGuard {
   }
 
   cancelInvocation(invocationId: string): void {
+    // Denied before execution (permission refused, PreSpend veto): nothing
+    // was submitted, so a trade-plan reservation made by the gate goes back.
+    try {
+      releaseTradeReservation(invocationId);
+    } catch { /* budget accounting must never break tool flow */ }
     this.pendingSearches.delete(invocationId);
     this.pendingReads.delete(invocationId);
     this.pendingFetches.delete(invocationId);

@@ -126,7 +126,7 @@ async function execute(raw: Record<string, unknown>, ctx: ExecutionScope): Promi
   try {
     await ensurePolymarketWallet();
   } catch (err) {
-    return { output: `Wallet unavailable: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+    return { output: `Wallet unavailable: ${err instanceof Error ? err.message : String(err)}`, isError: true, notSubmitted: true };
   }
 
   const wantsConfirm = input.confirm === true;
@@ -143,10 +143,10 @@ async function execute(raw: Record<string, unknown>, ctx: ExecutionScope): Promi
       if (preview.isError) {
         // The dry-run itself failed (bad params, insufficient balance, not set
         // up) — surface that instead of prompting to sign a doomed action.
-        return { output: preview.text, isError: true, fullOutput: preview.text };
+        return { output: preview.text, isError: true, fullOutput: preview.text, notSubmitted: true };
       }
     } catch (err) {
-      return { output: `Preview failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+      return { output: `Preview failed: ${err instanceof Error ? err.message : String(err)}`, isError: true, notSubmitted: true };
     }
 
     const answer = await ctx.onAskUser(
@@ -158,7 +158,7 @@ async function execute(raw: Record<string, unknown>, ctx: ExecutionScope): Promi
       ['Confirm', 'Cancel'],
     );
     if (answer.toLowerCase() !== 'confirm') {
-      return { output: 'Polymarket action cancelled by user.' };
+      return { output: 'Polymarket action cancelled by user.', notSubmitted: true };
     }
   }
 
@@ -183,7 +183,7 @@ async function execute(raw: Record<string, unknown>, ctx: ExecutionScope): Promi
   }
 
   if (result.isError) {
-    return { output: result.text, isError: true, fullOutput: result.text };
+    return { output: result.text, isError: true, fullOutput: result.text, ...(result.notSubmitted ? { notSubmitted: true } : {}) };
   }
   return { output: result.text, fullOutput: result.text };
 }

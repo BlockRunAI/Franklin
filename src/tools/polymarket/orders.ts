@@ -254,9 +254,37 @@ export interface ToolResult {
   text: string;
   structured?: Record<string, unknown>;
   isError?: boolean;
+  /**
+   * franklin-local: true only when this call provably never handed an order or
+   * transaction to the venue (validation, preview, or a definite rejection).
+   * Callers holding a spend reservation may release it ONLY on this signal;
+   * any other error may have been accepted upstream.
+   */
+  notSubmitted?: boolean;
+}
+
+/**
+ * franklin-local: a submit error is a definite rejection only when the CLOB
+ * answered with a 4xx. A missing status (no response: timeout, reset) or a 5xx
+ * means the order may have been accepted and its acknowledgement lost.
+ */
+function isDefiniteSubmitRejection(err: unknown): boolean {
+  const status = (err as { status?: unknown })?.status;
+  return typeof status === "number" && status >= 400 && status < 500 && status !== 408;
 }
 
 export async function executeTrade(input: TradeInput): Promise<ToolResult> {
+  // franklin-local: report whether the order could have reached the CLOB.
+  const progress = { submitStarted: false, rejected: false };
+  const result = await executeTradeUnchecked(input, progress);
+  if (result.isError && (!progress.submitStarted || progress.rejected)) return { ...result, notSubmitted: true };
+  return result;
+}
+
+async function executeTradeUnchecked(
+  input: TradeInput,
+  progress: { submitStarted: boolean; rejected: boolean },
+): Promise<ToolResult> {
   const side = input.action === "buy" ? Side.BUY : Side.SELL;
   const isLimit = input.price !== undefined;
 
@@ -414,6 +442,10 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
       // Reserve now (before the await) so a concurrent order sees this spend;
       // roll back if the submit throws so a failed order doesn't consume budget.
       reserveBet(notional, input.agent_id);
+      // withCredsRetry may re-run this body after a definite 401; each attempt
+      // starts unrejected so a later ambiguous failure is never mislabelled.
+      progress.submitStarted = true;
+      progress.rejected = false;
       let response: unknown;
       try {
         try {
@@ -434,7 +466,21 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
           response = await submitOrder();
         }
       } catch (submitErr) {
+        // franklin-local: only a definite rejection frees the reservation. A
+        // lost acknowledgement may still be a live order; releasing here let
+        // the retry place a second one under a cap that no longer counted it.
+        if (!isDefiniteSubmitRejection(submitErr)) {
+          commitBet();
+          const raw = submitErr instanceof Error ? submitErr.message : String(submitErr);
+          return {
+            text: `Order outcome UNKNOWN — the submit failed without a definite rejection (${raw}), so the CLOB ` +
+              `may have accepted it. Do NOT place it again. Check action:"orders" and action:"positions" first; ` +
+              `the session cap still counts this order.\n${summary}`,
+            isError: true,
+          };
+        }
         releaseBet(notional, input.agent_id);
+        progress.rejected = true;
         throw submitErr;
       }
 
@@ -456,6 +502,7 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
       const placed = r?.success !== false && (r?.orderID || r?.status === "matched");
       if (!placed) {
         releaseBet(notional, input.agent_id);
+        progress.rejected = true;
         throw new Error(r?.errorMsg || "order rejected");
       }
       commitBet();

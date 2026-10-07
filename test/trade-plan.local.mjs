@@ -154,7 +154,7 @@ test('gate: approved covering plan passes, flags auto_approve, draws down, then 
   assert.equal(stored.status, 'consumed');
 });
 
-test('gate: failed execution does not draw down the budget', () => {
+test('gate: a result for a call the gate never covered debits nothing', () => {
   clearPlans();
   const plan = createTradePlan({ sessionId: SESSION, trades: [{ ...SOL_TRADE, amountUsd: 4 }], rationale: 'test' });
   decideTradePlan(plan, 'approved', 'user:test');
@@ -352,7 +352,8 @@ const betInvocation = (input = {}) => ({
 
 test('gate: only execution asset fields match, using existing token aliases', () => {
   clearPlans();
-  approveTrades([SOL_TRADE]);
+  // Each covered pass reserves its amount, so size the line for both passes.
+  approveTrades([{ ...SOL_TRADE, amountUsd: 4 }]);
   assert.ok(checkTradePlanGate(swapInvocation({ output_mint: 'BONK', memo: 'SOL' }))?.isError);
   assert.ok(checkTradePlanGate(swapInvocation({ output_mint: 'some-SOL-token' }))?.isError);
   assert.ok(checkTradePlanGate(swapInvocation({ input_mint: 'SOL', output_mint: 'BONK' }))?.isError);
@@ -424,7 +425,7 @@ test('gate: drawdown stays with authorizing plan after a new approval, cancellat
       saveTradePlan({ ...newer, createdAt: first.createdAt + 1 });
       assert.equal(activeTradePlan().id, newer.id);
     } else if (change === 'expired') {
-      saveTradePlan({ ...first, expiresAt: Date.now() - 1 });
+      saveTradePlan({ ...loadTradePlan(first.id), expiresAt: Date.now() - 1 });
     } else {
       decideTradePlan(first, 'cancelled', 'user:test');
     }
@@ -437,16 +438,76 @@ test('gate: drawdown stays with authorizing plan after a new approval, cancellat
   }
 });
 
-test('gate: failed or ungated executions never debit, unknown USD amounts fail closed', () => {
+test('gate: an error keeps the reservation unless the tool proves nothing was submitted', () => {
+  clearPlans();
+  const plan = approveTrades([{ ...SOL_TRADE, amountUsd: 4 }]);
+  // Accepted-but-unacknowledged: an error without notSubmitted may be a live
+  // order, so its line stays spent and a retry cannot place it again.
+  const lost = swapInvocation();
+  assert.equal(checkTradePlanGate(lost), null);
+  recordTradeExecution(lost, { output: 'response lost', isError: true });
+  recordTradeExecution(lost, { output: 'late duplicate' });
+  recordTradeExecution(swapInvocation(), { output: 'ungated' });
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2);
+
+  const rejected = swapInvocation();
+  assert.equal(checkTradePlanGate(rejected), null);
+  assert.equal(loadTradePlan(plan.id).status, 'consumed', 'reserved before the tool runs');
+  recordTradeExecution(rejected, { output: 'definite rejection', isError: true, notSubmitted: true });
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2);
+  assert.equal(loadTradePlan(plan.id).status, 'approved', 'a release reopens a plan its reservation closed');
+  assert.ok(checkTradePlanGate(swapInvocation({ input_mint: 'BONK' }))?.isError);
+});
+
+test('gate: reservation happens at the gate, so a second call cannot reuse an in-flight line', () => {
   clearPlans();
   const plan = approveTrades([SOL_TRADE]);
+  const first = swapInvocation();
+  assert.equal(checkTradePlanGate(first), null);
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2);
+  assert.ok(checkTradePlanGate(swapInvocation())?.isError, 'the same line is not available while the first call runs');
+  // Re-checking the same invocation must not stack a second reservation.
+  saveTradePlan({ ...loadTradePlan(plan.id), trades: [{ ...SOL_TRADE, amountUsd: 4 }], totalSpendUsd: 4, status: 'approved' });
+  assert.equal(checkTradePlanGate(first), null);
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2);
+});
+
+test('gate: a denial before execution returns the reservation via cancelInvocation', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  clearPlans();
+  const plan = approveTrades([SOL_TRADE]);
+  const guard = new SessionToolGuard(SESSION);
+  const inv = swapInvocation({ amount: 2 });
+  inv.id = 'denied-by-permission';
+  assert.equal(await guard.beforeExecute(inv, { workingDir: TMP_HOME, abortSignal: new AbortController().signal }), null);
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2);
+  guard.cancelInvocation(inv.id);
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 0);
+  assert.equal(loadTradePlan(plan.id).status, 'approved');
+});
+
+test('gate: legacy plans without per-line accounting cannot regain a consumed line', () => {
+  clearPlans();
+  const plan = approveTrades([SOL_TRADE, { ...SOL_TRADE, asset: 'BONK' }]);
+  const legacy = { ...loadTradePlan(plan.id), consumedUsd: 2 };
+  delete legacy.consumedLineUsd;
+  saveTradePlan(legacy);
+  const result = checkTradePlanGate(swapInvocation());
+  assert.ok(result?.isError);
+  assert.match(result.output, /predates per-line/);
+});
+
+test('gate: deciding with a stale plan object never resets stored consumption', () => {
+  clearPlans();
+  const stale = approveTrades([{ ...SOL_TRADE, amountUsd: 4 }]);
   const inv = swapInvocation();
   assert.equal(checkTradePlanGate(inv), null);
-  recordTradeExecution(inv, { output: 'failed', isError: true });
-  recordTradeExecution(inv, { output: 'late duplicate' });
-  recordTradeExecution(swapInvocation(), { output: 'ungated' });
-  assert.equal(loadTradePlan(plan.id).consumedUsd, 0);
-  assert.ok(checkTradePlanGate(swapInvocation({ input_mint: 'BONK' }))?.isError);
+  recordTradeExecution(inv, { output: 'ok' });
+  decideTradePlan(stale, 'cancelled', 'user:test');
+  const stored = loadTradePlan(stale.id);
+  assert.equal(stored.status, 'cancelled');
+  assert.equal(stored.consumedUsd, 2);
+  assert.deepEqual(stored.consumedLineUsd, [2]);
 });
 
 test('gate: the matched line is debited and exhausted independently of other lines', () => {
