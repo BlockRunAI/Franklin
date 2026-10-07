@@ -24,6 +24,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { logger } from '../logger.js';
 import { createOAuthProvider, type FranklinOAuthProvider } from './oauth.js';
+import { sanitizeSubprocessEnv } from '../tools/subprocess-env.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -249,7 +250,9 @@ async function connectStdio(name: string, config: McpServerConfig): Promise<Conn
   const transport = new StdioClientTransport({
     command: config.command,
     args: config.args || [],
-    env: { ...process.env, ...(config.env || {}) } as Record<string, string>,
+    // Inherited env drops wallet/account keys; values the user wrote into this
+    // server's own `env` config are an explicit grant and pass through.
+    env: { ...sanitizeSubprocessEnv(), ...(config.env || {}) } as Record<string, string>,
     // Capture stderr so we can show it in `/mcp` rather than dumping to the
     // user's terminal. The previous `'ignore'` mode meant a misconfigured
     // server (missing env, OAuth failure, missing binary) showed up as a

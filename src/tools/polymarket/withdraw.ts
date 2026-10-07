@@ -42,6 +42,8 @@ import { getFundsAddress } from "./positions.js";
 import { loadState, saveState } from "./creds.js";
 import { getRelayerTransactionState, sendWalletBatch } from "./relayer.js";
 import { getPublicClient } from "./setup.js";
+// franklin-local: identify an EOA transfer before handing it to the RPC.
+import { keccak256 } from "viem";
 
 async function rawTokenBalance(token: Hex, owner: Hex): Promise<bigint> {
   return getPublicClient().readContract({
@@ -117,6 +119,57 @@ async function readPusdUntil(owner: Hex, minimum: bigint): Promise<bigint> {
   return observed;
 }
 
+// franklin-local: RPC rejections that prove a node refused (and so never
+// relayed) a raw transaction. "already known" is deliberately absent: it means
+// the node HAS the transaction.
+const DEFINITE_REJECTION_RE =
+  /insufficient funds|nonce too low|intrinsic gas too low|max fee per gas less than block base fee|transaction underpriced|invalid sender/i;
+
+function isDefiniteBroadcastRejection(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
+    const msg = e instanceof Error ? `${e.message} ${(e as { details?: string }).details ?? ""}` : String(e);
+    if (DEFINITE_REJECTION_RE.test(msg)) return true;
+  }
+  return false;
+}
+
+/** True unless the RPC positively reports the hash as unknown. Read errors count as known (fail closed). */
+async function transactionKnown(hash: Hex): Promise<boolean> {
+  try {
+    await getPublicClient().getTransaction({ hash });
+    return true;
+  } catch (err) {
+    return !(err instanceof Error && err.name === "TransactionNotFoundError");
+  }
+}
+
+type PendingWithdraw = NonNullable<ReturnType<typeof loadState>["pendingWithdraw"]>;
+
+/**
+ * franklin-local: decide whether an EOA withdrawal marker can be released.
+ * A receipt (success or revert) resolves it. Without one, the nonce having
+ * moved past ours while the RPC does not know our hash means another
+ * transaction consumed the nonce, so these bytes can never land. Otherwise the
+ * same signed bytes are re-broadcast (same nonce, so at most one transfer can
+ * ever execute) and the guard holds — never a fresh signature.
+ */
+async function eoaPendingResolved(pending: PendingWithdraw): Promise<boolean> {
+  const client = getPublicClient();
+  const hash = pending.txHash as Hex;
+  const receipt = await client.getTransactionReceipt({ hash }).catch(() => null);
+  if (receipt) return true;
+  if (pending.from && pending.nonce !== undefined && !(await transactionKnown(hash))) {
+    const latest = await client.getTransactionCount({ address: pending.from as Hex, blockTag: "latest" }).catch(() => null);
+    if (latest !== null && latest > Number(pending.nonce)) return true;
+  }
+  if (pending.serializedTransaction) {
+    const account = getPolymarketAccount();
+    const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
+    await wallet.sendRawTransaction({ serializedTransaction: pending.serializedTransaction as Hex }).catch(() => undefined);
+  }
+  return false;
+}
+
 const WITHDRAW_GUIDANCE =
   'check the pUSD balance with action:"setup" and the bridge status endpoint before ANY retry — ' +
   "a resubmitted withdrawal signs a SECOND transfer and can double-send";
@@ -129,12 +182,20 @@ interface WithdrawInput {
 
 export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
   let owner: Hex;
+  let recipient: Hex;
   try {
+    // franklin-local: this is the agent's x402 signer, not the deposit wallet.
+    recipient = getPolymarketAccount().address;
+    if (input.to_address !== undefined && (typeof input.to_address !== "string" || input.to_address.toLowerCase() !== recipient.toLowerCase())) {
+      return {
+        text: "Withdraw to your agent wallet first; moving funds to an external address is not something the agent does on its own.",
+        isError: true,
+      };
+    }
     owner = getFundsAddress();
   } catch (err) {
     return { text: err instanceof Error ? err.message : String(err), isError: true };
   }
-  const recipient = (input.to_address as Hex) || getPolymarketAccount().address;
 
   try {
     // Refuse to sign while an earlier withdrawal batch may still land: its
@@ -144,14 +205,25 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
     const pending = loadState().pendingWithdraw;
     if (pending && input.confirm === true) {
       const graceSec = 60; // relayer can mine right at the deadline; don't race it
-      if (Math.floor(Date.now() / 1000) < pending.deadline + graceSec) {
-        const state = await getRelayerTransactionState(pending.transactionID);
+      // franklin-local: EOA transfers have no deadline; only a receipt proves resolution.
+      if (pending.txHash) {
+        if (!(await eoaPendingResolved(pending))) {
+          return {
+            text: `A previous withdrawal (${pending.txHash}) has no receipt and may still land — it was re-broadcast ` +
+              `as the same signed transaction. Do not retry; check the balance again in a few minutes.`,
+            isError: true,
+          };
+        }
+        saveState({ pendingWithdraw: undefined });
+      // franklin-local: an unacknowledged batch cannot be queried, but can still execute.
+      } else if (pending.deadline === undefined || Math.floor(Date.now() / 1000) < pending.deadline + graceSec) {
+        const state = pending.transactionID ? await getRelayerTransactionState(pending.transactionID) : undefined;
         if (state === "STATE_MINED" || state === "STATE_CONFIRMED" || state === "STATE_FAILED" || state === "STATE_INVALID") {
           saveState({ pendingWithdraw: undefined });
         } else {
-          const waitSecs = pending.deadline + graceSec - Math.floor(Date.now() / 1000);
+          const waitSecs = pending.deadline === undefined ? "unknown" : pending.deadline + graceSec - Math.floor(Date.now() / 1000);
           return {
-            text: `A previous withdrawal (relayer tx ${pending.transactionID}, state: ${state ?? "unreachable"}) ` +
+            text: `A previous withdrawal (relayer tx ${pending.transactionID ?? "unacknowledged"}, state: ${state ?? "unreachable"}) ` +
               `may still execute — its signed transfer stays valid for up to ~${waitSecs}s more. Signing another ` +
               `one now could double-send. Re-run after that window, when the balance reads will show what happened.`,
             isError: true,
@@ -257,18 +329,33 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
     } else {
       const account = getPolymarketAccount();
       const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
-      txHash = await wallet.sendTransaction({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account });
+      // franklin-local: hash the locally signed bytes and persist before any broadcast.
+      const nonce = await getPublicClient().getTransactionCount({ address: account.address, blockTag: "pending" });
+      const request = await wallet.prepareTransactionRequest({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account, nonce });
+      const serializedTransaction = await wallet.signTransaction(request);
+      txHash = keccak256(serializedTransaction);
+      saveState({ pendingWithdraw: { txHash, nonce, from: account.address, serializedTransaction } });
+      try {
+        await wallet.sendRawTransaction({ serializedTransaction });
+      } catch (err) {
+        // franklin-local: a node that rejected these bytes outright never
+        // relayed them, so only that case may release the guard. Anything
+        // ambiguous (timeout, 5xx) keeps it until a receipt says otherwise.
+        if (isDefiniteBroadcastRejection(err) && !(await transactionKnown(txHash as Hex))) {
+          saveState({ pendingWithdraw: undefined });
+        }
+        throw err;
+      }
       // viem does NOT throw on a reverted tx — it resolves with status:"reverted".
       // Discarding the receipt meant a REVERTED pUSD transfer still printed
       // "✅ Withdrawal submitted … the bridge delivers USDC to Base" with a link
       // to the failed tx and no isError, so the user waited for money that was
       // never sent and blamed the bridge. redeem.ts and setup.ts both assert
       // status; this path was the one that did not.
-      assertTransactionSucceeded(
-        await getPublicClient().waitForTransactionReceipt({ hash: txHash as Hex }),
-        "pUSD transfer",
-        txHash,
-      );
+      // franklin-local: either receipt status resolves the guard; timeouts retain it.
+      const receipt = await getPublicClient().waitForTransactionReceipt({ hash: txHash as Hex });
+      saveState({ pendingWithdraw: undefined });
+      assertTransactionSucceeded(receipt, "pUSD transfer", txHash);
     }
 
     return {

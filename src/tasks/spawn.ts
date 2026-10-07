@@ -32,6 +32,7 @@ import { randomUUID } from 'node:crypto';
 import { writeTaskMeta } from './store.js';
 import { taskLogPath, ensureTaskDir } from './paths.js';
 import type { TaskRecord } from './types.js';
+import { sanitizeSubprocessEnv } from '../tools/subprocess-env.js';
 
 // Captured at module load so it survives later chdir / argv mutation.
 // `process.argv[1]` may be relative (`dist/index.js` in dev mode); we
@@ -95,7 +96,7 @@ export function startDetachedTask(input: StartDetachedTaskInput): string {
     cwd: input.workingDir,
     detached: true,
     stdio: ['ignore', logFd, logFd],
-    env: { ...process.env, FRANKLIN_TASK_RUN_ID: runId },
+    env: { ...sanitizeSubprocessEnv(), FRANKLIN_TASK_RUN_ID: runId },
   });
   child.unref();
 

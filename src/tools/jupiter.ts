@@ -82,7 +82,7 @@ const TOKEN_DECIMALS: Record<string, number> = {
   EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm: 6,
 };
 
-function resolveMint(input: string): string {
+export function resolveMint(input: string): string {
   const upper = input.trim().toUpperCase();
   if (SYMBOL_TO_MINT[upper]) return SYMBOL_TO_MINT[upper];
   return input.trim();

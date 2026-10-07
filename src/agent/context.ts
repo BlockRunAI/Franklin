@@ -12,6 +12,7 @@ import { Keypair } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { loadLearnings, decayLearnings, saveLearnings, formatForPrompt } from '../learnings/store.js';
 import { isKeyMode, resolvePayMode } from '../payments/auth-mode.js';
+import { sanitizeSubprocessEnv } from '../tools/subprocess-env.js';
 
 // ─── System Instructions Assembly ──────────────────────────────────────────
 // Composable prompt sections — each independently maintainable and conditionally includable.
@@ -766,7 +767,7 @@ function buildEnvironmentSection(workingDir: string): string {
 
   // Git repo detection
   try {
-    execSync('git rev-parse --is-inside-work-tree', { cwd: workingDir, timeout: 2000, stdio: ['pipe', 'pipe', 'pipe'] });
+    execSync('git rev-parse --is-inside-work-tree', { env: sanitizeSubprocessEnv(), cwd: workingDir, timeout: 2000, stdio: ['pipe', 'pipe', 'pipe'] });
     lines.push('- Is a git repository: true');
   } catch {
     lines.push('- Is a git repository: false');
@@ -874,6 +875,7 @@ const MAX_GIT_LOG_CHARS = 800;
 
 function getGitContext(workingDir: string): string | null {
   const gitCmd = (cmd: string) => execSync(cmd, {
+    env: sanitizeSubprocessEnv(),
     cwd: workingDir,
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],

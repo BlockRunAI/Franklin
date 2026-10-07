@@ -46,7 +46,7 @@ export function createTradePlanCapability(): CapabilityHandler {
               properties: {
                 venue: { type: 'string', enum: ['jupiter', 'zerox', 'polymarket'] },
                 action: { type: 'string', enum: ['buy', 'sell', 'swap', 'bet'] },
-                asset: { type: 'string', description: 'Symbol, mint/token address, or market outcome.' },
+                asset: { type: 'string', description: 'Exactly what the execution call will name: the token symbol/mint/address being bought (or sold, for sells); for polymarket, the token_id, or the condition_id with direction set to the outcome. Matched against that field only.' },
                 direction: { type: 'string', enum: ['long', 'short', 'yes', 'no'] },
                 amountUsd: { type: 'number', description: 'USD to commit to this trade.' },
                 maxSlippageBps: { type: 'number' },

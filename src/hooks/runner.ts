@@ -24,6 +24,7 @@ import {
   type HookInput,
   type LoadedHook,
 } from './types.js';
+import { sanitizeSubprocessEnv } from '../tools/subprocess-env.js';
 
 const DEFAULT_TIMEOUT_SECS = 5;
 const MAX_STDOUT_BYTES = 64 * 1024;
@@ -94,6 +95,13 @@ export class HookEngine {
       if (fs.existsSync(resolved)) command = resolved;
     }
 
+    // Lifecycle hooks are user-authored and keep the full env. Tool and spend
+    // hooks receive model-controlled input on stdin and may execute it, so the
+    // inherited env drops wallet/account keys; the hook's own configured `env`
+    // is an explicit user grant and still applies.
+    const inherited = input.toolInput || input.spend ? sanitizeSubprocessEnv() : process.env;
+    const env = { ...inherited, ...hook.handler.env };
+
     return new Promise<HookDecision>(resolve => {
       const child = execFile(
         '/bin/sh',
@@ -102,8 +110,7 @@ export class HookEngine {
           timeout: timeoutMs,
           maxBuffer: MAX_STDOUT_BYTES,
           env: {
-            ...process.env,
-            ...hook.handler.env,
+            ...env,
             // Reserved vars always win over handler env.
             FRANKLIN_HOOK_EVENT: input.hookEventName,
             FRANKLIN_SESSION_ID: input.sessionId,

@@ -20,6 +20,14 @@ import { CLOB_HOST, POLYGON_CHAIN_ID, POLYGON_WRITE_RPC_URL, RELAYER_URL } from 
 import { loadBuilderCreds, loadL2Creds, saveBuilderCreds, saveL2Creds, saveState } from "./creds.js";
 import { deriveApiCreds } from "./l1-auth-1271.js";
 
+// franklin-local: use the SDK builder to persist the signed batch before submission.
+import { AxiosHeaders } from "axios";
+import { keccak256, toHex } from "viem";
+import { buildDepositWalletBatchRequest } from "@polymarket/builder-relayer-client/dist/builder/deposit-wallet.js";
+import { isDepositWalletContractConfigValid } from "@polymarket/builder-relayer-client/dist/config/index.js";
+import { ClientRelayerTransactionResponse } from "@polymarket/builder-relayer-client/dist/response/index.js";
+import { SUBMIT_TRANSACTION } from "@polymarket/builder-relayer-client/dist/endpoints.js";
+
 export type { DepositWalletCall };
 
 let _relayClient: RelayClient | null = null;
@@ -124,6 +132,31 @@ export async function getRelayerTransactionState(transactionID: string): Promise
   }
 }
 
+// franklin-local: signing/auth failures leave no marker; once send starts, a lost
+// response must retain the guard because the relayer may already have the batch.
+async function submitTrackedWithdraw(client: RelayClient, calls: DepositWalletCall[], depositWallet: string, deadline: number) {
+  if (!client.signer) throw new Error("Relayer signer unavailable");
+  const config = client.contractConfig.DepositWalletContracts;
+  if (!isDepositWalletContractConfigValid(config)) throw new Error("Deposit wallet config unavailable");
+  const from = await client.signer.getAddress();
+  const { nonce } = await client.getNonce(from, "WALLET");
+  const request = await buildDepositWalletBatchRequest(client.signer, {
+    from, chainId: client.chainId, walletAddress: depositWallet, nonce, deadline: String(deadline), calls,
+  }, config);
+  const body = JSON.stringify(request);
+  // Mirrors the SDK's private sendAuthedRequest: builder headers only when the
+  // builder config is valid, otherwise an unauthenticated submit.
+  const headers = client.builderConfig?.isValid()
+    ? await client.builderConfig.generateBuilderHeaders("POST", SUBMIT_TRANSACTION, body)
+    : undefined;
+  const pending = { deadline, from, nonce, payloadHash: keccak256(toHex(body)) };
+  const options = { headers: new AxiosHeaders(headers ? { ...headers } : {}), data: body };
+  saveState({ pendingWithdraw: pending });
+  const { data } = await client.httpClient.send(`${client.relayerUrl}${SUBMIT_TRANSACTION}`, "POST", options);
+  saveState({ pendingWithdraw: { ...pending, transactionID: data.transactionID } });
+  return new ClientRelayerTransactionResponse(data.transactionID, data.state, data.transactionHash, client);
+}
+
 /**
  * Execute a signed WALLET batch from the deposit wallet (approvals, redeem…).
  * The SDK fetches the nonce, EIP-712-signs the Batch with the local key, and
@@ -148,10 +181,11 @@ export async function sendWalletBatch(
   opts?: { guidance?: string; trackPendingWithdraw?: boolean },
 ): Promise<{ transactionHash?: string }> {
   const deadlineSec = Math.floor(Date.now() / 1000) + BATCH_DEADLINE_SECS;
-  const response = await (await getRelayClient()).executeDepositWalletBatch(calls, depositWallet, String(deadlineSec));
-  if (opts?.trackPendingWithdraw) {
-    saveState({ pendingWithdraw: { transactionID: response.transactionID, deadline: deadlineSec } });
-  }
+  // franklin-local: only withdrawals need the pre-submission persistence boundary.
+  const client = await getRelayClient();
+  const response = opts?.trackPendingWithdraw
+    ? await submitTrackedWithdraw(client, calls, depositWallet, deadlineSec)
+    : await client.executeDepositWalletBatch(calls, depositWallet, String(deadlineSec));
   const confirmed = await response.wait();
   if (!confirmed) {
     const state = await getRelayerTransactionState(response.transactionID);

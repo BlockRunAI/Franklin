@@ -5,6 +5,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
+import { sanitizeSubprocessEnv } from './subprocess-env.js';
 
 // ─── Smart Output Compression ─────────────────────────────────────────────
 // Learned from RTK (Rust Token Killer): strip noise before sending to LLM.
@@ -333,22 +334,22 @@ function executeCommand(command: string, timeoutMs: number, ctx: ExecutionScope)
     const shell = fs.existsSync('/bin/bash') ? '/bin/bash' : (process.env.SHELL || '/bin/sh');
     let child: ReturnType<typeof spawn>;
     try {
-      // The account bearer key is deliberately withheld from the subprocess.
-      // bash-guard auto-approves `printenv` and `echo` as safe, so
-      // `printenv BLOCKRUN_API_KEY` ran with no confirmation and returned the
-      // key as tool output — into the model prompt and the saved transcript.
-      // Wallet private keys are never in the environment at all; this gives
-      // the key the same treatment. Franklin's own gateway calls read
-      // process.env in-process and are unaffected, and a user who genuinely
-      // needs the key in a shell can export it there themselves.
+      // Credentials are withheld from the subprocess. bash-guard auto-approves
+      // `printenv` and `echo` as safe, so `printenv BLOCKRUN_API_KEY` once ran
+      // with no confirmation and returned the key as tool output. The same
+      // holds for the wallet keys the SDK reads from BLOCKRUN_WALLET_KEY /
+      // BASE_CHAIN_WALLET_KEY / SOLANA_WALLET_KEY: inherited, they let a
+      // model-written script sign transfers that no Franklin gate ever sees.
+      // Franklin's own gateway calls read process.env in-process and are
+      // unaffected, and a user who genuinely needs a key in a shell can
+      // export it there themselves.
       const childEnv: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...sanitizeSubprocessEnv(),
         FRANKLIN: '1', // Let scripts detect they're running inside Franklin
         FRANKLIN_WORKDIR: ctx.workingDir,
         RUNCODE: '1', // Backwards compat
         RUNCODE_WORKDIR: ctx.workingDir,
       };
-      delete childEnv.BLOCKRUN_API_KEY;
 
       child = spawn(shell, ['-c', command], {
         cwd: ctx.workingDir,
