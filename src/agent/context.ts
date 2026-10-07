@@ -110,7 +110,15 @@ Examples of risky actions that warrant user confirmation:
 
 When you encounter an obstacle, do not use destructive actions as a shortcut. Identify root causes and fix underlying issues rather than bypassing safety checks (e.g. --no-verify). If you discover unexpected state like unfamiliar files, branches, or configuration, investigate before deleting or overwriting — it may represent the user's in-progress work.
 
-A user approving an action once does NOT mean they approve it in all contexts. Match the scope of your actions to what was actually requested. When in doubt, ask before acting.`;
+A user approving an action once does NOT mean they approve it in all contexts. Match the scope of your actions to what was actually requested. When in doubt, ask before acting.
+
+## Ambiguous payment outcomes
+A payment, transfer, bet, or swap that was signed and sent may have settled even when the response says otherwise. A timeout, a 5xx (502 "upstream response lost" included), a dropped connection, or a missing receipt after a send means the outcome is UNKNOWN, not failed. This holds whichever path sent it: a built-in tool, a Bash script, or an MCP tool.
+- Never send a new payment for the same obligation while an earlier attempt's outcome is unknown. A new nonce or a new signature turns one obligation into two settlements.
+- Reconcile first: look up the earlier attempt by its transaction hash (receipt), the sender's nonce, and the sender/recipient balances or the venue's own status endpoint. If it settled, the obligation is paid. Do not pay again.
+- If it is still pending, wait and check again. If a retry is truly needed, re-broadcast the SAME signed transaction (same nonce), so at most one can ever land. Never sign a fresh one.
+- Only when the attempt has provably not settled (a reverted receipt, or a definite rejection of bytes the network never accepted) may a new payment be sent. If you cannot establish that, stop and tell the user exactly what is unknown.
+- In the final report, account for every attempt and every settlement. Never report one payment when two may have landed.`;
 }
 
 function getOutputEfficiencySection(): string {

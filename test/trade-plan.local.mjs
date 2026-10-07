@@ -474,3 +474,18 @@ test('gate: sell direction and conservative share value stay within the line', (
   assert.equal(checkTradePlanGate(betInvocation({ action: 'sell', size: 2 })), null);
   assert.ok(checkTradePlanGate(betInvocation({ action: 'sell', price: 0.01, size: 3 }))?.isError, 'sell limit is a minimum, not an upper bound');
 });
+
+// ─── Ambiguous payment outcomes (system prompt) ────────────────────────────
+
+test('system prompt treats a lost post-send response as unknown and forbids a fresh payment', async () => {
+  const { assembleInstructions } = await import('../dist/agent/context.js');
+  const prompt = assembleInstructions(TMP_HOME).join('\n');
+  const start = prompt.indexOf('## Ambiguous payment outcomes');
+  assert.ok(start > 0, 'the rule ships in the always-on prompt');
+  const rule = prompt.slice(start, prompt.indexOf('\n#', start + 3));
+  assert.match(rule, /502/);
+  assert.match(rule, /UNKNOWN, not failed/);
+  assert.match(rule, /Bash script/, 'covers payments sent outside built-in tools');
+  assert.match(rule, /SAME signed transaction/);
+  assert.match(rule, /every attempt and every settlement/);
+});
