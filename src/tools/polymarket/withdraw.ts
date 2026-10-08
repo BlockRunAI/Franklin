@@ -347,10 +347,11 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
       const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
       // franklin-local: hash the locally signed bytes and persist before any broadcast.
       // franklin-local: the nonce comes from the WRITE endpoint
-      // (prepareTransactionRequest asks the wallet's own transport for the
-      // pending count), not the fallback public readers: their pending pools
-      // can differ, and a reader nonce could collide with a transaction only
-      // the write node has seen.
+      // (prepareTransactionRequest asks the wallet's own transport), not the
+      // fallback public readers, which are separate providers with their own
+      // pending pools. A load-balanced write URL can still answer from a
+      // different backend than the broadcast; safety does not rest on this —
+      // the bytes are persisted first and a retry re-sends only those.
       const request = await wallet.prepareTransactionRequest({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account });
       const nonce = request.nonce;
       const serializedTransaction = await wallet.signTransaction(request);
