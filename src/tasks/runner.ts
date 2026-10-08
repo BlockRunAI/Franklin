@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import { readTaskMeta, applyEvent, writeTaskMeta } from './store.js';
 import { taskLogPath, ensureTaskDir } from './paths.js';
 import type { TaskStatus } from './types.js';
+import { sanitizeSubprocessEnv } from '../tools/subprocess-env.js';
 
 const HEARTBEAT_MS = 5_000;
 const TAIL_BYTES = 500;
@@ -143,7 +144,7 @@ export async function runDetachedTask(runId: string): Promise<number> {
   const child = spawn('bash', ['-lc', meta.command], {
     cwd: meta.workingDir,
     stdio: ['ignore', logFd, logFd],
-    env: { ...process.env, FRANKLIN_TASK_RUN_ID: runId },
+    env: { ...sanitizeSubprocessEnv(), FRANKLIN_TASK_RUN_ID: runId },
   });
 
   // Cancel path: parent CLI sends SIGTERM (or user hits Ctrl-C). We must

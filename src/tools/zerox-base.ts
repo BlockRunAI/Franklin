@@ -112,7 +112,7 @@ const STABLECOIN_ADDRESSES = new Set<string>([
   '0x50c5725949a6f0c72e6c4a641f24049a917db0cb', // DAI
 ]);
 
-function resolveTokenAddress(input: string): Address {
+export function resolveTokenAddress(input: string): Address {
   const upper = input.trim().toUpperCase();
   if (SYMBOL_TO_ADDRESS[upper]) return SYMBOL_TO_ADDRESS[upper];
   return input.trim() as Address;

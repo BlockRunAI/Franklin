@@ -126,7 +126,7 @@ async function execute(raw: Record<string, unknown>, ctx: ExecutionScope): Promi
   try {
     await ensurePolymarketWallet();
   } catch (err) {
-    return { output: `Wallet unavailable: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+    return { output: `Wallet unavailable: ${err instanceof Error ? err.message : String(err)}`, isError: true, notSubmitted: true };
   }
 
   const wantsConfirm = input.confirm === true;
@@ -143,10 +143,10 @@ async function execute(raw: Record<string, unknown>, ctx: ExecutionScope): Promi
       if (preview.isError) {
         // The dry-run itself failed (bad params, insufficient balance, not set
         // up) — surface that instead of prompting to sign a doomed action.
-        return { output: preview.text, isError: true, fullOutput: preview.text };
+        return { output: preview.text, isError: true, fullOutput: preview.text, notSubmitted: true };
       }
     } catch (err) {
-      return { output: `Preview failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+      return { output: `Preview failed: ${err instanceof Error ? err.message : String(err)}`, isError: true, notSubmitted: true };
     }
 
     const answer = await ctx.onAskUser(
@@ -158,7 +158,7 @@ async function execute(raw: Record<string, unknown>, ctx: ExecutionScope): Promi
       ['Confirm', 'Cancel'],
     );
     if (answer.toLowerCase() !== 'confirm') {
-      return { output: 'Polymarket action cancelled by user.' };
+      return { output: 'Polymarket action cancelled by user.', notSubmitted: true };
     }
   }
 
@@ -183,7 +183,7 @@ async function execute(raw: Record<string, unknown>, ctx: ExecutionScope): Promi
   }
 
   if (result.isError) {
-    return { output: result.text, isError: true, fullOutput: result.text };
+    return { output: result.text, isError: true, fullOutput: result.text, ...(result.notSubmitted ? { notSubmitted: true } : {}) };
   }
   return { output: result.text, fullOutput: result.text };
 }
@@ -221,7 +221,7 @@ export const polymarketBetCapability: CapabilityHandler = {
         post_only: { type: 'boolean', description: 'Maker-only limit order (rejected if it would cross the book).' },
         order_id: { type: 'string', description: 'Order ID to cancel.' },
         all: { type: 'boolean', description: 'cancel: cancel ALL open orders.' },
-        to_address: { type: 'string', description: 'withdraw: destination address on Base (default: your agent wallet).' },
+        to_address: { type: 'string', description: 'withdraw: your agent wallet on Base only (default). Other recipients are refused; withdraw to your agent wallet first.' },
         confirm: { type: 'boolean', description: 'Must be true to place orders / sign approvals / redeem. Omit for a dry-run preview.' },
         auto_approve: { type: 'boolean', description: 'Skip the interactive user confirmation prompt (headless use). Caps still apply.' },
         agent_id: { type: 'string', description: 'Tag for the session betting ledger (bets do NOT draw from the x402 API budget).' },

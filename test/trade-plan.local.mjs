@@ -17,7 +17,7 @@ process.env.HOME = TMP_HOME;
 const {
   createTradePlan, decideTradePlan, activeTradePlan, listTradePlans,
   checkTradePlanGate, recordTradeExecution, setTradePlanSessionId,
-  validatePlannedTrades, formatTradePlanText, tradePlansDir,
+  validatePlannedTrades, formatTradePlanText, tradePlansDir, loadTradePlan, saveTradePlan,
 } = await import('../dist/trading/trade-plan.js');
 const { createTradePlanCapability } = await import('../dist/tools/trade-plan.js');
 const { setSchedulerSessionId } = await import('../dist/scheduler/store.js');
@@ -146,13 +146,15 @@ test('gate: approved covering plan passes, flags auto_approve, draws down, then 
   assert.equal(after1.consumedUsd, 2);
 
   // Second $2 execution exhausts the $4 budget → plan consumed.
-  recordTradeExecution(swapInvocation({ id: 'inv2' }), { output: 'ok' });
+  const inv2 = swapInvocation();
+  assert.equal(checkTradePlanGate(inv2), null);
+  recordTradeExecution(inv2, { output: 'ok' });
   assert.equal(activeTradePlan(SESSION), null, 'consumed plan no longer active');
   const stored = listTradePlans().find(p => p.id === plan.id);
   assert.equal(stored.status, 'consumed');
 });
 
-test('gate: failed execution does not draw down the budget', () => {
+test('gate: a result for a call the gate never covered debits nothing', () => {
   clearPlans();
   const plan = createTradePlan({ sessionId: SESSION, trades: [{ ...SOL_TRADE, amountUsd: 4 }], rationale: 'test' });
   decideTradePlan(plan, 'approved', 'user:test');
@@ -336,4 +338,215 @@ test('headless policy: flag and max-spend matrix', async () => {
 
   const nonTrade = { ...req, kind: 'ask-user' };
   assert.equal((await createHeadlessApprovalFn(true, 100)(nonTrade)).choice, 'deny', 'non-trade approvals fail closed headless');
+});
+
+function approveTrades(trades) {
+  const plan = createTradePlan({ sessionId: SESSION, trades, rationale: 'test coverage' });
+  return decideTradePlan(plan, 'approved', 'user:test');
+}
+
+const betInvocation = (input = {}) => ({
+  type: 'tool_use', id: 'bet', name: 'PolymarketBet',
+  input: { action: 'buy', condition_id: 'market-1', outcome: 'Yes', amount_usd: 2, confirm: true, ...input },
+});
+
+test('gate: only execution asset fields match, using existing token aliases', () => {
+  clearPlans();
+  // Each covered pass reserves its amount, so size the line for both passes.
+  approveTrades([{ ...SOL_TRADE, amountUsd: 4 }]);
+  assert.ok(checkTradePlanGate(swapInvocation({ output_mint: 'BONK', memo: 'SOL' }))?.isError);
+  assert.ok(checkTradePlanGate(swapInvocation({ output_mint: 'some-SOL-token' }))?.isError);
+  assert.ok(checkTradePlanGate(swapInvocation({ input_mint: 'SOL', output_mint: 'BONK' }))?.isError);
+  assert.equal(checkTradePlanGate(swapInvocation({ output_mint: 'So11111111111111111111111111111111111111112' })), null);
+  assert.equal(checkTradePlanGate(swapInvocation({ output_mint: 'sol' })), null);
+
+  for (const name of ['Base0xSwap', 'Base0xGaslessSwap']) {
+    clearPlans();
+    approveTrades([{ venue: 'zerox', action: 'buy', asset: 'WETH', amountUsd: 2 }]);
+    const inv = { type: 'tool_use', id: name, name, input: { sell_token: 'USDC', buy_token: 'AERO', sell_amount: 2, memo: 'WETH' } };
+    assert.ok(checkTradePlanGate(inv)?.isError);
+    inv.input.buy_token = '0x4200000000000000000000000000000000000006';
+    assert.equal(checkTradePlanGate(inv), null);
+  }
+});
+
+test('gate: Polymarket action, direction, and token precedence bind coverage', () => {
+  clearPlans();
+  approveTrades([{ venue: 'polymarket', action: 'bet', asset: 'market-1', direction: 'yes', amountUsd: 2 }]);
+  assert.equal(checkTradePlanGate(betInvocation()), null);
+  assert.ok(checkTradePlanGate(betInvocation({ action: 'sell', price: 0.5, size: 4 }))?.isError);
+  assert.ok(checkTradePlanGate(betInvocation({ outcome: 'No' }))?.isError);
+  assert.ok(checkTradePlanGate(betInvocation({ condition_id: 'market-2', memo: 'market-1' }))?.isError);
+  assert.ok(checkTradePlanGate(betInvocation({ token_id: 'other-token' }))?.isError);
+  clearPlans();
+  approveTrades([{ venue: 'polymarket', action: 'buy', asset: '12345', amountUsd: 2 }]);
+  assert.equal(checkTradePlanGate(betInvocation({ token_id: '12345' })), null);
+  assert.ok(checkTradePlanGate(betInvocation({ token_id: '123456' }))?.isError);
+  // An outcome label exists in every market, so it can never authorize one.
+  clearPlans();
+  approveTrades([{ venue: 'polymarket', action: 'buy', asset: 'Yes', amountUsd: 2 }]);
+  assert.ok(checkTradePlanGate(betInvocation({ condition_id: 'market-9', outcome: 'Yes' }))?.isError);
+});
+
+test('gate: per-line cap and exact micro-dollar totals prevent repeated consumption', () => {
+  clearPlans();
+  const plan = approveTrades([SOL_TRADE, { ...SOL_TRADE, asset: 'BONK', amountUsd: 10 }]);
+  assert.ok(checkTradePlanGate(swapInvocation({ amount: 2.001 }))?.isError, 'total budget cannot subsidize this line');
+  const first = swapInvocation();
+  assert.equal(checkTradePlanGate(first), null);
+  recordTradeExecution(first, { output: 'ok' });
+  recordTradeExecution(first, { output: 'duplicate callback' });
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2, 'an invocation is debited only once');
+  assert.ok(checkTradePlanGate(swapInvocation({ amount: 0.01 }))?.isError, 'fully consumed line stays unavailable');
+  assert.equal(checkTradePlanGate(swapInvocation({ output_mint: 'BONK', amount: 1 })), null);
+
+  clearPlans();
+  const small = approveTrades([{ ...SOL_TRADE, amountUsd: 0.3 }]);
+  for (const amount of [0.1, 0.2]) {
+    const inv = swapInvocation({ amount });
+    assert.equal(checkTradePlanGate(inv), null);
+    recordTradeExecution(inv, { output: 'ok' });
+  }
+  assert.equal(loadTradePlan(small.id).consumedUsd, 0.3);
+  assert.equal(loadTradePlan(small.id).status, 'consumed');
+});
+
+test('gate: drawdown stays with authorizing plan after a new approval, cancellation, or expiry', () => {
+  for (const change of ['newer', 'expired', 'cancelled']) {
+    clearPlans();
+    const first = approveTrades([{ ...SOL_TRADE, amountUsd: 4 }]);
+    const inv = swapInvocation();
+    assert.equal(checkTradePlanGate(inv), null);
+    assert.deepEqual(Object.keys(inv).sort(), ['id', 'input', 'name', 'type']);
+    assert.deepEqual(Object.keys(inv.input).sort(), ['amount', 'auto_approve', 'input_mint', 'output_mint']);
+    let newer;
+    if (change === 'newer') {
+      newer = approveTrades([{ ...SOL_TRADE, amountUsd: 8 }]);
+      saveTradePlan({ ...newer, createdAt: first.createdAt + 1 });
+      assert.equal(activeTradePlan().id, newer.id);
+    } else if (change === 'expired') {
+      saveTradePlan({ ...loadTradePlan(first.id), expiresAt: Date.now() - 1 });
+    } else {
+      decideTradePlan(first, 'cancelled', 'user:test');
+    }
+    inv.input.amount = 99; // completion must use the amount that passed the gate
+    recordTradeExecution(inv, { output: 'ok' });
+    assert.equal(loadTradePlan(first.id).consumedUsd, 2);
+    assert.deepEqual(loadTradePlan(first.id).consumedLineUsd, [2]);
+    if (newer) assert.equal(loadTradePlan(newer.id).consumedUsd, 0);
+    if (change === 'cancelled') assert.equal(loadTradePlan(first.id).status, 'cancelled');
+  }
+});
+
+test('gate: an error keeps the reservation unless the tool proves nothing was submitted', () => {
+  clearPlans();
+  const plan = approveTrades([{ ...SOL_TRADE, amountUsd: 4 }]);
+  // Accepted-but-unacknowledged: an error without notSubmitted may be a live
+  // order, so its line stays spent and a retry cannot place it again.
+  const lost = swapInvocation();
+  assert.equal(checkTradePlanGate(lost), null);
+  recordTradeExecution(lost, { output: 'response lost', isError: true });
+  recordTradeExecution(lost, { output: 'late duplicate' });
+  recordTradeExecution(swapInvocation(), { output: 'ungated' });
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2);
+
+  const rejected = swapInvocation();
+  assert.equal(checkTradePlanGate(rejected), null);
+  assert.equal(loadTradePlan(plan.id).status, 'consumed', 'reserved before the tool runs');
+  recordTradeExecution(rejected, { output: 'definite rejection', isError: true, notSubmitted: true });
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2);
+  assert.equal(loadTradePlan(plan.id).status, 'approved', 'a release reopens a plan its reservation closed');
+  assert.ok(checkTradePlanGate(swapInvocation({ input_mint: 'BONK' }))?.isError);
+});
+
+test('gate: reservation happens at the gate, so a second call cannot reuse an in-flight line', () => {
+  clearPlans();
+  const plan = approveTrades([SOL_TRADE]);
+  const first = swapInvocation();
+  assert.equal(checkTradePlanGate(first), null);
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2);
+  assert.ok(checkTradePlanGate(swapInvocation())?.isError, 'the same line is not available while the first call runs');
+  // Re-checking the same invocation must not stack a second reservation.
+  saveTradePlan({ ...loadTradePlan(plan.id), trades: [{ ...SOL_TRADE, amountUsd: 4 }], totalSpendUsd: 4, status: 'approved' });
+  assert.equal(checkTradePlanGate(first), null);
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2);
+});
+
+test('gate: a denial before execution returns the reservation via cancelInvocation', async () => {
+  const { SessionToolGuard } = await import('../dist/agent/tool-guard.js');
+  clearPlans();
+  const plan = approveTrades([SOL_TRADE]);
+  const guard = new SessionToolGuard(SESSION);
+  const inv = swapInvocation({ amount: 2 });
+  inv.id = 'denied-by-permission';
+  assert.equal(await guard.beforeExecute(inv, { workingDir: TMP_HOME, abortSignal: new AbortController().signal }), null);
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 2);
+  guard.cancelInvocation(inv.id);
+  assert.equal(loadTradePlan(plan.id).consumedUsd, 0);
+  assert.equal(loadTradePlan(plan.id).status, 'approved');
+});
+
+test('gate: legacy plans without per-line accounting cannot regain a consumed line', () => {
+  clearPlans();
+  const plan = approveTrades([SOL_TRADE, { ...SOL_TRADE, asset: 'BONK' }]);
+  const legacy = { ...loadTradePlan(plan.id), consumedUsd: 2 };
+  delete legacy.consumedLineUsd;
+  saveTradePlan(legacy);
+  const result = checkTradePlanGate(swapInvocation());
+  assert.ok(result?.isError);
+  assert.match(result.output, /predates per-line/);
+});
+
+test('gate: deciding with a stale plan object never resets stored consumption', () => {
+  clearPlans();
+  const stale = approveTrades([{ ...SOL_TRADE, amountUsd: 4 }]);
+  const inv = swapInvocation();
+  assert.equal(checkTradePlanGate(inv), null);
+  recordTradeExecution(inv, { output: 'ok' });
+  decideTradePlan(stale, 'cancelled', 'user:test');
+  const stored = loadTradePlan(stale.id);
+  assert.equal(stored.status, 'cancelled');
+  assert.equal(stored.consumedUsd, 2);
+  assert.deepEqual(stored.consumedLineUsd, [2]);
+});
+
+test('gate: the matched line is debited and exhausted independently of other lines', () => {
+  clearPlans();
+  const plan = approveTrades([SOL_TRADE, { ...SOL_TRADE, asset: 'BONK', amountUsd: 3 }]);
+  const inv = swapInvocation({ output_mint: 'BONK', amount: 3 });
+  assert.equal(checkTradePlanGate(inv), null);
+  recordTradeExecution(inv, { output: 'ok' });
+  assert.deepEqual(loadTradePlan(plan.id).consumedLineUsd, [0, 3]);
+  assert.ok(checkTradePlanGate(swapInvocation({ output_mint: 'BONK', amount: 0.000001 }))?.isError);
+  assert.equal(checkTradePlanGate(swapInvocation()), null);
+});
+
+test('gate: limit-order economics cannot be hidden by an unused amount_usd', () => {
+  clearPlans();
+  approveTrades([{ venue: 'polymarket', action: 'buy', asset: 'market-1', amountUsd: 2 }]);
+  assert.ok(checkTradePlanGate(betInvocation({ price: 0.5, size: 6, amount_usd: 0.01 }))?.isError);
+  assert.equal(checkTradePlanGate(betInvocation({ price: 0.5, size: 4, amount_usd: 100 })), null);
+});
+
+test('gate: sell direction and conservative share value stay within the line', () => {
+  clearPlans();
+  approveTrades([{ venue: 'polymarket', action: 'sell', asset: 'market-1', direction: 'yes', amountUsd: 2 }]);
+  assert.ok(checkTradePlanGate(betInvocation({ price: 0.5, size: 2 }))?.isError, 'buy does not match sell');
+  assert.equal(checkTradePlanGate(betInvocation({ action: 'sell', size: 2 })), null);
+  assert.ok(checkTradePlanGate(betInvocation({ action: 'sell', price: 0.01, size: 3 }))?.isError, 'sell limit is a minimum, not an upper bound');
+});
+
+// ─── Ambiguous payment outcomes (system prompt) ────────────────────────────
+
+test('system prompt treats a lost post-send response as unknown and forbids a fresh payment', async () => {
+  const { assembleInstructions } = await import('../dist/agent/context.js');
+  const prompt = assembleInstructions(TMP_HOME).join('\n');
+  const start = prompt.indexOf('## Ambiguous payment outcomes');
+  assert.ok(start > 0, 'the rule ships in the always-on prompt');
+  const rule = prompt.slice(start, prompt.indexOf('\n#', start + 3));
+  assert.match(rule, /502/);
+  assert.match(rule, /UNKNOWN, not failed/);
+  assert.match(rule, /Bash script/, 'covers payments sent outside built-in tools');
+  assert.match(rule, /SAME signed transaction/);
+  assert.match(rule, /every attempt and every settlement/);
 });

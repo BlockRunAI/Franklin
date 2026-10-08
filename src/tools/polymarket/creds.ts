@@ -54,7 +54,17 @@ export interface PolymarketState {
    * withdrawal signed before then can DOUBLE-SEND — withdraw refuses to sign
    * while this is set and unresolved. Cleared on confirm/failure.
    */
-  pendingWithdraw?: { transactionID: string; deadline: number };
+  // franklin-local: persist before either broadcast path, including lost acknowledgements.
+  pendingWithdraw?: {
+    transactionID?: string;
+    deadline?: number;
+    payloadHash?: string;
+    txHash?: string;
+    nonce?: string | number;
+    from?: string;
+    /** EOA path: the signed bytes, so a retry re-broadcasts them instead of signing anew. */
+    serializedTransaction?: string;
+  };
 }
 
 function readJsonFile<T>(file: string): T | null {
@@ -135,6 +145,7 @@ export function loadDepositWalletForSigner(signer: string): string | undefined {
 }
 
 export function saveState(patch: Partial<PolymarketState>): PolymarketState {
+  // franklin-local: TODO: serialize read/modify/write across processes with a lock.
   const next = { ...loadState(), ...patch };
   writeJsonFile(STATE_FILE, next);
   return next;

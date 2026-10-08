@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { McpServerConfig } from './client.js';
 import { logger } from '../logger.js';
+import { sanitizeSubprocessEnv } from '../tools/subprocess-env.js';
 
 const require = createRequire(import.meta.url);
 
@@ -101,6 +102,7 @@ export function ensureCodegraphIndex(workDir: string): void {
   try {
     const child = spawn(process.execPath, [shim, 'init', workDir, '-i'], {
       cwd: workDir,
+      env: sanitizeSubprocessEnv(),
       // Discard output: this is best-effort background indexing. Failures are
       // non-fatal — the agent simply keeps using grep/read until (and if) the
       // index appears. Surfacing a stack trace here would just be noise.

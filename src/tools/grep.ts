@@ -10,6 +10,7 @@ import { BLOCKRUN_DIR } from '../config.js';
 import {
   WALLET_KEY_PATHS, hostCredentialDirPaths, isHostCredentialPath, isWalletKeyPath, secretPathRefusal,
 } from './sensitive-paths.js';
+import { sanitizeSubprocessEnv } from './subprocess-env.js';
 
 interface GrepInput {
   pattern: string;
@@ -153,6 +154,7 @@ function runRipgrep(
 
   try {
     const result = execFileSync('rg', args, {
+      env: sanitizeSubprocessEnv(),
       encoding: 'utf-8',
       maxBuffer: 2 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -238,6 +240,7 @@ function runNativeGrep(
 
   try {
     const result = execFileSync('grep', args, {
+      env: sanitizeSubprocessEnv(),
       encoding: 'utf-8',
       maxBuffer: 2 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],

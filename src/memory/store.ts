@@ -24,6 +24,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { BLOCKRUN_DIR } from '../config.js';
+import { sanitizeSubprocessEnv } from '../tools/subprocess-env.js';
 
 export function memoryEnabled(): boolean {
   return process.env.FRANKLIN_MEMORY !== '0';
@@ -57,6 +58,7 @@ export function repoIdentity(workDir: string): string | null {
   let identity: string | null = null;
   try {
     const url = execFileSync('git', ['-C', workDir, 'remote', 'get-url', 'origin'], {
+      env: sanitizeSubprocessEnv(),
       encoding: 'utf-8',
       timeout: 2000,
       stdio: ['ignore', 'pipe', 'ignore'],

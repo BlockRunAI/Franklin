@@ -86,6 +86,13 @@ export interface CapabilityResult {
    * getting a "Binary file" stub.
    */
   images?: Array<{ mediaType: string; base64: string }>;
+  /**
+   * Set by a money-moving tool only when the call provably never submitted
+   * anything (validation failure, user cancel, definite venue rejection). The
+   * trade-plan gate reserves budget before execution and releases it only on
+   * this signal — an error alone may hide an accepted, unacknowledged order.
+   */
+  notSubmitted?: boolean;
 }
 
 // ─── Execution Scope ───────────────────────────────────────────────────────

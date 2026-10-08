@@ -26,6 +26,7 @@ import {
 import type { Registry } from '../skills/registry.js';
 import { matchSkill } from '../skills/invoke.js';
 import type { ParsedSkill } from '../skills/types.js';
+import { sanitizeSubprocessEnv } from '../tools/subprocess-env.js';
 
 type EventEmitter = (event: StreamEvent) => void;
 
@@ -51,6 +52,7 @@ interface CommandResult {
 
 function gitExec(cmd: string, cwd: string, timeout = 5000, maxBuffer?: number): string {
   return execSync(cmd, {
+    env: sanitizeSubprocessEnv(),
     cwd,
     encoding: 'utf-8',
     timeout,
