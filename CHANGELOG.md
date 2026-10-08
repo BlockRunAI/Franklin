@@ -1,5 +1,41 @@
 # Changelog
 
+## Franklin Agent 3.49.6 — money that may have moved is never sent twice
+
+**Shell commands no longer see the wallet key.** Bash, background tasks,
+hooks, MCP servers, Grep and git subprocesses used to inherit
+`BLOCKRUN_WALLET_KEY`, `BASE_CHAIN_WALLET_KEY`, `SOLANA_WALLET_KEY` and
+`BLOCKRUN_API_KEY` from Franklin's environment, so a script could sign
+payments outside every guard. Those variables are now removed before any
+subprocess starts. **Behavior change:** an MCP server or hook that relied on
+inheriting one of them must now set it in its own `env` config, which is
+still passed through.
+
+**Polymarket withdrawals go only to your own wallet, and are never doubled.**
+`withdraw` now refuses any recipient other than the agent wallet. Before it
+submits, it records the signed transfer. If the response is lost, a retry
+re-broadcasts the same signed transaction instead of signing a new one. A
+retry that finds the earlier withdrawal settled, reverted or expired reports
+that result and stops; it does not start another withdrawal in the same call.
+A withdrawal counts as resolved only once there is a receipt. A nonce that
+has moved on proves nothing about it.
+
+**Trade plans now authorize exactly what they name.** Execution is matched
+against the specific field (mint, token address, or Polymarket token or
+condition id plus outcome), not loosely. Each plan line has its own budget.
+The budget is reserved when the trade is approved, and given back only when
+the order provably never reached the venue. A timeout or a 5xx from the
+exchange keeps the reservation and the session bet cap, and Franklin is told
+to check open orders and positions before trying again. Plans created before
+this version that have already been partly spent must be proposed again.
+
+**Ambiguous payment outcomes are reconciled first.** The system prompt now
+treats a timeout, a 5xx (including "upstream response lost"), a dropped
+connection or a missing receipt as an unknown outcome, not a failure. This
+applies to built-in tools, scripts and MCP tools alike. Franklin must
+reconcile by transaction hash, nonce and balances before any new payment,
+and may only re-broadcast the same signed transaction.
+
 ## Franklin Agent 3.49.5 — the README matches what Franklin is
 
 Documentation only; no code changes.
