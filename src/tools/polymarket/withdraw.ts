@@ -346,8 +346,13 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
       const account = getPolymarketAccount();
       const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
       // franklin-local: hash the locally signed bytes and persist before any broadcast.
-      const nonce = await getPublicClient().getTransactionCount({ address: account.address, blockTag: "pending" });
-      const request = await wallet.prepareTransactionRequest({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account, nonce });
+      // franklin-local: the nonce comes from the WRITE endpoint
+      // (prepareTransactionRequest asks the wallet's own transport for the
+      // pending count), not the fallback public readers: their pending pools
+      // can differ, and a reader nonce could collide with a transaction only
+      // the write node has seen.
+      const request = await wallet.prepareTransactionRequest({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account });
+      const nonce = request.nonce;
       const serializedTransaction = await wallet.signTransaction(request);
       txHash = keccak256(serializedTransaction);
       saveState({ pendingWithdraw: { txHash, nonce, from: account.address, serializedTransaction } });

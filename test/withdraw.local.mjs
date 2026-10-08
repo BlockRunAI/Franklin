@@ -62,12 +62,12 @@ beforeEach(() => {
     calls: [],
     publicClient: {
       readContract: async ({ address }) => { h.calls.push('balance'); return address === PUSD_COLLATERAL ? 10_000_000n : 0n; },
-      getTransactionCount: async args => { h.calls.push('nonce'); assert.equal(args.blockTag, 'pending'); return 7; },
+      getTransactionCount: async () => { h.calls.push('reader-nonce'); return 3; },
       getTransactionReceipt: async () => { h.calls.push('receipt'); throw new Error('receipt unavailable'); },
       waitForTransactionReceipt: async () => ({ status: 'success' }),
     },
     wallet: {
-      prepareTransactionRequest: async request => { h.calls.push('prepare'); assert.equal(request.nonce, 7); return request; },
+      prepareTransactionRequest: async request => { h.calls.push('prepare'); assert.equal(request.nonce, undefined, 'the write transport fills the nonce'); return { ...request, nonce: 7 }; },
       signTransaction: async request => { h.calls.push('sign'); assert.equal(request.nonce, 7); assert.equal(loadState().pendingWithdraw, undefined); return signed; },
       sendRawTransaction: async ({ serializedTransaction }) => {
         h.calls.push('broadcast');
@@ -200,7 +200,8 @@ test('EOA persists hash, nonce and sender before raw broadcast and clears on rec
   process.env.POLYMARKET_SIG_TYPE = '0';
   const result = await withdrawFunds({ amount_usd: 2, confirm: true });
   assert.ok(!result.isError, result.text);
-  assert.deepEqual(h.calls.slice(-4), ['nonce', 'prepare', 'sign', 'broadcast']);
+  assert.deepEqual(h.calls.slice(-3), ['prepare', 'sign', 'broadcast']);
+  assert.ok(!h.calls.includes('reader-nonce'), 'the nonce never comes from the public reader');
   assert.equal(result.structured.transactionHash, txHash);
   assert.equal(loadState().pendingWithdraw, undefined);
 });
@@ -257,7 +258,7 @@ test('EOA guard never infers "dropped" from an advanced nonce plus an unknown ha
 });
 
 test('a retry that resolves the earlier withdrawal ends there and signs nothing new', async () => {
-  const fresh = ['nonce', 'prepare', 'sign', 'broadcast', 'bridge', 'submit', 'batch-sign', 'balance'];
+  const fresh = ['reader-nonce', 'prepare', 'sign', 'broadcast', 'bridge', 'submit', 'batch-sign', 'balance'];
   const cases = [
     ['eoa success', () => { saveState({ pendingWithdraw: { txHash, nonce: 7, from: agent, serializedTransaction: signed } });
       h.publicClient.getTransactionReceipt = async () => ({ status: 'success' }); }, /SETTLED/],
