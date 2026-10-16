@@ -1,5 +1,19 @@
 # Changelog
 
+## Franklin Agent 3.49.8 — router-core 0.2.0: more models can recover a tool turn
+
+**When the usual tool-calling models are unavailable, Auto now has eleven more
+to fall back on.** `@blockrun/router-core` moves from d7bc10c to 0.2.0
+(27125a3). Claude Fable 5.1 / Opus 5.5 / Sonnet 5.5, Gemini 3.8 Flash,
+GPT-5.1, GPT-6 Astra / Luna / Sol, Grok 4.6 / 4.7 and MiMo 2.5 each returned a
+real structured tool call in a live probe and are admitted as fallbacks for
+tool-required turns. They never displace a benchmarked primary, and outside
+Premium the cheapest one is tried first.
+
+The bump also carries the router-core changes since d7bc10c: V3.5 routes only
+what the live catalog lists, the eco free rungs move off retired NVIDIA
+models, and the 2026-10 catalog sync.
+
 ## Franklin Agent 3.49.7 — an unknown payment outcome is held in code, not just in the prompt
 
 **A payment that ended in a timeout or a 5xx can no longer be sent twice by
