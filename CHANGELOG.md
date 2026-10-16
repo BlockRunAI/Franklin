@@ -1,5 +1,54 @@
 # Changelog
 
+## Franklin Agent 3.49.7 — an unknown payment outcome is held in code, not just in the prompt
+
+**A payment that ended in a timeout or a 5xx can no longer be sent twice by
+rewriting the script.** An external audit of 3.49.6 (37 sessions) found the
+"Ambiguous payment outcomes" rule was in every system prompt but the model
+did not apply it. It re-sent after a timeout or 502 from a rewritten script
+(three double payments), or recorded the invoice as unpaid without checking.
+The exact-command dedup caught one resend in four, because it compares command
+text. Franklin now enforces the rule for Bash payments:
+
+- A Bash run that sends a transaction or pays a request is recognised by the
+  code it actually executes, not by its wording: inline programs
+  (`node -e`, `python3 -c`, `bash -c`, `eval`), heredocs fed to an
+  interpreter, scripts on stdin (`node < pay.mjs`, `cat pay.mjs | node`),
+  and every local script file it runs, resolved through quoting, `cd`,
+  `env -C` and wrappers such as `timeout`, `nohup`, `setsid`, `npx` or
+  `uv run`. Covered: viem, ethers, web3.py, Solana web3, `cast send`,
+  `solana transfer`, `spl-token transfer` (global options included) and
+  x402 payment headers. A script rewritten and run in the same command is
+  judged by its new content. Searching for or printing payment code
+  (`grep 'sendTransaction('`, `printf … > draft.mjs`) is not a send.
+- If that run ends in a timeout, a 5xx, a dropped connection, a missing
+  receipt, an error after a tx hash was printed, or a thrown tool, or if it
+  keeps running after the call returns (`run_in_background`, `&`, `nohup`,
+  `setsid`), its result is marked **OUTCOME UNKNOWN** before the model
+  decides anything.
+- While an outcome is unknown, any new send that could pay the same
+  recipient is **held** and sent to the user as a `payment-hold` approval.
+  Headless runs, and anything the user does not explicitly approve, stay
+  held. Payments to other recipients are not affected.
+- Holds are saved per session under `~/.blockrun/payment-holds/`, so
+  `franklin --resume` keeps them.
+- Until a read-only lookup has checked an attempt (its receipt, the
+  recipient's or sender's balance or nonce, or a status endpoint), recording
+  it as failed or unpaid is refused: through a tool, a file write, an Edit,
+  a script that persists it, redirected program output, or an HTTP write,
+  and also when batched with a send or a lookup. A lookup counts only for
+  the attempts it names, only once it has finished, and only when it runs;
+  a lookup merely printed into a file does not. Recording the outcome as
+  unknown is always allowed.
+- Every unknown outcome and every hold decision is written to
+  `~/.blockrun/approvals.jsonl`.
+
+**Trade-plan approval no longer reads as execution.** The approval message
+used to say "the plan approval was the confirmation", and one audited session
+recorded a payment as completed straight after an approval, with nothing
+sent. It now states that approval executes nothing, and that money has moved
+only when an execution call succeeds.
+
 ## Franklin Agent 3.49.6 — money that may have moved is never sent twice
 
 **Shell commands no longer see the wallet key.** Bash, background tasks,
