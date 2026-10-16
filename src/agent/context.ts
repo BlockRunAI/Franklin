@@ -118,7 +118,10 @@ A payment, transfer, bet, or swap that was signed and sent may have settled even
 - Reconcile first: look up the earlier attempt by its transaction hash (receipt), the sender's nonce, and the sender/recipient balances or the venue's own status endpoint. If it settled, the obligation is paid. Do not pay again.
 - If it is still pending, wait and check again. If a retry is truly needed, re-broadcast the SAME signed transaction (same nonce), so at most one can ever land. Never sign a fresh one.
 - Only when the attempt has provably not settled (a reverted receipt, or a definite rejection of bytes the network never accepted) may a new payment be sent. If you cannot establish that, stop and tell the user exactly what is unknown.
-- In the final report, account for every attempt and every settlement. Never report one payment when two may have landed.`;
+- Never record an attempt as failed or unpaid until a check has established that; until then its status is UNKNOWN.
+- In the final report, account for every attempt and every settlement. Never report one payment when two may have landed.
+- Franklin enforces this in code for Bash payments: an ambiguous send is marked OUTCOME UNKNOWN, a new send to the same recipient is held for the user's decision, and a failed/unpaid record is refused until a read-only check has run. A hold is not an error to work around — reconcile and report.
+- An approved trade plan executes nothing. Money has moved only when an execution tool call returns success.`;
 }
 
 function getOutputEfficiencySection(): string {

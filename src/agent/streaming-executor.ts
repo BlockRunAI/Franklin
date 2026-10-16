@@ -313,7 +313,7 @@ export class StreamingExecutor {
 
       const execStart = Date.now();
       let result = await handler.execute(invocation.input, progressScope);
-      this.guard?.afterExecute(invocation, result);
+      if (this.guard) result = this.guard.afterExecute(invocation, result);
 
       // Notify-only hooks — never block, never delay the result.
       if (this.hooks?.hasHooks('PostToolUse')) {
@@ -373,8 +373,14 @@ export class StreamingExecutor {
 
       return result;
     } catch (err) {
-      this.guard?.cancelInvocation(invocation.id);
       const errMsg = (err as Error).message;
+      // A payment send that threw mid-run may already have broadcast: the
+      // guard records it as an unknown outcome before the cancel below.
+      const thrown = this.guard?.executionThrew(invocation, {
+        output: `Error executing ${invocation.name}: ${errMsg}`,
+        isError: true,
+      });
+      this.guard?.cancelInvocation(invocation.id);
       recordFailure({
         timestamp: Date.now(),
         model: '', // not available at tool level
@@ -388,7 +394,7 @@ export class StreamingExecutor {
       // them alongside everything else.
       const preview = this.inputPreview(invocation) || '';
       logger.warn(`[franklin] Tool error: ${invocation.name} threw "${errMsg.slice(0, 120)}"${preview ? ` — ${preview.slice(0, 80)}` : ''}`);
-      return {
+      return thrown ?? {
         output: `Error executing ${invocation.name}: ${errMsg}`,
         isError: true,
       };

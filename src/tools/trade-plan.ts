@@ -137,8 +137,11 @@ export function createTradePlanCapability(): CapabilityHandler {
         return {
           output:
             `Trade plan ${plan.id} APPROVED — $${plan.totalSpendUsd.toFixed(2)} authorized until ` +
-            `${new Date(plan.expiresAt).toLocaleTimeString()}. Execute ONLY the planned trades; each ` +
-            'execution draws down the budget. Per-swap confirmation is skipped — the plan approval was the confirmation.',
+            `${new Date(plan.expiresAt).toLocaleTimeString()}. Approval executes NOTHING: no trade has been ` +
+            'placed and no money has moved yet. Execute ONLY the planned trades, each with its own tool call; each ' +
+            'execution draws down the budget, and only a successful execution result means money moved. Never ' +
+            'report or record a trade or payment as done on the strength of this approval. Per-swap confirmation ' +
+            'is skipped because this approval already covers it.',
         };
       }
       if (choice === 'request changes') {

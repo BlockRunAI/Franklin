@@ -2,6 +2,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CapabilityInvocation, CapabilityResult, ExecutionScope } from './types.js';
 import { checkTradePlanGate, recordTradeExecution, releaseTradeReservation } from '../trading/trade-plan.js';
+import { appendApprovalRecord } from '../audit/approvals.js';
+import { getAddress } from '../wallet/manager.js';
+import { activeSolanaAddress } from '../wallet/solana-migration.js';
+import {
+  ambiguousOutcomeReason,
+  analyzeBash,
+  attemptsOverlap,
+  commandPreview,
+  describeAttempt,
+  extractRecipients,
+  extractTxHashes,
+  isPaymentSend,
+  isReconciliation,
+  loadPaymentAttempts,
+  savePaymentAttempts,
+  codeRecordsNegativeOutcome,
+  recordsNegativeOutcome,
+  unknownOutcomeNotice,
+  type PaymentAttempt,
+} from './payment-hold.js';
 
 const MAX_WEBSEARCHES_PER_TURN = 8;
 const MAX_SIMILAR_SEARCHES_PER_TURN = 4;
@@ -206,6 +226,85 @@ export function isToolClassFailure(name: string, result: CapabilityResult): bool
   return true;
 }
 
+// Tools whose input can never record a payment outcome — reads, searches,
+// and questions to the user (asking is exactly what an unknown outcome needs).
+const OUTCOME_NEUTRAL_TOOLS = new Set([
+  'Read', 'Grep', 'Glob', 'WebSearch', 'SearchX', 'WebFetch', 'AskUser', 'ActivateTool',
+]);
+
+/**
+ * Every string in a tool input, checked raw as well as serialized: JSON
+ * escaping turns `{"status":"failed"}` inside a Write's content into
+ * `{\"status\":\"failed\"}`, which a pattern on the serialized form misses.
+ */
+function inputRecordsNegativeOutcome(name: string, input: Record<string, unknown>): boolean {
+  // Editing tools: only the text they introduce is a record. Removing an
+  // "unpaid" (Edit's old_string) is a correction, not a claim.
+  if (name === 'Edit') return recordsNegativeOutcome(String(input.new_string ?? ''));
+  if (name === 'Write') return recordsNegativeOutcome(String(input.content ?? ''));
+  const strings: string[] = [];
+  const walk = (v: unknown, depth: number) => {
+    if (depth > 6) return;
+    if (typeof v === 'string') strings.push(v);
+    else if (Array.isArray(v)) v.forEach(x => walk(x, depth + 1));
+    else if (v && typeof v === 'object') Object.values(v).forEach(x => walk(x, depth + 1));
+  };
+  walk(input, 0);
+  return recordsNegativeOutcome(JSON.stringify(input ?? {})) || strings.some(recordsNegativeOutcome);
+}
+
+/**
+ * Whether a read-only lookup is about this attempt: it names one of the
+ * attempt's tx hashes, recipients or paying wallets (a sender nonce or
+ * balance check). An attempt with none of those cannot be told apart from
+ * any other, so any lookup counts for it.
+ */
+function lookupAddressesAttempt(lookup: string, attempt: PaymentAttempt): boolean {
+  const keys = [...attempt.txHashes, ...attempt.recipients, ...attempt.senders].map(k => k.toLowerCase());
+  if (keys.length === 0) return true;
+  const text = lookup.toLowerCase();
+  return keys.some(k => text.includes(k));
+}
+
+function negativeOutcomeBlock(unresolved: PaymentAttempt[]): CapabilityResult {
+  const pending = unresolved.filter(a => !a.reconciled);
+  return {
+    output:
+      'Blocked by Franklin\'s payment guard: this call records a payment as failed/unpaid, but the outcome of ' +
+      `${pending.length === 1 ? 'this attempt is' : 'these attempts are'} UNKNOWN and nothing has been checked yet:\n` +
+      pending.map(a => `- ${describeAttempt(a)}`).join('\n') +
+      '\n\nA timeout or 5xx after a send is not a failure — the payment may have settled. Either run a READ-ONLY ' +
+      'reconciliation first (receipt for the tx hash, the sender\'s nonce, sender/recipient balances, or the ' +
+      'venue\'s status endpoint), or record the outcome as UNKNOWN and tell the user exactly what is unknown.',
+    isError: true,
+  };
+}
+
+function ownWalletAddresses(): string[] {
+  const out: string[] = [];
+  try { out.push(getAddress()); } catch { /* no EVM wallet */ }
+  try {
+    const sol = activeSolanaAddress();
+    if (sol) out.push(sol);
+  } catch { /* no Solana wallet */ }
+  return out;
+}
+
+function paymentHoldResult(blocking: PaymentAttempt[]): CapabilityResult {
+  return {
+    output:
+      'Payment held by Franklin\'s payment guard — NOT sent. An earlier payment attempt to the same recipient ' +
+      'has an UNKNOWN outcome and may already have settled:\n' +
+      blocking.map(a => `- ${describeAttempt(a)}`).join('\n') +
+      '\n\nSending again — with a rewritten script, a new nonce or a new signature — could pay the same obligation ' +
+      'twice, so the user did not approve this send (or no one was available to approve it). Do not try another ' +
+      'way to send it. Reconcile with READ-ONLY checks (receipt for the tx hash, sender nonce, sender/recipient ' +
+      'balances, or the venue\'s status endpoint), then report every attempt to the user and say exactly what ' +
+      'is still unknown. Record the outcome as UNKNOWN unless a check established it.',
+    isError: true,
+  };
+}
+
 export class SessionToolGuard {
   /**
    * Session identity for the trade-plan gate. Explicit (not module-global)
@@ -228,9 +327,28 @@ export class SessionToolGuard {
   private recentGreps = new Map<string, { preview: string; turn: number }>();
   private recentGlobs = new Map<string, { preview: string; turn: number }>();
   private recentBash = new Map<string, { preview: string; turn: number; isError: boolean }>();
+  // Payment hold (see payment-hold.ts): sends whose outcome is unknown, the
+  // sends and reconciliation lookups currently executing, and sends the user
+  // explicitly allowed past a hold (those skip the exact-command dedup too).
+  private paymentAttempts: PaymentAttempt[] = [];
+  private nextPaymentAttemptId = 1;
+  private pendingPaymentSends = new Map<string, { command: string; recipients: string[]; senders: string[]; background: boolean }>();
+  // Read-only lookups in flight: the code they run, so only the attempts it
+  // names (tx hash or recipient) count as checked.
+  private pendingReconciles = new Map<string, string>();
+  private userAllowedPaymentSends = new Set<string>();
 
   constructor(sessionId?: string) {
     this.sessionId = sessionId;
+    if (sessionId) {
+      // A resumed session keeps its unknown payment outcomes and their holds.
+      this.paymentAttempts = loadPaymentAttempts(sessionId);
+      this.nextPaymentAttemptId = this.paymentAttempts.reduce((m, a) => Math.max(m, a.id), 0) + 1;
+    }
+  }
+
+  private persistPaymentAttempts(): void {
+    if (this.sessionId) savePaymentAttempts(this.sessionId, this.paymentAttempts);
   }
 
   startTurn(): void {
@@ -280,6 +398,11 @@ export class SessionToolGuard {
     // remaining budget — in every permission mode, trust included.
     const tradeGate = checkTradePlanGate(invocation, this.sessionId);
     if (tradeGate) return tradeGate;
+
+    // Payment hold: a send whose outcome is unknown blocks any new send that
+    // could pay the same recipient, whatever the script text looks like.
+    const paymentGate = await this.checkPaymentHold(invocation, scope);
+    if (paymentGate) return paymentGate;
 
     switch (invocation.name) {
       case 'WebSearch':
@@ -362,6 +485,9 @@ export class SessionToolGuard {
 
     // Only dedup deterministic read-only commands. Skip anything writing/network/long-running.
     if (WRITE_KEYWORDS.test(cmd)) return null;
+    // The user explicitly allowed this send past a payment hold — honor that
+    // even when it repeats a command that failed earlier.
+    if (this.userAllowedPaymentSends.delete(invocation.id)) return null;
     // Normalize whitespace so "ls   -la" and "ls -la" share a cache entry.
     const key = cmd.replace(/\s+/g, ' ');
     const cached = this.recentBash.get(key);
@@ -406,12 +532,19 @@ export class SessionToolGuard {
     return null;
   }
 
-  afterExecute(invocation: CapabilityInvocation, result: CapabilityResult): void {
+  /**
+   * Post-execution bookkeeping. Returns the result the model should see —
+   * the same object unless a payment attempt ended ambiguously, in which case
+   * an OUTCOME UNKNOWN notice is appended before the model decides anything.
+   */
+  afterExecute(invocation: CapabilityInvocation, result: CapabilityResult): CapabilityResult {
     // Draw down the approved trade plan's budget on successful executions
     // (no-op for non-trade tools).
     try {
       recordTradeExecution(invocation, result, this.sessionId);
     } catch { /* budget accounting must never break tool results */ }
+
+    result = this.afterPayment(invocation, result);
 
     // Per-tool circuit breaker: count consecutive tool-class failures, reset on
     // any success. Agent-input errors (e.g. WebFetch 404 on a guessed URL) are
@@ -448,6 +581,188 @@ export class SessionToolGuard {
       default:
         break;
     }
+    return result;
+  }
+
+  /** Payment attempts this session whose outcome is still unknown. */
+  unresolvedPaymentAttempts(): PaymentAttempt[] {
+    return this.paymentAttempts.filter(a => !a.overriddenByUser);
+  }
+
+  private async checkPaymentHold(
+    invocation: CapabilityInvocation,
+    scope: ExecutionScope,
+  ): Promise<CapabilityResult | null> {
+    const unresolved = this.unresolvedPaymentAttempts();
+
+    if (invocation.name === 'Bash') {
+      const cmd = String(invocation.input.command ?? '').trim();
+      if (!cmd) return null;
+      const { code, data, detached } = analyzeBash(cmd, scope.workingDir);
+      const hasUncheckedAttempt = unresolved.some(a => !a.reconciled);
+
+      // Recording failed/unpaid from the shell — checked before anything
+      // else, so batching it with a send or a lookup changes nothing: text it
+      // writes to a file or passes to a CLI (`echo '{"status":"unpaid"}' >
+      // ledger.json`, `ledger add --status unpaid`), or code it runs that
+      // persists a negative outcome (`node record.mjs`). A send's own code may
+      // log "failed" for its own errors, so for sends only the shell-level
+      // writes count. A lookup that merely PRINTS "unpaid" writes nothing.
+      if (
+        hasUncheckedAttempt &&
+        (recordsNegativeOutcome(data) || (!isPaymentSend(code) && codeRecordsNegativeOutcome(code)))
+      ) {
+        return negativeOutcomeBlock(unresolved);
+      }
+
+      if (isPaymentSend(code)) {
+        const own = ownWalletAddresses();
+        const recipients = extractRecipients(code, own);
+        // The wallet named in the script, or — when it loads its key some
+        // other way — every wallet Franklin holds.
+        const named = own.filter(a => code.toLowerCase().includes(a.toLowerCase()));
+        const senders = (named.length ? named : own).map(a => a.toLowerCase());
+        const blocking = unresolved.filter(a => attemptsOverlap(a.recipients, recipients));
+        if (blocking.length > 0) {
+          const allowed = await this.askToOverrideHold(blocking, cmd, scope);
+          if (!allowed) return paymentHoldResult(blocking);
+          for (const a of blocking) a.overriddenByUser = true;
+          this.persistPaymentAttempts();
+          this.userAllowedPaymentSends.add(invocation.id);
+        }
+        this.pendingPaymentSends.set(invocation.id, {
+          command: commandPreview(cmd),
+          recipients,
+          senders,
+          // `node pay.mjs &` or `nohup …` returns before the payment does,
+          // exactly like the tool's own run_in_background.
+          background: Boolean(invocation.input.run_in_background) || detached,
+        });
+        return null;
+      }
+
+      // Classified on executed code only: printing a lookup into a file is
+      // not a lookup.
+      if (isReconciliation(code)) {
+        // A background lookup returns before it has looked anything up, so
+        // it can never count as a check.
+        if (unresolved.length > 0 && !invocation.input.run_in_background && !detached) {
+          this.pendingReconciles.set(invocation.id, code);
+        }
+      }
+      // Bash was judged above on what it writes and runs, not on its raw text.
+      return null;
+    }
+
+    // Recording an unknown outcome as failed/unpaid before anything was
+    // checked. Read-only tools and questions to the user are never outcome
+    // records, so they pass.
+    if (
+      unresolved.some(a => !a.reconciled) &&
+      !OUTCOME_NEUTRAL_TOOLS.has(invocation.name) &&
+      inputRecordsNegativeOutcome(invocation.name, invocation.input)
+    ) {
+      return negativeOutcomeBlock(unresolved);
+    }
+    return null;
+  }
+
+  private async askToOverrideHold(
+    blocking: PaymentAttempt[],
+    command: string,
+    scope: ExecutionScope,
+  ): Promise<boolean> {
+    const sessionId = scope.sessionId ?? this.sessionId ?? '';
+    const subject = `payment attempt${blocking.length > 1 ? 's' : ''} ${blocking.map(a => `#${a.id}`).join(', ')}`;
+    if (!scope.onApproval) {
+      appendApprovalRecord({ ts: Date.now(), sessionId, kind: 'payment-hold', subject, decision: 'deny', by: 'policy', reason: 'no approval surface' });
+      return false;
+    }
+    let choice = 'deny';
+    let by = 'user';
+    try {
+      const decision = await scope.onApproval({
+        sessionId,
+        kind: 'payment-hold',
+        title: 'New payment while an earlier one is unresolved',
+        description:
+          'An earlier payment attempt in this session ended without a clear result, so it may already have ' +
+          'settled. Sending again could pay the same obligation twice.\n\n' +
+          blocking.map(a => `Earlier: ${describeAttempt(a)}`).join('\n') +
+          `\n\nNew send: ${commandPreview(command)}\n\n` +
+          'Approve ONLY if you have confirmed the earlier attempt did not settle (e.g. a reverted receipt, or ' +
+          'the recipient balance and sender nonce are unchanged). Deny keeps the hold.',
+        options: ['approve', 'deny'],
+        payload: { attempts: blocking, command },
+      });
+      choice = decision.choice.toLowerCase();
+      if (decision.message === 'auto') by = 'flag';
+    } catch {
+      choice = 'deny';
+      by = 'policy';
+    }
+    const approved = choice === 'approve';
+    appendApprovalRecord({
+      ts: Date.now(),
+      sessionId,
+      kind: 'payment-hold',
+      subject,
+      decision: approved ? 'approve' : 'deny',
+      by,
+    });
+    return approved;
+  }
+
+  private afterPayment(
+    invocation: CapabilityInvocation,
+    result: CapabilityResult,
+    forcedReason?: string,
+  ): CapabilityResult {
+    const output = String(result.output ?? '');
+
+    const lookup = this.pendingReconciles.get(invocation.id);
+    if (lookup !== undefined) {
+      this.pendingReconciles.delete(invocation.id);
+      // A lookup that itself failed or timed out established nothing.
+      if (!result.isError && !ambiguousOutcomeReason(output, result.isError, false)) {
+        for (const a of this.unresolvedPaymentAttempts()) {
+          if (lookupAddressesAttempt(lookup, a)) a.reconciled = true;
+        }
+        this.persistPaymentAttempts();
+      }
+    }
+
+    const pending = this.pendingPaymentSends.get(invocation.id);
+    if (!pending) return result;
+    this.pendingPaymentSends.delete(invocation.id);
+
+    const reason = forcedReason ?? ambiguousOutcomeReason(output, result.isError, pending.background);
+    if (!reason) return result;
+
+    const attempt: PaymentAttempt = {
+      id: this.nextPaymentAttemptId++,
+      turn: this.turn,
+      at: Date.now(),
+      command: pending.command,
+      recipients: pending.recipients,
+      senders: pending.senders,
+      reason,
+      txHashes: extractTxHashes(output),
+      reconciled: false,
+      overriddenByUser: false,
+    };
+    this.paymentAttempts.push(attempt);
+    this.persistPaymentAttempts();
+    appendApprovalRecord({
+      ts: attempt.at,
+      sessionId: this.sessionId ?? '',
+      kind: 'payment-hold',
+      subject: `payment attempt #${attempt.id}`,
+      decision: 'deny',
+      by: 'policy',
+      reason: `outcome unknown: ${reason}`,
+    });
+    return { ...result, output: output + unknownOutcomeNotice(attempt) };
   }
 
   private afterBash(invocation: CapabilityInvocation, result: CapabilityResult): void {
@@ -483,6 +798,19 @@ export class SessionToolGuard {
     this.recentGlobs.set(key, { preview, turn: this.turn });
   }
 
+  /**
+   * The tool threw instead of returning. A payment send that was already
+   * running may have broadcast before the throw, so it is recorded as an
+   * unknown outcome rather than silently forgotten. Returns the error result
+   * the model should see.
+   */
+  executionThrew(invocation: CapabilityInvocation, result: CapabilityResult): CapabilityResult {
+    const pending = this.pendingPaymentSends.get(invocation.id);
+    if (!pending) return result;
+    // A thrown send never produced a conclusive answer.
+    return this.afterPayment(invocation, result, 'the tool threw before it could report a result');
+  }
+
   cancelInvocation(invocationId: string): void {
     // Denied before execution (permission refused, PreSpend veto): nothing
     // was submitted, so a trade-plan reservation made by the gate goes back.
@@ -492,6 +820,9 @@ export class SessionToolGuard {
     this.pendingSearches.delete(invocationId);
     this.pendingReads.delete(invocationId);
     this.pendingFetches.delete(invocationId);
+    this.pendingPaymentSends.delete(invocationId);
+    this.pendingReconciles.delete(invocationId);
+    this.userAllowedPaymentSends.delete(invocationId);
   }
 
   private beforeWebSearch(invocation: CapabilityInvocation): CapabilityResult | null {

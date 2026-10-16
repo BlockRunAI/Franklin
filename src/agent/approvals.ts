@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 export interface ApprovalRequest {
   requestId: string;
   sessionId: string;
-  kind: 'trade-plan' | 'tool-permission' | 'ask-user';
+  kind: 'trade-plan' | 'tool-permission' | 'ask-user' | 'payment-hold';
   /** Short human-readable headline. */
   title: string;
   /** Full body — markdown-ish text rendered by the answering surface. */

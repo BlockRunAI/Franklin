@@ -1,6 +1,6 @@
 /**
  * Unified approval/decision audit log — one book for every gate decision:
- * hook denies, permission prompts, and trade-plan verdicts. Append-only
+ * hook denies, permission prompts, trade-plan verdicts, and payment holds. Append-only
  * JSONL at ~/.blockrun/approvals.jsonl so `franklin panel` and post-hoc
  * forensics read a single stream instead of three.
  */
@@ -13,7 +13,7 @@ export interface ApprovalRecord {
   ts: number;
   sessionId: string;
   /** What kind of gate produced this record. */
-  kind: 'hook' | 'permission' | 'trade-plan';
+  kind: 'hook' | 'permission' | 'trade-plan' | 'payment-hold';
   /** What was being decided — tool name, plan id, hook source. */
   subject: string;
   decision: 'allow' | 'deny' | 'approve' | 'reject' | 'expire' | 'cancel';
