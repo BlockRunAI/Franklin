@@ -21,6 +21,7 @@ Issues that were correct, specific, and changed the code.
 
 | Reporter | Issue | Outcome |
 |----------|-------|---------|
+| EmberTail | Payment-safety audits of 3.49.6 and 3.49.7 on a simulated ledger: double payments after a lost response, unpaid records written without a check, the money-movement gaps in #205, a quoting gap that hid sends from the payment guard, and an override that retired an attempt from every protection | Fixed in 3.49.6 (#205), 3.49.7 (payment hold in code) and 3.49.9 |
 | [@aurumflux20](https://github.com/aurumflux20) | #128 — wallet reservation released on an aborted x402 payment that may already have settled | Fixed in #138: ambiguous settlements now hold the reservation instead of releasing it |
 | [@GentechLabs](https://github.com/GentechLabs) | #129 — parallel PR for the same bug; the `paidRequestDispatched` tracking in `postWithPayment` follows their approach | Superseded by #138, which adds the bounded grace window |
 | [@KillerQueen-Z](https://github.com/KillerQueen-Z) | #119 — legacy Solana wallet migration must not silently change the active address; plus #5, #10, #12, #51, #52, #65 on gateway tool-call conversion, vision payloads, and image-to-image | #119 tracked as a wallet enhancement; the rest shipped |

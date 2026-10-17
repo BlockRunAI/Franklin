@@ -1,5 +1,50 @@
 # Changelog
 
+## Franklin Agent 3.49.9 — a stray apostrophe or one approval can no longer switch the payment guard off
+
+Both fixes come from EmberTail's rerun of their payment-safety audit against
+3.49.7 (45 sessions on a simulated ledger). EmberTail also ran the 3.49.6
+audit behind 3.49.7, which earlier release notes called only "an external
+audit", and reported the money-movement gaps fixed in #205.
+
+**A payment script is recognised however its quotes fall.** An apostrophe in
+an ordinary comment inside `node -e '…'` (`// Get the wallet's USDC
+balance`) ended the analyser's view of the program before its
+`writeContract`, so the send was not seen and its 502 was never held.
+Testing against real bash found more shapes of the same kind, each now
+handled:
+
+- A command whose quoting cannot be resolved (a quote that never closes, or
+  one that collides with the program around it) fails closed. It counts as a
+  send, and as a write if it persists an unpaid record. It never counts as a
+  reconciliation lookup.
+- `#` shell comments, `$'…'` quoting (including `\x`, octal and `\u`
+  escapes) and `$"…"` are read the way bash reads them.
+- Commands inside `"$(…)"` and `` "`…`" `` are inspected.
+- `<<` only starts a heredoc where bash would act on it: not in quotes, not
+  in a comment, not as a shift inside `$((…))` or an inline program. A pipe
+  after a heredoc's comment is not a pipe.
+- If a run's parse is unreliable, it never counts as a check, so it cannot
+  unlock an unpaid record.
+
+The test suite now runs these shapes through `/bin/bash -c` with stub
+binaries and requires the analyser to agree with what bash actually ran.
+
+**Approving one resend no longer retires the earlier attempt.** The approval
+covered the attempt itself, not the send it was granted for. One approval
+lifted the hold, lifted the refusal to record the invoice unpaid, and stopped
+any lookup from checking the attempt, even when the approved send was then
+denied at the permission prompt and nothing was sent. The flag was saved,
+so it survived `--resume`. Now:
+
+- The hold lifts only once the approved send has actually run and succeeded
+  or ended ambiguously. A denied prompt, a PreSpend veto, a later guard
+  check, or a definitive failure before sending keeps it.
+- The earlier attempt stays UNKNOWN. Recording it as failed or unpaid still
+  needs a lookup, and a lookup can still check it. The approval prompt now
+  says so.
+- Override flags in holds files saved by 3.49.7 are discarded on load.
+
 ## Franklin Agent 3.49.8 — router-core 0.2.0: more models can recover a tool turn
 
 **When the usual tool-calling models are unavailable, Auto now has eleven more
