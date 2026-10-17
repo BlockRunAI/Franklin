@@ -250,6 +250,10 @@ export class StreamingExecutor {
       ? await this.guard.beforeExecute(invocation, this.scope)
       : null;
     if (guardResult) {
+      // Answered by the guard instead of running: a later check can block
+      // after an earlier one registered state (a payment-hold approval, a
+      // trade reservation) for this invocation, so release it.
+      this.guard?.cancelInvocation(invocation.id);
       return guardResult;
     }
 

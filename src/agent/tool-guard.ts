@@ -266,8 +266,7 @@ function lookupAddressesAttempt(lookup: string, attempt: PaymentAttempt): boolea
   return keys.some(k => text.includes(k));
 }
 
-function negativeOutcomeBlock(unresolved: PaymentAttempt[]): CapabilityResult {
-  const pending = unresolved.filter(a => !a.reconciled);
+function negativeOutcomeBlock(pending: PaymentAttempt[]): CapabilityResult {
   return {
     output:
       'Blocked by Franklin\'s payment guard: this call records a payment as failed/unpaid, but the outcome of ' +
@@ -332,7 +331,14 @@ export class SessionToolGuard {
   // explicitly allowed past a hold (those skip the exact-command dedup too).
   private paymentAttempts: PaymentAttempt[] = [];
   private nextPaymentAttemptId = 1;
-  private pendingPaymentSends = new Map<string, { command: string; recipients: string[]; senders: string[]; background: boolean }>();
+  private pendingPaymentSends = new Map<string, {
+    command: string;
+    recipients: string[];
+    senders: string[];
+    background: boolean;
+    /** Attempts the user approved this send past; lifted only once it runs. */
+    overrides: number[];
+  }>();
   // Read-only lookups in flight: the code they run, so only the attempts it
   // names (tx hash or recipient) count as checked.
   private pendingReconciles = new Map<string, string>();
@@ -584,8 +590,21 @@ export class SessionToolGuard {
     return result;
   }
 
-  /** Payment attempts this session whose outcome is still unknown. */
+  /**
+   * Payment attempts this session whose outcome is still unknown: no lookup
+   * has checked them. A user override does not resolve an attempt — it
+   * answers "may I send again", not "did the first one settle".
+   */
   unresolvedPaymentAttempts(): PaymentAttempt[] {
+    return this.paymentAttempts.filter(a => !a.reconciled);
+  }
+
+  /**
+   * Attempts that hold a new send to the same recipient. A lookup does not
+   * lift a hold (a pending receipt is not a failure); only a send the user
+   * approved past it, once that send has actually run.
+   */
+  private holdingPaymentAttempts(): PaymentAttempt[] {
     return this.paymentAttempts.filter(a => !a.overriddenByUser);
   }
 
@@ -598,8 +617,12 @@ export class SessionToolGuard {
     if (invocation.name === 'Bash') {
       const cmd = String(invocation.input.command ?? '').trim();
       if (!cmd) return null;
-      const { code, data, detached } = analyzeBash(cmd, scope.workingDir);
-      const hasUncheckedAttempt = unresolved.some(a => !a.reconciled);
+      const { code: executed, opaque, data, detached } = analyzeBash(cmd, scope.workingDir);
+      // What may run: sends and persisted records are judged on this, so
+      // unresolved quoting fails closed. A run whose parse is unreliable
+      // (opaque) never counts as a check, whatever `executed` holds.
+      const code = opaque ? `${executed}\n${opaque}` : executed;
+      const hasUncheckedAttempt = unresolved.length > 0;
 
       // Recording failed/unpaid from the shell — checked before anything
       // else, so batching it with a send or a lookup changes nothing: text it
@@ -622,18 +645,20 @@ export class SessionToolGuard {
         // other way — every wallet Franklin holds.
         const named = own.filter(a => code.toLowerCase().includes(a.toLowerCase()));
         const senders = (named.length ? named : own).map(a => a.toLowerCase());
-        const blocking = unresolved.filter(a => attemptsOverlap(a.recipients, recipients));
+        const blocking = this.holdingPaymentAttempts().filter(a => attemptsOverlap(a.recipients, recipients));
         if (blocking.length > 0) {
           const allowed = await this.askToOverrideHold(blocking, cmd, scope);
           if (!allowed) return paymentHoldResult(blocking);
-          for (const a of blocking) a.overriddenByUser = true;
-          this.persistPaymentAttempts();
+          // The hold is lifted in afterPayment, once this send has run. A
+          // permission prompt or PreSpend hook can still stop it, and then
+          // nothing was sent and the hold must stay.
           this.userAllowedPaymentSends.add(invocation.id);
         }
         this.pendingPaymentSends.set(invocation.id, {
           command: commandPreview(cmd),
           recipients,
           senders,
+          overrides: blocking.map(a => a.id),
           // `node pay.mjs &` or `nohup …` returns before the payment does,
           // exactly like the tool's own run_in_background.
           background: Boolean(invocation.input.run_in_background) || detached,
@@ -643,11 +668,11 @@ export class SessionToolGuard {
 
       // Classified on executed code only: printing a lookup into a file is
       // not a lookup.
-      if (isReconciliation(code)) {
+      if (!opaque && isReconciliation(executed)) {
         // A background lookup returns before it has looked anything up, so
         // it can never count as a check.
         if (unresolved.length > 0 && !invocation.input.run_in_background && !detached) {
-          this.pendingReconciles.set(invocation.id, code);
+          this.pendingReconciles.set(invocation.id, executed);
         }
       }
       // Bash was judged above on what it writes and runs, not on its raw text.
@@ -658,7 +683,7 @@ export class SessionToolGuard {
     // checked. Read-only tools and questions to the user are never outcome
     // records, so they pass.
     if (
-      unresolved.some(a => !a.reconciled) &&
+      unresolved.length > 0 &&
       !OUTCOME_NEUTRAL_TOOLS.has(invocation.name) &&
       inputRecordsNegativeOutcome(invocation.name, invocation.input)
     ) {
@@ -691,7 +716,9 @@ export class SessionToolGuard {
           blocking.map(a => `Earlier: ${describeAttempt(a)}`).join('\n') +
           `\n\nNew send: ${commandPreview(command)}\n\n` +
           'Approve ONLY if you have confirmed the earlier attempt did not settle (e.g. a reverted receipt, or ' +
-          'the recipient balance and sender nonce are unchanged). Deny keeps the hold.',
+          'the recipient balance and sender nonce are unchanged). Deny keeps the hold.\n\n' +
+          'Approving allows this one send. It does not mark the earlier attempt as failed: it stays UNKNOWN, ' +
+          'and recording it as failed or unpaid still needs a read-only lookup.',
         options: ['approve', 'deny'],
         payload: { attempts: blocking, command },
       });
@@ -735,8 +762,21 @@ export class SessionToolGuard {
     const pending = this.pendingPaymentSends.get(invocation.id);
     if (!pending) return result;
     this.pendingPaymentSends.delete(invocation.id);
+    this.userAllowedPaymentSends.delete(invocation.id);
 
     const reason = forcedReason ?? ambiguousOutcomeReason(output, result.isError, pending.background);
+
+    // The send the user approved went out, or may have: the attempts it was
+    // approved past no longer hold sends. They are still unknown until a
+    // lookup checks them. A definitive failure before sending (a syntax
+    // error, a missing script) sent nothing, so the hold stays.
+    if (pending.overrides.length > 0 && (!result.isError || reason)) {
+      for (const a of this.paymentAttempts) {
+        if (pending.overrides.includes(a.id)) a.overriddenByUser = true;
+      }
+      this.persistPaymentAttempts();
+    }
+
     if (!reason) return result;
 
     const attempt: PaymentAttempt = {

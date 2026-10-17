@@ -215,6 +215,41 @@ interface SimpleCommand {
   writesFile: boolean;
   /** The files those output redirects write. */
   outFiles: string[];
+  /** Command substitutions inside double quotes (`"$(node pay.mjs)"`): they run. */
+  substitutions: string[];
+  /** A quote opened or closed in the middle of one of its words. */
+  collided: boolean;
+}
+
+/**
+ * Index of the `)` closing a `$(` whose body starts at `start`, honoring
+ * quotes, escapes and nesting; -1 when it never closes.
+ */
+function substitutionEnd(text: string, start: number): number {
+  let depth = 1;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (c === '\\') i++;
+    else if (c === "'") {
+      const close = text.indexOf("'", i + 1);
+      if (close === -1) return -1;
+      i = close;
+    } else if (c === '"') {
+      i++;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === '\\') i++;
+        else if (text[i] === '$' && text[i + 1] === '(') {
+          const end = substitutionEnd(text, i + 2);
+          if (end === -1) return -1;
+          i = end;
+        }
+        i++;
+      }
+      if (i >= text.length) return -1;
+    } else if (c === '(') depth++;
+    else if (c === ')' && --depth === 0) return i;
+  }
+  return -1;
 }
 
 /**
@@ -225,9 +260,66 @@ interface SimpleCommand {
  * stdin runs whatever arrives there.
  */
 export function splitShellCommands(text: string): SimpleCommand[] {
+  return scanShell(text).commands;
+}
+
+/** `$'…'` escapes that stand for one character. */
+const ANSI_C_ESCAPES: Record<string, string> = {
+  n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v',
+  '\\': '\\', "'": "'", '"': '"', '?': '?',
+};
+
+/**
+ * Decode the `$'…'` escape whose letter is at `at`: the character(s) it
+ * stands for and how many characters after the backslash it used. Hex,
+ * octal and Unicode escapes are decoded too, so `$'write\x43ontract'` reads
+ * as the `writeContract` bash hands the program.
+ */
+function ansiCEscape(text: string, at: number): [string, number] {
+  const esc = text[at];
+  const fromCode = (digits: string, radix: number): string => {
+    const code = parseInt(digits, radix);
+    return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+  };
+  const run = (re: RegExp) => re.exec(text.slice(at + 1))?.[0] ?? '';
+  if (esc === 'x') {
+    const hex = run(/^[0-9A-Fa-f]{1,2}/);
+    return hex ? [fromCode(hex, 16), 1 + hex.length] : ['\\x', 1];
+  }
+  if (esc === 'u' || esc === 'U') {
+    const hex = run(esc === 'u' ? /^[0-9A-Fa-f]{1,4}/ : /^[0-9A-Fa-f]{1,8}/);
+    return hex ? [fromCode(hex, 16), 1 + hex.length] : [`\\${esc}`, 1];
+  }
+  if (/[0-7]/.test(esc)) {
+    const oct = /^[0-7]{1,3}/.exec(text.slice(at))![0];
+    return [fromCode(oct, 8), oct.length];
+  }
+  if (esc === 'c' && at + 1 < text.length) {
+    return [String.fromCharCode(text.charCodeAt(at + 1) & 0x1f), 2];
+  }
+  return [ANSI_C_ESCAPES[esc] ?? `\\${esc}`, 1];
+}
+
+/**
+ * Split shell text, and say whether a quote never closed. Each command also
+ * records whether a quote opened or closed in the middle of one of its words
+ * (`wallet's`, `console.log("hi")` inside `node -e "…"`): legal shell, but in
+ * a program's inline code it almost always means an apostrophe or quote
+ * collided with the quotes around it, and the split is no longer a reliable
+ * account of what runs. (EmberTail, 3.49.7 live-3/S40: `// Get the wallet's
+ * USDC balance` inside `node -e '…'` hid the writeContract that followed.)
+ */
+function scanShell(text: string): { commands: SimpleCommand[]; unreliable: boolean } {
   const commands: SimpleCommand[] = [];
+  // A quote never closed, or a construct this splitter cannot place.
+  let unreliable = false;
+  const isWordChar = (ch: string | undefined) => ch !== undefined && /[A-Za-z0-9_]/.test(ch);
+  // A quote opening right after a letter or digit of the same word.
+  const opensMidWord = (i: number) => isWordChar(text[i - 1]);
+  // A quote closing right before a letter or digit of the same word.
+  const closesMidWord = (close: number) => isWordChar(text[close + 1]);
   const fresh = (pipedFrom: SimpleCommand | null = null): SimpleCommand =>
-    ({ words: [], stdinFiles: [], hereStrings: [], pipedFrom, background: false, writesFile: false, outFiles: [] });
+    ({ words: [], stdinFiles: [], hereStrings: [], pipedFrom, background: false, writesFile: false, outFiles: [], substitutions: [], collided: false });
   let current = fresh();
   let word = '';
   let inWord = false;
@@ -247,29 +339,88 @@ export function splitShellCommands(text: string): SimpleCommand[] {
     endWord();
     target = 'word';
     current.background = Boolean(opts.background);
-    const done = current.words.length || current.stdinFiles.length || current.hereStrings.length ? current : null;
+    const done = current.words.length || current.stdinFiles.length || current.hereStrings.length || current.substitutions.length ? current : null;
     if (done) commands.push(done);
     current = fresh(opts.pipe ? done : null);
   };
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === '\\' && i + 1 < text.length) {
-      if (text[i + 1] !== '\n') word += text[i + 1];
-      inWord = true;
+      // A line continuation is removed, not part of a word: a `#` after it
+      // still starts a comment.
+      if (text[i + 1] !== '\n') {
+        word += text[i + 1];
+        inWord = true;
+      }
       i++;
+    } else if (c === '#' && !inWord && (text[i - 1] === ')' || text[i - 1] === '`')) {
+      // `$(x)#…` is one word in bash, `(x)#…` a comment. Telling them apart
+      // needs the nesting this splitter does not keep, so the run is opaque.
+      unreliable = true;
+      word += c;
+      inWord = true;
+    } else if (c === '#' && !inWord) {
+      // A comment runs to the end of the line. Its text never executes, and
+      // an apostrophe in it (`# check the wallet's balance`) must not open a
+      // quote that swallows the commands below.
+      while (i + 1 < text.length && text[i + 1] !== '\n') i++;
+    } else if (c === '$' && text[i + 1] === "'") {
+      // ANSI-C quoting: `$'…'`, where `\'` is a literal apostrophe.
+      if (opensMidWord(i)) current.collided = true;
+      // Bash finds the closing quote first (a backslash escapes one
+      // character), then decodes the body: `$'\c'` is closed.
+      let close = i + 2;
+      while (close < text.length && text[close] !== "'") close += text[close] === '\\' ? 2 : 1;
+      const body = text.slice(i + 2, Math.min(close, text.length));
+      for (let k = 0; k < body.length; k++) {
+        if (body[k] === '\\' && k + 1 < body.length) {
+          const [decoded, used] = ansiCEscape(body, k + 1);
+          word += decoded;
+          k += used;
+        } else {
+          word += body[k];
+        }
+      }
+      i = close;
+      if (i >= text.length) unreliable = true;
+      else if (closesMidWord(i)) current.collided = true;
+      inWord = true;
     } else if (c === "'") {
+      if (opensMidWord(i)) current.collided = true;
       const close = text.indexOf("'", i + 1);
+      if (close === -1) unreliable = true;
+      else if (closesMidWord(close)) current.collided = true;
       const end = close === -1 ? text.length : close;
       word += text.slice(i + 1, end);
       inWord = true;
       i = end;
-    } else if (c === '"') {
+    } else if (c === '"' || (c === '$' && text[i + 1] === '"')) {
+      // `$"…"` (locale translation) quotes like `"…"`.
+      if (c === '$') i++;
+      if (opensMidWord(i)) current.collided = true;
       i++;
       while (i < text.length && text[i] !== '"') {
         if (text[i] === '\\' && i + 1 < text.length && '"\\$`'.includes(text[i + 1])) i++;
+        else if ((text[i] === '$' && text[i + 1] === '(') || text[i] === '`') {
+          // `"$(node pay.mjs)"`, `"`node pay.mjs`"`: still runs inside quotes.
+          const tick = text[i] === '`';
+          const bodyStart = i + (tick ? 1 : 2);
+          let end = tick ? bodyStart : substitutionEnd(text, bodyStart);
+          if (tick) while (end < text.length && text[end] !== '`') end += text[end] === '\\' ? 2 : 1;
+          if (end === -1 || end >= text.length) {
+            unreliable = true;
+            end = text.length;
+          }
+          current.substitutions.push(text.slice(bodyStart, end));
+          word += text.slice(i, end + 1);
+          i = end + 1;
+          continue;
+        }
         word += text[i];
         i++;
       }
+      if (i >= text.length) unreliable = true;
+      else if (closesMidWord(i)) current.collided = true;
       inWord = true;
     } else if (c === ' ' || c === '\t') {
       endWord();
@@ -315,7 +466,7 @@ export function splitShellCommands(text: string): SimpleCommand[] {
     }
   }
   endCommand();
-  return commands;
+  return { commands, unreliable };
 }
 
 /** Files a command writes or replaces through its own arguments. */
@@ -496,6 +647,10 @@ function analyzeCommand(words: string[]): CommandRun {
   return run;
 }
 
+function runsSomething(run: CommandRun): boolean {
+  return Boolean(run.interpreter || run.cli || run.scripts.length || run.inlineCode.length || run.inlineShell.length);
+}
+
 interface Heredoc {
   /** Shell text before the `<<` marker on its line, back to the previous separator. */
   head: string;
@@ -504,32 +659,90 @@ interface Heredoc {
   body: string;
 }
 
+type QuoteState = '' | "'" | '"' | "$'";
+
+/**
+ * Heredoc markers on one physical line that the shell would act on: not in
+ * quotes and not in a comment. `quote` is the state carried in from the line
+ * before, so a `<<` inside a multi-line `node -e '…'` program (`1n << 8n`)
+ * is code, not a heredoc. Also returns where an unquoted comment starts
+ * (`cat <<EOF # notes | node` pipes nothing) and the state carried out.
+ */
+function scanLineForHeredocs(line: string, quote: QuoteState): {
+  markers: { index: number; length: number; stripTabs: boolean; delim: string }[];
+  commentAt: number;
+  quote: QuoteState;
+  /** Something here this line scan cannot follow (a substitution inside
+   *  double quotes, arithmetic, `)#`): where heredocs start is a guess. */
+  uncertain: boolean;
+} {
+  const markers: { index: number; length: number; stripTabs: boolean; delim: string }[] = [];
+  let uncertain = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote === "'") {
+      if (c === "'") quote = '';
+    } else if (quote === '"' || quote === "$'") {
+      // Quotes nest inside `"$(…)"` and `"`…`"`; a line scan cannot follow that.
+      if (quote === '"' && ((c === '$' && line[i + 1] === '(') || c === '`')) uncertain = true;
+      if (c === '\\') i++;
+      else if ((quote === '"' && c === '"') || (quote === "$'" && c === "'")) quote = '';
+    } else if (c === '\\') {
+      i++;
+    } else if (c === '$' && line[i + 1] === "'") {
+      quote = "$'";
+      i++;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+    } else if (c === '#' && (line[i - 1] === ')' || line[i - 1] === '`')) {
+      uncertain = true;
+    } else if (c === '#' && (i === 0 || /[\s;&|(<>]/.test(line[i - 1]))) {
+      return { markers, commentAt: i, quote, uncertain };
+    } else if (c === '(' && line[i + 1] === '(') {
+      // `$((1 << n))`, `((x <<= 1))`: a shift, not a heredoc.
+      uncertain = true;
+    } else if (c === '<' && line[i + 1] === '<' && line[i + 2] !== '<' && line[i - 1] !== '<') {
+      const m = /^<<(-?)\s*(['"]?)([A-Za-z_][\w.-]*)\2/.exec(line.slice(i));
+      if (m) {
+        markers.push({ index: i, length: m[0].length, stripTabs: m[1] === '-', delim: m[3] });
+        i += m[0].length - 1;
+      } else {
+        i++;
+      }
+    }
+  }
+  return { markers, commentAt: -1, quote, uncertain };
+}
+
 /** Pull heredoc bodies out so their contents are not mistaken for shell. */
-function extractHeredocs(text: string): { shell: string; heredocs: Heredoc[] } {
+function extractHeredocs(text: string): { shell: string; heredocs: Heredoc[]; uncertain: boolean } {
   const lines = text.split('\n');
   const out: string[] = [];
   const heredocs: Heredoc[] = [];
+  let quote: QuoteState = '';
+  let uncertain = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     out.push(line);
-    const markers = [...line.matchAll(/<<(-?)\s*(['"]?)([A-Za-z_][\w.-]*)\2/g)];
-    for (const m of markers) {
-      const stripTabs = m[1] === '-';
-      const delim = m[3];
+    const scan = scanLineForHeredocs(line, quote);
+    quote = scan.quote;
+    if (scan.uncertain) uncertain = true;
+    const codeEnd = scan.commentAt === -1 ? line.length : scan.commentAt;
+    for (const m of scan.markers) {
       const body: string[] = [];
       i++;
       while (i < lines.length) {
-        const candidate = stripTabs ? lines[i].replace(/^\t+/, '') : lines[i];
-        if (candidate === delim) break;
+        const candidate = m.stripTabs ? lines[i].replace(/^\t+/, '') : lines[i];
+        if (candidate === m.delim) break;
         body.push(lines[i]);
         i++;
       }
       const before = line.slice(0, m.index);
       const head = before.split(/;|&&|\|\||\||\(|\$\(/).pop() ?? '';
-      heredocs.push({ head, tail: line.slice((m.index ?? 0) + m[0].length), body: body.join('\n') });
+      heredocs.push({ head, tail: line.slice(m.index + m.length, codeEnd), body: body.join('\n') });
     }
   }
-  return { shell: out.join('\n'), heredocs };
+  return { shell: out.join('\n'), heredocs, uncertain };
 }
 
 function readScript(resolved: string): string | null {
@@ -553,10 +766,12 @@ interface Collected {
    *  this, so `grep 'sendTransaction(' f` or a lookup merely printed into a
    *  file (`printf '…getTransactionReceipt…' > c.mjs`) never counts. */
   code: string[];
+  /** Shell text whose quoting did not resolve, so what it runs is unknown. */
+  opaque: string[];
 }
 
 function collect(command: string, cwd: string, depth: number, out: Collected, seen: Set<string>): void {
-  const { shell, heredocs } = extractHeredocs(command);
+  const { shell, heredocs, uncertain } = extractHeredocs(command);
 
   // A heredoc is code when an interpreter reads it (`node <<EOF`, `cat <<EOF | python3`).
   // Otherwise it is data — usually a file being written (`cat > pay.mjs <<EOF`),
@@ -582,7 +797,13 @@ function collect(command: string, cwd: string, depth: number, out: Collected, se
     if (target) writtenFiles.set(path.basename(expandHome(target[2])), doc.body);
   }
 
-  const commands = splitShellCommands(shell);
+  const { commands, unreliable } = scanShell(shell);
+  // Quoting that did not resolve cleanly: the split below may have cut a
+  // program short and left the rest as shell words (a send among them). A
+  // collision in a command that runs nothing (`grep 'a' b' c'`) is only data.
+  if (uncertain || unreliable || commands.some(c => c.collided && runsSomething(analyzeCommand(c.words)))) {
+    out.opaque.push(command);
+  }
   // Files this same command writes or replaces before (or while) running
   // things: their on-disk contents are stale, so the command text that writes
   // them is evidence too.
@@ -600,11 +821,9 @@ function collect(command: string, cwd: string, depth: number, out: Collected, se
       continue;
     }
     const run = analyzeCommand(words);
-    const runsSomething = Boolean(
-      run.interpreter || run.cli || run.scripts.length || run.inlineCode.length || run.inlineShell.length,
-    );
+    const runs = runsSomething(run);
     if (simple.background || words.some(w => DETACHERS.has(path.basename(w)))) out.detached = true;
-    if (!runsSomething && (simple.writesFile || !NON_RECORDING.has(path.basename(words[0] ?? '')))) {
+    if (!runs && (simple.writesFile || !NON_RECORDING.has(path.basename(words[0] ?? '')))) {
       out.data.push(words.join(' '));
     }
     // A program whose output goes into a file writes what it prints
@@ -612,7 +831,7 @@ function collect(command: string, cwd: string, depth: number, out: Collected, se
     // with a body or a write method sends what it carries. A send's own
     // text is left out: its error messages are not outcome records.
     const httpWrite = Boolean(run.cli && isHttpWrite(words));
-    if (runsSomething && (simple.writesFile || httpWrite)) {
+    if (runs && (simple.writesFile || httpWrite)) {
       const own = [words.join(' '), ...run.inlineCode];
       for (const t of own) if (!isPaymentSend(t)) out.data.push(t);
     }
@@ -630,6 +849,10 @@ function collect(command: string, cwd: string, depth: number, out: Collected, se
       }
     }
     const runDir = run.chdir ? path.resolve(cwd, expandHome(run.chdir)) : cwd;
+    for (const sub of simple.substitutions) {
+      if (depth < MAX_SHELL_DEPTH) collect(sub, cwd, depth + 1, out, seen);
+      else out.code.push(sub);
+    }
     for (const code of run.inlineCode) out.code.push(code);
     if (run.cli) out.code.push(run.cli);
     for (const inner of run.inlineShell) {
@@ -668,6 +891,14 @@ function collect(command: string, cwd: string, depth: number, out: Collected, se
 export interface BashExecution {
   /** Only code that executes. Payment-send and reconciliation detection. */
   code: string;
+  /**
+   * Shell text whose quoting or structure did not resolve cleanly (see
+   * scanShell). It may run, so it counts toward a send and toward a
+   * persisted unpaid record, failing closed as an attempt with no
+   * identifiable recipient matches any send. When it is non-empty the parse
+   * is unreliable, so the run never counts as a lookup: that would fail open.
+   */
+  opaque: string;
   /** What it writes or prints rather than runs. Outcome-record detection. */
   data: string;
   /** Part of it keeps running after the Bash call returns. */
@@ -685,13 +916,15 @@ export interface BashExecution {
  * must not count as running it.
  */
 export function analyzeBash(command: string, workingDir: string): BashExecution {
-  const out: Collected = { code: [], data: [], detached: false };
+  const out: Collected = { code: [], opaque: [], data: [], detached: false };
   collect(command, workingDir, 0, out, new Set());
-  return { code: out.code.join('\n'), data: out.data.join('\n'), detached: out.detached };
+  return { code: out.code.join('\n'), opaque: out.opaque.join('\n'), data: out.data.join('\n'), detached: out.detached };
 }
 
+/** Everything a Bash run may execute: its code, plus text whose quoting did not resolve. */
 export function bashExecutedText(command: string, workingDir: string): string {
-  return analyzeBash(command, workingDir).code;
+  const { code, opaque } = analyzeBash(command, workingDir);
+  return opaque ? `${code}\n${opaque}` : code;
 }
 
 export function isPaymentSend(text: string): boolean {
@@ -799,7 +1032,11 @@ export interface PaymentAttempt {
   txHashes: string[];
   /** Set once a read-only receipt/nonce/balance lookup ran after it. */
   reconciled: boolean;
-  /** Set when the user explicitly allowed a new payment despite it. */
+  /**
+   * Set once a send the user explicitly approved past this attempt has run.
+   * It lifts the hold only: the outcome is still unknown, so recording it as
+   * failed/unpaid still needs a lookup, and a lookup can still check it.
+   */
   overriddenByUser: boolean;
 }
 
@@ -842,17 +1079,30 @@ export function paymentHoldsDir(): string {
   return path.join(BLOCKRUN_DIR, 'payment-holds');
 }
 
+/**
+ * Bumped when the saved meaning of a field changes. Version 1 (3.49.7) set
+ * `overriddenByUser` when the user approved, before the send ran, so a send
+ * that was then denied left it set; those flags are not trusted on load.
+ */
+const HOLDS_FORMAT = 2;
+
 function holdsPath(sessionId: string): string {
   return path.join(paymentHoldsDir(), `${sessionId.replace(/[^\w.-]/g, '_')}.json`);
 }
 
 export function loadPaymentAttempts(sessionId: string): PaymentAttempt[] {
   try {
-    const raw = JSON.parse(fs.readFileSync(holdsPath(sessionId), 'utf-8')) as { attempts?: unknown };
+    const raw = JSON.parse(fs.readFileSync(holdsPath(sessionId), 'utf-8')) as { format?: unknown; attempts?: unknown };
     if (!Array.isArray(raw.attempts)) return [];
+    const trustOverrides = raw.format === HOLDS_FORMAT;
     return raw.attempts.filter((a): a is PaymentAttempt =>
       !!a && typeof a === 'object' && typeof (a as PaymentAttempt).id === 'number' && Array.isArray((a as PaymentAttempt).recipients),
-    ).map(a => ({ ...a, senders: Array.isArray(a.senders) ? a.senders : [], txHashes: Array.isArray(a.txHashes) ? a.txHashes : [] }));
+    ).map(a => ({
+      ...a,
+      senders: Array.isArray(a.senders) ? a.senders : [],
+      txHashes: Array.isArray(a.txHashes) ? a.txHashes : [],
+      overriddenByUser: trustOverrides && a.overriddenByUser === true,
+    }));
   } catch {
     return [];
   }
@@ -863,7 +1113,7 @@ export function savePaymentAttempts(sessionId: string, attempts: PaymentAttempt[
     fs.mkdirSync(paymentHoldsDir(), { recursive: true });
     const file = holdsPath(sessionId);
     const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ sessionId, attempts }, null, 2));
+    fs.writeFileSync(tmp, JSON.stringify({ format: HOLDS_FORMAT, sessionId, attempts }, null, 2));
     fs.renameSync(tmp, file);
   } catch {
     /* best-effort: the in-memory hold still applies for this process */

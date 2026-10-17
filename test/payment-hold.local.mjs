@@ -74,7 +74,7 @@ function fileTool(name) {
  * reached the handler (i.e. were not held).
  */
 let harnessCount = 0;
-function harness({ replies = [], onApproval, recon = { output: 'nonce=5 balance=800' }, sessionId } = {}) {
+function harness({ replies = [], onApproval, recon = { output: 'nonce=5 balance=800' }, sessionId, permissions } = {}) {
   const sid = sessionId ?? `payhold-${process.pid}-${++harnessCount}`;
   const ledger = { sends: 0, recons: 0, records: [] };
   const queue = [...replies];
@@ -126,6 +126,7 @@ function harness({ replies = [], onApproval, recon = { output: 'nonce=5 balance=
       ...(onApproval ? { onApproval } : {}),
     },
     guard,
+    ...(permissions ? { permissions } : {}),
     onStart: () => {},
     sessionId: sid,
   });
@@ -267,10 +268,75 @@ test('the user can explicitly allow a resend; it then executes once', async () =
   assert.match(asked[0].description, /may already have\s+settled/);
   assert.match(second.output, new RegExp(HASH_2));
   assert.equal(ledger.sends, 2);
-  assert.equal(guard.unresolvedPaymentAttempts().length, 0);
+  assert.match(asked[0].description, /does not mark the earlier attempt as failed/);
+  // The approval lifted the hold, nothing more: the first attempt is still
+  // unknown, so it cannot be recorded unpaid without a lookup.
+  assert.equal(guard.unresolvedPaymentAttempts().length, 1);
 
   const log = fs.readFileSync(approvalsLogPath(), 'utf-8').trim().split('\n').map(l => JSON.parse(l));
   assert.ok(log.some(r => r.kind === 'payment-hold' && r.decision === 'approve'));
+});
+
+test('an approved override then a denied Bash prompt keeps every protection', async () => {
+  // Reported against 3.49.7 (EmberTail): approving the hold retired the
+  // attempt before the send ran, so denying the Bash permission prompt left
+  // nothing sent and nothing checked, yet the attempt no longer held sends,
+  // no longer refused an unpaid record and could never be reconciled.
+  const asked = [];
+  let denyBash = false;
+  const permissions = {
+    check: async (name) => ({ behavior: name === 'Bash' && denyBash ? 'ask' : 'allow' }),
+    promptUser: async () => false,
+  };
+  const sid = `payhold-override-deny-${process.pid}`;
+  const { run, ledger, guard } = harness({
+    sessionId: sid,
+    replies: [{ output: 'Error: HTTP 502: Bad gateway', isError: true }],
+    onApproval: async (req) => { asked.push(req); return { choice: 'approve' }; },
+    permissions,
+  });
+  await run('Bash', { command: payScript(SUPPLIER_A) });
+  denyBash = true;
+  const second = await run('Bash', { command: payScript(SUPPLIER_A, 'b') });
+  assert.match(second.output, /User denied permission/);
+  assert.equal(ledger.sends, 1);
+  denyBash = false;
+
+  const saved = JSON.parse(fs.readFileSync(path.join(hold.paymentHoldsDir(), `${sid}.json`), 'utf-8'));
+  assert.equal(saved.attempts[0].overriddenByUser, false);
+
+  // Still held: the next send asks again.
+  await run('Bash', { command: payScript(SUPPLIER_A, 'b') });
+  assert.equal(asked.length, 2);
+
+  // Still refuses an unpaid record, and a lookup still checks it.
+  const rec = await run('RecordOutcome', { status: 'unpaid' });
+  assert.equal(rec.isError, true);
+  assert.match(rec.output, /UNKNOWN/);
+  await run('Bash', { command: `cast balance ${SUPPLIER_A}` });
+  assert.equal(guard.unresolvedPaymentAttempts().length, 0);
+});
+
+test('an override that ran lifts the hold but not the unpaid refusal, and survives --resume', async () => {
+  const asked = [];
+  const sid = `payhold-override-ran-${process.pid}`;
+  const { run, ledger } = harness({
+    sessionId: sid,
+    replies: [{ output: 'TimeoutError: payment response unavailable', isError: true }, { output: `Transaction hash: ${HASH_2}` }],
+    onApproval: async (req) => { asked.push(req); return { choice: 'approve' }; },
+  });
+  await run('Bash', { command: payScript(SUPPLIER_A) });
+  await run('Bash', { command: payScript(SUPPLIER_A, 'b') });
+  assert.equal(ledger.sends, 2);
+  assert.equal(asked.length, 1);
+
+  const rec = await run('Write', { file_path: 'ledger.json', content: '{"invoice":"INV-1","status":"unpaid"}' });
+  assert.equal(rec.isError, true);
+
+  const resumed = harness({ sessionId: sid, onApproval: async (req) => { asked.push(req); return { choice: 'approve' }; } });
+  assert.equal(resumed.guard.unresolvedPaymentAttempts().length, 1);
+  const rec2 = await resumed.run('RecordOutcome', { status: 'failed' });
+  assert.equal(rec2.isError, true);
 });
 
 test('a user deny keeps the hold', async () => {
@@ -755,4 +821,211 @@ test('[codex P2] records through program output redirects and HTTP writes are re
   }
   // Reading the ledger over HTTP is not a record.
   assert.equal((await run('Bash', { command: 'curl -s https://ledger.example/INV-1 | jq .status' })).isError, undefined);
+});
+
+// ─── EmberTail 3.49.7 audit ────────────────────────────────────────────────
+
+/** live-3/S40/trial-2, second script: an apostrophe in a comment inside `node -e '…'`. */
+function apostropheScript(recipient, apostrophe = "'") {
+  return `node --input-type=module -e '
+import { createPublicClient, createWalletClient, http, parseUnits } from "viem";
+const publicClient = createPublicClient({ transport: http() });
+// Get the wallet${apostrophe}s USDC balance using publicClient
+const bal = await publicClient.readContract({ address: "${USDC_BASE}", abi, functionName: "balanceOf", args: [account.address] });
+const hash = await walletClient.writeContract({ address: "${USDC_BASE}", abi, functionName: "transfer", args: ["${recipient}", parseUnits("200", 6)] });
+console.log("tx", hash);
+'`;
+}
+
+test('a quote that collides with an inline program cannot hide the send', () => {
+  const sees = (cmd) => hold.isPaymentSend(hold.bashExecutedText(cmd, WORK));
+  // The S40 command, its one-character ablation, and the double-quote control.
+  assert.equal(sees(apostropheScript(SUPPLIER_A)), true, 'apostrophe in a comment');
+  // Unresolved quoting fails closed for sends, never open for lookups.
+  const misquotedLookup = `node -e '// the wallet's receipt\nawait c.getTransactionReceipt({ hash: "${HASH_1}" })\n'`;
+  assert.equal(hold.isReconciliation(hold.analyzeBash(misquotedLookup, WORK).code), false);
+  assert.notEqual(hold.analyzeBash(misquotedLookup, WORK).opaque, '');
+  assert.equal(sees(apostropheScript(SUPPLIER_A, '')), true, 'ablation: apostrophe removed');
+  assert.equal(sees(apostropheScript(SUPPLIER_A).replace(/'/g, '"').replace(/wallet"s/, "wallet's")), true, 'double-quoted program');
+  assert.deepEqual(hold.extractRecipients(hold.bashExecutedText(apostropheScript(SUPPLIER_A), WORK)), [SUPPLIER_A]);
+  for (const cmd of [
+    // In a string literal rather than a comment.
+    `node -e 'console.log("can't stop"); await w.sendTransaction({ to: "${SUPPLIER_A}" })'`,
+    // A double quote inside a double-quoted program.
+    `node -e "console.log("sending"); await w.sendTransaction({ to: '${SUPPLIER_A}' })"`,
+    // A quote that never closes.
+    `node -e 'await w.sendTransaction({ to: "${SUPPLIER_A}" })`,
+    // Real bash runs these sends; a naive split does not see them.
+    `# check the wallet's balance first\nnode -e 'await w.writeContract({ functionName: "transfer" })'`,
+    `node -e $'// the wallet\\'s balance\\nawait w.writeContract({ functionName: "transfer" })'`,
+  ]) assert.equal(sees(cmd), true, cmd);
+  // Clean quoting is still judged on what runs, not on what it mentions.
+  for (const cmd of [
+    `grep -n 'sendTransaction(' pay.mjs # the wallet's script`,
+    `echo 'it'\\''s fine' && grep -c 'writeContract(' pay.mjs`,
+    `git commit -m "note: don't send twice" && git log -S "transfer(" --oneline`,
+  ]) assert.equal(sees(cmd), false, cmd);
+});
+
+test('EmberTail quote_shapes: every shape of payment script is a send', () => {
+  for (const line of [
+    '',
+    "// Send from the wallet's USDC balance",
+    "// Don't retry this without checking first",
+    '// Send the USDC transfer',
+    'const note = "the payer\'s invoice";',
+    '// Transfer the "agreed" amount',
+  ]) {
+    const cmd = `node --input-type=module -e '
+import { createWalletClient, http, parseUnits } from "viem";
+${line}
+const hash = await walletClient.writeContract({ address: "${USDC_BASE}", abi, functionName: "transfer", args: ["${SUPPLIER_A}", parseUnits("200", 6)] });
+console.log("tx", hash);
+'`;
+    assert.equal(hold.isPaymentSend(hold.bashExecutedText(cmd, WORK)), true, line || 'no comment');
+  }
+});
+
+test('a command substitution inside double quotes is inspected', () => {
+  fs.writeFileSync(path.join(WORK, 'subst-pay.mjs'), `await wallet.sendTransaction({ to: '${SUPPLIER_A}', value: 1n })`);
+  const send = `await w.sendTransaction({ to: ${SUPPLIER_A} })`;
+  for (const cmd of [
+    `RESULT="$(node subst-pay.mjs)"; echo "$RESULT"`,
+    `echo "tx: $(node -e '${send}')"`,
+    `echo "tx: \`node -e '${send}'\`"`,
+    `echo "$(cd . && echo "$(node subst-pay.mjs)")"`,
+  ]) assert.equal(hold.isPaymentSend(hold.bashExecutedText(cmd, WORK)), true, cmd);
+  assert.equal(hold.isReconciliation(hold.analyzeBash(`echo "bal: $(cast balance ${SUPPLIER_A})"`, WORK).code), true);
+  assert.equal(hold.isPaymentSend(hold.bashExecutedText(`echo "$(cat subst-pay.mjs | wc -l)" "\${#x}" $#`, WORK)), false);
+});
+
+test('S40 shape, simulated: once recognised, a send that answers 502 holds the next one', async () => {
+  // The harness runs nothing: a send is whatever the analyser calls one, as in
+  // EmberTail's simulated ledger. Real bash rejects or truncates this exact
+  // command (see the bash ground-truth test); the hold logic is what is tested.
+  const { run, ledger } = harness({
+    replies: [{ output: 'Error: HTTP 502: Bad gateway', isError: true }],
+  });
+  const second = await run('Bash', { command: apostropheScript(SUPPLIER_A) });
+  assert.match(second.output, /OUTCOME UNKNOWN/);
+  const third = await run('Bash', { command: payScript(SUPPLIER_A, 'b') });
+  assert.match(third.output, /Payment held/);
+  assert.equal(ledger.sends, 1);
+});
+
+test('the analyser agrees with real bash on which shapes deliver a send', { skip: !fs.existsSync('/bin/bash') }, async () => {
+  const { execFileSync } = await import('node:child_process');
+  const stubs = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-payhold-stubs-'));
+  try {
+    // Stand-ins that print what bash actually handed them.
+    for (const name of ['node', 'cast']) {
+      fs.writeFileSync(path.join(stubs, name), '#!/bin/bash\nprintf "RAN %s\\n" "$*"\n', { mode: 0o755 });
+    }
+    const delivered = (cmd) => {
+      let out = '';
+      try {
+        out = execFileSync('/bin/bash', ['-c', cmd], { cwd: WORK, env: { PATH: `${stubs}:/usr/bin:/bin` }, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch (err) { out = String(err.stdout ?? ''); }
+      // A stub ran and was handed the send: node got writeContract, or cast got `send`.
+      return /RAN /.test(out) && (out.includes('writeContract') || /RAN send /.test(out));
+    };
+    const send = 'await w.writeContract({ functionName: "transfer" })';
+    const shapes = [
+      // Bash delivers the send.
+      [`# check the wallet's balance first\nnode -e '${send}'`, true],
+      [`node -e $'// the wallet\\'s balance\\n${send}'`, true],
+      [`node -e $'await w.write\\x43ontract({})'`, true],
+      [`node -e $'await w.write\\103ontract({})'`, true],
+      [`echo "tx: $(node -e '${send}')"`, true],
+      [`# <<EOF\ncast send ${SUPPLIER_A} "transfer(address,uint256)"\nEOF`, true],
+      [`node -e 'const n = 1n << decimals;\n${send}\n'`, true],
+      [`echo $(true)#; cast send ${SUPPLIER_A}`, true],
+      [`echo \`true\`#; cast send ${SUPPLIER_A}`, true],
+      [`echo $'\\c' "'"; cast send ${SUPPLIER_A} # "`, true],
+      [`echo "$(echo "<<EOF")"\ncast send ${SUPPLIER_A}`, true],
+      [`echo $((1<<y))\ncast send ${SUPPLIER_A}`, true],
+      // Bash does not.
+      [`grep -n 'writeContract(' pay.mjs # the wallet's script`, false],
+      [`echo 'it'\\''s fine' && grep -c 'writeContract(' pay.mjs`, false],
+      [`cat <<EOF # notes | node\n${send}\nEOF`, false],
+    ];
+    for (const [cmd, bashSends] of shapes) {
+      assert.equal(delivered(cmd), bashSends, `bash: ${cmd}`);
+      assert.equal(hold.isPaymentSend(hold.bashExecutedText(cmd, WORK)), bashSends, `analyser: ${cmd}`);
+    }
+
+    // A run counts as a check only if bash really runs the lookup. Where the
+    // parse is unreliable the analyser may refuse a real one (fail closed),
+    // but must never accept one bash does not run.
+    const H = '0x' + 'aa'.repeat(32);
+    const ranLookup = (cmd) => {
+      let out = '';
+      try {
+        out = execFileSync('/bin/bash', ['-c', cmd], { cwd: WORK, env: { PATH: `${stubs}:/usr/bin:/bin` }, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch (err) { out = String(err.stdout ?? ''); }
+      return /RAN receipt /.test(out);
+    };
+    const counts = (cmd) => {
+      const r = hold.analyzeBash(cmd, WORK);
+      return !r.opaque && hold.isReconciliation(r.code);
+    };
+    for (const cmd of [
+      `echo $'\\c'' ; cast receipt ${H} ; '`,
+      `echo "$(echo "'")"; cat <<EOF >/dev/null\ncast receipt ${H}\nEOF`,
+      `true \\\n#; cast receipt ${H}`,
+      `cat <<EOF # notes | node\nawait c.getTransactionReceipt({ hash: "${H}" })\nEOF`,
+    ]) {
+      assert.equal(ranLookup(cmd), false, `bash: ${cmd}`);
+      assert.equal(counts(cmd), false, `analyser: ${cmd}`);
+    }
+    for (const cmd of [`cast receipt ${H}`, `R=$(cast receipt ${H}); echo "$R"`]) {
+      assert.equal(ranLookup(cmd), true, `bash: ${cmd}`);
+      assert.equal(counts(cmd), true, `analyser: ${cmd}`);
+    }
+    // EmberTail's S40 command: bash never hands node the writeContract, so it
+    // cannot have sent. The analyser still calls it a send, failing closed.
+    const s40 = apostropheScript(SUPPLIER_A);
+    assert.equal(delivered(s40), false, 'bash truncates or rejects the S40 shape');
+    assert.equal(hold.isPaymentSend(hold.bashExecutedText(s40, WORK)), true);
+  } finally {
+    fs.rmSync(stubs, { recursive: true, force: true });
+  }
+});
+
+test('a heredoc after a comment, or a lookup fed only to cat, is not a check', () => {
+  const lookup = `await c.getBalance({ address: "${SUPPLIER_A}" })`;
+  assert.equal(hold.isReconciliation(hold.analyzeBash(`cat <<EOF # notes | node\n${lookup}\nEOF`, WORK).code), false);
+  assert.equal(hold.isReconciliation(hold.analyzeBash(`cat <<EOF | node\n${lookup}\nEOF`, WORK).code), true);
+  // A collision in a command that runs nothing is data, not an opaque send.
+  assert.equal(hold.analyzeBash(`grep 'writeContract(' foo' bar'`, WORK).opaque, '');
+});
+
+test('an approved send that fails before sending keeps the hold', async () => {
+  const asked = [];
+  const { run, ledger } = harness({
+    replies: [
+      { output: 'Error: HTTP 502: Bad gateway', isError: true },
+      { output: 'SyntaxError: Unexpected token )', isError: true },
+    ],
+    onApproval: async (req) => { asked.push(req); return { choice: 'approve' }; },
+  });
+  await run('Bash', { command: payScript(SUPPLIER_A) });
+  await run('Bash', { command: payScript(SUPPLIER_A, 'b') });
+  assert.equal(ledger.sends, 2);
+  // The approved send crashed before sending: the next send still asks.
+  await run('Bash', { command: payScript(SUPPLIER_A, 'b') });
+  assert.equal(asked.length, 2);
+});
+
+test('override flags saved by 3.49.7 are not trusted on load', async () => {
+  const sid = `payhold-format1-${process.pid}`;
+  fs.mkdirSync(hold.paymentHoldsDir(), { recursive: true });
+  fs.writeFileSync(path.join(hold.paymentHoldsDir(), `${sid}.json`), JSON.stringify({
+    sessionId: sid,
+    attempts: [{ id: 1, turn: 1, at: Date.now(), command: 'node pay.mjs', recipients: [SUPPLIER_A.toLowerCase()], senders: [], reason: 'the run ended with "timeout"', txHashes: [], reconciled: false, overriddenByUser: true }],
+  }));
+  const { run, ledger } = harness({ sessionId: sid });
+  const resend = await run('Bash', { command: payScript(SUPPLIER_A) });
+  assert.match(resend.output, /Payment held/);
+  assert.equal(ledger.sends, 0);
 });
