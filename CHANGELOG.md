@@ -1,5 +1,14 @@
 # Changelog
 
+## Franklin Agent 3.49.10 — the 3.49.9 notes no longer claim a double payment that did not happen
+
+Release notes only; no code changes. The 3.49.9 entry said the apostrophe gap
+let a payment through unrecorded. EmberTail traced that report to their audit
+sandbox, which handed node a program bash never would. Their corrected count
+for 3.49.7 is zero double payments in 29 sessions. The three double payments
+in their 3.49.6 audit were re-checked against real bash and still stand. The
+3.49.9 entry now says this. The fixes it describes are unchanged.
+
 ## Franklin Agent 3.49.9 — a stray apostrophe or one approval can no longer switch the payment guard off
 
 Both fixes come from EmberTail's rerun of their payment-safety audit against
@@ -10,9 +19,11 @@ audit", and reported the money-movement gaps fixed in #205.
 **A payment script is recognised however its quotes fall.** An apostrophe in
 an ordinary comment inside `node -e '…'` (`// Get the wallet's USDC
 balance`) ended the analyser's view of the program before its
-`writeContract`, so the send was not seen and its 502 was never held.
-Testing against real bash found more shapes of the same kind, each now
-handled:
+`writeContract`. For that exact command bash cuts the program at the same
+place, so nothing was sent: the double payment first reported for it came
+from the audit sandbox, and EmberTail has corrected the 3.49.7 count to zero
+double payments. Testing against real bash did find shapes of the same kind
+where bash runs the send and the analyser missed it, each now handled:
 
 - A command whose quoting cannot be resolved (a quote that never closes, or
   one that collides with the program around it) fails closed. It counts as a
