@@ -1,5 +1,31 @@
 # Changelog
 
+## Franklin Agent 3.49.12 — a refuted-then-verified goal now teaches the next one
+
+A /goal that the verifier panel refuted and then verified on a later round
+is a behavioral contrast between two attempts at the same objective: same
+model, same tools, one gap closed. Those verdicts were written under
+`~/.blockrun/goals/<id>/verdicts/` and never read. Now a reflector on the
+free extraction models turns the contrast into at most one lesson per goal:
+the shape of situation it applies to, the operation to perform naming its
+component, and the closed gap as evidence. A goal that passes on round one
+writes nothing, because adoption alone is not evidence. A goal that hits
+the round cap writes a confounded row that is never rendered.
+
+Lessons are scoped to the wallet for trading goals and to the workspace
+for everything else, never global. They render after the learnings block
+under a 1,200-character budget, lose a confirmation when a later goal in
+the same scope is refuted on round one while they were in the prompt, and
+turn into a ⛔ rule after two such events. Injection patterns, addresses,
+amounts and the objective's own tickers are rejected before anything is
+saved, and lessons are prose only: nothing here writes hooks, skills or
+scripts. `FRANKLIN_NO_EXPERIENCE=1` removes the component, the harness
+bench gains a `no-experience` config, and `/learnings` lists the verified
+lessons (`/learnings clear` leaves them; `/learnings clear lessons`
+removes them). The design follows Harness² (google-research/harness2,
+arXiv 2610.14224); the prompt injection scanner moves to its own module so
+the lesson path and the project-config path share it.
+
 ## Franklin Agent 3.49.11 — routing reads the request, not Franklin's own instructions
 
 `@blockrun/router-core` moves to 0.3.0 (65a92c8). Auto now reads only the
