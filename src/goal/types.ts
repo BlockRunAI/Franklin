@@ -53,6 +53,10 @@ export interface GoalState {
   blockedReason?: string;
   /** Closing user-facing summary, once completed. */
   summary?: string;
+  /** Skills whose trigger hints fired on turns while this goal was active.
+   *  Carried into the experience record so a lesson can later be scored
+   *  against the skills that were in play. */
+  skillsHinted?: string[];
 }
 
 export interface VerifierVerdict {

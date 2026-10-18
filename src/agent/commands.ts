@@ -995,11 +995,28 @@ export async function handleSlashCommand(
   // /learnings — view or clear per-user learnings
   if (input === '/learnings' || input.startsWith('/learnings ')) {
     const { loadLearnings, decayLearnings, saveLearnings } = await import('../learnings/store.js');
+    const { loadExperiences, saveExperiences } = await import('../learnings/experience.js');
     const arg = input.slice('/learnings'.length).trim();
-    if (arg === 'clear') {
+    if (arg === 'clear lessons') {
+      saveExperiences([]);
+      ctx.onEvent({ kind: 'text_delta', text: 'All verified lessons cleared.\n' });
+    } else if (arg === 'clear') {
       saveLearnings([]);
-      ctx.onEvent({ kind: 'text_delta', text: 'All learnings cleared.\n' });
+      ctx.onEvent({ kind: 'text_delta', text: 'All learnings cleared (verified lessons kept — `/learnings clear lessons` removes those).\n' });
     } else {
+      const lessons = loadExperiences();
+      if (lessons.length > 0) {
+        const live = lessons.filter(l => l.verdict !== 'confounded');
+        const confounded = lessons.length - live.length;
+        let text = `**Lessons verified by goal outcomes** (${live.length}${confounded ? `, ${confounded} confounded` : ''})\n\n`;
+        for (const l of live.sort((a, b) => b.times_confirmed - a.times_confirmed)) {
+          const where = l.scope.wallet ? `wallet ${l.scope.wallet}` : `workspace ${l.scope.workspace}`;
+          text += `  [${l.verdict}/${l.confidence}] ${l.lesson}\n`;
+          text += `      when: ${l.cue}\n`;
+          text += `      evidence: goal ${l.evidence.goalId}, ${l.evidence.roundsRefuted} refuted round(s), closed: ${l.evidence.closedGaps.join('; ') || '—'} · ${where} · ×${l.times_confirmed}\n`;
+        }
+        ctx.onEvent({ kind: 'text_delta', text: text + '\n' });
+      }
       let learnings = loadLearnings();
       if (learnings.length === 0) {
         ctx.onEvent({ kind: 'text_delta', text: 'No learnings yet. Franklin learns your preferences over time.\n' });

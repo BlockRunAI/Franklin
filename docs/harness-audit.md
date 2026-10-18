@@ -38,9 +38,10 @@ If the failure mode has been absorbed by model capability, the component is now 
 | 14 | Planner → executor model swap mid-turn | `loop.ts` lines 773–784 | "Cheap executor model can follow a plan made by an expensive planner" | Capability | **Coupled to #1** — if #1 goes, this goes too | Covered by #1 test |
 | 15 | Brain auto-recall | `loop.ts` lines 537–563 | "Model can't always remember entities from earlier in the same session" | Capability | **Low load** — nice UX, probably not critical. Test by disabling and measuring continuity. | Needs new env flag |
 | 16 | Weak-model tool inventory injection | `loop.ts` lines 800–808 | "Weak / free models invent tool names when not given an explicit list" | Capability | **Holds for free tier**, likely **stale for Sonnet / Opus** | Split injection on model tier |
+| 18 | Goal-outcome lessons (experience library) | `src/learnings/experience.ts` | "A single verified run is not evidence; a refuted→verified verifier contrast on the same objective is. Models repeat the mistake that cost them a round unless the fix is carried into the next goal's prompt." (from Harness², arXiv 2610.14224) | Capability | **Just added** — needs burn-in; lessons are scoped per wallet/workspace and retire when later goals refute while they were in play. | `FRANKLIN_NO_EXPERIENCE=1` (wired; `no-experience` bench config) |
 | 17 | Sub-agent delegation (Task tool) | `src/tools/subagent.ts` | "Main agent's context can't afford broad research; delegate to a fresh sub-agent" | Capability / context mgmt | **Holds** — basic parallelism + context isolation win | Not a candidate |
 
-**Count:** 17 components.
+**Count:** 18 components.
 - **Permanent / infrastructure** (not candidates for removal): 10 (#6–13, #17)
 - **Capability-gap hedges worth re-testing now**: 7 (#1, #2, #4, #5, #14, #15, #16)
 - **Just-added, needs burn-in**: 1 (#4)
@@ -113,3 +114,4 @@ The correct order is: **observe → map to assumption → check if existing comp
 ## Changelog
 
 - **2026-04-21** — Initial audit on v3.8.14. 17 components enumerated. 5 ablation candidates ranked. Bench script scaffolded.
+- **2026-10-18** — #18 goal-outcome lessons added (Harness²-style harnessing-level recursion). `no-experience` bench config added.
