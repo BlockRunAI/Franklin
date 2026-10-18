@@ -1,5 +1,19 @@
 # Changelog
 
+## Franklin Agent 3.49.11 — routing reads the request, not Franklin's own instructions
+
+`@blockrun/router-core` moves to 0.3.0 (65a92c8). Auto now reads only the
+user turn for structured-output, stakes, latency and language cues. Before,
+Franklin's standing system prompt (tool schemas, behavioural rules) lifted
+every request off the cheapest tier, so a one-line question paid MEDIUM
+prices. Chinese, Japanese and Korean input is sized at about one token per
+character instead of a quarter, so a long pasted document now reaches the
+long-context models rather than a window that cannot hold it. Keyword
+scoring matches whole words ("classic" is not code, "history" is not
+creative, "credit" is not an edit), a stale speed probe fades toward neutral
+instead of toward zero, and a model with no catalog price no longer reports
+100% savings. No change to which models are primaries for tool turns.
+
 ## Franklin Agent 3.49.10 — the 3.49.9 notes no longer claim a double payment that did not happen
 
 Release notes only; no code changes. The 3.49.9 entry said the apostrophe gap
