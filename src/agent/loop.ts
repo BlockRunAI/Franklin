@@ -731,6 +731,7 @@ async function runInteractiveSession(
     client,
     getModel: () => config.model,
     capabilities: config.capabilities,
+    getHistory: () => history,
   });
   if (config.resumeSessionId) {
     const resumedMeta = loadSessionMeta(config.resumeSessionId);
@@ -955,6 +956,13 @@ async function runInteractiveSession(
       const matches = matchSkillTriggers(input, skillRegistry.list());
       if (matches.length > 0) {
         turnSkillHints = formatSkillHints(matches);
+        // Remember which skills were in play for the active goal, so the
+        // goal-outcome reflector can tie a lesson to them later.
+        const hintedGoal = getActiveGoal();
+        if (hintedGoal && hintedGoal.status === 'active') {
+          const names = matches.map(m => m.skill.skill.name);
+          updateActiveGoal({ skillsHinted: [...new Set([...(hintedGoal.skillsHinted ?? []), ...names])].slice(0, 20) });
+        }
         if (config.debug && matches.length > 0) {
           const summary = matches.map(m => `${m.skill.skill.name}(${m.score.toFixed(1)})`).join(', ');
           onEvent({ kind: 'text_delta', text: `*[skill triggers] ${summary}*\n` });

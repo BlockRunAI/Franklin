@@ -15,7 +15,7 @@ import { FREE_DEFAULT_MODEL } from '../free-models.js';
 
 // Free models for learning extraction — JSON extraction is simple enough.
 // Ordered by reliability: try the best free model first, fall back to others.
-const EXTRACTION_MODELS = [
+export const EXTRACTION_MODELS = [
   FREE_DEFAULT_MODEL,           // Free lead — see src/free-models.ts
   'poolside/laguna-xs-2.1',     // Different provider, so the fallback survives an NVIDIA-wide outage
 ];
@@ -264,6 +264,44 @@ async function runExtraction(condensed: string, sessionId: string, client: Model
   saveLearnings(existing);
 }
 
+/**
+ * Condense history WITH tool calls and results (unlike `condenseHistory`,
+ * which keeps only user/assistant text). Used wherever the evidence is what
+ * the agent DID, not what was said: skill extraction and the goal-outcome
+ * reflector. Walks the most recent messages until `cap` characters.
+ */
+export function condenseWithTools(history: Dialogue[], cap: number, recent = 20): string {
+  const parts: string[] = [];
+  let chars = 0;
+  for (const msg of history.slice(-recent)) {
+    if (chars >= cap) break;
+    if (typeof msg.content === 'string') {
+      const line = `${msg.role}: ${msg.content.slice(0, 300)}`;
+      parts.push(line);
+      chars += line.length;
+    } else if (Array.isArray(msg.content)) {
+      for (const p of msg.content) {
+        if (chars >= cap) break;
+        if ((p as any).type === 'text') {
+          const line = `${msg.role}: ${(p as any).text.slice(0, 200)}`;
+          parts.push(line);
+          chars += line.length;
+        } else if ((p as any).type === 'tool_use') {
+          const line = `tool: ${(p as any).name}(${JSON.stringify((p as any).input).slice(0, 150)})`;
+          parts.push(line);
+          chars += line.length;
+        } else if ((p as any).type === 'tool_result') {
+          const text = typeof (p as any).content === 'string' ? (p as any).content : '';
+          const line = `result: ${text.slice(0, 100)}`;
+          parts.push(line);
+          chars += line.length;
+        }
+      }
+    }
+  }
+  return parts.join('\n\n');
+}
+
 // ─── Skill extraction (procedural memory) ─────────────────────────────────
 // After complex tasks, detect reusable procedures and save as skills.
 
@@ -296,38 +334,7 @@ export async function maybeExtractSkill(
 ): Promise<void> {
   if (turnToolCalls < MIN_TOOL_CALLS_FOR_SKILL) return;
 
-  // Condense recent history with tool details (skills need tool context)
-  const parts: string[] = [];
-  let chars = 0;
-  const CAP = 6000;
-  for (const msg of history.slice(-20)) {
-    if (chars >= CAP) break;
-    if (typeof msg.content === 'string') {
-      const line = `${msg.role}: ${msg.content.slice(0, 300)}`;
-      parts.push(line);
-      chars += line.length;
-    } else if (Array.isArray(msg.content)) {
-      for (const p of msg.content) {
-        if (chars >= CAP) break;
-        if ((p as any).type === 'text') {
-          const line = `${msg.role}: ${(p as any).text.slice(0, 200)}`;
-          parts.push(line);
-          chars += line.length;
-        } else if ((p as any).type === 'tool_use') {
-          const line = `tool: ${(p as any).name}(${JSON.stringify((p as any).input).slice(0, 150)})`;
-          parts.push(line);
-          chars += line.length;
-        } else if ((p as any).type === 'tool_result') {
-          const text = typeof (p as any).content === 'string' ? (p as any).content : '';
-          const line = `result: ${text.slice(0, 100)}`;
-          parts.push(line);
-          chars += line.length;
-        }
-      }
-    }
-  }
-
-  const condensed = parts.join('\n\n');
+  const condensed = condenseWithTools(history, 6000);
   if (condensed.length < 200) return;
 
   try {

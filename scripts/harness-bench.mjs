@@ -74,6 +74,7 @@ const CONFIGS = [
   { name: 'no-plan', env: { FRANKLIN_NOPLAN: '1' }, summary: 'plan-then-execute OFF' },
   { name: 'no-dynamic-tools', env: { FRANKLIN_DYNAMIC_TOOLS: '0' }, summary: 'ActivateTool / CORE gating OFF' },
   { name: 'no-eval', env: { FRANKLIN_NO_EVAL: '1' }, summary: 'Groundedness evaluator OFF' },
+  { name: 'no-experience', env: { FRANKLIN_NO_EXPERIENCE: '1' }, summary: 'Goal-outcome lessons OFF' },
 ];
 
 // ─── Per-run settings ────────────────────────────────────────────────────

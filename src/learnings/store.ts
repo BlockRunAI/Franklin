@@ -42,13 +42,13 @@ export function saveLearnings(learnings: Learning[]): void {
 
 // ─── Merge / Dedup ────────────────────────────────────────────────────────
 
-function tokenize(text: string): Set<string> {
+export function tokenize(text: string): Set<string> {
   return new Set(
     text.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(w => w.length > 2)
   );
 }
 
-function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+export function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 && b.size === 0) return 1;
   let intersection = 0;
   for (const w of a) if (b.has(w)) intersection++;

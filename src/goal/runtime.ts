@@ -6,7 +6,15 @@
  */
 
 import type { ModelClient } from '../agent/llm.js';
-import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
+import type { CapabilityHandler, CapabilityResult, Dialogue, ExecutionScope } from '../agent/types.js';
+import { readRuntimeWallet } from '../agent/context.js';
+import {
+  experienceEnabled,
+  experienceScope,
+  markRenderedLessonsRefuted,
+  recordConfoundedGoal,
+  reflectGoalExperience,
+} from '../learnings/experience.js';
 import {
   getActiveGoal,
   loadPlan,
@@ -20,12 +28,30 @@ import {
   runVerifierPanel,
   type GoalEngineContext,
 } from './engine.js';
-import { goalMaxRounds } from './types.js';
+import { goalMaxRounds, type GoalState } from './types.js';
 
 export interface GoalEngineDeps {
   client: ModelClient;
   getModel: () => string;
   capabilities: CapabilityHandler[];
+  /** The session transcript, read by the goal-outcome reflector as evidence. */
+  getHistory?: () => Dialogue[];
+}
+
+// The reflector runs after a verified claim without blocking the reply.
+// Tests (and shutdown) await it here.
+let pendingReflection: Promise<unknown> = Promise.resolve();
+
+export function awaitGoalReflection(): Promise<void> {
+  return pendingReflection.then(() => undefined, () => undefined);
+}
+
+function scopeFor(goal: { kind: GoalState['kind'] }, scope: ExecutionScope) {
+  return experienceScope(scope.workingDir, safeWallet(), goal.kind);
+}
+
+function safeWallet() {
+  try { return readRuntimeWallet(); } catch { return {}; }
 }
 
 let deps: GoalEngineDeps | null = null;
@@ -88,6 +114,7 @@ export async function processGoalClaim(
       status: 'blocked',
       blockedReason: `verification round cap (${goalMaxRounds()}) reached`,
     });
+    try { recordConfoundedGoal(goal, scopeFor(goal, scope)); } catch { /* best-effort */ }
     return {
       output:
         `Verification round cap reached (${goalMaxRounds()} rounds). The goal is now blocked — ` +
@@ -109,6 +136,19 @@ export async function processGoalClaim(
       summary = await runSummarizer(ctx, { ...goal, rounds }, planMd);
     } catch { /* summary is best-effort */ }
     updateActiveGoal({ status: 'completed', rounds, verifierGaps: [], summary });
+    // Harnessing-level recursion: a refuted→verified contrast is evidence; a
+    // round-1 pass is adoption alone and teaches nothing durable.
+    if (experienceEnabled() && (rounds.length >= 2 || goal.strategistNote)) {
+      const verified: GoalState = { ...goal, rounds, status: 'completed', summary };
+      pendingReflection = reflectGoalExperience({
+        goal: verified,
+        planMd,
+        history: deps?.getHistory?.() ?? [],
+        scope: scopeFor(goal, scope),
+        sessionId: scope.sessionId ?? '',
+        client: ctx.client,
+      }).catch(() => null);
+    }
     return {
       output:
         `GOAL VERIFIED COMPLETE (round ${round}, ${outcome.verdicts.length}-reviewer panel).\n\n` +
@@ -134,6 +174,9 @@ export async function processGoalClaim(
   }
 
   const updated = updateActiveGoal({ status: 'active', rounds, verifierGaps: outcome.gaps });
+  if (round === 1) {
+    try { markRenderedLessonsRefuted(scopeFor(goal, scope), goal.id); } catch { /* best-effort */ }
+  }
   let strategistLine = '';
   if (updated && needsStrategist(updated)) {
     try {
