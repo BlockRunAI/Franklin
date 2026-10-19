@@ -7,7 +7,7 @@
  * be called BEFORE Base0xQuote / a swap into a token that is not in the
  * built-in symbol list.
  *
- *   - Price: $0.01 USDC per call, paid with the local Base wallet through the
+ *   - Price: $0.008 USDC per call, paid with the local Base wallet through the
  *     same x402 handshake the other paid tools use. No key, no account.
  *   - Free sample: /gate/swap/preview?token=usdc|weth|cbbtc|aero|degen
  *   - Fail-open on transport errors (the tool reports "unchecked", it never
@@ -27,7 +27,7 @@ import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
 
 const GATE_BASE = process.env.FRANKLIN_TOKEN_GATE_URL || 'https://api.greyridgesignals.ai';
-const GATE_PRICE_USD = 0.01;
+const GATE_PRICE_USD = 0.008;
 const GATE_TIMEOUT_MS = 20_000;
 
 interface GateInput {
@@ -132,7 +132,7 @@ export const baseTokenGateCapability: CapabilityHandler = {
   spec: {
     name: 'BaseTokenGate',
     description:
-      'Pre-trade safety gate for a Base ERC-20 that is NOT a well-known symbol (honeypot/sellability simulation, admin controls, liquidity vs. trade size). Returns GO / HOLD / BLOCK with a reason. $0.01 USDC per call from the Base wallet. Call before Base0xQuote when the buy token is an arbitrary address.',
+      'Pre-trade safety gate for a Base ERC-20 that is NOT a well-known symbol (honeypot/sellability simulation, admin controls, liquidity vs. trade size). Returns GO / HOLD / BLOCK with a reason. $0.008 USDC per call from the Base wallet. Call before Base0xQuote when the buy token is an arbitrary address.',
     input_schema: {
       type: 'object',
       required: ['token'],
