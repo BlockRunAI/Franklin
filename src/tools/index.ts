@@ -39,6 +39,7 @@ import { walletCapability } from './wallet.js';
 import { jupiterQuoteCapability, jupiterSwapCapability } from './jupiter.js';
 import { base0xQuoteCapability, base0xSwapCapability } from './zerox-base.js';
 import { base0xGaslessSwapCapability } from './zerox-gasless.js';
+import { baseTokenGateCapability } from './base-token-gate.js';
 import {
   defiLlamaProtocolsCapability,
   defiLlamaProtocolCapability,
@@ -205,6 +206,7 @@ export const allCapabilities: CapabilityHandler[] = [
   base0xQuoteCapability,
   base0xSwapCapability,
   base0xGaslessSwapCapability,
+  baseTokenGateCapability, // read-only pre-trade safety gate for arbitrary Base tokens ($0.01/call)
   defiLlamaProtocolsCapability,
   defiLlamaProtocolCapability,
   defiLlamaChainsCapability,
