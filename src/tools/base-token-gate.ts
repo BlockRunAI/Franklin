@@ -26,7 +26,7 @@ import { gatewayHeaders, walletMayPay } from '../payments/auth-mode.js';
 import { frameUntrusted } from './untrusted.js';
 import { recordUsage } from '../stats/tracker.js';
 
-const GATE_BASE = process.env.FRANKLIN_TOKEN_GATE_URL || 'https://api.greyridgesignals.ai';
+const GATE_BASE = process.env.FRANKLIN_TOKEN_GATE_URL || 'https://x402-data-api.sigrunner.workers.dev';
 const GATE_PRICE_USD = 0.008;
 const GATE_TIMEOUT_MS = 20_000;
 
