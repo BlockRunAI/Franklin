@@ -38,6 +38,13 @@ jobs:
             echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # npm trusted publishing (OIDC): with this package's Trusted Publisher set
+      # to this repo + publish.yml on npmjs.com, npm >= 11.5.1 exchanges the
+      # job's id-token for a one-off publish credential, so no long-lived
+      # NPM_TOKEN is needed. The token stays below as a fallback until every
+      # package is switched over.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@^11.5.1
       - name: Publish to npm
         if: steps.check.outputs.already_published != 'true'
         run: npm publish --provenance --access public
