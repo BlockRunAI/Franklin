@@ -284,6 +284,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'deepseek/deepseek-chat': 1_000_000,
   'deepseek/deepseek-reasoner': 1_000_000,
   'deepseek/deepseek-v4-pro': 1_000_000,
+  'deepseek/deepseek-v4.1-flash': 1_000_000,
   // xAI. grok-4.5 / 4.3 / build were missing until 2026-08-20: neither matches
   // any inference pattern below, so a cold catalog cache fell through to the
   // blind 128k default and compacted a 500K–1M window ~4-8x too early.

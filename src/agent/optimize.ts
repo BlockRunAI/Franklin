@@ -81,6 +81,7 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   'deepseek/deepseek-chat': 65_536,
   'deepseek/deepseek-reasoner': 65_536,
   'deepseek/deepseek-v4-pro': 65_536,
+  'deepseek/deepseek-v4.1-flash': 65_536,
   // Kimi K3 (flagship, 2026-07) supports 65K output per the BlockRun gateway
   // model entry (max_output: 65536). Without this entry the default 16K cap
   // left users with 4× headroom on the table for long-form coding outputs

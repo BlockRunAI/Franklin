@@ -12549,8 +12549,9 @@ test('2026-10-20: deepseek-v4.1-flash is priced and pinnable; the dead nvidia De
   assert.deepEqual(MODEL_PRICING['deepseek/deepseek-v4.1-flash'], { input: 0.14, output: 0.28 });
   assert.equal(resolveModel('deepseek-v4.1-flash'), 'deepseek/deepseek-v4.1-flash');
   assert.equal(resolveModel('v4.1-flash'), 'deepseek/deepseek-v4.1-flash');
-  // Base-only for now, so the bare alias stays on the both-chains twin.
-  assert.equal(resolveModel('deepseek'), 'deepseek/deepseek-chat');
+  // Both chains list it (sol.blockrun.ai since 2026-10-20), so the bare alias
+  // takes the canonical id.
+  assert.equal(resolveModel('deepseek'), 'deepseek/deepseek-v4.1-flash');
   // Free aliases never move to a paid model.
   assert.notEqual(resolveModel('deepseek-v4-flash'), 'deepseek/deepseek-v4.1-flash');
   assert.equal(MODEL_PRICING[resolveModel('deepseek-v4-flash')].input, 0);

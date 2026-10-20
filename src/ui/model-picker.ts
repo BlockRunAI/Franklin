@@ -155,19 +155,17 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'grok-4.1': 'xai/grok-4.3',
   // DeepSeek — paid SKUs route through deepseek/* (gateway aliases serve V4
   // Flash modes upstream); free tier routes through nvidia/*.
-  deepseek: 'deepseek/deepseek-chat',     // V4 Flash Chat (paid, $0.20/$0.40)
+  deepseek: 'deepseek/deepseek-v4.1-flash', // V4.1 Flash (paid, $0.14/$0.28)
   r1: 'deepseek/deepseek-reasoner',       // V4 Flash Reasoner (paid)
   // V4 Pro: paid flagship, 1.6T MoE / 49B active, 1M ctx, $1.32/$3.96 (live 2026-10-02).
   'deepseek-v4-pro': 'deepseek/deepseek-v4-pro',
   'dsv4-pro': 'deepseek/deepseek-v4-pro',
   'v4-pro': 'deepseek/deepseek-v4-pro',
-  // V4.1 Flash (live on Base 2026-10-20, $0.14/$0.28): the gateway's own name
-  // for the model deepseek-chat already serves — same upstream, same price,
-  // same non-thinking default. `deepseek` deliberately stays on deepseek-chat:
-  // sol.blockrun.ai does not list v4.1-flash yet, and a bare alias has to
-  // resolve on both chains (the `glm` rule). Explicit pins only until Solana
-  // lists it. NOTE `deepseek-v4-flash` / `dsv4` are FREE aliases (below) and
-  // must not move to this paid id.
+  // V4.1 Flash (live on Base and Solana 2026-10-20, $0.14/$0.28): the
+  // gateway's own name for the model deepseek-chat also serves — same
+  // upstream, same price, same non-thinking default. `deepseek` points here
+  // now that both chains list it (the `glm` rule). NOTE `deepseek-v4-flash` /
+  // `dsv4` are FREE aliases (below) and must not move to this paid id.
   'deepseek-v4.1-flash': 'deepseek/deepseek-v4.1-flash',
   'deepseek-v4.1': 'deepseek/deepseek-v4.1-flash',
   'v4.1-flash': 'deepseek/deepseek-v4.1-flash',
