@@ -183,28 +183,32 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'openai/gpt-5-nano': { input: 0.05, output: 0.4 }, // (probed)
   'openai/o1-mini': { input: 1.1, output: 4.4 },
   'google/gemini-3-pro-preview': { input: 2.0, output: 12.0 }, // GA'd as gemini-3.1-pro
-  'xai/grok-4-fast': { input: 0.2, output: 0.5 },
-  'xai/grok-4-fast-reasoning': { input: 0.2, output: 0.5 }, // (probed)
-  'xai/grok-4-1-fast': { input: 0.2, output: 0.5 },
-  'xai/grok-4-1-fast-reasoning': { input: 0.2, output: 0.5 }, // (probed)
+  // Retired at xAI. The gateway pins every retired Grok slug to grok-4.3 and
+  // bills grok-4.3's $1.25/$2.50 (blockrun models.ts + model-maps.ts
+  // "Retired -> grok-4.3", repriced 2026-09-07/09). The old per-id list
+  // prices here overstated grok-3 / grok-4-0709 by 2.4x/6x and understated
+  // the fast family, so they now carry what the gateway actually charges.
+  'xai/grok-4-fast': { input: 0.2, output: 0.5 }, // not in the gateway catalog — historical only
+  'xai/grok-4-fast-reasoning': { input: 1.25, output: 2.5 }, // served as grok-4.3
+  'xai/grok-4-1-fast': { input: 0.2, output: 0.5 }, // not in the gateway catalog — historical only
+  'xai/grok-4-1-fast-reasoning': { input: 1.25, output: 2.5 }, // served as grok-4.3
   // The two non-reasoning ids sit in the shared Router's SIMPLE chains and
-  // were charged today, yet had no row here — Franklin reported them as $0
+  // were charged, yet once had no row here — Franklin reported them as $0
   // and the portfolio scorer, which treats an unpriced id as infinitely
-  // expensive, could never pick them over a priced rung. Priced with their
-  // reasoning siblings (xAI bills the pair identically).
-  'xai/grok-4-1-fast-non-reasoning': { input: 0.2, output: 0.5 }, // (probed)
-  'xai/grok-4-fast-non-reasoning': { input: 0.2, output: 0.5 }, // (probed)
-  'xai/grok-4-0709': { input: 3.0, output: 15.0 }, // (probed) gateway lists $3/$15 (was mispriced here at $0.2/$1.5)
-  'xai/grok-3-mini': { input: 0.3, output: 0.5 }, // (probed)
-  'xai/grok-2-vision': { input: 2.0, output: 10.0 },
-  'xai/grok-3': { input: 3.0, output: 15.0 }, // (probed)
+  // expensive, could never pick them over a priced rung.
+  'xai/grok-4-1-fast-non-reasoning': { input: 1.25, output: 2.5 }, // served as grok-4.3
+  'xai/grok-4-fast-non-reasoning': { input: 1.25, output: 2.5 }, // served as grok-4.3
+  'xai/grok-4-0709': { input: 1.25, output: 2.5 }, // served as grok-4.3 (was $3/$15)
+  'xai/grok-3-mini': { input: 1.25, output: 2.5 }, // served as grok-4.3
+  'xai/grok-2-vision': { input: 1.25, output: 2.5 }, // served as grok-4.3
+  'xai/grok-3': { input: 1.25, output: 2.5 }, // served as grok-4.3 (was $3/$15)
   'minimax/minimax-m2.5': { input: 0.3, output: 1.2 },
   // K2.x (probed): the bare `kimi`/`k2.*` shortcuts resolve to K3, the
   // explicit ids still answer.
   'moonshot/kimi-k2.7': { input: 0.95, output: 4.0 },
   'moonshot/kimi-k2.6': { input: 0.95, output: 4.0 },
   'moonshot/kimi-k2.5': { input: 0.6, output: 3.0 },
-  'nvidia/kimi-k2.5': { input: 0.55, output: 2.5 },
+  'nvidia/kimi-k2.5': { input: 0.6, output: 3.0 }, // gateway list (falls back to moonshot/kimi-k2.5, same price)
   'zai/glm-5.1-turbo': { input: 1.2, output: 4.0 }, // was a client alias for zai/glm-5-turbo
 };
 

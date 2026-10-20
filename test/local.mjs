@@ -12259,7 +12259,8 @@ test('catalog sync 2026-08-29: the xAI non-reasoning fast ids in the core chains
   const { MODEL_PRICING } = await import('../dist/pricing.js');
   const { getContextWindow } = await import('../dist/agent/tokens.js');
   for (const id of ['xai/grok-4-1-fast-non-reasoning', 'xai/grok-4-fast-non-reasoning']) {
-    assert.deepEqual(MODEL_PRICING[id], { input: 0.2, output: 0.5 }, `${id} was charged today; it must not estimate as $0`);
+    // Retired at xAI; the gateway serves and bills them as grok-4.3 ($1.25/$2.50).
+    assert.deepEqual(MODEL_PRICING[id], { input: 1.25, output: 2.5 }, `${id} is charged at grok-4.3's rate; it must not estimate as $0`);
     assert.equal(getContextWindow(id), 131_072);
   }
 });
