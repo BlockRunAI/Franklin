@@ -1,5 +1,30 @@
 # Changelog
 
+## Franklin Agent 3.49.13 — DeepSeek V4.1 Flash, and the model lists match the live catalog
+
+Bare `deepseek` now names `deepseek/deepseek-v4.1-flash`, the gateway's own id
+for the model `deepseek-chat` serves: same upstream, same $0.14/$0.28, same
+non-thinking default. Both Base and Solana list it, so the alias resolves on
+either chain. `deepseek-v4.1-flash`, `deepseek-v4.1` and `v4.1-flash` pin it
+explicitly. The free `deepseek-v4-flash` / `dsv4` names stay free.
+
+`flash` / `gemini-flash` move to `google/gemini-3.8-flash` (same $0.75/$3.75
+as 3.6, listed on both chains), and `glm` / `glm5` move to `zai/glm-5.3` now
+that Solana lists it at the same price as 5.2. `qwen-max` stays on 3.7 Max,
+because 3.8 Max costs more.
+
+The offline price table gains the ten live ids it was missing (GPT-6.1 Sol,
+Gemini 3.8 Flash, DeepSeek V4 Flash Vision, Qwen 3.8 Max/Flash, Hy4 Preview,
+MiMo V2.5, Laguna S 2.1, Mistral Large 4, Muse Glimmer 30B), and the six
+vision-capable ones are marked as such, so an image turn on `/model flash` is
+no longer swapped to another model. Retired Grok slugs are priced at the
+grok-4.3 rate the gateway actually bills. `nemotron-3-nano-30b` leaves the
+free routing order (delisted 2026-09-08).
+
+`@blockrun/router-core` moves to 2cd5a10 (capability rows for V4.1 Flash,
+GPT-6.1 Sol and Mistral Large 4; routing unchanged since 0.3.0), and
+`@blockrun/model-catalog` to catalog `2026.10.20.3`.
+
 ## Franklin Agent 3.49.12 — a refuted-then-verified goal now teaches the next one
 
 A /goal that the verifier panel refuted and then verified on a later round
