@@ -12500,7 +12500,7 @@ test('catalog sync 2026-10-20: every live gateway id is priced and pinnable', as
     'tencent/hy4-preview': [0.834, 2.501, 'hy4'],
     'xiaomi/mimo-v2.5': [0.14, 0.28, 'mimo-v2.5'],
     'poolside/laguna-s-2.1': [0.09, 0.18, 'laguna-s'],
-    'mistral/mistral-large-4': [0.68, 2.09, 'mistral'],
+    'mistral/mistral-large-4': [1.36, 4.18, 'mistral'],
     'nvidia/muse-glimmer-30b': [0, 0, 'muse-glimmer'],
   };
   for (const [id, [input, output, pin]] of Object.entries(live)) {

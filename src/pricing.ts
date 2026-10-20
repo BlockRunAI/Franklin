@@ -158,7 +158,7 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'xiaomi/mimo-v2.5-pro': { input: 0.435, output: 0.87 },
   'xiaomi/mimo-v2.5': { input: 0.14, output: 0.28 }, // live 2026-10-20 — vision-capable, cheaper than Pro
   // Mistral + Poolside paid tiers — live 2026-10-20.
-  'mistral/mistral-large-4': { input: 0.68, output: 2.09 },
+  'mistral/mistral-large-4': { input: 1.36, output: 4.18 },
   'poolside/laguna-s-2.1': { input: 0.09, output: 0.18 }, // paid sibling of the free laguna-xs-2.1
   // Moonshot — K3 is the gateway flagship (2026-07): 2.8T open MoE, 1M
   // context, multimodal (image+text), returns reasoning_content. Pricier
