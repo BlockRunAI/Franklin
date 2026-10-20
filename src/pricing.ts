@@ -132,6 +132,8 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   // again upstream 2026-08-07 to $0.14/$0.28 — mirrored here 2026-08-12).
   'deepseek/deepseek-chat': { input: 0.14, output: 0.28 },
   'deepseek/deepseek-reasoner': { input: 0.14, output: 0.28 },
+  // V4.1 Flash — live on Base 2026-10-20; the same model and price as deepseek-chat.
+  'deepseek/deepseek-v4.1-flash': { input: 0.14, output: 0.28 },
   // V4 Pro (1.6T MoE / 49B active, 1M ctx, 65K out). Live list 2026-10-02;
   // the old $0.435/$0.87 promo figure no longer matches the gateway.
   'deepseek/deepseek-v4-pro': { input: 1.32, output: 3.96 },

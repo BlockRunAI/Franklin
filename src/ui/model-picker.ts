@@ -110,18 +110,19 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   gemini: 'google/gemini-3.1-pro',
   'gemini-2.5': 'google/gemini-2.5-pro',
   'gemini-2.5-pro': 'google/gemini-2.5-pro',
-  // `flash` follows the newest Flash generation (3.6 since 2026-08). 3.5 stays
-  // reachable by its explicit id — it is dearer on output ($9 vs $7.5) with no
-  // capability edge, so nothing should be pinned to it deliberately.
-  flash: 'google/gemini-3.6-flash',
-  'gemini-flash': 'google/gemini-3.6-flash',
+  // `flash` follows the newest Flash generation — 3.8 since 2026-10-20, at
+  // the same $0.75/$3.75 as 3.6 and live on both chains. 3.6 stays reachable
+  // as `gemini-3.6`. 3.5 stays reachable by its explicit id — it is dearer
+  // ($1.5/$9) with no capability edge, so nothing should be pinned to it
+  // deliberately.
+  flash: 'google/gemini-3.8-flash',
+  'gemini-flash': 'google/gemini-3.8-flash',
   'gemini-3.6': 'google/gemini-3.6-flash',
   'gemini-3.6-flash': 'google/gemini-3.6-flash',
   'gemini-3.5-flash': 'google/gemini-3.5-flash',
   'gemini-2.5-flash': 'google/gemini-2.5-flash',
   'gemini-3-flash-preview': 'google/gemini-3-flash-preview',
   // Gemini 3.8 Flash (live 2026-10-20, both chains) — same $0.75/$3.75 as 3.6.
-  // Explicit pins only for now; `flash` is NOT moved in a catalog sync.
   'gemini-3.8': 'google/gemini-3.8-flash',
   'gemini-3.8-flash': 'google/gemini-3.8-flash',
   // Flash Lite — thinking-mode Gemini for high-throughput work. `flash-lite`
@@ -160,6 +161,16 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'deepseek-v4-pro': 'deepseek/deepseek-v4-pro',
   'dsv4-pro': 'deepseek/deepseek-v4-pro',
   'v4-pro': 'deepseek/deepseek-v4-pro',
+  // V4.1 Flash (live on Base 2026-10-20, $0.14/$0.28): the gateway's own name
+  // for the model deepseek-chat already serves — same upstream, same price,
+  // same non-thinking default. `deepseek` deliberately stays on deepseek-chat:
+  // sol.blockrun.ai does not list v4.1-flash yet, and a bare alias has to
+  // resolve on both chains (the `glm` rule). Explicit pins only until Solana
+  // lists it. NOTE `deepseek-v4-flash` / `dsv4` are FREE aliases (below) and
+  // must not move to this paid id.
+  'deepseek-v4.1-flash': 'deepseek/deepseek-v4.1-flash',
+  'deepseek-v4.1': 'deepseek/deepseek-v4.1-flash',
+  'v4.1-flash': 'deepseek/deepseek-v4.1-flash',
   // V4 Flash Vision (experimental, live 2026-10-20): the paid DeepSeek SKU
   // that takes images, $0.30/$1.20. Names match the shared catalog policy.
   'deepseek-v4-flash-vision-exp': 'deepseek/deepseek-v4-flash-vision-exp',
@@ -250,16 +261,13 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'qwen-flash': 'qwen/qwen3.7-flash',
   'qwen3.7-flash': 'qwen/qwen3.7-flash',
   // GLM-5.3 (2026-08) is Z.AI's flagship — same $1.4/$4.4 as 5.2 with 1M
-  // context and always-on reasoning — but it ships on the BASE gateway ONLY
-  // (sol.blockrun.ai lists 92 of Base's 93 models, and 5.3 is the one it's
-  // missing; verified 2026-08-20).
-  //
-  // So `glm` deliberately does NOT follow the flagship here. A bare alias is
-  // what people type from muscle memory, and it has to resolve on BOTH chains
-  // — pointing it at a Base-only id would hand every Solana user an HTTP 400
-  // on `/model glm`. 5.2 is on both, identically priced, one generation back.
-  // Promote this line the day 5.3 lands on Solana.
-  glm: 'zai/glm-5.2',
+  // context and always-on reasoning. It shipped Base-only, so `glm` held at 5.2
+  // (a bare alias has to resolve on BOTH chains, or every Solana user gets an
+  // HTTP 400 on `/model glm`) with a note to promote it the day 5.3 reached
+  // Solana. It has: sol.blockrun.ai lists zai/glm-5.3 at $1.4/$4.4 (verified
+  // 2026-10-20), so `glm` / `glm5` now follow the flagship like `gpt`, `grok`
+  // and `gemini`. 5.2 stays reachable as `glm-5.2`.
+  glm: 'zai/glm-5.3',
   'glm-5': 'zai/glm-5',
   'glm-5.3': 'zai/glm-5.3',
   // GLM-5.3 Flash (2026-08-29 catalog sync): 1M ctx, vision, $0.15/$0.5.
@@ -270,7 +278,7 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   // routes for anyone who wants the 200K-context build explicitly.
   'glm-5.1': 'zai/glm-5.1',
   'glm-turbo': 'zai/glm-5-turbo',
-  'glm5': 'zai/glm-5.2',
+  'glm5': 'zai/glm-5.3',
   // Tencent + Xiaomi joined the gateway in 2026-08 — cheap reasoning at long
   // context, below the frontier tier. tencent/hy3 was retired 2026-09-24 (the
   // gateway now redirects it to qwen3.7-flash); Hy4 Preview is Tencent's live

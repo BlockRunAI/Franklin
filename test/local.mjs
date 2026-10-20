@@ -12517,3 +12517,52 @@ test('catalog sync 2026-10-20: every live gateway id is priced and pinnable', as
   assert.equal(isFreeModelId('nvidia/nemotron-3-nano-30b'), true,
     'a delisted free id still prices old sessions at $0');
 });
+
+test('2026-10-20: bare flash / glm follow their flagships, price-neutral and on both chains', async () => {
+  const { resolveModel } = await import('../dist/ui/model-picker.js');
+  const { MODEL_PRICING } = await import('../dist/pricing.js');
+  const { isVisionModel } = await import('../dist/router/vision.js');
+  assert.equal(resolveModel('flash'), 'google/gemini-3.8-flash');
+  assert.equal(resolveModel('gemini-flash'), 'google/gemini-3.8-flash');
+  assert.equal(resolveModel('gemini-3.6'), 'google/gemini-3.6-flash', '3.6 stays pinnable');
+  assert.deepEqual(MODEL_PRICING['google/gemini-3.8-flash'], MODEL_PRICING['google/gemini-3.6-flash']);
+  assert.equal(resolveModel('glm'), 'zai/glm-5.3');
+  assert.equal(resolveModel('glm5'), 'zai/glm-5.3');
+  assert.equal(resolveModel('glm-5.2'), 'zai/glm-5.2', '5.2 stays pinnable');
+  assert.deepEqual(MODEL_PRICING['zai/glm-5.3'], MODEL_PRICING['zai/glm-5.2']);
+  // `qwen-max` deliberately stays on 3.7: 3.8 Max is dearer ($2/$6 vs $1.475/$4.425).
+  assert.equal(resolveModel('qwen-max'), 'qwen/qwen3.7-max');
+  // A vision-tagged new id must be recognised as vision, or an image turn on
+  // `/model flash` would be swapped to a "vision sibling" the user never chose.
+  for (const id of ['openai/gpt-6.1-sol', 'google/gemini-3.8-flash', 'deepseek/deepseek-v4-flash-vision-exp',
+    'qwen/qwen3.8-flash', 'xiaomi/mimo-v2.5', 'mistral/mistral-large-4']) {
+    assert.equal(isVisionModel(id), true, `${id} is vision-tagged in the live catalog`);
+  }
+  for (const id of ['qwen/qwen3.8-max', 'tencent/hy4-preview', 'poolside/laguna-s-2.1']) {
+    assert.equal(isVisionModel(id), false, `${id} is text-only`);
+  }
+});
+
+test('2026-10-20: deepseek-v4.1-flash is priced and pinnable; the dead nvidia DeepSeek SKUs are not free', async () => {
+  const { resolveModel } = await import('../dist/ui/model-picker.js');
+  const { MODEL_PRICING } = await import('../dist/pricing.js');
+  assert.deepEqual(MODEL_PRICING['deepseek/deepseek-v4.1-flash'], { input: 0.14, output: 0.28 });
+  assert.equal(resolveModel('deepseek-v4.1-flash'), 'deepseek/deepseek-v4.1-flash');
+  assert.equal(resolveModel('v4.1-flash'), 'deepseek/deepseek-v4.1-flash');
+  // Base-only for now, so the bare alias stays on the both-chains twin.
+  assert.equal(resolveModel('deepseek'), 'deepseek/deepseek-chat');
+  // Free aliases never move to a paid model.
+  assert.notEqual(resolveModel('deepseek-v4-flash'), 'deepseek/deepseek-v4.1-flash');
+  assert.equal(MODEL_PRICING[resolveModel('deepseek-v4-flash')].input, 0);
+});
+
+test('the gateway-400 nvidia DeepSeek SKUs are in no free set or routing order', async () => {
+  const { FREE_PREFERENCE_ORDER, FREE_MODEL_CONTEXT_WINDOWS, LEGACY_FREE_MODEL_IDS, isFreeModelId } =
+    await import('../dist/free-models.js');
+  for (const id of ['nvidia/deepseek-v4-flash', 'nvidia/deepseek-v4-pro']) {
+    assert.ok(!FREE_PREFERENCE_ORDER.includes(id), `${id} must not be routed`);
+    assert.ok(!(id in FREE_MODEL_CONTEXT_WINDOWS), `${id} is not a live free id`);
+    assert.ok(!LEGACY_FREE_MODEL_IDS.includes(id), `${id} must not be treated as free`);
+    assert.equal(isFreeModelId(id), false);
+  }
+});
