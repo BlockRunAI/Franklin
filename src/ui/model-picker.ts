@@ -306,7 +306,7 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'k2.6': 'moonshot/kimi-k3',
   'kimi-k2.5': 'moonshot/kimi-k3',
   'k2.5': 'moonshot/kimi-k3',
-  // Mistral Large 4 (live 2026-10-20, both chains): $0.68/$2.09, reasoning +
+  // Mistral Large 4 (live 2026-10-20, both chains): $1.36/$4.18, reasoning +
   // vision. Bare `mistral` is safe to take — `mistral-small` / `mistral-nemotron`
   // are the free aliases and stay free.
   mistral: 'mistral/mistral-large-4',
