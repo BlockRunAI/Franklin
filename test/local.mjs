@@ -12493,6 +12493,7 @@ test('catalog sync 2026-10-20: every live gateway id is priced and pinnable', as
   const live = {
     'openai/gpt-6.1-sol': [2, 10, 'gpt-6.1-sol'],
     'google/gemini-3.8-flash': [0.75, 3.75, 'gemini-3.8-flash'],
+    'google/gemini-4-argon': [2, 10, 'gemini-4-argon'],
     'deepseek/deepseek-v4-flash-vision-exp': [0.3, 1.2, 'deepseek-vision'],
     'qwen/qwen3.8-max': [2, 6, 'qwen3.8-max'],
     'qwen/qwen3.8-flash': [0.15, 0.47, 'qwen3.8-flash'],
@@ -12523,6 +12524,8 @@ test('2026-10-20: bare flash / glm follow their flagships, price-neutral and on 
   const { MODEL_PRICING } = await import('../dist/pricing.js');
   const { isVisionModel } = await import('../dist/router/vision.js');
   assert.equal(resolveModel('flash'), 'google/gemini-3.8-flash');
+  assert.equal(resolveModel('argon'), 'google/gemini-4-argon');
+  assert.equal(resolveModel('gemini'), 'google/gemini-3.1-pro', 'bare gemini stays on 3.1 Pro');
   assert.equal(resolveModel('gemini-flash'), 'google/gemini-3.8-flash');
   assert.equal(resolveModel('gemini-3.6'), 'google/gemini-3.6-flash', '3.6 stays pinnable');
   assert.deepEqual(MODEL_PRICING['google/gemini-3.8-flash'], MODEL_PRICING['google/gemini-3.6-flash']);
@@ -12534,7 +12537,7 @@ test('2026-10-20: bare flash / glm follow their flagships, price-neutral and on 
   assert.equal(resolveModel('qwen-max'), 'qwen/qwen3.7-max');
   // A vision-tagged new id must be recognised as vision, or an image turn on
   // `/model flash` would be swapped to a "vision sibling" the user never chose.
-  for (const id of ['openai/gpt-6.1-sol', 'google/gemini-3.8-flash', 'deepseek/deepseek-v4-flash-vision-exp',
+  for (const id of ['openai/gpt-6.1-sol', 'google/gemini-3.8-flash', 'google/gemini-4-argon', 'deepseek/deepseek-v4-flash-vision-exp',
     'qwen/qwen3.8-flash', 'xiaomi/mimo-v2.5', 'mistral/mistral-large-4']) {
     assert.equal(isVisionModel(id), true, `${id} is vision-tagged in the live catalog`);
   }

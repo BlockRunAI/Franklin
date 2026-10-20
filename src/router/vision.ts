@@ -79,6 +79,7 @@ const VISION_MODELS = new Set<string>([
   'xiaomi/mimo-v2.5',
   'mistral/mistral-large-4',
   // Google — vision baked into every Gemini SKU we surface (flash-lite excepted)
+  'google/gemini-4-argon',
   'google/gemini-3.1-pro',
   'google/gemini-3.6-flash',
   'google/gemini-3.5-flash',
