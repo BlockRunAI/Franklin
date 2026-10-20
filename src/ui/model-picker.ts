@@ -131,6 +131,12 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'gemini-3.5-flash-lite': 'google/gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite': 'google/gemini-3.1-flash-lite',
   'gemini-2.5-flash-lite': 'google/gemini-2.5-flash-lite',
+  // Gemini 4 Argon (live 2026-10-20, both chains) — explicit pins only. Bare
+  // `gemini` stays on 3.1 Pro until Argon has production history; moving it
+  // would change which model (and price) existing users get.
+  argon: 'google/gemini-4-argon',
+  'gemini-4': 'google/gemini-4-argon',
+  'gemini-4-argon': 'google/gemini-4-argon',
   'gemini-3': 'google/gemini-3.1-pro',
   'gemini-3.1': 'google/gemini-3.1-pro',
   // xAI — grok-4.5 is the public flagship since 2026-07-14; `grok` follows it

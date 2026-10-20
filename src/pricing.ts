@@ -122,6 +122,9 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'google/gemini-3.8-flash': { input: 0.75, output: 3.75 }, // live 2026-10-20
   'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
   'google/gemini-3.1-pro': { input: 2.0, output: 12.0 },
+  // Gemini 4 Argon — live 2026-10-20 on both chains. Google's intro rate;
+  // it moves to $4/$20 on 2026-12-01, re-price it then.
+  'google/gemini-4-argon': { input: 2.0, output: 10.0 },
   // xAI
   'xai/grok-4.3': { input: 1.25, output: 2.5 },        // 1M ctx; demoted from flagship 2026-07-14
   'xai/grok-4.7': { input: 2.0, output: 6.0 },        // newest Grok, 500K ctx (2x at >=200K input)

@@ -1,5 +1,17 @@
 # Changelog
 
+## Franklin Agent 3.49.14 — Gemini 4 Argon is selectable and priced
+
+`google/gemini-4-argon`, Google's frontier reasoning model, is live on Base and
+Solana at $2/$10 per 1M tokens (Google's rate through 2026-11-30; it moves to
+$4/$20 on 2026-12-01). Franklin now prices it offline, treats it as
+vision-capable so an image turn on Argon stays on Argon, and resolves
+`argon`, `gemini-4` and `gemini-4-argon` to it.
+
+Nothing routes to it by default: bare `gemini` stays on 3.1 Pro and no smart
+routing tier changes. Picker membership comes from `@blockrun/model-catalog`
+and follows that package's next release.
+
 ## Franklin Agent 3.49.13 — DeepSeek V4.1 Flash, and the model lists match the live catalog
 
 Bare `deepseek` now names `deepseek/deepseek-v4.1-flash`, the gateway's own id
