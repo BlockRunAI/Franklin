@@ -9,8 +9,8 @@ vision-capable so an image turn on Argon stays on Argon, and resolves
 `argon`, `gemini-4` and `gemini-4-argon` to it.
 
 Nothing routes to it by default: bare `gemini` stays on 3.1 Pro and no smart
-routing tier changes. Picker membership comes from `@blockrun/model-catalog`
-and follows that package's next release.
+routing tier changes. `@blockrun/model-catalog` moves to catalog
+`2026.10.20.4` (b95efe2), which lists Argon.
 
 ## Franklin Agent 3.49.13 — DeepSeek V4.1 Flash, and the model lists match the live catalog
 
