@@ -53,6 +53,9 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'gpt-6-astra': 'openai/gpt-6-astra',
   'gpt-6-sol': 'openai/gpt-6-sol',
   'gpt-6-luna': 'openai/gpt-6-luna',
+  // GPT-6.1 Sol (live /api/v1/models 2026-10-20, Base + Solana): same $2/$10
+  // as GPT-6 Sol with a newer knowledge cutoff. Explicit pin only.
+  'gpt-6.1-sol': 'openai/gpt-6.1-sol',
   'gpt-5.1': 'openai/gpt-5.1',
   'gpt-5.6-sol': 'openai/gpt-5.6-sol',
   'gpt-5.6-terra': 'openai/gpt-5.6-terra',
@@ -117,6 +120,10 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'gemini-3.5-flash': 'google/gemini-3.5-flash',
   'gemini-2.5-flash': 'google/gemini-2.5-flash',
   'gemini-3-flash-preview': 'google/gemini-3-flash-preview',
+  // Gemini 3.8 Flash (live 2026-10-20, both chains) — same $0.75/$3.75 as 3.6.
+  // Explicit pins only for now; `flash` is NOT moved in a catalog sync.
+  'gemini-3.8': 'google/gemini-3.8-flash',
+  'gemini-3.8-flash': 'google/gemini-3.8-flash',
   // Flash Lite — thinking-mode Gemini for high-throughput work. `flash-lite`
   // follows the newest (3.5); 3.1 is cheaper still and stays explicit.
   'flash-lite': 'google/gemini-3.5-flash-lite',
@@ -137,14 +144,14 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'grok-4.6': 'xai/grok-4.6',
   'grok-4.3': 'xai/grok-4.3',
   'grok-build': 'xai/grok-build-0.1',
-  // grok-3 / grok-4-0709 / the grok-4-1-fast pair are hidden from
-  // /v1/models but still served and charged (probed 2026-08-29) — explicit
-  // pins keep resolving to the real ids. Note grok-3 and grok-4-0709 bill at
-  // $3/$15; `grok` (4.5) is the cheaper flagship.
-  'grok-3': 'xai/grok-3',
-  'grok-4': 'xai/grok-4-0709',
-  'grok-fast': 'xai/grok-4-1-fast-reasoning',
-  'grok-4.1': 'xai/grok-4-1-fast-reasoning',
+  // grok-3 / grok-4-0709 / the grok-4-1-fast pair are retired at xAI. The
+  // gateway pins every one of them to grok-4.3 and bills grok-4.3's rate
+  // (blockrun model-maps.ts, "Retired -> grok-4.3"), so these pins name what
+  // actually answers. `grok-4` is the generation alias and follows `grok`.
+  'grok-3': 'xai/grok-4.3',
+  'grok-4': 'xai/grok-4.5',
+  'grok-fast': 'xai/grok-4.3',
+  'grok-4.1': 'xai/grok-4.3',
   // DeepSeek — paid SKUs route through deepseek/* (gateway aliases serve V4
   // Flash modes upstream); free tier routes through nvidia/*.
   deepseek: 'deepseek/deepseek-chat',     // V4 Flash Chat (paid, $0.20/$0.40)
@@ -153,6 +160,11 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'deepseek-v4-pro': 'deepseek/deepseek-v4-pro',
   'dsv4-pro': 'deepseek/deepseek-v4-pro',
   'v4-pro': 'deepseek/deepseek-v4-pro',
+  // V4 Flash Vision (experimental, live 2026-10-20): the paid DeepSeek SKU
+  // that takes images, $0.30/$1.20. Names match the shared catalog policy.
+  'deepseek-v4-flash-vision-exp': 'deepseek/deepseek-v4-flash-vision-exp',
+  'deepseek-vision': 'deepseek/deepseek-v4-flash-vision-exp',
+  'v4-flash-vision': 'deepseek/deepseek-v4-flash-vision-exp',
   // The free nvidia/deepseek-v4-flash SKU was EOL'd by the gateway (410).
   // Point the deepseek-free aliases at the current free default so muscle
   // memory keeps working without handing back a dead id.
@@ -195,12 +207,17 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   omni: FREE_DEFAULT_MODEL,
   'free-omni': FREE_DEFAULT_MODEL,
   'nano-omni': FREE_DEFAULT_MODEL,
-  // Base-only free ids. They 400 on Solana, which is a clear error rather than
-  // a silent wrong model, so the shortcuts stay honest and resolve to the id
-  // the user typed.
-  'nano-30b': 'nvidia/nemotron-3-nano-30b',
+  // nemotron-3-nano-30b was delisted by the gateway on 2026-09-08 (NVIDIA
+  // deprovisioned it), so `nano-30b` joins the retired-free-id pattern.
+  'nano-30b': FREE_DEFAULT_MODEL,
+  // Explicit pins to other live free ids (Base + Solana, 2026-10-20) — they
+  // resolve to the id the user typed, never to the default.
   laguna: 'poolside/laguna-xs-2.1',
   'ultra-550b': 'nvidia/nemotron-3-ultra-550b',
+  // Meta's Muse Glimmer 30B, free on NVIDIA (gateway 2026-10-02). A reasoning
+  // model: give it a real max_tokens budget or it answers blank.
+  'muse-glimmer': 'nvidia/muse-glimmer-30b',
+  'muse-glimmer-30b': 'nvidia/muse-glimmer-30b',
   // Maverick left the gateway catalog on/before 2026-07-14 and the free pool
   // silently substitutes for it, so pointing users at it would promise a model
   // they don't get. Resolve to the current free default instead.
@@ -219,6 +236,13 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'qwen-max': 'qwen/qwen3.7-max',
   'qwen3.7-max': 'qwen/qwen3.7-max',
   'qwen-3.7-max': 'qwen/qwen3.7-max',
+  // Qwen 3.8 (live 2026-10-20, both chains). Max is $2/$6, Flash $0.15/$0.47
+  // and takes images. Explicit pins — `qwen-max` / `qwen-flash` stay on 3.7.
+  'qwen3.8-max': 'qwen/qwen3.8-max',
+  'qwen-3.8-max': 'qwen/qwen3.8-max',
+  'qwen3.8-flash': 'qwen/qwen3.8-flash',
+  'qwen-3.8-flash': 'qwen/qwen3.8-flash',
+  'qwen-vision': 'qwen/qwen3.8-flash',
   // Plus and Flash round out the paid Qwen line — both 1M context with
   // reasoning. Flash at $0.03/$0.13 is the cheapest paid model on the gateway.
   'qwen-plus': 'qwen/qwen3.7-plus',
@@ -248,11 +272,18 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'glm-turbo': 'zai/glm-5-turbo',
   'glm5': 'zai/glm-5.2',
   // Tencent + Xiaomi joined the gateway in 2026-08 — cheap reasoning at long
-  // context, below the frontier tier.
-  hy3: 'tencent/hy3',
-  tencent: 'tencent/hy3',
+  // context, below the frontier tier. tencent/hy3 was retired 2026-09-24 (the
+  // gateway now redirects it to qwen3.7-flash); Hy4 Preview is Tencent's live
+  // model, so `hy3` / `tencent` follow it the way the K2.x pins follow K3.
+  hy3: 'tencent/hy4-preview',
+  tencent: 'tencent/hy4-preview',
+  hy4: 'tencent/hy4-preview',
+  'hy4-preview': 'tencent/hy4-preview',
   mimo: 'xiaomi/mimo-v2.5-pro',
   'mimo-v2.5-pro': 'xiaomi/mimo-v2.5-pro',
+  // MiMo V2.5 (non-Pro): cheaper and the vision-capable one ($0.14/$0.28).
+  'mimo-v2.5': 'xiaomi/mimo-v2.5',
+  'mimo-vision': 'xiaomi/mimo-v2.5',
   xiaomi: 'xiaomi/mimo-v2.5-pro',
   kimi: 'moonshot/kimi-k3',
   k3: 'moonshot/kimi-k3',
@@ -263,6 +294,16 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'k2.6': 'moonshot/kimi-k3',
   'kimi-k2.5': 'moonshot/kimi-k3',
   'k2.5': 'moonshot/kimi-k3',
+  // Mistral Large 4 (live 2026-10-20, both chains): $0.68/$2.09, reasoning +
+  // vision. Bare `mistral` is safe to take — `mistral-small` / `mistral-nemotron`
+  // are the free aliases and stay free.
+  mistral: 'mistral/mistral-large-4',
+  'mistral-large': 'mistral/mistral-large-4',
+  'mistral-large-4': 'mistral/mistral-large-4',
+  // Poolside Laguna S 2.1 — the PAID sibling of the free laguna-xs ($0.09/$0.18).
+  // `laguna` stays on the free XS model: a free alias never moves to a paid one.
+  'laguna-s': 'poolside/laguna-s-2.1',
+  'laguna-s-2.1': 'poolside/laguna-s-2.1',
 };
 
 /**
@@ -343,6 +384,9 @@ const PROVIDER_ORDER = [
   'deepseek',
   'tencent',
   'xiaomi',
+  'mistral',
+  'poolside',
+  'cohere',
   'nvidia',
 ];
 
@@ -358,6 +402,9 @@ const PROVIDER_LABELS: Record<string, string> = {
   deepseek: 'DeepSeek',
   tencent: 'Tencent / Hunyuan',
   xiaomi: 'Xiaomi / MiMo',
+  mistral: 'Mistral',
+  poolside: 'Poolside / Laguna',
+  cohere: 'Cohere',
   nvidia: 'Free / NVIDIA',
 };
 

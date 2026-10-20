@@ -117,7 +117,15 @@ export { FREE_DEFAULT_MODEL, FREE_POOL_CONTEXT_FLOOR, FREE_PREFERENCE_ORDER };
  *     chain alive through an NVIDIA-wide outage instead of it being four names
  *     for one upstream.
  *
+ * 2026-10-20: nemotron-3-nano-30b, the Base leader in the table above, was
+ * delisted on 2026-09-08 and has left this list (see LEGACY_FREE_MODEL_IDS).
+ * The measurements stay as the record of why it led.
+ *
  * Not listed, and why:
+ *   - nvidia/muse-glimmer-30b — joined the free pool 2026-10-02 and has not
+ *     been measured on /v1/messages, the bar every rung above had to clear.
+ *     A reasoning model that spends a small max_tokens budget entirely on
+ *     reasoning (gateway probe). Reachable by explicit pin until measured.
  *   - nvidia/nemotron-3.5-lightning — LATENCY, and only latency. Measured
  *     10.9s / 12.2s / 22.5s for a one-sentence answer at max_tokens 800,
  *     against ~0.8-3s for the rest of the pool. Its name is a lie. (An
@@ -213,12 +221,16 @@ export const QUARANTINED_FREE_MODELS: readonly string[] = [
 ];
 
 /**
- * Free ids Franklin used to name. The gateway still answers for all of them
- * (via substitution), but they are gone from /api/v1/models. Kept so old
- * session-cost records still price at $0 and so stale aliases can be remapped
- * rather than handed back to the user as-is.
+ * Free ids Franklin used to name. All are gone from /api/v1/models; the
+ * gateway answers for most of them by substitution. Kept DELIBERATELY: this
+ * list is what lets isFreeModelId() report an old session's model as $0 and
+ * keep a stale pin on the free side of every paid-approval gate. It is never
+ * routed to — FREE_PREFERENCE_ORDER is the routing list.
  */
 export const LEGACY_FREE_MODEL_IDS: readonly string[] = [
+  // Delisted 2026-09-08 (NVIDIA deprovisioned it; gateway marks it
+  // unavailable and redirects to nano-omni). Led the free chain until then.
+  'nvidia/nemotron-3-nano-30b',
   'nvidia/nemotron-nano-9b-v2',
   'nvidia/mistral-nemotron',
   'nvidia/nemotron-nano-12b-v2-vl',
@@ -228,17 +240,18 @@ export const LEGACY_FREE_MODEL_IDS: readonly string[] = [
 ];
 
 /**
- * Every free id in the live Base catalog as of 2026-08-30, mapped to its
- * catalogued context window. Used for metadata display; NOT for sizing a
- * request — use FREE_POOL_CONTEXT_FLOOR for that.
+ * Every free id (billing_mode "free") in the live catalog as of 2026-10-20 —
+ * identical on Base and Solana — mapped to its catalogued context window.
+ * Used for metadata display and as the cold-cache answer to isFreeModelId();
+ * NOT for sizing a request — use FREE_POOL_CONTEXT_FLOOR for that.
  */
 export const FREE_MODEL_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
   'nvidia/nemotron-3-ultra-550b': 1_000_000,
   'nvidia/nemotron-3.5-lightning': 1_000_000,
   'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': 256_000,
   'cohere/north-mini-code': 256_000,
-  'nvidia/nemotron-3-nano-30b': 131_072,
   'poolside/laguna-xs-2.1': 131_072,
+  'nvidia/muse-glimmer-30b': 131_072,
   'nvidia/llama-3.2-11b-vision': 128_000,
 };
 

@@ -26,7 +26,9 @@ export const FREE_DEFAULT_MODEL = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
 
 /** Free models in preference order, best first. See free-models.ts. */
 export const FREE_PREFERENCE_ORDER: readonly string[] = [
-  'nvidia/nemotron-3-nano-30b',     // 5/5 healthy, fastest
+  // nvidia/nemotron-3-nano-30b led this list until the gateway delisted it on
+  // 2026-09-08 (NVIDIA deprovisioned it). It is gone from /api/v1/models, so
+  // the chain-safe default leads again.
   FREE_DEFAULT_MODEL,               // the floor this never drops below
   'poolside/laguna-xs-2.1',         // different provider
   'cohere/north-mini-code',         // different provider; needs max_tokens >= 1200
