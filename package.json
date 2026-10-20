@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/franklin",
-  "version": "3.49.14",
+  "version": "3.49.15",
   "description": "Franklin Agent — The AI agent with a wallet. Spends USDC autonomously to get real work done. Pay per action, no subscriptions.",
   "type": "module",
   "exports": {
@@ -77,7 +77,7 @@
   "dependencies": {
     "@blockrun/llm": "^3.19.1",
     "@blockrun/model-catalog": "https://codeload.github.com/BlockRunAI/model-catalog/tar.gz/b95efe2f025c9968742e6479bc9ec71b6a40c0f4",
-    "@blockrun/router-core": "https://codeload.github.com/BlockRunAI/router-core/tar.gz/2cd5a1026f755cd39a3f0d6e61cab23a5ad391a9",
+    "@blockrun/router-core": "https://codeload.github.com/BlockRunAI/router-core/tar.gz/8773a9954b091bd0090acdfec67c75a006c0e156",
     "@colbymchenry/codegraph": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@polymarket/builder-relayer-client": "^0.0.10",

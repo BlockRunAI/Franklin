@@ -1,5 +1,16 @@
 # Changelog
 
+## Franklin Agent 3.49.15 — Mistral Large 4 at its list price; two more verified tool fallbacks
+
+Mistral's launch promotion ended and blockrun moved `mistral/mistral-large-4`
+from $0.68/$2.09 to $1.36/$4.18. The offline price table follows, so session
+cost estimates match what the gateway bills.
+
+`@blockrun/router-core` moves to 8773a99. A live probe confirmed well-formed
+tool calls from `deepseek/deepseek-v4.1-flash` and `openai/gpt-6.1-sol`, so
+auto routing can fall back to them on tool turns, behind the configured
+chains. No primary changes on the core's decision snapshot.
+
 ## Franklin Agent 3.49.14 — Gemini 4 Argon is selectable and priced
 
 `google/gemini-4-argon`, Google's frontier reasoning model, is live on Base and
