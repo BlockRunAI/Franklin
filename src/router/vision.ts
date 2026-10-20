@@ -71,6 +71,13 @@ const VISION_MODELS = new Set<string>([
   'openai/gpt-6-sol',
   'openai/gpt-6-luna',
   'openai/gpt-5.1',
+  // 2026-10-20 catalog sync — every new id the live catalog tags vision.
+  'openai/gpt-6.1-sol',
+  'google/gemini-3.8-flash',
+  'deepseek/deepseek-v4-flash-vision-exp',
+  'qwen/qwen3.8-flash',
+  'xiaomi/mimo-v2.5',
+  'mistral/mistral-large-4',
   // Google — vision baked into every Gemini SKU we surface (flash-lite excepted)
   'google/gemini-3.1-pro',
   'google/gemini-3.6-flash',
