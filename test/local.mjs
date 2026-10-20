@@ -478,7 +478,7 @@ test('proxy server handles OPTIONS and local model switching without backend cal
       nemotron: FREE_DEFAULT,
       devstral: FREE_DEFAULT,
       'nano-9b': FREE_DEFAULT,
-      'nano-30b': 'nvidia/nemotron-3-nano-30b',
+      'nano-30b': FREE_DEFAULT, // delisted 2026-09-08 — retired-free-id pattern
       laguna: 'poolside/laguna-xs-2.1',
       'ultra-550b': 'nvidia/nemotron-3-ultra-550b',
     };
@@ -6124,9 +6124,10 @@ test('free model catalog: picker, shortcuts, pricing, and weak-model guard stay 
     'nano-vl': FREE_DEFAULT_MODEL,
     'free-vision': FREE_DEFAULT_MODEL,
     omni: FREE_DEFAULT_MODEL,
-    'nano-30b': 'nvidia/nemotron-3-nano-30b',
+    'nano-30b': FREE_DEFAULT_MODEL, // delisted 2026-09-08 — retired-free-id pattern
     laguna: 'poolside/laguna-xs-2.1',
     'ultra-550b': 'nvidia/nemotron-3-ultra-550b',
+    'muse-glimmer': 'nvidia/muse-glimmer-30b',
   };
 
   for (const [shortcut, expectedModel] of Object.entries(freeAliases)) {
@@ -6165,7 +6166,7 @@ test('buildFallbackChain: a free model never falls back to a paid one', async ()
 
   // The bug: an explicit free request that hit a 429/5xx walked on to
   // deepseek/gemini and signed an x402 payment for it.
-  for (const free of ['poolside/laguna-xs-2.1', 'nvidia/nemotron-3-nano-30b', FREE_DEFAULT_MODEL]) {
+  for (const free of ['poolside/laguna-xs-2.1', 'nvidia/muse-glimmer-30b', FREE_DEFAULT_MODEL]) {
     const chain = buildFallbackChain(free);
     assert.equal(chain[0], free, 'the requested model leads its own chain');
     for (const m of chain) {
@@ -6314,7 +6315,6 @@ test('free routing profile stays free across router entry points', async () => {
     // keep a PAID id out of the free chain, not to freeze the roster — see
     // src/free-models.ts for why each id is in or out.
     'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
-    'nvidia/nemotron-3-nano-30b',
     'poolside/laguna-xs-2.1',
     'cohere/north-mini-code',
   ]);
@@ -7547,12 +7547,13 @@ test('picker trim: shortcuts for hidden models still resolve (muscle-memory pres
   // flagship-promotion pattern as kimi → k2.7. Explicit pins still resolve.
   assert.equal(resolveModel('grok'), 'xai/grok-4.5');
   assert.equal(resolveModel('grok-4.3'), 'xai/grok-4.3');
-  // grok-3 / grok-4-0709 / grok-4-1-fast are hidden from /v1/models but
-  // still served (probed 2026-08-29) — explicit pins resolve to the real ids.
-  assert.equal(resolveModel('grok-3'), 'xai/grok-3');
-  assert.equal(resolveModel('grok-4'), 'xai/grok-4-0709');
-  assert.equal(resolveModel('grok-fast'), 'xai/grok-4-1-fast-reasoning');
-  assert.equal(resolveModel('grok-4.1'), 'xai/grok-4-1-fast-reasoning');
+  // grok-3 / grok-4-0709 / grok-4-1-fast are retired at xAI; the gateway
+  // serves them all as grok-4.3 at grok-4.3's rate, so the pins name what
+  // answers. `grok-4` is the generation alias and follows `grok`.
+  assert.equal(resolveModel('grok-3'), 'xai/grok-4.3');
+  assert.equal(resolveModel('grok-4'), 'xai/grok-4.5');
+  assert.equal(resolveModel('grok-fast'), 'xai/grok-4.3');
+  assert.equal(resolveModel('grok-4.1'), 'xai/grok-4.3');
   assert.equal(resolveModel('grok-build'), 'xai/grok-build-0.1');
 });
 
@@ -9250,16 +9251,17 @@ test('pickFreeFallback: respects alreadyFailed set', async () => {
   // every later test sees a catalog it never asked for.
   try {
     __primeGatewayModelsCache([
-      freeEntry('nvidia/nemotron-3-nano-30b'),
       freeEntry(FREE_DEFAULT_MODEL),
       freeEntry('poolside/laguna-xs-2.1'),
       freeEntry('cohere/north-mini-code'),
     ]);
-    const failed = new Set(['nvidia/nemotron-3-nano-30b']);
+    assert.equal(pickFreeFallback('coding', new Set()), FREE_DEFAULT_MODEL,
+      'the chain-safe default leads a warm free chain');
+    const failed = new Set([FREE_DEFAULT_MODEL]);
     const pick = pickFreeFallback('coding', failed);
-    assert.notEqual(pick, 'nvidia/nemotron-3-nano-30b');
-    assert.equal(pick, FREE_DEFAULT_MODEL,
-      `after the Base leader fails, coding should fall to the chain-safe default, got ${pick}`);
+    assert.notEqual(pick, FREE_DEFAULT_MODEL);
+    assert.equal(pick, 'poolside/laguna-xs-2.1',
+      `after the default fails, coding should fall to the next live rung, got ${pick}`);
 
     // Cold cache: the both-chains id leads, so a gateway missing the Base-only
     // rungs is never handed one first. But the chain must NOT collapse to a
@@ -12214,9 +12216,11 @@ test('catalog sync 2026-08-29: hidden-but-served ids stay priced, routable and p
   resetUnavailableModels();
   const served = {
     'anthropic/claude-opus-4.6': 'opus-4.6',
-    'xai/grok-4-0709': 'grok-4',
-    'xai/grok-3': 'grok-3',
-    'xai/grok-4-1-fast-reasoning': 'grok-fast',
+    // The retired xAI ids keep a price and stay routable by full id (the
+    // gateway answers them as grok-4.3); their short pins moved to grok-4.3.
+    'xai/grok-4-0709': 'xai/grok-4-0709',
+    'xai/grok-3': 'xai/grok-3',
+    'xai/grok-4-1-fast-reasoning': 'xai/grok-4-1-fast-reasoning',
     'moonshot/kimi-k2.7': 'moonshot/kimi-k2.7',
     'openai/gpt-5-nano': 'nano',
   };
@@ -12465,4 +12469,50 @@ test('panel refuses DNS-rebinding hosts and never serves files outside the sessi
     const ok = await panelRequest(port, '/api/sessions');
     assert.equal(ok.status, 200, 'normal local requests still work');
   });
+});
+
+test('catalog sync 2026-10-20: every live gateway id is priced and pinnable', async () => {
+  // Ids that reached GET /api/v1/models (Base and Solana) after the 2026-10-02
+  // sync. Prices are the live list, read 2026-10-20 — the static table is the
+  // offline fallback, so it must not price a live model at the unknown-id $0.
+  // Read the static table straight from source: MODEL_PRICING merges the
+  // bundled @blockrun/model-catalog snapshot over it, and that snapshot can
+  // lag the gateway (it carried deepseek-v4-flash-vision-exp at $0.44/$1.32
+  // while /api/v1/models listed $0.30/$1.20).
+  const { readFileSync } = await import('node:fs');
+  const pricingSrc = readFileSync(new URL('../src/pricing.ts', import.meta.url), 'utf8');
+  const staticPrice = (id) => {
+    const esc = id.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    const m = pricingSrc.match(new RegExp(`'${esc}':\\s*\\{\\s*input:\\s*([\\d.]+),\\s*output:\\s*([\\d.]+)`));
+    return m ? { input: Number(m[1]), output: Number(m[2]) } : undefined;
+  };
+  const { MODEL_PRICING, hasHistoricalPrice } = await import('../dist/pricing.js');
+  const { resolveModel } = await import('../dist/ui/model-picker.js');
+  const { isFreeModelId } = await import('../dist/free-models.js');
+  const live = {
+    'openai/gpt-6.1-sol': [2, 10, 'gpt-6.1-sol'],
+    'google/gemini-3.8-flash': [0.75, 3.75, 'gemini-3.8-flash'],
+    'deepseek/deepseek-v4-flash-vision-exp': [0.3, 1.2, 'deepseek-vision'],
+    'qwen/qwen3.8-max': [2, 6, 'qwen3.8-max'],
+    'qwen/qwen3.8-flash': [0.15, 0.47, 'qwen3.8-flash'],
+    'tencent/hy4-preview': [0.834, 2.501, 'hy4'],
+    'xiaomi/mimo-v2.5': [0.14, 0.28, 'mimo-v2.5'],
+    'poolside/laguna-s-2.1': [0.09, 0.18, 'laguna-s'],
+    'mistral/mistral-large-4': [0.68, 2.09, 'mistral'],
+    'nvidia/muse-glimmer-30b': [0, 0, 'muse-glimmer'],
+  };
+  for (const [id, [input, output, pin]] of Object.entries(live)) {
+    assert.equal(hasHistoricalPrice(id), true, `${id} needs an offline fallback price`);
+    assert.deepEqual(staticPrice(id), { input, output }, `${id} fallback price drifted from the live list`);
+    assert.ok(MODEL_PRICING[id], `${id} must be priced`);
+    assert.equal(resolveModel(pin), id, `${pin} must resolve to ${id}`);
+  }
+  // tencent/hy3 was retired 2026-09-24; the Tencent aliases follow Hy4.
+  assert.equal(resolveModel('hy3'), 'tencent/hy4-preview');
+  assert.equal(resolveModel('tencent'), 'tencent/hy4-preview');
+  // Free aliases never move to a paid model.
+  assert.equal(resolveModel('laguna'), 'poolside/laguna-xs-2.1');
+  assert.equal(isFreeModelId('nvidia/muse-glimmer-30b'), true);
+  assert.equal(isFreeModelId('nvidia/nemotron-3-nano-30b'), true,
+    'a delisted free id still prices old sessions at $0');
 });

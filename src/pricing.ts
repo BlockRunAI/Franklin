@@ -10,13 +10,13 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   // their parser mapping promotes them to Auto upstream of cost estimation.
   'blockrun/auto': { input: 0.8, output: 4.0 },
   'blockrun/free': { input: 0, output: 0 },
-  // FREE — BlockRun gateway free tier (refreshed 2026-08-30 to match live
-  // /api/v1/models, which rotated the entire free pool). The routing order and
+  // FREE — BlockRun gateway free tier (refreshed 2026-10-20 to match live
+  // /api/v1/models, identical on Base and Solana). The routing order and
   // the reasoning behind it live in src/free-models.ts; this table only has to
   // price every id at $0 so no free call is ever reported as a charge.
   'nvidia/nemotron-3-ultra-550b': { input: 0, output: 0 },      // strongest free model, but 0/5 reachable — NOT the default
-  'nvidia/nemotron-3-nano-30b': { input: 0, output: 0 },        // leads the free chain on Base (see free-models.ts)
   'nvidia/nemotron-3.5-lightning': { input: 0, output: 0 },
+  'nvidia/muse-glimmer-30b': { input: 0, output: 0 },           // Meta Muse Glimmer, free on NVIDIA since 2026-10-02
   'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning': { input: 0, output: 0 },
   'nvidia/llama-3.2-11b-vision': { input: 0, output: 0 },
   'cohere/north-mini-code': { input: 0, output: 0 },
@@ -29,6 +29,7 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'nvidia/nemotron-nano-12b-v2-vl': { input: 0, output: 0 },    // -> nemotron-3-nano-omni
   'nvidia/step-3.7-flash': { input: 0, output: 0 },             // -> nemotron-3.5-lightning
   'nvidia/nemotron-3-super-120b-a12b-free': { input: 0, output: 0 }, // pool backing id, never listed
+  'nvidia/nemotron-3-nano-30b': { input: 0, output: 0 },        // delisted 2026-09-08 (NVIDIA deprovisioned it)
   // Retired free models (kept at 0 for legacy session-cost records; gateway no
   // longer serves these — do NOT route to them).
   'nvidia/qwen3-next-80b-a3b-instruct': { input: 0, output: 0 }, // NVIDIA EOL 410, 2026-07-27
@@ -74,6 +75,7 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   // per-1M table cannot express — the catalog's long_context tiers carry that.
   'openai/gpt-6-astra': { input: 10.0, output: 50.0 },
   'openai/gpt-6-sol': { input: 2.0, output: 10.0 },
+  'openai/gpt-6.1-sol': { input: 2.0, output: 10.0 }, // refreshed Sol, live 2026-10-20 (same base rate as 6 Sol)
   'openai/gpt-6-luna': { input: 0.1, output: 0.5 },
   'openai/gpt-5.1': { input: 1.25, output: 10.0 },
   'openai/gpt-4.1-nano': { input: 0.1, output: 0.4 },
@@ -117,6 +119,7 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'google/gemini-3.5-flash': { input: 1.5, output: 9.0 }, // latest Flash w/ thinking, 1M ctx
   'google/gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
   'google/gemini-3.6-flash': { input: 0.75, output: 3.75 }, // added upstream 2026-08-03 (base #329); live promo rate 2026-10-02
+  'google/gemini-3.8-flash': { input: 0.75, output: 3.75 }, // live 2026-10-20
   'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
   'google/gemini-3.1-pro': { input: 2.0, output: 12.0 },
   // xAI
@@ -132,6 +135,8 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   // V4 Pro (1.6T MoE / 49B active, 1M ctx, 65K out). Live list 2026-10-02;
   // the old $0.435/$0.87 promo figure no longer matches the gateway.
   'deepseek/deepseek-v4-pro': { input: 1.32, output: 3.96 },
+  // V4 Flash Vision (experimental): the image-capable DeepSeek SKU, live 2026-10-20.
+  'deepseek/deepseek-v4-flash-vision-exp': { input: 0.3, output: 1.2 },
   // Minimax
   'minimax/minimax-m3': { input: 0.3, output: 1.2 },
   'minimax/minimax-m2.7': { input: 0.3, output: 1.2 },
@@ -139,9 +144,17 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
   'qwen/qwen3.7-max': { input: 1.475, output: 4.425 },
   'qwen/qwen3.7-plus': { input: 0.32, output: 1.28 },
   'qwen/qwen3.7-flash': { input: 0.03, output: 0.13 },
+  // Qwen 3.8 — live 2026-10-20. Flash is the vision-capable one.
+  'qwen/qwen3.8-max': { input: 2.0, output: 6.0 },
+  'qwen/qwen3.8-flash': { input: 0.15, output: 0.47 },
   // New providers added upstream 2026-08 — priced from the live catalog.
-  'tencent/hy3': { input: 0.132, output: 0.528 }, // retired upstream (hidden) — kept for session-cost records
+  'tencent/hy3': { input: 0.132, output: 0.528 }, // retired 2026-09-24 (gateway redirects to qwen3.7-flash) — kept for session-cost records
+  'tencent/hy4-preview': { input: 0.834, output: 2.501 }, // live 2026-10-20 — Tencent's current model
   'xiaomi/mimo-v2.5-pro': { input: 0.435, output: 0.87 },
+  'xiaomi/mimo-v2.5': { input: 0.14, output: 0.28 }, // live 2026-10-20 — vision-capable, cheaper than Pro
+  // Mistral + Poolside paid tiers — live 2026-10-20.
+  'mistral/mistral-large-4': { input: 0.68, output: 2.09 },
+  'poolside/laguna-s-2.1': { input: 0.09, output: 0.18 }, // paid sibling of the free laguna-xs-2.1
   // Moonshot — K3 is the gateway flagship (2026-07): 2.8T open MoE, 1M
   // context, multimodal (image+text), returns reasoning_content. Pricier
   // than the K2.x line it replaced ($3/$15 vs K2.7's $0.95/$4).

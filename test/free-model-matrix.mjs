@@ -3,7 +3,7 @@
  *
  * Run:
  *   npm run test:free-models
- *   FREE_MODEL_MATRIX=nvidia/nemotron-3-ultra-550b,nvidia/nemotron-3-nano-30b npm run test:free-models
+ *   FREE_MODEL_MATRIX=nvidia/nemotron-3-ultra-550b,nvidia/muse-glimmer-30b npm run test:free-models
  *   FREE_MODEL_MATRIX=all npm run test:free-models
  *   FREE_MODEL_MATRIX_PROBES=echo npm run test:free-models
  *
@@ -35,7 +35,7 @@ const requestedModels = (process.env.FREE_MODEL_MATRIX || '')
 
 const defaultMatrixModels = new Set([
   'nvidia/nemotron-3-ultra-550b',
-  'nvidia/nemotron-3-nano-30b',
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
   'poolside/laguna-xs-2.1',
 ]);
 
