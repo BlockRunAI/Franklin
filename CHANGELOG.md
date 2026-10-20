@@ -1,5 +1,16 @@
 # Changelog
 
+## Franklin Agent 3.49.15 — router-core 3aca0e1, and Mistral Large 4 at its list price
+
+`@blockrun/router-core` moves from 2cd5a10 to 3aca0e1, which adds
+`google/gemini-4-argon` to the capability table (1M context, vision,
+`supportsTools: false` until a paid tool probe verifies it, so tool requests
+never route to it). Capability facts only: router-core's decision snapshot is
+byte-identical across that range, so no routing decision changes.
+
+Mistral Large 4's offline price moves to $1.36/$4.18 per 1M — the launch
+promo ended, and the old $0.68/$2.09 would under-reserve by half.
+
 ## Franklin Agent 3.49.14 — Gemini 4 Argon is selectable and priced
 
 `google/gemini-4-argon`, Google's frontier reasoning model, is live on Base and
