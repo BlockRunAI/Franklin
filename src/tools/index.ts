@@ -39,6 +39,7 @@ import { walletCapability } from './wallet.js';
 import { jupiterQuoteCapability, jupiterSwapCapability } from './jupiter.js';
 import { base0xQuoteCapability, base0xSwapCapability } from './zerox-base.js';
 import { base0xGaslessSwapCapability } from './zerox-gasless.js';
+import { baseTokenGateCapability } from './base-token-gate.js';
 import {
   defiLlamaProtocolsCapability,
   defiLlamaProtocolCapability,
@@ -205,6 +206,7 @@ export const allCapabilities: CapabilityHandler[] = [
   base0xQuoteCapability,
   base0xSwapCapability,
   base0xGaslessSwapCapability,
+  baseTokenGateCapability, // read-only pre-trade safety gate for arbitrary Base tokens ($0.008/call)
   defiLlamaProtocolsCapability,
   defiLlamaProtocolCapability,
   defiLlamaChainsCapability,
@@ -224,11 +226,11 @@ export const allCapabilities: CapabilityHandler[] = [
   buyPhoneNumberCapability,      // BuyPhoneNumber   — $5 / 30 days
   renewPhoneNumberCapability,    // RenewPhoneNumber — $5 / 30 days
   releasePhoneNumberCapability,  // ReleasePhoneNumber — free
-  phoneLookupCapability,         // PhoneLookup      — $0.01
+  phoneLookupCapability,         // PhoneLookup      — $0.008
   phoneFraudCheckCapability,     // PhoneFraudCheck  — $0.05
   voiceCallCapability,           // VoiceCall        — $0.54 / call (Bland.ai)
   voiceStatusCapability,         // VoiceStatus      — free (poll)
-  realFaceCapability,            // RealFace — init/status/enroll/list; $0.01 enroll → ta_xxx avatar for VideoGen
+  realFaceCapability,            // RealFace — init/status/enroll/list; $0.008 enroll → ta_xxx avatar for VideoGen
   // Modal GPU sandbox tools — registered but hidden by default (not in
   // CORE_TOOL_NAMES). Agent must `ActivateTool({names:["ModalCreate",...]})`
   // before they appear in its tool inventory. High-cost ($0.40/H100 create)
