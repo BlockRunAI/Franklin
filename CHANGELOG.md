@@ -1,5 +1,9 @@
 # Changelog
 
+## Franklin Agent 3.49.16 — router-core catalog API
+
+Bump @blockrun/router-core to fd6d03d: adds the shared parseModelCatalog / toRoutingCatalog catalog API. No routing behavior change.
+
 ## Franklin Agent 3.49.15 — Mistral Large 4 at its list price; two more verified tool fallbacks
 
 Mistral's launch promotion ended and blockrun moved `mistral/mistral-large-4`
