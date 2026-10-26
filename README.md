@@ -45,7 +45,7 @@
 
 ## The pitch in one paragraph
 
-Franklin Agent is an **autonomous economic agent** — an AI that holds a USDC wallet and spends it to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from <!-- br:models.chatVisible -->88<!-- /br:models.chatVisible --> models. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. No subscriptions, no seats, no rate limits.
+Franklin Agent is an **autonomous economic agent** — an AI that holds a USDC wallet and spends it to get real work done, with **trading as its flagship arena**. It buys live market data, proposes trade plans you approve before a cent moves, pursues long-running goals across sessions, keeps a wallet-bound trading journal, and picks the best model per task from <!-- br:models.chatVisible -->90<!-- /br:models.chatVisible --> models. You state an outcome and set a budget. Franklin Agent decides what to call, what to pay for, and when to stop. No subscriptions, no seats, no rate limits.
 
 Funding it is your choice. Fund a **USDC wallet** and every paid action routes through the [x402](https://x402.org) micropayment protocol, settling on-chain against a wallet only you control — no signup, no account, the wallet is the identity. Or top up a **prepaid balance** at [user.blockrun.ai](https://user.blockrun.ai) and hand Franklin an API key. Same models, same tools, same agent. See [Two ways to pay](#two-ways-to-pay).
 
@@ -387,7 +387,7 @@ Every tool call is itemized. Every token is priced. When the wallet hits zero, F
 
 ## Smart Router
 
-**<!-- br:models.chatVisible -->88<!-- /br:models.chatVisible --> models. One decision. Zero guesswork.**
+**<!-- br:models.chatVisible -->90<!-- /br:models.chatVisible --> models. One decision. Zero guesswork.**
 
 You don't pick models. Franklin picks for you.
 
@@ -467,7 +467,7 @@ No email. No phone. No KYC. Your Solana, Base or Arc address is your account —
 | -------------------------------------- | ---------------- | ----------------------- | -------------------- | ------------------------------- |
 | **Spends money for you**               | ❌               | ⚠️ you wire payments     | ⚠️ trades only        | ✅ **USDC wallet or prepaid key** |
 | **Buys data + APIs + images + search** | ❌               | ⚠️ one key per service   | ❌                   | ✅ **one wallet pays for all**    |
-| Picks best model per task              | ❌ single-vendor | ⚠️ you pick              | ❌                   | ✅ **Smart Router, <!-- br:models.chatVisible -->88<!-- /br:models.chatVisible --> models** |
+| Picks best model per task              | ❌ single-vendor | ⚠️ you pick              | ❌                   | ✅ **Smart Router, <!-- br:models.chatVisible -->90<!-- /br:models.chatVisible --> models** |
 | **Money moves only on your approval**  | —                | ⚠️ build it yourself     | ❌ runs on rules      | ✅ **trade plan, every mode**     |
 | Spend guardrails                       | —                | ⚠️ build it yourself     | ⚠️ per-bot limits     | ✅ **budget caps + hooks**        |
 | Works when a provider goes down        | ❌               | ⚠️ if you code it        | ❌                   | ✅ **routes to another**          |
@@ -494,14 +494,14 @@ Ask "what's BTC looking like?" — Franklin fetches live price data, computes RS
 **🎨 AI image generation**
 Ask "generate a logo" — Franklin calls DALL-E / GPT Image, saves the result locally, paid from your wallet.
 
-**🧠 <!-- br:models.chatVisible -->88<!-- /br:models.chatVisible --> models via one wallet**
+**🧠 <!-- br:models.chatVisible -->90<!-- /br:models.chatVisible --> models via one wallet**
 Anthropic, OpenAI, Google, xAI, DeepSeek, GLM, Kimi, Minimax, plus a free tier. One wallet, one interface, automatic fallback.
 
 **💳 x402 micropayments (YOPO)**
 HTTP 402 native. Every paid action is a signed USDC micropayment — an EIP-712 authorization on Base and Arc, a signed SPL transfer on Solana. Non-custodial: your keys never leave your machine. YOPO: you pay only for outcomes.
 
 **🧠 Learned model router**
-Trained on 2M+ real requests. Classifies your task and picks the best model from <!-- br:models.chatVisible -->88<!-- /br:models.chatVisible --> LLMs. Four profiles (auto/eco/premium/free). Adapts to your usage over time.
+Trained on 2M+ real requests. Classifies your task and picks the best model from <!-- br:models.chatVisible -->90<!-- /br:models.chatVisible --> LLMs. Four profiles (auto/eco/premium/free). Adapts to your usage over time.
 
 </td>
 <td width="50%" valign="top">
@@ -581,13 +581,13 @@ Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY
 │  Intent → Smart Router → Tool Use → Spend Control → Result   │
 ├──────────────────────────────────────────────────────────────┤
 │  Learned Router                                              │
-│  2M+ requests · <!-- br:models.chatVisible@live -->88<!-- /br:models.chatVisible@live --> models · category detection · Elo scores │
+│  2M+ requests · <!-- br:models.chatVisible@live -->90<!-- /br:models.chatVisible@live --> models · category detection · Elo scores │
 ├──────────────────────────────────────────────────────────────┤
 │  Agent Loop                                                  │
 │  60+ tools · Sessions · Compaction · Pricing · Plugin SDK    │
 ├──────────────────────────────────────────────────────────────┤
 │  BlockRun Gateway                                            │
-│  <!-- br:models.chatVisible@live -->88<!-- /br:models.chatVisible@live --> LLMs · CoinGecko · Search · Image APIs · paid services  │
+│  <!-- br:models.chatVisible@live -->90<!-- /br:models.chatVisible@live --> LLMs · CoinGecko · Search · Image APIs · paid services  │
 ├──────────────────────────────────────────────────────────────┤
 │  x402 Micropayment Protocol                                  │
 │  HTTP 402 · USDC on Solana, Base & Arc · signed payloads     │
@@ -636,7 +636,7 @@ src/
 ├── stats/             Usage tracking + insights engine
 ├── ui/                Ink-based terminal UI
 ├── proxy/             Payment proxy for external tools
-├── router/            Learned model router (<!-- br:models.chatVisible@live -->88<!-- /br:models.chatVisible@live --> models, Elo scoring)
+├── router/            Learned model router (<!-- br:models.chatVisible@live -->90<!-- /br:models.chatVisible@live --> models, Elo scoring)
 ├── wallet/            Wallet management (Base/Arc + Solana)
 ├── mcp/               MCP server auto-discovery
 └── commands/          CLI subcommands
