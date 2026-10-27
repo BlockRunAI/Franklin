@@ -1387,7 +1387,7 @@ export async function handleSlashCommand(
 
   // Argument-based rewrite commands (prefix match)
   for (const { prefix, rewrite } of ARG_COMMANDS) {
-    if (input.startsWith(prefix)) {
+    if (input.startsWith(prefix) && (prefix.endsWith(' ') || input === prefix)) {
       const arg = input.slice(prefix.length).trim();
       return { handled: false, rewritten: rewrite(arg) };
     }

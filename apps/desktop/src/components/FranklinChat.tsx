@@ -3,10 +3,18 @@
 // rewired to the local agent: useFranklinChat streams over the WebSocket, the
 // wallet is the local CLI wallet (read-only, no connect flow).
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, PanelLeft, ImageIcon, Clapperboard, Music, X, Plus, Check, ChevronDown, Gauge, BarChart3, TrendingUp, MoreHorizontal, Users, Laptop2, ShieldAlert } from "lucide-react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { ChartCandlestick, Wallet, MessageSquare, ArrowUp, PanelLeft, ImageIcon, Clapperboard, Music, X, Plus, Check, ChevronDown, Gauge, BarChart3, TrendingUp, MoreHorizontal, Users, Laptop2, ShieldAlert } from "lucide-react";
 import { TopBarMenu } from "./TopBarMenu";
 import { ModelSelect } from "./ModelSelect";
+import { MoreMenu } from "./MoreMenu";
+import { TradingWorkspace } from "./TradingWorkspace";
+import { marketCopy } from "../lib/market-i18n";
+import { MARKETS, marketIntervalLabel } from "../lib/market-data";
+import { appendMarketDraft, loadMarketSelection, saveMarketSelection } from "../lib/market-context";
+import { transitionUi } from "../lib/ui-transition";
+import { loadTradingMode, saveTradingMode } from "../lib/trading-mode";
+import franklinAvatar from "../assets/franklin-avatar.png";
 import { HistorySidebar, type TryView } from "./HistorySidebar";
 import { MessageContent } from "./MessageContent";
 import { ActivitySummary } from "./ActivitySummary";
@@ -32,6 +40,9 @@ import { prepareImageForUpload } from "../lib/image-compress";
 import { useStudioRegistry } from "../hooks/use-studio-registry";
 import { useCloudWorkspace } from "../hooks/use-cloud-workspace";
 import { safeExternalHttpUrl } from "../lib/external-url";
+
+// Keep chart code out of the initial chat bundle.
+const MarketsPanel = lazy(() => import("./MarketsPanel").then((module) => ({ default: module.MarketsPanel })));
 
 // Composer "focus" modes — force a specific live-data tool (server tool_choice).
 type ToolFocus = "search_prediction_markets" | "web_search" | "get_market_price";
@@ -65,7 +76,9 @@ function EmphTitle({ text }: { text: string }) {
 }
 
 export function FranklinChat() {
-  const { t } = useTryLang();
+  const { t, lang } = useTryLang();
+  const marketText = marketCopy[lang];
+  const [tradingEnabled, setTradingEnabled] = useState(loadTradingMode);
   const auth = useAuth();
   const {
     wallet,
@@ -76,6 +89,7 @@ export function FranklinChat() {
     switchChain: switchWalletChain,
   } = useWallet();
   const [chatSpace, setChatSpaceState] = useState<ChatSpace>(() => {
+    if (tradingEnabled) return "personal";
     if (typeof window === "undefined") return "personal";
     try {
       return localStorage.getItem("franklin-desktop-chat-space-v1") === "team" ? "team" : "personal";
@@ -107,12 +121,28 @@ export function FranklinChat() {
   const [input, setInput] = useState("");
   const [attachment, setAttachment] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [view, setView] = useState<TryView>("chat");
+  const [sidebarOpen, setSidebarOpen] = useState(!tradingEnabled);
+  const [view, setView] = useState<TryView>(tradingEnabled ? "markets" : "chat");
+  const [marketSelection, setMarketSelection] = useState(loadMarketSelection);
+  const [conversationRequest, setConversationRequest] = useState(0);
+  const marketActive = view === "markets";
+  const chatVisible = view === "chat" || marketActive;
+  useEffect(() => { saveMarketSelection(marketSelection); }, [marketSelection]);
+  useEffect(() => { saveTradingMode(tradingEnabled); }, [tradingEnabled]);
   const MOBILE_BP = 880;
   const closeSidebarOnMobile = () => {
     if (typeof window !== "undefined" && window.innerWidth <= MOBILE_BP) setSidebarOpen(false);
   };
+  const navigate = (next: TryView) => {
+    if (next === "markets" && !tradingEnabled) { changeTradingMode(true); return; }
+    if (tradingEnabled && next !== "markets" && next !== "chat" && next !== "wallet") return;
+    transitionUi(() => {
+      setView(tradingEnabled && next === "chat" ? "markets" : next);
+      if (next === "markets") setSidebarOpen(false);
+      else closeSidebarOnMobile();
+    });
+  };
+  const toggleSidebar = () => transitionUi(() => setSidebarOpen((open) => !open));
   useEffect(() => {
     if (window.innerWidth <= MOBILE_BP) setSidebarOpen(false);
   }, []);
@@ -121,13 +151,48 @@ export function FranklinChat() {
   const [resOpen, setResOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const setChatSpace = (next: ChatSpace) => {
+  const normalWorkspace = useRef<{ view: TryView; mode: typeof mode; focus: ToolFocus | null; chatSpace: ChatSpace; sidebarOpen: boolean } | null>(null);
+  const changeTradingMode = (enabled: boolean) => {
+    if (busy || enabled === tradingEnabled) return;
+    transitionUi(() => {
+      if (enabled) {
+        normalWorkspace.current = { view, mode, focus, chatSpace, sidebarOpen };
+        setView("markets"); setMode("chat"); setFocus(null);
+        setChatSpaceState("personal"); setSidebarOpen(false);
+      } else {
+        const previous = normalWorkspace.current;
+        setView(previous?.view === "markets" ? "chat" : previous?.view ?? "chat");
+        setMode(previous?.mode ?? "chat"); setFocus(previous?.focus ?? null);
+        setChatSpaceState(previous?.chatSpace ?? "personal");
+        setSidebarOpen(previous?.sidebarOpen ?? true);
+      }
+      setEditingTitle(false); setMenuOpen(false);
+      setTradingEnabled(enabled);
+    });
+  };
+  const tradingMode = { enabled: tradingEnabled, disabled: busy, onChange: changeTradingMode };
+  const setChatSpace = (next: ChatSpace, keepMarkets = false) => {
     if (next === "team" && !studio.teamModeEnabled) return;
     setChatSpaceState(next);
-    try { localStorage.setItem("franklin-desktop-chat-space-v1", next); } catch { /* local cache unavailable */ }
+    try { if (!tradingEnabled) localStorage.setItem("franklin-desktop-chat-space-v1", next); } catch { /* local cache unavailable */ }
     setEditingTitle(false);
-    setView("chat");
+    setView(tradingEnabled || (keepMarkets && marketActive) ? "markets" : "chat");
     closeSidebarOnMobile();
+  };
+  const newPersonalChat = () => {
+    setChatSpace("personal", true);
+    history.newChatInSpace("personal");
+  };
+  const newTeamProject = () => {
+    setChatSpace("team", true);
+    cloud.setActiveId(null);
+  };
+  const prepareMarketResearch = (prompt: string) => {
+    setChatSpace("personal", true);
+    setMode("chat");
+    setFocus(null);
+    setInput((draft) => appendMarketDraft(draft, prompt));
+    setConversationRequest((request) => request + 1);
   };
   // Image mode → aspect-ratio whitelist (value = size like "1536x1024"); video
   // mode → ratio list (value = the ratio itself). Picker hidden when ≤1 option.
@@ -248,35 +313,21 @@ export function FranklinChat() {
               : t.phMessage;
 
   return (
-    <div className="try-shell">
+    <div className={`try-shell${tradingEnabled ? " is-trading-mode" : ""}`}>
       <HistorySidebar
         conversations={history.personalConversations}
         activeId={history.activeId}
-        onNewChat={() => {
-          setChatSpace("personal");
-          history.newChatInSpace("personal");
-          setView("chat");
-          closeSidebarOnMobile();
-        }}
-        onNewProject={() => {
-          setChatSpace("team");
-          cloud.setActiveId(null);
-          setView("chat");
-          closeSidebarOnMobile();
-        }}
+        onNewChat={newPersonalChat}
+        onNewProject={newTeamProject}
         onSelect={(id) => {
-          setChatSpace("personal");
+          setChatSpace("personal", true);
           history.selectChatInSpace("personal", id);
-          setView("chat");
-          closeSidebarOnMobile();
         }}
         onDelete={history.deleteChat}
         onTogglePinned={history.togglePinned}
         view={view}
-        onView={(v) => {
-          setView(v);
-          closeSidebarOnMobile();
-        }}
+        onView={navigate}
+        tradingMode={tradingMode}
         open={sidebarOpen}
         wallet={wallet}
         walletLoading={walletLoading}
@@ -290,26 +341,35 @@ export function FranklinChat() {
         activeTeamWorkspaceId={teamNav.activeId}
         teamLoading={teamNav.loading}
         onTeamWorkspace={(id) => {
-          setChatSpace("team");
+          setChatSpace("team", true);
           cloud.setActiveId(id);
-          setView("chat");
           closeSidebarOnMobile();
         }}
       />
 
-      {sidebarOpen && <div className="try-sidebar-scrim" onClick={() => setSidebarOpen(false)} />}
+      {sidebarOpen && <button type="button" className="try-sidebar-scrim" aria-label={lang === "zh" ? "收起侧栏" : lang === "es" ? "Cerrar barra lateral" : "Close history"} onClick={toggleSidebar} />}
 
-      <div className="try-chat">
+      {tradingEnabled && !sidebarOpen && <nav className="trading-rail" aria-label={marketText.rail}>
+        <button className="trading-rail-brand" title="Franklin" aria-label="Franklin" onClick={() => navigate("chat")}><img src={franklinAvatar} width={28} height={28} alt="" /></button>
+        <button title={t.newChat} aria-label={t.newChat} onClick={newPersonalChat}><Plus size={19} aria-hidden /></button>
+        <button className={marketActive ? "is-active" : ""} title={marketText.title} aria-label={marketText.title} aria-current={marketActive ? "page" : undefined} onClick={() => navigate("markets")}><ChartCandlestick size={19} aria-hidden /></button>
+        <span className="trading-rail-spacer" />
+        <button title={t.wallet} aria-label={t.wallet} onClick={() => navigate("wallet")}><Wallet size={19} aria-hidden /></button>
+        <button title="Toggle history" aria-label="Toggle history" onClick={toggleSidebar}><PanelLeft size={19} aria-hidden /></button>
+        <MoreMenu tradingMode={tradingMode} />
+      </nav>}
+      <div className={`try-chat${marketActive ? " has-trading-workspace" : ""}`}>
         <div className="try-chat-bar">
           <button
             className="try-sidebar-toggle"
-            onClick={() => setSidebarOpen((o) => !o)}
+            onClick={toggleSidebar}
             aria-label="Toggle history"
           >
             <PanelLeft className="h-[18px] w-[18px]" />
           </button>
+          {tradingEnabled && <button type="button" className="trading-mode-badge" onClick={() => navigate("markets")} title={marketText.backToTrading}><ChartCandlestick size={12} aria-hidden />{marketText.tradingMode}</button>}
 
-          {view === "chat" && (activeConvo || chatSpace === "team") && (
+          {chatVisible && (activeConvo || chatSpace === "team") && (
             <div className="try-bar-title">
               <div className="try-bar-title-line">
               {chatSpace === "team" ? (
@@ -351,7 +411,7 @@ export function FranklinChat() {
             </div>
           )}
 
-          {view === "chat" && messages.length > 0 && (
+          {chatVisible && messages.length > 0 && (
             <div className="try-bar-menu-wrap">
               <button
                 className={`try-bar-more${menuOpen ? " is-open" : ""}`}
@@ -374,7 +434,9 @@ export function FranklinChat() {
           )}
         </div>
 
-        {chatSpace === "team" && studio.teamModeEnabled && view === "chat" ? (
+        <TradingWorkspace active={marketActive} conversationRequest={conversationRequest} onClose={() => changeTradingMode(false)} exitLabel={marketText.exitMode} exitDisabled={busy}
+          market={marketActive ? <Suspense fallback={<div className="market-chart-empty" role="status">{marketText.loading}</div>}><MarketsPanel onResearch={prepareMarketResearch} selection={marketSelection} onSelectionChange={setMarketSelection} draft={input} /></Suspense> : null}>
+        {chatSpace === "team" && studio.teamModeEnabled && chatVisible ? (
           <CloudWorkspacePanel cloud={cloud} />
         ) : view === "agents" ? (
           <AgentsPanel
@@ -410,7 +472,17 @@ export function FranklinChat() {
         ) : (
         <>
         <div className="try-messages" ref={scrollRef}>
-          {messages.length === 0 ? (
+          {messages.length === 0 && marketActive && mode === "chat" ? (
+            <div className="trading-chat-empty">
+              <span className="trading-assistant-mark"><MessageSquare size={22} aria-hidden /></span>
+              <span className="trading-eyebrow">FRANKLIN</span>
+              <h1>{marketText.deskTitle}</h1>
+              <p>{marketText.deskIntro}</p>
+              <div className="trading-starters">
+                {[{ label: marketText.trendStarter, prompt: `${marketText.trendPrompt} ${MARKETS[marketSelection.market].symbol} · ${marketIntervalLabel(marketSelection.interval)}. ${marketText.researchGuard}` }, { label: marketText.riskStarter, prompt: `${marketText.riskPrompt} ${MARKETS[marketSelection.market].symbol} · ${marketIntervalLabel(marketSelection.interval)}. ${marketText.researchGuard}` }, { label: marketText.compareStarter, prompt: marketText.comparePrompt }].map((starter) => <button type="button" key={starter.label} onClick={() => prepareMarketResearch(starter.prompt)}>{starter.label}<ArrowUp size={14} aria-hidden /></button>)}
+              </div>
+            </div>
+          ) : messages.length === 0 ? (
             <div className="try-empty">
               {chatSpace === "team" && mode === "chat" ? (
                 <div className="try-team-empty">
@@ -573,6 +645,7 @@ export function FranklinChat() {
         </div>
 
         <div className="try-input-wrap">
+          {marketActive && <div className="trading-composer-context"><span><ChartCandlestick size={12} aria-hidden />{marketText.currentChart} {MARKETS[marketSelection.market].symbol} · {marketIntervalLabel(marketSelection.interval)}</span><small>{busy ? marketText.nextDraft : marketText.contextHint}</small></div>}
           {chatSpace === "team" && (
             <div className="try-team-sharing-note"><Users className="h-3.5 w-3.5" /> Shared with BlockRun Team · demo data stays on this device</div>
           )}
@@ -606,17 +679,19 @@ export function FranklinChat() {
             {attachError && <div className="try-attach-error">{attachError}</div>}
             <textarea
               className="try-input"
+              aria-label={marketActive ? marketText.conversation : t.phMessage}
+              name="message"
+              autoComplete="off"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                   e.preventDefault();
                   submit();
                 }
               }}
               placeholder={placeholder}
               rows={1}
-              disabled={busy}
             />
             <div className="try-tools">
               <div className="try-tools-left">
@@ -639,7 +714,7 @@ export function FranklinChat() {
                 <ModelSelect models={models} model={model} onChange={setModel} disabled={busy} />
                 {mode === "chat" ? (
                   <>
-                    <button className="try-tool" onClick={() => { setFocus(null); setMode("image"); }} disabled={busy}>
+                    {!tradingEnabled && <><button className="try-tool" onClick={() => { setFocus(null); setMode("image"); }} disabled={busy}>
                       <ImageIcon className="h-4 w-4" /> {t.image}
                     </button>
                     <button className="try-tool" onClick={() => { setFocus(null); setMode("video"); }} disabled={busy}>
@@ -648,7 +723,8 @@ export function FranklinChat() {
                     <button className="try-tool" onClick={() => { setFocus(null); setMode("music"); }} disabled={busy}>
                       <Music className="h-4 w-4" /> {t.music}
                     </button>
-                    {FOCUSES.map((f) => (
+                    </>}
+                    {FOCUSES.filter((f) => !marketActive || f.key === "get_market_price").map((f) => (
                       <button
                         key={f.key}
                         className={`try-tool try-focus${focus === f.key ? " is-active" : ""}`}
@@ -772,6 +848,7 @@ export function FranklinChat() {
         </div>
         </>
         )}
+        </TradingWorkspace>
       </div>
 
       {lightbox && (

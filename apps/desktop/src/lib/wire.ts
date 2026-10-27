@@ -34,6 +34,8 @@ export type ClientMsgKind =
   | "skills.toggle"
   | "skills.create"
   | "skills.upload"
+  | "skills.remove"
+  | "skills.resolve"
   | "settings.get"
   | "settings.set";
 

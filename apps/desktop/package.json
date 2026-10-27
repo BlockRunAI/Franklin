@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/franklin-desktop",
-  "version": "0.2.0-beta.3",
+  "version": "0.2.0-beta.4",
   "author": "BlockRun <hello@blockrun.ai>",
   "description": "Franklin Desktop — native desktop app for the Franklin agent (Electron). Same agent, wallet and tools as the CLI, in a polished window.",
   "license": "Apache-2.0",
@@ -32,7 +32,11 @@
     "prepare:runtime": "node scripts/prepare-runtime.mjs",
     "dist:mac": "npm run build && npm run prepare:runtime && electron-builder --mac --arm64 --publish never",
     "dist:win": "npm run build && npm run prepare:runtime && electron-builder --win --x64 --publish never",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run",
+    "test:markets": "npm run build && node test/markets.e2e.mjs",
+    "test:markets:live": "npm run build && node test/markets.e2e.mjs --live",
+    "desktop:markets-preview": "npm run build && node scripts/preview-markets.mjs",
+    "test:skills": "npm run build && node test/skills.e2e.mjs"
   },
   "dependencies": {
     "@blockrun/franklin": "*",
@@ -42,13 +46,16 @@
     "@noble/hashes": "^1.8.0",
     "html-to-image": "^1.11.13",
     "https-proxy-agent": "^9.1.0",
+    "lightweight-charts": "5.2.1",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.3",
-    "remark-gfm": "^4.0.0"
+    "remark-gfm": "^4.0.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "@tailwindcss/vite": "^4.3.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.3",

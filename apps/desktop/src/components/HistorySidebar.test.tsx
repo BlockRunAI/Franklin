@@ -165,3 +165,20 @@ describe("localisation", () => {
     expect(screen.getByText("项目", { selector: ".try-sidebar-section-head span" })).toBeTruthy();
   });
 });
+
+describe("focused trading navigation", () => {
+  it("keeps history and settings while removing creative, agent and project entry points", () => {
+    draw({ view: "markets", activeId: "c1", tradingMode: { enabled: true, disabled: false, onChange: vi.fn() }, conversations: [conversation()] });
+    expect(screen.getByText("A chat")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeTruthy();
+    for (const label of ["Agents", "New project", "Gallery", "Marketplace", "Install CLI"]) expect(screen.queryByRole("button", { name: label })).toBeNull();
+    expect(screen.queryByText("Projects", { selector: ".try-sidebar-section-head span" })).toBeNull();
+    expect(screen.getByText("A chat").closest(".try-history-item")?.classList.contains("is-active")).toBe(true);
+  });
+  it("removes the collapsed sidebar from keyboard and assistive navigation", () => {
+    const { container } = draw({ open: false });
+    const sidebar = container.querySelector(".try-sidebar")!;
+    expect(sidebar.hasAttribute("inert")).toBe(true);
+    expect(sidebar.getAttribute("aria-hidden")).toBe("true");
+  });
+});

@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 
 import { loadSkillsFromDir } from './loader.js';
+import { disabledSkills } from './state.js';
 import { Registry } from './registry.js';
 import type { LoadError, LoadedSkill } from './types.js';
 import { BLOCKRUN_DIR, type Chain } from '../config.js';
@@ -68,7 +69,7 @@ export function loadBundledSkills(): BundledLoad {
  * unioned; the Registry resolves name collisions by source precedence
  * (project > user > learned > bundled).
  */
-export function loadAllSkills(workDir: string): AllSkillsLoad {
+export function loadAllSkills(workDir: string, options: { includeDisabled?: boolean } = {}): AllSkillsLoad {
   const errors: LoadError[] = [];
   const all: LoadedSkill[] = [];
   const counts: Record<string, number> = {};
@@ -103,7 +104,8 @@ export function loadAllSkills(workDir: string): AllSkillsLoad {
     counts[source] = (counts[source] ?? 0) + result.skills.length;
   }
 
-  return { registry: Registry.fromLoaded(all), errors, counts };
+  const disabled = options.includeDisabled ? new Set<string>() : disabledSkills();
+  return { registry: Registry.fromLoaded(all.filter((s) => !disabled.has(s.skill.name))), errors, counts };
 }
 
 /** Ensure the user-global skills root exists so `~/.blockrun/skills/<name>/`

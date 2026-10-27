@@ -17,6 +17,7 @@
  * fan-out can come later.
  */
 
+import { listManagedSkills, importSkill, toggleSkill, removeSkill, resolveManagedSkill } from '../skills/management.js';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -695,6 +696,26 @@ export async function startServer(opts: ServerOptions): Promise<void> {
     const { id, kind, payload } = msg;
     const p = (payload ?? {}) as Record<string, unknown>;
     switch (kind) {
+      case 'skills.list':
+      case 'skills.upload':
+      case 'skills.toggle':
+      case 'skills.remove':
+      case 'skills.resolve': {
+        try {
+          const result = kind === 'skills.list' ? listManagedSkills(workDir)
+            : kind === 'skills.upload' ? importSkill(workDir, p.content)
+            : kind === 'skills.toggle' ? toggleSkill(workDir, p.name, p.enabled)
+            : kind === 'skills.remove' ? removeSkill(workDir, p.name)
+            : resolveManagedSkill(workDir, p.input);
+          send(ws, id, 'response', result);
+        } catch (err) {
+          send(ws, id, 'error', { message: err instanceof Error ? err.message : 'Skill management failed' });
+        }
+        break;
+      }
+      case 'skills.create':
+        send(ws, id, 'error', { message: 'Automatic skill generation is not available. Import a SKILL.md from Skills instead.' });
+        break;
       case 'session.list': {
         const metas = listSessions();
         send(ws, id, 'response', {

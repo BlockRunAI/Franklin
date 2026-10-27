@@ -709,7 +709,7 @@ async function runInteractiveSession(
       onEvent({ kind: 'text_delta', text: `[skills] ${err.path}: ${err.error}\n` });
     }
   }
-  const skillRegistry = skillBoot.registry;
+  let skillRegistry = skillBoot.registry;
   // Track models that failed with 402 (payment required) across turns.
   // These persist until the session ends — unlike transient errors, payment failures
   // will keep failing until the user adds funds. Map stores failure timestamp for future TTL.
@@ -895,6 +895,9 @@ async function runInteractiveSession(
     let input = await inputMux.getUserInput();
     if (input === null) break; // User wants to exit
     if (input === '') continue; // Empty input → re-prompt
+
+    // Desktop imports and toggles take effect without restarting this session.
+    skillRegistry = loadAllSkills(workDir).registry;
 
     // ── Slash command dispatch ──
     if (!input.startsWith('/')) turnSkillBudgetUsd = undefined;
