@@ -42,3 +42,9 @@ verify a built installer, set FRANKLIN_TEST_EXECUTABLE to its extracted
 application executable and run `node apps/desktop/test/skills.e2e.mjs`.
 The unmodified OpenClaw weather fixture is MIT-licensed and includes its source
 and license in test/fixtures/openclaw-weather/.
+
+CI runs `node apps/desktop/test/packaged-runtime.e2e.mjs` on both platforms after
+packaging. It copies the shipped app outside the checkout and starts its embedded
+runtime with an isolated home before exercising real Skills RPCs. This catches
+missing production modules that a repository ancestor could otherwise supply.
+The packaged native UI test also stages its app outside the checkout.

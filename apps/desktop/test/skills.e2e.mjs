@@ -10,8 +10,14 @@ const require = createRequire(import.meta.url);
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const qa = await fs.mkdtemp(path.join(os.tmpdir(), 'franklin-skills-native-'));
 const weather = await fs.readFile(path.join(desktop, '../../test/fixtures/openclaw-weather/SKILL.md'), 'utf8');
-const executable = process.env.FRANKLIN_TEST_EXECUTABLE || require('electron');
+let executable = process.env.FRANKLIN_TEST_EXECUTABLE || require('electron');
 const packaged = !!process.env.FRANKLIN_TEST_EXECUTABLE;
+if (packaged) {
+  const bundle = process.platform === 'darwin' ? executable.slice(0, executable.indexOf('.app/') + 4) : path.dirname(executable);
+  const staged = path.join(qa, process.platform === 'darwin' ? 'Franklin.app' : 'app');
+  await fs.cp(bundle, staged, { recursive: true, verbatimSymlinks: true });
+  executable = process.platform === 'darwin' ? path.join(staged, 'Contents/MacOS/Franklin') : path.join(staged, 'Franklin.exe');
+}
 const app = await _electron.launch({
   executablePath: executable,
   args: [...(packaged ? [] : [path.join(desktop, 'electron/main.cjs')]), `--user-data-dir=${path.join(qa, 'profile')}`],

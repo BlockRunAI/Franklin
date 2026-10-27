@@ -72,6 +72,9 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
+      - name: Verify packaged runtime outside the checkout
+        run: node apps/desktop/test/packaged-runtime.e2e.mjs
+
       - name: Upload test installer
         uses: actions/upload-artifact@v4
         with:
