@@ -537,7 +537,7 @@ test('franklin skills list hides hidden skills by default but --all reveals them
     'hidden-one',
     frontmatter('hidden-one', 'An auto-generated hidden skill', 'body', 'hidden: true\nauto-generated: true'),
   );
-  const opts = { timeoutMs: 15_000, cwd: work, env: { HOME: fakeHome } };
+  const opts = { timeoutMs: 15_000, cwd: work, env: { HOME: fakeHome, USERPROFILE: fakeHome } };
   try {
     const def = await runCli(['skills', 'list'], opts);
     assert.equal(def.code, 0);
@@ -609,7 +609,7 @@ test('legacy flat ~/.blockrun/skills/<name>.md migrates to learned/<name>/SKILL.
   writeFileSync(join(skillsDir, 'legacy-flow.md'), legacy, 'utf8');
 
   try {
-    const res = await runCli(['skills', 'list', '--all'], { timeoutMs: 15_000, env: { HOME: fakeHome } });
+    const res = await runCli(['skills', 'list', '--all'], { timeoutMs: 15_000, env: { HOME: fakeHome, USERPROFILE: fakeHome } });
     assert.equal(res.code, 0);
     // The migrated skill should now load (as a hidden, learned skill).
     assert.match(res.stdout, /legacy-flow/);
