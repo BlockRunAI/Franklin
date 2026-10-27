@@ -13,5 +13,11 @@ interface Window {
     startAgentRuntime?: (id: string) => Promise<{ ok: boolean; available?: boolean; running: boolean; path?: string; version?: string; endpoint?: string; lifecycleSupported?: boolean; error?: string }>;
     stopAgentRuntime?: (id: string) => Promise<{ ok: boolean; running: boolean; error?: string }>;
     switchWalletChain?: (chain: "base" | "solana") => Promise<{ ok: boolean; chain: "base" | "solana" }>;
+    getUpdateState?: () => Promise<import("./lib/desktop-updates").DesktopUpdateState>;
+    checkForUpdates?: () => Promise<import("./lib/desktop-updates").DesktopUpdateState>;
+    downloadUpdate?: () => Promise<import("./lib/desktop-updates").DesktopUpdateState>;
+    openUpdateInstaller?: () => Promise<import("./lib/desktop-updates").DesktopUpdateState>;
+    cancelUpdateDownload?: () => Promise<void>;
+    onUpdateState?: (callback: (state: import("./lib/desktop-updates").DesktopUpdateState) => void) => () => void;
   };
 }

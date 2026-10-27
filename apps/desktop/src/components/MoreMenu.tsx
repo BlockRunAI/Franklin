@@ -7,6 +7,7 @@ import { copyText } from "../lib/clipboard";
 import { SIDEBAR_ITEMS, useSidebarPreferences } from "../hooks/use-sidebar-preferences";
 import type { TradingModeControl } from "../lib/trading-mode";
 import { marketCopy } from "../lib/market-i18n";
+import { DesktopUpdateMenuItem } from "./DesktopUpdates";
 
 const SAVER_LABELS: Record<string, { label: string; desc: string }> = {
   en: { label: "Cost saver", desc: "Auto-compress history on long, tool-heavy turns to cut token cost" },
@@ -60,6 +61,7 @@ export function MoreMenu({ tradingMode }: { tradingMode?: TradingModeControl }) 
       </button>
       {open && (
         <div className="try-settings-menu" role="menu">
+          <DesktopUpdateMenuItem onSelect={() => setOpen(false)} />
           {tradingMode && <>
             <button type="button" className="try-select-option try-saver-row trading-mode-setting" role="menuitemcheckbox" aria-checked={tradingMode.enabled} disabled={tradingMode.disabled}
               onClick={() => { setOpen(false); tradingMode.onChange(!tradingMode.enabled); }}>

@@ -35,6 +35,16 @@ contextBridge.exposeInMainWorld("__FRANKLIN__", {
   startAgentRuntime: (id) => ipcRenderer.invoke("franklin:studio-start", id),
   stopAgentRuntime: (id) => ipcRenderer.invoke("franklin:studio-stop", id),
   switchWalletChain: (chain) => ipcRenderer.invoke("franklin:wallet-switch", chain),
+  getUpdateState: () => ipcRenderer.invoke("franklin:update-state"),
+  checkForUpdates: () => ipcRenderer.invoke("franklin:update-check"),
+  downloadUpdate: () => ipcRenderer.invoke("franklin:update-download"),
+  openUpdateInstaller: () => ipcRenderer.invoke("franklin:update-install"),
+  cancelUpdateDownload: () => ipcRenderer.invoke("franklin:update-cancel"),
+  onUpdateState: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("franklin:update-state", listener);
+    return () => ipcRenderer.removeListener("franklin:update-state", listener);
+  },
   // Native clipboard — navigator.clipboard is unreliable inside Electron, so the
   // renderer prefers this when present.
   copy: (text) => {

@@ -26,6 +26,7 @@ const {
   trustedRendererUrl,
 } = require("./security.cjs");
 const { createStudioRuntimeManager } = require("./studio-runtime.cjs");
+const { createDesktopUpdater } = require("./updates.cjs");
 
 // Is something already listening on a local port? Used so we don't double-spawn
 // Franklin Canvas (a second `npm start` would hit EADDRINUSE on :3100 and, per
@@ -69,6 +70,9 @@ let activeAgentPort = null;
 let activeCloudPort = null;
 let quitting = false;
 let backendReady = false;
+let desktopUpdater = null;
+let updateTimer = null;
+let updateInterval = null;
 const rendererReadyWaiters = new Map();
 let startupState = {
   status: "loading",
@@ -617,10 +621,24 @@ async function startApplication() {
   updateStartupState("loading", "Opening Franklin...");
   void startCanvas();
   await openMainWindow();
+  if (!updateTimer) {
+    updateTimer = setTimeout(() => void desktopUpdater.check(), 30_000);
+    updateInterval = setInterval(() => void desktopUpdater.check(), 6 * 60 * 60_000);
+    updateTimer.unref();
+    updateInterval.unref();
+  }
 }
 
 app.whenReady().then(() => {
   if (!hasSingleInstanceLock) return;
+  desktopUpdater = createDesktopUpdater({
+    currentVersion: app.isPackaged ? app.getVersion() : require("../package.json").version,
+    platform: process.platform, arch: process.arch,
+    directory: path.join(app.getPath("userData"), "updates"),
+    enabled: app.isPackaged,
+    openInstaller: (file) => shell.openPath(file),
+    onChange: (state) => { if (win && !win.isDestroyed()) win.webContents.send("franklin:update-state", state); },
+  });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   ipcMain.handle("franklin:open-canvas", (event) => { requireTrustedIpc(event); return openCanvasWindow(); });
@@ -628,6 +646,9 @@ app.whenReady().then(() => {
   ipcMain.handle("franklin:studio-start", (event, id) => { requireTrustedIpc(event); return startStudioRuntime(String(id)); });
   ipcMain.handle("franklin:studio-stop", (event, id) => { requireTrustedIpc(event); return stopStudioRuntime(String(id)); });
   ipcMain.handle("franklin:wallet-switch", (event, chain) => { requireTrustedIpc(event); return switchWalletChain(String(chain)); });
+  for (const [channel, method] of [["state", "getState"], ["check", "check"], ["download", "download"], ["install", "install"], ["cancel", "cancel"]]) {
+    ipcMain.handle(`franklin:update-${channel}`, (event) => { requireTrustedIpc(event); return desktopUpdater[method](); });
+  }
   ipcMain.on("franklin:renderer-ready", (event) => {
     requireTrustedIpc(event);
     rendererReadyWaiters.get(event.sender.id)?.();
@@ -670,6 +691,9 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => { quitting = true; });
 
 app.on("quit", () => {
+  clearTimeout(updateTimer);
+  clearInterval(updateInterval);
+  desktopUpdater?.cancel();
   studioRuntimes.stopAll();
   if (backend) backend.kill();
   if (cloudBackend) cloudBackend.kill();

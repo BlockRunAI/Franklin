@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { FranklinChat } from "./components/FranklinChat";
 import { TryLangProvider } from "./lib/i18n";
 import { useTheme } from "./hooks/use-theme";
+import { DesktopUpdateProvider } from "./components/DesktopUpdates";
 
 function ThemeBoot() {
   // Mounting the hook is enough — it pulls from localStorage and applies the
@@ -36,7 +37,7 @@ export default function App() {
   return (
     <TryLangProvider>
       <ThemeBoot />
-      <FranklinChat />
+      <DesktopUpdateProvider><FranklinChat /></DesktopUpdateProvider>
     </TryLangProvider>
   );
 }

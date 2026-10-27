@@ -8,6 +8,7 @@ import { ChartCandlestick, Wallet, MessageSquare, ArrowUp, PanelLeft, ImageIcon,
 import { TopBarMenu } from "./TopBarMenu";
 import { ModelSelect } from "./ModelSelect";
 import { MoreMenu } from "./MoreMenu";
+import { DesktopUpdateNotice } from "./DesktopUpdates";
 import { TradingWorkspace } from "./TradingWorkspace";
 import { marketCopy } from "../lib/market-i18n";
 import { MARKETS, marketIntervalLabel } from "../lib/market-data";
@@ -314,6 +315,7 @@ export function FranklinChat() {
 
   return (
     <div className={`try-shell${tradingEnabled ? " is-trading-mode" : ""}`}>
+      <DesktopUpdateNotice busy={isBusy || Object.keys(mediaJobs).length > 0 || cloud.sending} />
       <HistorySidebar
         conversations={history.personalConversations}
         activeId={history.activeId}

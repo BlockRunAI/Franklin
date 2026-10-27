@@ -36,7 +36,8 @@
     "test:markets": "npm run build && node test/markets.e2e.mjs",
     "test:markets:live": "npm run build && node test/markets.e2e.mjs --live",
     "desktop:markets-preview": "npm run build && node scripts/preview-markets.mjs",
-    "test:skills": "npm run build && node test/skills.e2e.mjs"
+    "test:skills": "npm run build && node test/skills.e2e.mjs",
+    "test:updates": "npm run build && node test/updates.e2e.mjs"
   },
   "dependencies": {
     "@blockrun/llm": "^3.19.1",

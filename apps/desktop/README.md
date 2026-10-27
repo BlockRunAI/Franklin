@@ -67,6 +67,38 @@ SHA-256 checksums.
 Beta installers are currently unsigned. Users may need to confirm the first
 launch through their operating system's security prompt.
 
+## Desktop updates
+
+Installed builds with the update feature check the public
+`BlockRunAI/Franklin` GitHub releases 30 seconds after startup and every six
+hours while running. Settings → Check for updates shows the Desktop version
+and offers the newest compatible installer. Beta builds include Desktop
+prereleases; stable builds stay on stable releases. CLI releases and drafts are
+excluded. No wallet credentials or GitHub login are needed for these checks.
+
+A new release opens an update dialog once the app is visible and its active
+chat, media and Team tasks have finished. **Later** dismisses that version's
+automatic prompt; the update stays available in Settings. Downloads happen
+only after **Download update**. The app verifies the published SHA-256 checksum
+and size before enabling **Open installer**, and verifies the file again
+before opening it. A download or verification error never opens an installer.
+
+The current unsigned beta uses the normal OS installer flow. On macOS, quit
+Franklin and replace it in Applications using the downloaded disk image. On
+Windows, open the installer, close Franklin and follow its steps. The updater
+does not silently replace the app or restart an active task. It supports the
+currently published Apple Silicon macOS and x64 Windows installers.
+
+Older releases, including `0.2.0-beta.6`, do not contain this feature. Those
+users must install a release with update support manually once before they can
+receive future in-app update prompts.
+
+The update manager and renderer tests are included in `npm test`. For a native
+Electron check of startup prompts, Settings, verified downloads, retry and
+Chinese/dark/narrow layout, run `npm run test:updates --workspace
+@blockrun/franklin-desktop`. This uses an isolated profile and fixture release
+data; it never launches a real installer or sends a paid model request.
+
 ## Team service
 
 Electron starts `cloud-server/server.mjs` as a local sidecar. It accepts only an
