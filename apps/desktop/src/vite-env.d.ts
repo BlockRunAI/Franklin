@@ -17,6 +17,8 @@ interface Window {
     checkForUpdates?: () => Promise<import("./lib/desktop-updates").DesktopUpdateState>;
     downloadUpdate?: () => Promise<import("./lib/desktop-updates").DesktopUpdateState>;
     openUpdateInstaller?: () => Promise<import("./lib/desktop-updates").DesktopUpdateState>;
+    installDesktopUpdate?: () => Promise<import("./lib/desktop-updates").DesktopUpdateState>;
+    setUpdateTaskActive?: (active: boolean) => Promise<void>;
     cancelUpdateDownload?: () => Promise<void>;
     onUpdateState?: (callback: (state: import("./lib/desktop-updates").DesktopUpdateState) => void) => () => void;
   };

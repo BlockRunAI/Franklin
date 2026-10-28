@@ -27,6 +27,7 @@ const {
 } = require("./security.cjs");
 const { createStudioRuntimeManager } = require("./studio-runtime.cjs");
 const { createDesktopUpdater } = require("./updates.cjs");
+const { createNativeInstaller } = require("./native-updates.cjs");
 
 // Is something already listening on a local port? Used so we don't double-spawn
 // Franklin Canvas (a second `npm start` would hit EADDRINUSE on :3100 and, per
@@ -73,6 +74,7 @@ let backendReady = false;
 let desktopUpdater = null;
 let updateTimer = null;
 let updateInterval = null;
+let updateTaskActive = false;
 const rendererReadyWaiters = new Map();
 let startupState = {
   status: "loading",
@@ -631,11 +633,21 @@ async function startApplication() {
 
 app.whenReady().then(() => {
   if (!hasSingleInstanceLock) return;
+  let nativeInstaller = null;
+  // Squirrel.Mac requires a signed app. Unsigned betas retain the explicit
+  // installer fallback until the first signed release has been installed.
+  const signedMac = process.platform === "darwin" && app.isPackaged && fs.existsSync(path.join(process.resourcesPath, "franklin-signed-update.json"));
+  if (app.isPackaged && (process.platform === "win32" || signedMac)) {
+    const { autoUpdater } = require("electron-updater");
+    nativeInstaller = createNativeInstaller({ updater: autoUpdater, onError: (error) => desktopUpdater?.reportNativeError(error) });
+  }
   desktopUpdater = createDesktopUpdater({
     currentVersion: app.isPackaged ? app.getVersion() : require("../package.json").version,
     platform: process.platform, arch: process.arch,
     directory: path.join(app.getPath("userData"), "updates"),
     enabled: app.isPackaged,
+    nativeInstaller,
+    canInstall: () => !updateTaskActive,
     openInstaller: (file) => shell.openPath(file),
     onChange: (state) => { if (win && !win.isDestroyed()) win.webContents.send("franklin:update-state", state); },
   });
@@ -649,6 +661,7 @@ app.whenReady().then(() => {
   for (const [channel, method] of [["state", "getState"], ["check", "check"], ["download", "download"], ["install", "install"], ["cancel", "cancel"]]) {
     ipcMain.handle(`franklin:update-${channel}`, (event) => { requireTrustedIpc(event); return desktopUpdater[method](); });
   }
+  ipcMain.handle("franklin:update-activity", (event, active) => { requireTrustedIpc(event); updateTaskActive = active === true; });
   ipcMain.on("franklin:renderer-ready", (event) => {
     requireTrustedIpc(event);
     rendererReadyWaiters.get(event.sender.id)?.();

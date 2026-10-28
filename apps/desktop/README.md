@@ -76,28 +76,41 @@ and offers the newest compatible installer. Beta builds include Desktop
 prereleases; stable builds stay on stable releases. CLI releases and drafts are
 excluded. No wallet credentials or GitHub login are needed for these checks.
 
-A new release opens an update dialog once the app is visible and its active
-chat, media and Team tasks have finished. **Later** dismisses that version's
-automatic prompt; the update stays available in Settings. Downloads happen
-only after **Download update**. The app verifies the published SHA-256 checksum
-and size before enabling **Open installer**, and verifies the file again
-before opening it. A download or verification error never opens an installer.
+A new release adds **Update Franklin** to the bottom of the sidebar, including
+a compact control when the sidebar is collapsed or Trading Mode is active.
+Clicking downloads the update inside Franklin, showing progress in the same
+button. Once verified, it becomes **Restart to update**. This uses
+`electron-updater`: Squirrel.Mac replaces the signed app and relaunches it;
+NSIS silently upgrades and relaunches on Windows. Chat, media and Team tasks
+block installation in both the renderer and main process. The update never
+installs merely because a download finished or the user quits the app.
 
-The current unsigned beta uses the normal OS installer flow. On macOS, quit
-Franklin and replace it in Applications using the downloaded disk image. On
-Windows, open the installer, close Franklin and follow its steps. The updater
-does not silently replace the app or restart an active task. It supports the
-currently published Apple Silicon macOS and x64 Windows installers.
+The release selector pins the native provider to the chosen **Desktop** tag,
+so the shared repository's CLI releases cannot become Desktop updates. Native
+update metadata must refer to the exact published assets and sizes. The updater
+checks SHA-512; Franklin also checks the GitHub SHA-256 digest when present and
+rehashes the downloaded file before installation. Code signature checks remain
+enabled. Network, checksum and native installation failures are retryable.
+
+Signed/notarized macOS releases include a ZIP payload and `latest-mac.yml`;
+Windows includes `latest.yml` and the NSIS installer. Older releases without
+native metadata, and unsigned macOS test builds, retain the explicit installer
+fallback. They show **Open installer**, not **Restart to update**. See
+[signing and release setup](docs/desktop-updates.md) before publishing a new tag.
 
 Older releases, including `0.2.0-beta.6`, do not contain this feature. Those
 users must install a release with update support manually once before they can
 receive future in-app update prompts.
 
 The update manager and renderer tests are included in `npm test`. For a native
-Electron check of startup prompts, Settings, verified downloads, retry and
+Electron check of sidebar detection, Settings, verified downloads, retry and
 Chinese/dark/narrow layout, run `npm run test:updates --workspace
 @blockrun/franklin-desktop`. This uses an isolated profile and fixture release
-data; it never launches a real installer or sends a paid model request.
+data; it never launches a real installer or sends a paid model request. Windows
+CI additionally installs an older package in an isolated directory, downloads
+a newer NSIS payload through the native adapter and silently upgrades that
+installation while checking that user data survives. This installer test
+refuses to run outside an ephemeral Windows Actions runner.
 
 ## Team service
 

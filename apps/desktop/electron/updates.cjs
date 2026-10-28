@@ -70,10 +70,20 @@ function selectRelease(releases, currentVersion, platform, arch) {
   if (matching.length !== 1 || manifests.length !== 1) throw new UpdateError("feed");
   const asset = matching[0];
   if (!Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > MAX_INSTALLER_BYTES) throw new UpdateError("feed");
+  const nativeFilename = platform === "darwin" ? `Franklin-${version}-arm64.zip` : filename;
+  const updateInfoName = platform === "darwin" ? "latest-mac.yml" : "latest.yml";
+  const updateInfos = assets.filter((entry) => entry.name === updateInfoName);
+  const nativeAssets = assets.filter((entry) => entry.name === nativeFilename);
+  if (updateInfos.length > 1 || (updateInfos.length && nativeAssets.length !== 1)) throw new UpdateError("feed");
+  if (updateInfos.length) {
+    assetUrl(updateInfos[0], tag); assetUrl(nativeAssets[0], tag);
+    if (!Number.isSafeInteger(nativeAssets[0].size) || nativeAssets[0].size <= 0 || nativeAssets[0].size > MAX_INSTALLER_BYTES) throw new UpdateError("feed");
+  }
   return {
     version, releaseUrl: `https://github.com/${REPOSITORY}/releases/tag/${tag}`,
     filename, size: asset.size, url: assetUrl(asset, tag), manifestUrl: assetUrl(manifests[0], tag),
     digest: asset.digest,
+    nativeFilename, assets, feedUrl: updateInfos.length ? `https://github.com/${REPOSITORY}/releases/download/${tag}/` : null,
   };
 }
 
@@ -94,15 +104,17 @@ async function limitedBody(response, limit) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function createDesktopUpdater({ currentVersion, platform, arch, directory, enabled = true, fetchImpl = fetch, openInstaller, onChange = () => {} }) {
+function createDesktopUpdater({ currentVersion, platform, arch, directory, enabled = true, fetchImpl = fetch, openInstaller, nativeInstaller = null, canInstall = () => true, onChange = () => {} }) {
   const supported = (platform === "darwin" && arch === "arm64") || (platform === "win32" && arch === "x64");
   let state = { status: !enabled ? "disabled" : !supported ? "unsupported" : "idle", currentVersion, platform };
   let candidate = null, downloaded = null, pending = null, controller = null;
   const getState = () => ({ ...state });
   const publish = (patch) => { state = { ...state, ...patch }; onChange(getState()); return getState(); };
-  const fail = (error) => error instanceof UpdateError && error.code === "cancelled"
-    ? publish({ status: "available", progress: undefined, error: undefined })
-    : publish({ status: "error", error: error instanceof UpdateError ? error.code : "network" });
+  const fail = (error) => {
+    const code = error instanceof UpdateError ? error.code : error?.updateCode || (error?.code === "ERR_CHECKSUM_MISMATCH" || /signature|not signed/i.test(error?.message ?? "") ? "verification" : "network");
+    if (code === "verification") downloaded = null;
+    return code === "cancelled" ? publish({ status: "available", progress: undefined, error: undefined }) : publish({ status: "error", error: code });
+  };
 
   async function request(url, signal, api = false) {
     for (let hops = 0; hops < 5; hops++) {
@@ -135,6 +147,7 @@ function createDesktopUpdater({ currentVersion, platform, arch, directory, enabl
   }
 
   function check() {
+    if (state.status === "installing") return Promise.resolve(getState());
     if (!enabled || !supported) return Promise.resolve(getState());
     return operation(async () => {
       publish({ status: "checking", error: undefined });
@@ -158,6 +171,7 @@ function createDesktopUpdater({ currentVersion, platform, arch, directory, enabl
         if (!latest || latest.version !== candidate?.version) downloaded = null;
         candidate = latest;
         return publish({ status: !latest ? "current" : downloaded ? "downloaded" : "available", version: latest?.version,
+          installMode: nativeInstaller && latest?.feedUrl ? "automatic" : "manual",
           releaseUrl: latest?.releaseUrl, progress: downloaded ? 100 : undefined, openedAt: downloaded ? state.openedAt : undefined, checkedAt: Date.now() });
       } finally { clearTimeout(timer); }
     });
@@ -173,6 +187,10 @@ function createDesktopUpdater({ currentVersion, platform, arch, directory, enabl
       const timer = setTimeout(() => controller?.abort(), 15 * 60_000);
       let folder, handle;
       try {
+        if (state.installMode === "automatic") {
+          downloaded = { ...await nativeInstaller.download(release, (progress) => publish({ progress }), controller.signal), automatic: true };
+          return publish({ status: "downloaded", progress: 100 });
+        }
         const manifest = await request(release.manifestUrl, controller.signal);
         const expected = manifestHash(await limitedBody(manifest, 64 * 1024), release.filename);
         if (release.digest && release.digest !== `sha256:${expected}`) throw new UpdateError("verification");
@@ -210,7 +228,14 @@ function createDesktopUpdater({ currentVersion, platform, arch, directory, enabl
 
   function install() {
     if (!downloaded || !enabled) return Promise.resolve(getState());
+    if (state.status === "installing") return Promise.resolve(getState());
     return operation(async () => {
+      if (!canInstall()) throw new UpdateError("busy");
+      if (downloaded.automatic) {
+        publish({ status: "installing", error: undefined });
+        await nativeInstaller.install(downloaded, canInstall);
+        return getState();
+      }
       publish({ status: "opening", error: undefined });
       // Check again immediately before opening; a changed file is never run.
       try {
@@ -225,6 +250,7 @@ function createDesktopUpdater({ currentVersion, platform, arch, directory, enabl
         await fs.rm(path.dirname(downloaded.file), { recursive: true, force: true }); downloaded = null;
         throw new UpdateError("verification");
       }
+      if (!canInstall()) throw new UpdateError("busy");
       const error = await openInstaller(downloaded.file);
       if (error) throw new UpdateError("open");
       return publish({ status: "downloaded", openedAt: Date.now() });
@@ -234,7 +260,7 @@ function createDesktopUpdater({ currentVersion, platform, arch, directory, enabl
   function cancel() {
     if (state.status === "downloading") controller?.abort(new UpdateError("cancelled"));
   }
-  return { getState, check, download, install, cancel };
+  return { getState, check, download, install, cancel, reportNativeError: fail };
 }
 
 module.exports = { createDesktopUpdater, compareVersions, selectRelease, manifestHash };

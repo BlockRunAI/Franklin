@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/franklin-desktop",
-  "version": "0.2.0-beta.6",
+  "version": "0.2.0-beta.7",
   "author": "BlockRun <hello@blockrun.ai>",
   "description": "Franklin Desktop — native desktop app for the Franklin agent (Electron). Same agent, wallet and tools as the CLI, in a polished window.",
   "license": "Apache-2.0",
@@ -30,8 +30,8 @@
     "desktop:real": "concurrently -k -n web,electron -c green,magenta \"npm run dev:desktop-real-web\" \"ELECTRON_RUN_AS_NODE= FRANKLIN_DESKTOP_DEV_URL=http://localhost:5174 electron electron/main.cjs\"",
     "desktop": "npm run build && ELECTRON_RUN_AS_NODE= electron electron/main.cjs",
     "prepare:runtime": "node scripts/prepare-runtime.mjs",
-    "dist:mac": "npm run build && npm run prepare:runtime && electron-builder --mac --arm64 --publish never",
-    "dist:win": "npm run build && npm run prepare:runtime && electron-builder --win --x64 --publish never",
+    "dist:mac": "npm run build && npm run prepare:runtime && electron-builder --config builder.config.cjs --mac --arm64 --publish never",
+    "dist:win": "npm run build && npm run prepare:runtime && electron-builder --config builder.config.cjs --win --x64 --publish never",
     "test:unit": "vitest run",
     "test:markets": "npm run build && node test/markets.e2e.mjs",
     "test:markets:live": "npm run build && node test/markets.e2e.mjs --live",
@@ -58,6 +58,7 @@
     "bs58": "^6.0.0",
     "chalk": "^5.4.0",
     "commander": "^15.0.0",
+    "electron-updater": "6.8.11",
     "html-to-image": "^1.11.13",
     "https-proxy-agent": "^9.1.0",
     "ink": "^7.1.1",
@@ -125,15 +126,19 @@
       "!node_modules/@colbymchenry/codegraph-*/**"
     ],
     "asar": true,
+    "publish": [{ "provider": "generic", "url": "https://github.com/BlockRunAI/Franklin/releases/download/desktop-v${version}/", "channel": "latest", "useMultipleRangeRequest": false }],
+    "electronUpdaterCompatibility": ">=2.15",
     "mac": {
       "target": [
-        "dmg"
+        "dmg", "zip"
       ],
+      "artifactName": "Franklin-${version}-${arch}.${ext}",
       "icon": "build/icon.png",
       "category": "public.app-category.developer-tools",
-      "identity": null
+      "hardenedRuntime": true
     },
     "win": {
+      "artifactName": "Franklin.Setup.${version}.${ext}",
       "target": [
         "nsis"
       ],

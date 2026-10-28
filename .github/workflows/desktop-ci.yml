@@ -31,11 +31,18 @@ jobs:
         include:
           - os: macos-latest
             script: dist:mac
-            artifact: apps/desktop/release/*.dmg
+            artifact: |
+              apps/desktop/release/*.dmg
+              apps/desktop/release/*.zip
+              apps/desktop/release/latest*.yml
+              apps/desktop/release/*.blockmap
             name: macOS
           - os: windows-latest
             script: dist:win
-            artifact: apps/desktop/release/*.exe
+            artifact: |
+              apps/desktop/release/*.exe
+              apps/desktop/release/latest*.yml
+              apps/desktop/release/*.blockmap
             name: Windows
 
     runs-on: ${{ matrix.os }}
@@ -68,12 +75,37 @@ jobs:
           npm test --workspace @blockrun/franklin-desktop
 
       - name: Build unsigned test installer
+        if: matrix.name != 'macOS' || !startsWith(github.ref, 'refs/tags/desktop-v')
         run: npm run ${{ matrix.script }} --workspace @blockrun/franklin-desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
+      - name: Build signed and notarized macOS release
+        if: matrix.name == 'macOS' && startsWith(github.ref, 'refs/tags/desktop-v')
+        run: npm run dist:mac --workspace @blockrun/franklin-desktop
+        env:
+          FRANKLIN_SIGNED_RELEASE: "1"
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify in-app update metadata and payload checksums
+        run: node apps/desktop/scripts/verify-update-artifacts.mjs
+
+      - name: Verify macOS release signature and notarization
+        if: matrix.name == 'macOS' && startsWith(github.ref, 'refs/tags/desktop-v')
+        run: |
+          codesign --verify --deep --strict apps/desktop/release/mac-arm64/Franklin.app
+          xcrun stapler validate apps/desktop/release/mac-arm64/Franklin.app
+
       - name: Verify packaged runtime outside the checkout
         run: node apps/desktop/test/packaged-runtime.e2e.mjs
+
+      - name: Verify real silent Windows upgrade in an isolated installation
+        if: matrix.name == 'Windows'
+        run: node apps/desktop/test/in-place-update.windows.mjs
 
       - name: Upload test installer
         uses: actions/upload-artifact@v4
@@ -106,7 +138,8 @@ jobs:
           shopt -s nullglob
           dmg=(release/*.dmg)
           exe=(release/*.exe)
-          if (( ${#dmg[@]} != 1 || ${#exe[@]} != 1 )); then
+          zip=(release/*.zip)
+          if (( ${#dmg[@]} != 1 || ${#exe[@]} != 1 || ${#zip[@]} != 1 )) || [[ ! -f release/latest.yml || ! -f release/latest-mac.yml ]]; then
             echo "::error::expected exactly one .dmg and one .exe, got ${#dmg[@]} dmg / ${#exe[@]} exe"
             ls -la release/
             exit 1
@@ -115,10 +148,6 @@ jobs:
       - name: Generate checksums
         shell: bash
         run: |
-          for file in release/*; do
-            normalized="${file// /.}"
-            if [[ "$file" != "$normalized" ]]; then mv "$file" "$normalized"; fi
-          done
           sha256sum release/* | sed 's#  release/#  #' > release/SHA256SUMS.txt
 
       - name: Prepare release metadata

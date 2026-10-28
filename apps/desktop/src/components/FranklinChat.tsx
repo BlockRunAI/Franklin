@@ -8,7 +8,7 @@ import { ChartCandlestick, Wallet, MessageSquare, ArrowUp, PanelLeft, ImageIcon,
 import { TopBarMenu } from "./TopBarMenu";
 import { ModelSelect } from "./ModelSelect";
 import { MoreMenu } from "./MoreMenu";
-import { DesktopUpdateNotice } from "./DesktopUpdates";
+import { DesktopUpdateNotice, DesktopUpdateSidebarButton, useDesktopUpdateInstalling } from "./DesktopUpdates";
 import { TradingWorkspace } from "./TradingWorkspace";
 import { marketCopy } from "../lib/market-i18n";
 import { MARKETS, marketIntervalLabel } from "../lib/market-data";
@@ -117,7 +117,8 @@ export function FranklinChat() {
   const { mode, setMode, model, setModel, models, selectedModel, status, activeTool, needsToolWallet, genConvId, mediaJobs, error, pendingPermission, respondToPermission, isBusy, isConnected, send, stop, stopMedia, regenerate, imageSize, setImageSize, imageSizes, videoRatio, setVideoRatio, videoRatios, videoResolution, setVideoResolution, videoResolutions } = chat;
   const genHere = genConvId === null || genConvId === history.activeId;
   const activeMediaJob = history.activeId ? mediaJobs[history.activeId] : undefined;
-  const busy = isBusy || !!activeMediaJob;
+  const updateInstalling = useDesktopUpdateInstalling();
+  const busy = isBusy || !!activeMediaJob || updateInstalling;
 
   const [input, setInput] = useState("");
   const [attachment, setAttachment] = useState<string | null>(null);
@@ -356,6 +357,7 @@ export function FranklinChat() {
         <button title={t.newChat} aria-label={t.newChat} onClick={newPersonalChat}><Plus size={19} aria-hidden /></button>
         <button className={marketActive ? "is-active" : ""} title={marketText.title} aria-label={marketText.title} aria-current={marketActive ? "page" : undefined} onClick={() => navigate("markets")}><ChartCandlestick size={19} aria-hidden /></button>
         <span className="trading-rail-spacer" />
+        <DesktopUpdateSidebarButton compact />
         <button title={t.wallet} aria-label={t.wallet} onClick={() => navigate("wallet")}><Wallet size={19} aria-hidden /></button>
         <button title="Toggle history" aria-label="Toggle history" onClick={toggleSidebar}><PanelLeft size={19} aria-hidden /></button>
         <MoreMenu tradingMode={tradingMode} />
@@ -369,6 +371,7 @@ export function FranklinChat() {
           >
             <PanelLeft className="h-[18px] w-[18px]" />
           </button>
+          {!sidebarOpen && !tradingEnabled && <DesktopUpdateSidebarButton compact />}
           {tradingEnabled && <button type="button" className="trading-mode-badge" onClick={() => navigate("markets")} title={marketText.backToTrading}><ChartCandlestick size={12} aria-hidden />{marketText.tradingMode}</button>}
 
           {chatVisible && (activeConvo || chatSpace === "team") && (

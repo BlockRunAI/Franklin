@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld("__FRANKLIN__", {
   checkForUpdates: () => ipcRenderer.invoke("franklin:update-check"),
   downloadUpdate: () => ipcRenderer.invoke("franklin:update-download"),
   openUpdateInstaller: () => ipcRenderer.invoke("franklin:update-install"),
+  installDesktopUpdate: () => ipcRenderer.invoke("franklin:update-install"),
+  setUpdateTaskActive: (active) => ipcRenderer.invoke("franklin:update-activity", active === true),
   cancelUpdateDownload: () => ipcRenderer.invoke("franklin:update-cancel"),
   onUpdateState: (callback) => {
     const listener = (_event, state) => callback(state);

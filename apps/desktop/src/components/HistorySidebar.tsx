@@ -8,6 +8,7 @@ import type { WalletInfo } from "../lib/wire";
 import type { AgentConnectionState } from "../lib/ws";
 import { useTryLang } from "../lib/i18n";
 import { MoreMenu } from "./MoreMenu";
+import { DesktopUpdateSidebarButton } from "./DesktopUpdates";
 import { WalletPill } from "./WalletPill";
 import franklinAvatar from "../assets/franklin-avatar.png";
 import type { TeamWorkspaceNavItem } from "../hooks/use-cloud-workspace";
@@ -196,6 +197,7 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
       </div>
 
       <div className="try-sidebar-footer">
+        <DesktopUpdateSidebarButton />
         <div className="try-footer-icons">
           <MoreMenu tradingMode={tradingMode} />
           <div className="try-footer-wallet">

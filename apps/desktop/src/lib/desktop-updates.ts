@@ -1,5 +1,6 @@
 export interface DesktopUpdateState {
-  status: "idle" | "checking" | "current" | "available" | "downloading" | "downloaded" | "opening" | "error" | "disabled" | "unsupported";
+  status: "idle" | "checking" | "current" | "available" | "downloading" | "downloaded" | "opening" | "installing" | "error" | "disabled" | "unsupported";
+  installMode?: "automatic" | "manual";
   currentVersion: string;
   platform: string;
   version?: string;
@@ -12,6 +13,7 @@ export interface DesktopUpdateState {
 
 export const updateCopy = {
   en: {
+    update: "Update Franklin", restart: "Restart to update", installing: "Restarting to update…", automatic: "The update downloads inside Franklin. Restart when you're ready to finish installing it.", ready: "The update is downloaded. Restart Franklin to finish updating.",
     title: "Desktop updates", check: "Check for updates", checking: "Checking for updates…", available: "Update available",
     current: "You're up to date", currentVersion: "Current version", newVersion: "New version", later: "Later", close: "Close",
     download: "Download update", downloading: "Downloading update…", install: "Open installer", opening: "Opening installer…", cancel: "Cancel download", notes: "Release notes",
@@ -25,6 +27,7 @@ export const updateCopy = {
     rateLimit: "GitHub's update service is temporarily rate limited. Try again later.", feed: "The release information is incomplete. Try again later.", open: "Couldn't open the installer. Try opening it again.",
   },
   zh: {
+    update: "更新 Franklin", restart: "重启并更新", installing: "正在重启更新…", automatic: "在 Franklin 内下载更新，准备好后点击重启即可完成安装。", ready: "更新已下载，重启 Franklin 即可完成更新。",
     title: "Desktop 更新", check: "检查更新", checking: "正在检查更新…", available: "有新版本可用",
     current: "已是最新版本", currentVersion: "当前版本", newVersion: "新版本", later: "稍后", close: "关闭",
     download: "下载更新", downloading: "正在下载更新…", install: "打开安装包", opening: "正在打开安装包…", cancel: "取消下载", notes: "更新说明",
@@ -37,6 +40,7 @@ export const updateCopy = {
     rateLimit: "GitHub 更新服务暂时限流，请稍后重试。", feed: "新版发布信息尚不完整，请稍后重试。", open: "安装包未能打开，请重试。",
   },
   es: {
+    update: "Actualizar Franklin", restart: "Reiniciar y actualizar", installing: "Reiniciando para actualizar…", automatic: "La actualización se descarga en Franklin. Reinicia cuando quieras completar la instalación.", ready: "Actualización descargada. Reinicia Franklin para completarla.",
     title: "Actualizaciones de Desktop", check: "Buscar actualizaciones", checking: "Buscando actualizaciones…", available: "Actualización disponible",
     current: "Estás al día", currentVersion: "Versión actual", newVersion: "Nueva versión", later: "Más tarde", close: "Cerrar",
     download: "Descargar actualización", downloading: "Descargando actualización…", install: "Abrir instalador", opening: "Abriendo instalador…", cancel: "Cancelar descarga", notes: "Notas de la versión",

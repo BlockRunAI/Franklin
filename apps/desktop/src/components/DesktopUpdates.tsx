@@ -9,14 +9,16 @@ interface UpdateControl {
   open: boolean;
   show: () => void;
   close: () => void;
-  run: (action: "checkForUpdates" | "downloadUpdate" | "openUpdateInstaller" | "cancelUpdateDownload") => void;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
+  run: (action: "checkForUpdates" | "downloadUpdate" | "openUpdateInstaller" | "installDesktopUpdate" | "cancelUpdateDownload") => void;
 }
 const UpdateContext = createContext<UpdateControl | null>(null);
-const DISMISSED_KEY = "franklin-dismissed-update-v1";
 
 export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<DesktopUpdateState | null>(null);
   const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     const api = window.__FRANKLIN__;
     if (!api?.getUpdateState) return;
@@ -26,14 +28,35 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
     return () => { active = false; unsubscribe?.(); };
   }, []);
   const run = useCallback((action: Parameters<UpdateControl["run"]>[0]) => {
+    if (busy && (action === "installDesktopUpdate" || action === "openUpdateInstaller")) return;
     const result = window.__FRANKLIN__?.[action]?.();
     void result?.then((next) => { if (next) setState(next); }).catch(() => setState((previous) => previous ? { ...previous, status: "error", error: "network" } : previous));
-  }, []);
-  const close = () => {
-    if (state?.version) { try { localStorage.setItem(DISMISSED_KEY, state.version); } catch { /* optional preference */ } }
-    setOpen(false);
-  };
-  return <UpdateContext.Provider value={{ state, open, show: () => setOpen(true), close, run }}>{children}</UpdateContext.Provider>;
+  }, [busy]);
+  return <UpdateContext.Provider value={{ state, open, busy, setBusy, show: () => setOpen(true), close: () => setOpen(false), run }}>{children}</UpdateContext.Provider>;
+}
+
+export function useDesktopUpdateInstalling() {
+  return useContext(UpdateContext)?.state?.status === "installing";
+}
+
+export function DesktopUpdateSidebarButton({ compact = false }: { compact?: boolean }) {
+  const updates = useContext(UpdateContext);
+  const { lang } = useTryLang();
+  const state = updates?.state, copy = updateCopy[lang];
+  if (!updates || !state?.version || ["current", "disabled", "unsupported"].includes(state.status)) return null;
+  const ready = state.status === "downloaded" || (state.status === "error" && ["busy", "open"].includes(state.error ?? ""));
+  const working = state.status === "downloading" || state.status === "installing";
+  const label = state.status === "downloading" ? `${copy.downloading} ${state.progress ?? 0}%` : state.status === "installing" ? copy.installing : ready ? state.installMode === "automatic" ? copy.restart : copy.install : copy.update;
+  return <button type="button" className={`desktop-update-sidebar${compact ? " is-compact" : ""}`} title={ready && updates.busy ? copy.busy : `${label} · ${state.version}`} aria-label={label}
+    disabled={state.status === "installing" || state.status === "checking" || (ready && updates.busy)} onClick={() => {
+      if (state.status === "available") updates.run("downloadUpdate");
+      else if (ready) updates.run(state.installMode === "automatic" ? "installDesktopUpdate" : "openUpdateInstaller");
+      else updates.show();
+    }}>
+    {working ? <Loader2 size={16} className="spin" aria-hidden /> : ready ? <RefreshCw size={16} aria-hidden /> : <Download size={16} aria-hidden />}
+    {!compact && <span>{label}</span>}
+    {state.status === "downloading" && <span className="desktop-update-sidebar-progress" aria-hidden style={{ width: `${state.progress ?? 0}%` }} />}
+  </button>;
 }
 
 export function DesktopUpdateMenuItem({ onSelect }: { onSelect: () => void }) {
@@ -54,20 +77,12 @@ export function DesktopUpdateMenuItem({ onSelect }: { onSelect: () => void }) {
 
 export function DesktopUpdateNotice({ busy }: { busy: boolean }) {
   const updates = useContext(UpdateContext);
-  const prompted = useRef(new Set<string>());
-  const [visible, setVisible] = useState(document.visibilityState === "visible");
+  const setBusy = updates?.setBusy;
   useEffect(() => {
-    const onVisibility = () => setVisible(document.visibilityState === "visible");
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, []);
+    setBusy?.(busy);
+    void window.__FRANKLIN__?.setUpdateTaskActive?.(busy).catch(() => {});
+  }, [busy, setBusy]);
   const state = updates?.state;
-  useEffect(() => {
-    if (!state?.version || state.status !== "available" || busy || !visible || updates?.open || prompted.current.has(state.version)) return;
-    try { if (localStorage.getItem(DISMISSED_KEY) === state.version) return; } catch { /* show once per launch */ }
-    prompted.current.add(state.version);
-    updates?.show();
-  }, [state, busy, visible, updates]);
   if (!updates?.open || !state) return null;
   return <DesktopUpdateDialog updates={updates} state={state} busy={busy} />;
 }
@@ -93,27 +108,28 @@ function DesktopUpdateDialog({ updates, state, busy }: { updates: UpdateControl;
     document.addEventListener("keydown", keydown);
     return () => { document.removeEventListener("keydown", keydown); if (previous?.isConnected) previous.focus(); };
   }, []);
-  const downloading = state.status === "downloading", opening = state.status === "opening";
+  const automatic = state.installMode === "automatic";
+  const downloading = state.status === "downloading", opening = state.status === "opening" || state.status === "installing";
   const unavailable = state.status === "disabled" || state.status === "unsupported";
-  const error = state.error === "verification" ? copy.verification : state.error === "rateLimit" ? copy.rateLimit : state.error === "feed" ? copy.feed : state.error === "open" ? copy.open : copy.error;
+  const error = state.error === "busy" ? copy.busy : state.error === "verification" ? copy.verification : state.error === "rateLimit" ? copy.rateLimit : state.error === "feed" ? copy.feed : state.error === "open" ? copy.open : copy.error;
   const status = state.status === "checking" ? copy.checking : state.status === "current" ? copy.current
     : unavailable ? copy[state.status as "disabled" | "unsupported"] : state.status === "error" ? error
-    : downloading ? `${copy.downloading} ${state.progress ?? 0}%` : opening ? copy.opening : state.openedAt ? copy.opened : copy.description;
-  const downloaded = state.status === "downloaded" || (state.status === "error" && state.error === "open");
+    : downloading ? `${copy.downloading} ${state.progress ?? 0}%` : opening ? automatic ? copy.installing : copy.opening : state.openedAt ? copy.opened : automatic ? state.status === "downloaded" ? copy.ready : copy.automatic : copy.description;
+  const downloaded = state.status === "downloaded" || (state.status === "error" && ["open", "busy"].includes(state.error ?? ""));
   return createPortal(<div className="desktop-update-backdrop">
     <div className="desktop-update-dialog" ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="desktop-update-title" aria-describedby="desktop-update-status">
       <div className="desktop-update-heading"><Download size={22} aria-hidden /><h2 id="desktop-update-title">{state.version ? copy.available : copy.title}</h2><button type="button" onClick={updates.close} aria-label={copy.close}><X size={18} /></button></div>
       <div className="desktop-update-versions"><span>{copy.currentVersion} <strong>{state.currentVersion}</strong></span>{state.version && <span>{copy.newVersion} <strong>{state.version}</strong></span>}</div>
       <p id="desktop-update-status" role={state.status === "error" ? "alert" : "status"}>{status}</p>
       {downloading && <progress aria-label={copy.downloading} value={state.progress ?? 0} max={100} />}
-      {state.version && <p className="desktop-update-help">{busy ? copy.busy : state.platform === "darwin" ? copy.mac : copy.win}</p>}
+      {state.version && (busy || !automatic) && <p className="desktop-update-help">{busy ? copy.busy : state.platform === "darwin" ? copy.mac : copy.win}</p>}
       <div className="desktop-update-actions">
         {state.releaseUrl && <a href={state.releaseUrl} target="_blank" rel="noreferrer">{copy.notes}</a>}
         <span />
         {downloading ? <button type="button" onClick={() => updates.run("cancelUpdateDownload")}>{copy.cancel}</button> : <button type="button" onClick={updates.close}>{state.version ? copy.later : copy.close}</button>}
-        {!unavailable && <button type="button" className="is-primary" disabled={downloading || opening || state.status === "checking" || (downloaded && busy)} onClick={() => updates.run(downloaded ? "openUpdateInstaller" : state.status === "available" ? "downloadUpdate" : "checkForUpdates")}>
+        {!unavailable && <button type="button" className="is-primary" disabled={downloading || opening || state.status === "checking" || (downloaded && busy)} onClick={() => updates.run(downloaded ? automatic ? "installDesktopUpdate" : "openUpdateInstaller" : state.status === "available" ? "downloadUpdate" : "checkForUpdates")}>
           {downloading || opening || state.status === "checking" ? <Loader2 size={15} className="spin" aria-hidden /> : downloaded || state.status === "available" ? <Download size={15} aria-hidden /> : <RefreshCw size={15} aria-hidden />}
-          {downloading ? copy.downloading : opening ? copy.opening : state.status === "checking" ? copy.checking : downloaded ? copy.install : state.status === "available" ? copy.download : copy.check}
+          {downloading ? copy.downloading : opening ? automatic ? copy.installing : copy.opening : state.status === "checking" ? copy.checking : downloaded ? automatic ? copy.restart : copy.install : state.status === "available" ? copy.download : copy.check}
         </button>}
       </div>
     </div>
