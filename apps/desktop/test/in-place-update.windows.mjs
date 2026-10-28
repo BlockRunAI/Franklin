@@ -25,6 +25,7 @@ const run = (command, args, options = {}) => new Promise((resolve, reject) => {
 });
 const workerEnv = Object.fromEntries(["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "PROCESSOR_ARCHITECTURE", "GITHUB_ACTIONS"].flatMap((key) => process.env[key] ? [[key, process.env[key]]] : []));
 Object.assign(workerEnv, { HOME: qa, USERPROFILE: qa, APPDATA: path.join(qa, "roaming"), LOCALAPPDATA: path.join(qa, "local"), TMP: qa, TEMP: qa });
+Object.assign(workerEnv, { FRANKLIN_WORK_DIR: path.join(qa, "workspace"), FRANKLIN_CLOUD_DATA_DIR: path.join(qa, "cloud"), FRANKLIN_CATALOG_OFFLINE: "1", FRANKLIN_TEAM_CLOUD_URL: "http://127.0.0.1:1" });
 await Promise.all([fs.mkdir(workerEnv.APPDATA), fs.mkdir(workerEnv.LOCALAPPDATA)]);
 const initialInstaller = path.join(desktop, "release", `Franklin.Setup.${pkg.version}.exe`);
 await fs.access(initialInstaller);
@@ -32,8 +33,12 @@ await run(process.execPath, [require.resolve("electron-builder/cli.js"), "--conf
   cwd: desktop, env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: "false" },
 });
 await run(initialInstaller, ["/S", `/D=${installed}`], { env: workerEnv });
-const { extractFile } = require("@electron/asar");
-const readVersion = () => JSON.parse(extractFile(path.join(installed, "resources/app.asar"), "package.json").toString()).version;
+const { extractFile, uncache } = require("@electron/asar");
+const readVersion = () => {
+  const archive = path.join(installed, "resources/app.asar");
+  uncache(archive); // An in-place replacement changes the archive header/offsets.
+  return JSON.parse(extractFile(archive, "package.json").toString()).version;
+};
 const until = async (predicate, label) => {
   const end = Date.now() + 180_000;
   while (Date.now() < end) { try { if (await predicate()) return; } catch { /* installer is replacing files */ } await new Promise((r) => setTimeout(r, 500)); }
