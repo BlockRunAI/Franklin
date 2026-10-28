@@ -7687,7 +7687,7 @@ test('reconcileExpandedPicker: live catalog is grouped by provider after Auto', 
   );
 });
 
-test('reconcileExpandedPicker: provider groups rank newest and strongest models first', async () => {
+test('reconcileExpandedPicker: provider groups use shared recency and preserve same-generation order', async () => {
   const { reconcileExpandedPicker } = await import('../dist/ui/model-picker.js');
   const catalog = [
     gwModel('anthropic/claude-haiku-4.5', { input: 1, output: 2 }),
@@ -7732,13 +7732,13 @@ test('reconcileExpandedPicker: provider groups rank newest and strongest models 
     'anthropic/claude-haiku-4.5',
   ]);
   assert.deepEqual(idsFor('OpenAI / GPT'), [
+    'openai/gpt-5.6-luna',
     'openai/gpt-5.6-sol',
     'openai/gpt-5.6-terra',
-    'openai/gpt-5.6-luna',
     'openai/gpt-5.5',
-    'openai/gpt-5.4-pro',
     'openai/gpt-5.4-mini',
     'openai/gpt-5.4-nano',
+    'openai/gpt-5.4-pro',
     'openai/gpt-5.3-codex',
     'openai/gpt-5.3',
     'openai/gpt-5.2',
@@ -7747,8 +7747,8 @@ test('reconcileExpandedPicker: provider groups rank newest and strongest models 
   ]);
   assert.deepEqual(idsFor('Google / Gemini'), [
     'google/gemini-3.5-flash',
-    'google/gemini-3.1-pro',
     'google/gemini-3.1-flash-lite',
+    'google/gemini-3.1-pro',
     'google/gemini-3-flash-preview',
     'google/gemini-2.5-flash',
   ]);
@@ -7760,8 +7760,8 @@ test('reconcileExpandedPicker: provider groups rank newest and strongest models 
   assert.deepEqual(idsFor('Z.AI / GLM'), [
     'zai/glm-5.2',
     'zai/glm-5.1',
-    'zai/glm-5',
     'zai/glm-5-turbo',
+    'zai/glm-5',
   ]);
   assert.deepEqual(idsFor('MiniMax'), [
     'minimax/minimax-m3',
