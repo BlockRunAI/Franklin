@@ -55,6 +55,12 @@ jobs:
           node-version: "22"
           cache: npm
 
+      - name: Require explicit updater rollout enablement for public releases
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        env:
+          DESKTOP_UPDATER_RELEASE_ENABLED: ${{ vars.DESKTOP_UPDATER_RELEASE_ENABLED }}
+        run: node -e "if(process.env.DESKTOP_UPDATER_RELEASE_ENABLED !== 'true') throw new Error('Desktop updater rollout is on hold; do not publish until the owner explicitly enables it.')"
+
       - name: Verify Desktop tag matches its package version
         if: startsWith(github.ref, 'refs/tags/desktop-v')
         run: node -e "const v=require('./apps/desktop/package.json').version; if(process.env.GITHUB_REF_NAME !== 'desktop-v'+v) throw new Error('Desktop tag/version mismatch')"

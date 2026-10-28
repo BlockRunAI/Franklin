@@ -16,6 +16,30 @@ await fs.cp(source, staged, { recursive: true, verbatimSymlinks: true });
 const exe = mac ? path.join(staged, 'Contents/MacOS/Franklin') : path.join(staged, 'Franklin.exe');
 const asar = mac ? path.join(staged, 'Contents/Resources/app.asar') : path.join(staged, 'resources/app.asar');
 await fs.access(exe);
+const updaterProbe = path.join(qa, 'updater-probe.cjs');
+await fs.writeFile(updaterProbe, `
+const assert = require('node:assert/strict');
+const {createRequire} = require('node:module');
+const fs = require('node:fs');
+const requireApp = createRequire(${JSON.stringify(path.join(asar, 'package.json'))});
+const updater = requireApp('electron-updater');
+assert.equal(typeof updater.MacUpdater, 'function');
+assert.equal(typeof updater.NsisUpdater, 'function');
+const yaml = requireApp('yaml');
+const config = yaml.parse(fs.readFileSync(${JSON.stringify(path.join(path.dirname(asar), 'app-update.yml'))}, 'utf8'));
+assert.equal(config.provider, 'generic');
+assert.equal(config.channel, 'latest');
+assert.match(config.url, /^https:\\/\\/github\\.com\\/BlockRunAI\\/Franklin\\/releases\\/download\\/desktop-v/);
+console.log('PASS isolated packaged updater dependency graph and metadata');
+`);
+await new Promise((resolve, reject) => {
+  const probe = spawn(exe, [updaterProbe], {
+    cwd: qa, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, HOME: qa, USERPROFILE: qa, TMP: qa, TEMP: qa, ELECTRON_RUN_AS_NODE: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = ''; probe.stdout.on('data', data => { output += data; }); probe.stderr.on('data', data => { output += data; });
+  probe.once('error', reject); probe.once('exit', code => code === 0 ? (console.log(output.trim()), resolve()) : reject(new Error(output)));
+});
 const workspace = path.join(qa, 'workspace'); await fs.mkdir(workspace);
 const token = 'qa-packaged-runtime-only';
 const child = spawn(exe, [path.join(asar, 'franklin-agent/dist/index.js'), 'serve', '--port', '0', '--work-dir', workspace], {

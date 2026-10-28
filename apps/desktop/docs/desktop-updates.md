@@ -1,5 +1,12 @@
 # Desktop update release setup
 
+**Rollout on hold (2026-10-27).** The product owner has deferred this feature
+until Apple Developer signing is available. Keep this branch unmerged and do
+not publish an installer or deploy the associated website changes. The public
+release workflow also requires the repository Actions variable
+`DESKTOP_UPDATER_RELEASE_ENABLED=true`; it is not enabled by this change.
+Resume release preparation only after the owner explicitly authorizes rollout.
+
 Customer flow: sidebar **Update Franklin** → in-app download and verification
 → **Restart to update** → the new app opens. Settings retains manual checks,
 release notes, cancellation and retry. No customer Terminal commands are needed.
