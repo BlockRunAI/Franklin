@@ -105,6 +105,7 @@ jobs:
 
       - name: Verify real silent Windows upgrade in an isolated installation
         if: matrix.name == 'Windows'
+        timeout-minutes: 12
         run: node apps/desktop/test/in-place-update.windows.mjs
 
       - name: Upload test installer

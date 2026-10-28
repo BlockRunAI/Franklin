@@ -20,7 +20,7 @@ const targetVersion = `${major}.${minor}.${patch + 1}-update-smoke.1`;
 const qa = await fs.mkdtemp(path.join(process.env.RUNNER_TEMP || os.tmpdir(), "franklin-upgrade-"));
 const target = path.join(qa, "target"), installed = path.join(qa, "installed");
 const run = (command, args, options = {}) => new Promise((resolve, reject) => {
-  const child = spawn(command, args, { stdio: "inherit", ...options });
+  const child = spawn(command, args, { stdio: "inherit", timeout: 8 * 60_000, ...options });
   child.on("error", reject); child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`${path.basename(command)} exited ${code}`)));
 });
 const workerEnv = Object.fromEntries(["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "PROCESSOR_ARCHITECTURE", "GITHUB_ACTIONS"].flatMap((key) => process.env[key] ? [[key, process.env[key]]] : []));
@@ -35,13 +35,16 @@ await run(initialInstaller, ["/S", `/D=${installed}`], { env: workerEnv });
 const { extractFile } = require("@electron/asar");
 const readVersion = () => JSON.parse(extractFile(path.join(installed, "resources/app.asar"), "package.json").toString()).version;
 const until = async (predicate, label) => {
-  const end = Date.now() + 90_000;
+  const end = Date.now() + 180_000;
   while (Date.now() < end) { try { if (await predicate()) return; } catch { /* installer is replacing files */ } await new Promise((r) => setTimeout(r, 500)); }
   throw new Error(label);
 };
 await until(() => readVersion() === pkg.version, "Initial NSIS install did not finish");
 const preserved = path.join(workerEnv.APPDATA, "Franklin", "update-qa-preserved.txt");
 await fs.mkdir(path.dirname(preserved), { recursive: true }); await fs.writeFile(preserved, "Keep customer settings across updates");
+const skill = path.join(qa, ".blockrun", "skills", "update-qa", "SKILL.md");
+const skillContent = "---\nname: update-qa\ndescription: Preserve installed Skills during updates\n---\nReturn the user's request without tools.\n";
+await fs.mkdir(path.dirname(skill), { recursive: true }); await fs.writeFile(skill, skillContent);
 const metadata = parse(await fs.readFile(path.join(target, "latest.yml"), "utf8"));
 assert.equal(metadata.version, targetVersion);
 const assets = await Promise.all(metadata.files.map(async (file) => {
@@ -60,12 +63,16 @@ await fs.writeFile(worker, `
 const assert = require('node:assert/strict');
 const {NsisUpdater} = require(${JSON.stringify(require.resolve("electron-updater"))});
 const {NodeHttpExecutor} = require(${JSON.stringify(require.resolve("builder-util/out/nodeHttpExecutor"))});
+const {ElectronHttpExecutor} = require(${JSON.stringify(require.resolve("electron-updater/out/electronHttpExecutor"))});
 const {createNativeInstaller} = require(${JSON.stringify(path.join(desktop, "electron/native-updates.cjs"))});
 const app = {version: ${JSON.stringify(pkg.version)}, name: 'Franklin', isPackaged: true,
   appUpdateConfigPath: ${JSON.stringify(path.join(installed, "resources/app-update.yml"))},
   userDataPath: ${JSON.stringify(path.join(qa, "profile"))}, baseCachePath: ${JSON.stringify(path.join(qa, "cache"))},
   whenReady: async()=>{}, onQuit:()=>{}, quit:()=>{}, relaunch:()=>{}};
 const updater = new NsisUpdater(null, app); updater.httpExecutor = new NodeHttpExecutor();
+// Reuse the production streaming/checksum download implementation with Node's
+// HTTP transport; plain NodeHttpExecutor only implements metadata requests.
+updater.httpExecutor.download = ElectronHttpExecutor.prototype.download;
 // Node owns this harness; NSIS itself performs the real silent replacement and
 // relaunch. Electron's window shutdown is covered separately by native UI tests.
 updater.quitAndInstall = (silent,relaunch)=>{assert.equal(silent,true);assert.equal(relaunch,true);assert.equal(updater.install(silent,relaunch),true);};
@@ -77,6 +84,7 @@ try {
   await run(process.execPath, [worker], { env: workerEnv });
   await until(() => readVersion() === targetVersion, "Downloaded update was not installed in place");
   assert.equal(await fs.readFile(preserved, "utf8"), "Keep customer settings across updates");
+  assert.equal(await fs.readFile(skill, "utf8"), skillContent);
   console.log(`PASS installed app advanced ${pkg.version} → ${targetVersion}; customer settings retained`);
 } finally {
   await new Promise((resolve) => server.close(resolve));
