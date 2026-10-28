@@ -76,7 +76,7 @@
   },
   "dependencies": {
     "@blockrun/llm": "^3.19.1",
-    "@blockrun/model-catalog": "https://codeload.github.com/BlockRunAI/model-catalog/tar.gz/b95efe2f025c9968742e6479bc9ec71b6a40c0f4",
+    "@blockrun/model-catalog": "https://codeload.github.com/BlockRunAI/model-catalog/tar.gz/a9d7dd21e65c744104dd752a13d7bf5a71e27f01",
     "@blockrun/router-core": "https://codeload.github.com/BlockRunAI/router-core/tar.gz/fd6d03d035ff676642ba1683c333d929939f8a00",
     "@colbymchenry/codegraph": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",

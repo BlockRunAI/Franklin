@@ -66,6 +66,8 @@ export interface GatewayModel {
   name: string;
   description?: string;
   owned_by?: string;
+  available?: boolean;
+  release_date?: string;
   billing_mode: BillingMode;
   categories: string[];
   context_window?: number;
