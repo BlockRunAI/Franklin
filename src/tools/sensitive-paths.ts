@@ -156,7 +156,16 @@ export async function isCredentialPathAsync(resolvedAbsPath: string): Promise<bo
   const matches = (candidate: string) => matchesKeyFile(candidate) || matchesHostCredential(candidate, home);
   if (matches(resolvedAbsPath)) return true;
   try {
-    return matches(await fs.promises.realpath(resolvedAbsPath));
+    const canonical = await fs.promises.realpath(resolvedAbsPath);
+    if (matches(canonical)) return true;
+    // Windows temp homes may use an 8.3 alias while native realpath expands
+    // it; macOS also aliases /var. Compare against the same home namespace.
+    const canonicalHome = await fs.promises.realpath(home);
+    const relative = path.relative(canonicalHome, canonical);
+    if (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep)) {
+      return matches(path.resolve(home, relative));
+    }
+    return false;
   } catch {
     return false;
   }
