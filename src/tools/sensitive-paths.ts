@@ -150,6 +150,27 @@ export function isHostCredentialPath(resolvedAbsPath: string): boolean {
   return false;
 }
 
+/** Same file-search exclusion policy without blocking the agent's RPC loop. */
+export async function isCredentialPathAsync(resolvedAbsPath: string): Promise<boolean> {
+  const home = os.homedir();
+  const matches = (candidate: string) => matchesKeyFile(candidate) || matchesHostCredential(candidate, home);
+  if (matches(resolvedAbsPath)) return true;
+  try {
+    const canonical = await fs.promises.realpath(resolvedAbsPath);
+    if (matches(canonical)) return true;
+    // Windows temp homes may use an 8.3 alias while native realpath expands
+    // it; macOS also aliases /var. Compare against the same home namespace.
+    const canonicalHome = await fs.promises.realpath(home);
+    const relative = path.relative(canonicalHome, canonical);
+    if (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep)) {
+      return matches(path.resolve(home, relative));
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /** Home-relative credential directories, for tools that keep their own blocklist. */
 export function hostCredentialDirPaths(): string[] {
   return hostCredentialDirs(os.homedir());
