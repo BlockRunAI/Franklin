@@ -27,9 +27,14 @@ export interface ChatModel {
   contextWindow?: number;
 }
 
+// Routing profiles are resolved by the CLI, so the gateway catalog does not
+// include them. Keep Auto available before and after that catalog loads.
+const AUTO_CHAT_MODEL: ChatModel = { id: "blockrun/auto", label: "Auto", group: "Automatic" };
+
 // Curated fallback lineup (mirrors Franklin's /model picker) used until the CLI
 // returns its live catalog over models.list.
 export const CHAT_MODELS: ChatModel[] = [
+  AUTO_CHAT_MODEL,
   { id: "nvidia/nemotron-nano-9b-v2", label: "Nemotron Nano 9B v2", free: true, group: "Free" },
   { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", label: "Nemotron 3 Nano Omni", free: true, group: "Free" },
   { id: "nvidia/mistral-nemotron", label: "Mistral Nemotron", free: true, group: "Free" },
@@ -179,7 +184,12 @@ export function useFranklinChat(
 
   // Prefer the CLI's live catalog for chat; fall back to the curated list.
   const chatModels: ChatModel[] = liveModels.length
-    ? liveModels.map((m) => ({ id: m.id, label: m.label, free: m.free, group: m.group, contextWindow: m.contextWindow }))
+    ? [
+        AUTO_CHAT_MODEL,
+        ...liveModels
+          .filter((m) => m.id !== AUTO_CHAT_MODEL.id)
+          .map((m) => ({ id: m.id, label: m.label, free: m.free, group: m.group, contextWindow: m.contextWindow })),
+      ]
     : CHAT_MODELS;
 
   const models = mode === "image" ? IMAGE_MODELS : mode === "video" ? VIDEO_MODELS : mode === "music" ? MUSIC_MODELS : chatModels;
