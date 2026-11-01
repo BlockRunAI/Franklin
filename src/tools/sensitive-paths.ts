@@ -150,6 +150,18 @@ export function isHostCredentialPath(resolvedAbsPath: string): boolean {
   return false;
 }
 
+/** Same file-search exclusion policy without blocking the agent's RPC loop. */
+export async function isCredentialPathAsync(resolvedAbsPath: string): Promise<boolean> {
+  const home = os.homedir();
+  const matches = (candidate: string) => matchesKeyFile(candidate) || matchesHostCredential(candidate, home);
+  if (matches(resolvedAbsPath)) return true;
+  try {
+    return matches(await fs.promises.realpath(resolvedAbsPath));
+  } catch {
+    return false;
+  }
+}
+
 /** Home-relative credential directories, for tools that keep their own blocklist. */
 export function hostCredentialDirPaths(): string[] {
   return hostCredentialDirs(os.homedir());
