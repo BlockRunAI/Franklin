@@ -37,11 +37,11 @@ contextBridge.exposeInMainWorld("__FRANKLIN__", {
   switchWalletChain: (chain) => ipcRenderer.invoke("franklin:wallet-switch", chain),
   // Native clipboard — navigator.clipboard is unreliable inside Electron, so the
   // renderer prefers this when present.
-  copy: (text) => {
+  copy: async (text) => {
     try {
       const value = String(text ?? "");
       if (value.length > 1_000_000) return false;
-      clipboard.writeText(value);
+      await clipboard.writeText(value);
       return true;
     } catch {
       return false;
