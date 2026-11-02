@@ -2,6 +2,48 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import snapshot from '@blockrun/model-catalog/snapshot' with { type: 'json' };
+import { buildModelList } from '../dist/serve/model-list.js';
+
+test('models.list groups every available chat model with the latest generations first', () => {
+  const row = (id, extra = {}) => ({ id, name: id, categories: ['chat'], billing_mode: 'paid', pricing: { input: 1, output: 2 }, ...extra });
+  const rows = [
+    row('google/gemini-2.5-pro'),
+    row('openai/gpt-4.1'),
+    row('anthropic/claude-haiku-4.5', { billing_mode: 'free' }),
+    row('google/gemini-3.1-pro'),
+    row('anthropic/claude-fable-5.1'),
+    row('openai/gpt-6.1-sol', { context_window: 1_000_000 }),
+    row('google/gemini-4-argon'),
+    row('openai/gpt-6-astra'),
+    row('google/gemini-3.8-flash'),
+    row('test/future-chat'),
+    row('google/image-model', { categories: ['image'] }),
+    row('openai/gpt-99', { available: false }),
+  ];
+  const list = buildModelList(rows);
+  assert.deepEqual(list.map(m => m.id), [
+    'anthropic/claude-fable-5.1', 'anthropic/claude-haiku-4.5',
+    'openai/gpt-6.1-sol', 'openai/gpt-6-astra', 'openai/gpt-4.1',
+    'google/gemini-4-argon', 'google/gemini-3.8-flash', 'google/gemini-3.1-pro', 'google/gemini-2.5-pro',
+    'test/future-chat',
+  ]);
+  assert.equal(list.find(m => m.id === 'anthropic/claude-haiku-4.5').free, true);
+  assert.equal(list.find(m => m.id === 'openai/gpt-6.1-sol').contextWindow, 1_000_000);
+  assert.deepEqual([...new Set(list.map(m => m.group))], ['Anthropic', 'OpenAI', 'Google', 'Test']);
+  assert.equal(rows[0].id, 'google/gemini-2.5-pro', 'input order is not mutated');
+});
+
+test('Desktop and expanded terminal pickers share verified release-date ordering', async () => {
+  const { reconcileExpandedPicker } = await import('../dist/ui/model-picker.js');
+  const rows = [
+    { id: 'google/gemini-4-argon', name: 'Gemini 4 Argon', release_date: '2026-09-01' },
+    { id: 'google/gemini-3.8-flash', name: 'Gemini 3.8 Flash', release_date: '2026-10-01' },
+  ].map(m => ({ ...m, categories: ['chat'], billing_mode: 'paid', pricing: { input: 1, output: 2 } }));
+  const expected = ['google/gemini-3.8-flash', 'google/gemini-4-argon'];
+  assert.deepEqual(buildModelList(rows).map(m => m.id), expected);
+  const expanded = reconcileExpandedPicker(rows).categories.find(c => c.category === 'Google / Gemini');
+  assert.deepEqual(expanded.models.map(m => m.id), expected);
+});
 
 process.env.RUNCODE_CHAIN = 'solana';
 delete process.env.FRANKLIN_CATALOG_OFFLINE;

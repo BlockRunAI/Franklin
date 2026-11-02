@@ -31,6 +31,7 @@ import { assembleInstructions } from '../agent/context.js';
 import { interactiveSession } from '../agent/loop.js';
 import { allCapabilities, createSubAgentCapability } from '../tools/index.js';
 import { getModelsByCategory } from '../gateway-models.js';
+import { buildModelList } from './model-list.js';
 import { listSessions, loadSessionHistory } from '../session/storage.js';
 import { loadSdkSettlements } from '../stats/cost-log.js';
 import { readSwaps } from '../stats/swap-log.js';
@@ -140,26 +141,11 @@ function labelFor(name: string): string {
   return TOOL_LABELS[name] ?? name;
 }
 
-// Model list grouping — by provider (company), like OpenRouter/Together. The
-// provider is the id's vendor prefix (e.g. "anthropic/claude-…"); PROVIDER_ORDER
-// puts the most-wanted vendors first, the rest fall in alphabetically.
-const PROVIDER_LABEL: Record<string, string> = {
-  anthropic: 'Anthropic', openai: 'OpenAI', azure: 'OpenAI', google: 'Google', 'google-vertex': 'Google',
-  xai: 'xAI', deepseek: 'DeepSeek', meta: 'Meta', 'meta-llama': 'Meta', nvidia: 'NVIDIA',
-  moonshot: 'Moonshot', moonshotai: 'Moonshot', qwen: 'Qwen', alibaba: 'Qwen', mistral: 'Mistral',
-  mistralai: 'Mistral', minimax: 'MiniMax', zhipu: 'Zhipu', bytedance: 'ByteDance', cohere: 'Cohere',
-  perplexity: 'Perplexity', amazon: 'Amazon', microsoft: 'Microsoft', '01-ai': 'Yi', ai21: 'AI21',
-};
-const PROVIDER_ORDER = ['Anthropic', 'OpenAI', 'Google', 'xAI', 'DeepSeek', 'Qwen', 'Moonshot', 'Meta', 'Mistral', 'MiniMax', 'NVIDIA'];
 const MEDIA_MIME: Record<string, string> = {
   mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg', flac: 'audio/flac',
   mp4: 'video/mp4', webm: 'video/webm',
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
 };
-function providerLabel(id: string, ownedBy?: string): string {
-  const p = (id.split('/')[0] || ownedBy || '').toLowerCase();
-  return PROVIDER_LABEL[p] || (p ? p.charAt(0).toUpperCase() + p.slice(1) : 'Other');
-}
 
 // ─── Browser-attack surface gate ────────────────────────────────────────────
 // Loopback binding alone is NOT an auth boundary: any web page the user has
@@ -839,28 +825,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       case 'models.list': {
         try {
           const models = await getModelsByCategory('chat');
-          const mapped = models.map((m) => {
-            const provider = providerLabel(m.id, m.owned_by);
-            return {
-              id: m.id,
-              label: m.name,
-              free: m.billing_mode === 'free',
-              group: provider,
-              provider,
-              contextWindow: m.context_window,
-            };
-          });
-          // Group by provider (PROVIDER_ORDER first, then alphabetical); free
-          // models surface first within each provider. The picker renders
-          // consecutive same-`group` items as one section, so sort accordingly.
-          const rank = (g: string) => { const i = PROVIDER_ORDER.indexOf(g); return i < 0 ? 999 : i; };
-          mapped.sort((a, b) =>
-            rank(a.group) - rank(b.group) ||
-            a.group.localeCompare(b.group) ||
-            (a.free === b.free ? 0 : a.free ? -1 : 1) ||
-            a.label.localeCompare(b.label),
-          );
-          send(ws, id, 'response', { models: mapped });
+          send(ws, id, 'response', { models: buildModelList(models) });
         } catch (err) {
           send(ws, id, 'error', { message: err instanceof Error ? err.message : 'models error' });
         }

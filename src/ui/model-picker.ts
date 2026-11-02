@@ -5,6 +5,7 @@
 
 import readline from 'node:readline';
 import chalk from 'chalk';
+import { sortModelsNewestFirst } from '@blockrun/model-catalog';
 import { getGatewayModels, type GatewayModel } from '../gateway-models.js';
 import { FREE_DEFAULT_MODEL } from '../free-models.js';
 import { getModelCatalog, onModelCatalogChange } from '../model-catalog.js';
@@ -490,94 +491,6 @@ function modelSuffix(id: string): string {
   return id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
 }
 
-function versionScoreFrom(match: RegExpMatchArray | null): number {
-  if (!match) return 0;
-  const parts = match[1].split('.').map(part => Number.parseInt(part, 10) || 0);
-  return parts.slice(0, 3).reduce((score, part, index) => score + part * [1_000_000, 100_000, 1_000][index], 0);
-}
-
-function providerVersionScore(provider: string, suffix: string): number {
-  switch (provider) {
-    case 'anthropic':
-      return versionScoreFrom(suffix.match(/claude-(?:fable|opus|sonnet|haiku)-(\d+(?:\.\d+)*)/));
-    case 'openai':
-      if (suffix.startsWith('gpt-4o')) return versionScoreFrom(['', '4.0'] as RegExpMatchArray);
-      return versionScoreFrom(suffix.match(/(?:gpt-|o)(\d+(?:\.\d+)*)/));
-    case 'google':
-      return versionScoreFrom(suffix.match(/gemini-(\d+(?:\.\d+)*)/));
-    case 'xai':
-      return versionScoreFrom(suffix.match(/grok-(\d+(?:\.\d+)*)/));
-    case 'zai':
-      return versionScoreFrom(suffix.match(/glm-(\d+(?:\.\d+)*)/));
-    case 'moonshot':
-      return versionScoreFrom(suffix.match(/kimi-k(\d+(?:\.\d+)*)/));
-    case 'minimax':
-      return versionScoreFrom(suffix.match(/minimax-m(\d+(?:\.\d+)*)/));
-    case 'deepseek':
-      return versionScoreFrom(suffix.match(/deepseek-v(\d+(?:\.\d+)*)/));
-    case 'nvidia':
-      return versionScoreFrom(
-        suffix.match(/deepseek-v(\d+(?:\.\d+)*)/) ??
-        suffix.match(/qwen(\d+(?:\.\d+)*)/) ??
-        suffix.match(/step-(\d+(?:\.\d+)*)/) ??
-        suffix.match(/nemotron-(\d+(?:\.\d+)*)/) ??
-        suffix.match(/mistral-large-(\d+(?:\.\d+)*)/) ??
-        suffix.match(/v(\d+(?:\.\d+)*)/),
-      );
-    default:
-      return versionScoreFrom(suffix.match(/(?:^|[^\d])(\d+(?:\.\d+)*)(?:[^\d]|$)/));
-  }
-}
-
-function expandedModelRank(model: GatewayModel): number {
-  const suffix = modelSuffix(model.id).toLowerCase();
-  const provider = providerOf(model.id);
-  let score = providerVersionScore(provider, suffix);
-
-  switch (provider) {
-    case 'anthropic':
-      score += suffix.includes('fable') ? 90_000 : suffix.includes('opus') ? 80_000 : suffix.includes('sonnet') ? 70_000 : suffix.includes('haiku') ? 40_000 : 0;
-      break;
-    case 'openai':
-      score += suffix.startsWith('gpt-') ? 80_000 : suffix.startsWith('o') ? 65_000 : 0;
-      if (suffix.includes('codex')) score += 8_000;
-      if (suffix.includes('pro') || suffix.includes('sol')) score += 3_000;
-      if (suffix.includes('terra')) score += 2_000;
-      if (suffix.includes('luna')) score += 1_000;
-      if (suffix.includes('mini')) score -= 8_000;
-      if (suffix.includes('nano')) score -= 12_000;
-      break;
-    case 'google':
-      score += suffix.includes('gemini') ? 80_000 : 0;
-      if (suffix.includes('pro')) score += 5_000;
-      if (suffix.includes('flash')) score -= 5_000;
-      break;
-    case 'xai':
-      score += suffix.includes('grok') ? 80_000 : 0;
-      if (suffix.includes('fast')) score -= 4_000;
-      if (suffix.includes('build')) score -= 8_000;
-      break;
-    case 'zai':
-      score += suffix.includes('glm') ? 80_000 : 0;
-      if (suffix.includes('turbo')) score -= 5_000;
-      break;
-    case 'moonshot':
-      score += suffix.includes('kimi') ? 80_000 : 0;
-      break;
-    case 'minimax':
-      score += suffix.includes('minimax') ? 80_000 : 0;
-      break;
-    case 'deepseek':
-      score += suffix.includes('v4-pro') ? 90_000 : suffix.includes('reasoner') ? 75_000 : suffix.includes('chat') ? 70_000 : 0;
-      break;
-    case 'nvidia':
-      score += suffix.includes('qwen3-next') ? 80_000 : suffix.includes('qwen') ? 70_000 : suffix.includes('nemotron') ? 60_000 : 0;
-      break;
-  }
-
-  return score;
-}
-
 function cleanGatewayLabel(model: GatewayModel): string {
   return (model.name || modelSuffix(model.id))
     .replace(/\s*\((?:free|paid)\)\s*$/i, '')
@@ -698,28 +611,24 @@ export async function getExpandedPickerCategories(): Promise<HydratedPicker> {
 
 export function reconcileExpandedPicker(catalog: GatewayModel[]): HydratedPicker {
   const categories: ModelCategory[] = [{ ...PICKER_CATEGORIES[0], models: [...PICKER_CATEGORIES[0].models] }];
-  const curated = new Set<string>();
   const curatedRows = new Map<string, ModelEntry>();
 
   for (const cat of PICKER_CATEGORIES) {
     for (const row of cat.models) {
-      curated.add(row.id);
       if (!isSyntheticId(row.id)) curatedRows.set(row.id, row);
     }
   }
 
   const shortcutById = buildShortcutById();
-  const chatModels = catalog
-    .filter(m => m.categories?.includes('chat'))
-    .sort((a, b) => {
-      const providerDelta = providerRank(providerOf(a.id)) - providerRank(providerOf(b.id));
-      if (providerDelta !== 0) return providerDelta;
-      const rankDelta = expandedModelRank(b) - expandedModelRank(a);
-      if (rankDelta !== 0) return rankDelta;
-      const curatedDelta = Number(!curated.has(a.id)) - Number(!curated.has(b.id));
-      if (curatedDelta !== 0) return curatedDelta;
-      return modelSuffix(a.id).localeCompare(modelSuffix(b.id));
-    });
+  const byProviderModels = new Map<string, GatewayModel[]>();
+  for (const model of catalog) {
+    if (model.available === false || !model.categories?.includes('chat')) continue;
+    const provider = providerOf(model.id);
+    const rows = byProviderModels.get(provider) ?? [];
+    rows.push(model);
+    byProviderModels.set(provider, rows);
+  }
+  const chatModels = [...byProviderModels.values()].flatMap(rows => sortModelsNewestFirst(rows));
 
   const byProvider = new Map<string, ModelEntry[]>();
   for (const model of chatModels) {
