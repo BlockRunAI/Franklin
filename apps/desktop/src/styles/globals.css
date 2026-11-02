@@ -7434,3 +7434,13 @@ html.is-mac .try-brand {
 .skill-note { opacity:.75; }
 .skill-notice { color:#c9a048; }
 @media (prefers-reduced-motion: reduce) { .skill-button { transition:none; } }
+
+/* Native dialog keeps keyboard focus inside the pending agent question. */
+dialog.agent-question { margin: auto; color: var(--fg); max-height: 85vh; overflow-y: auto; }
+dialog.agent-question::backdrop { background: rgba(0, 0, 0, .45); }
+.agent-question-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-question-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.agent-question-options button { white-space: normal; overflow-wrap: anywhere; }
+.agent-question-options button[aria-pressed="true"] { border-color: var(--gold); }
+.agent-question-label { display: block; margin-bottom: 8px; font-size: 14px; }
+.agent-question-answer { width: 100%; box-sizing: border-box; resize: vertical; padding: 12px; font: inherit; color: inherit; background: transparent; border: 1px solid var(--border); border-radius: 12px; }

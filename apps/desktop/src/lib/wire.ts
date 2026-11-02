@@ -16,6 +16,7 @@
 export type ClientMsgKind =
   | "agent.send"
   | "agent.cancel"
+  | "agent.questionResponse"
   | "agent.permissionResponse"
   | "session.list"
   | "session.load"
@@ -45,6 +46,8 @@ export type ServerMsgKind =
   | "agent.tool_result"   // tool returned
   | "agent.step"          // CLI-style activity step ("Searching the web · Exa")
   | "agent.permissionAsk" // tool needs permission (Bash, Write, etc.)
+  | "agent.questionAsk"
+  | "agent.questionClosed"
   | "agent.payment"       // x402 sign/settle event (FYI; CLI signs locally — no popup)
   | "agent.done"          // turn finished
   | "agent.error"         // turn failed
@@ -210,4 +213,10 @@ export interface ModelInfo {
   inputPrice?: number;
   outputPrice?: number;
   contextWindow?: number;
+}
+
+export interface AgentQuestion {
+  askId: string;
+  question: string;
+  options: string[];
 }

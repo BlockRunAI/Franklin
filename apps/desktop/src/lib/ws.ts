@@ -191,7 +191,9 @@ class AgentSocket {
     const msg: ClientMsg<TReq> = { id, kind, payload };
     this.pending.set(id, {
       resolve: () => {},
-      reject: () => {},
+      // A disconnected stream cannot receive questionClosed or agent.done.
+      // Deliver a terminal event so the UI releases any pending dialog.
+      reject: (error) => onEvent({ id, kind: "agent.error", payload: { message: error.message } }),
       stream: onEvent,
     });
     this.ws!.send(JSON.stringify(msg));
