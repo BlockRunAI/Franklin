@@ -39,6 +39,7 @@ import { isCloudSyncEnabled, cloudList, cloudSync, type CloudConversation } from
 import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
 import { retryFetchBalance } from '../commands/balance-retry.js';
 import { AgentHost } from './agent-host.js';
+import { DesktopQuestions } from './desktop-questions.js';
 import { bus } from '../events/bus.js';
 import type { FranklinEvent } from '../events/types.js';
 import type { AgentConfig, StreamEvent, Dialogue, ContentPart, UserContentPart } from '../agent/types.js';
@@ -449,6 +450,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   // Pending approval asks for the legacy desktop session (tools + trade plans).
   // Keyed by askId — the wire contract the desktop UI already declares
   // (agent.permissionAsk / agent.permissionResponse with askId + decision).
+  const questions = new DesktopQuestions<WebSocket>();
   let askSeq = 0;
   type LegacyDecision = 'yes' | 'no' | 'always';
   const legacyAsks = new Map<string, (decision: LegacyDecision) => void>();
@@ -607,6 +609,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         break;
       }
       case 'turn_done':
+        if (activeWs) questions.cancel(activeWs);
         if (event.reason === 'completed') {
           emit('agent.done', { sessionId: '', costUsd: 0 });
         } else if (event.error) {
@@ -657,12 +660,11 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       allowPaidPrefetch: !desktopBoundary,
       ...(desktopBoundary ? { maxSpendUsd: 5 } : {}),
       costSaver,
-      // Tools such as ImageGen perform their own exact-price confirmation.
-      // Map the Desktop yes/no approval bridge back to the tool's choices.
-      onAskUser: async (question, options) => {
-        const decision = await requestDesktopPermission('Agent confirmation', question);
-        if (decision === 'yes' || decision === 'always') return options?.[0] ?? 'yes';
-        return options?.[options.length - 1] ?? 'no';
+      onAskUser: (question, options) => {
+        const ws = activeWs;
+        const turnId = activeTurnId;
+        if (!ws || !turnId) return Promise.resolve('');
+        return questions.request(ws, question, options, (kind, payload) => send(ws, turnId, kind, payload));
       },
       // Structured approvals (trade plans): surfaced to the desktop over the
       // in-flight turn stream as agent.permissionAsk; the UI answers with
@@ -929,7 +931,13 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         break;
       }
       case 'agent.cancel':
-        if (abortFn) abortFn();
+        if (ws === activeWs) {
+          if (abortFn) abortFn();
+          questions.cancel(ws);
+        }
+        break;
+      case 'agent.questionResponse':
+        send(ws, id, 'response', { ok: questions.respond(ws, p.askId, p.answer) });
         break;
       case 'agent.permissionResponse': {
         // Two resolution paths:
@@ -1085,6 +1093,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       });
     });
     ws.on('close', () => {
+      questions.cancel(ws);
       // Tear down this socket's agent subscriptions; the agents keep running.
       const subs = wsSubs.get(ws);
       if (subs) for (const unsubscribe of subs.values()) unsubscribe();

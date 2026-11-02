@@ -1,3 +1,4 @@
+import type { AgentQuestion } from "../lib/wire";
 // Chat engine — run-shaped API, WebSocket-backed.
 //
 // This exposes the SAME surface franklin-run's useFranklinChat does (mode,
@@ -175,6 +176,7 @@ export function useFranklinChat(
   const [error, setError] = useState<string | null>(null);
   const [genConvId, setGenConvId] = useState<string | null>(null);
   const [mediaJobs, setMediaJobs] = useState<Record<string, MediaJob>>({});
+  const [questions, setQuestions] = useState<AgentQuestion[]>([]);
   const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
 
   const cancelRef = useRef<(() => void) | null>(null);
@@ -337,6 +339,21 @@ export function useFranklinChat(
             if (p.usd) recordRef.current?.(p.model || modelId || "", p.usd);
             break;
           }
+          case "agent.questionAsk": {
+            const p = msg.payload as AgentQuestion;
+            if (typeof p.askId === "string" && typeof p.question === "string") {
+              setQuestions(previous => previous.some(q => q.askId === p.askId) ? previous : [...previous, {
+                askId: p.askId, question: p.question,
+                options: Array.isArray(p.options) ? p.options.filter(o => typeof o === "string") : [],
+              }]);
+            }
+            break;
+          }
+          case "agent.questionClosed": {
+            const p = msg.payload as { askId: string };
+            setQuestions(previous => previous.filter(q => q.askId !== p.askId));
+            break;
+          }
           case "agent.permissionAsk": {
             const p = msg.payload as PendingPermission;
             if (p.askId && p.toolName) setPendingPermission({
@@ -363,6 +380,7 @@ export function useFranklinChat(
             clearMediaJob(convId);
             cancelRef.current = null;
             setPendingPermission(null);
+            setQuestions([]);
             break;
           }
           case "agent.error": {
@@ -373,6 +391,7 @@ export function useFranklinChat(
             clearMediaJob(convId);
             cancelRef.current = null;
             setPendingPermission(null);
+            setQuestions([]);
             break;
           }
           default:
@@ -454,7 +473,15 @@ export function useFranklinChat(
     setStatus("idle");
     setGenConvId(null);
     setPendingPermission(null);
+    setQuestions([]);
   }, [pendingPermission]);
+
+  const respondToQuestion = useCallback((answer: string) => {
+    const question = questions[0];
+    if (!question) return;
+    agent.emit("agent.questionResponse", { askId: question.askId, answer });
+    setQuestions(previous => previous.filter(q => q.askId !== question.askId));
+  }, [questions]);
 
   const respondToPermission = useCallback((decision: "y" | "n") => {
     if (!pendingPermission) return;
@@ -471,6 +498,7 @@ export function useFranklinChat(
       setStatus("idle");
       setGenConvId(null);
       setPendingPermission(null);
+      setQuestions([]);
     },
     [clearMediaJob, pendingPermission],
   );
@@ -502,6 +530,8 @@ export function useFranklinChat(
     genConvId,
     mediaJobs,
     error,
+    pendingQuestion: questions[0] ?? null,
+    respondToQuestion,
     pendingPermission,
     respondToPermission,
     isBusy,

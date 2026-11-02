@@ -6,6 +6,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ChartCandlestick, Wallet, MessageSquare, ArrowUp, PanelLeft, ImageIcon, Clapperboard, Music, X, Plus, Check, ChevronDown, Gauge, BarChart3, TrendingUp, MoreHorizontal, Users, Laptop2, ShieldAlert } from "lucide-react";
 import { TopBarMenu } from "./TopBarMenu";
+import { AgentQuestionDialog } from "./AgentQuestionDialog";
 import { ModelSelect } from "./ModelSelect";
 import { MoreMenu } from "./MoreMenu";
 import { TradingWorkspace } from "./TradingWorkspace";
@@ -113,7 +114,7 @@ export function FranklinChat() {
     loading: cloud.loading && !cloud.session,
   }), [cloud.workspaces, cloud.activeId, cloud.loading, cloud.session]);
   const chat = useFranklinChat(history.messages, history.setMessages, history.ensureConvId);
-  const { mode, setMode, model, setModel, models, selectedModel, status, activeTool, needsToolWallet, genConvId, mediaJobs, error, pendingPermission, respondToPermission, isBusy, isConnected, send, stop, stopMedia, regenerate, imageSize, setImageSize, imageSizes, videoRatio, setVideoRatio, videoRatios, videoResolution, setVideoResolution, videoResolutions } = chat;
+  const { mode, setMode, model, setModel, models, selectedModel, status, activeTool, needsToolWallet, genConvId, mediaJobs, error, pendingQuestion, respondToQuestion, pendingPermission, respondToPermission, isBusy, isConnected, send, stop, stopMedia, regenerate, imageSize, setImageSize, imageSizes, videoRatio, setVideoRatio, videoRatios, videoResolution, setVideoResolution, videoResolutions } = chat;
   const genHere = genConvId === null || genConvId === history.activeId;
   const activeMediaJob = history.activeId ? mediaJobs[history.activeId] : undefined;
   const busy = isBusy || !!activeMediaJob;
@@ -859,6 +860,8 @@ export function FranklinChat() {
           </button>
         </div>
       )}
+
+      {!pendingPermission && pendingQuestion && <AgentQuestionDialog key={pendingQuestion.askId} question={pendingQuestion} onAnswer={respondToQuestion} />}
 
       {pendingPermission && (
         <div className="try-mkt-overlay" role="presentation">

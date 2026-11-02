@@ -116,3 +116,33 @@ describe("Desktop Auto model selection", () => {
     expect(result.current.model).toBe("blockrun/auto");
   });
 });
+
+describe("Desktop agent questions", () => {
+  it("queues questions and sends exact text over the question response channel", () => {
+    const { result } = renderChat();
+    act(() => result.current.send("Analyze a market"));
+    const handle = transport.stream.mock.calls[0][2];
+    act(() => {
+      handle({ id: "turn", kind: "agent.questionAsk", payload: { askId: "q1", question: "Which market?", options: ["A", "B"] } });
+      handle({ id: "turn", kind: "agent.questionAsk", payload: { askId: "q2", question: "What time range?", options: [] } });
+    });
+    expect(result.current.pendingQuestion?.askId).toBe("q1");
+    expect(result.current.pendingPermission).toBeNull();
+    act(() => result.current.respondToQuestion("B, with historical context"));
+    expect(transport.emit).toHaveBeenCalledWith("agent.questionResponse", { askId: "q1", answer: "B, with historical context" });
+    expect(result.current.pendingQuestion?.askId).toBe("q2");
+    act(() => handle({ id: "turn", kind: "agent.questionClosed", payload: { askId: "q2" } }));
+    expect(result.current.pendingQuestion).toBeNull();
+  });
+  it("keeps permissions binary and clears questions on stop", () => {
+    const { result } = renderChat();
+    act(() => result.current.send("Analyze a market"));
+    const handle = transport.stream.mock.calls[0][2];
+    act(() => handle({ id: "turn", kind: "agent.permissionAsk", payload: { askId: "p1", toolName: "Bash", description: "Run a command" } }));
+    act(() => result.current.respondToPermission("n"));
+    expect(transport.emit).toHaveBeenCalledWith("agent.permissionResponse", { askId: "p1", decision: "n" });
+    act(() => handle({ id: "turn", kind: "agent.questionAsk", payload: { askId: "q1", question: "Which market?", options: [] } }));
+    act(() => result.current.stop());
+    expect(result.current.pendingQuestion).toBeNull();
+  });
+});
