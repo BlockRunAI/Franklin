@@ -1,5 +1,19 @@
 # Changelog
 
+## Franklin Agent 3.49.17 — the model pickers list each provider's newest models first
+
+The Desktop and browser model dropdowns used to sort a provider's models
+alphabetically, so older Gemini, GPT and Claude generations came before newer
+ones. Both pickers, and the expanded terminal picker, now share Model Core's
+newest-first ordering: verified release dates when a provider has full date
+coverage, otherwise descending generation (Gemini 4 before 3.8 before 3.1;
+GPT 6.1 before 6 before 5.x). Providers stay grouped in the same order, and
+labels, free flags, shortcuts, context sizes and prices are unchanged. Free
+models are no longer pulled to the top of their provider's group.
+
+`@blockrun/model-catalog` moves to aecf20b (0.2.1), the merged commit that
+ships `sortModelsNewestFirst`.
+
 ## Franklin Agent 3.49.16 — router-core catalog API
 
 Bump @blockrun/router-core to fd6d03d: adds the shared parseModelCatalog / toRoutingCatalog catalog API. No routing behavior change.
