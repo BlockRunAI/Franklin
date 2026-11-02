@@ -37,7 +37,7 @@ import { useSpend } from "../hooks/use-spend";
 import { useAuth } from "../hooks/use-auth";
 import { useWallet } from "../hooks/use-wallet";
 import { useTryLang } from "../lib/i18n";
-import { prepareImageForUpload } from "../lib/image-compress";
+import { useImageAttachment } from "../hooks/use-image-attachment";
 import { useStudioRegistry } from "../hooks/use-studio-registry";
 import { useCloudWorkspace } from "../hooks/use-cloud-workspace";
 import { safeExternalHttpUrl } from "../lib/external-url";
@@ -120,7 +120,7 @@ export function FranklinChat() {
   const busy = isBusy || !!activeMediaJob;
 
   const [input, setInput] = useState("");
-  const [attachment, setAttachment] = useState<string | null>(null);
+  const { attachment, error: attachError, preparing: preparingImage, attach, clear: clearAttachment } = useImageAttachment();
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(!tradingEnabled);
   const [view, setView] = useState<TryView>(tradingEnabled ? "markets" : "chat");
@@ -247,17 +247,16 @@ export function FranklinChat() {
   const fileRef = useRef<HTMLInputElement>(null);
   const messages = history.messages;
 
-  const [attachError, setAttachError] = useState<string | null>(null);
-  const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
-    setAttachError(null);
-    try {
-      setAttachment(await prepareImageForUpload(file));
-    } catch (err) {
-      setAttachError(err instanceof Error ? err.message : "Could not load that image.");
-    }
+    if (file) void attach(file);
+  };
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const image = Array.from(e.clipboardData.files).find((file) => file.type.startsWith("image/"));
+    if (!image) return; // Preserve ordinary text paste and browser editing behavior.
+    e.preventDefault();
+    void attach(image);
   };
 
   useEffect(() => {
@@ -266,7 +265,7 @@ export function FranklinChat() {
 
   // Local CLI wallet signs everything — there is no per-turn wallet gate.
   const needsWallet = (mode !== "chat" || !selectedModel?.free || !!attachment) && !isConnected;
-  const canSend = (!!input.trim() || !!attachment) && !busy && !needsWallet;
+  const canSend = (!!input.trim() || !!attachment) && !busy && !preparingImage && !needsWallet;
   const suggestions = mode === "image" ? t.sugImage : mode === "video" ? t.sugVideo : mode === "music" ? t.sugMusic : t.sugChat;
 
   const CASES: { mode: "chat" | "image" | "video"; prompt: string }[] = [
@@ -296,7 +295,7 @@ export function FranklinChat() {
       send(input, attachment ?? undefined);
     }
     setInput("");
-    setAttachment(null);
+    clearAttachment();
   };
 
   const placeholder = needsWallet
@@ -669,10 +668,11 @@ export function FranklinChat() {
           )}
 
           <div className="try-composer">
-            {attachment && (
-              <div className="try-attach">
-                <img src={attachment} alt="attachment" />
-                <button className="try-attach-x" onClick={() => setAttachment(null)} aria-label="Remove attachment">
+            {(attachment || preparingImage) && (
+              <div className="try-attach" aria-busy={preparingImage}>
+                {attachment && <img src={attachment} alt="attachment" />}
+                {preparingImage && <span role="status">{t.statusWorking}</span>}
+                <button className="try-attach-x" onClick={() => clearAttachment()} aria-label="Remove attachment">
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -685,6 +685,7 @@ export function FranklinChat() {
               autoComplete="off"
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onPaste={onPaste}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                   e.preventDefault();

@@ -17,6 +17,8 @@
  * fan-out can come later.
  */
 
+import { desktopInput } from './desktop-input.js';
+import type { AgentInput } from '../agent/types.js';
 import { listManagedSkills, importSkill, toggleSkill, removeSkill, resolveManagedSkill } from '../skills/management.js';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -440,8 +442,8 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   // flips this; we mutate the running config so the loop picks it up next turn.
   let agentConfig: AgentConfig | null = null;
   let costSaver = userConfig['cost-saver'] !== 'false';
-  let inputQueue: string[] = [];
-  let inputResolver: ((v: string | null) => void) | null = null;
+  let inputQueue: AgentInput[] = [];
+  let inputResolver: ((v: AgentInput | null) => void) | null = null;
   let abortFn: (() => void) | null = null;
 
   // The socket + correlation id for the in-flight turn (single-window).
@@ -491,7 +493,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   const stepDetails = new Map<string, string>();
   let stepSeq = 0;
 
-  function getUserInput(): Promise<string | null> {
+  function getUserInput(): Promise<AgentInput | null> {
     return new Promise((resolve) => {
       if (inputQueue.length > 0) {
         resolve(inputQueue.shift()!);
@@ -500,7 +502,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       inputResolver = resolve;
     });
   }
-  function pushInput(text: string): void {
+  function pushInput(text: AgentInput): void {
     if (inputResolver) {
       const r = inputResolver;
       inputResolver = null;
@@ -890,8 +892,13 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         break;
       }
       case 'agent.send': {
-        const text = String(p.text ?? '').trim();
-        if (!text) { send(ws, id, 'agent.error', { sessionId: '', message: 'empty input' }); break; }
+        let input: AgentInput;
+        try {
+          input = desktopInput(p.text, p.attachments);
+        } catch (error) {
+          send(ws, id, 'agent.error', { sessionId: '', message: error instanceof Error ? error.message : 'Invalid attachment' });
+          break;
+        }
         activeWs = ws;
         activeTurnId = id;
         stepIds.clear();
@@ -915,7 +922,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
           pushInput(`/model ${desiredModel}`);
           currentModel = desiredModel;
         }
-        pushInput(text);
+        pushInput(input);
         break;
       }
       case 'settings.get':
