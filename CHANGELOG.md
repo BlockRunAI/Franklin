@@ -1,5 +1,27 @@
 # Changelog
 
+## Franklin Agent 3.49.19 — the panel's task route can no longer read files outside the tasks folder
+
+Security fix. Follow-up to GHSA-jx74-262x-94p3, which 3.49.3 fixed for
+`/api/sessions/:id` only. Upgrade if you run `franklin panel`.
+
+- **Task ids cannot leave the tasks folder.** `/api/tasks/:runId` turned the
+  id from the URL into a path without checking it, so
+  `/api/tasks/..%2F..%2F<dir>` read `meta.json`, `events.jsonl` or `log.txt`
+  from any folder on disk. Session ids and task run ids now pass one shared
+  check that refuses `..`, `/`, `\` and null bytes. That covers session
+  meta files too, which the cleanup code deletes. A bad task id now gets a
+  404.
+- **Every panel API route needs the page token, read-only ones included.**
+  The checks for a local caller and a local Host header do not tell OS users
+  apart, so another account on a shared machine, or anyone reaching the port
+  through an `ssh -L` tunnel, could read session transcripts and the audit
+  log. The panel page already sent its per-process token with every fetch.
+  The live event stream now passes it as `?token=`, because EventSource
+  cannot set headers.
+
+Thanks to Rajnish Tiwari, who reported the original issue.
+
 ## Franklin Agent 3.49.18 — the Desktop beta.9 work lands in the agent
 
 This release merges the Desktop 0.2.0 beta line back into the agent, so
