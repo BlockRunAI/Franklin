@@ -9,6 +9,12 @@
   wrapper as every other call, reconnecting every 3 seconds as before. No
   panel route accepts a token in the query string any more. The launch link
   printed in the terminal still carries it once.
+- **The panel link uses 127.0.0.1, not localhost.** The panel listens on
+  127.0.0.1 only, but `localhost` resolves to the IPv6 address `::1` first
+  in browsers and Node. Another account on the machine could listen on
+  `[::1]` at the panel's port and receive the launch link, token included.
+  Links saved by 3.49.20 point at `localhost`, so `franklin panel --open`
+  treats them as stale; restart `franklin` or `franklin panel` once.
 - **A malformed session id is a 400.** `/api/sessions/:id` with a broken
   `%` escape answered 500; it now answers 400.
 - **Removed the unused SSE translator.** `src/proxy/sse-translator.ts` was
