@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { BLOCKRUN_DIR, type Chain } from '../config.js';
+import { assertSafePathSegment } from '../storage/safe-id.js';
 import type { Dialogue } from '../agent/types.js';
 
 const MAX_SESSIONS = 20; // Keep last 20 sessions
@@ -119,9 +120,7 @@ function getSessionsDir(): string {
 
 function sessionPath(id: string): string {
   // Ids reach here from URLs (panel /api/sessions/:id); never let one escape the sessions dir.
-  if (!id || id !== path.basename(id) || id.includes('..') || id.includes('\0')) {
-    throw new Error(`Invalid session id: ${JSON.stringify(id)}`);
-  }
+  assertSafePathSegment(id, 'session id');
   return path.join(getSessionsDir(), `${id}.jsonl`);
 }
 
@@ -131,6 +130,7 @@ export function getSessionFilePath(id: string): string {
 }
 
 function metaPath(id: string): string {
+  assertSafePathSegment(id, 'session id');
   return path.join(getSessionsDir(), `${id}.meta.json`);
 }
 

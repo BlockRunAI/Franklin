@@ -36,6 +36,7 @@ import {
 } from '../tasks/store.js';
 import { reconcileLostTasks } from '../tasks/lost-detection.js';
 import { taskLogPath } from '../tasks/paths.js';
+import { isSafePathSegment } from '../storage/safe-id.js';
 import { isTerminalTaskStatus } from '../tasks/types.js';
 import { readLiveAgents } from '../session/live-registry.js';
 import { BLOCKRUN_DIR } from '../config.js';
@@ -114,10 +115,13 @@ function isLocalHostHeader(req: http.IncomingMessage): boolean {
 const PANEL_TOKEN = crypto.randomBytes(32).toString('hex');
 const PANEL_TOKEN_HEADER = 'x-franklin-panel-token';
 
-function hasPanelToken(req: http.IncomingMessage): boolean {
-  const got = req.headers[PANEL_TOKEN_HEADER];
+function tokenMatches(got: unknown): boolean {
   if (typeof got !== 'string' || got.length !== PANEL_TOKEN.length) return false;
   return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(PANEL_TOKEN));
+}
+
+function hasPanelToken(req: http.IncomingMessage): boolean {
+  return tokenMatches(req.headers[PANEL_TOKEN_HEADER]);
 }
 
 function isLocalPanelRequest(req: http.IncomingMessage): boolean {
@@ -180,6 +184,18 @@ export function createPanelServer(port: number): http.Server {
     if (!isLoopback(req) || !isLocalHostHeader(req)) {
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end('Forbidden');
+      return;
+    }
+
+    // Every API route needs the page's token, read-only ones included.
+    // Loopback + local Host does not tell OS users apart: on a shared machine
+    // another account, or anyone reaching the port through an ssh -L tunnel,
+    // passes both and could read transcripts and the audit log
+    // (GHSA-jx74-262x-94p3). EventSource cannot set headers, so /api/events
+    // alone may carry the token as ?token=.
+    if (p.startsWith('/api/') && !hasPanelToken(req)
+        && !(p === '/api/events' && tokenMatches(url.searchParams.get('token')))) {
+      json(res, { error: 'forbidden' }, 403);
       return;
     }
 
@@ -753,10 +769,12 @@ export function createPanelServer(port: number): http.Server {
       if (p.startsWith('/api/tasks/')) {
         const rest = p.slice('/api/tasks/'.length);
         const segments = rest.split('/');
-        const runId = decodeURIComponent(segments[0] || '');
+        let runId = '';
+        try { runId = decodeURIComponent(segments[0] || ''); } catch { /* malformed %-escape */ }
         const sub = segments[1];
 
-        if (!runId) {
+        // getTaskDir also refuses these; answer 404 here instead of a 500.
+        if (!isSafePathSegment(runId)) {
           res.writeHead(404);
           res.end('Not found');
           return;

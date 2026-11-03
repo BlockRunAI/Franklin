@@ -918,6 +918,8 @@ a:hover { text-decoration:underline; }
 // refuses wallet, spend, and state-changing routes without it.
 (() => {
   const PANEL_TOKEN = ${JSON.stringify(panelToken)};
+  // EventSource cannot set headers; /api/events reads it from ?token=.
+  window.__FRANKLIN_PANEL_TOKEN = PANEL_TOKEN;
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => {
     const headers = new Headers(init.headers || {});
@@ -1426,7 +1428,7 @@ document.getElementById('wallet-import-btn').addEventListener('click', async () 
   }
 });
 
-const es = new EventSource('/api/events');
+const es = new EventSource('/api/events?token=' + encodeURIComponent(window.__FRANKLIN_PANEL_TOKEN));
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
 es.onopen = () => { dot.className = 'dot on'; statusEl.textContent = 'live'; };

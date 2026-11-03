@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { BLOCKRUN_DIR } from '../config.js';
+import { assertSafePathSegment } from '../storage/safe-id.js';
 
 const LEGACY_FRANKLIN_HOME = path.join(os.homedir(), '.franklin');
 
@@ -40,6 +41,9 @@ export function getLegacyTasksDir(): string {
 }
 
 export function getTaskDir(runId: string): string {
+  // Run ids reach here from URLs (panel /api/tasks/:runId); never let one
+  // escape the tasks dir. Every task path helper routes through here.
+  assertSafePathSegment(runId, 'task run id');
   // Prefer the primary location. If a task already exists in the
   // legacy ~/.franklin/tasks/ — either created by an older release or
   // by a runner subprocess started before this version was installed —

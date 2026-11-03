@@ -309,7 +309,10 @@ test('panel server serves dashboard HTML and stats JSON', async () => {
     assert.ok(html.includes('<title>Franklin Agent Panel</title>'), 'Missing panel title in HTML');
     assert.ok(html.includes('Overview'), 'Missing Overview section in HTML');
 
-    const statsRes = await fetch(`http://127.0.0.1:${port}/api/stats`);
+    const token = /const PANEL_TOKEN = "([0-9a-f]{64})"/.exec(html)[1];
+    const statsRes = await fetch(`http://127.0.0.1:${port}/api/stats`, {
+      headers: { 'X-Franklin-Panel-Token': token },
+    });
     assert.equal(statsRes.status, 200, `Expected stats JSON, got ${statsRes.status}`);
     const stats = await statsRes.json();
     assert.equal(typeof stats.totalRequests, 'number');
@@ -332,8 +335,15 @@ test('panel server rejects cross-origin browser requests to spendful phone route
       headers: { Origin: 'https://evil.example' },
     });
     assert.equal(listRes.status, 403, `Expected cross-origin phone list to be forbidden, got ${listRes.status}`);
-    const listBody = await listRes.json();
-    assert.deepEqual(listBody, { error: 'forbidden', numbers: [] });
+    assert.equal((await listRes.json()).error, 'forbidden');
+
+    // Even with a leaked token, the route's own Origin check still refuses.
+    const token = await readPanelToken(port);
+    const tokenRes = await fetch(`http://127.0.0.1:${port}/api/phone/numbers`, {
+      headers: { Origin: 'https://evil.example', 'X-Franklin-Panel-Token': token },
+    });
+    assert.equal(tokenRes.status, 403);
+    assert.deepEqual(await tokenRes.json(), { error: 'forbidden', numbers: [] });
 
     const buyRes = await fetch(`http://127.0.0.1:${port}/api/phone/numbers/buy`, {
       method: 'POST',
@@ -403,8 +413,12 @@ test('panel: wallet secret and state-changing routes need the page token (no-Ori
       headers: { 'X-Franklin-Panel-Token': '0'.repeat(64) },
     });
     assert.equal(wrong.status, 403, 'a wrong token must be refused');
-    // Control: read-only routes still work without the token.
-    assert.equal((await fetch(`http://127.0.0.1:${port}/api/stats`)).status, 200);
+    // Read-only routes need the token too (GHSA-jx74-262x-94p3 follow-up).
+    assert.equal((await fetch(`http://localhost:${port}/api/stats`)).status, 403);
+    const token = await readPanelToken(port);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/stats`, {
+      headers: { 'X-Franklin-Panel-Token': token },
+    })).status, 200);
   } finally {
     await new Promise((resolve) => server.close(() => resolve()));
     unwatchFile(join(homedir(), '.blockrun', 'franklin-stats.json'));
@@ -8668,15 +8682,31 @@ async function withPanelServer(fn) {
 // Direct node:http request — avoids undici's global dispatcher keeping idle
 // keep-alive sockets in its pool past the test's lifetime. agent:false +
 // Connection: close gives a fresh socket per call that closes cleanly.
+// Every /api/* route needs the per-process panel token (GHSA-jx74-262x-94p3),
+// so read it off the served page once per port. Pass `token: false` to send
+// a request without it.
+const panelTokens = new Map();
+async function panelToken(port) {
+  if (!panelTokens.has(port)) {
+    const page = (await panelRequest(port, '/', { token: false })).text();
+    panelTokens.set(port, /const PANEL_TOKEN = "([0-9a-f]{64})"/.exec(page)[1]);
+  }
+  return panelTokens.get(port);
+}
+
 async function panelRequest(port, path, opts = {}) {
   const http = await import('node:http');
+  const extra = {};
+  if (opts.token !== false && path.startsWith('/api/')) {
+    extra['X-Franklin-Panel-Token'] = await panelToken(port);
+  }
   return new Promise((resolve, reject) => {
     const req = http.request({
       host: '127.0.0.1',
       port,
       path,
       method: opts.method || 'GET',
-      headers: { Connection: 'close', ...(opts.headers || {}) },
+      headers: { Connection: 'close', ...extra, ...(opts.headers || {}) },
       agent: false,
     }, (res) => {
       const chunks = [];
@@ -12491,6 +12521,71 @@ test('panel refuses DNS-rebinding hosts and never serves files outside the sessi
     assert.deepEqual(traversal.json(), [], 'a traversal id must not read files next to the sessions dir');
     const ok = await panelRequest(port, '/api/sessions');
     assert.equal(ok.status, 200, 'normal local requests still work');
+  });
+});
+
+test('task run ids from the panel URL cannot escape the tasks dir (GHSA-jx74-262x-94p3 follow-up)', async () => {
+  const { isSafePathSegment } = await import('../dist/storage/safe-id.js');
+  const { getTaskDir } = await import('../dist/tasks/paths.js');
+  const { getSessionFilePath, loadSessionMeta } = await import('../dist/session/storage.js');
+  for (const id of ['..', '.', '', '../x', '..%2Fx', 'a/b', 'a\\b', '..\\x', 'x\0y', '../../outside/evil']) {
+    const decoded = (() => { try { return decodeURIComponent(id); } catch { return id; } })();
+    assert.equal(isSafePathSegment(decoded), false, `must reject ${JSON.stringify(decoded)}`);
+    assert.throws(() => getTaskDir(decoded), /Invalid task run id/);
+    assert.throws(() => getSessionFilePath(decoded), /Invalid session id/);
+    assert.equal(loadSessionMeta(decoded), null);
+  }
+  for (const id of ['t_mh2k3l_abcd1234', 'session-2026-10-03T10-15-24-123Z-abcd1234', 'telegram-2026-10-03T10:15:24.123Z']) {
+    assert.equal(isSafePathSegment(id), true, `must accept ${id}`);
+  }
+});
+
+test('panel /api/tasks/:runId never reads meta, events, or log files outside the tasks dir', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  await withPanelServer(async ({ port, fakeHome }) => {
+    // FRANKLIN_HOME=fakeHome, tasks dir = fakeHome/tasks; plant a decoy two levels up.
+    const decoy = path.join(fakeHome, 'outside', 'evil');
+    fs.mkdirSync(decoy, { recursive: true });
+    fs.writeFileSync(path.join(decoy, 'meta.json'), JSON.stringify({ status: 'running', secret: 'META-LEAK' }));
+    fs.writeFileSync(path.join(decoy, 'events.jsonl'), JSON.stringify({ secret: 'EVENTS-LEAK' }) + '\n');
+    fs.writeFileSync(path.join(decoy, 'log.txt'), 'LOG-LEAK');
+    const base = '/api/tasks/..%2Foutside%2Fevil';
+    for (const suffix of ['', '/log', '/events']) {
+      const res = await panelRequest(port, base + suffix);
+      assert.equal(res.status, 404, `${suffix || 'meta'} traversal must 404`);
+      assert.doesNotMatch(res.text(), /LEAK/);
+    }
+    const bad = await panelRequest(port, '/api/tasks/%E0%A4%A');
+    assert.equal(bad.status, 404, 'a malformed escape is a 404, not a 500');
+  });
+});
+
+test('panel read-only API routes require the page token (GHSA-jx74-262x-94p3 follow-up)', async () => {
+  const http = await import('node:http');
+  await withPanelServer(async ({ port }) => {
+    for (const p of ['/api/sessions', '/api/sessions/some-id', '/api/audit', '/api/tasks', '/api/stats', '/api/events']) {
+      const res = await panelRequest(port, p, { token: false });
+      assert.equal(res.status, 403, `${p} without the token must be refused`);
+    }
+    const wrong = await panelRequest(port, '/api/events?token=' + '0'.repeat(64), { token: false });
+    assert.equal(wrong.status, 403);
+    // A query token is only honoured on /api/events (EventSource cannot set headers).
+    const token = await panelToken(port);
+    const elsewhere = await panelRequest(port, `/api/sessions?token=${token}`, { token: false });
+    assert.equal(elsewhere.status, 403);
+    // SSE never ends, so resolve on the response head and drop the socket.
+    const status = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: `/api/events?token=${token}`, agent: false, headers: { Connection: 'close' } }, (res) => {
+        resolve(res.statusCode);
+        req.destroy();
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(status, 200);
+    const page = (await panelRequest(port, '/', { token: false })).text();
+    assert.match(page, /new EventSource\('\/api\/events\?token='/, 'the page must pass its token to EventSource');
   });
 });
 
