@@ -1,5 +1,27 @@
 # Changelog
 
+## Franklin Agent 3.49.22 — Claude Code reaches the proxy at 127.0.0.1, not localhost
+
+Security fix. Upgrade if you route Claude Code or another Anthropic-compatible
+agent through `franklin proxy`, `franklin daemon` or `franklin init`, on a
+machine other accounts can use.
+
+- **The proxy URL is 127.0.0.1.** The proxy listens on 127.0.0.1 only, but
+  `franklin init` set Claude Code's `ANTHROPIC_BASE_URL` to
+  `http://localhost:<port>/api`, and `localhost` resolves to the IPv6
+  address `::1` first. Another account on the machine could listen on
+  `[::1]` at the proxy's port, read every prompt Claude Code sent, and
+  answer with its own replies, tool calls included, which Claude Code would
+  then run. `franklin init` now writes `http://127.0.0.1:<port>/api`, and
+  `franklin proxy` and `franklin daemon` print that address.
+- **Existing setups are fixed on the next proxy start.** When the proxy
+  starts (directly, through `franklin daemon`, or from the login item) it
+  rewrites a `localhost` `ANTHROPIC_BASE_URL` in `~/.claude/settings.json`
+  to 127.0.0.1. It only changes the value `franklin init` wrote, identified
+  by Franklin's placeholder auth token, and leaves any other setting alone.
+  Restart Claude Code afterwards so it reads the new address. If you set
+  `ANTHROPIC_BASE_URL` in your shell instead, change it by hand.
+
 ## Franklin Agent 3.49.21 — the panel never puts its token in a URL after launch
 
 - **Live updates send the panel token as a header.** The panel page used
