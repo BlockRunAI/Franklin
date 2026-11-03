@@ -158,10 +158,20 @@ test('render: only the current scope, helped as lines, hurt as rules, confounded
 });
 
 test('render: respects the character budget', () => {
-  const list = Array.from({ length: 20 }, (_, i) => entry({ id: `e${i}`, lesson: `playbook: lesson ${i} ${'detail '.repeat(20)}` }));
+  // Pin last_confirmed explicitly (lesson 0 newest). Equal confirmations tie
+  // on score and break by recency, so a fixture that reads Date.now() per
+  // entry flips the order whenever the clock ticks mid-loop.
+  const T = 1_800_000_000_000;
+  const list = Array.from({ length: 20 }, (_, i) => entry({
+    id: `e${i}`,
+    lesson: `playbook: lesson ${i} ${'detail '.repeat(20)}`,
+    created_at: T - i,
+    last_confirmed: T - i,
+  }));
   const text = formatExperienceForPrompt(list, WS, 600);
   assert.ok(text.length <= 600, `rendered ${text.length} chars`);
-  assert.match(text, /lesson 0/);
+  assert.match(text, /lesson 0 /, 'the most recently confirmed lesson renders first');
+  assert.doesNotMatch(text, /lesson 19 /, 'the oldest lesson is the one the budget drops');
 });
 
 test('render: a rendered lesson is stamped so a later refutation can count against it', () => {

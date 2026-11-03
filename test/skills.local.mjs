@@ -539,17 +539,22 @@ test('franklin skills list hides hidden skills by default but --all reveals them
   );
   const opts = { timeoutMs: 15_000, cwd: work, env: { HOME: fakeHome, USERPROFILE: fakeHome } };
   try {
-    const def = await runCli(['skills', 'list'], opts);
+    // The three invocations are independent read-only lists, so spawn them
+    // together. Each pays a ~1-3s cold CLI start; run back to back under the
+    // suite's --test-concurrency=4 they could exceed the 20s budget.
+    const [def, all, json] = await Promise.all([
+      runCli(['skills', 'list'], opts),
+      runCli(['skills', 'list', '--all'], opts),
+      runCli(['skills', 'list', '--json'], opts),
+    ]);
     assert.equal(def.code, 0);
     assert.match(def.stdout, /visible-one/);
     assert.doesNotMatch(def.stdout, /\/hidden-one\b/);
     assert.match(def.stdout, /hidden/); // the "+N hidden" footer
 
-    const all = await runCli(['skills', 'list', '--all'], opts);
     assert.equal(all.code, 0);
     assert.match(all.stdout, /hidden-one/);
 
-    const json = await runCli(['skills', 'list', '--json'], opts);
     const parsed = JSON.parse(json.stdout);
     const found = parsed.skills.find((s) => s.name === 'hidden-one');
     assert.ok(found, '--json always includes hidden skills');
