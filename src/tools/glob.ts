@@ -4,8 +4,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
-import { isHostCredentialPath, isWalletKeyPath } from './sensitive-paths.js';
+import { isCredentialPathAsync } from './sensitive-paths.js';
 
 interface GlobInput {
   pattern: string;
@@ -35,39 +36,47 @@ function globMatch(pattern: string, text: string): boolean {
   return regex.test(text.replace(/\\/g, '/'));
 }
 
-function walkDirectory(
+async function walkDirectory(
   dir: string,
   baseDir: string,
   pattern: string,
   results: string[],
   depth: number,
+  signal: AbortSignal,
   visited?: Set<string>
-): void {
+): Promise<void> {
+  signal.throwIfAborted();
   if (depth > 50 || results.length >= MAX_RESULTS) return;
 
   // Symlink loop protection
   const visitedSet = visited ?? new Set<string>();
   let realDir: string;
   try {
-    realDir = fs.realpathSync(dir);
+    realDir = await fs.promises.realpath(dir);
   } catch {
     return;
   }
   if (visitedSet.has(realDir)) return;
   visitedSet.add(realDir);
+  signal.throwIfAborted();
 
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch {
     return; // Permission denied or similar
   }
 
+  let checked = 0;
   for (const entry of entries) {
+    signal.throwIfAborted();
     if (results.length >= MAX_RESULTS) break;
+    // Large flat directories also need to yield, even when nothing matches.
+    if (++checked % 128 === 0) await yieldToRequests(undefined, { signal });
 
     // Skip hidden dirs and common large dirs
-    const isDir = entry.isDirectory() || (entry.isSymbolicLink() && isSymlinkDir(path.join(dir, entry.name)));
+    const isDir = entry.isDirectory() || (entry.isSymbolicLink() && await isSymlinkDir(path.join(dir, entry.name)));
+    signal.throwIfAborted();
     if (entry.name.startsWith('.') && isDir) continue;
     if (entry.name === 'node_modules' || entry.name === '__pycache__' || entry.name === '.git') continue;
 
@@ -75,33 +84,43 @@ function walkDirectory(
     const relativePath = path.relative(baseDir, fullPath);
 
     if (entry.isFile() || (entry.isSymbolicLink() && !isDir)) {
+      if (!globMatch(pattern, relativePath)) continue;
       // Don't hand the model a map to the key store or host credentials.
-      if (isWalletKeyPath(fullPath) || isHostCredentialPath(fullPath)) continue;
-      if (globMatch(pattern, relativePath)) {
-        results.push(fullPath);
-      }
+      const secret = await isCredentialPathAsync(fullPath);
+      signal.throwIfAborted();
+      if (!secret) results.push(fullPath);
     } else if (isDir) {
       // Recurse for ** patterns; for patterns with /, only recurse if current dir is on the path
       if (pattern.includes('**')) {
-        walkDirectory(fullPath, baseDir, pattern, results, depth + 1, visitedSet);
+        await walkDirectory(fullPath, baseDir, pattern, results, depth + 1, signal, visitedSet);
       } else if (pattern.includes('/')) {
         // Check if this directory could be part of the pattern path
         const relativePath = path.relative(baseDir, fullPath);
         const patternDir = pattern.split('/').slice(0, -1).join('/');
         if (patternDir.startsWith(relativePath) || relativePath.startsWith(patternDir)) {
-          walkDirectory(fullPath, baseDir, pattern, results, depth + 1, visitedSet);
+          await walkDirectory(fullPath, baseDir, pattern, results, depth + 1, signal, visitedSet);
         }
       }
     }
   }
 }
 
-function isSymlinkDir(p: string): boolean {
-  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+async function isSymlinkDir(p: string): Promise<boolean> {
+  try { return (await fs.promises.stat(p)).isDirectory(); } catch { return false; }
 }
 
 async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
+  try {
+    return await search(input, ctx);
+  } catch (err) {
+    if (ctx.abortSignal.aborted) return { output: 'File search cancelled.', isError: true };
+    throw err;
+  }
+}
+
+async function search(input: Record<string, unknown>, ctx: ExecutionScope): Promise<CapabilityResult> {
   const { pattern, path: searchPath } = input as unknown as GlobInput;
+  ctx.abortSignal.throwIfAborted();
 
   if (!pattern) {
     return { output: 'Error: pattern is required', isError: true };
@@ -111,21 +130,27 @@ async function execute(input: Record<string, unknown>, ctx: ExecutionScope): Pro
     ? (path.isAbsolute(searchPath) ? searchPath : path.resolve(ctx.workingDir, searchPath))
     : ctx.workingDir;
 
-  if (!fs.existsSync(baseDir)) {
+  try {
+    await fs.promises.access(baseDir);
+  } catch {
     return { output: `Error: directory not found: ${baseDir}`, isError: true };
   }
 
   const results: string[] = [];
-  walkDirectory(baseDir, baseDir, pattern, results, 0);
+  await walkDirectory(baseDir, baseDir, pattern, results, 0, ctx.abortSignal);
+  ctx.abortSignal.throwIfAborted();
 
   // Sort by modification time (most recent first)
-  const withMtime = results.map(f => {
+  const withMtime: Array<{ path: string; mtime: number }> = [];
+  for (const f of results) {
+    ctx.abortSignal.throwIfAborted();
     try {
-      return { path: f, mtime: fs.statSync(f).mtimeMs };
+      withMtime.push({ path: f, mtime: (await fs.promises.stat(f)).mtimeMs });
     } catch {
-      return { path: f, mtime: 0 };
+      withMtime.push({ path: f, mtime: 0 });
     }
-  });
+  }
+  ctx.abortSignal.throwIfAborted();
   withMtime.sort((a, b) => b.mtime - a.mtime);
 
   // Convert to relative paths to save tokens

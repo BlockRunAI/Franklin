@@ -7,7 +7,7 @@ export async function copyText(text: string): Promise<boolean> {
   const bridge = typeof window !== "undefined" ? window.__FRANKLIN__ : undefined;
   if (bridge?.copy) {
     try {
-      if (bridge.copy(text)) return true;
+      if (await bridge.copy(text)) return true;
     } catch {
       /* fall through */
     }

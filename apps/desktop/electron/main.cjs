@@ -335,8 +335,12 @@ function resolveFranklinEntry() {
   // the Franklin workspace dependency.
   if (app.isPackaged) {
     const bundled = path.join(app.getAppPath(), "franklin-agent", "dist", "index.js");
-    if (require("node:fs").existsSync(bundled)) return bundled;
+    return fs.existsSync(bundled) ? bundled : null;
   }
+  // A workspace install may resolve @blockrun/franklin to an older published
+  // package. Native development must exercise this checkout's built runtime.
+  const workspaceEntry = path.resolve(__dirname, "..", "..", "..", "dist", "index.js");
+  if (fs.existsSync(workspaceEntry)) return workspaceEntry;
   try {
     const pkg = require.resolve("@blockrun/franklin/package.json");
     return path.join(path.dirname(pkg), "dist", "index.js");

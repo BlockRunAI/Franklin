@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Server, Wrench, AlertTriangle, Sparkles, RefreshCw, Lock, LockOpen, Plus, Upload, Loader2 } from "lucide-react";
+import { Server, Wrench, AlertTriangle, Sparkles, RefreshCw, Lock, LockOpen, Upload } from "lucide-react";
 import { useMcp } from "../hooks/use-mcp";
 import { useAgentSkills, type AgentSkill } from "../hooks/use-agent-skills";
 
@@ -31,10 +31,8 @@ function Badge({ text, color }: { text: string; color: string }) {
 
 export function McpPanel() {
   const { servers, failures, loading: mcpLoading, refresh: refreshMcp } = useMcp();
-  const { skills, loading: skillsLoading, refresh: refreshSkills, toggle, create, upload } = useAgentSkills();
+  const { skills, loading: skillsLoading, refresh: refreshSkills, toggle, error, upload } = useAgentSkills();
 
-  const [desc, setDesc] = useState("");
-  const [creating, setCreating] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -42,17 +40,6 @@ export function McpPanel() {
   const refresh = () => {
     refreshMcp();
     refreshSkills();
-  };
-
-  const onCreate = async () => {
-    const d = desc.trim().slice(0, 2_000);
-    if (!d || creating) return;
-    setCreating(true);
-    setNotice(null);
-    const r = await create(d);
-    setCreating(false);
-    if (r) { setDesc(""); setNotice(`Created /${r.name} · restart the session to invoke it`); }
-    else setNotice("Couldn't generate the skill — try a clearer description.");
   };
 
   const onFiles = async (files: FileList | null) => {
@@ -177,24 +164,6 @@ export function McpPanel() {
 
           {/* Create a skill from a description (model-generated SKILL.md). */}
           <div style={{ display: "flex", gap: 6, margin: "4px 0 8px" }}>
-            <input
-              className="try-tool-card"
-              placeholder="Describe a skill to create — e.g. “review a PR for security issues”"
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void onCreate(); }}
-              style={{ flex: 1, padding: "8px 10px", fontSize: 13 }}
-            />
-            <button
-              className="try-tool-card"
-              onClick={onCreate}
-              disabled={creating || !desc.trim()}
-              title="Generate skill"
-              style={{ padding: "0 12px", display: "inline-flex", alignItems: "center", gap: 6, width: "auto", opacity: creating || !desc.trim() ? 0.5 : 1 }}
-            >
-              {creating ? <Loader2 className="h-3.5 w-3.5 spin" /> : <Plus className="h-3.5 w-3.5" />}
-              <span style={{ fontSize: 12 }}>{creating ? "Generating…" : "Create"}</span>
-            </button>
             <button
               className="try-tool-card"
               onClick={() => fileRef.current?.click()}
@@ -213,9 +182,10 @@ export function McpPanel() {
               onChange={(e) => { void onFiles(e.target.files); e.target.value = ""; }}
             />
           </div>
+          {error && <p role="alert" className="try-tool-card-desc">{error}</p>}
           {notice && <p className="try-tool-card-desc" style={{ margin: "0 0 8px", color: "#2563eb" }}>{notice}</p>}
           <p className="try-tool-card-desc" style={{ margin: "0 0 8px", opacity: 0.6 }}>
-            Drag a SKILL.md here to add it. Toggle a skill off to hide it from the model.
+            Drag a SKILL.md here to add it. Changes apply to the next message. Imports never run instructions or grant tool permissions.
           </p>
 
           {skills.length === 0 && (

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Plus, MessageSquare, Trash2, Phone, Blocks, Images, Wallet, Sparkles, Search,
-  Grid2x2, ChevronRight, Terminal, Server, Bot, Folder, FolderPlus, Pin, PinOff,
+  Grid2x2, ChevronRight, Terminal, Server, Bot, Folder, FolderPlus, Pin, PinOff, ChartCandlestick,
 } from "lucide-react";
 import { conversationActivityAt, type ChatSpace, type Conversation } from "../hooks/use-chat-history";
 import type { WalletInfo } from "../lib/wire";
@@ -11,9 +11,11 @@ import { MoreMenu } from "./MoreMenu";
 import { WalletPill } from "./WalletPill";
 import franklinAvatar from "../assets/franklin-avatar.png";
 import type { TeamWorkspaceNavItem } from "../hooks/use-cloud-workspace";
+import { marketCopy } from "../lib/market-i18n";
 import { useSidebarPreferences } from "../hooks/use-sidebar-preferences";
+import type { TradingModeControl } from "../lib/trading-mode";
 
-export type TryView = "chat" | "agents" | "phone" | "tools" | "gallery" | "wallet" | "skills" | "cli" | "mcp";
+export type TryView = "markets" | "chat" | "agents" | "phone" | "tools" | "gallery" | "wallet" | "skills" | "cli" | "mcp";
 
 // Local bundled logo (no network → no offline blank).
 const PORTRAIT_URL = franklinAvatar;
@@ -42,11 +44,13 @@ interface Props {
   activeTeamWorkspaceId?: string | null;
   teamLoading?: boolean;
   onTeamWorkspace?: (id: string) => void;
+  tradingMode?: TradingModeControl;
 }
 
-export function HistorySidebar({ conversations, activeId, onNewChat, onNewProject, onSelect, onDelete, onTogglePinned, view, onView, open, wallet, walletLoading, walletError, walletConnectionState, switchingWalletChain, onSwitchWalletChain, chatSpace, teamModeEnabled = true, teamWorkspaces = [], activeTeamWorkspaceId = null, teamLoading = false, onTeamWorkspace }: Props) {
-  const { t } = useTryLang();
+export function HistorySidebar({ conversations, activeId, onNewChat, onNewProject, onSelect, onDelete, onTogglePinned, view, onView, open, wallet, walletLoading, walletError, walletConnectionState, switchingWalletChain, onSwitchWalletChain, chatSpace, teamModeEnabled = true, teamWorkspaces = [], activeTeamWorkspaceId = null, teamLoading = false, onTeamWorkspace, tradingMode }: Props) {
+  const { t, lang } = useTryLang();
   const { visibleItems } = useSidebarPreferences();
+  const focused = !!tradingMode?.enabled;
   const [searchOpen, setSearchOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreBtnRef = useRef<HTMLButtonElement>(null);
@@ -79,13 +83,14 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
 
   return (
     <>
-    <aside className={`try-sidebar${open ? " is-open" : ""}`}>
+    <aside className={`try-sidebar${open ? " is-open" : ""}`} inert={!open} aria-hidden={!open}>
       <button className="try-brand" onClick={() => onView("chat")}>
         <span className="try-brand-ring">
           <img src={PORTRAIT_URL} alt="Franklin" width={30} height={30} />
         </span>
         <span className="try-brand-name">Franklin</span>
       </button>
+      {focused && <div className="trading-sidebar-mode"><ChartCandlestick size={13} aria-hidden />{marketCopy[lang].tradingMode}</div>}
 
       <button className="try-nav-item" onClick={onNewChat}>
         <Plus className="h-4 w-4" />
@@ -98,12 +103,16 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
       </button>
 
       <div className="try-scroll">
-        {visibleItems.includes("agents") && <button className={`try-nav-item${view === "agents" ? " is-active" : ""}`} onClick={() => onView("agents")}>
+        <button className={`try-nav-item${view === "markets" ? " is-active" : ""}`} disabled={!focused && tradingMode?.disabled} onClick={() => onView("markets")} aria-current={view === "markets" ? "page" : undefined}>
+          <ChartCandlestick className="h-4 w-4" />
+          {marketCopy[lang].title}
+        </button>
+        {!focused && visibleItems.includes("agents") && <button className={`try-nav-item${view === "agents" ? " is-active" : ""}`} onClick={() => onView("agents")}>
           <Bot className="h-4 w-4" />
           {t.agents}
         </button>}
 
-        <button
+        {!focused && <button
           className="try-nav-item try-project-create"
           onClick={onNewProject}
           disabled={!teamModeEnabled}
@@ -111,16 +120,16 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
         >
           <FolderPlus className="h-4 w-4" />
           {t.newProject}
-        </button>
+        </button>}
 
-        {!teamModeEnabled && <button className="try-team-disabled-note" onClick={() => onView("agents")}>{t.teamModeOff}</button>}
+        {!focused && !teamModeEnabled && <button className="try-team-disabled-note" onClick={() => onView("agents")}>{t.teamModeOff}</button>}
 
         {pinned.length > 0 && <SidebarSection label={t.pinned} count={pinned.length}>
           {pinned.map((conversation) => (
             <ConversationRow
               key={conversation.id}
               conversation={conversation}
-              active={chatSpace === "personal" && conversation.id === activeId && view === "chat"}
+              active={chatSpace === "personal" && conversation.id === activeId && (view === "chat" || focused)}
               onSelect={onSelect}
               onDelete={onDelete}
               onTogglePinned={onTogglePinned}
@@ -128,7 +137,7 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
           ))}
         </SidebarSection>}
 
-        <SidebarSection label={t.projects} count={teamWorkspaces.length}>
+        {!focused && <SidebarSection label={t.projects} count={teamWorkspaces.length}>
           {teamLoading ? (
             <p className="try-section-empty">{t.connectingProjects}</p>
           ) : teamWorkspaces.length === 0 ? (
@@ -145,7 +154,7 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
               <span>{workspace.name}</span>
             </button>
           ))}
-        </SidebarSection>
+        </SidebarSection>}
 
         <SidebarSection label={t.recent} count={recent.length}>
           {recent.length === 0 ? (
@@ -154,7 +163,7 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
             <ConversationRow
               key={conversation.id}
               conversation={conversation}
-              active={chatSpace === "personal" && conversation.id === activeId && view === "chat"}
+              active={chatSpace === "personal" && conversation.id === activeId && (view === "chat" || focused)}
               onSelect={onSelect}
               onDelete={onDelete}
               onTogglePinned={onTogglePinned}
@@ -162,7 +171,7 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
           ))}
         </SidebarSection>
 
-        <div className="try-sidebar-secondary">
+        {!focused && <div className="try-sidebar-secondary">
           {nav.map((n) => (
             <button
               key={n.key}
@@ -183,12 +192,12 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
             <span className="try-more-label">{t.more}</span>
             <ChevronRight className="try-more-chevron h-4 w-4" />
           </button>}
-        </div>
+        </div>}
       </div>
 
       <div className="try-sidebar-footer">
         <div className="try-footer-icons">
-          <MoreMenu />
+          <MoreMenu tradingMode={tradingMode} />
           <div className="try-footer-wallet">
             <WalletPill wallet={wallet} connectionState={walletConnectionState} isLoading={walletLoading} error={walletError} switchingChain={switchingWalletChain} onSwitchChain={onSwitchWalletChain} />
           </div>
@@ -196,7 +205,7 @@ export function HistorySidebar({ conversations, activeId, onNewChat, onNewProjec
       </div>
     </aside>
 
-    {moreOpen && morePos && (
+    {open && !focused && moreOpen && morePos && (
       <>
         <div className="try-more-scrim" onClick={() => setMoreOpen(false)} />
         <div className="try-more-flyout" style={{ top: morePos.top, left: morePos.left }}>

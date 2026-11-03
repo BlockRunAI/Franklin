@@ -8,7 +8,7 @@ interface Window {
     agentUrl: string;
     cloudUrl?: string;
     cloudToken?: string;
-    copy?: (text: string) => boolean;
+    copy?: (text: string) => boolean | Promise<boolean>;
     scanAgentRuntimes?: () => Promise<Array<{ id: string; available: boolean; running: boolean; path?: string; version?: string; endpoint?: string; lifecycleSupported?: boolean; error?: string }>>;
     startAgentRuntime?: (id: string) => Promise<{ ok: boolean; available?: boolean; running: boolean; path?: string; version?: string; endpoint?: string; lifecycleSupported?: boolean; error?: string }>;
     stopAgentRuntime?: (id: string) => Promise<{ ok: boolean; running: boolean; error?: string }>;

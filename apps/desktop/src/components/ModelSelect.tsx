@@ -53,8 +53,8 @@ export function ModelSelect({ models, model, onChange, disabled }: Props) {
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <span className="try-select-current">{selected?.label}</span>
-        <ChevronDown className={`try-select-chev${open ? " is-open" : ""}`} />
+        <span className="try-select-current">{selected?.label || model || "Model"}</span>
+        <ChevronDown aria-hidden className={`try-select-chev${open ? " is-open" : ""}`} />
       </button>
 
       {open && (

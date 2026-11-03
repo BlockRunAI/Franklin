@@ -17,6 +17,9 @@
  * fan-out can come later.
  */
 
+import { desktopInput } from './desktop-input.js';
+import type { AgentInput } from '../agent/types.js';
+import { listManagedSkills, importSkill, toggleSkill, removeSkill, resolveManagedSkill } from '../skills/management.js';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -39,6 +42,7 @@ import { isCloudSyncEnabled, cloudList, cloudSync, type CloudConversation } from
 import { setupAgentWallet, setupAgentSolanaWallet } from '@blockrun/llm';
 import { retryFetchBalance } from '../commands/balance-retry.js';
 import { AgentHost } from './agent-host.js';
+import { DesktopQuestions } from './desktop-questions.js';
 import { bus } from '../events/bus.js';
 import type { FranklinEvent } from '../events/types.js';
 import type { AgentConfig, StreamEvent, Dialogue, ContentPart, UserContentPart } from '../agent/types.js';
@@ -424,8 +428,8 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   // flips this; we mutate the running config so the loop picks it up next turn.
   let agentConfig: AgentConfig | null = null;
   let costSaver = userConfig['cost-saver'] !== 'false';
-  let inputQueue: string[] = [];
-  let inputResolver: ((v: string | null) => void) | null = null;
+  let inputQueue: AgentInput[] = [];
+  let inputResolver: ((v: AgentInput | null) => void) | null = null;
   let abortFn: (() => void) | null = null;
 
   // The socket + correlation id for the in-flight turn (single-window).
@@ -434,6 +438,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   // Pending approval asks for the legacy desktop session (tools + trade plans).
   // Keyed by askId — the wire contract the desktop UI already declares
   // (agent.permissionAsk / agent.permissionResponse with askId + decision).
+  const questions = new DesktopQuestions<WebSocket>();
   let askSeq = 0;
   type LegacyDecision = 'yes' | 'no' | 'always';
   const legacyAsks = new Map<string, (decision: LegacyDecision) => void>();
@@ -474,7 +479,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   const stepDetails = new Map<string, string>();
   let stepSeq = 0;
 
-  function getUserInput(): Promise<string | null> {
+  function getUserInput(): Promise<AgentInput | null> {
     return new Promise((resolve) => {
       if (inputQueue.length > 0) {
         resolve(inputQueue.shift()!);
@@ -483,7 +488,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       inputResolver = resolve;
     });
   }
-  function pushInput(text: string): void {
+  function pushInput(text: AgentInput): void {
     if (inputResolver) {
       const r = inputResolver;
       inputResolver = null;
@@ -592,6 +597,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         break;
       }
       case 'turn_done':
+        if (activeWs) questions.cancel(activeWs);
         if (event.reason === 'completed') {
           emit('agent.done', { sessionId: '', costUsd: 0 });
         } else if (event.error) {
@@ -642,12 +648,11 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       allowPaidPrefetch: !desktopBoundary,
       ...(desktopBoundary ? { maxSpendUsd: 5 } : {}),
       costSaver,
-      // Tools such as ImageGen perform their own exact-price confirmation.
-      // Map the Desktop yes/no approval bridge back to the tool's choices.
-      onAskUser: async (question, options) => {
-        const decision = await requestDesktopPermission('Agent confirmation', question);
-        if (decision === 'yes' || decision === 'always') return options?.[0] ?? 'yes';
-        return options?.[options.length - 1] ?? 'no';
+      onAskUser: (question, options) => {
+        const ws = activeWs;
+        const turnId = activeTurnId;
+        if (!ws || !turnId) return Promise.resolve('');
+        return questions.request(ws, question, options, (kind, payload) => send(ws, turnId, kind, payload));
       },
       // Structured approvals (trade plans): surfaced to the desktop over the
       // in-flight turn stream as agent.permissionAsk; the UI answers with
@@ -681,6 +686,26 @@ export async function startServer(opts: ServerOptions): Promise<void> {
     const { id, kind, payload } = msg;
     const p = (payload ?? {}) as Record<string, unknown>;
     switch (kind) {
+      case 'skills.list':
+      case 'skills.upload':
+      case 'skills.toggle':
+      case 'skills.remove':
+      case 'skills.resolve': {
+        try {
+          const result = kind === 'skills.list' ? listManagedSkills(workDir)
+            : kind === 'skills.upload' ? importSkill(workDir, p.content)
+            : kind === 'skills.toggle' ? toggleSkill(workDir, p.name, p.enabled)
+            : kind === 'skills.remove' ? removeSkill(workDir, p.name)
+            : resolveManagedSkill(workDir, p.input);
+          send(ws, id, 'response', result);
+        } catch (err) {
+          send(ws, id, 'error', { message: err instanceof Error ? err.message : 'Skill management failed' });
+        }
+        break;
+      }
+      case 'skills.create':
+        send(ws, id, 'error', { message: 'Automatic skill generation is not available. Import a SKILL.md from Skills instead.' });
+        break;
       case 'session.list': {
         const metas = listSessions();
         send(ws, id, 'response', {
@@ -832,8 +857,13 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         break;
       }
       case 'agent.send': {
-        const text = String(p.text ?? '').trim();
-        if (!text) { send(ws, id, 'agent.error', { sessionId: '', message: 'empty input' }); break; }
+        let input: AgentInput;
+        try {
+          input = desktopInput(p.text, p.attachments);
+        } catch (error) {
+          send(ws, id, 'agent.error', { sessionId: '', message: error instanceof Error ? error.message : 'Invalid attachment' });
+          break;
+        }
         activeWs = ws;
         activeTurnId = id;
         stepIds.clear();
@@ -857,7 +887,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
           pushInput(`/model ${desiredModel}`);
           currentModel = desiredModel;
         }
-        pushInput(text);
+        pushInput(input);
         break;
       }
       case 'settings.get':
@@ -873,7 +903,13 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         break;
       }
       case 'agent.cancel':
-        if (abortFn) abortFn();
+        if (ws === activeWs) {
+          if (abortFn) abortFn();
+          questions.cancel(ws);
+        }
+        break;
+      case 'agent.questionResponse':
+        send(ws, id, 'response', { ok: questions.respond(ws, p.askId, p.answer) });
         break;
       case 'agent.permissionResponse': {
         // Two resolution paths:
@@ -1029,6 +1065,7 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       });
     });
     ws.on('close', () => {
+      questions.cancel(ws);
       // Tear down this socket's agent subscriptions; the agents keep running.
       const subs = wsSubs.get(ws);
       if (subs) for (const unsubscribe of subs.values()) unsubscribe();

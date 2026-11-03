@@ -3558,6 +3558,28 @@ test('stripLargeImageData: leaves small images untouched (favicon-sized)', async
   assert.equal(out.content[0].content[1].source.data.length, 3000);
 });
 
+test('stripLargeImageData: strips large user-attached images at the top level of a message', async () => {
+  const { stripLargeImageData } = await import('../dist/agent/loop.js');
+  const bigB64 = 'A'.repeat(200_000);
+  const tinyB64 = 'A'.repeat(3000);
+  const msg = {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'What is in this screenshot?' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: bigB64 } },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: tinyB64 } },
+    ],
+  };
+  const out = stripLargeImageData(msg);
+  assert.notEqual(out, msg, 'must return a new object reference');
+  assert.equal(msg.content[1].source.data.length, 200_000, 'in-memory history keeps the full image');
+  assert.equal(out.content[0].text, 'What is in this screenshot?', 'user text preserved');
+  assert.equal(out.content[1].type, 'text', 'large attached image replaced with a placeholder');
+  assert.match(out.content[1].text, /user-attached image stripped from session log: 195\.3 KB/);
+  assert.equal(out.content[2], msg.content[2], 'small attached image passes through');
+  assert.ok(JSON.stringify(out).length < 10_000, 'persisted line no longer carries the large image bytes');
+});
+
 test('stripLargeImageData: passes through messages without tool_result image blocks', async () => {
   const { stripLargeImageData } = await import('../dist/agent/loop.js');
   // Plain user text.

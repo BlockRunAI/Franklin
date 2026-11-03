@@ -1,15 +1,8 @@
-/**
- * SKILL.md loader — parses Anthropic-spec frontmatter + markdown body.
- *
- * The frontmatter parser is intentionally minimal: flat `key: value` lines
- * with scalar values (string, boolean, number). Quoted strings, nested
- * objects, and arrays are out of scope for MVP — Anthropic's SKILL.md spec
- * never needs them and adding a YAML dependency would be heavier than the
- * spec warrants.
- */
+/** SKILL.md frontmatter and Markdown loader. Metadata is data, never executable. */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseDocument } from 'yaml';
 
 import type {
   LoadedSkill,
@@ -33,10 +26,10 @@ export function parseSkill(content: string): ParseResult {
 
   const { fields, warnings } = parsedFrontmatter;
 
-  if (typeof fields.name !== 'string' || fields.name.length === 0) {
+  if (typeof fields.name !== 'string' || fields.name.trim().length === 0) {
     return { error: 'frontmatter missing required field: name' };
   }
-  if (typeof fields.description !== 'string' || fields.description.length === 0) {
+  if (typeof fields.description !== 'string' || fields.description.trim().length === 0) {
     return { error: 'frontmatter missing required field: description' };
   }
 
@@ -83,7 +76,7 @@ interface FrontmatterMatch {
 }
 
 function extractFrontmatter(content: string): FrontmatterMatch | null {
-  const normalized = content.replace(/\r\n/g, '\n');
+  const normalized = content.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
   if (!normalized.startsWith(FRONTMATTER_FENCE + '\n')) return null;
 
   const rest = normalized.slice(FRONTMATTER_FENCE.length + 1);
@@ -95,67 +88,16 @@ function extractFrontmatter(content: string): FrontmatterMatch | null {
   return { frontmatter, body };
 }
 
-type ScalarValue = string | number | boolean;
-type FrontmatterValue = ScalarValue | string[];
-
-interface FrontmatterParse {
-  fields: Record<string, FrontmatterValue>;
-  warnings: string[];
-}
-
-const LIST_ITEM_RE = /^\s+-\s+(.+)$/;
-
-function parseFrontmatter(text: string): FrontmatterParse | { error: string } {
-  const fields: Record<string, FrontmatterValue> = {};
-  const warnings: string[] = [];
-  const lines = text.split('\n');
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === '' || line.trim().startsWith('#')) continue;
-
-    // YAML list continuation: skip — handled by the key-line that opened it.
-    if (LIST_ITEM_RE.test(line)) continue;
-
-    const colon = line.indexOf(':');
-    if (colon < 0) {
-      return { error: `frontmatter line ${i + 1} is not key: value — got "${line}"` };
-    }
-
-    const key = line.slice(0, colon).trim();
-    const rawValue = line.slice(colon + 1).trim();
-    if (key.length === 0) {
-      return { error: `frontmatter line ${i + 1} has empty key` };
-    }
-
-    // Empty value followed by indented `- item` lines = YAML list.
-    if (rawValue === '') {
-      const items: string[] = [];
-      let j = i + 1;
-      while (j < lines.length) {
-        const next = lines[j];
-        if (next.trim() === '') {
-          j++;
-          continue;
-        }
-        const m = LIST_ITEM_RE.exec(next);
-        if (!m) break;
-        items.push(parseScalarString(m[1].trim()));
-        j++;
-      }
-      if (items.length > 0) {
-        fields[key] = items;
-        continue;
-      }
-      // No list followed; treat as empty string.
-      fields[key] = '';
-      continue;
-    }
-
-    fields[key] = parseScalar(rawValue);
+function parseFrontmatter(text: string): { fields: Record<string, unknown>; warnings: string[] } | { error: string } {
+  try {
+    const doc = parseDocument(text, { schema: 'core', uniqueKeys: true });
+    if (doc.errors.length) return { error: 'Invalid YAML frontmatter: ' + doc.errors[0].message.split('\n')[0] };
+    const fields: unknown = doc.toJS({ maxAliasCount: 0 });
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return { error: 'Frontmatter must be a mapping' };
+    return { fields: fields as Record<string, unknown>, warnings: doc.warnings.map((w) => w.message.split('\n')[0]) };
+  } catch {
+    return { error: 'Invalid YAML frontmatter (aliases are not supported)' };
   }
-
-  return { fields, warnings };
 }
 
 /**
@@ -215,23 +157,4 @@ export function loadSkillsFromDir(root: string, source: SkillSource): LoadResult
   }
 
   return result;
-}
-
-function parseScalar(raw: string): ScalarValue {
-  if (raw === 'true') return true;
-  if (raw === 'false') return false;
-  if (/^-?\d+$/.test(raw)) return Number.parseInt(raw, 10);
-  if (/^-?\d+\.\d+$/.test(raw)) return Number.parseFloat(raw);
-  return parseScalarString(raw);
-}
-
-/** Strip surrounding quotes from a string-shaped value, leaving everything else as-is. */
-function parseScalarString(raw: string): string {
-  if (
-    (raw.startsWith('"') && raw.endsWith('"') && raw.length >= 2) ||
-    (raw.startsWith("'") && raw.endsWith("'") && raw.length >= 2)
-  ) {
-    return raw.slice(1, -1);
-  }
-  return raw;
 }

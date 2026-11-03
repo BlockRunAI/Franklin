@@ -42,7 +42,10 @@ export interface CapabilityOutcome {
 }
 
 export type ContentPart = TextSegment | CapabilityInvocation | ThinkingSegment;
-export type UserContentPart = TextSegment | CapabilityOutcome;
+export type UserContentPart = TextSegment | ImageSegment | CapabilityOutcome;
+
+/** Structured driver input; CLI and scheduled prompts can remain plain text. */
+export type AgentInput = string | { text: string; images: ImageSegment[] };
 
 export interface Dialogue {
   role: Role;
