@@ -1,5 +1,31 @@
 # Changelog
 
+## Franklin Agent 3.49.20 — the panel opens only from its own link, and ~/.blockrun is owner-only
+
+Security fix. Upgrade if more than one person uses your machine, or if you
+reach the panel through an ssh tunnel.
+
+- **The panel page now needs its access link.** Until now any local
+  program or other account on the machine could load the panel page at `/`,
+  read its access token out of the HTML, and use it to call
+  `/api/wallet/secret`, which returns the wallet's private key. The page now
+  loads only from the link with `?token=` that `franklin` and
+  `franklin panel` print in the terminal. Without it you get a short page
+  saying where to find the link. The page sends no Referer, so the token
+  never leaves in one.
+- **`franklin panel --open [section]`** opens the running panel in your
+  browser, for example `franklin panel --open wallet`. The agent uses it
+  when you ask how to fund your wallet, so the access token never appears
+  in a prompt or a transcript. The launch link is saved in
+  `~/.blockrun/panel-url`, which is now owner-only (0600).
+- **`~/.blockrun` is owner-only (0700).** It was created world-readable, so
+  other accounts could read session transcripts, the LLM audit log, and the
+  cost and trade ledgers straight from disk. Franklin now tightens the
+  folder at startup. Wallet key files were already owner-only.
+- Low-balance and payment-error messages now say
+  `franklin panel --open wallet` instead of a bare localhost URL, which no
+  longer opens without the token.
+
 ## Franklin Agent 3.49.19 — the panel's task route can no longer read files outside the tasks folder
 
 Security fix. Follow-up to GHSA-jx74-262x-94p3, which 3.49.3 fixed for
@@ -13,12 +39,9 @@ Security fix. Follow-up to GHSA-jx74-262x-94p3, which 3.49.3 fixed for
   meta files too, which the cleanup code deletes. A bad task id now gets a
   404.
 - **Every panel API route needs the page token, read-only ones included.**
-  The checks for a local caller and a local Host header do not tell OS users
-  apart, so another account on a shared machine, or anyone reaching the port
-  through an `ssh -L` tunnel, could read session transcripts and the audit
-  log. The panel page already sent its per-process token with every fetch.
-  The live event stream now passes it as `?token=`, because EventSource
-  cannot set headers.
+  This stops browser pages and server-side request forgery from reading
+  panel data. It did not stop other local users: the page served at `/`
+  carried the token without asking for it. 3.49.20 closes that.
 
 Thanks to Rajnish Tiwari, who reported the original issue.
 
