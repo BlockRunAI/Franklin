@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import chalk from 'chalk';
+import { proxyBaseUrl } from '../proxy/claude-settings.js';
 import { BLOCKRUN_DIR, DEFAULT_PROXY_PORT } from '../config.js';
 
 const PID_FILE = path.join(BLOCKRUN_DIR, 'franklin.pid');
@@ -66,7 +67,7 @@ export async function daemonCommand(action: string, options: { port?: string }) 
       const existing = readPid();
       if (existing && isRunning(existing)) {
         console.log(chalk.yellow(`franklin daemon already running (PID ${existing})`));
-        console.log(chalk.dim(`  Proxy: http://localhost:${port}/api`));
+        console.log(chalk.dim(`  Proxy: ${proxyBaseUrl(port)}`));
         return;
       }
 
@@ -87,7 +88,7 @@ export async function daemonCommand(action: string, options: { port?: string }) 
 
       fs.writeFileSync(PID_FILE, String(child.pid));
       console.log(chalk.green(`✓ franklin daemon started (PID ${child.pid})`));
-      console.log(chalk.dim(`  Proxy: http://localhost:${port}/api`));
+      console.log(chalk.dim(`  Proxy: ${proxyBaseUrl(port)}`));
       console.log(chalk.dim(`  Logs:  ${LOG_FILE}`));
       break;
     }
@@ -130,7 +131,7 @@ export async function daemonCommand(action: string, options: { port?: string }) 
       if (isRunning(pid)) {
         console.log(chalk.green(`✓ franklin daemon running`));
         console.log(`  PID:   ${chalk.bold(pid)}`);
-        console.log(`  Proxy: ${chalk.cyan(`http://localhost:${port}/api`)}`);
+        console.log(`  Proxy: ${chalk.cyan(proxyBaseUrl(port))}`);
         console.log(chalk.dim(`  Logs:  ${LOG_FILE}`));
       } else {
         fs.unlinkSync(PID_FILE);

@@ -12750,6 +12750,56 @@ test('panel page parses the SSE stream it reads through fetch, across chunk spli
   assert.equal(status.textContent, 'offline');
 });
 
+test('proxy base URL is 127.0.0.1 and old localhost settings from franklin init are migrated', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { proxyBaseUrl, migrateClaudeSettingsBaseUrl, PROXY_AUTH_PLACEHOLDER } = await import('../dist/proxy/claude-settings.js');
+  assert.equal(proxyBaseUrl(8402), 'http://127.0.0.1:8402/api');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-claude-settings-'));
+  const file = path.join(dir, 'settings.json');
+  const write = (obj, nl = '\n') => fs.writeFileSync(file, JSON.stringify(obj, null, 2) + nl);
+  const read = () => JSON.parse(fs.readFileSync(file, 'utf8'));
+  try {
+    // Ours, as an older `franklin init` wrote it: rewritten, everything else kept.
+    write({ model: 'x', env: { ANTHROPIC_BASE_URL: 'http://localhost:8402/api', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER, OTHER: '1' } });
+    assert.equal(migrateClaudeSettingsBaseUrl(file), true);
+    const after = read();
+    assert.equal(after.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:8402/api');
+    assert.equal(after.env.OTHER, '1');
+    assert.equal(after.model, 'x');
+    assert.ok(fs.readFileSync(file, 'utf8').endsWith('}\n'), 'keeps the trailing newline');
+    assert.equal(migrateClaudeSettingsBaseUrl(file), false, 'second run is a no-op');
+    // Custom port carries over.
+    write({ env: { ANTHROPIC_BASE_URL: 'http://localhost:9001/api/', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER } });
+    assert.equal(migrateClaudeSettingsBaseUrl(file), true);
+    assert.equal(read().env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:9001/api');
+    // Not ours, or not the exact form init wrote: untouched, byte for byte.
+    for (const env of [
+      { ANTHROPIC_BASE_URL: 'http://localhost:8402/api', ANTHROPIC_AUTH_TOKEN: 'sk-users-own' },
+      { ANTHROPIC_BASE_URL: 'http://localhost:8402/v1', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER },
+      { ANTHROPIC_BASE_URL: 'https://api.example.com', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER },
+      { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8402/api', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER },
+    ]) {
+      write({ env }, '');
+      const before = fs.readFileSync(file, 'utf8');
+      assert.equal(migrateClaudeSettingsBaseUrl(file), false, JSON.stringify(env));
+      assert.equal(fs.readFileSync(file, 'utf8'), before);
+    }
+    fs.writeFileSync(file, '{ not json');
+    assert.equal(migrateClaudeSettingsBaseUrl(file), false);
+    assert.equal(fs.readFileSync(file, 'utf8'), '{ not json');
+    assert.equal(migrateClaudeSettingsBaseUrl(path.join(dir, 'missing.json')), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // init, proxy and daemon never print or write a localhost proxy URL.
+  for (const f of ['init.ts', 'proxy.ts', 'daemon.ts']) {
+    const src = readFileSync(new URL(`../src/commands/${f}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /localhost:\$\{port\}/, `${f} must use proxyBaseUrl`);
+  }
+});
+
 test('catalog sync 2026-10-20: every live gateway id is priced and pinnable', async () => {
   // Ids that reached GET /api/v1/models (Base and Solana) after the 2026-10-02
   // sync. Prices are the live list, read 2026-10-20 — the static table is the

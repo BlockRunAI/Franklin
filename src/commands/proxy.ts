@@ -10,6 +10,7 @@ import { loadChain, CHAIN_LABELS, DEFAULT_PROXY_PORT} from '../config.js';
 import { gatewayBase } from '../payments/auth-mode.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
+import { proxyBaseUrl, migrateClaudeSettingsBaseUrl, CLAUDE_SETTINGS_FILE } from '../proxy/claude-settings.js';
 
 interface ProxyOptions {
   port?: string;
@@ -51,7 +52,7 @@ export async function proxyCommand(options: ProxyOptions) {
     console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
     if (model) console.log(`Model:    ${chalk.green(model)}`);
     console.log(`Fallback: ${fallbackEnabled ? chalk.green('enabled') : chalk.yellow('disabled')}`);
-    console.log(`Proxy:    ${chalk.cyan(`http://localhost:${port}`)}`);
+    console.log(`Proxy:    ${chalk.cyan(proxyBaseUrl(port))}`);
     console.log(`Backend:  ${chalk.dim(apiUrl)}\n`);
 
     const server = createProxy({
@@ -80,7 +81,7 @@ export async function proxyCommand(options: ProxyOptions) {
     console.log(`Wallet:   ${chalk.cyan(wallet.address)}`);
     if (model) console.log(`Model:    ${chalk.green(model)}`);
     console.log(`Fallback: ${fallbackEnabled ? chalk.green('enabled') : chalk.yellow('disabled')}`);
-    console.log(`Proxy:    ${chalk.cyan(`http://localhost:${port}`)}`);
+    console.log(`Proxy:    ${chalk.cyan(proxyBaseUrl(port))}`);
     console.log(`Backend:  ${chalk.dim(apiUrl)}\n`);
 
     const server = createProxy({
@@ -111,16 +112,22 @@ function launchProxy(
 
   // Bind to loopback ONLY — this proxy signs x402 USDC payments from the local
   // wallet on every request, so it must never be reachable from the LAN. Every
-  // other Franklin server binds 127.0.0.1; the banner below says "localhost".
+  // other Franklin server binds 127.0.0.1, and every URL we print or write
+  // says 127.0.0.1 too (see proxy/claude-settings.ts for why not localhost).
   server.listen(port, '127.0.0.1', () => {
     console.log(chalk.green(`✓ Proxy running on port ${port}`));
+    // `franklin daemon` and the LaunchAgent both start here, so this one call
+    // fixes a localhost base URL that an older `franklin init` wrote.
+    if (migrateClaudeSettingsBaseUrl()) {
+      console.log(chalk.yellow(`  Updated ANTHROPIC_BASE_URL in ${CLAUDE_SETTINGS_FILE} to 127.0.0.1. Restart Claude Code to pick it up.`));
+    }
     console.log(chalk.dim(`  Usage tracking: ~/.blockrun/franklin-stats.json`));
     if (debug) console.log(chalk.dim(`  Debug log:      ~/.blockrun/franklin-debug.log`));
     console.log(chalk.dim(`  Run 'franklin stats' to view statistics\n`));
 
     console.log('Set these in your shell to route Anthropic-compatible CLI agents through franklin:\n');
     console.log(
-      chalk.bold(`  export ANTHROPIC_BASE_URL=http://localhost:${port}/api`)
+      chalk.bold(`  export ANTHROPIC_BASE_URL=${proxyBaseUrl(port)}`)
     );
     console.log(
       chalk.bold(`  export ANTHROPIC_AUTH_TOKEN=x402-proxy-handles-auth`)

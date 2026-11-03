@@ -3,8 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import chalk from 'chalk';
 import { DEFAULT_PROXY_PORT } from '../config.js';
-
-const CLAUDE_SETTINGS_FILE = path.join(os.homedir(), '.claude', 'settings.json');
+import { CLAUDE_SETTINGS_FILE, PROXY_AUTH_PLACEHOLDER, proxyBaseUrl } from '../proxy/claude-settings.js';
 const LAUNCH_AGENT_DIR = path.join(os.homedir(), 'Library', 'LaunchAgents');
 const LAUNCH_AGENT_PLIST = path.join(LAUNCH_AGENT_DIR, 'ai.blockrun.franklin.plist');
 const LEGACY_LAUNCH_AGENT_PLIST = path.join(LAUNCH_AGENT_DIR, 'ai.blockrun.runcode.plist');
@@ -28,8 +27,9 @@ export async function initCommand(options: { port?: string }) {
 
   settings.env = {
     ...(settings.env as Record<string, string> | undefined ?? {}),
-    ANTHROPIC_BASE_URL: `http://localhost:${port}/api`,
-    ANTHROPIC_AUTH_TOKEN: 'x402-proxy-handles-auth',
+    // 127.0.0.1, never localhost: see proxy/claude-settings.ts.
+    ANTHROPIC_BASE_URL: proxyBaseUrl(port),
+    ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER,
     ANTHROPIC_MODEL: 'blockrun/auto',
     ANTHROPIC_DEFAULT_SONNET_MODEL: 'anthropic/claude-sonnet-4.6',
     ANTHROPIC_DEFAULT_OPUS_MODEL: 'anthropic/claude-opus-5',
