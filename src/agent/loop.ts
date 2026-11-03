@@ -84,6 +84,8 @@ import type {
   TextSegment,
   ThinkingSegment,
   UserContentPart,
+  AgentInput,
+  ImageSegment,
 } from './types.js';
 import { FREE_DEFAULT_MODEL, freeVisionModel, isFreeModelId } from '../free-models.js';
 
@@ -483,6 +485,24 @@ export function stripLargeImageData(message: Dialogue): Dialogue {
   // in via the loop's outcome-building path. Runtime structure is what
   // matters here; we only mutate when we positively identify the shape.
   const newContent = (message.content as unknown[]).map((part) => {
+    // Images the user attached directly (Desktop paste / file picker) sit at
+    // the top level of the user message, not inside a tool_result. They have
+    // no source path to re-Read, so the placeholder asks for a re-attach.
+    if (
+      typeof part === 'object' &&
+      part !== null &&
+      (part as { type?: string }).type === 'image' &&
+      (part as ToolResultImageBlock).source?.type === 'base64' &&
+      ((part as ToolResultImageBlock).source.data?.length ?? 0) > SESSION_IMAGE_STRIP_THRESHOLD
+    ) {
+      mutated = true;
+      const sz = (part as ToolResultImageBlock).source.data.length;
+      return {
+        type: 'text',
+        text: `<user-attached image stripped from session log: ${(sz / 1024).toFixed(1)} KB base64. ` +
+              `Ask the user to attach it again if you need to see it.>`,
+      } as ToolResultTextBlock;
+    }
     if (
       typeof part === 'object' &&
       part !== null &&
@@ -573,7 +593,7 @@ export function isWeakModel(model: string): boolean {
  */
 export async function interactiveSession(
   config: AgentConfig,
-  getUserInput: () => Promise<string | null>,
+  getUserInput: () => Promise<AgentInput | null>,
   onEvent: (event: StreamEvent) => void,
   onAbortReady?: (abort: () => void) => void
 ): Promise<Dialogue[]> {
@@ -584,7 +604,7 @@ export async function interactiveSession(
 
 async function runInteractiveSession(
   config: AgentConfig,
-  getUserInput: () => Promise<string | null>,
+  getUserInput: () => Promise<AgentInput | null>,
   onEvent: (event: StreamEvent) => void,
   onAbortReady?: (abort: () => void) => void
 ): Promise<Dialogue[]> {
@@ -691,6 +711,7 @@ async function runInteractiveSession(
   const inputMux = createInputMultiplexer(getUserInput);
   const history: Dialogue[] = [];
   let lastUserInput = ''; // For /retry
+  let lastUserImages: ImageSegment[] = [];
   // budget-cap-usd of the skill that kicked off this turn (`/name` invocation);
   // kept across /retry, which replays the same skill prompt.
   let turnSkillBudgetUsd: number | undefined;
@@ -892,8 +913,10 @@ async function runInteractiveSession(
   process.once('SIGTERM', exitFlush);
 
   while (true) {
-    let input = await inputMux.getUserInput();
-    if (input === null) break; // User wants to exit
+    const incoming = await inputMux.getUserInput();
+    if (incoming === null) break; // User wants to exit
+    let input = typeof incoming === 'string' ? incoming : incoming.text;
+    let images = typeof incoming === 'string' ? [] : incoming.images;
     if (input === '') continue; // Empty input → re-prompt
 
     // Desktop imports and toggles take effect without restarting this session.
@@ -914,6 +937,7 @@ async function runInteractiveSession(
           continue;
         }
         input = lastUserInput;
+        images = lastUserImages;
       } else {
         const cmdResult = await handleSlashCommand(input, {
           history, config, client, sessionId, onEvent,
@@ -944,6 +968,7 @@ async function runInteractiveSession(
     }
 
     lastUserInput = input;
+    lastUserImages = images;
     fireLifecycleHook('UserPromptSubmit');
 
     // ── Skill trigger auto-invoke ──
@@ -989,11 +1014,14 @@ async function runInteractiveSession(
     // (pushback SYSTEM NOTE, prefetch context block) are applied AFTER
     // the turn analyzer runs so they get driven by model-decided flags
     // instead of keyword regex.
-    history.push({ role: 'user', content: input });
+    const userContent: string | UserContentPart[] = images.length
+      ? [{ type: 'text', text: input }, ...images]
+      : input;
+    history.push({ role: 'user', content: userContent });
     turnCount++;
     toolGuard.startTurn();
     publishLiveState('working');
-    persistSessionMessage({ role: 'user', content: input });
+    persistSessionMessage({ role: 'user', content: userContent });
 
     // ── Model recovery: try original model at the start of each new turn ──
     // If we fell back to a free model last turn due to a transient error, try original again.
@@ -1519,7 +1547,7 @@ async function runInteractiveSession(
       // images, Read's tool_result image blocks get tokenized as base64 text
       // by the gateway (verified 2026-05-09) and the model hallucinates from
       // the "Image file: <path>" stub. Detect upfront, route accordingly.
-      const turnNeedsVision = loopCount === 1 && messageNeedsVision(lastUserInput);
+      const turnNeedsVision = loopCount === 1 && (images.length > 0 || messageNeedsVision(lastUserInput));
 
       // ── Router: resolve routing profiles to concrete models ──
       // The shared Router is local/deterministic and runs once per user turn.
@@ -2626,6 +2654,7 @@ async function runInteractiveSession(
           if (!config.disableGroundingRetry && shouldCheckGrounding(lastUserInput || '', assistantText)) {
             const gResult = await checkGrounding(lastUserInput, history, assistantText, client, {
               abortSignal: abort.signal,
+              userImageCount: images.length,
             });
 
             if (gResult.verdict === 'UNGROUNDED' && groundingRetryCount < MAX_GROUNDING_RETRIES) {

@@ -59,7 +59,7 @@ jobs:
         run: npm run build
 
       - name: Check skills and permission boundaries
-        run: node --test test/skills.local.mjs test/skills-management.local.mjs test/glob-responsive.local.mjs test/serve-security.local.mjs test/desktop-questions.local.mjs test/desktop-question-flow.local.mjs test/desktop-auto-routing.local.mjs
+        run: node --test test/skills.local.mjs test/skills-management.local.mjs test/glob-responsive.local.mjs test/serve-security.local.mjs test/desktop-questions.local.mjs test/desktop-question-flow.local.mjs test/desktop-input.local.mjs test/desktop-image-flow.local.mjs test/desktop-auto-routing.local.mjs
 
       - name: Check Desktop
         run: |

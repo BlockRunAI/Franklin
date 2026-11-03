@@ -44,7 +44,10 @@ const EVALUATOR_PROMPT = `You are a GROUNDING CHECK agent. Your job is to verify
 ### A. Ungrounded claims
 Every **factual claim** in the answer must trace to ONE of:
   (a) A tool call result from this turn (model-initiated OR listed under "Pre-fetched by Franklin harness"), OR
-  (b) Explicit acknowledgment of uncertainty ("I'm not sure", "based on older data")
+  (b) User-provided material, including observations of an attached image when the summary confirms an image was supplied, OR
+  (c) Explicit acknowledgment of uncertainty ("I'm not sure", "based on older data")
+
+**User-provided images are evidence for visual observations.** The main assistant can see attached images directly; a Read or web tool is not required to transcribe visible text or describe shapes. When the summary confirms user-provided images, do not flag those observations merely because no tool ran. This text-only check cannot verify their visual accuracy: use PARTIAL if that is the only uncertainty, not a demand for a tool call. Images do NOT establish fresh external facts: claims about live prices, latest news, or facts beyond the supplied image still require appropriate evidence.
 
 **Harness-prefetched data is evidence.** When the turn includes a "Pre-fetched by Franklin harness" section, the data listed there was fetched live from tools on the assistant's behalf (TradingMarket, ExaAnswer, etc). Treat it identically to a model-initiated tool call — claims that reference prefetched prices, numbers, or news snippets are GROUNDED.
 
@@ -160,11 +163,16 @@ export function shouldCheckGrounding(
  * + tool result snippets + assistant's final answer. Bounded to keep the
  * evaluator call cheap; it doesn't need every byte of every tool output.
  */
-function summarizeTurn(userInput: string, history: Dialogue[], assistantText: string): string {
+function summarizeTurn(userInput: string, history: Dialogue[], assistantText: string, userImageCount = 0): string {
   const lines: string[] = [];
   lines.push(`## User question`);
   lines.push(userInput.trim().slice(0, 800));
   lines.push('');
+  if (userImageCount > 0) {
+    lines.push(`## User-provided images: ${userImageCount}`);
+    lines.push('The assistant received these images directly in this turn. Visual observations and transcription can use them as evidence without a tool call. Image bytes are omitted from this text-only check.');
+    lines.push('');
+  }
 
   // ── Harness prefetch (treated as synthetic tool calls) ──
   // When intent-prefetch fires, it prepends a [FRANKLIN HARNESS PREFETCH]
@@ -188,7 +196,7 @@ function summarizeTurn(userInput: string, history: Dialogue[], assistantText: st
   const toolLines: string[] = [];
   for (let i = history.length - 1; i >= 0 && found < 40; i--) {
     const msg = history[i];
-    if (msg.role === 'user' && typeof msg.content === 'string') break;
+    if (msg.role === 'user' && (typeof msg.content === 'string' || !msg.content.some(part => part.type === 'tool_result'))) break;
     if (msg.role === 'assistant' && Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (typeof part === 'object' && part.type === 'tool_use') {
@@ -287,10 +295,11 @@ export async function checkGrounding(
   opts: {
     abortSignal?: AbortSignal;
     model?: string;
+    userImageCount?: number;
   } = {},
 ): Promise<GroundingResult> {
   const model = opts.model || evaluatorModel();
-  const summary = summarizeTurn(userInput, history, assistantText);
+  const summary = summarizeTurn(userInput, history, assistantText, opts.userImageCount);
 
   // Run independently of the main agent — the evaluator gets NO tools
   // (it just reads and grades). Limit tokens so a chatty evaluator can't
