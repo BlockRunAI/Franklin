@@ -130,9 +130,14 @@ function hasPanelToken(req: http.IncomingMessage): boolean {
  * port through an ssh -L tunnel) could GET `/`, read the token out of the
  * HTML, and call /api/wallet/secret. Only someone who can see the terminal
  * that started the panel, or read the 0600 panel-url file, has the link.
+ *
+ * The host is the literal 127.0.0.1 the server binds, never `localhost`.
+ * Browsers and Node try ::1 first for `localhost`, and another local account
+ * can listen on [::1]:<port> next to our 127.0.0.1:<port> without a bind
+ * conflict, so a `localhost` link would hand that listener the token.
  */
 export function getPanelLaunchUrl(port: number): string {
-  return `http://localhost:${port}/?token=${PANEL_TOKEN}`;
+  return `http://127.0.0.1:${port}/?token=${PANEL_TOKEN}`;
 }
 
 export const PANEL_URL_FILE = path.join(BLOCKRUN_DIR, 'panel-url');

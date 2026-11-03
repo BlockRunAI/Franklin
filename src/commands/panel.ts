@@ -34,7 +34,9 @@ async function openRunningPanel(section: string): Promise<void> {
   let launch = '';
   try { launch = fs.readFileSync(PANEL_URL_FILE, 'utf8').trim(); } catch { /* none */ }
   let alive = false;
-  if (/^http:\/\/localhost:\d+\/\?token=[0-9a-f]{64}$/.test(launch)) {
+  // 127.0.0.1 only: a `localhost` link (written by 3.49.20) can resolve to a
+  // squatter on [::1]:<port>, so treat it as stale and make the user restart.
+  if (/^http:\/\/127\.0\.0\.1:\d+\/\?token=[0-9a-f]{64}$/.test(launch)) {
     try {
       const res = await fetch(launch, { signal: AbortSignal.timeout(1500) });
       alive = res.status === 200; // 401 means a different panel process owns the port now
@@ -47,7 +49,7 @@ async function openRunningPanel(section: string): Promise<void> {
   }
   openInBrowser(section ? `${launch}#${section}` : launch);
   const port = new URL(launch).port;
-  console.log(`  Opened the Franklin panel${section ? ` (${section})` : ''} on localhost:${port}.`);
+  console.log(`  Opened the Franklin panel${section ? ` (${section})` : ''} on 127.0.0.1:${port}.`);
 }
 
 export async function panelCommand(options: { port?: string; open?: string | boolean }): Promise<void> {

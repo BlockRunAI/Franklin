@@ -12636,13 +12636,52 @@ test('panel-url file is owner-only and ~/.blockrun is hardened to 0700', async (
       `const c = await import(${JSON.stringify(config)}); c.hardenBlockrunDir();
        const s = await import(${JSON.stringify(server)}); process.stdout.write(s.writePanelUrlFile(4321));`],
       { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
-    assert.match(out, /^http:\/\/localhost:4321\/\?token=[0-9a-f]{64}$/);
+    assert.match(out, /^http:\/\/127\.0\.0\.1:4321\/\?token=[0-9a-f]{64}$/);
     assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
     const file = path.join(dir, 'panel-url');
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
     assert.equal(fs.readFileSync(file, 'utf8'), out);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('panel launch URL reaches the real panel even when [::1] on its port is squatted', async (t) => {
+  // Another local account can listen on [::1]:<port> beside our 127.0.0.1:<port>
+  // (no bind conflict). A `localhost` launch URL resolves to ::1 first and hands
+  // that listener the token, which then unlocks /api/wallet/secret on 127.0.0.1.
+  const { createPanelServer, getPanelLaunchUrl } = await import('../dist/panel/server.js');
+  // createPanelServer watches the stats file; unwatch it in cleanup or the
+  // StatWatcher keeps the suite alive (see withPanelServer).
+  const { getStatsFilePath } = await import('../dist/stats/tracker.js');
+  const statsFile = getStatsFilePath();
+  const panel = createPanelServer(0);
+  const port = await listenOnRandomPort(panel);
+  const seen = [];
+  const squatter = createServer((req, res) => { seen.push(req.url); res.end('squatter'); });
+  try {
+    try {
+      await new Promise((resolve, reject) => {
+        squatter.once('error', reject);
+        squatter.listen(port, '::1', resolve);
+      });
+    } catch (err) {
+      t.skip(`no IPv6 loopback here (${err.code})`);
+      return;
+    }
+    const launch = getPanelLaunchUrl(port);
+    assert.match(launch, /^http:\/\/127\.0\.0\.1:\d+\/\?token=[0-9a-f]{64}$/);
+    const res = await fetch(launch, { signal: AbortSignal.timeout(3000) });
+    const body = await res.text();
+    assert.equal(res.status, 200);
+    assert.notEqual(body, 'squatter');
+    assert.ok(body.includes('const PANEL_TOKEN'), 'the launch URL must load the real panel page');
+    assert.deepEqual(seen, [], 'the [::1] listener must never see the token-bearing URL');
+  } finally {
+    if (typeof panel.closeAllConnections === 'function') panel.closeAllConnections();
+    await new Promise((r) => panel.close(() => r()));
+    if (squatter.listening) await new Promise((r) => squatter.close(() => r()));
+    unwatchFile(statsFile);
   }
 });
 
