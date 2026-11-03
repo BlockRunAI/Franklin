@@ -10,6 +10,9 @@ on:
       - "src/agent/**"
       - "src/serve/**"
       - "src/tools/**"
+      - "src/skills/**"
+      - "test/skills*.mjs"
+      - "test/fixtures/**"
       - "test/serve-security.local.mjs"
       - ".npmrc"
       - "package.json"
@@ -45,11 +48,18 @@ jobs:
           node-version: "22"
           cache: npm
 
+      - name: Verify Desktop tag matches its package version
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        run: node -e "const v=require('./apps/desktop/package.json').version; if(process.env.GITHUB_REF_NAME !== 'desktop-v'+v) throw new Error('Desktop tag/version mismatch')"
+
       - name: Install the pinned monorepo dependency graph
         run: npm ci
 
       - name: Build Franklin runtime
         run: npm run build
+
+      - name: Check skills and permission boundaries
+        run: node --test test/skills.local.mjs test/skills-management.local.mjs test/glob-responsive.local.mjs test/serve-security.local.mjs test/desktop-questions.local.mjs test/desktop-question-flow.local.mjs test/desktop-input.local.mjs test/desktop-image-flow.local.mjs test/desktop-auto-routing.local.mjs
 
       - name: Check Desktop
         run: |
@@ -61,6 +71,9 @@ jobs:
         run: npm run ${{ matrix.script }} --workspace @blockrun/franklin-desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Verify packaged runtime outside the checkout
+        run: node apps/desktop/test/packaged-runtime.e2e.mjs
 
       - name: Upload test installer
         uses: actions/upload-artifact@v4

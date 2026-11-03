@@ -14,9 +14,11 @@
  * user's typing is never dropped.
  */
 
+import type { AgentInput } from './types.js';
+
 export interface InputMultiplexer {
   /** Drop-in replacement for the driver's getUserInput. */
-  getUserInput: () => Promise<string | null>;
+  getUserInput: () => Promise<AgentInput | null>;
   /** Queue a synthetic input for the next turn boundary. */
   enqueue: (text: string, opts?: { priority?: boolean }) => void;
   /** Number of injected inputs currently waiting. */
@@ -24,10 +26,10 @@ export interface InputMultiplexer {
 }
 
 export function createInputMultiplexer(
-  base: () => Promise<string | null>
+  base: () => Promise<AgentInput | null>
 ): InputMultiplexer {
   const queue: string[] = [];
-  let pendingBase: Promise<string | null> | null = null;
+  let pendingBase: Promise<AgentInput | null> | null = null;
   let baseDone = false;
   // The loop is a single consumer — at most one getUserInput() outstanding,
   // so one notifier slot suffices.

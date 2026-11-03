@@ -51,6 +51,9 @@ export function matchSkill(
   if (!skill) return null;
 
   const args = space < 0 ? '' : input.slice(space + 1).trim();
-  const rewritten = substituteVariables(skill.skill.body, vars, args);
+  const rendered = substituteVariables(skill.skill.body, vars, args);
+  // External SKILL.md files often omit Franklin's argument placeholder.
+  const rewritten = args && !skill.skill.body.includes('$ARGUMENTS')
+    ? `${rendered}\n\nUser request:\n${args}` : rendered;
   return { rewritten, skill: skill.skill };
 }

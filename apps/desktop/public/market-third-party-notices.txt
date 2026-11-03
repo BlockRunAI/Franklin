@@ -1,0 +1,9 @@
+TradingView Lightweight Charts™
+Copyright (с) 2025 TradingView, Inc. https://www.tradingview.com/
+
+Lightweight Charts v5.2.1 is licensed under the Apache License, Version 2.0.
+https://www.apache.org/licenses/LICENSE-2.0
+Source and upstream notice: https://github.com/tradingview/lightweight-charts/tree/v5.2.1
+
+The library renders charts; it does not provide market data.
+Public spot market data shown in Franklin Markets is obtained separately from Kraken.

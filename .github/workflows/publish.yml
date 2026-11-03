@@ -6,6 +6,7 @@ on:
 
 jobs:
   publish:
+    if: ${{ !startsWith(github.event.release.tag_name, 'desktop-v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

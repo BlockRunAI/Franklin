@@ -2,6 +2,7 @@
 
 import { Fragment, useState } from "react";
 import { Copy, Check, Maximize2, X, Download } from "lucide-react";
+import { copyText } from "../lib/clipboard";
 import { safeExternalHttpUrl } from "../lib/external-url";
 
 // Lightweight Markdown renderer for assistant replies (no external deps):
@@ -139,11 +140,11 @@ function TableBlock({
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  const copy = () => {
-    navigator.clipboard?.writeText(tableToMarkdown(headers, rows)).then(() => {
+  const copy = async () => {
+    if (await copyText(tableToMarkdown(headers, rows))) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }
   };
 
   const download = () => {
@@ -275,11 +276,11 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  const copy = () => {
-    navigator.clipboard?.writeText(code).then(() => {
+  const copy = async () => {
+    if (await copyText(code)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }
   };
 
   const block = (

@@ -1,10 +1,5 @@
-// The real agent skill registry (bundled + user + project + learned) the local
-// agent loaded — name, description, source, enabled state. Distinct from the
-// SkillsPanel's hard-coded prompt starters; this reflects what the model can
-// actually invoke via the Skill tool, plus management actions (toggle, create,
-// upload) that mirror WorkBuddy's skill UX.
-
-import { useCallback, useEffect, useState } from "react";
+// The server's installed slash-command skills, including persistent enabled state.
+import { useCallback, useEffect, useRef, useState } from "react";
 import { agent } from "../lib/ws";
 
 export interface AgentSkill {
@@ -14,76 +9,55 @@ export interface AgentSkill {
   hidden: boolean;
   modelInvocable: boolean;
   enabled: boolean;
+  removable: boolean;
+  notes: string[];
 }
 
-export function useAgentSkills(): {
-  skills: AgentSkill[];
-  loading: boolean;
-  refresh: () => void;
-  toggle: (name: string, enabled: boolean) => Promise<void>;
-  create: (description: string) => Promise<{ name: string } | null>;
-  upload: (content: string) => Promise<{ name: string } | null>;
-} {
+export function useAgentSkills() {
   const [skills, setSkills] = useState<AgentSkill[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const fetchSkills = useCallback(async () => {
+  const [error, setError] = useState<string | null>(null);
+  const generation = useRef(0);
+  const refresh = useCallback(async () => {
+    const current = ++generation.current;
     setLoading(true);
+    setError(null);
     try {
-      const r = await agent.request<undefined, { skills?: AgentSkill[] }>("skills.list");
-      setSkills(r?.skills ?? []);
-    } catch {
-      /* best-effort */
+      const r = await agent.request<undefined, { skills: AgentSkill[]; errors?: string[] }>("skills.list");
+      if (current !== generation.current) return;
+      if (!Array.isArray(r.skills)) throw new Error("Skill registry is unavailable. Update the local agent runtime.");
+      setSkills(r.skills);
+      if (r.errors?.length) setError(r.errors.join(" · "));
+    } catch (err) {
+      if (current === generation.current) setError(err instanceof Error ? err.message : "Couldn't load skills");
     } finally {
-      setLoading(false);
+      if (current === generation.current) setLoading(false);
     }
   }, []);
-
-  const toggle = useCallback(
-    async (name: string, enabled: boolean) => {
-      // Optimistic flip, then persist + refetch.
-      setSkills((prev) => prev.map((s) => (s.name === name ? { ...s, enabled } : s)));
-      try {
-        await agent.request<{ name: string; enabled: boolean }, unknown>("skills.toggle", { name, enabled });
-      } catch {
-        void fetchSkills(); // revert to server truth on failure
-      }
-    },
-    [fetchSkills],
-  );
-
-  const create = useCallback(
-    async (description: string) => {
-      try {
-        const r = await agent.request<{ description: string }, { name?: string }>("skills.create", { description });
-        await fetchSkills();
-        return r?.name ? { name: r.name } : null;
-      } catch {
-        return null;
-      }
-    },
-    [fetchSkills],
-  );
-
-  const upload = useCallback(
-    async (content: string) => {
-      try {
-        const r = await agent.request<{ content: string }, { name?: string }>("skills.upload", { content });
-        await fetchSkills();
-        return r?.name ? { name: r.name } : null;
-      } catch {
-        return null;
-      }
-    },
-    [fetchSkills],
-  );
-
+  const upload = useCallback(async (content: string) => {
+    setError(null);
+    try {
+      const result = await agent.request<{ content: string }, { name: string }>("skills.upload", { content });
+      await refresh();
+      return result;
+    } catch (err) { setError(err instanceof Error ? err.message : "Import failed"); return null; }
+  }, [refresh]);
+  const toggle = useCallback(async (name: string, enabled: boolean) => {
+    try {
+      await agent.request("skills.toggle", { name, enabled });
+      await refresh();
+    } catch (err) { setError(err instanceof Error ? err.message : "Update failed"); }
+  }, [refresh]);
+  const remove = useCallback(async (name: string) => {
+    try {
+      await agent.request("skills.remove", { name });
+      await refresh();
+    } catch (err) { setError(err instanceof Error ? err.message : "Remove failed"); }
+  }, [refresh]);
   useEffect(() => {
-    const off = agent.onState((s) => {
-      if (s === "open") void fetchSkills();
-    });
-    return off;
-  }, [fetchSkills]);
-
-  return { skills, loading, refresh: fetchSkills, toggle, create, upload };
+    const off = agent.onState((state) => { if (state === "open") void refresh(); });
+    const invalidate = () => { generation.current++; };
+    return () => { off(); invalidate(); };
+  }, [refresh]);
+  return { skills, loading, error, refresh, toggle, upload, remove };
 }
