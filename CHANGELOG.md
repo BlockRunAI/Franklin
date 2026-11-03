@@ -1,5 +1,28 @@
 # Changelog
 
+## Franklin Agent 3.49.18 — the Desktop beta.9 work lands in the agent
+
+This release merges the Desktop 0.2.0 beta line back into the agent, so
+`franklin serve` and the npm package carry the same runtime the Desktop
+betas ship.
+
+- **Images reach the model.** The serve socket accepts one inline PNG, JPEG,
+  WebP or GIF (up to 4 MB) per message, validates its bytes and format, and
+  passes it to the model as a real image block. Paths and URLs are refused
+  before any model is called. An image-only message gets a default prompt,
+  `/retry` resends the image, and the turn routes to a vision-capable model.
+  Attached images are stripped from the session log above 50 KB, as tool
+  images already were.
+- **The grounding check knows when the user supplied an image.** Describing
+  or transcribing an attached image no longer triggers a demand for a tool
+  call. Live prices and news still need evidence.
+- **Agent questions accept typed answers** in the Desktop and browser UI, not
+  only the listed choices.
+- **Skills**: local skills can be imported, toggled and removed from Desktop,
+  and the skills list stays responsive while a file search runs.
+- **Glob** normalizes home-directory aliases the same way on macOS, Linux
+  and Windows, and sensitive-path checks cover them.
+
 ## Franklin Agent 3.49.17 — the model pickers list each provider's newest models first
 
 The Desktop and browser model dropdowns used to sort a provider's models
