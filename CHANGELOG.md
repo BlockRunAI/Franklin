@@ -1,5 +1,20 @@
 # Changelog
 
+## Franklin Agent 3.49.21 — the panel never puts its token in a URL after launch
+
+- **Live updates send the panel token as a header.** The panel page used
+  EventSource for its live status stream, and EventSource cannot set
+  headers, so the token rode in `/api/events?token=` and could land in
+  browser history. The page now reads the stream through the same fetch
+  wrapper as every other call, reconnecting every 3 seconds as before. No
+  panel route accepts a token in the query string any more. The launch link
+  printed in the terminal still carries it once.
+- **A malformed session id is a 400.** `/api/sessions/:id` with a broken
+  `%` escape answered 500; it now answers 400.
+- **Removed the unused SSE translator.** `src/proxy/sse-translator.ts` was
+  never wired into the proxy, which passes the gateway's stream through and
+  reads usage from it directly. No behaviour changes.
+
 ## Franklin Agent 3.49.20 — the panel opens only from its own link, and ~/.blockrun is owner-only
 
 Security fix. Upgrade if more than one person uses your machine, or if you
