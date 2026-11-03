@@ -15,6 +15,7 @@ interface TranslatorState {
   thinkingBlockActive: boolean;
   textBlockActive: boolean;
   messageStarted: boolean;
+  stopReasonEmitted: boolean;
   inputTokens: number;
   outputTokens: number;
 }
@@ -38,6 +39,7 @@ export class SSETranslator {
       thinkingBlockActive: false,
       textBlockActive: false,
       messageStarted: false,
+      stopReasonEmitted: false,
       inputTokens: 0,
       outputTokens: 0,
     };
@@ -69,13 +71,17 @@ export class SSETranslator {
     for (const event of events) {
       if (event.data === '[DONE]') {
         translated.push(...this.closeActiveBlocks());
-        translated.push(
-          this.formatSSE('message_delta', {
-            type: 'message_delta',
-            delta: { stop_reason: 'end_turn', stop_sequence: null },
-            usage: { output_tokens: this.state.outputTokens },
-          })
-        );
+        // A finish_reason chunk already emitted the real stop_reason (e.g.
+        // tool_use); a second message_delta here would overwrite it.
+        if (!this.state.stopReasonEmitted) {
+          translated.push(
+            this.formatSSE('message_delta', {
+              type: 'message_delta',
+              delta: { stop_reason: 'end_turn', stop_sequence: null },
+              usage: { output_tokens: this.state.outputTokens },
+            })
+          );
+        }
         translated.push(this.formatSSE('message_stop', { type: 'message_stop' }));
         continue;
       }
@@ -230,6 +236,7 @@ export class SSETranslator {
             : choice.finish_reason === 'stop'
               ? 'end_turn'
               : choice.finish_reason;
+        this.state.stopReasonEmitted = true;
         translated.push(
           this.formatSSE('message_delta', {
             type: 'message_delta',
