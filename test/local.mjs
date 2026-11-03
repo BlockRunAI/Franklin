@@ -430,6 +430,9 @@ test('panel: wallet secret and state-changing routes need the page token (no-Ori
   }
 });
 
+// Proxy tests pass their own token so they never create ~/.blockrun/proxy-token.
+const TEST_PROXY_TOKEN = 'a'.repeat(64);
+
 test('proxy server handles OPTIONS and local model switching without backend calls', async () => {
   const originalHome = process.env.HOME;
   const fakeHome = mkdtempSync(join(tmpdir(), 'rc-proxy-home-'));
@@ -440,6 +443,7 @@ test('proxy server handles OPTIONS and local model switching without backend cal
     process.env.HOME = fakeHome;
     const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
     server = createProxy({
+      authToken: TEST_PROXY_TOKEN,
       port: 0,
       apiUrl: 'http://127.0.0.1:9',
       chain: 'base',
@@ -453,7 +457,7 @@ test('proxy server handles OPTIONS and local model switching without backend cal
 
     const switchRes = await fetch(`http://127.0.0.1:${port}/api/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TEST_PROXY_TOKEN}` },
       body: JSON.stringify({
         messages: [{ role: 'user', content: 'use sonnet' }],
       }),
@@ -468,7 +472,7 @@ test('proxy server handles OPTIONS and local model switching without backend cal
 
     const suffixSwitchRes = await fetch(`http://127.0.0.1:${port}/api/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TEST_PROXY_TOKEN}` },
       body: JSON.stringify({
         messages: [{ role: 'user', content: 'use k3' }],
       }),
@@ -504,7 +508,7 @@ test('proxy server handles OPTIONS and local model switching without backend cal
     for (const [shortcut, expectedModel] of Object.entries(freeSwitches)) {
       const freeSwitchRes = await fetch(`http://127.0.0.1:${port}/api/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TEST_PROXY_TOKEN}` },
         body: JSON.stringify({
           messages: [{ role: 'user', content: `use ${shortcut}` }],
         }),
@@ -556,6 +560,7 @@ test('proxy Auto routes through the shared portfolio before forwarding', async (
     const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
     const { routeRequest } = await import(`${routerUrl.href}?t=${Date.now()}`);
     proxy = createProxy({
+      authToken: TEST_PROXY_TOKEN,
       port: 0,
       apiUrl: `http://127.0.0.1:${backendPort}`,
       chain: 'base',
@@ -576,7 +581,7 @@ test('proxy Auto routes through the shared portfolio before forwarding', async (
 
     const response = await fetch(`http://127.0.0.1:${proxyPort}/api/v1/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TEST_PROXY_TOKEN}` },
       body: JSON.stringify({
         model: 'blockrun/auto',
         system: systemPrompt,
@@ -631,6 +636,7 @@ test('proxy Auto honors tool_choice none as a hard no-tool constraint', async ()
     const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
     const { routeRequest } = await import(`${routerUrl.href}?t=${Date.now()}`);
     proxy = createProxy({
+      authToken: TEST_PROXY_TOKEN,
       port: 0,
       apiUrl: `http://127.0.0.1:${backendPort}`,
       chain: 'base',
@@ -648,7 +654,7 @@ test('proxy Auto honors tool_choice none as a hard no-tool constraint', async ()
 
     const response = await fetch(`http://127.0.0.1:${proxyPort}/api/v1/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TEST_PROXY_TOKEN}` },
       body: JSON.stringify({
         model: 'blockrun/auto',
         messages: [{ role: 'user', content: prompt }],
@@ -732,6 +738,7 @@ test('proxy server falls back when the paid BlockRun request times out', async (
     const backendPort = await listenOnRandomPort(backend);
     const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
     proxy = createProxy({
+      authToken: TEST_PROXY_TOKEN,
       port: 0,
       apiUrl: `http://127.0.0.1:${backendPort}`,
       chain: 'base',
@@ -743,7 +750,7 @@ test('proxy server falls back when the paid BlockRun request times out', async (
 
     const response = await fetch(`http://127.0.0.1:${proxyPort}/api/v1/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TEST_PROXY_TOKEN}` },
       body: JSON.stringify({
         model: 'slow/model',
         messages: [{ role: 'user', content: 'hello' }],
@@ -12750,53 +12757,156 @@ test('panel page parses the SSE stream it reads through fetch, across chunk spli
   assert.equal(status.textContent, 'offline');
 });
 
-test('proxy base URL is 127.0.0.1 and old localhost settings from franklin init are migrated', async () => {
+test('proxy base URL is 127.0.0.1 and old franklin init settings are migrated to it and the proxy token', async () => {
   const fs = await import('node:fs');
   const os = await import('node:os');
   const path = await import('node:path');
-  const { proxyBaseUrl, migrateClaudeSettingsBaseUrl, PROXY_AUTH_PLACEHOLDER } = await import('../dist/proxy/claude-settings.js');
+  const { proxyBaseUrl, migrateClaudeSettings, PROXY_AUTH_PLACEHOLDER } = await import('../dist/proxy/claude-settings.js');
   assert.equal(proxyBaseUrl(8402), 'http://127.0.0.1:8402/api');
+  const TOKEN = 'b'.repeat(64);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-claude-settings-'));
   const file = path.join(dir, 'settings.json');
-  const write = (obj, nl = '\n') => fs.writeFileSync(file, JSON.stringify(obj, null, 2) + nl);
+  const write = (obj, nl = '\n') => { fs.writeFileSync(file, JSON.stringify(obj, null, 2) + nl, { mode: 0o644 }); fs.chmodSync(file, 0o644); };
   const read = () => JSON.parse(fs.readFileSync(file, 'utf8'));
   try {
-    // Ours, as an older `franklin init` wrote it: rewritten, everything else kept.
+    // Ours, as an older `franklin init` wrote it: both fields fixed, the rest kept.
     write({ model: 'x', env: { ANTHROPIC_BASE_URL: 'http://localhost:8402/api', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER, OTHER: '1' } });
-    assert.equal(migrateClaudeSettingsBaseUrl(file), true);
+    assert.equal(migrateClaudeSettings(TOKEN, file), true);
     const after = read();
     assert.equal(after.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:8402/api');
+    assert.equal(after.env.ANTHROPIC_AUTH_TOKEN, TOKEN);
     assert.equal(after.env.OTHER, '1');
     assert.equal(after.model, 'x');
     assert.ok(fs.readFileSync(file, 'utf8').endsWith('}\n'), 'keeps the trailing newline');
-    assert.equal(migrateClaudeSettingsBaseUrl(file), false, 'second run is a no-op');
-    // Custom port carries over.
-    write({ env: { ANTHROPIC_BASE_URL: 'http://localhost:9001/api/', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER } });
-    assert.equal(migrateClaudeSettingsBaseUrl(file), true);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'settings now hold the token');
+    assert.equal(migrateClaudeSettings(TOKEN, file), false, 'second run is a no-op');
+    // 3.49.22 already fixed the URL: only the token changes. Custom port kept.
+    write({ env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9001/api', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER } });
+    assert.equal(migrateClaudeSettings(TOKEN, file), true);
+    assert.deepEqual(read().env, { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9001/api', ANTHROPIC_AUTH_TOKEN: TOKEN });
+    // Our token already, but a localhost URL: URL fixed.
+    write({ env: { ANTHROPIC_BASE_URL: 'http://localhost:9001/api/', ANTHROPIC_AUTH_TOKEN: TOKEN } });
+    assert.equal(migrateClaudeSettings(TOKEN, file), true);
     assert.equal(read().env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:9001/api');
-    // Not ours, or not the exact form init wrote: untouched, byte for byte.
+    // Not ours, or nothing to do: untouched, byte for byte.
     for (const env of [
       { ANTHROPIC_BASE_URL: 'http://localhost:8402/api', ANTHROPIC_AUTH_TOKEN: 'sk-users-own' },
-      { ANTHROPIC_BASE_URL: 'http://localhost:8402/v1', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER },
-      { ANTHROPIC_BASE_URL: 'https://api.example.com', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER },
-      { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8402/api', ANTHROPIC_AUTH_TOKEN: PROXY_AUTH_PLACEHOLDER },
+      { ANTHROPIC_BASE_URL: 'http://localhost:8402/api', ANTHROPIC_AUTH_TOKEN: 'c'.repeat(64) },
+      { ANTHROPIC_BASE_URL: 'https://api.example.com' },
+      { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8402/api', ANTHROPIC_AUTH_TOKEN: TOKEN },
     ]) {
       write({ env }, '');
       const before = fs.readFileSync(file, 'utf8');
-      assert.equal(migrateClaudeSettingsBaseUrl(file), false, JSON.stringify(env));
+      assert.equal(migrateClaudeSettings(TOKEN, file), false, JSON.stringify(env));
       assert.equal(fs.readFileSync(file, 'utf8'), before);
     }
     fs.writeFileSync(file, '{ not json');
-    assert.equal(migrateClaudeSettingsBaseUrl(file), false);
+    assert.equal(migrateClaudeSettings(TOKEN, file), false);
     assert.equal(fs.readFileSync(file, 'utf8'), '{ not json');
-    assert.equal(migrateClaudeSettingsBaseUrl(path.join(dir, 'missing.json')), false);
+    assert.equal(migrateClaudeSettings(TOKEN, path.join(dir, 'missing.json')), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  // init, proxy and daemon never print or write a localhost proxy URL.
+  // init, proxy and daemon never print or write a localhost proxy URL or the old placeholder.
   for (const f of ['init.ts', 'proxy.ts', 'daemon.ts']) {
     const src = readFileSync(new URL(`../src/commands/${f}`, import.meta.url), 'utf8');
     assert.doesNotMatch(src, /localhost:\$\{port\}/, `${f} must use proxyBaseUrl`);
+    assert.doesNotMatch(src, /x402-proxy-handles-auth/, `${f} must use the real proxy token`);
+  }
+});
+
+test('proxy token file is owner-only, stable, and replaced when corrupt', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { getOrCreateProxyToken, hasProxyToken } = await import('../dist/proxy/token.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-proxy-token-'));
+  const file = path.join(dir, 'proxy-token');
+  try {
+    const t1 = getOrCreateProxyToken(file);
+    assert.match(t1, /^[0-9a-f]{64}$/);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    assert.equal(getOrCreateProxyToken(file), t1, 'stable across calls');
+    fs.writeFileSync(file, 'garbage');
+    const t2 = getOrCreateProxyToken(file);
+    assert.match(t2, /^[0-9a-f]{64}$/);
+    assert.notEqual(t2, t1);
+    assert.equal(hasProxyToken({ authorization: `Bearer ${t2}` }, t2), true);
+    assert.equal(hasProxyToken({ authorization: `bearer  ${t2}` }, t2), true);
+    assert.equal(hasProxyToken({ 'x-api-key': t2 }, t2), true);
+    assert.equal(hasProxyToken({ authorization: t2 }, t2), false, 'needs the Bearer scheme');
+    assert.equal(hasProxyToken({ authorization: `Bearer ${t1}` }, t2), false);
+    assert.equal(hasProxyToken({ authorization: 'Bearer x402-proxy-handles-auth' }, t2), false);
+    assert.equal(hasProxyToken({ 'x-api-key': t2.slice(1) }, t2), false);
+    assert.equal(hasProxyToken({}, t2), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('proxy refuses requests without its token and never forwards the client credential', async () => {
+  const originalHome = process.env.HOME;
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-proxy-token-'));
+  const proxyUrl = new URL('../dist/proxy/server.js', import.meta.url);
+  const seen = [];
+  const backend = createServer(async (req, res) => {
+    for await (const _ of req) { /* drain */ }
+    seen.push({ authorization: req.headers['authorization'], apiKey: req.headers['x-api-key'] });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'x', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }));
+  });
+  let proxy;
+  try {
+    process.env.HOME = fakeHome;
+    const backendPort = await listenOnRandomPort(backend);
+    const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
+    proxy = createProxy({
+      authToken: TEST_PROXY_TOKEN,
+      port: 0,
+      apiUrl: `http://127.0.0.1:${backendPort}`,
+      chain: 'base',
+      modelOverride: 'zai/glm-5.1',
+      fallbackEnabled: false,
+    });
+    const port = await listenOnRandomPort(proxy);
+    const body = JSON.stringify({ model: 'zai/glm-5.1', messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 });
+    const post = (headers) => fetch(`http://127.0.0.1:${port}/api/v1/messages`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body,
+    });
+    for (const headers of [
+      {},
+      { Authorization: 'Bearer x402-proxy-handles-auth' },
+      { Authorization: `Bearer ${'0'.repeat(64)}` },
+      { 'x-api-key': 'wrong' },
+      { Origin: 'http://localhost:5173' }, // a page on a local dev server
+    ]) {
+      const res = await post(headers);
+      assert.equal(res.status, 401, `must refuse ${JSON.stringify(headers)}`);
+      assert.equal((await res.json()).error.type, 'authentication_error');
+    }
+    assert.equal(seen.length, 0, 'a refused request never reaches the gateway');
+    // Health stays open for status checks.
+    const health = await fetch(`http://127.0.0.1:${port}/api/health`);
+    assert.notEqual(health.status, 401);
+    // With the token, as Claude Code sends it and as an API-key client sends it.
+    for (const headers of [{ Authorization: `Bearer ${TEST_PROXY_TOKEN}` }, { 'x-api-key': TEST_PROXY_TOKEN }]) {
+      const res = await post(headers);
+      assert.equal(res.status, 200, `must accept ${Object.keys(headers)[0]}`);
+      await res.text();
+    }
+    const forwarded = seen.filter((h) => h.authorization !== undefined || h.apiKey !== undefined);
+    for (const h of seen) {
+      assert.notEqual(h.authorization, `Bearer ${TEST_PROXY_TOKEN}`, 'the proxy token must not reach the gateway');
+      assert.notEqual(h.apiKey, TEST_PROXY_TOKEN, 'the proxy token must not reach the gateway');
+    }
+    assert.ok(seen.length >= 2, `both accepted requests reached the backend (saw ${seen.length}, with creds ${forwarded.length})`);
+  } finally {
+    if (proxy) { proxy.closeAllConnections?.(); await new Promise((resolve) => proxy.close(() => resolve())); }
+    backend.closeAllConnections?.();
+    await new Promise((resolve) => backend.close(() => resolve()));
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    rmSync(fakeHome, { recursive: true, force: true });
   }
 });
 

@@ -37,6 +37,7 @@ import { estimateCost } from '../pricing.js';
 import { freeVisionModel, isFreeModelId } from '../free-models.js';
 import { getMaxOutputTokens } from '../agent/optimize.js';
 import { VERSION } from '../config.js';
+import { getOrCreateProxyToken, hasProxyToken } from './token.js';
 
 // User-Agent for backend requests
 const USER_AGENT = `franklin/${VERSION}`;
@@ -57,6 +58,9 @@ export interface ProxyOptions {
   // were timing out at 40ms long after the test process exited).
   requestTimeoutMs?: number;
   streamTimeoutMs?: number;
+  // Access token clients must send (see proxy/token.ts). Defaults to the
+  // persistent ~/.blockrun/proxy-token; tests pass their own.
+  authToken?: string;
 }
 
 // Logging here goes through the unified logger introduced in 3.15.11
@@ -273,6 +277,7 @@ export function createProxy(options: ProxyOptions): http.Server {
   // process.env for the rest of the process — and for any sibling proxy.
   const effectiveRequestTimeoutMs = options.requestTimeoutMs ?? getProxyRequestTimeoutMs();
   const effectiveStreamTimeoutMs = options.streamTimeoutMs ?? getProxyStreamTimeoutMs();
+  const authToken = options.authToken ?? getOrCreateProxyToken();
 
   let baseWallet: { privateKey: string; address: string } | null = null;
   let solanaWallet: { privateKey: string; address: string } | null = null;
@@ -309,6 +314,23 @@ export function createProxy(options: ProxyOptions): http.Server {
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
       res.end();
+      return;
+    }
+
+    // Every request that can reach the gateway, and so spend from the
+    // wallet, must carry the proxy token. Loopback alone is not enough:
+    // other accounts and local web pages can reach 127.0.0.1 too.
+    const pathOnly = (req.url || '').replace(/^\/api/, '').split('?')[0];
+    if (pathOnly !== '/health' && !hasProxyToken(req.headers, authToken)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'authentication_error',
+          message: 'Franklin proxy: missing or wrong token. Run `franklin init` to configure Claude Code, ' +
+            'or set ANTHROPIC_AUTH_TOKEN to the contents of ~/.blockrun/proxy-token.',
+        },
+      }));
       return;
     }
 
@@ -522,10 +544,15 @@ export function createProxy(options: ProxyOptions): http.Server {
           'X-Franklin-Version': X_FRANKLIN_VERSION,
         };
         for (const [key, value] of Object.entries(req.headers)) {
+          const lower = key.toLowerCase();
           if (
-            key.toLowerCase() !== 'host' &&
-            key.toLowerCase() !== 'content-length' &&
-            key.toLowerCase() !== 'user-agent' && // Don't forward client's user-agent
+            lower !== 'host' &&
+            lower !== 'content-length' &&
+            lower !== 'user-agent' && // Don't forward client's user-agent
+            // The client's credential is the local proxy token: never send
+            // it upstream. applyGatewayAuth adds the real gateway auth.
+            lower !== 'authorization' &&
+            lower !== 'x-api-key' &&
             value
           ) {
             headers[key] = Array.isArray(value) ? value[0] : value;

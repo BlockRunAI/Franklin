@@ -10,7 +10,8 @@ import { loadChain, CHAIN_LABELS, DEFAULT_PROXY_PORT} from '../config.js';
 import { gatewayBase } from '../payments/auth-mode.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
-import { proxyBaseUrl, migrateClaudeSettingsBaseUrl, CLAUDE_SETTINGS_FILE } from '../proxy/claude-settings.js';
+import { proxyBaseUrl, migrateClaudeSettings, CLAUDE_SETTINGS_FILE } from '../proxy/claude-settings.js';
+import { getOrCreateProxyToken } from '../proxy/token.js';
 
 interface ProxyOptions {
   port?: string;
@@ -117,9 +118,11 @@ function launchProxy(
   server.listen(port, '127.0.0.1', () => {
     console.log(chalk.green(`✓ Proxy running on port ${port}`));
     // `franklin daemon` and the LaunchAgent both start here, so this one call
-    // fixes a localhost base URL that an older `franklin init` wrote.
-    if (migrateClaudeSettingsBaseUrl()) {
-      console.log(chalk.yellow(`  Updated ANTHROPIC_BASE_URL in ${CLAUDE_SETTINGS_FILE} to 127.0.0.1. Restart Claude Code to pick it up.`));
+    // updates the env block an older `franklin init` wrote (127.0.0.1 base
+    // URL, real proxy token in place of the old placeholder).
+    const token = getOrCreateProxyToken();
+    if (migrateClaudeSettings(token)) {
+      console.log(chalk.yellow(`  Updated Franklin's settings in ${CLAUDE_SETTINGS_FILE} (127.0.0.1 address, proxy token). Restart Claude Code to pick them up.`));
     }
     console.log(chalk.dim(`  Usage tracking: ~/.blockrun/franklin-stats.json`));
     if (debug) console.log(chalk.dim(`  Debug log:      ~/.blockrun/franklin-debug.log`));
@@ -130,7 +133,7 @@ function launchProxy(
       chalk.bold(`  export ANTHROPIC_BASE_URL=${proxyBaseUrl(port)}`)
     );
     console.log(
-      chalk.bold(`  export ANTHROPIC_AUTH_TOKEN=x402-proxy-handles-auth`)
+      chalk.bold(`  export ANTHROPIC_AUTH_TOKEN=$(cat ~/.blockrun/proxy-token)`)
     );
     console.log(`\nThen run ${chalk.bold('claude')} in another terminal.`);
   });
