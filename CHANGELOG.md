@@ -1,5 +1,31 @@
 # Changelog
 
+## Franklin Agent 3.49.23 — the proxy only spends for clients that hold its token
+
+Security fix. Upgrade if you run `franklin proxy`, `franklin daemon` or
+`franklin init`.
+
+- **The proxy needs a token.** `franklin proxy` signs a USDC payment from
+  your wallet for every request it forwards, and until now it accepted any
+  request that reached 127.0.0.1. Any other account on the machine, any
+  local program, and any web page served from a local dev server could
+  spend from your wallet through it. The proxy now refuses requests without
+  its token with a 401. The token is created once in
+  `~/.blockrun/proxy-token` (owner-only) and is accepted as
+  `Authorization: Bearer <token>` or `x-api-key: <token>`. `/health` stays
+  open.
+- **Claude Code is set up for you.** `franklin init` writes the token as
+  `ANTHROPIC_AUTH_TOKEN`. Settings written by an older `franklin init`
+  carry the old placeholder `x402-proxy-handles-auth`; the next proxy start
+  (directly, through `franklin daemon`, or from the login item) replaces it
+  with the token. `~/.claude/settings.json` is set to owner-only because it
+  now holds the token. Restart Claude Code afterwards.
+- **If you set the variables in your shell**, change
+  `ANTHROPIC_AUTH_TOKEN` to `$(cat ~/.blockrun/proxy-token)`. `franklin
+  proxy` prints the line to copy.
+- The proxy no longer forwards the client's own `Authorization` or
+  `x-api-key` header to the gateway, so the token never leaves the machine.
+
 ## Franklin Agent 3.49.22 — Claude Code reaches the proxy at 127.0.0.1, not localhost
 
 Security fix. Upgrade if you route Claude Code or another Anthropic-compatible
