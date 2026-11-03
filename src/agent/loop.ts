@@ -485,6 +485,24 @@ export function stripLargeImageData(message: Dialogue): Dialogue {
   // in via the loop's outcome-building path. Runtime structure is what
   // matters here; we only mutate when we positively identify the shape.
   const newContent = (message.content as unknown[]).map((part) => {
+    // Images the user attached directly (Desktop paste / file picker) sit at
+    // the top level of the user message, not inside a tool_result. They have
+    // no source path to re-Read, so the placeholder asks for a re-attach.
+    if (
+      typeof part === 'object' &&
+      part !== null &&
+      (part as { type?: string }).type === 'image' &&
+      (part as ToolResultImageBlock).source?.type === 'base64' &&
+      ((part as ToolResultImageBlock).source.data?.length ?? 0) > SESSION_IMAGE_STRIP_THRESHOLD
+    ) {
+      mutated = true;
+      const sz = (part as ToolResultImageBlock).source.data.length;
+      return {
+        type: 'text',
+        text: `<user-attached image stripped from session log: ${(sz / 1024).toFixed(1)} KB base64. ` +
+              `Ask the user to attach it again if you need to see it.>`,
+      } as ToolResultTextBlock;
+    }
     if (
       typeof part === 'object' &&
       part !== null &&
