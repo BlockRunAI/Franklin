@@ -216,19 +216,9 @@ Do NOT check access before acting. Do NOT explain what you tried. Just deliver, 
 }
 
 function getWalletKnowledgeSection(): string {
-  // Read the panel URL persisted by startPanelBackground (start.ts) so we
-  // surface the actual bound port — the panel auto-increments past 3100
-  // when the default is taken (e.g. a second franklin running). Falls back
-  // to the canonical default when the file is missing (panel disabled or
-  // never started this session).
-  let panelUrl = 'http://localhost:3100';
-  try {
-    const persisted = fs.readFileSync(path.join(BLOCKRUN_DIR, 'panel-url'), 'utf8').trim();
-    if (persisted.startsWith('http://') || persisted.startsWith('https://')) {
-      panelUrl = persisted;
-    }
-  } catch { /* fall through to default */ }
-
+  // The panel URL is deliberately not in this prompt: it carries the panel's
+  // access token, which must not reach a model provider or a transcript.
+  // `franklin panel --open wallet` reads it from the 0600 panel-url file.
   return `# Wallet Storage (answer "where is my wallet" directly — no searching)
 Franklin stores wallet keys in ~/.blockrun/. When the user asks about wallet location, answer from this map — do not grep or scan.
 
@@ -254,25 +244,23 @@ When the user asks about "my wallet" without qualifier, default to Base (it's th
 
 When the user asks about depositing or funding USDC — in any language — do not describe the steps in chat. **Open the panel wallet page directly in their browser** using Bash, then confirm in chat what you opened and which chain is active.
 
-The exact wallet URL for this session:
+Bash command to open it (same on macOS, Linux and Windows; it finds the running panel's port and access link itself):
 
-  ${panelUrl}/#wallet
+  franklin panel --open wallet
 
-Bash command to open it (macOS \`open\`, Linux \`xdg-open\`, Windows \`start\`):
-
-  open ${panelUrl}/#wallet
+If it reports that no panel is running, tell the user to run \`franklin panel\` and open the Wallet tab from there.
 
 That page is where the deposit address, QR code, live balance, chain switcher, and back-up controls all live. The user lands on it instead of you reciting steps.
 
-After running \`open\`:
-- Tell the user one line: "Opened the wallet page — \`${panelUrl}/#wallet\`. Active chain: <base|solana>."
+After running it:
+- Tell the user one line: "Opened the wallet page in your browser. Active chain: <base|solana>."
 - Read the active chain from ~/.blockrun/payment-chain so they know which network to send USDC on.
 - Mention USDC is the only accepted token; ETH/SOL on their own won't settle x402 calls.
 
 Hard rules:
 - Do NOT print the private key in chat. The panel reveals it behind a click.
 - Do NOT invent a \`franklin deposit\` CLI flow — there isn't one; the panel IS the funding surface.
-- Do NOT hand-craft a different localhost port; the URL above tracks the actual bound port (3100 might have been taken; the panel could be on 3101+).
+- Do NOT hand-craft a localhost panel URL or read ~/.blockrun/panel-url: the panel needs its access token, and \`franklin panel --open wallet\` supplies it without showing it to you.
 - If \`open\` fails (e.g. no GUI on a remote box), fall back to giving them the URL as plain text and tell them to paste it into a browser.`;
 }
 

@@ -1393,7 +1393,7 @@ export class ModelClient {
     } catch (err) {
       const msg = (err as Error).message || '';
       if (msg.includes('insufficient') || msg.includes('balance')) {
-        console.error(`[franklin] Insufficient USDC balance. Open http://localhost:3100/#wallet to deposit (or run 'franklin balance').`);
+        console.error(`[franklin] Insufficient USDC balance. Run 'franklin panel --open wallet' to deposit (or 'franklin balance').`);
       } else if (this.debug) {
         console.error('[franklin] Payment error:', msg);
       } else {

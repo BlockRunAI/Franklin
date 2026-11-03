@@ -43,6 +43,26 @@ export const CHAIN_LABELS: Record<Chain, string> = {
 export const BLOCKRUN_DIR = path.join(os.homedir(), '.blockrun');
 export const CHAIN_FILE = path.join(BLOCKRUN_DIR, 'payment-chain');
 
+/**
+ * ~/.blockrun holds session transcripts, the LLM audit log, cost and trade
+ * ledgers, and wallet keys. Created under the default umask it is 755 with
+ * 644 files, so any other account on the machine can read all of it.
+ * Owner-only, like ~/.ssh. Runs once per CLI start; never touches a
+ * directory owned by someone else.
+ */
+export function hardenBlockrunDir(): void {
+  if (process.platform === 'win32') return;
+  try {
+    const st = fs.statSync(BLOCKRUN_DIR);
+    if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return;
+    if ((st.mode & 0o077) !== 0) fs.chmodSync(BLOCKRUN_DIR, 0o700);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      try { fs.mkdirSync(BLOCKRUN_DIR, { recursive: true, mode: 0o700 }); } catch { /* best-effort */ }
+    }
+  }
+}
+
 export const API_URLS: Record<Chain, string> = {
   base: 'https://blockrun.ai/api',
   solana: 'https://sol.blockrun.ai/api',

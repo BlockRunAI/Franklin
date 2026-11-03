@@ -271,7 +271,7 @@ export async function startCommand(options: StartOptions) {
   // Full wallet address is shown so the user can copy-paste it to fund the wallet.
   console.log(chalk.dim('  Wallet:    ') + (walletAddress || chalk.yellow('not set')));
   console.log(chalk.dim('  Dir:       ') + workDir);
-  console.log(chalk.dim('  Dashboard: ') + (panelUrl ? chalk.cyan(panelUrl) : chalk.cyan('franklin panel') + chalk.dim(' → http://localhost:3100')));
+  console.log(chalk.dim('  Dashboard: ') + (panelUrl ? chalk.cyan(panelUrl) : chalk.cyan('franklin panel')));
   console.log(chalk.dim('  Help:      ') + chalk.cyan('/help'));
   console.log('');
 
@@ -822,7 +822,7 @@ async function runWithBasicUI(
 async function startPanelBackground(startPort: number): Promise<string | undefined> {
   const MAX_ATTEMPTS = 20;
   try {
-    const { createPanelServer } = await import('../panel/server.js');
+    const { createPanelServer, writePanelUrlFile } = await import('../panel/server.js');
     return await new Promise<string | undefined>((resolve) => {
       const tryListen = (port: number, attempt: number) => {
         const server = createPanelServer(port);
@@ -835,17 +835,11 @@ async function startPanelBackground(startPort: number): Promise<string | undefin
         });
         server.listen(port, '127.0.0.1', () => {
           server.unref?.();
-          const url = `http://localhost:${port}`;
-          // Persist the bound URL so the agent context (assembled per-turn)
-          // can point users at /#wallet for funding without baking in the
-          // 3100 default — the panel auto-increments past EADDRINUSE.
-          // Best-effort write: a stale file from a crashed run is harmless,
-          // since the user just sees a dead link.
-          try {
-            fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
-            fs.writeFileSync(path.join(BLOCKRUN_DIR, 'panel-url'), url, 'utf8');
-          } catch { /* best-effort */ }
-          resolve(url);
+          // Persist the launch URL (0600, token included) so the agent's
+          // `franklin panel --open wallet` finds the bound port; the panel
+          // auto-increments past EADDRINUSE. A stale file from a crashed run
+          // is harmless: --open probes it and reports no running panel.
+          resolve(writePanelUrlFile(port));
         });
       };
       tryListen(startPort, 0);

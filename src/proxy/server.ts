@@ -1018,7 +1018,7 @@ async function handleBasePayment(
 ): Promise<ProxyAttemptResult> {
   const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
-    throw new Error('402 Payment Required — wallet may need funding. Open http://localhost:3100/#wallet to deposit USDC (or run: franklin balance)');
+    throw new Error('402 Payment Required — wallet may need funding. Run: franklin panel --open wallet to deposit USDC (or: franklin balance)');
   }
 
   const paymentRequired = parsePaymentRequired(paymentHeader);
@@ -1078,7 +1078,7 @@ async function handleSolanaPayment(
 ): Promise<ProxyAttemptResult> {
   const paymentHeader = await extractPaymentHeader(response);
   if (!paymentHeader) {
-    throw new Error('402 Payment Required — wallet may need funding. Open http://localhost:3100/#wallet to deposit USDC (or run: franklin balance)');
+    throw new Error('402 Payment Required — wallet may need funding. Run: franklin panel --open wallet to deposit USDC (or: franklin balance)');
   }
 
   const paymentRequired = parsePaymentRequired(paymentHeader);

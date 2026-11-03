@@ -184,7 +184,7 @@ async function runChecks(): Promise<Check[]> {
           : `$${walletBalance.toFixed(2)}`;
       const balanceRemedy =
         walletBalance < LOW_BALANCE_THRESHOLD
-          ? `Send USDC on ${chain} to ${walletAddress} (or open http://localhost:3100/#wallet)`
+          ? `Send USDC on ${chain} to ${walletAddress} (or run: franklin panel --open wallet)`
           : undefined;
       out.push({
         name: 'USDC balance',

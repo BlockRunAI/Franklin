@@ -298,18 +298,19 @@ test('panel HTML wires Calls tab safely (deep link + recording URL escaping)', a
 
 test('panel server serves dashboard HTML and stats JSON', async () => {
   const panelUrl = new URL('../dist/panel/server.js', import.meta.url);
-  const { createPanelServer } = await import(`${panelUrl.href}?t=${Date.now()}`);
+  const panelMod = await import(`${panelUrl.href}?t=${Date.now()}`);
+  const { createPanelServer } = panelMod;
   const server = createPanelServer(0);
   const port = await listenOnRandomPort(server);
 
   try {
-    const htmlRes = await fetch(`http://127.0.0.1:${port}/`);
+    const token = await readPanelToken(port, panelMod);
+    const htmlRes = await fetch(`http://127.0.0.1:${port}/?token=${token}`);
     assert.equal(htmlRes.status, 200, `Expected dashboard HTML, got ${htmlRes.status}`);
     const html = await htmlRes.text();
     assert.ok(html.includes('<title>Franklin Agent Panel</title>'), 'Missing panel title in HTML');
     assert.ok(html.includes('Overview'), 'Missing Overview section in HTML');
 
-    const token = /const PANEL_TOKEN = "([0-9a-f]{64})"/.exec(html)[1];
     const statsRes = await fetch(`http://127.0.0.1:${port}/api/stats`, {
       headers: { 'X-Franklin-Panel-Token': token },
     });
@@ -326,7 +327,8 @@ test('panel server serves dashboard HTML and stats JSON', async () => {
 
 test('panel server rejects cross-origin browser requests to spendful phone routes', async () => {
   const panelUrl = new URL('../dist/panel/server.js', import.meta.url);
-  const { createPanelServer } = await import(`${panelUrl.href}?t=${Date.now()}`);
+  const panelMod = await import(`${panelUrl.href}?t=${Date.now()}`);
+  const { createPanelServer } = panelMod;
   const server = createPanelServer(0);
   const port = await listenOnRandomPort(server);
 
@@ -338,7 +340,7 @@ test('panel server rejects cross-origin browser requests to spendful phone route
     assert.equal((await listRes.json()).error, 'forbidden');
 
     // Even with a leaked token, the route's own Origin check still refuses.
-    const token = await readPanelToken(port);
+    const token = await readPanelToken(port, panelMod);
     const tokenRes = await fetch(`http://127.0.0.1:${port}/api/phone/numbers`, {
       headers: { Origin: 'https://evil.example', 'X-Franklin-Panel-Token': token },
     });
@@ -360,22 +362,24 @@ test('panel server rejects cross-origin browser requests to spendful phone route
   }
 });
 
-// The panel page embeds a per-process token that its fetch wrapper sends back.
-async function readPanelToken(port) {
-  const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
-  const m = /const PANEL_TOKEN = "([0-9a-f]{64})"/.exec(html);
-  assert.ok(m, 'panel HTML must embed the token');
-  return m[1];
+// The panel's per-process token comes from its launch URL (the one the CLI
+// prints); the page served at /?token= embeds it for its fetch wrapper.
+async function readPanelToken(port, panelMod) {
+  const token = new URL(panelMod.getPanelLaunchUrl(port)).searchParams.get('token');
+  const html = await (await fetch(`http://127.0.0.1:${port}/?token=${token}`)).text();
+  assert.ok(html.includes(`const PANEL_TOKEN = "${token}"`), 'panel HTML must embed the token');
+  return token;
 }
 
 test('panel server allows same-origin browser requests to guarded routes', async () => {
   const panelUrl = new URL('../dist/panel/server.js', import.meta.url);
-  const { createPanelServer } = await import(`${panelUrl.href}?t=${Date.now()}`);
+  const panelMod = await import(`${panelUrl.href}?t=${Date.now()}`);
+  const { createPanelServer } = panelMod;
   const server = createPanelServer(0);
   const port = await listenOnRandomPort(server);
 
   try {
-    const token = await readPanelToken(port);
+    const token = await readPanelToken(port, panelMod);
     const res = await fetch(`http://127.0.0.1:${port}/api/phone/numbers/renew`, {
       method: 'POST',
       headers: {
@@ -396,7 +400,8 @@ test('panel server allows same-origin browser requests to guarded routes', async
 
 test('panel: wallet secret and state-changing routes need the page token (no-Origin SSRF shape)', async () => {
   const panelUrl = new URL('../dist/panel/server.js', import.meta.url);
-  const { createPanelServer } = await import(`${panelUrl.href}?t=${Date.now()}`);
+  const panelMod = await import(`${panelUrl.href}?t=${Date.now()}`);
+  const { createPanelServer } = panelMod;
   const server = createPanelServer(0);
   const port = await listenOnRandomPort(server);
   try {
@@ -415,7 +420,7 @@ test('panel: wallet secret and state-changing routes need the page token (no-Ori
     assert.equal(wrong.status, 403, 'a wrong token must be refused');
     // Read-only routes need the token too (GHSA-jx74-262x-94p3 follow-up).
     assert.equal((await fetch(`http://localhost:${port}/api/stats`)).status, 403);
-    const token = await readPanelToken(port);
+    const token = await readPanelToken(port, panelMod);
     assert.equal((await fetch(`http://127.0.0.1:${port}/api/stats`, {
       headers: { 'X-Franklin-Panel-Token': token },
     })).status, 200);
@@ -8683,15 +8688,12 @@ async function withPanelServer(fn) {
 // keep-alive sockets in its pool past the test's lifetime. agent:false +
 // Connection: close gives a fresh socket per call that closes cleanly.
 // Every /api/* route needs the per-process panel token (GHSA-jx74-262x-94p3),
-// so read it off the served page once per port. Pass `token: false` to send
+// so take it from the launch URL. Pass `token: false` to send
 // a request without it.
-const panelTokens = new Map();
 async function panelToken(port) {
-  if (!panelTokens.has(port)) {
-    const page = (await panelRequest(port, '/', { token: false })).text();
-    panelTokens.set(port, /const PANEL_TOKEN = "([0-9a-f]{64})"/.exec(page)[1]);
-  }
-  return panelTokens.get(port);
+  // Same module instance withPanelServer imported, so the same token.
+  const { getPanelLaunchUrl } = await import(new URL('../dist/panel/server.js', import.meta.url).href);
+  return new URL(getPanelLaunchUrl(port)).searchParams.get('token');
 }
 
 async function panelRequest(port, path, opts = {}) {
@@ -8901,9 +8903,7 @@ test('panel /api/tasks/:runId/cancel: rejects already-terminal task; 404 unknown
       workingDir: '/tmp', status: 'succeeded', createdAt: 1, endedAt: 2,
     });
 
-    const page = (await panelRequest(port, '/')).text();
-    const token = /const PANEL_TOKEN = "([0-9a-f]{64})"/.exec(page)[1];
-    const headers = { 'X-Franklin-Panel-Token': token };
+    const headers = { 'X-Franklin-Panel-Token': await panelToken(port) };
 
     const res = await panelRequest(port, `/api/tasks/${runId}/cancel`, { method: 'POST', headers });
     assert.equal(res.status, 200);
@@ -12584,9 +12584,88 @@ test('panel read-only API routes require the page token (GHSA-jx74-262x-94p3 fol
       req.end();
     });
     assert.equal(status, 200);
-    const page = (await panelRequest(port, '/', { token: false })).text();
+    const page = (await panelRequest(port, `/?token=${token}`, { token: false })).text();
     assert.match(page, /new EventSource\('\/api\/events\?token='/, 'the page must pass its token to EventSource');
   });
+});
+
+test('panel page itself needs the launch-URL token, so a local client cannot scrape it (GHSA-jx74-262x-94p3 follow-up)', async () => {
+  await withPanelServer(async ({ port }) => {
+    const token = await panelToken(port);
+    for (const p of ['/', '/?token=', `/?token=${'0'.repeat(64)}`, `/?token=${token.slice(1)}`]) {
+      const res = await panelRequest(port, p, { token: false });
+      assert.equal(res.status, 401, `${p} must be refused`);
+      assert.doesNotMatch(res.text(), /PANEL_TOKEN|[0-9a-f]{64}/, `${p} must not leak the token`);
+      assert.match(res.text(), /franklin panel --open/);
+    }
+    // Header alone does not unlock the page; only the launch URL does.
+    const header = await panelRequest(port, '/', { token: false, headers: { 'X-Franklin-Panel-Token': token } });
+    assert.equal(header.status, 401);
+    const ok = await panelRequest(port, `/?token=${token}`, { token: false });
+    assert.equal(ok.status, 200);
+    assert.ok(ok.text().includes(`const PANEL_TOKEN = "${token}"`));
+    assert.equal(ok.headers['referrer-policy'], 'no-referrer', 'the token in the URL must not leak as a Referer');
+    // Public images stay reachable without the token.
+    const asset = await panelRequest(port, '/assets/franklin-portrait.jpg', { token: false });
+    assert.notEqual(asset.status, 401);
+  });
+});
+
+test('panel-url file is owner-only and ~/.blockrun is hardened to 0700', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  if (process.platform === 'win32') return;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-harden-'));
+  try {
+    const dir = path.join(home, '.blockrun');
+    fs.mkdirSync(dir, { mode: 0o755 });
+    fs.chmodSync(dir, 0o755);
+    // A panel-url left world-readable by an older release must be tightened.
+    fs.writeFileSync(path.join(dir, 'panel-url'), 'http://localhost:3100', { mode: 0o644 });
+    fs.chmodSync(path.join(dir, 'panel-url'), 0o644);
+    const server = new URL('../dist/panel/server.js', import.meta.url).href;
+    const config = new URL('../dist/config.js', import.meta.url).href;
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e',
+      `const c = await import(${JSON.stringify(config)}); c.hardenBlockrunDir();
+       const s = await import(${JSON.stringify(server)}); process.stdout.write(s.writePanelUrlFile(4321));`],
+      { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+    assert.match(out, /^http:\/\/localhost:4321\/\?token=[0-9a-f]{64}$/);
+    assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+    const file = path.join(dir, 'panel-url');
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    assert.equal(fs.readFileSync(file, 'utf8'), out);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('franklin panel --open never prints the token and refuses when no panel runs', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-open-'));
+  try {
+    const cli = new URL('../dist/index.js', import.meta.url).pathname;
+    const env = { ...process.env, HOME: home, USERPROFILE: home, FRANKLIN_NO_UPDATE_CHECK: '1' };
+    const none = spawnSync(process.execPath, [cli, 'panel', '--open', 'wallet'], { env, encoding: 'utf8', timeout: 30000 });
+    assert.equal(none.status, 1);
+    assert.match(none.stderr, /No running Franklin panel found/);
+    const bad = spawnSync(process.execPath, [cli, 'panel', '--open', 'x;rm'], { env, encoding: 'utf8', timeout: 30000 });
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /Unknown panel section/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('the wallet prompt opens the panel through the CLI, never with the token in the prompt', () => {
+  const ctx = readFileSync(new URL('../src/agent/context.ts', import.meta.url), 'utf8');
+  const section = ctx.slice(ctx.indexOf('function getWalletKnowledgeSection'), ctx.indexOf('Hard rules:', ctx.indexOf('function getWalletKnowledgeSection')));
+  assert.match(section, /franklin panel --open wallet/);
+  assert.doesNotMatch(section, /panel-url'\)|readFileSync|\$\{panelUrl\}/, 'the prompt must not read or embed the launch URL');
 });
 
 test('catalog sync 2026-10-20: every live gateway id is priced and pinnable', async () => {

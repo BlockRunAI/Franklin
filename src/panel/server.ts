@@ -124,6 +124,44 @@ function hasPanelToken(req: http.IncomingMessage): boolean {
   return tokenMatches(req.headers[PANEL_TOKEN_HEADER]);
 }
 
+/**
+ * The page itself is gated on the token too, passed once as `/?token=`.
+ * Without that, any local client (another OS user, a process reaching the
+ * port through an ssh -L tunnel) could GET `/`, read the token out of the
+ * HTML, and call /api/wallet/secret. Only someone who can see the terminal
+ * that started the panel, or read the 0600 panel-url file, has the link.
+ */
+export function getPanelLaunchUrl(port: number): string {
+  return `http://localhost:${port}/?token=${PANEL_TOKEN}`;
+}
+
+export const PANEL_URL_FILE = path.join(BLOCKRUN_DIR, 'panel-url');
+
+/**
+ * Persist the launch URL (token included) for `franklin panel --open`.
+ * Owner-only: the file is the key to the panel. writeFileSync's mode only
+ * applies on create, so chmod covers a file left by an older release.
+ * Returns the launch URL.
+ */
+export function writePanelUrlFile(port: number): string {
+  const launch = getPanelLaunchUrl(port);
+  try {
+    fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+    fs.writeFileSync(PANEL_URL_FILE, launch, { encoding: 'utf8', mode: 0o600 });
+    fs.chmodSync(PANEL_URL_FILE, 0o600);
+  } catch { /* best-effort: the terminal still shows the link */ }
+  return launch;
+}
+
+const LOCKED_PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Franklin Panel</title>
+<meta name="referrer" content="no-referrer"></head>
+<body style="font-family:system-ui,sans-serif;max-width:34rem;margin:4rem auto;line-height:1.5">
+<h1>Franklin Panel</h1>
+<p>This link is missing its access token.</p>
+<p>Open the Dashboard link printed in the terminal where Franklin is running,
+or run <code>franklin panel --open</code>.</p>
+</body></html>`;
+
 function isLocalPanelRequest(req: http.IncomingMessage): boolean {
   return isLoopback(req) && isTrustedPanelOrigin(req) && hasPanelToken(req);
 }
@@ -208,12 +246,15 @@ export function createPanelServer(port: number): http.Server {
 
     // ─── HTML ──
     if (p === '/') {
-      res.writeHead(200, {
+      const ok = tokenMatches(url.searchParams.get('token'));
+      res.writeHead(ok ? 200 : 401, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store, no-cache, must-revalidate',
         'Pragma': 'no-cache',
+        // The URL carries the token; never send it on as a Referer.
+        'Referrer-Policy': 'no-referrer',
       });
-      res.end(html);
+      res.end(ok ? html : LOCKED_PAGE);
       return;
     }
 

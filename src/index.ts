@@ -36,7 +36,10 @@ import { predictCommand } from './commands/predict.js';
 import { loginCommand, logoutCommand } from './commands/login.js';
 import { useWalletMode } from './payments/auth-mode.js';
 
-import { VERSION as version } from './config.js';
+import { VERSION as version, hardenBlockrunDir } from './config.js';
+
+// Before any command reads or writes ~/.blockrun (GHSA-jx74-262x-94p3 follow-up).
+hardenBlockrunDir();
 
 // `--wallet` is process-global rather than a per-command option: it has to take
 // effect before anything resolves a pay mode, and it belongs on `balance`,
@@ -151,7 +154,8 @@ program
   .command('panel')
   .description('Open the Franklin dashboard (localhost:3100)')
   .option('-p, --port <port>', 'Dashboard port', '3100')
-  .action(async (options: { port?: string }) => {
+  .option('--open [section]', 'Open the already-running panel in the browser (e.g. --open wallet)')
+  .action(async (options: { port?: string; open?: string | boolean }) => {
     const { panelCommand } = await import('./commands/panel.js');
     await panelCommand(options);
   });
