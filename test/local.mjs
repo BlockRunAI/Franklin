@@ -12561,31 +12561,36 @@ test('panel /api/tasks/:runId never reads meta, events, or log files outside the
   });
 });
 
-test('panel read-only API routes require the page token (GHSA-jx74-262x-94p3 follow-up)', async () => {
+test('panel read-only API routes require the page token header, never a query token (GHSA-jx74-262x-94p3 follow-up)', async () => {
   const http = await import('node:http');
   await withPanelServer(async ({ port }) => {
     for (const p of ['/api/sessions', '/api/sessions/some-id', '/api/audit', '/api/tasks', '/api/stats', '/api/events']) {
       const res = await panelRequest(port, p, { token: false });
       assert.equal(res.status, 403, `${p} without the token must be refused`);
     }
-    const wrong = await panelRequest(port, '/api/events?token=' + '0'.repeat(64), { token: false });
-    assert.equal(wrong.status, 403);
-    // A query token is only honoured on /api/events (EventSource cannot set headers).
-    const token = await panelToken(port);
-    const elsewhere = await panelRequest(port, `/api/sessions?token=${token}`, { token: false });
-    assert.equal(elsewhere.status, 403);
-    // SSE never ends, so resolve on the response head and drop the socket.
-    const status = await new Promise((resolve, reject) => {
-      const req = http.request({ host: '127.0.0.1', port, path: `/api/events?token=${token}`, agent: false, headers: { Connection: 'close' } }, (res) => {
+    // SSE never ends, so resolve on the response head and drop the socket;
+    // a regression that accepts the request then fails instead of hanging.
+    const head = (path, headers = {}) => new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path, agent: false,
+        headers: { Connection: 'close', ...headers } }, (res) => {
         resolve(res.statusCode);
         req.destroy();
       });
       req.on('error', reject);
       req.end();
     });
-    assert.equal(status, 200);
+    // No route takes the token in the URL, /api/events included.
+    const token = await panelToken(port);
+    for (const p of [`/api/events?token=${token}`, `/api/sessions?token=${token}`]) {
+      assert.equal(await head(p), 403, `${p.split('?')[0]} must refuse a query-string token`);
+    }
+    assert.equal(await head('/api/events', { 'X-Franklin-Panel-Token': token }), 200);
     const page = (await panelRequest(port, `/?token=${token}`, { token: false })).text();
-    assert.match(page, /new EventSource\('\/api\/events\?token='/, 'the page must pass its token to EventSource');
+    assert.doesNotMatch(page, /new EventSource|__FRANKLIN_PANEL_TOKEN/, 'the page must not put the token in a URL');
+    assert.match(page, /fetch\('\/api\/events'/, 'live updates go through the token-sending fetch wrapper');
+    // A malformed %-escape in a session id is a 400, not a 500.
+    const bad = await panelRequest(port, '/api/sessions/%E0%A4%A');
+    assert.equal(bad.status, 400);
   });
 });
 
@@ -12666,6 +12671,44 @@ test('the wallet prompt opens the panel through the CLI, never with the token in
   const section = ctx.slice(ctx.indexOf('function getWalletKnowledgeSection'), ctx.indexOf('Hard rules:', ctx.indexOf('function getWalletKnowledgeSection')));
   assert.match(section, /franklin panel --open wallet/);
   assert.doesNotMatch(section, /panel-url'\)|readFileSync|\$\{panelUrl\}/, 'the prompt must not read or embed the launch URL');
+});
+
+test('panel page parses the SSE stream it reads through fetch, across chunk splits', async () => {
+  const { getHTML } = await import('../dist/panel/html.js');
+  const html = getHTML('0'.repeat(64));
+  const start = html.indexOf('function setLive(on)');
+  const end = html.indexOf('streamEvents();', start);
+  assert.ok(start > 0 && end > start, 'page must define setLive/streamEvents');
+  const src = html.slice(start, end);
+  // Every inline script must at least parse.
+  for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+    assert.doesNotThrow(() => new Function(m[1]), 'inline panel script must parse');
+  }
+  const enc = new TextEncoder();
+  const chunks = ['data: {"type":"connected"}\n\n', 'data: {"type":"stats.up', 'dated"}\n', '\n', 'data: not-json\n\ndata: {"type":"stats.updated"}\n\n'];
+  let fetches = 0;
+  const calls = { overview: 0, live: [] };
+  const dot = {}; const status = {};
+  const fakeFetch = async (url) => {
+    fetches++;
+    assert.equal(url, '/api/events');
+    if (fetches > 1) throw new Error('stop');
+    return new Response(new ReadableStream({
+      start(c) { for (const ch of chunks) c.enqueue(enc.encode(ch)); c.close(); },
+    }), { status: 200 });
+  };
+  const fakeTimeout = (fn) => { if (fetches < 2) fn(); };
+  const run = new Function('fetch', 'setTimeout', 'document', 'loadOverview', 'calls',
+    `const dot = document.getElementById('dot'); const statusEl = document.getElementById('status');
+     ${src}
+     const _setLive = setLive; setLive = (on) => { calls.live.push(on); _setLive(on); };
+     streamEvents();`);
+  run(fakeFetch, fakeTimeout, { getElementById: (id) => (id === 'dot' ? dot : status) }, () => { calls.overview++; }, calls);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(calls.overview, 2, 'both stats.updated frames, one split over three chunks, must fire');
+  assert.deepEqual(calls.live.slice(0, 2), [true, false], 'live on connect, offline when the stream ends');
+  assert.equal(fetches, 2, 'it reconnects after the stream ends');
+  assert.equal(status.textContent, 'offline');
 });
 
 test('catalog sync 2026-10-20: every live gateway id is priced and pinnable', async () => {

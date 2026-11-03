@@ -229,10 +229,9 @@ export function createPanelServer(port: number): http.Server {
     // Loopback + local Host does not tell OS users apart: on a shared machine
     // another account, or anyone reaching the port through an ssh -L tunnel,
     // passes both and could read transcripts and the audit log
-    // (GHSA-jx74-262x-94p3). EventSource cannot set headers, so /api/events
-    // alone may carry the token as ?token=.
-    if (p.startsWith('/api/') && !hasPanelToken(req)
-        && !(p === '/api/events' && tokenMatches(url.searchParams.get('token')))) {
+    // (GHSA-jx74-262x-94p3). The page reads /api/events through fetch so it
+    // can send the header too; no route takes the token in a query string.
+    if (p.startsWith('/api/') && !hasPanelToken(req)) {
       json(res, { error: 'forbidden' }, 403);
       return;
     }
@@ -394,7 +393,11 @@ export function createPanelServer(port: number): http.Server {
       }
 
       if (p.startsWith('/api/sessions/')) {
-        const id = decodeURIComponent(p.slice('/api/sessions/'.length));
+        let id: string;
+        try { id = decodeURIComponent(p.slice('/api/sessions/'.length)); } catch {
+          json(res, { error: 'invalid session id' }, 400); // malformed %-escape
+          return;
+        }
         const history = loadSessionHistory(id);
         json(res, history);
         return;

@@ -918,8 +918,6 @@ a:hover { text-decoration:underline; }
 // refuses wallet, spend, and state-changing routes without it.
 (() => {
   const PANEL_TOKEN = ${JSON.stringify(panelToken)};
-  // EventSource cannot set headers; /api/events reads it from ?token=.
-  window.__FRANKLIN_PANEL_TOKEN = PANEL_TOKEN;
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => {
     const headers = new Headers(init.headers || {});
@@ -1428,14 +1426,46 @@ document.getElementById('wallet-import-btn').addEventListener('click', async () 
   }
 });
 
-const es = new EventSource('/api/events?token=' + encodeURIComponent(window.__FRANKLIN_PANEL_TOKEN));
+// Live updates read the SSE stream through fetch, not EventSource:
+// EventSource cannot send the panel token header, and a token in the URL
+// would land in browser history. Reconnects every 3s, as EventSource does.
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
-es.onopen = () => { dot.className = 'dot on'; statusEl.textContent = 'live'; };
-es.onerror = () => { dot.className = 'dot off'; statusEl.textContent = 'offline'; };
-es.onmessage = (e) => {
-  try { if (JSON.parse(e.data).type === 'stats.updated') loadOverview(); } catch {}
-};
+function setLive(on) {
+  dot.className = on ? 'dot on' : 'dot off';
+  statusEl.textContent = on ? 'live' : 'offline';
+}
+async function streamEvents() {
+  for (;;) {
+    try {
+      const res = await fetch('/api/events', { cache: 'no-store' });
+      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+      setLive(true);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\\n\\n')) >= 0) {
+          const frame = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          const data = frame.split('\\n')
+            .filter((l) => l.startsWith('data:'))
+            .map((l) => l.slice(5).trimStart())
+            .join('\\n');
+          if (!data) continue;
+          try { if (JSON.parse(data).type === 'stats.updated') loadOverview(); } catch {}
+        }
+      }
+    } catch { /* fall through to reconnect */ }
+    setLive(false);
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+}
+streamEvents();
 
 async function loadAudit() {
   const list = document.getElementById('audit-list');
