@@ -13008,3 +13008,15 @@ test('the gateway-400 nvidia DeepSeek SKUs are in no free set or routing order',
     assert.equal(isFreeModelId(id), false);
   }
 });
+
+test('modalCreatePriceUsd prices size as the gateway does, so the reservation is not short', async () => {
+  const { modalCreatePriceUsd } = await import('../dist/tools/modal.js');
+  assert.equal(modalCreatePriceUsd('cpu'), 0.01);
+  assert.equal(modalCreatePriceUsd('T4'), 0.05);
+  assert.equal(modalCreatePriceUsd('T4', 1, 1024, 300), 0.05);
+  assert.ok(Math.abs(modalCreatePriceUsd('T4', 1.5, 1024, 300) - 1 / 3) < 1e-9);
+  assert.ok(Math.abs(modalCreatePriceUsd('T4', 1, 1025, 300) - 1 / 3) < 1e-9);
+  assert.ok(Math.abs(modalCreatePriceUsd('H100', 8, 32768, 300) - 0.75) < 1e-9);
+  // Large and short: the flat rate is the floor.
+  assert.equal(modalCreatePriceUsd('T4', 8, 32768, 10), 0.05);
+});
