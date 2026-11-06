@@ -5,7 +5,9 @@
  * underlying primitives.
  *
  * Pricing (per-call, USDC):
- *   create: $0.01 (CPU) / $0.05 (T4) / $0.08 (L4) / $0.10 (A10G) / $0.20 (A100) / $0.40 (H100)
+ *   create at up to 1 CPU and 1024 MB: $0.01 (CPU) / $0.05 (T4) / $0.08 (L4) / $0.10 (A10G) / $0.20 (A100) / $0.40 (H100)
+ *   create above that: hourly rate x lifetime, never below the flat rate:
+ *     $4 (T4) / $4.50 (L4) / $5 (A10G) / $7 (A100) / $9 (H100) per hour
  *   exec: $0.001
  *   status: $0.001
  *   terminate: $0.001
@@ -53,6 +55,38 @@ const CREATE_PRICE_USD: Record<string, number> = {
   A100: 0.20,
   H100: 0.40,
 };
+// The gateway bills a larger sandbox by the hour for its whole lifetime. Keep in
+// step with getModalCreatePricing in the gateway's src/lib/modal.ts.
+const GPU_HOURLY_PRICE_USD: Record<string, number> = {
+  T4: 4.00,
+  L4: 4.50,
+  A10G: 5.00,
+  A100: 7.00,
+  H100: 9.00,
+};
+const FLAT_RATE_MAX_CPU = 1;
+const FLAT_RATE_MAX_MEMORY_MB = 1024;
+const DEFAULT_TIMEOUT_SECONDS = 300;
+
+/**
+ * What the gateway will ask for this create. The reservation and the confirm
+ * dialog both read it, so it has to see size as well as GPU type: an 8-core T4
+ * is $0.33, not the $0.05 a tier lookup says. Lifetime is capped at 300s here,
+ * so the CPU tier is always flat.
+ */
+export function modalCreatePriceUsd(
+  tier: string,
+  cpu?: number,
+  memory?: number,
+  timeoutSeconds: number = DEFAULT_TIMEOUT_SECONDS,
+): number {
+  const flat = CREATE_PRICE_USD[tier];
+  const hourly = GPU_HOURLY_PRICE_USD[tier];
+  const small = (cpu ?? 1) <= FLAT_RATE_MAX_CPU && (memory ?? 512) <= FLAT_RATE_MAX_MEMORY_MB;
+  if (small || hourly === undefined) return flat;
+  return Math.max(flat, hourly * (timeoutSeconds / 3600));
+}
+
 const EXEC_PRICE_USD = 0.001;
 const STATUS_PRICE_USD = 0.001;
 const TERMINATE_PRICE_USD = 0.001;
@@ -351,8 +385,9 @@ export const modalCreateCapability: CapabilityHandler = {
     name: 'ModalCreate',
     description:
       'Create a Modal Python 3.11 sandbox (CPU or GPU) via the BlockRun gateway. ' +
-      'Returns a sandbox_id you pass to ModalExec. Charged once per create at the ' +
-      'GPU tier price: CPU $0.01, T4 $0.05, L4 $0.08, A10G $0.10, A100 $0.20, H100 $0.40. ' +
+      'Returns a sandbox_id you pass to ModalExec. Charged once per create. Up to 1 CPU and ' +
+      '1024 MB: CPU $0.01, T4 $0.05, L4 $0.08, A10G $0.10, A100 $0.20, H100 $0.40. Larger GPU ' +
+      'sandboxes pay hourly for the lifetime, at least the same: T4 $4, L4 $4.50, A10G $5, A100 $7, H100 $9 per hour. ' +
       'IMPORTANT — current limitations (BlockRun gateway is in early-access for sandboxes):\n' +
       '  - sandbox lifetime: 5 minutes MAX (gateway hard-cap, regardless of GPU tier)\n' +
       '  - per ModalExec call: 60 seconds MAX wall-clock\n' +
@@ -376,8 +411,8 @@ export const modalCreateCapability: CapabilityHandler = {
       properties: {
         gpu: { type: 'string', description: 'GPU tier. One of T4, L4, A10G, A100, H100. Omit for CPU-only ($0.01).' },
         timeout: { type: 'number', description: 'Lifetime cap in seconds. Default + Max = 300 (5 min). Gateway rejects values > 300 with HTTP 400.' },
-        cpu: { type: 'number', description: 'Number of CPU cores. Default 0.125, max 8.' },
-        memory: { type: 'number', description: 'Memory MB. Default 128, max 32768.' },
+        cpu: { type: 'number', description: 'Number of CPU cores. Default 1, min 0.125, max 1 for CPU sandboxes and 8 with a GPU. Above 1 bills hourly.' },
+        memory: { type: 'number', description: 'Memory MB. Default 512, max 1024 for CPU sandboxes and 32768 with a GPU. Above 1024 bills hourly.' },
       },
     },
   },
@@ -402,7 +437,6 @@ export const modalCreateCapability: CapabilityHandler = {
       };
     }
     const tier = gpu ?? 'cpu';
-    const price = CREATE_PRICE_USD[tier];
 
     // Coerce numeric fields. Reject NaN explicitly so we don't ship
     // garbage to the gateway.
@@ -436,6 +470,13 @@ export const modalCreateCapability: CapabilityHandler = {
         isError: true,
       };
     }
+
+    const price = modalCreatePriceUsd(
+      tier,
+      typeof cpuCoerced === 'number' ? cpuCoerced : undefined,
+      typeof memoryCoerced === 'number' ? memoryCoerced : undefined,
+      typeof timeoutCoerced === 'number' ? timeoutCoerced : undefined,
+    );
 
     // ── AskUser cost preview (skipped if env auto-approve or non-UI mode) ──
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
