@@ -1,5 +1,17 @@
 # Changelog
 
+## Franklin Agent 3.49.24 — ModalCreate shows and reserves the size-based price
+
+Upgrade if you use Modal sandboxes.
+
+- **The price follows the size.** The gateways now bill a sandbox above 1 CPU
+  or 1024 MB by the hour for its whole lifetime, never below the flat rate.
+  ModalCreate looked its price up by GPU type alone, so an 8-core T4 would
+  have confirmed and reserved $0.05 and then signed about $0.33. The confirm
+  dialog, the reservation and the usage record now use the same rule.
+- **Correct defaults in the tool text.** cpu defaults to 1 and memory to 512 MB.
+  The text said 0.125 and 128.
+
 ## Franklin Agent 3.49.23 — the proxy only spends for clients that hold its token
 
 Security fix. Upgrade if you run `franklin proxy`, `franklin daemon` or
