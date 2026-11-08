@@ -1,5 +1,18 @@
 # Changelog
 
+## Franklin Agent 3.49.25 — router-core 273c2af (router audit)
+
+Bump @blockrun/router-core to 273c2af. Auto routing now makes the same decisions
+as @blockrun/llm 3.26.4 and blockrun-llm 1.21.6:
+
+- Chinese debug, refactor, extraction and proof prompts are no longer classified
+  as plain chat; Japanese prompts no longer get the Mandarin extraction band.
+- A bare language name on a tool turn no longer goes to the code-agent pool, and
+  tool-name verbs and reservation ids no longer match look-alike text.
+- An unpriced model no longer wins on cost, and NaN prices or malformed
+  performance data can no longer leak into the ranking.
+- Capability snapshot synced to the 2026-11-08 catalog.
+
 ## Franklin Agent 3.49.24 — ModalCreate shows and reserves the size-based price
 
 Upgrade if you use Modal sandboxes.
