@@ -14,6 +14,8 @@ import WebSocket from 'ws';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SELF = fileURLToPath(import.meta.url);
+// `franklin serve` refuses sockets without its token; a fixed one is fine for a test fixture.
+const AGENT_TOKEN = 'desktop-fixture-token-only';
 
 if (process.argv[2] === '--fixture') {
   const gateway = new URL(process.env.FRANKLIN_TEST_GATEWAY);
@@ -81,6 +83,7 @@ if (process.argv[2] === '--fixture') {
         FRANKLIN_TEST_GATEWAY: `http://127.0.0.1:${gateway.address().port}`,
         FRANKLIN_TEST_WORKDIR: workDir,
         FRANKLIN_DESKTOP_WORKSPACE_BOUNDARY: '1',
+        FRANKLIN_SERVE_TOKEN: AGENT_TOKEN,
         FRANKLIN_SERVE_DISCOVERY: 'off',
         FRANKLIN_CLOUD_SYNC: 'off',
         FRANKLIN_NO_AUDIT: '1',
@@ -109,7 +112,7 @@ if (process.argv[2] === '--fixture') {
         }
       });
     });
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/agent`);
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/agent?token=${AGENT_TOKEN}`);
     await once(socket, 'open');
     t.after(() => socket.terminate());
     let sequence = 0;

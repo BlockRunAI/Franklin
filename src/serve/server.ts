@@ -164,8 +164,12 @@ const MEDIA_MIME: Record<string, string> = {
 // FRANKLIN_SERVE_ALLOWED_ORIGINS (comma-separated). The literal "null" origin
 // is REJECTED by default — sandboxed iframes on hostile pages also serialize
 // to "null" — set FRANKLIN_SERVE_ALLOW_NULL_ORIGIN=1 if a renderer needs it.
-// Defense-in-depth: when FRANKLIN_SERVE_TOKEN is set, every WS upgrade and
-// /file request must also carry it (?token=…).
+// The origin check alone is not authentication: a client with no Origin header
+// may be another local account, and any page on a localhost dev server passes
+// it. Every WS upgrade must therefore carry the server token (?token=…) and
+// every /file request an HMAC signed with it. The token is FRANKLIN_SERVE_TOKEN
+// when the launcher supplies one (Desktop does), otherwise minted per process
+// by startServer. There is no unauthenticated mode.
 const DEFAULT_ALLOWED_ORIGINS = ['https://franklin.run'];
 export function isOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return true; // non-browser local client
@@ -178,9 +182,32 @@ export function isOriginAllowed(origin: string | undefined): boolean {
     .split(',').map((s) => s.trim()).filter(Boolean);
   return [...DEFAULT_ALLOWED_ORIGINS, ...extra].includes(origin);
 }
+// Minted by ensureServeToken() when the launcher supplied none. Kept out of
+// process.env on purpose: the agent's own subprocesses (Bash, hooks, MCP)
+// inherit the environment, and a model-driven command holding this token
+// could open the socket and approve its own permission prompts.
+let mintedServeToken: string | null = null;
+
+function requiredServeToken(): string | null {
+  return process.env.FRANKLIN_SERVE_TOKEN || mintedServeToken;
+}
+
+function fileSigningKey(): string | null {
+  return process.env.FRANKLIN_SERVE_FILE_TOKEN || requiredServeToken();
+}
+
+/** The token clients must present, minting a random one if none was supplied. */
+export function ensureServeToken(): string {
+  const existing = requiredServeToken();
+  if (existing) return existing;
+  mintedServeToken = crypto.randomBytes(32).toString('base64url');
+  return mintedServeToken;
+}
+
 export function tokenOk(url: URL): boolean {
-  const required = process.env.FRANKLIN_SERVE_TOKEN;
-  if (!required) return true;
+  // Fail closed: no configured token means nobody is authorised, never everybody.
+  const required = requiredServeToken();
+  if (!required) return false;
   const supplied = url.searchParams.get('token');
   if (!supplied) return false;
   const expectedBytes = Buffer.from(required);
@@ -191,7 +218,7 @@ export function tokenOk(url: URL): boolean {
 export function localFileUrl(port: number, filePath: string): string {
   const url = new URL(`http://127.0.0.1:${port}/file`);
   url.searchParams.set('path', filePath);
-  const signingKey = process.env.FRANKLIN_SERVE_FILE_TOKEN || process.env.FRANKLIN_SERVE_TOKEN;
+  const signingKey = fileSigningKey();
   if (signingKey) {
     url.searchParams.set('sig', crypto.createHmac('sha256', signingKey).update(filePath).digest('base64url'));
   }
@@ -199,8 +226,8 @@ export function localFileUrl(port: number, filePath: string): string {
 }
 
 export function fileTokenOk(url: URL): boolean {
-  const signingKey = process.env.FRANKLIN_SERVE_FILE_TOKEN || process.env.FRANKLIN_SERVE_TOKEN;
-  if (!signingKey) return true;
+  const signingKey = fileSigningKey();
+  if (!signingKey) return false;
   const filePath = url.searchParams.get('path');
   const supplied = url.searchParams.get('sig');
   if (!filePath || !supplied) return false;
@@ -383,6 +410,9 @@ function dialogueText(content: Dialogue['content']): string {
 export async function startServer(opts: ServerOptions): Promise<void> {
   let { port } = opts;
   const { workDir, debug } = opts;
+  // Before anything can mint a /file URL or accept a socket.
+  const tokenSupplied = !!process.env.FRANKLIN_SERVE_TOKEN;
+  const serveToken = ensureServeToken();
   const chain = loadChain();
   const apiUrl = gatewayBase();
   const userConfig = loadConfig();
@@ -441,7 +471,9 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   const questions = new DesktopQuestions<WebSocket>();
   let askSeq = 0;
   type LegacyDecision = 'yes' | 'no' | 'always';
-  const legacyAsks = new Map<string, (decision: LegacyDecision) => void>();
+  // Each ask remembers the socket it was sent to. Only that socket may answer
+  // it: holding an askId must not be enough to approve a tool or a payment.
+  const legacyAsks = new Map<string, { ws: WebSocket; resolve: (decision: LegacyDecision) => void }>();
 
   const requestDesktopPermission = (
     toolName: string,
@@ -457,9 +489,12 @@ export async function startServer(opts: ServerOptions): Promise<void> {
       if (legacyAsks.delete(askId)) resolve('no');
     }, timeoutMs);
     timer.unref?.();
-    legacyAsks.set(askId, (decision) => {
-      clearTimeout(timer);
-      resolve(decision);
+    legacyAsks.set(askId, {
+      ws: activeWs,
+      resolve: (decision) => {
+        clearTimeout(timer);
+        resolve(decision);
+      },
     });
     emit('agent.permissionAsk', { sessionId: '', toolName, description, askId });
   });
@@ -927,11 +962,11 @@ export async function startServer(opts: ServerOptions): Promise<void> {
         }
         const askId = p.askId ? String(p.askId) : '';
         if (askId) {
-          const resolver = legacyAsks.get(askId);
-          if (resolver) {
+          const ask = legacyAsks.get(askId);
+          if (ask && ask.ws === ws) {
             legacyAsks.delete(askId);
             const decision = String(p.decision ?? p.choice ?? 'n').toLowerCase();
-            resolver(decision === 'always' ? 'always' :
+            ask.resolve(decision === 'always' ? 'always' :
               decision === 'y' || decision === 'yes' || decision === 'approve' ? 'yes' : 'no');
             send(ws, id, 'response', { ok: true });
           } else {
@@ -1104,12 +1139,22 @@ export async function startServer(opts: ServerOptions): Promise<void> {
   if (discoveryEnabled) {
     try {
       const discoveryUrl = new URL(`ws://127.0.0.1:${port}/agent`);
-      const token = process.env.FRANKLIN_SERVE_TOKEN;
-      if (token) discoveryUrl.searchParams.set('token', token);
+      discoveryUrl.searchParams.set('token', serveToken);
       writtenDiscoveryUrl = discoveryUrl.toString();
       fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
       fs.writeFileSync(serveUrlFile, writtenDiscoveryUrl, { mode: 0o600 });
+      // mode only applies on create; tighten a file an earlier run left behind.
+      fs.chmodSync(serveUrlFile, 0o600);
     } catch { /* best-effort */ }
+  }
+  if (!tokenSupplied) {
+    // A minted token is useless unless a client can get it. The 0600 discovery
+    // file is the normal channel (`franklin panel` reads it); with discovery off
+    // only this terminal can hand it on, same as the panel's launch link.
+    // eslint-disable-next-line no-console
+    console.log(writtenDiscoveryUrl
+      ? `Clients authenticate with the per-start token in ${serveUrlFile} (owner-only).`
+      : `Connect with: ws://127.0.0.1:${port}/agent?token=${serveToken}`);
   }
   const cleanup = () => {
     // Do not remove another server's discovery record. Packaged Desktop has

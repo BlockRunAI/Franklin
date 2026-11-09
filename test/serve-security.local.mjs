@@ -10,12 +10,36 @@ import { PermissionManager } from '../dist/agent/permissions.js';
 import { StreamingExecutor } from '../dist/agent/streaming-executor.js';
 import {
   createDesktopWorkspacePermissionPolicy,
+  ensureServeToken,
   fileTokenOk,
   isOriginAllowed,
   localFileUrl,
   resolveServedMediaPath,
   tokenOk,
 } from '../dist/serve/server.js';
+
+test('serve auth fails closed before a token exists, then gates on the minted one', () => {
+  // Runs before anything in this process mints a token. An unset token used to
+  // mean "accept every socket" (GHSA-wfcc-mrqp-668m).
+  const previous = process.env.FRANKLIN_SERVE_TOKEN;
+  const previousFileToken = process.env.FRANKLIN_SERVE_FILE_TOKEN;
+  delete process.env.FRANKLIN_SERVE_TOKEN;
+  delete process.env.FRANKLIN_SERVE_FILE_TOKEN;
+  try {
+    assert.equal(tokenOk(new URL('http://127.0.0.1/agent')), false);
+    assert.equal(fileTokenOk(new URL('http://127.0.0.1/file?path=/tmp/a.png')), false);
+    const minted = ensureServeToken();
+    assert.ok(minted.length >= 40);
+    assert.equal(ensureServeToken(), minted, 'one token per process');
+    assert.equal(process.env.FRANKLIN_SERVE_TOKEN, undefined, 'the minted token must stay out of the env subprocesses inherit');
+    assert.equal(tokenOk(new URL('http://127.0.0.1/agent')), false);
+    assert.equal(tokenOk(new URL(`http://127.0.0.1/agent?token=${minted}`)), true);
+    assert.equal(fileTokenOk(new URL(localFileUrl(3737, '/tmp/a.png'))), true);
+  } finally {
+    if (previous !== undefined) process.env.FRANKLIN_SERVE_TOKEN = previous;
+    if (previousFileToken !== undefined) process.env.FRANKLIN_SERVE_FILE_TOKEN = previousFileToken;
+  }
+});
 
 test('serve token gates WebSocket and file URLs', () => {
   const previous = process.env.FRANKLIN_SERVE_TOKEN;

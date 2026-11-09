@@ -32,9 +32,10 @@ function assertSanitized(output) {
   assert.match(output, /ENV_TEST_VISIBLE=keep-this/);
 }
 
-test('env list covers SDK account and EVM/Solana keys without mutating the source', () => {
+test('env list covers SDK account, EVM/Solana keys and serve socket tokens without mutating the source', () => {
   assert.deepEqual([...SENSITIVE_ENV_NAMES].sort(), [
     'BLOCKRUN_API_KEY', 'BLOCKRUN_WALLET_KEY', 'BASE_CHAIN_WALLET_KEY', 'SOLANA_WALLET_KEY',
+    'FRANKLIN_SERVE_TOKEN', 'FRANKLIN_SERVE_FILE_TOKEN',
   ].sort());
   setKeys();
   const clean = sanitizeSubprocessEnv();

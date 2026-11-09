@@ -5,19 +5,38 @@
 import chalk from 'chalk';
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
-import { createPanelServer, writePanelUrlFile, PANEL_URL_FILE } from '../panel/server.js';
+import { createPanelServer, writePanelUrlFile, writePanelOpenFile, PANEL_URL_FILE } from '../panel/server.js';
 
 /**
- * Open a URL in the default browser without going through a shell: the URL
- * carries the panel token and `?`/`#`, which a shell would glob or cut.
+ * How to hand a staged launch page to the default browser. The argument is the
+ * owner-only file from writePanelOpenFile, never the URL: argument vectors are
+ * readable by other local accounts (/proc/<pid>/cmdline on Linux), and the
+ * URL carries the token that unlocks /api/wallet/secret. No shell is involved.
  */
-export function openInBrowser(url: string): void {
-  const onError = () => { /* headless box: the terminal still shows the link */ };
-  if (process.platform === 'darwin') execFile('open', [url], onError);
-  else if (process.platform === 'win32') {
+export function browserOpenCommand(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+): { cmd: string; args: string[]; windowsVerbatimArguments?: boolean } {
+  if (platform === 'darwin') return { cmd: 'open', args: [filePath] };
+  if (platform === 'win32') {
     // `start` treats its first quoted argument as a window title.
-    execFile('cmd', ['/c', 'start', '""', `"${url}"`], { windowsVerbatimArguments: true }, onError);
-  } else execFile('xdg-open', [url], onError);
+    return { cmd: 'cmd', args: ['/c', 'start', '""', `"${filePath}"`], windowsVerbatimArguments: true };
+  }
+  return { cmd: 'xdg-open', args: [filePath] };
+}
+
+/**
+ * Open the panel launch URL in the default browser. The browser is pointed at
+ * a 0600 redirect page so the token never enters any process's command line.
+ * If staging fails, nothing is opened: the starting terminal still shows the
+ * link, and leaking the token is worse than a manual click.
+ */
+export function openInBrowser(launchUrl: string): void {
+  let file: string;
+  try { file = writePanelOpenFile(launchUrl); } catch { return; }
+  const { cmd, args, windowsVerbatimArguments } = browserOpenCommand(file);
+  const onError = () => { /* headless box: the terminal still shows the link */ };
+  execFile(cmd, args, { windowsVerbatimArguments }, onError);
 }
 
 /**

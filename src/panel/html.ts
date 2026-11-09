@@ -1970,7 +1970,7 @@ function renderPhoneNumbers(data) {
     const human = formatPhoneNumber(n.phone_number);
     const renewBtn = tier === 'expired'
       ? ''
-      : '<button class="btn btn-warn" data-phone-renew="' + n.phone_number + '">Renew $5</button>';
+      : '<button class="btn btn-warn" data-phone-renew="' + esc(n.phone_number) + '">Renew $5</button>';
     const releaseLabel = tier === 'expired' ? 'Remove' : 'Release';
     return ''
       + '<div class="phone-row' + rowCls + '">'
@@ -1980,15 +1980,15 @@ function renderPhoneNumbers(data) {
       + '    </svg>'
       + '  </div>'
       + '  <div class="phone-main">'
-      + '    <div class="phone-num">' + human + '</div>'
+      + '    <div class="phone-num">' + esc(human) + '</div>'
       + '    <div class="phone-meta">'
-      + '      <span class="chip">' + (n.chain || '—') + '</span>'
+      + '      <span class="chip">' + esc(n.chain || '—') + '</span>'
       + '      <span class="chip ' + chipCls + '">' + phoneCountdownLabel(d) + '</span>'
       + '    </div>'
       + '  </div>'
       + '  <div class="phone-actions">'
       +      renewBtn
-      + '    <button class="btn btn-ghost" data-phone-release="' + n.phone_number + '" title="' + releaseLabel + ' this number">' + releaseLabel + '</button>'
+      + '    <button class="btn btn-ghost" data-phone-release="' + esc(n.phone_number) + '" title="' + releaseLabel + ' this number">' + releaseLabel + '</button>'
       + '  </div>'
       + '</div>';
   }).join('');
@@ -2018,7 +2018,7 @@ async function loadPhone(opts) {
     if (!r.ok) {
       if (statusEl) { statusEl.textContent = data.error || 'Failed to load'; statusEl.className = 'phone-status err'; }
       const list = document.getElementById('phone-list');
-      if (list) list.innerHTML = '<div class="phone-empty"><strong>Could not load numbers</strong>' + (data.error || 'Unknown error') + '</div>';
+      if (list) list.innerHTML = '<div class="phone-empty"><strong>Could not load numbers</strong>' + esc(data.error || 'Unknown error') + '</div>';
       return;
     }
     phoneState.data = data;

@@ -27,6 +27,30 @@ interface Pending {
   timer?: ReturnType<typeof setTimeout>;
 }
 
+const TOKEN_STORAGE_KEY = "franklin.agentToken";
+
+/**
+ * Browser dev only: `franklin serve` requires its token on every socket, and
+ * the page must not get it from the dev server (anything that can reach the
+ * dev server could fetch it too). The developer opens the link printed by
+ * scripts/with-agent-token.mjs, which carries it in the fragment, never sent
+ * over HTTP. Keep it for this tab's reloads and drop it from the address bar.
+ */
+function browserAgentToken(): string {
+  try {
+    const match = /(?:^#|&)agentToken=([^&]+)/.exec(location.hash);
+    if (match) {
+      const token = decodeURIComponent(match[1]);
+      sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+      history.replaceState(null, "", location.pathname + location.search);
+      return token;
+    }
+    return sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -59,7 +83,8 @@ class AgentSocket {
       throw new Error("Franklin Desktop agent bridge is unavailable");
     } else {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      this.url = `${proto}//${location.host}/agent`;
+      const token = browserAgentToken();
+      this.url = `${proto}//${location.host}/agent${token ? `?token=${encodeURIComponent(token)}` : ""}`;
     }
   }
 

@@ -158,6 +158,36 @@ export function writePanelUrlFile(port: number): string {
   return launch;
 }
 
+/**
+ * Where `openInBrowser` stages the launch URL. A process's argument vector is
+ * not private: /proc/<pid>/cmdline is world-readable on Linux, so passing the
+ * token-bearing URL to xdg-open (and on to the browser it starts) would show
+ * the token to every local account. The opener gets this file's path instead,
+ * and the page inside forwards the browser to the real URL.
+ */
+export const PANEL_OPEN_FILE = path.join(BLOCKRUN_DIR, 'panel-open.html');
+
+// Launch URLs are always our own: 127.0.0.1, a hex token, an optional #section.
+const LAUNCH_URL_RE = /^http:\/\/127\.0\.0\.1:\d{1,5}\/\?token=[0-9a-f]{64}(?:#[a-z0-9-]+)?$/i;
+
+/**
+ * Write the owner-only redirect page for `launchUrl` and return its path.
+ * Throws on anything that is not a panel launch URL, so nothing else can be
+ * smuggled into the page.
+ */
+export function writePanelOpenFile(launchUrl: string): string {
+  if (!LAUNCH_URL_RE.test(launchUrl)) throw new Error('not a panel launch URL');
+  const page = '<!DOCTYPE html><html><head><meta charset="utf-8">'
+    + '<meta name="referrer" content="no-referrer"><title>Franklin Panel</title>'
+    + `<meta http-equiv="refresh" content="0;url=${launchUrl}">`
+    + `<script>location.replace(${JSON.stringify(launchUrl)});</script>`
+    + `</head><body><a href="${launchUrl}">Open the Franklin panel</a></body></html>`;
+  fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+  fs.writeFileSync(PANEL_OPEN_FILE, page, { encoding: 'utf8', mode: 0o600 });
+  fs.chmodSync(PANEL_OPEN_FILE, 0o600);
+  return PANEL_OPEN_FILE;
+}
+
 const LOCKED_PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Franklin Panel</title>
 <meta name="referrer" content="no-referrer"></head>
 <body style="font-family:system-ui,sans-serif;max-width:34rem;margin:4rem auto;line-height:1.5">

@@ -1,5 +1,42 @@
 # Changelog
 
+## Franklin Agent 3.49.26 — `franklin serve` needs a token, and the panel token stays off the command line
+
+Security fix. Upgrade if you run `franklin serve` or `franklin panel`. Thanks to
+orshih6 and Abhinav Kumar (EmberTail) for the reports (GHSA-wfcc-mrqp-668m,
+GHSA-25q2-mmr5-c394).
+
+- **`franklin serve` needs a token.** Until now the standalone server accepted
+  any socket that reached 127.0.0.1 unless `FRANKLIN_SERVE_TOKEN` was set, and
+  the CLI never set it. Any other account on the machine, any local program,
+  and any page served from a local dev server could run the agent with your
+  wallet and tools, and answer its own Bash, trade-plan and payment prompts.
+  Serve now creates a token at every start and refuses sockets without it
+  (401), and `/file` refuses unsigned paths. The token is written only to
+  `~/.blockrun/serve-url` (owner-only), which `franklin panel` already reads,
+  so the Agents tab needs no setup. With `FRANKLIN_SERVE_DISCOVERY=off`, the
+  connect URL is printed to the terminal that started serve. The Desktop app
+  already used a token and is unchanged.
+- **An approval is answered only where it was asked.** A tool or payment prompt
+  can be approved only by the connection it was sent to. Holding its id is no
+  longer enough.
+- **Agent commands no longer inherit the serve token.** `FRANKLIN_SERVE_TOKEN`
+  and `FRANKLIN_SERVE_FILE_TOKEN` are removed from the environment of Bash,
+  hooks, MCP servers and background tasks, so a command the model runs cannot
+  connect and approve its own prompts.
+- **The panel token stays off the command line.** `franklin panel` and
+  `franklin panel --open` passed the token-bearing link to `open`,
+  `xdg-open` or `start` as an argument, where other accounts can read it (on
+  Linux, `/proc/<pid>/cmdline`). That token unlocks the wallet key. The browser
+  is now pointed at an owner-only page, `~/.blockrun/panel-open.html`, that
+  forwards to the panel. If your `.html` files open in an editor, use the link
+  printed in the terminal.
+- **The Phone tab escapes gateway text.** Phone numbers, chain names and error
+  messages are escaped before they are shown, so a crafted gateway reply cannot
+  run script in the panel.
+- Scripts that connect to `franklin serve` themselves must now add
+  `?token=` from `~/.blockrun/serve-url`.
+
 ## Franklin Agent 3.49.25 — router-core 273c2af (router audit)
 
 Bump @blockrun/router-core to 273c2af. Auto routing now makes the same decisions

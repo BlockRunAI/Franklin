@@ -12653,6 +12653,79 @@ test('panel-url file is owner-only and ~/.blockrun is hardened to 0700', async (
   }
 });
 
+test('panel browser launch never puts the token on a command line', async () => {
+  // GHSA-25q2-mmr5-c394 item 1: argv is readable by other local accounts
+  // (/proc/<pid>/cmdline), and the token unlocks /api/wallet/secret.
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'franklin-open-file-'));
+  try {
+    const server = new URL('../dist/panel/server.js', import.meta.url).href;
+    const panel = new URL('../dist/commands/panel.js', import.meta.url).href;
+    const out = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
+      `const s = await import(${JSON.stringify(server)});
+       const p = await import(${JSON.stringify(panel)});
+       const launch = s.getPanelLaunchUrl(4321) + '#wallet';
+       const file = s.writePanelOpenFile(launch);
+       const cmds = ['darwin', 'win32', 'linux'].map((pl) => p.browserOpenCommand(file, pl));
+       let rejected = 0;
+       for (const bad of ['http://127.0.0.1:4321/?token=' + '0'.repeat(64) + '"><script>', 'https://evil.example/?token=' + '0'.repeat(64), 'http://localhost:4321/?token=' + '0'.repeat(64)]) {
+         try { s.writePanelOpenFile(bad); } catch { rejected++; }
+       }
+       process.stdout.write(JSON.stringify({ launch, file, cmds, rejected }));`],
+      { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' }));
+    const token = new URL(out.launch).searchParams.get('token');
+    assert.match(token, /^[0-9a-f]{64}$/);
+    for (const { args } of out.cmds) {
+      assert.ok(args.some((a) => a.includes(out.file)), 'the opener gets the staged file');
+      assert.ok(!args.join(' ').includes(token), 'the token must not reach argv');
+    }
+    assert.equal(out.rejected, 3, 'only our own 127.0.0.1 launch URLs may be staged');
+    assert.equal(out.file, path.join(home, '.blockrun', 'panel-open.html'));
+    const page = fs.readFileSync(out.file, 'utf8');
+    assert.ok(page.includes(`location.replace(${JSON.stringify(out.launch)})`), 'the page forwards to the launch URL');
+    assert.ok(page.includes('name="referrer" content="no-referrer"'));
+    if (process.platform !== 'win32') assert.equal(fs.statSync(out.file).mode & 0o777, 0o600);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('panel Phone tab escapes gateway-supplied number, chain and error text', async () => {
+  // GHSA-25q2-mmr5-c394 item 3: script in the panel origin can read the token
+  // and then the wallet key.
+  const { getHTML } = await import('../dist/panel/html.js');
+  const html = getHTML('0'.repeat(64));
+  const grab = (name) => {
+    const start = html.indexOf(`function ${name}(`);
+    assert.ok(start > 0, `${name} must exist`);
+    const end = html.indexOf('\n}\n', start);
+    return html.slice(start, end + 2);
+  };
+  const escStart = html.indexOf('const esc = (s) =>');
+  const escSrc = html.slice(escStart, html.indexOf(';\n', escStart) + 2);
+  const payload = '+1"><img src=x onerror=alert(1)>';
+  const list = { innerHTML: '', querySelectorAll: () => [] };
+  const run = new Function('document', `
+    ${escSrc}
+    ${grab('formatPhoneNumber')}
+    ${grab('daysLeft')}
+    ${grab('phoneTier')}
+    ${grab('phoneChipClass')}
+    ${grab('phoneCountdownLabel')}
+    function updatePhoneNavBadge() {}
+    function maybeNotifyExpiry() {}
+    ${grab('renderPhoneNumbers')}
+    return renderPhoneNumbers;`)({ getElementById: () => list });
+  run({ numbers: [{ phone_number: payload, chain: '<svg onload=alert(2)>', expires_at: new Date(Date.now() + 9 * 864e5).toISOString() }] });
+  // (The row's own phone icon is a static <svg>; only the injected tags matter.)
+  assert.ok(!/<img|<svg onload/i.test(list.innerHTML), 'gateway text must not become markup');
+  assert.ok(list.innerHTML.includes('data-phone-release="+1&quot;&gt;&lt;img'), 'the action attribute keeps the escaped value');
+  assert.ok(html.includes("esc(data.error || 'Unknown error')"), 'the load-error message must be escaped too');
+});
+
 test('panel launch URL reaches the real panel even when [::1] on its port is squatted', async (t) => {
   // Another local account can listen on [::1]:<port> beside our 127.0.0.1:<port>
   // (no bind conflict). A `localhost` launch URL resolves to ::1 first and hands

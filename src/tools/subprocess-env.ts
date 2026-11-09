@@ -4,6 +4,10 @@ export const SENSITIVE_ENV_NAMES = [
   'BLOCKRUN_WALLET_KEY',
   'BASE_CHAIN_WALLET_KEY',
   'SOLANA_WALLET_KEY',
+  // `franklin serve` socket credentials (Desktop passes them in the env). A
+  // model-driven command holding one could connect and approve its own prompts.
+  'FRANKLIN_SERVE_TOKEN',
+  'FRANKLIN_SERVE_FILE_TOKEN',
 ] as const;
 
 export function sanitizeSubprocessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {

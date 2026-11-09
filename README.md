@@ -567,7 +567,8 @@ Franklin holds money, so the defaults assume a model can be steered by what it r
 - **Money moves only on your approval.** Trades need a trade plan you approve, in every permission mode. `--max-spend` sets a spending ceiling, and [lifecycle hooks](docs/examples/hooks/) can veto any paid action before it runs.
 - **The wallet key never reaches the model.** File, search and browser tools refuse the key store and the machine's own credential stores (`~/.ssh`, `~/.aws`, cloud and Solana CLI keys). The exact key values are also scrubbed from every tool result.
 - **Network calls stay public.** Model-driven requests (web fetch, webhooks, the browser) refuse loopback, private and cloud-metadata addresses, and re-check every redirect.
-- **The local panel answers only you.** It listens on loopback, checks the `Host` header, and its wallet and spend routes require a token that only the page it serves knows.
+- **The local panel answers only you.** It listens on loopback, checks the `Host` header, and its wallet and spend routes require a token that only the page it serves knows. The browser is opened through an owner-only file, so that token never appears on a command line.
+- **`franklin serve` answers only token holders.** Every socket must carry a per-start token, kept in the owner-only `~/.blockrun/serve-url` that `franklin panel` reads. An approval prompt can be answered only by the connection it was sent to.
 
 Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md).
 
