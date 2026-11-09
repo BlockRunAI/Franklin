@@ -39,15 +39,27 @@ jobs:
             echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # npm trusted publishing (OIDC): with this package's Trusted Publisher set
-      # to this repo + publish.yml on npmjs.com, npm >= 11.5.1 exchanges the
-      # job's id-token for a one-off publish credential, so no long-lived
-      # NPM_TOKEN is needed. The token stays below as a fallback until every
-      # package is switched over.
-      - name: Upgrade npm for trusted publishing
-        run: npm install -g npm@^11.5.1
-      - name: Publish to npm
+      # npm trusted publishing (OIDC) with staged publishing. The package's
+      # Trusted Publisher on npmjs.com (BlockRunAI/Franklin + publish.yml) is
+      # allowed to *stage* only, never to publish. This job uploads the version
+      # in a staged state that nobody can install; it goes live only when a
+      # maintainer runs `npm stage approve <stage-id>` (or approves on
+      # npmjs.com), which requires 2FA. A compromised workflow or a stolen
+      # release permission therefore cannot ship a Franklin build to users.
+      # No long-lived npm token is used: npm exchanges the job's id-token.
+      - name: Upgrade npm for staged trusted publishing
+        run: npm install -g npm@^11.20.0
+      - name: Stage for publishing
         if: steps.check.outputs.already_published != 'true'
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm stage publish --provenance --access public
+          {
+            echo "### Staged, not yet live"
+            echo ""
+            echo "Approve with 2FA to publish:"
+            echo ""
+            echo '```'
+            echo "npx -y npm@11 stage list @blockrun/franklin"
+            echo "npx -y npm@11 stage approve <stage-id>"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
