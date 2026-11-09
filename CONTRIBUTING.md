@@ -77,8 +77,17 @@ and the ADRs under `docs/adr/`.
 Patches land on `main` and ship via `chore(release): X.Y.Z — …`
 commits that bump `package.json` and prepend a `CHANGELOG.md` entry.
 A matching narrative goes under `docs/release-notes/YYYY-MM-DD-*.md`.
-The `npm publish` step is currently driven manually by the maintainer;
-the GitHub Release tag is the canonical record.
+Publishing a GitHub Release (tag `vX.Y.Z`) runs `.github/workflows/publish.yml`,
+which **stages** the version on npm through trusted publishing. A staged
+version is not installable until a maintainer approves it with 2FA:
+
+```bash
+npx -y npm@11 stage list @blockrun/franklin
+npx -y npm@11 stage approve <stage-id>
+```
+
+Check the workflow run before approving: the tag must point at the commit you
+meant to ship. The GitHub Release tag is the canonical record.
 
 ## License
 
