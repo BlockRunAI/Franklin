@@ -40,7 +40,7 @@
     "test:skills": "npm run build && node test/skills.e2e.mjs"
   },
   "dependencies": {
-    "@blockrun/llm": "^3.19.1",
+    "@blockrun/llm": "^3.26.5",
     "@blockrun/model-catalog": "https://codeload.github.com/BlockRunAI/model-catalog/tar.gz/aecf20b4d5ee51af4a38a69a1b9c81e3e64b955c",
     "@blockrun/router-core": "https://codeload.github.com/BlockRunAI/router-core/tar.gz/273c2af0a9abe70212efbad7117b72eb3038cffc",
     "@fontsource/poppins": "^5.2.7",

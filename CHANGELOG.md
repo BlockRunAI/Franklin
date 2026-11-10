@@ -1,5 +1,15 @@
 # Changelog
 
+## Franklin Agent 3.49.27 — Solana payments sign on the gateway's quoted blockhash
+
+Requires `@blockrun/llm` 3.26.5 (was 3.19.1 in the lockfile). When a Solana 402
+quotes `extra.recentBlockhash`, every paid tool now signs on that blockhash instead
+of one the SDK fetched itself. It is a `finalized` hash every facilitator verifier
+has already seen, and the Solana gateway applies its sandbox-create payment-window
+check only to payments signed on the hash it quoted. All 18 Franklin call sites
+already pass the 402's `extra` through, so no Franklin code changes. With no valid
+quote the payment is built exactly as before.
+
 ## Franklin Agent 3.49.26 — `franklin serve` needs a token, and the panel token stays off the command line
 
 Security fix. Upgrade if you run `franklin serve` or `franklin panel`. Thanks to
