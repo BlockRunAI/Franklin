@@ -271,8 +271,10 @@ async function connectStdio(name: string, config: McpServerConfig): Promise<Conn
     const stderr = transport.stderr;
     if (stderr) {
       let buf = '';
-      stderr.on('data', (chunk: Buffer) => {
-        buf += chunk.toString('utf8');
+      // Decode incrementally so multi-byte characters split across chunks survive.
+      (stderr as NodeJS.ReadableStream).setEncoding('utf8');
+      stderr.on('data', (chunk: string | Buffer) => {
+        buf += chunk.toString();
         const lines = buf.split('\n');
         buf = lines.pop() || '';
         for (const line of lines) {
