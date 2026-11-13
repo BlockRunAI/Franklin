@@ -13093,3 +13093,22 @@ test('modalCreatePriceUsd prices size as the gateway does, so the reservation is
   // Large and short: the flat rate is the floor.
   assert.equal(modalCreatePriceUsd('T4', 8, 32768, 10), 0.05);
 });
+
+test('modalCreatePriceUsd bills a lifetime above 300 s hourly at any size, CPU included', async () => {
+  const { modalCreatePriceUsd, modalCreatePricing, MODAL_MAX_TIMEOUT_SECONDS } = await import('../dist/tools/modal.js');
+  const close = (a, b) => Math.abs(a - b) < 1e-9;
+  assert.equal(MODAL_MAX_TIMEOUT_SECONDS, 86400, 'gateway max probed 2026-11-13: 86400 -> 402, 86401 -> 400');
+  assert.equal(modalCreatePriceUsd('cpu', undefined, undefined, 300), 0.01, '300 s is still flat');
+  assert.ok(close(modalCreatePriceUsd('cpu', undefined, undefined, 301), 0.25 * 301 / 3600), '301 s is hourly');
+  assert.ok(close(modalCreatePriceUsd('cpu', undefined, undefined, 3600), 0.25));
+  assert.ok(close(modalCreatePriceUsd('cpu', undefined, undefined, 86400), 6), 'sol quotes 6000000 for a 24 h CPU create');
+  assert.ok(close(modalCreatePriceUsd('A100', undefined, undefined, 600), 7 / 6));
+  assert.ok(close(modalCreatePriceUsd('H100', undefined, undefined, 1200), 3));
+  assert.ok(close(modalCreatePriceUsd('H100', undefined, undefined, 86400), 216));
+  const h = modalCreatePricing('H100', undefined, undefined, 301);
+  assert.equal(h.model, 'hourly');
+  assert.equal(h.hourlyRateUsd, 9);
+  assert.ok(close(h.priceUsd, 9 * 301 / 3600));
+  // Hourly-eligible (8 cores) but below the flat floor: the floor wins and the model says flat.
+  assert.deepEqual(modalCreatePricing('T4', 8, undefined, 10), { priceUsd: 0.05, model: 'flat' });
+});

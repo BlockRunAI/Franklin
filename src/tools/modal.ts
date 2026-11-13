@@ -4,15 +4,20 @@
  * status, terminate}. See https://modal.com/docs/guide/sandboxes for the
  * underlying primitives.
  *
- * Pricing (per-call, USDC):
- *   create at up to 1 CPU and 1024 MB: $0.01 (CPU) / $0.05 (T4) / $0.08 (L4) / $0.10 (A10G) / $0.20 (A100) / $0.40 (H100)
- *   create above that: hourly rate x lifetime, never below the flat rate:
- *     $4 (T4) / $4.50 (L4) / $5 (A10G) / $7 (A100) / $9 (H100) per hour
+ * Pricing (per-call, USDC; the Base gateway adds a $0.001 transaction fee):
+ *   create with timeout <= 300s, cpu <= 1 and memory <= 1024 MB (flat):
+ *     $0.01 (CPU) / $0.05 (T4) / $0.08 (L4) / $0.10 (A10G) / $0.20 (A100) / $0.40 (H100)
+ *   any other create: hourly rate x the full requested lifetime, upfront, never
+ *   below the flat rate, no refund on early terminate:
+ *     $0.25 (CPU) / $4 (T4) / $4.50 (L4) / $5 (A10G) / $7 (A100) / $9 (H100) per hour
  *   exec: $0.001
  *   status: $0.001
  *   terminate: $0.001
  *
- * Gateway constraints (probed 2026-05-02):
+ * Gateway constraints (probed 2026-05-02; lifetime re-probed 2026-11-13):
+ *   - sandbox lifetime (create `timeout`): 10..86400 s (24 h). 86401 -> 400 on
+ *     sol.blockrun.ai and blockrun.ai; 86400 -> 402 with a quote.
+ *   - cpu >= 0.125 (Modal's own default; below that the Solana gateway 400s).
  *   - image is fixed at python:3.11 — no custom containers yet.
  *   - command is execve-style (string[]), not a shell string. We accept a
  *     plain string from the LLM and auto-wrap to ["sh","-c", string].
@@ -45,6 +50,7 @@ import { walletReservation, AMBIGUOUS_GRACE_MS, type ReservationToken } from '..
 import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
 import { noChargeNote } from '../payments/billing-copy.js';
+import { GATEWAY_TRANSACTION_FEE_USD } from '../gateway-models.js';
 
 // ─── Pricing table (probed from /.well-known/x402 + 402 responses) ─────────
 const CREATE_PRICE_USD: Record<string, number> = {
@@ -55,9 +61,14 @@ const CREATE_PRICE_USD: Record<string, number> = {
   A100: 0.20,
   H100: 0.40,
 };
-// The gateway bills a larger sandbox by the hour for its whole lifetime. Keep in
-// step with getModalCreatePricing in the gateway's src/lib/modal.ts.
-const GPU_HOURLY_PRICE_USD: Record<string, number> = {
+// The gateway bills every create outside the flat tier by the hour for its whole
+// requested lifetime. Keep in step with getModalCreatePricing in the gateway's
+// src/lib/modal.ts (sol, arc and nano carry these rates; the Base gateway's are
+// lower, so these never under-reserve there). The quote guard in
+// postWithPayment refuses to sign anything above this table, so a gateway price
+// rise surfaces as a clear refusal rather than a silent over-charge.
+const HOURLY_PRICE_USD: Record<string, number> = {
+  cpu: 0.25,
   T4: 4.00,
   L4: 4.50,
   A10G: 5.00,
@@ -66,25 +77,75 @@ const GPU_HOURLY_PRICE_USD: Record<string, number> = {
 };
 const FLAT_RATE_MAX_CPU = 1;
 const FLAT_RATE_MAX_MEMORY_MB = 1024;
+const FLAT_RATE_MAX_SECONDS = 300;
 const DEFAULT_TIMEOUT_SECONDS = 300;
+/** Gateway bounds on create `timeout` (sol and base probed 2026-11-13; arc and nano share the schema). */
+export const MODAL_MIN_TIMEOUT_SECONDS = 10;
+export const MODAL_MAX_TIMEOUT_SECONDS = 86_400;
+export const MODAL_MIN_CPU = 0.125;
+/**
+ * Per-call transaction fee the Base gateway adds to every quote (the Solana
+ * gateway charges none). The quote guard allows it on top of the list price.
+ */
+const QUOTE_FEE_ALLOWANCE_USD = GATEWAY_TRANSACTION_FEE_USD;
+
+export interface ModalCreatePricing {
+  priceUsd: number;
+  model: 'flat' | 'hourly';
+  /** Set when model === 'hourly'. */
+  hourlyRateUsd?: number;
+}
 
 /**
- * What the gateway will ask for this create. The reservation and the confirm
- * dialog both read it, so it has to see size as well as GPU type: an 8-core T4
- * is $0.33, not the $0.05 a tier lookup says. Lifetime is capped at 300s here,
- * so the CPU tier is always flat.
+ * What the gateway will ask for this create — mirrors getModalCreatePricing.
+ * Flat only when the lifetime is <= 300 s AND the size is <= 1 CPU / 1024 MB;
+ * anything else is hourly x the full requested lifetime, floored at the flat
+ * rate. The reservation, the quote ceiling and the confirm dialog all read it.
  */
+export function modalCreatePricing(
+  tier: string,
+  cpu?: number,
+  memory?: number,
+  timeoutSeconds: number = DEFAULT_TIMEOUT_SECONDS,
+): ModalCreatePricing {
+  const flat = CREATE_PRICE_USD[tier];
+  const flatEligible =
+    timeoutSeconds <= FLAT_RATE_MAX_SECONDS &&
+    (cpu ?? 1) <= FLAT_RATE_MAX_CPU &&
+    (memory ?? 512) <= FLAT_RATE_MAX_MEMORY_MB;
+  if (!flatEligible) {
+    const hourlyRateUsd = HOURLY_PRICE_USD[tier];
+    const hourlyPrice = hourlyRateUsd * (timeoutSeconds / 3600);
+    if (hourlyPrice > flat) return { priceUsd: hourlyPrice, model: 'hourly', hourlyRateUsd };
+  }
+  return { priceUsd: flat, model: 'flat' };
+}
+
 export function modalCreatePriceUsd(
   tier: string,
   cpu?: number,
   memory?: number,
   timeoutSeconds: number = DEFAULT_TIMEOUT_SECONDS,
 ): number {
-  const flat = CREATE_PRICE_USD[tier];
-  const hourly = GPU_HOURLY_PRICE_USD[tier];
-  const small = (cpu ?? 1) <= FLAT_RATE_MAX_CPU && (memory ?? 512) <= FLAT_RATE_MAX_MEMORY_MB;
-  if (small || hourly === undefined) return flat;
-  return Math.max(flat, hourly * (timeoutSeconds / 3600));
+  return modalCreatePricing(tier, cpu, memory, timeoutSeconds).priceUsd;
+}
+
+/**
+ * The most this client will sign for a call listed at `listPriceUsd`: the list
+ * price plus the Base transaction fee, rounded UP to USDC's 6 decimals, plus
+ * one atomic unit for the gateway's own round-up of an hourly quote. Returned
+ * in atomic units (1 USDC = 1_000_000).
+ */
+export function maxSignableAtomic(listPriceUsd: number): bigint {
+  // Round the micro-dollar figure to 3 places first so float noise
+  // (0.1 + 0.001 = 0.10100000000000001) does not ceil an exact figure up a unit.
+  const micro = Math.ceil(Number(((listPriceUsd + QUOTE_FEE_ALLOWANCE_USD) * 1e6).toFixed(3)));
+  return BigInt(micro) + 1n;
+}
+
+/** The ceiling as dollars — what the wallet reservation holds. */
+export function maxSignableUsd(listPriceUsd: number): number {
+  return Number(maxSignableAtomic(listPriceUsd)) / 1e6;
 }
 
 const EXEC_PRICE_USD = 0.001;
@@ -151,6 +212,9 @@ async function signPayment(
     const paymentHeader = await extractPaymentReq(response);
     if (!paymentHeader) return null;
 
+    // maxTimeoutSeconds below is the x402 authorization validity window the 402
+    // quotes (300 s), NOT the sandbox lifetime: a 24 h create still settles
+    // within seconds of signing, so it needs no change for long lifetimes.
     if (chain === 'solana') {
       const wallet = await getOrCreateSolanaWallet();
       const paymentRequired = parsePaymentRequired(paymentHeader);
@@ -212,6 +276,29 @@ async function extractPaymentReq(response: Response): Promise<string | null> {
 }
 
 /**
+ * The amount (atomic USDC) a 402 asks for, picked the same way signPayment
+ * picks its option. Null when the 402 carries no readable quote.
+ */
+async function quotedAtomic(response: Response, chain: Chain): Promise<bigint | null> {
+  try {
+    const header = await extractPaymentReq(response.clone());
+    if (!header) return null;
+    const details = extractPaymentDetails(
+      parsePaymentRequired(header),
+      chain === 'solana' ? SOLANA_NETWORK : undefined,
+    );
+    const amount = String(details.amount ?? '');
+    return /^\d+$/.test(amount) ? BigInt(amount) : null;
+  } catch {
+    return null;
+  }
+}
+
+function atomicToUsd(n: bigint): string {
+  return `$${(Number(n) / 1e6).toFixed(6)}`;
+}
+
+/**
  * Generic POST-with-x402-retry helper used by all four Modal endpoints. The
  * first POST gets a 402 with payment requirements; we sign and retry once
  * with the X-PAYMENT header. Returns the parsed JSON body and the raw
@@ -226,6 +313,13 @@ async function extractPaymentReq(response: Response): Promise<string | null> {
  * nothing was spent. Failures that provably never left this machine (signal
  * already aborted before dispatch, DNS / connection-refused) are NOT
  * ambiguous and release normally.
+ *
+ * `maxPriceUsd` is the list price this client expects for the call. When set,
+ * the 402's quote is checked BEFORE anything is signed: above
+ * maxSignableAtomic(maxPriceUsd), or unreadable, and nothing is signed or
+ * sent — the call returns 402 with `quote_exceeds_expected`. Without it a
+ * gateway quoting a long-lifetime create at $216 would be signed blind while
+ * the reservation held a fraction of that.
  */
 export async function postWithPayment(
   endpoint: string,
@@ -234,6 +328,7 @@ export async function postWithPayment(
   abortSignal: AbortSignal,
   timeoutMs: number,
   reservation?: ReservationToken | null,
+  maxPriceUsd?: number,
 ): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; raw: string }> {
   const chain = loadChain();
   const headers: Record<string, string> = {
@@ -252,6 +347,18 @@ export async function postWithPayment(
     let response = await fetch(endpoint, { method: 'POST', signal: ctrl.signal, headers, body: payload });
 
     if (response.status === 402 && walletMayPay(headers)) {
+      if (maxPriceUsd !== undefined) {
+        const quoted = await quotedAtomic(response, chain);
+        const ceiling = maxSignableAtomic(maxPriceUsd);
+        if (quoted === null || quoted > ceiling) {
+          const error = quoted === null
+            ? 'quote_exceeds_expected: the 402 carried no readable amount, so nothing was signed'
+            : `quote_exceeds_expected: the gateway asked ${atomicToUsd(quoted)}, above the ` +
+              `${atomicToUsd(ceiling)} this client expected, so nothing was signed`;
+          logger.warn(`[franklin] Modal ${endpoint}: ${error}`);
+          return { ok: false, status: 402, body: { error }, raw: '' };
+        }
+      }
       const paymentHeaders = await paymentSigner(response, chain, endpoint, resourceDescription);
       if (!paymentHeaders) {
         return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '' };
@@ -385,23 +492,26 @@ export const modalCreateCapability: CapabilityHandler = {
     name: 'ModalCreate',
     description:
       'Create a Modal Python 3.11 sandbox (CPU or GPU) via the BlockRun gateway. ' +
-      'Returns a sandbox_id you pass to ModalExec. Charged once per create. Up to 1 CPU and ' +
-      '1024 MB: CPU $0.01, T4 $0.05, L4 $0.08, A10G $0.10, A100 $0.20, H100 $0.40. Larger GPU ' +
-      'sandboxes pay hourly for the lifetime, at least the same: T4 $4, L4 $4.50, A10G $5, A100 $7, H100 $9 per hour. ' +
-      'IMPORTANT — current limitations (BlockRun gateway is in early-access for sandboxes):\n' +
-      '  - sandbox lifetime: 5 minutes MAX (gateway hard-cap, regardless of GPU tier)\n' +
-      '  - per ModalExec call: 60 seconds MAX wall-clock\n' +
+      'Returns a sandbox_id you pass to ModalExec. Charged ONCE, UPFRONT, at create.\n' +
+      'BILLING — `timeout` is the BILLED lifetime, not an idle timeout:\n' +
+      '  - timeout <= 300 s AND cpu <= 1 AND memory <= 1024 MB: flat rate. ' +
+      'CPU $0.01, T4 $0.05, L4 $0.08, A10G $0.10, A100 $0.20, H100 $0.40.\n' +
+      '  - Anything else (timeout > 300 s, OR cpu > 1, OR memory > 1024 MB): hourly rate x the FULL ' +
+      'requested timeout, charged upfront, never below the flat rate, NO refund when you terminate early. ' +
+      'Per hour: CPU $0.25, T4 $4, L4 $4.50, A10G $5, A100 $7, H100 $9.\n' +
+      '  - Examples: {timeout: 600, gpu: "A100"} = $1.17; {timeout: 1200, gpu: "H100"} = $3.00; ' +
+      '{timeout: 86400, gpu: "H100"} = $216 even if the job finishes in a minute.\n' +
+      '  - Ask for the time the work needs, not a safe-looking ceiling. Keep timeout <= 300 with ' +
+      'default size for short tasks.\n' +
+      'Limits:\n' +
+      '  - sandbox lifetime: 10 s to 86400 s (24 h); default 300 s\n' +
+      '  - per ModalExec call: 60 seconds MAX wall-clock (use fire-and-poll below)\n' +
       '  - Python 3.11 only, no custom images yet\n' +
-      '  - 1 vCPU, 1 GiB RAM defaults\n' +
-      '  - GPU access is preview-tier (officially "coming later" in docs)\n' +
+      '  - 1 vCPU, 512 MB RAM defaults\n' +
       '  - No setup-time provisioning — every sandbox starts empty\n' +
-      'These limits make this tool suitable for: GPU benchmarks (nvidia-smi, matmul), ' +
-      'small model inference (≤3B params if weights pre-cached), CUDA kernel validation, ' +
-      'short ad-hoc Python tasks. NOT suitable for: full LoRA / fine-tuning runs, ' +
-      'pip install + model download + training (pip alone burns 1-2 min of the 5-min budget). ' +
-      'Custom images + longer lifetime + GPU production tier are documented as "coming later" ' +
-      'by BlockRun — for serious ML workloads tell the user to use Modal directly until then. ' +
-      'Always call ModalTerminate when done. ' +
+      'Good for: GPU benchmarks, CUDA kernel validation, model inference, ad-hoc Python, and ' +
+      'longer jobs (pip install + model download + training) when the user accepts the hourly cost. ' +
+      'Always call ModalTerminate when done (it stops the sandbox; it does not refund the lifetime). ' +
       'Long-running command pattern: each ModalExec call is itself capped at 60s wall-clock. ' +
       'For work that takes >60s (pip install, model download, training), use the ' +
       'fire-and-poll pattern: ModalExec(["sh","-c","nohup <cmd> > /workspace/log 2>&1 &"]) ' +
@@ -410,7 +520,13 @@ export const modalCreateCapability: CapabilityHandler = {
       type: 'object',
       properties: {
         gpu: { type: 'string', description: 'GPU tier. One of T4, L4, A10G, A100, H100. Omit for CPU-only ($0.01).' },
-        timeout: { type: 'number', description: 'Lifetime cap in seconds. Default + Max = 300 (5 min). Gateway rejects values > 300 with HTTP 400.' },
+        timeout: {
+          type: 'number',
+          description:
+            'BILLED sandbox lifetime in seconds: charged upfront for the whole value, never refunded. ' +
+            'Default 300, min 10, max 86400 (24 h). <= 300 (with cpu <= 1, memory <= 1024) is the flat rate; ' +
+            '> 300 bills hourly for the full value (e.g. 600 s on A100 = $1.17, 3600 s CPU = $0.25, 86400 s H100 = $216).',
+        },
         cpu: { type: 'number', description: 'Number of CPU cores. Default 1, min 0.125, max 1 for CPU sandboxes and 8 with a GPU. Above 1 bills hourly.' },
         memory: { type: 'number', description: 'Memory MB. Default 512, max 1024 for CPU sandboxes and 32768 with a GPU. Above 1024 bills hourly.' },
       },
@@ -456,42 +572,51 @@ export const modalCreateCapability: CapabilityHandler = {
         return { output: `Error: ${c.error}`, isError: true };
       }
     }
-    // Gateway hard-caps sandbox lifetime at 300s. Cap client-side so we
-    // surface a clear error instead of letting the user pay $0.20 for a
-    // create that 400s on the wire.
-    const CREATE_TIMEOUT_MAX = 300;
-    if (typeof timeoutCoerced === 'number' && timeoutCoerced > CREATE_TIMEOUT_MAX) {
+    // Mirror the gateway's create schema (integer timeout in 10..86400, cpu
+    // >= 0.125) so a bad value fails here with a clear message instead of a
+    // bare 400 from the gateway.
+    const timeoutSec = typeof timeoutCoerced === 'number' ? timeoutCoerced : DEFAULT_TIMEOUT_SECONDS;
+    if (
+      !Number.isInteger(timeoutSec) ||
+      timeoutSec < MODAL_MIN_TIMEOUT_SECONDS ||
+      timeoutSec > MODAL_MAX_TIMEOUT_SECONDS
+    ) {
       return {
         output:
-          `Error: timeout ${timeoutCoerced}s exceeds gateway max of ${CREATE_TIMEOUT_MAX}s. ` +
-          `BlockRun caps Modal sandbox lifetime at 5 minutes regardless of GPU tier. ` +
-          `For longer workloads, the work must be split across multiple sandboxes ` +
-          `(checkpoint + reload) or you need to ask BlockRun to lift this cap.`,
+          `Error: timeout must be a whole number of seconds from ${MODAL_MIN_TIMEOUT_SECONDS} to ` +
+          `${MODAL_MAX_TIMEOUT_SECONDS} (24 h), got ${timeoutSec}. Remember it is the billed lifetime: ` +
+          `above 300 s it is charged hourly for the full value, upfront, with no refund.`,
         isError: true,
       };
     }
+    if (typeof cpuCoerced === 'number' && cpuCoerced < MODAL_MIN_CPU) {
+      return { output: `Error: cpu must be at least ${MODAL_MIN_CPU}, got ${cpuCoerced}.`, isError: true };
+    }
 
-    const price = modalCreatePriceUsd(
+    const pricing = modalCreatePricing(
       tier,
       typeof cpuCoerced === 'number' ? cpuCoerced : undefined,
       typeof memoryCoerced === 'number' ? memoryCoerced : undefined,
-      typeof timeoutCoerced === 'number' ? timeoutCoerced : undefined,
+      timeoutSec,
     );
+    const price = pricing.priceUsd;
+    const billingLine = pricing.model === 'hourly'
+      ? `hourly: ${fmtUsd(pricing.hourlyRateUsd ?? 0)}/h x ${(timeoutSec / 3600).toFixed(2)} h, upfront, no refund on early terminate`
+      : 'flat (timeout <= 300 s, cpu <= 1, memory <= 1024 MB)';
 
     // ── AskUser cost preview (skipped if env auto-approve or non-UI mode) ──
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
     if (ctx.onAskUser && !autoApprove) {
-      const timeoutSec = raw.timeout ?? 300;
       const lines = [
         `Create Modal sandbox?`,
         ``,
         `  Tier:        ${tier === 'cpu' ? 'CPU only' : `GPU ${tier}`}`,
         `  Image:       python:3.11`,
-        `  Timeout:     ${timeoutSec}s (${(timeoutSec / 60).toFixed(1)} min)`,
-        ...(raw.cpu ? [`  CPU cores:   ${raw.cpu}`] : []),
-        ...(raw.memory ? [`  Memory:      ${raw.memory} MB`] : []),
+        `  Timeout:     ${timeoutSec}s (${(timeoutSec / 60).toFixed(1)} min) — billed lifetime`,
+        ...(typeof cpuCoerced === 'number' ? [`  CPU cores:   ${cpuCoerced}`] : []),
+        ...(typeof memoryCoerced === 'number' ? [`  Memory:      ${memoryCoerced} MB`] : []),
         ``,
-        `Create cost:   ${fmtUsd(price)} (one-time)`,
+        `Create cost:   ${fmtUsd(price)} (one-time, ${billingLine})`,
         `Each exec:     ${fmtUsd(EXEC_PRICE_USD)}`,
         `Terminate:     ${fmtUsd(TERMINATE_PRICE_USD)}`,
       ];
@@ -507,9 +632,11 @@ export const modalCreateCapability: CapabilityHandler = {
     }
 
     // Wallet reservation — block over-spend if other in-flight calls hold balance.
+    // Hold the most we will sign (list price + Base fee), not the list price:
+    // the quote guard in postWithPayment refuses anything above that ceiling.
     let reservation: ReservationToken | null = null;
     try {
-      reservation = await walletReservation.hold(price);
+      reservation = await walletReservation.hold(maxSignableUsd(price));
       if (!reservation) {
         return {
           output:
@@ -535,6 +662,7 @@ export const modalCreateCapability: CapabilityHandler = {
         ctx.abortSignal,
         90_000, // 90s — sandbox cold-start can be slow on fresh GPU pulls
         reservation,
+        price,
       );
       const latencyMs = Date.now() - callStartedAt;
 
@@ -569,7 +697,7 @@ export const modalCreateCapability: CapabilityHandler = {
         id: sandboxId,
         gpu: tier,
         createdAt: Date.now(),
-        timeoutSeconds: raw.timeout ?? 300,
+        timeoutSeconds: timeoutSec,
       });
 
       // Stats — surface Modal usage in `franklin insights` like other paid tools.
@@ -582,8 +710,8 @@ export const modalCreateCapability: CapabilityHandler = {
           `Sandbox created\n` +
           `- id: \`${sandboxId}\`\n` +
           `- tier: ${tier === 'cpu' ? 'CPU only' : `GPU ${tier}`}\n` +
-          `- timeout: ${raw.timeout ?? 300}s\n` +
-          `- charged: ${fmtUsd(price)}\n\n` +
+          `- timeout: ${timeoutSec}s (billed lifetime; terminating early refunds nothing)\n` +
+          `- charged: ${fmtUsd(price)} (${billingLine})\n\n` +
           `Next: ModalExec({ sandbox_id: "${sandboxId}", command: ["python","-c","print(1)"] })`,
       };
     } finally {
@@ -617,7 +745,7 @@ export const modalExecCapability: CapabilityHandler = {
       '  exec2: ["sh","-c","tail -50 /workspace/log"] (poll progress, <1s) ' +
       '  exec3: ["sh","-c","kill -0 $(cat /workspace/pid) 2>/dev/null && echo RUN || echo DONE"] (check live) ' +
       'This decouples actual work duration from the per-exec 60s ceiling, but the sandbox ' +
-      'itself still dies at 300s wall-clock — total useful work fits in ~5 minutes.',
+      'itself still dies when its create `timeout` (billed lifetime, default 300 s, max 24 h) runs out.',
     input_schema: {
       type: 'object',
       properties: {
@@ -685,6 +813,7 @@ export const modalExecCapability: CapabilityHandler = {
         ctx.abortSignal,
         Math.max(30_000, ((coercedTimeout ?? 300) + 30) * 1000),
         reservation,
+        EXEC_PRICE_USD,
       );
       const latencyMs = Date.now() - callStartedAt;
 
@@ -774,6 +903,7 @@ export const modalStatusCapability: CapabilityHandler = {
         ctx.abortSignal,
         30_000,
         reservation,
+        STATUS_PRICE_USD,
       );
       const latencyMs = Date.now() - callStartedAt;
 
@@ -829,6 +959,7 @@ export const modalTerminateCapability: CapabilityHandler = {
         ctx.abortSignal,
         30_000,
         reservation,
+        TERMINATE_PRICE_USD,
       );
       const latencyMs = Date.now() - callStartedAt;
 
@@ -887,6 +1018,8 @@ export async function terminateAllSessionSandboxes(opts: { abortSignal?: AbortSi
         'Franklin Modal sandbox cleanup',
         ctrl.signal,
         20_000,
+        null,
+        TERMINATE_PRICE_USD,
       );
       if (res.ok) succeeded++;
       else failed.push({ id, error: String(res.body.error ?? res.raw.slice(0, 200)) });
