@@ -1,5 +1,28 @@
 # Changelog
 
+## Franklin Agent 3.49.28 — Modal sandboxes can live up to 24 hours, and Franklin never signs more than it expected
+
+Upgrade if you use Modal sandboxes.
+
+- **Lifetimes up to 24 h.** ModalCreate refused any `timeout` above 300 s and told
+  the model the gateway would reject it. The gateways have accepted up to 86400 s
+  (24 h) for a while (probed 2026-11-13: 86400 is quoted, 86401 is a 400 on
+  sol.blockrun.ai and blockrun.ai). The client now accepts 10 to 86400 s and
+  still defaults to 300 s.
+- **`timeout` is explained as the billed lifetime.** A create with timeout <= 300 s,
+  cpu <= 1 and memory <= 1024 MB pays the flat rate. Anything else pays the hourly
+  rate for the full requested lifetime, upfront, never below the flat rate, with
+  no refund on early terminate: 600 s on an A100 is $1.17, 24 h on an H100 is $216.
+  The tool text, the confirm dialog and the result now all say so.
+- **Correct hourly price for CPU sandboxes.** A CPU create above 300 s is billed at
+  $0.25/h. Franklin priced it at the flat $0.01, so a 24 h CPU sandbox would have
+  reserved $0.01 against a $6.00 charge.
+- **No signing above the expected price.** Before it signs, every Modal call now
+  checks the 402 quote against the price Franklin computed for the request (plus
+  the Base gateway's $0.001 transaction fee). A higher or unreadable quote is
+  refused with `quote_exceeds_expected` and nothing is signed or sent. The wallet
+  reservation holds that same ceiling.
+
 ## Franklin Agent 3.49.27 — Solana payments sign on the gateway's quoted blockhash
 
 Requires `@blockrun/llm` 3.26.5 (was 3.19.1 in the lockfile). When a Solana 402

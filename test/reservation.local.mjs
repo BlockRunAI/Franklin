@@ -257,3 +257,150 @@ test('an untrustworthy read does not prune ambiguous holds', async () => {
   assert.equal(walletReservation.snapshot().ambiguousCount, 1,
     'an ambiguous hold must survive a read that could not see it');
 });
+
+// ─── Quote ceiling: never sign more than the client expected ──────────────
+// Older clients reserved the list price and then signed whatever the 402
+// asked. With create lifetimes up to 24 h a quote can be $216, so the client
+// checks the quote against its own price before it signs anything.
+
+const { modalCreateCapability, maxSignableAtomic } = await import('../dist/tools/modal.js');
+
+function res402Quote(amount) {
+  return new Response(JSON.stringify({
+    x402Version: 2,
+    accepts: [{ scheme: 'exact', network: 'eip155:8453', amount, payTo: '0xabc', asset: '0xusdc', maxTimeoutSeconds: 300 }],
+  }), { status: 402, headers: { 'content-type': 'application/json' } });
+}
+
+/** Stub: 402 quoting `amount`, then 200 for the paid retry. Records the bodies sent. */
+function stubQuote(amount, paidBody = { sandbox_id: 'sb_q' }) {
+  const sent = [];
+  globalThis.fetch = async (_url, init) => {
+    sent.push({ body: init.body ? JSON.parse(init.body) : null, paid: !!init.headers?.['PAYMENT-SIGNATURE'] });
+    if (sent.length === 1) return res402Quote(amount);
+    return new Response(JSON.stringify(paidBody), { status: 200 });
+  };
+  let signed = 0;
+  _setPaymentSignerForTests(async () => { signed++; return { 'PAYMENT-SIGNATURE': 'sig' }; });
+  return { sent, signedCount: () => signed };
+}
+
+test('maxSignableAtomic = list + Base fee, rounded up, + 1 unit', () => {
+  assert.equal(maxSignableAtomic(0.01), 11_001n);
+  assert.equal(maxSignableAtomic(0.10), 101_001n, 'float noise must not add a unit');
+  assert.equal(maxSignableAtomic(7 * 600 / 3600), 1_167_668n);
+  assert.equal(maxSignableAtomic(216), 216_001_001n);
+});
+
+test('quote above the expected price -> nothing signed, nothing sent, 402 quote_exceeds_expected', async () => {
+  walletReservation._resetForTests(fixed(1000));
+  const { sent, signedCount } = stubQuote('216000000'); // a 24h H100 quote
+  const r = await postWithPayment('https://gateway.invalid/modal/create', {}, 't', new AbortController().signal, 1000, null, 0.01);
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 402);
+  assert.match(String(r.body.error), /quote_exceeds_expected.*\$216\.000000.*\$0\.011001/);
+  assert.equal(signedCount(), 0, 'signer must not run');
+  assert.equal(sent.length, 1, 'no paid request dispatched');
+});
+
+test('quote one unit over the ceiling is refused; at the ceiling it is signed', async () => {
+  walletReservation._resetForTests(fixed(1000));
+  let q = stubQuote('11002');
+  let r = await postWithPayment('https://gateway.invalid/x', {}, 't', new AbortController().signal, 1000, null, 0.01);
+  assert.equal(r.ok, false);
+  assert.equal(q.signedCount(), 0);
+
+  q = stubQuote('11001');
+  r = await postWithPayment('https://gateway.invalid/x', {}, 't', new AbortController().signal, 1000, null, 0.01);
+  assert.equal(r.ok, true);
+  assert.equal(q.signedCount(), 1);
+});
+
+test('live gateway quotes (2026-11-13) pass the ceiling of the client price', async () => {
+  const { modalCreatePriceUsd } = await import('../dist/tools/modal.js');
+  // [tier, timeout, quoted atomic] probed unpaid on sol.blockrun.ai and blockrun.ai.
+  const live = [
+    ['cpu', 300, '10000'],      // sol flat
+    ['cpu', 300, '11000'],      // base flat + $0.001 fee
+    ['cpu', 86400, '6000000'],  // sol 24h CPU
+    ['cpu', 86400, '2401000'],  // base 24h CPU (lower rate)
+    ['A100', 600, '1166667'],   // sol hourly, gateway rounds up
+    ['A100', 600, '667667'],    // base hourly
+  ];
+  for (const [tier, timeout, amount] of live) {
+    walletReservation._resetForTests(fixed(1000));
+    const q = stubQuote(amount);
+    const price = modalCreatePriceUsd(tier, undefined, undefined, timeout);
+    const r = await postWithPayment('https://gateway.invalid/x', {}, 't', new AbortController().signal, 1000, null, price);
+    assert.equal(r.ok, true, `${tier} ${timeout}s quote ${amount} must be signed (price ${price})`);
+    assert.equal(q.signedCount(), 1);
+  }
+});
+
+test('an unreadable 402 is refused when a ceiling is set', async () => {
+  walletReservation._resetForTests(fixed(1000));
+  let signed = 0;
+  _setPaymentSignerForTests(async () => { signed++; return { 'PAYMENT-SIGNATURE': 'sig' }; });
+  stubFetch(async () => new Response('{}', { status: 200 }));
+  const r = await postWithPayment('https://gateway.invalid/x', {}, 't', new AbortController().signal, 1000, null, 0.01);
+  assert.equal(r.ok, false);
+  assert.match(String(r.body.error), /no readable amount/);
+  assert.equal(signed, 0);
+});
+
+const createCtx = () => ({ abortSignal: new AbortController().signal, workingDir: process.cwd() });
+
+test('ModalCreate accepts a 24h lifetime and signs the hourly quote', async () => {
+  walletReservation._resetForTests(fixed(1000));
+  const q = stubQuote('216000000');
+  const out = await modalCreateCapability.execute({ gpu: 'H100', timeout: 86400 }, createCtx());
+  assert.equal(out.isError, undefined, out.output);
+  assert.equal(q.sent[0].body.timeout, 86400, 'timeout reaches the gateway unclamped');
+  assert.equal(q.signedCount(), 1);
+  assert.match(out.output, /charged: \$216\.00 \(hourly: \$9\.00\/h x 24\.00 h/);
+});
+
+test('ModalCreate refuses a quote above its own price for the request', async () => {
+  walletReservation._resetForTests(fixed(1000));
+  // Client prices a default 300 s CPU create at $0.01; a gateway asking $6 is refused.
+  const q = stubQuote('6000000');
+  const out = await modalCreateCapability.execute({}, createCtx());
+  assert.equal(out.isError, true);
+  assert.match(out.output, /ModalCreate failed \(402\): quote_exceeds_expected/);
+  assert.equal(q.signedCount(), 0);
+  assert.equal(q.sent.length, 1);
+});
+
+test('ModalCreate reserves the ceiling of the hourly price, not the flat rate', async () => {
+  // Balance covers the flat rate many times over but not 1h of A100.
+  walletReservation._resetForTests(fixed(5));
+  const q = stubQuote('7000000');
+  const out = await modalCreateCapability.execute({ gpu: 'A100', timeout: 3600 }, createCtx());
+  assert.equal(out.isError, true);
+  assert.match(out.output, /Insufficient .* ~\$7\.00/);
+  assert.equal(q.sent.length, 0, 'nothing leaves the machine');
+});
+
+test('ModalCreate rejects lifetimes outside the gateway range before any request', async () => {
+  walletReservation._resetForTests(fixed(1000));
+  for (const timeout of [86401, 9, 600.5]) {
+    const q = stubQuote('1');
+    const out = await modalCreateCapability.execute({ timeout }, createCtx());
+    assert.equal(out.isError, true, `timeout ${timeout}`);
+    assert.match(out.output, /from 10 to 86400/);
+    assert.equal(q.sent.length, 0);
+  }
+  const q = stubQuote('1');
+  const out = await modalCreateCapability.execute({ cpu: 0.1 }, createCtx());
+  assert.match(out.output, /cpu must be at least 0\.125/);
+  assert.equal(q.sent.length, 0);
+});
+
+test('ModalCreate holds list price + fee allowance, so a balance at exactly the list price is refused', async () => {
+  walletReservation._resetForTests(fixed(7.0005)); // covers $7.00, not the $7.001001 ceiling
+  const q = stubQuote('7001000');
+  const out = await modalCreateCapability.execute({ gpu: 'A100', timeout: 3600 }, createCtx());
+  assert.equal(out.isError, true);
+  assert.match(out.output, /Insufficient/);
+  assert.equal(q.sent.length, 0);
+});
