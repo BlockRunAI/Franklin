@@ -352,7 +352,10 @@ export function createProxy(options: ProxyOptions): http.Server {
     let body = '';
     const requestStartTime = Date.now();
 
-    req.on('data', (chunk: Buffer) => {
+    // Decode incrementally: a multi-byte UTF-8 character can be split across
+    // 'data' chunks, and `body += chunk` would decode each Buffer on its own.
+    req.setEncoding('utf8');
+    req.on('data', (chunk: string) => {
       body += chunk;
     });
 
