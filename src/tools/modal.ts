@@ -26,11 +26,15 @@
  *   - No upload/download endpoints — files in/out via exec heredoc / curl.
  *
  * Lifecycle:
- *   ModalCreate → returns sandbox_id, charged at GPU tier
+ *   ModalCreate → returns sandbox_id; the whole requested lifetime is charged
+ *                 here, upfront
  *   ModalExec   → sync, returns { stdout, stderr, exit_code }
  *   ModalStatus → check running/terminated
- *   ModalTerminate → release; called automatically at session end via
- *                    the SessionSandboxTracker registry.
+ *   ModalTerminate → stops the sandbox and frees its resources. It refunds
+ *                    nothing: the lifetime was paid at create. Nothing calls
+ *                    it automatically today (terminateAllSessionSandboxes has
+ *                    no caller), so an unterminated sandbox runs until its
+ *                    timeout — already paid for, so no further charge.
  */
 
 import {
@@ -51,6 +55,7 @@ import { recordUsage } from '../stats/tracker.js';
 import { logger } from '../logger.js';
 import { noChargeNote } from '../payments/billing-copy.js';
 import { GATEWAY_TRANSACTION_FEE_USD } from '../gateway-models.js';
+import { chargeFromResponse } from '../payments/price-catalog.js';
 
 // ─── Pricing table (probed from /.well-known/x402 + 402 responses) ─────────
 const CREATE_PRICE_USD: Record<string, number> = {
@@ -94,6 +99,12 @@ export interface ModalCreatePricing {
   model: 'flat' | 'hourly';
   /** Set when model === 'hourly'. */
   hourlyRateUsd?: number;
+  /**
+   * True when the request is NOT flat-eligible (lifetime > 300 s, cpu > 1 or
+   * memory > 1024 MB) but its hourly price is below the flat rate, so the flat
+   * rate applies as a floor. The flat-eligibility rule does not describe it.
+   */
+  flatFloor?: boolean;
 }
 
 /**
@@ -108,6 +119,11 @@ export function modalCreatePricing(
   memory?: number,
   timeoutSeconds: number = DEFAULT_TIMEOUT_SECONDS,
 ): ModalCreatePricing {
+  // Fail closed: an unknown tier has no price, and an undefined price would
+  // reach the reservation and the quote ceiling as NaN.
+  if (!Object.prototype.hasOwnProperty.call(CREATE_PRICE_USD, tier)) {
+    throw new RangeError(`no Modal price for tier ${JSON.stringify(tier)}`);
+  }
   const flat = CREATE_PRICE_USD[tier];
   const flatEligible =
     timeoutSeconds <= FLAT_RATE_MAX_SECONDS &&
@@ -117,6 +133,7 @@ export function modalCreatePricing(
     const hourlyRateUsd = HOURLY_PRICE_USD[tier];
     const hourlyPrice = hourlyRateUsd * (timeoutSeconds / 3600);
     if (hourlyPrice > flat) return { priceUsd: hourlyPrice, model: 'hourly', hourlyRateUsd };
+    return { priceUsd: flat, model: 'flat', flatFloor: true };
   }
   return { priceUsd: flat, model: 'flat' };
 }
@@ -137,6 +154,11 @@ export function modalCreatePriceUsd(
  * in atomic units (1 USDC = 1_000_000).
  */
 export function maxSignableAtomic(listPriceUsd: number): bigint {
+  // Fail closed on a price that is not a real number: NaN would otherwise
+  // throw deep inside BigInt() where a caller may swallow it.
+  if (typeof listPriceUsd !== 'number' || !Number.isFinite(listPriceUsd) || listPriceUsd < 0) {
+    throw new RangeError(`no quote ceiling for list price ${String(listPriceUsd)}`);
+  }
   // Round the micro-dollar figure to 3 places first so float noise
   // (0.1 + 0.001 = 0.10100000000000001) does not ceil an exact figure up a unit.
   const micro = Math.ceil(Number(((listPriceUsd + QUOTE_FEE_ALLOWANCE_USD) * 1e6).toFixed(3)));
@@ -155,12 +177,13 @@ const TERMINATE_PRICE_USD = 0.001;
 const VALID_GPUS = new Set(Object.keys(CREATE_PRICE_USD).filter(g => g !== 'cpu'));
 
 // ─── Session sandbox tracker ───────────────────────────────────────────────
-// In-memory registry of sandboxes created in the current session. Used by
-// (1) the cleanup hook in vscode-session.ts to terminate orphans on session
-// end, (2) the extension UI's "active sandboxes" badge.
+// In-memory registry of sandboxes created in the current session, for
+// terminateAllSessionSandboxes (no caller today; the VS Code session hook it
+// was written for no longer exists).
 //
 // NOT persisted — sandboxes outlive the Franklin process via Modal's own
-// timeout, so a missed cleanup is bounded by the user-set `timeout`.
+// timeout. That lifetime was charged in full at create, so a missed cleanup
+// costs no extra money; it only leaves the sandbox running until `timeout`.
 
 export interface SandboxRecord {
   id: string;
@@ -314,22 +337,37 @@ function atomicToUsd(n: bigint): string {
  * already aborted before dispatch, DNS / connection-refused) are NOT
  * ambiguous and release normally.
  *
- * `maxPriceUsd` is the list price this client expects for the call. When set,
- * the 402's quote is checked BEFORE anything is signed: above
- * maxSignableAtomic(maxPriceUsd), or unreadable, and nothing is signed or
- * sent — the call returns 402 with `quote_exceeds_expected`. Without it a
+ * `maxPriceUsd` is the list price this client expects for the call, and it is
+ * required: the 402's quote is checked BEFORE anything is signed. A quote above
+ * maxSignableAtomic(maxPriceUsd), an unreadable quote, or a maxPriceUsd that is
+ * missing or not a finite non-negative number, and nothing is signed or sent —
+ * the call returns 402 with `quote_exceeds_expected`. Without the check a
  * gateway quoting a long-lifetime create at $216 would be signed blind while
  * the reservation held a fraction of that.
+ *
+ * `chargedUsd` / `signedUsd` report what this call actually cost, for the
+ * caller's "charged:" line and recordUsage (see modalCharge).
  */
+export interface ModalPostResult {
+  ok: boolean;
+  status: number;
+  body: Record<string, unknown>;
+  raw: string;
+  /** The gateway's own statement of the charge (`x-blockrun-cost-usd`), or null. */
+  chargedUsd: number | null;
+  /** The 402 quote this client signed and sent, in USD; null when nothing was signed. */
+  signedUsd: number | null;
+}
+
 export async function postWithPayment(
   endpoint: string,
   body: Record<string, unknown>,
   resourceDescription: string,
   abortSignal: AbortSignal,
   timeoutMs: number,
-  reservation?: ReservationToken | null,
-  maxPriceUsd?: number,
-): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; raw: string }> {
+  reservation: ReservationToken | null,
+  maxPriceUsd: number,
+): Promise<ModalPostResult> {
   const chain = loadChain();
   const headers: Record<string, string> = {
     ...gatewayHeaders(),
@@ -341,28 +379,44 @@ export async function postWithPayment(
   abortSignal.addEventListener('abort', onParentAbort, { once: true });
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let paymentDispatched = false;
+  let signedUsd: number | null = null;
+  const refuse = (error: string): ModalPostResult => {
+    logger.warn(`[franklin] Modal ${endpoint}: ${error}`);
+    return { ok: false, status: 402, body: { error }, raw: '', chargedUsd: null, signedUsd: null };
+  };
 
   try {
     const payload = JSON.stringify(body);
     let response = await fetch(endpoint, { method: 'POST', signal: ctrl.signal, headers, body: payload });
 
     if (response.status === 402 && walletMayPay(headers)) {
-      if (maxPriceUsd !== undefined) {
-        const quoted = await quotedAtomic(response, chain);
-        const ceiling = maxSignableAtomic(maxPriceUsd);
-        if (quoted === null || quoted > ceiling) {
-          const error = quoted === null
-            ? 'quote_exceeds_expected: the 402 carried no readable amount, so nothing was signed'
-            : `quote_exceeds_expected: the gateway asked ${atomicToUsd(quoted)}, above the ` +
-              `${atomicToUsd(ceiling)} this client expected, so nothing was signed`;
-          logger.warn(`[franklin] Modal ${endpoint}: ${error}`);
-          return { ok: false, status: 402, body: { error }, raw: '' };
-        }
+      // Fail closed: no computable ceiling means no signature, never a blind one.
+      let ceiling: bigint;
+      try {
+        ceiling = maxSignableAtomic(maxPriceUsd);
+      } catch {
+        return refuse(
+          `quote_exceeds_expected: this client has no expected price for the call ` +
+          `(${String(maxPriceUsd)}), so nothing was signed`,
+        );
+      }
+      const quoted = await quotedAtomic(response, chain);
+      if (quoted === null) {
+        return refuse('quote_exceeds_expected: the 402 carried no readable amount, so nothing was signed');
+      }
+      if (quoted > ceiling) {
+        return refuse(
+          `quote_exceeds_expected: the gateway asked ${atomicToUsd(quoted)}, above the ` +
+          `${atomicToUsd(ceiling)} this client expected, so nothing was signed`,
+        );
       }
       const paymentHeaders = await paymentSigner(response, chain, endpoint, resourceDescription);
       if (!paymentHeaders) {
-        return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '' };
+        return { ok: false, status: 402, body: { error: 'payment signing failed' }, raw: '', chargedUsd: null, signedUsd: null };
       }
+      // signPayment signs the amount quotedAtomic just read (same option
+      // selection), so this is the figure the settlement moves.
+      signedUsd = Number(quoted) / 1e6;
       // Signing can take a while (wallet load, Solana RPC). If the budget
       // expired meanwhile, fetch rejects before writing a byte — that is a
       // definite non-payment, not an ambiguous one.
@@ -387,7 +441,14 @@ export async function postWithPayment(
     }
     let parsed: Record<string, unknown> = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { /* leave as {} */ }
-    return { ok: response.ok, status: response.status, body: parsed, raw };
+    return {
+      ok: response.ok,
+      status: response.status,
+      body: parsed,
+      raw,
+      chargedUsd: chargeFromResponse(response),
+      signedUsd,
+    };
   } catch (err) {
     if (paymentDispatched && reservation && !definitelyNotSent(err)) {
       // Signed request went out; abort/timeout hit before we saw the result.
@@ -405,6 +466,35 @@ export async function postWithPayment(
     clearTimeout(timer);
     abortSignal.removeEventListener('abort', onParentAbort);
   }
+}
+
+/**
+ * What a successful Modal call cost, for the "charged:" line and recordUsage.
+ * The gateway's `x-blockrun-cost-usd` wins; next the 402 quote this client
+ * signed (an exact-scheme payment settles that amount); otherwise the client's
+ * list price, flagged as an estimate. The list price is the sol/arc/nano rate
+ * and the Base gateway's hourly rates are lower, so presenting it as the
+ * settled amount overstated Base hourly creates by up to ~2.5x.
+ */
+export function modalCharge(
+  res: Pick<ModalPostResult, 'chargedUsd' | 'signedUsd'>,
+  listPriceUsd: number,
+): { usd: number; estimated: boolean } {
+  if (typeof res.chargedUsd === 'number') return { usd: res.chargedUsd, estimated: false };
+  if (typeof res.signedUsd === 'number') return { usd: res.signedUsd, estimated: false };
+  return { usd: listPriceUsd, estimated: true };
+}
+
+/** A settled amount to the micro-dollar, trailing zeros trimmed, at least 2 places. */
+function fmtUsdExact(n: number): string {
+  const [whole, frac = ''] = n.toFixed(6).split('.');
+  return `$${whole}.${frac.replace(/0+$/, '').padEnd(2, '0')}`;
+}
+
+function describeCharge(charge: { usd: number; estimated: boolean }): string {
+  return charge.estimated
+    ? `~${fmtUsd(charge.usd)} estimated (list price; the gateway did not report the settled amount)`
+    : fmtUsdExact(charge.usd);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -541,16 +631,23 @@ export const modalCreateCapability: CapabilityHandler = {
     // 400s on either, leaving the agent confused (it sees "Invalid
     // request body" with no actionable hint). Fix the obvious mistakes
     // before they leave the client.
-    let gpu = raw.gpu;
-    if (typeof gpu === 'string') {
-      const matched = [...VALID_GPUS].find(g => g.toLowerCase() === gpu!.toLowerCase());
-      if (matched) gpu = matched;
-    }
-    if (gpu && !VALID_GPUS.has(gpu)) {
-      return {
-        output: `Error: invalid gpu "${gpu}". Allowed: ${[...VALID_GPUS].join(', ')} (or omit for CPU).`,
-        isError: true,
-      };
+    // An absent, null or blank gpu means CPU. Anything else must name a GPU
+    // tier exactly (after case/whitespace folding): `gpu: ""` used to fall
+    // through as tier "" with no price, which crashed the confirm dialog and,
+    // headless, skipped both the reservation and the quote ceiling.
+    const rawGpu: unknown = raw.gpu;
+    let gpu: string | undefined;
+    if (rawGpu === undefined || rawGpu === null || (typeof rawGpu === 'string' && rawGpu.trim() === '')) {
+      gpu = undefined;
+    } else {
+      const wanted = typeof rawGpu === 'string' ? rawGpu.trim().toLowerCase() : null;
+      gpu = wanted === null ? undefined : [...VALID_GPUS].find(g => g.toLowerCase() === wanted);
+      if (!gpu) {
+        return {
+          output: `Error: invalid gpu ${JSON.stringify(rawGpu)}. Allowed: ${[...VALID_GPUS].join(', ')} (or omit for CPU).`,
+          isError: true,
+        };
+      }
     }
     const tier = gpu ?? 'cpu';
 
@@ -593,16 +690,31 @@ export const modalCreateCapability: CapabilityHandler = {
       return { output: `Error: cpu must be at least ${MODAL_MIN_CPU}, got ${cpuCoerced}.`, isError: true };
     }
 
-    const pricing = modalCreatePricing(
-      tier,
-      typeof cpuCoerced === 'number' ? cpuCoerced : undefined,
-      typeof memoryCoerced === 'number' ? memoryCoerced : undefined,
-      timeoutSec,
-    );
+    // Fail closed: no price or no ceiling means no request at all. Both are
+    // computed here, before the dialog, the reservation or any network call,
+    // so nothing downstream can run with an undefined price.
+    let pricing: ModalCreatePricing;
+    let ceilingUsd: number;
+    try {
+      pricing = modalCreatePricing(
+        tier,
+        typeof cpuCoerced === 'number' ? cpuCoerced : undefined,
+        typeof memoryCoerced === 'number' ? memoryCoerced : undefined,
+        timeoutSec,
+      );
+      ceilingUsd = maxSignableUsd(pricing.priceUsd);
+    } catch (err) {
+      return {
+        output: `Error: could not price this ModalCreate (${(err as Error).message}); nothing was sent or charged.`,
+        isError: true,
+      };
+    }
     const price = pricing.priceUsd;
     const billingLine = pricing.model === 'hourly'
       ? `hourly: ${fmtUsd(pricing.hourlyRateUsd ?? 0)}/h x ${(timeoutSec / 3600).toFixed(2)} h, upfront, no refund on early terminate`
-      : 'flat (timeout <= 300 s, cpu <= 1, memory <= 1024 MB)';
+      : pricing.flatFloor
+        ? 'flat floor: the hourly price for this size and lifetime is below the flat rate, so the flat rate is charged, upfront, no refund on early terminate'
+        : 'flat (timeout <= 300 s, cpu <= 1, memory <= 1024 MB)';
 
     // ── AskUser cost preview (skipped if env auto-approve or non-UI mode) ──
     const autoApprove = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL === '1';
@@ -634,18 +746,26 @@ export const modalCreateCapability: CapabilityHandler = {
     // Wallet reservation — block over-spend if other in-flight calls hold balance.
     // Hold the most we will sign (list price + Base fee), not the list price:
     // the quote guard in postWithPayment refuses anything above that ceiling.
+    // A balance read that fails resolves to Infinity inside hold(), so a throw
+    // here is a bad amount, not an RPC blip: refuse rather than create with no
+    // hold.
     let reservation: ReservationToken | null = null;
     try {
-      reservation = await walletReservation.hold(maxSignableUsd(price));
-      if (!reservation) {
-        return {
-          output:
-            `Insufficient ${isKeyMode() ? 'account credit' : 'USDC'} for ModalCreate (${tier}, ~${fmtUsd(price)}). ` +
-            describeHeadroom(),
-          isError: true,
-        };
-      }
-    } catch { /* fall through, x402 will surface real error */ }
+      reservation = await walletReservation.hold(ceilingUsd);
+    } catch (err) {
+      return {
+        output: `Error: could not reserve funds for ModalCreate (${(err as Error).message}); nothing was sent or charged.`,
+        isError: true,
+      };
+    }
+    if (!reservation) {
+      return {
+        output:
+          `Insufficient ${isKeyMode() ? 'account credit' : 'USDC'} for ModalCreate (${tier}, ~${fmtUsd(price)}). ` +
+          describeHeadroom(),
+        isError: true,
+      };
+    }
 
     try {
       const body: Record<string, unknown> = {};
@@ -701,8 +821,10 @@ export const modalCreateCapability: CapabilityHandler = {
       });
 
       // Stats — surface Modal usage in `franklin insights` like other paid tools.
+      // Record what settled, not the client's list price (see modalCharge).
+      const charge = modalCharge(res, price);
       try {
-        recordUsage(`modal/${tier}`, 0, 0, price, latencyMs);
+        recordUsage(`modal/${tier}`, 0, 0, charge.usd, latencyMs, false, charge.estimated);
       } catch { /* ignore */ }
 
       return {
@@ -711,7 +833,7 @@ export const modalCreateCapability: CapabilityHandler = {
           `- id: \`${sandboxId}\`\n` +
           `- tier: ${tier === 'cpu' ? 'CPU only' : `GPU ${tier}`}\n` +
           `- timeout: ${timeoutSec}s (billed lifetime; terminating early refunds nothing)\n` +
-          `- charged: ${fmtUsd(price)} (${billingLine})\n\n` +
+          `- charged: ${describeCharge(charge)} (${billingLine})\n\n` +
           `Next: ModalExec({ sandbox_id: "${sandboxId}", command: ["python","-c","print(1)"] })`,
       };
     } finally {
@@ -777,10 +899,12 @@ export const modalExecCapability: CapabilityHandler = {
       };
     }
 
+    // Hold the ceiling the quote guard may sign (list + Base fee + 1 unit),
+    // not the bare list price. For micro-cost calls a null hold (insufficient)
+    // does not block — the guard still caps what can be signed.
     let reservation: ReservationToken | null = null;
     try {
-      reservation = await walletReservation.hold(EXEC_PRICE_USD);
-      // For micro-cost calls don't hard-block on insufficient — just proceed.
+      reservation = await walletReservation.hold(maxSignableUsd(EXEC_PRICE_USD));
     } catch { /* ignore */ }
 
     try {
@@ -850,7 +974,8 @@ export const modalExecCapability: CapabilityHandler = {
       const hasAnyOutput = stdout.length > 0 || stderr.length > 0;
       const exitCode = rawExit !== null ? rawExit : (hasAnyOutput ? 0 : -1);
 
-      try { recordUsage('modal/exec', 0, 0, EXEC_PRICE_USD, latencyMs); } catch { /* ignore */ }
+      const charge = modalCharge(res, EXEC_PRICE_USD);
+      try { recordUsage('modal/exec', 0, 0, charge.usd, latencyMs, false, charge.estimated); } catch { /* ignore */ }
 
       const summary = `exit ${exitCode}` + (rawExit === null ? ' (inferred — no exit_code field in response)' : '');
       const sections = [
@@ -892,7 +1017,7 @@ export const modalStatusCapability: CapabilityHandler = {
     if (!sandbox_id) return { output: 'Error: sandbox_id is required', isError: true };
 
     let reservation: ReservationToken | null = null;
-    try { reservation = await walletReservation.hold(STATUS_PRICE_USD); } catch { /* ignore */ }
+    try { reservation = await walletReservation.hold(maxSignableUsd(STATUS_PRICE_USD)); } catch { /* ignore */ }
 
     try {
       const callStartedAt = Date.now();
@@ -912,7 +1037,8 @@ export const modalStatusCapability: CapabilityHandler = {
         return { output: `ModalStatus failed (${res.status}): ${err}`, isError: true };
       }
 
-      try { recordUsage('modal/status', 0, 0, STATUS_PRICE_USD, latencyMs); } catch { /* ignore */ }
+      const charge = modalCharge(res, STATUS_PRICE_USD);
+      try { recordUsage('modal/status', 0, 0, charge.usd, latencyMs, false, charge.estimated); } catch { /* ignore */ }
 
       const status = (res.body.status as string) || 'unknown';
       const extra = JSON.stringify(res.body, null, 2);
@@ -929,11 +1055,12 @@ export const modalTerminateCapability: CapabilityHandler = {
   spec: {
     name: 'ModalTerminate',
     description:
-      'Terminate a Modal sandbox and release its resources. Charges $0.001. ' +
-      'Strongly recommended after every successful ModalExec sequence — ' +
-      'Modal bills wall-clock GPU time until the sandbox terminates or hits ' +
-      'its `timeout`. Session-end auto-cleanup also calls this for any sandboxes ' +
-      'the agent forgot, but explicit is better.',
+      'Terminate a Modal sandbox: stops it and anything running in it, frees its resources, ' +
+      'and ModalExec on that id fails afterwards. Charges $0.001. ' +
+      'It does NOT refund anything: ModalCreate already charged the full requested `timeout` ' +
+      'upfront, so terminating early saves no money. Choose the timeout the work needs at ' +
+      'ModalCreate. Call this when you are done with a sandbox so it does not hold resources ' +
+      'until its timeout; nothing terminates sandboxes automatically when the session ends.',
     input_schema: {
       type: 'object',
       properties: {
@@ -948,7 +1075,7 @@ export const modalTerminateCapability: CapabilityHandler = {
     if (!sandbox_id) return { output: 'Error: sandbox_id is required', isError: true };
 
     let reservation: ReservationToken | null = null;
-    try { reservation = await walletReservation.hold(TERMINATE_PRICE_USD); } catch { /* ignore */ }
+    try { reservation = await walletReservation.hold(maxSignableUsd(TERMINATE_PRICE_USD)); } catch { /* ignore */ }
 
     try {
       const callStartedAt = Date.now();
@@ -963,20 +1090,33 @@ export const modalTerminateCapability: CapabilityHandler = {
       );
       const latencyMs = Date.now() - callStartedAt;
 
-      // Always remove from tracker — even on failure, retrying is wasteful.
-      sessionSandboxTracker.remove(sandbox_id);
-
       if (!res.ok) {
         const err = res.body.error ? String(res.body.error) : res.raw.slice(0, 300);
+        // 402 (a quote-guard refusal or failed signing: nothing was paid, so the
+        // terminate never ran) and 5xx leave the sandbox running as far as we
+        // know. Keep it tracked and report an error. Other 4xx (e.g. already
+        // terminated, unknown id) are benign: drop it from the tracker.
+        if (res.status === 402 || res.status >= 500) {
+          return {
+            output:
+              `ModalTerminate failed (${res.status}): ${err}\n\n` +
+              `The sandbox \`${sandbox_id}\` is probably still running and is still tracked. ` +
+              `It stops by itself at its create timeout (already paid for). Retry ModalTerminate if you need it stopped now.`,
+            isError: true,
+          };
+        }
+        sessionSandboxTracker.remove(sandbox_id);
         return {
           output:
             `ModalTerminate returned ${res.status}: ${err}\n\n` +
-            `(Removed from local tracker regardless. Modal-side cleanup will happen at the timeout.)`,
-          isError: res.status >= 500, // 4xx (e.g. already-terminated) is benign
+            `(Removed from local tracker: the gateway reports no sandbox to terminate.)`,
+          isError: false,
         };
       }
 
-      try { recordUsage('modal/terminate', 0, 0, TERMINATE_PRICE_USD, latencyMs); } catch { /* ignore */ }
+      sessionSandboxTracker.remove(sandbox_id);
+      const charge = modalCharge(res, TERMINATE_PRICE_USD);
+      try { recordUsage('modal/terminate', 0, 0, charge.usd, latencyMs, false, charge.estimated); } catch { /* ignore */ }
 
       return { output: `Sandbox \`${sandbox_id}\` terminated.` };
     } finally {
@@ -988,11 +1128,11 @@ export const modalTerminateCapability: CapabilityHandler = {
 // ─── Bulk session cleanup ────────────────────────────────────────────────
 
 /**
- * Terminate every sandbox the current session has created. Called from
- * vscode-session.ts at session end (and the SessionToolGuard cleanup path)
- * so a missed agent ModalTerminate doesn't leave Modal billing the user
- * up to the per-sandbox timeout. Best-effort: failures are logged but
- * don't block session shutdown.
+ * Terminate every sandbox the current session has created. Written for a
+ * session-end hook that no longer exists, so nothing calls it today.
+ * Terminating refunds nothing (each lifetime was charged upfront at create);
+ * it only stops sandboxes left running. Best-effort: failures are returned,
+ * not thrown.
  */
 export async function terminateAllSessionSandboxes(opts: { abortSignal?: AbortSignal } = {}): Promise<{
   attempted: number;
