@@ -3511,13 +3511,13 @@ test('paid media and Modal tools pass measured latency to recordUsage', async ()
     'all four Modal paid calls must capture start time');
   assert.equal((modal.match(/latencyMs = Date\.now\(\) - callStartedAt/g) ?? []).length, 4,
     'all four Modal paid calls must compute latency');
-  assert.match(modal, /recordUsage\(`modal\/\$\{tier\}`, 0, 0, price, latencyMs\)/,
+  assert.match(modal, /recordUsage\(`modal\/\$\{tier\}`, 0, 0, charge\.usd, latencyMs, false, charge\.estimated\)/,
     'ModalCreate recordUsage must receive latencyMs');
-  assert.match(modal, /recordUsage\('modal\/exec', 0, 0, EXEC_PRICE_USD, latencyMs\)/,
+  assert.match(modal, /recordUsage\('modal\/exec', 0, 0, charge\.usd, latencyMs, false, charge\.estimated\)/,
     'ModalExec recordUsage must receive latencyMs');
-  assert.match(modal, /recordUsage\('modal\/status', 0, 0, STATUS_PRICE_USD, latencyMs\)/,
+  assert.match(modal, /recordUsage\('modal\/status', 0, 0, charge\.usd, latencyMs, false, charge\.estimated\)/,
     'ModalStatus recordUsage must receive latencyMs');
-  assert.match(modal, /recordUsage\('modal\/terminate', 0, 0, TERMINATE_PRICE_USD, latencyMs\)/,
+  assert.match(modal, /recordUsage\('modal\/terminate', 0, 0, charge\.usd, latencyMs, false, charge\.estimated\)/,
     'ModalTerminate recordUsage must receive latencyMs');
 });
 
@@ -13109,6 +13109,8 @@ test('modalCreatePriceUsd bills a lifetime above 300 s hourly at any size, CPU i
   assert.equal(h.model, 'hourly');
   assert.equal(h.hourlyRateUsd, 9);
   assert.ok(close(h.priceUsd, 9 * 301 / 3600));
-  // Hourly-eligible (8 cores) but below the flat floor: the floor wins and the model says flat.
-  assert.deepEqual(modalCreatePricing('T4', 8, undefined, 10), { priceUsd: 0.05, model: 'flat' });
+  // Hourly-eligible (8 cores) but below the flat floor: the floor wins, the model
+  // says flat, and flatFloor marks that the flat-eligibility rule does not apply.
+  assert.deepEqual(modalCreatePricing('T4', 8, undefined, 10), { priceUsd: 0.05, model: 'flat', flatFloor: true });
+  assert.deepEqual(modalCreatePricing('T4', 1, 1024, 300), { priceUsd: 0.05, model: 'flat' }, 'genuinely flat-eligible: no floor flag');
 });

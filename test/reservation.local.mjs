@@ -10,6 +10,8 @@ const { walletReservation, AMBIGUOUS_GRACE_MS } = await import('../dist/wallet/r
 const { postWithPayment, _setPaymentSignerForTests } = await import('../dist/tools/modal.js');
 
 const fixed = (v) => async () => v;
+// Paid-tool success paths call recordUsage; keep them out of the real stats file.
+process.env.FRANKLIN_NO_AUDIT = '1';
 
 test('markAmbiguous keeps the amount counted and survives a later release()', async () => {
   walletReservation._resetForTests(fixed(0.10));
@@ -119,6 +121,12 @@ const realFetch = globalThis.fetch;
 after(() => { globalThis.fetch = realFetch; _setPaymentSignerForTests(null); });
 
 function res402() {
+  return new Response(JSON.stringify({
+    x402Version: 2,
+    accepts: [{ scheme: 'exact', network: 'eip155:8453', amount: '10000', payTo: '0xabc', asset: '0xusdc', maxTimeoutSeconds: 300 }],
+  }), { status: 402, headers: { 'content-type': 'application/json' } });
+}
+function res402Unreadable() {
   return new Response(JSON.stringify({ accepts: [] }), { status: 402, headers: { 'content-type': 'application/json' } });
 }
 /** fetch stub: first call 402, second call runs `paid(signal)`. */
@@ -143,7 +151,7 @@ async function runPaid({ paid, timeoutMs = 60, signer, parent = new AbortControl
   const token = await walletReservation.hold(0.25);
   let threw = null;
   try {
-    await postWithPayment('https://gateway.invalid/modal/create', {}, 'test', parent.signal, timeoutMs, token);
+    await postWithPayment('https://gateway.invalid/modal/create', {}, 'test', parent.signal, timeoutMs, token, 0.01);
   } catch (e) { threw = e; }
   walletReservation.release(token); // the caller's finally
   return { threw, snap: walletReservation.snapshot(), token };
@@ -202,7 +210,7 @@ test('probe (unpaid) request failing -> nothing dispatched, nothing ambiguous', 
   walletReservation._resetForTests(fixed(1));
   globalThis.fetch = async () => { const e = new Error('aborted'); e.name = 'AbortError'; throw e; };
   const token = await walletReservation.hold(0.25);
-  await assert.rejects(() => postWithPayment('https://gateway.invalid/x', {}, 't', new AbortController().signal, 50, token));
+  await assert.rejects(() => postWithPayment('https://gateway.invalid/x', {}, 't', new AbortController().signal, 50, token, 0.01));
   walletReservation.release(token);
   assert.equal(walletReservation.snapshot().totalUsd, 0);
 });
@@ -341,7 +349,8 @@ test('an unreadable 402 is refused when a ceiling is set', async () => {
   walletReservation._resetForTests(fixed(1000));
   let signed = 0;
   _setPaymentSignerForTests(async () => { signed++; return { 'PAYMENT-SIGNATURE': 'sig' }; });
-  stubFetch(async () => new Response('{}', { status: 200 }));
+  let n = 0;
+  globalThis.fetch = async () => (++n === 1 ? res402Unreadable() : new Response('{}', { status: 200 }));
   const r = await postWithPayment('https://gateway.invalid/x', {}, 't', new AbortController().signal, 1000, null, 0.01);
   assert.equal(r.ok, false);
   assert.match(String(r.body.error), /no readable amount/);
@@ -403,4 +412,203 @@ test('ModalCreate holds list price + fee allowance, so a balance at exactly the 
   assert.equal(out.isError, true);
   assert.match(out.output, /Insufficient/);
   assert.equal(q.sent.length, 0);
+});
+
+// ─── GLM 5.3 review of #248: follow-ups ──────────────────────────────────
+
+const {
+  modalTerminateCapability, modalExecCapability, modalStatusCapability, modalCapabilities,
+  modalCreatePricing, modalCharge, sessionSandboxTracker,
+} = await import('../dist/tools/modal.js');
+const { getLiveSpendUsd } = await import('../dist/stats/tracker.js');
+
+test('no Modal tool text teaches usage billing: terminate refunds nothing', () => {
+  const term = modalTerminateCapability.spec.description;
+  assert.match(term, /does NOT refund/);
+  assert.match(term, /upfront/);
+  for (const cap of modalCapabilities) {
+    const text = JSON.stringify(cap.spec);
+    assert.doesNotMatch(text, /bills? wall-clock|until the sandbox terminates|keep billing/i, cap.spec.name);
+    assert.doesNotMatch(text, /auto-cleanup also calls/i, `${cap.spec.name}: no session-end cleanup is wired`);
+  }
+});
+
+test('gpu "" / blank / null is a CPU create with the quote guard and reservation on', async () => {
+  for (const gpu of ['', '   ', null]) {
+    walletReservation._resetForTests(fixed(1000));
+    // A CPU 300 s create is $0.01; a $6 quote must be refused, which proves the
+    // guard ran with a real price (tier "" used to price as undefined = no guard).
+    const q = stubQuote('6000000');
+    const out = await modalCreateCapability.execute({ gpu }, createCtx());
+    assert.equal(out.isError, true, `gpu ${JSON.stringify(gpu)}`);
+    assert.match(out.output, /quote_exceeds_expected/);
+    assert.equal(q.signedCount(), 0);
+    assert.equal(q.sent[0].body.gpu, undefined, 'blank gpu is not sent');
+  }
+  walletReservation._resetForTests(fixed(1000));
+  const q = stubQuote('10000');
+  let held = null;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (u, i) => { held ??= walletReservation.snapshot().totalUsd; return origFetch(u, i); };
+  const out = await modalCreateCapability.execute({ gpu: '' }, createCtx());
+  assert.equal(out.isError, undefined, out.output);
+  assert.equal(held, 0.011001, 'reservation holds the CPU ceiling');
+  assert.match(out.output, /tier: CPU only/);
+  assert.equal(q.signedCount(), 1);
+});
+
+test('gpu "" in the confirm dialog renders a CPU price instead of throwing', async () => {
+  walletReservation._resetForTests(fixed(1000));
+  stubQuote('10000');
+  let prompt = '';
+  const ctx = { ...createCtx(), onAskUser: async (q) => { prompt = q; return 'Cancel'; } };
+  const prev = process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL;
+  delete process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL;
+  try {
+    const out = await modalCreateCapability.execute({ gpu: '' }, ctx);
+    assert.match(out.output, /cancelled/);
+  } finally {
+    if (prev !== undefined) process.env.FRANKLIN_MEDIA_AUTO_APPROVE_ALL = prev;
+  }
+  assert.match(prompt, /CPU only/);
+  assert.match(prompt, /Create cost:\s+\$0\.01 /);
+});
+
+test('a non-string or unknown gpu is rejected before any request', async () => {
+  for (const gpu of [0, false, 4, 'cpu', 'B200']) {
+    walletReservation._resetForTests(fixed(1000));
+    const q = stubQuote('10000');
+    const out = await modalCreateCapability.execute({ gpu }, createCtx());
+    assert.equal(out.isError, true, `gpu ${JSON.stringify(gpu)}`);
+    assert.match(out.output, /invalid gpu/);
+    assert.equal(q.sent.length, 0);
+  }
+  // Case and whitespace still fold onto a real tier.
+  walletReservation._resetForTests(fixed(1000));
+  const q = stubQuote('50000');
+  const out = await modalCreateCapability.execute({ gpu: ' t4 ' }, createCtx());
+  assert.equal(out.isError, undefined, out.output);
+  assert.equal(q.sent[0].body.gpu, 'T4');
+});
+
+test('fail closed: no price means no signature and no NaN hold', async () => {
+  assert.throws(() => modalCreatePricing(''), /no Modal price/);
+  assert.throws(() => modalCreatePricing('B200'), /no Modal price/);
+  assert.throws(() => maxSignableAtomic(undefined), /no quote ceiling/);
+  assert.throws(() => maxSignableAtomic(NaN), /no quote ceiling/);
+  assert.throws(() => maxSignableAtomic(-1), /no quote ceiling/);
+  walletReservation._resetForTests(fixed(1000));
+  await assert.rejects(() => walletReservation.hold(NaN), /non-finite/);
+  await assert.rejects(() => walletReservation.hold(undefined), /non-finite/);
+  assert.equal(walletReservation.snapshot().totalUsd, 0, 'a refused hold leaves nothing behind');
+  for (const maxPrice of [undefined, NaN, Infinity, -1]) {
+    const q = stubQuote('1');
+    const r = await postWithPayment('https://gateway.invalid/x', {}, 't', new AbortController().signal, 1000, null, maxPrice);
+    assert.equal(r.ok, false, `maxPriceUsd ${maxPrice}`);
+    assert.equal(r.status, 402);
+    assert.match(String(r.body.error), /quote_exceeds_expected: this client has no expected price/);
+    assert.equal(q.signedCount(), 0);
+    assert.equal(q.sent.length, 1, 'no paid request dispatched');
+  }
+});
+
+test('ModalCreate reports the signed amount, not the sol list price (Base hourly)', async () => {
+  walletReservation._resetForTests(fixed(1000));
+  stubQuote('667667'); // Base A100 600 s, probed 2026-11-13
+  const before = getLiveSpendUsd();
+  const out = await modalCreateCapability.execute({ gpu: 'A100', timeout: 600 }, createCtx());
+  assert.equal(out.isError, undefined, out.output);
+  assert.match(out.output, /charged: \$0\.667667 \(hourly/);
+  assert.doesNotMatch(out.output, /\$1\.17/);
+  assert.ok(Math.abs(getLiveSpendUsd() - before - 0.667667) < 1e-9, 'recordUsage gets the settled amount');
+});
+
+test('ModalCreate prefers the gateway cost header, and labels a list price as an estimate', async () => {
+  // x-blockrun-cost-usd wins over the signed quote.
+  walletReservation._resetForTests(fixed(1000));
+  let n = 0;
+  globalThis.fetch = async () => (++n === 1
+    ? res402Quote('11000')
+    : new Response(JSON.stringify({ sandbox_id: 'sb_h' }), { status: 200, headers: { 'x-blockrun-cost-usd': '0.011000' } }));
+  _setPaymentSignerForTests(async () => ({ 'PAYMENT-SIGNATURE': 'sig' }));
+  let out = await modalCreateCapability.execute({}, createCtx());
+  assert.match(out.output, /charged: \$0\.011 \(flat/);
+
+  // No 402 and no header (e.g. a key-mode 200): the list price, marked estimated.
+  walletReservation._resetForTests(fixed(1000));
+  globalThis.fetch = async () => new Response(JSON.stringify({ sandbox_id: 'sb_k' }), { status: 200 });
+  const before = getLiveSpendUsd();
+  out = await modalCreateCapability.execute({ gpu: 'A100', timeout: 600 }, createCtx());
+  assert.match(out.output, /charged: ~\$1\.17 estimated \(list price; the gateway did not report the settled amount\)/);
+  assert.ok(Math.abs(getLiveSpendUsd() - before - 7 / 6) < 1e-9);
+
+  assert.deepEqual(modalCharge({ chargedUsd: 0, signedUsd: 0.5 }, 1), { usd: 0, estimated: false }, '0 from the header is a value');
+  assert.deepEqual(modalCharge({ chargedUsd: null, signedUsd: 0.5 }, 1), { usd: 0.5, estimated: false });
+  assert.deepEqual(modalCharge({ chargedUsd: null, signedUsd: null }, 1), { usd: 1, estimated: true });
+});
+
+test('exec / status / terminate hold the ceiling the guard may sign, not the bare list price', async () => {
+  const cases = [
+    [modalExecCapability, { sandbox_id: 'sb_x', command: 'true' }, { stdout: 'ok', exit_code: 0 }],
+    [modalStatusCapability, { sandbox_id: 'sb_x' }, { status: 'running' }],
+    [modalTerminateCapability, { sandbox_id: 'sb_x' }, { ok: true }],
+  ];
+  for (const [cap, input, paidBody] of cases) {
+    walletReservation._resetForTests(fixed(1000));
+    stubQuote('2000', paidBody); // Base: $0.001 + $0.001 fee
+    const heldAt = [];
+    const inner = globalThis.fetch;
+    globalThis.fetch = async (u, i) => { heldAt.push(walletReservation.snapshot().totalUsd); return inner(u, i); };
+    const out = await cap.execute(input, createCtx());
+    assert.ok(!out.isError, `${cap.spec.name}: ${out.output}`);
+    assert.equal(heldAt[0], 0.002001, `${cap.spec.name} holds list + fee + 1 unit`);
+    assert.equal(walletReservation.snapshot().totalUsd, 0, 'released after');
+  }
+});
+
+test('billingLine says "flat floor" for a large create priced at the floor', async () => {
+  walletReservation._resetForTests(fixed(1000));
+  stubQuote('50000');
+  const out = await modalCreateCapability.execute({ gpu: 'T4', cpu: 8, memory: 32768, timeout: 10 }, createCtx());
+  assert.equal(out.isError, undefined, out.output);
+  assert.match(out.output, /\(flat floor: the hourly price for this size and lifetime is below the flat rate/);
+  assert.doesNotMatch(out.output, /timeout <= 300 s, cpu <= 1/);
+  // A genuinely flat-eligible create keeps the eligibility wording.
+  walletReservation._resetForTests(fixed(1000));
+  stubQuote('50000');
+  const flat = await modalCreateCapability.execute({ gpu: 'T4' }, createCtx());
+  assert.match(flat.output, /\(flat \(timeout <= 300 s, cpu <= 1, memory <= 1024 MB\)\)/);
+});
+
+test('a quote-guard refusal on ModalTerminate is an error and keeps the sandbox tracked', async () => {
+  sessionSandboxTracker.drainIds();
+  sessionSandboxTracker.add({ id: 'sb_t', gpu: 'H100', createdAt: Date.now() });
+  walletReservation._resetForTests(fixed(1000));
+  const q = stubQuote('5000'); // above the $0.002001 terminate ceiling
+  const out = await modalTerminateCapability.execute({ sandbox_id: 'sb_t' }, createCtx());
+  assert.equal(out.isError, true);
+  assert.match(out.output, /ModalTerminate failed \(402\): quote_exceeds_expected/);
+  assert.match(out.output, /still tracked/);
+  assert.equal(q.signedCount(), 0);
+  assert.deepEqual(sessionSandboxTracker.list().map((r) => r.id), ['sb_t'], 'not dropped');
+
+  // A 5xx is an error and keeps it tracked too.
+  globalThis.fetch = async () => new Response('{"error":"upstream"}', { status: 502 });
+  const five = await modalTerminateCapability.execute({ sandbox_id: 'sb_t' }, createCtx());
+  assert.equal(five.isError, true);
+  assert.deepEqual(sessionSandboxTracker.list().map((r) => r.id), ['sb_t']);
+
+  // A benign 4xx (already gone) drops it without an error.
+  globalThis.fetch = async () => new Response('{"error":"not found"}', { status: 404 });
+  const gone = await modalTerminateCapability.execute({ sandbox_id: 'sb_t' }, createCtx());
+  assert.equal(gone.isError, false);
+  assert.equal(sessionSandboxTracker.list().length, 0);
+
+  // Success drops it.
+  sessionSandboxTracker.add({ id: 'sb_u', gpu: 'cpu', createdAt: Date.now() });
+  walletReservation._resetForTests(fixed(1000));
+  stubQuote('1000', { ok: true });
+  const ok = await modalTerminateCapability.execute({ sandbox_id: 'sb_u' }, createCtx());
+  assert.ok(!ok.isError, ok.output);
+  assert.equal(sessionSandboxTracker.list().length, 0);
 });

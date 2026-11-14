@@ -377,10 +377,11 @@ export class SessionToolGuard {
     scope: ExecutionScope
   ): Promise<CapabilityResult | null> {
     // Hard-block tools that have failed too many times this session.
-    // Modal lifecycle tools are exempt: orphan sandboxes keep billing
-    // GPU time, and ModalTerminate is the only way to recover from
-    // agent-side. Auto-disabling it after 3 transient errors would
-    // strand a $0.40/hr H100 until the session ends. Same logic for
+    // Modal lifecycle tools are exempt: ModalTerminate is the only way to
+    // stop a sandbox agent-side. A sandbox's whole lifetime is charged
+    // upfront at create (terminating refunds nothing), but auto-disabling
+    // ModalTerminate after 3 transient errors would leave a GPU sandbox
+    // running, holding resources, until its timeout. Same logic for
     // media-gen tools: failures are usually transient (gateway hiccup,
     // prompt rejection) and the user often wants to retry.
     const FAILURE_EXEMPT = new Set([

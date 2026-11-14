@@ -162,8 +162,15 @@ class WalletReservationManager {
    * Try to reserve `amountUsd`. Returns a token on success, or null if
    * insufficient (balance - already-reserved < amountUsd). Caller MUST
    * release the token after the actual payment resolves, success or fail.
+   *
+   * Throws on an amount that is not a finite number. A NaN hold used to be
+   * granted (every comparison with NaN is false) and then poisoned the
+   * reserved total, so every later hold passed whatever the balance.
    */
   async hold(amountUsd: number): Promise<ReservationToken | null> {
+    if (typeof amountUsd !== 'number' || !Number.isFinite(amountUsd)) {
+      throw new RangeError(`cannot reserve a non-finite amount (${String(amountUsd)})`);
+    }
     if (amountUsd <= 0) {
       // Free / zero-cost calls don't need accounting.
       return { id: `free-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, amountUsd: 0 };
