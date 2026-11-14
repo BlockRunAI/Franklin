@@ -1,5 +1,37 @@
 # Changelog
 
+## Franklin Agent 3.49.29 — Modal: no signing without a price, the real charge in the result, terminate refunds nothing
+
+Upgrade if you use Modal sandboxes. Follow-ups to 3.49.28.
+
+- **ModalTerminate no longer implies it saves money.** Its tool text said Modal
+  bills GPU time until the sandbox is terminated. ModalCreate charges the whole
+  requested `timeout` upfront and terminating early refunds nothing, so a model
+  reading the old text could pick a 24 h lifetime expecting to stop the meter
+  early. It now says terminate stops the sandbox and frees resources, refunds
+  nothing, and that the timeout should be chosen at create. It also no longer
+  claims that sandboxes are terminated automatically at session end.
+- **`gpu: ""` cannot bypass the quote check.** An empty gpu priced as nothing:
+  the confirm dialog crashed, and with no dialog the call went out with no
+  wallet reservation and no quote ceiling. A blank gpu now means CPU, and any
+  other value must name a GPU tier. Every Modal call now refuses to sign when
+  Franklin cannot compute the expected price, instead of signing whatever the
+  gateway asks.
+- **The "charged:" line shows what was paid.** It showed Franklin's list price,
+  which is the Solana rate; the Base gateway's hourly rates are lower (A100 for
+  600 s: $0.667667 on Base, shown as $1.17). Franklin now reports the gateway's
+  stated charge, or else the exact quote it signed, and labels the list price
+  as an estimate when neither is available. `franklin stats` records the same
+  figure.
+- **Exec, status and terminate reserve what they may sign**: the price plus the
+  Base $0.001 fee, as create already did.
+- **"flat floor" wording.** A large or long create whose hourly price is below
+  the flat rate now says it is charged the flat floor, instead of quoting the
+  flat-rate conditions it does not meet.
+- **A refused ModalTerminate is an error.** When the quote check refuses a
+  terminate, or the gateway answers 5xx, the result is an error and the
+  sandbox stays in the session's list instead of being reported as done.
+
 ## Franklin Agent 3.49.28 — Modal sandboxes can live up to 24 hours, and Franklin never signs more than it expected
 
 Upgrade if you use Modal sandboxes.
