@@ -30,7 +30,7 @@ process.env.FRANKLIN_ALLOW_PRIVATE_FETCH = '1';
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unwatchFile, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -598,6 +598,74 @@ test('proxy Auto routes through the shared portfolio before forwarding', async (
     assert.notEqual(forwarded[0].model, 'blockrun/auto');
     assert.equal(expected.routerVersion, 'v3-portfolio');
     assert.equal(expected.taskType, 'tool_agent');
+  } finally {
+    if (proxy) await new Promise((resolve) => proxy.close(() => resolve()));
+    await new Promise((resolve) => backend.close(() => resolve()));
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('proxy preserves multi-byte UTF-8 characters split across request body chunks', async () => {
+  const originalHome = process.env.HOME;
+  const fakeHome = mkdtempSync(join(tmpdir(), 'rc-proxy-utf8-home-'));
+  const proxyUrl = new URL('../dist/proxy/server.js', import.meta.url);
+  const forwarded = [];
+  const backend = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    forwarded.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      id: 'msg_utf8',
+      type: 'message',
+      role: 'assistant',
+      model: 'zai/glm-5.1',
+      content: [{ type: 'text', text: 'ok' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 4, output_tokens: 2 },
+    }));
+  });
+
+  let proxy;
+  try {
+    process.env.HOME = fakeHome;
+    const backendPort = await listenOnRandomPort(backend);
+    const { createProxy } = await import(`${proxyUrl.href}?t=${Date.now()}`);
+    proxy = createProxy({
+      authToken: TEST_PROXY_TOKEN,
+      port: 0,
+      apiUrl: `http://127.0.0.1:${backendPort}`,
+      chain: 'base',
+      modelOverride: 'zai/glm-5.1',
+      fallbackEnabled: false,
+    });
+    const proxyPort = await listenOnRandomPort(proxy);
+    const prompt = 'Price is \u20ac20';
+    const bytes = Buffer.from(JSON.stringify({
+      model: 'zai/glm-5.1',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 64,
+    }));
+    // Cut inside the 3-byte euro sign so the proxy sees it split across two 'data' events.
+    const cut = bytes.indexOf(Buffer.from('\u20ac')) + 1;
+
+    await new Promise((resolve, reject) => {
+      const clientReq = request({
+        host: '127.0.0.1',
+        port: proxyPort,
+        path: '/api/v1/messages',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': bytes.length, Authorization: `Bearer ${TEST_PROXY_TOKEN}` },
+      }, (res) => { res.resume(); res.on('end', resolve); });
+      clientReq.on('error', reject);
+      clientReq.write(bytes.subarray(0, cut));
+      setTimeout(() => clientReq.end(bytes.subarray(cut)), 100);
+    });
+
+    assert.equal(forwarded.length, 1);
+    assert.equal(forwarded[0].messages[0].content, prompt);
   } finally {
     if (proxy) await new Promise((resolve) => proxy.close(() => resolve()));
     await new Promise((resolve) => backend.close(() => resolve()));
@@ -1407,6 +1475,19 @@ test('bash capability reports user abort distinctly from timeout', async () => {
   assert.equal(result.isError, true, `Expected aborted command to be treated as an error.\n${result.output}`);
   assert.ok(result.output.includes('aborted by user'), `Expected abort wording.\n${result.output}`);
   assert.ok(!result.output.includes('timeout after'), `Abort should not be mislabeled as timeout.\n${result.output}`);
+});
+
+test('bash capability keeps multi-byte characters split across output chunks', async () => {
+  const { bashCapability } = await import('../dist/tools/bash.js');
+  // printf emits the three bytes of the euro sign (E2 82 AC) in separate writes.
+  const command = "printf '\\342\\202'; sleep 0.3; printf '\\254 20'; printf '\\342\\202' >&2; sleep 0.3; printf '\\254 30' >&2";
+  const result = await bashCapability.execute(
+    { command },
+    { workingDir: process.cwd(), abortSignal: new AbortController().signal }
+  );
+  assert.ok(result.output.includes('€ 20'), `stdout corrupted: ${JSON.stringify(result.output)}`);
+  assert.ok(result.output.includes('€ 30'), `stderr corrupted: ${JSON.stringify(result.output)}`);
+  assert.ok(!result.output.includes('\uFFFD'), `Unexpected replacement character: ${JSON.stringify(result.output)}`);
 });
 
 test('webfetch cache key includes max_length to avoid stale truncated responses', async () => {

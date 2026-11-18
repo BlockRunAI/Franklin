@@ -3,6 +3,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import fs from 'node:fs';
 import type { CapabilityHandler, CapabilityResult, ExecutionScope } from '../agent/types.js';
 import { sanitizeSubprocessEnv } from './subprocess-env.js';
@@ -411,6 +412,9 @@ function executeCommand(command: string, timeoutMs: number, ctx: ExecutionScope)
       if (lastLine) ctx.onProgress(lastLine.slice(0, 120));
     };
 
+    // Decode per stream so a multi-byte UTF-8 character split across two
+    // chunks is not replaced by U+FFFD.
+    const stdoutDecoder = new StringDecoder('utf8');
     child.stdout?.on('data', (chunk: Buffer) => {
       if (truncated) return;
       const remaining = MAX_OUTPUT_BYTES - outputBytes;
@@ -418,18 +422,23 @@ function executeCommand(command: string, timeoutMs: number, ctx: ExecutionScope)
         truncated = true;
         return;
       }
-      const text = chunk.toString('utf-8');
+      let text: string;
       if (chunk.length <= remaining) {
+        text = stdoutDecoder.write(chunk);
         stdout += text;
         outputBytes += chunk.length;
       } else {
-        stdout += text.slice(0, remaining);
+        text = stdoutDecoder.write(chunk.subarray(0, remaining)) + stdoutDecoder.end();
+        stdout += text;
         outputBytes = MAX_OUTPUT_BYTES;
         truncated = true;
       }
       emitProgress(text);
     });
 
+    // Decode per stream so a multi-byte UTF-8 character split across two
+    // chunks is not replaced by U+FFFD.
+    const stderrDecoder = new StringDecoder('utf8');
     child.stderr?.on('data', (chunk: Buffer) => {
       if (truncated) return;
       const remaining = MAX_OUTPUT_BYTES - outputBytes;
@@ -437,12 +446,14 @@ function executeCommand(command: string, timeoutMs: number, ctx: ExecutionScope)
         truncated = true;
         return;
       }
-      const text = chunk.toString('utf-8');
+      let text: string;
       if (chunk.length <= remaining) {
+        text = stderrDecoder.write(chunk);
         stderr += text;
         outputBytes += chunk.length;
       } else {
-        stderr += text.slice(0, remaining);
+        text = stderrDecoder.write(chunk.subarray(0, remaining)) + stderrDecoder.end();
+        stderr += text;
         outputBytes = MAX_OUTPUT_BYTES;
         truncated = true;
       }
