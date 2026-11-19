@@ -13,7 +13,7 @@
 
 import { loadStats } from './tracker.js';
 import type { UsageRecord } from './tracker.js';
-import { OPUS_PRICING } from '../pricing.js';
+import { OPUS_PRICING, platformFeeFactor } from '../pricing.js';
 import { formatTokens, formatUsd, shortModelName } from './format.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -170,7 +170,7 @@ export function generateInsights(days = 30): InsightsReport {
     .sort((a, b) => a.date.localeCompare(b.date));
 
   // Calculate savings vs Opus
-  const opusCostPer1M = (OPUS_PRICING.input + OPUS_PRICING.output) / 2;
+  const opusCostPer1M = ((OPUS_PRICING.input + OPUS_PRICING.output) / 2) * platformFeeFactor(OPUS_PRICING);
   const opusWouldCost = ((totalInput + totalOutput) / 1_000_000) * opusCostPer1M;
   const savedVsOpusUsd = Math.max(0, opusWouldCost - totalCost);
 

@@ -7,7 +7,7 @@ import { BLOCKRUN_DIR, loadChain} from '../config.js';
 import { gatewayBase } from '../payments/auth-mode.js';
 import { retryFetchBalance } from './balance-retry.js';
 import { flushStats, loadStats, getLiveSpendUsd } from '../stats/tracker.js';
-import { OPUS_PRICING } from '../pricing.js';
+import { OPUS_PRICING, tokenCostUsd } from '../pricing.js';
 import { loadConfig } from './config.js';
 import { printBanner } from '../banner.js';
 import { assembleInstructions } from '../agent/context.js';
@@ -880,9 +880,7 @@ function statsDelta(before: StatsSnapshot): StatsSnapshot & { saved: number } {
   const cost = Math.max(0, now.totalCostUsd - before.cost);
   const inputTokens = Math.max(0, now.totalInputTokens - before.inputTokens);
   const outputTokens = Math.max(0, now.totalOutputTokens - before.outputTokens);
-  const opusCost =
-    (inputTokens / 1_000_000) * OPUS_PRICING.input +
-    (outputTokens / 1_000_000) * OPUS_PRICING.output;
+  const opusCost = tokenCostUsd(OPUS_PRICING, inputTokens, outputTokens);
   return { requests, cost, inputTokens, outputTokens, saved: Math.max(0, opusCost - cost) };
 }
 

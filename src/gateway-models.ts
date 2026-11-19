@@ -10,9 +10,10 @@
  * Per gateway team (2026-04-22): every model returns `billing_mode` and
  * a mode-specific `pricing` object. Dispatch on billing_mode to compute
  * an estimated charge. Token-metered chat is billed at the provider's list
- * rate with no margin (since 2026-09-04); media (image/video/music/speech/
- * sfx) and Live Search carry a 5% platform fee. Every paid call adds a flat
- * $0.001 per-transaction fee (Base since
+ * rate plus the platform fee each paid row publishes as
+ * `platform_fee_percent` (PF-8, read by pricing.ts platformFeePercent);
+ * media (image/video/music/speech/sfx) and Live Search carry a 5% platform
+ * fee. Every paid call adds a flat $0.001 per-transaction fee (Base since
  * 2026-07-10; Solana instead enforces a $0.001 minimum per call with no
  * service fee — the flat-fee estimate over-counts there by ≤$0.001, which
  * is the safe direction for budget tracking).
@@ -183,7 +184,8 @@ export async function findModel(id: string): Promise<GatewayModel | null> {
 /**
  * Platform fee multiplier on MEDIA (per_image / per_second / per_track /
  * per_character / per_generation / flat) list prices. Token-metered chat
- * carries no margin — the gateway bills it at the provider's list rate.
+ * does not use this constant: its fee comes from each row's
+ * `platform_fee_percent` (pricing.ts platformFeePercent / estimateCost).
  */
 export const GATEWAY_MARGIN = 1.05;
 

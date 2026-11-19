@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import os from 'node:os';
-import { OPUS_PRICING } from '../pricing.js';
+import { OPUS_PRICING, tokenCostUsd } from '../pricing.js';
 import { BLOCKRUN_DIR } from '../config.js';
 import { isKeyMode } from '../payments/auth-mode.js';
 import { isTestFixtureModel } from './test-fixture.js';
@@ -380,9 +380,7 @@ export function getStatsSummary(): {
     if ((m.inputTokens + m.outputTokens) > 0) chatOnlyCost += m.costUsd;
     else mediaCost += m.costUsd;
   }
-  const opusChatCost =
-    (stats.totalInputTokens / 1_000_000) * OPUS_PRICING.input +
-    (stats.totalOutputTokens / 1_000_000) * OPUS_PRICING.output;
+  const opusChatCost = tokenCostUsd(OPUS_PRICING, stats.totalInputTokens, stats.totalOutputTokens);
   // Display-side baseline: include media on both sides so "you spent X
   // instead of Y" shows real, comparable totals.
   const opusCost = opusChatCost + mediaCost;
