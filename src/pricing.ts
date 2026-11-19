@@ -4,7 +4,14 @@ import { getModelCatalog, onModelCatalogChange } from './model-catalog.js';
  * Used by agent loop, proxy server, stats tracker, and router.
  */
 
-const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: number }> = {
+/**
+ * Per-1M list rates for one model. `platformFeePercent` is the fee the gateway
+ * adds on top of the per-token list rates of a paid chat row (PF-8); it is
+ * only ever set from a live catalog row, never typed here.
+ */
+export interface TokenPricing { input: number; output: number; perCall?: number; platformFeePercent?: number }
+
+const LEGACY_PRICING: Record<string, TokenPricing> = {
   // Routing profiles (blended averages). Auto + Free are the only profiles
   // surfaced after the 2026-05-03 collapse; eco/premium were retired and
   // their parser mapping promotes them to Auto upstream of cost estimation.
@@ -219,22 +226,77 @@ const LEGACY_PRICING: Record<string, { input: number; output: number; perCall?: 
 
 export function hasHistoricalPrice(model: string): boolean { return model in LEGACY_PRICING; }
 
+const isFeePercent = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+/**
+ * The platform fee (percent) a gateway /v1/models row charges on top of its
+ * per-token list rates (blockrun specs/2026-11-16-chat-platform-fee.md PF-8).
+ *
+ * Read from `pricing.platform_fee_percent` first (the shape Solana publishes
+ * and Base publishes too), then from the row's top-level
+ * `platform_fee_percent` (Base also publishes it there). Absent or malformed
+ * means 0: older gateways and enterprise (PF-9) do not send the field, and
+ * enterprise really does charge none. Only `billing_mode: 'paid'` rows carry
+ * the fee: free, flat and media rows return 0 even if a field is present,
+ * because their published price is already final.
+ */
+export function platformFeePercent(row: unknown): number {
+  if (!row || typeof row !== 'object') return 0;
+  const r = row as { billing_mode?: unknown; pricing?: unknown; platform_fee_percent?: unknown };
+  if (r.billing_mode !== 'paid') return 0;
+  const nested = r.pricing && typeof r.pricing === 'object'
+    ? (r.pricing as { platform_fee_percent?: unknown }).platform_fee_percent
+    : undefined;
+  if (isFeePercent(nested)) return nested;
+  if (isFeePercent(r.platform_fee_percent)) return r.platform_fee_percent;
+  return 0;
+}
+
+/** Multiplier for per-token chat cost: 1 + platformFeePercent/100 (1 when absent). */
+export function platformFeeFactor(pricing: Pick<TokenPricing, 'platformFeePercent'>): number {
+  const fee = pricing.platformFeePercent;
+  return isFeePercent(fee) ? 1 + fee / 100 : 1;
+}
+
+/** Per-token chat cost in USD: list rates x tokens, times the platform fee factor. */
+export function tokenCostUsd(pricing: TokenPricing, inputTokens: number, outputTokens: number): number {
+  return (
+    (inputTokens / 1_000_000) * pricing.input +
+    (outputTokens / 1_000_000) * pricing.output
+  ) * platformFeeFactor(pricing);
+}
+
 /** Gateway prices override historical fallbacks without replacing map identities. */
-export const MODEL_PRICING: Record<string, { input: number; output: number; perCall?: number }> = {};
-export const OPUS_PRICING = { input: 5, output: 25 };
+export const MODEL_PRICING: Record<string, TokenPricing> = {};
+export const OPUS_PRICING: TokenPricing = { input: 5, output: 25 };
 function updatePrices(state: ReturnType<typeof getModelCatalog>): void {
   for (const key of Object.keys(MODEL_PRICING)) delete MODEL_PRICING[key];
   Object.assign(MODEL_PRICING, LEGACY_PRICING, state.pricing);
+  // The catalog's projected `pricing` keeps only input/output, so the fee is
+  // carried over from the full row. Bundled-snapshot rows and the historical
+  // table above carry no fee field and so price at 0 (see platformFeePercent).
+  for (const row of state.models) {
+    const fee = platformFeePercent(row);
+    const price = MODEL_PRICING[row.id];
+    if (fee > 0 && price && price.perCall === undefined) {
+      MODEL_PRICING[row.id] = { ...price, platformFeePercent: fee };
+    }
+  }
   const opus = MODEL_PRICING['anthropic/claude-opus-5'];
-  if (opus) Object.assign(OPUS_PRICING, opus);
+  // Reset the fee first so a refresh without the field does not keep a stale one.
+  if (opus) Object.assign(OPUS_PRICING, { platformFeePercent: undefined }, opus);
 }
 updatePrices(getModelCatalog());
 onModelCatalogChange(updatePrices);
 
 /**
  * Estimate cost in USD for a request.
- * Falls back to $2/$10 per 1M for unknown models.
+ * Unknown models price at 0 (see below).
  * For per-call models (perCall > 0), uses flat per-call pricing instead of per-token.
+ * Per-token models include the row's platform fee (PF-8). The flat
+ * per-transaction fee is not added here: callers use this only when no x402
+ * charge was observed (see agent/loop.ts), and the real charge is preferred.
  */
 export function estimateCost(
   model: string,
@@ -249,8 +311,5 @@ export function estimateCost(
   if (pricing.perCall) {
     return pricing.perCall * calls;
   }
-  return (
-    (inputTokens / 1_000_000) * pricing.input +
-    (outputTokens / 1_000_000) * pricing.output
-  );
+  return tokenCostUsd(pricing, inputTokens, outputTokens);
 }

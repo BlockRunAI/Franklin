@@ -255,3 +255,71 @@ test('malformed remote picker policy retains usable state while live gateway pri
     catalog.clearModelCatalogCache();
   }
 });
+
+test('platformFeePercent reads pricing first, then the row, and defaults to 0 (PF-8)', async () => {
+  const { platformFeePercent, platformFeeFactor, tokenCostUsd } = await import('../dist/pricing.js');
+  const paid = (extra = {}, pricing = {}) => ({ billing_mode: 'paid', pricing: { input: 1, output: 2, ...pricing }, ...extra });
+  assert.equal(platformFeePercent(paid()), 0, 'absent on both: older gateways, enterprise');
+  assert.equal(platformFeePercent(paid({}, { platform_fee_percent: 5 })), 5, 'nested (Solana shape)');
+  assert.equal(platformFeePercent(paid({ platform_fee_percent: 5 })), 5, 'top-level fallback');
+  assert.equal(platformFeePercent(paid({ platform_fee_percent: 9 }, { platform_fee_percent: 5 })), 5, 'nested preferred');
+  assert.equal(platformFeePercent(paid({ platform_fee_percent: 0 }, { platform_fee_percent: 0 })), 0);
+  for (const bad of [-1, Number.NaN, Infinity, '5', null]) {
+    assert.equal(platformFeePercent(paid({}, { platform_fee_percent: bad })), 0, `malformed ${String(bad)}`);
+    assert.equal(platformFeePercent(paid({ platform_fee_percent: 7 }, { platform_fee_percent: bad })), 7, 'malformed nested falls back');
+  }
+  // Free, flat and media rows are final prices: a stray fee field never applies.
+  assert.equal(platformFeePercent({ billing_mode: 'free', platform_fee_percent: 5, pricing: { input: 0, output: 0, platform_fee_percent: 5 } }), 0);
+  assert.equal(platformFeePercent({ billing_mode: 'flat', platform_fee_percent: 5, pricing: { flat: 0.001, platform_fee_percent: 5 } }), 0);
+  assert.equal(platformFeePercent({ billing_mode: 'per_image', platform_fee_percent: 5, pricing: { per_image: 0.04, platform_fee_percent: 5 } }), 0);
+  assert.equal(platformFeePercent(undefined), 0);
+  assert.equal(platformFeeFactor({}), 1);
+  assert.equal(platformFeeFactor({ platformFeePercent: 5 }), 1.05);
+  assert.ok(Math.abs(tokenCostUsd({ input: 1, output: 2, platformFeePercent: 5 }, 1_000_000, 1_000_000) - 3.15) < 1e-12);
+  assert.equal(tokenCostUsd({ input: 1, output: 2 }, 1_000_000, 1_000_000), 3);
+});
+
+test('estimateCost applies the live row fee to per-token chat only', async () => {
+  const catalog = await import('../dist/model-catalog.js');
+  const pricing = await import('../dist/pricing.js');
+  const originalFetch = globalThis.fetch;
+  const originalPolicyUrl = process.env.BLOCKRUN_MODEL_CATALOG_URL;
+  const policyUrl = 'https://catalog.example.test/platform-fee.json';
+  process.env.BLOCKRUN_MODEL_CATALOG_URL = policyUrl;
+  auth.useWalletMode();
+  catalog.clearModelCatalogCache();
+  const chat = (id, billing_mode, p, extra = {}) => ({ id, name: id, categories: ['chat'], billing_mode, pricing: p, ...extra });
+  let rows = [
+    chat('test/fee-nested', 'paid', { input: 1, output: 2, platform_fee_percent: 5 }),
+    chat('test/fee-top', 'paid', { input: 1, output: 2 }, { platform_fee_percent: 5 }),
+    chat('test/fee-both', 'paid', { input: 1, output: 2, platform_fee_percent: 10 }, { platform_fee_percent: 5 }),
+    chat('test/fee-absent', 'paid', { input: 1, output: 2 }),
+    chat('test/fee-free', 'free', { input: 0, output: 0 }, { platform_fee_percent: 0 }),
+    chat('test/fee-flat', 'flat', { flat: 0.002, platform_fee_percent: 5 }, { platform_fee_percent: 5 }),
+    chat('anthropic/claude-opus-5', 'paid', { input: 5, output: 25, platform_fee_percent: 5 }),
+  ];
+  globalThis.fetch = async url => Response.json(String(url) === policyUrl ? snapshot : { data: rows });
+  const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-12, `${a} != ${b}`);
+  try {
+    const state = await catalog.refreshModelCatalog({ network: 'solana', force: true });
+    assert.equal(state.source, 'live');
+    close(pricing.estimateCost('test/fee-nested', 1_000_000, 1_000_000), 3.15);
+    close(pricing.estimateCost('test/fee-top', 1_000_000, 1_000_000), 3.15);
+    close(pricing.estimateCost('test/fee-both', 1_000_000, 1_000_000), 3.3);
+    assert.equal(pricing.estimateCost('test/fee-absent', 1_000_000, 1_000_000), 3);
+    assert.equal(pricing.estimateCost('test/fee-free', 1_000_000, 1_000_000), 0);
+    assert.equal(pricing.estimateCost('test/fee-flat', 1_000_000, 1_000_000, 2), 0.004, 'flat is a final price');
+    assert.equal(pricing.MODEL_PRICING['test/fee-nested'].input, 1, 'list rate is not rewritten');
+    assert.equal(pricing.OPUS_PRICING.platformFeePercent, 5, 'Opus baseline carries its fee');
+    // A later catalog without the field (older gateway) drops the fee again.
+    rows = rows.map(r => ({ ...r, platform_fee_percent: undefined, pricing: { ...r.pricing, platform_fee_percent: undefined } }));
+    await catalog.refreshModelCatalog({ force: true });
+    assert.equal(pricing.estimateCost('test/fee-nested', 1_000_000, 1_000_000), 3);
+    assert.equal(pricing.platformFeeFactor(pricing.OPUS_PRICING), 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalPolicyUrl === undefined) delete process.env.BLOCKRUN_MODEL_CATALOG_URL;
+    else process.env.BLOCKRUN_MODEL_CATALOG_URL = originalPolicyUrl;
+    catalog.clearModelCatalogCache();
+  }
+});

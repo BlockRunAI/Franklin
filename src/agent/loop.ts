@@ -42,7 +42,7 @@ import { runDataHygiene } from '../storage/hygiene.js';
 import { isTestFixtureModel } from '../stats/test-fixture.js';
 import { setSessionPersistenceDisabled, isSessionPersistenceDisabled } from '../session/storage.js';
 import { writeLiveAgent } from '../session/live-registry.js';
-import { estimateCost, OPUS_PRICING } from '../pricing.js';
+import { estimateCost, OPUS_PRICING, tokenCostUsd } from '../pricing.js';
 import { maybeMidSessionExtract } from '../learnings/extractor.js';
 import { extractMentions, buildEntityContext, loadEntities } from '../brain/store.js';
 import { routeRequest, parseRoutingProfile, getFallbackChain, pickFreeFallback, isVisionModel, messageNeedsVision, messagesNeedVision, pickVisionSibling, markModelUnavailable } from '../router/index.js';
@@ -2434,8 +2434,8 @@ async function runInteractiveSession(
       sessionOutputTokens += usage.outputTokens;
       sessionCostUsd += callCost;
       turnCostUsd += callCost;
-      const opusCost = (inputTokens / 1_000_000) * OPUS_PRICING.input
-        + (usage.outputTokens / 1_000_000) * OPUS_PRICING.output;
+      // Same basis as callCost: Opus's list rates plus its platform fee.
+      const opusCost = tokenCostUsd(OPUS_PRICING, inputTokens, usage.outputTokens);
       sessionSavedVsOpus += Math.max(0, opusCost - callCost);
 
       // ── Max-spend guard ──
