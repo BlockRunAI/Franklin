@@ -75,6 +75,31 @@ import { isTestFixtureModel } from '../stats/test-fixture.js';
 const DEFAULT_MAX_TOKENS = 4096;
 
 /**
+ * Pull token usage out of an accumulated SSE stream. Anthropic reports
+ * input_tokens in `message_start` (under `message.usage`) and the final
+ * output_tokens in `message_delta` (top-level `usage`); OpenAI-style chunks
+ * carry a top-level `usage`. Read both shapes, keeping the last non-zero value.
+ */
+export function parseStreamUsage(sse: string): { inputTokens: number; outputTokens: number } {
+  let outputTokens = 0;
+  let inputTokens = 0;
+  for (const line of sse.split('\n')) {
+    if (!line.startsWith('data: ')) continue;
+    const json = line.slice(6).trim();
+    if (json === '[DONE]') continue;
+    try {
+      const parsed = JSON.parse(json);
+      const usages = [parsed.usage, parsed.message?.usage];
+      for (const u of usages) {
+        if (u?.output_tokens) outputTokens = u.output_tokens;
+        if (u?.input_tokens) inputTokens = u.input_tokens;
+      }
+    } catch { /* skip malformed */ }
+  }
+  return { inputTokens, outputTokens };
+}
+
+/**
  * Decide the `max_tokens` the proxy forwards upstream.
  *
  * An explicit ask is honored; only a missing one gets the adaptive default.
@@ -760,19 +785,7 @@ export function createProxy(options: ProxyOptions): http.Server {
                 // Record stats from streaming response
                 if (isStreaming && fullResponse) {
                   // Extract token usage from SSE stream by parsing message_delta events
-                  let outputTokens = 0;
-                  let inputTokens = 0;
-                  // Find all data: lines and parse JSON to extract usage
-                  for (const line of fullResponse.split('\n')) {
-                    if (!line.startsWith('data: ')) continue;
-                    const json = line.slice(6).trim();
-                    if (json === '[DONE]') continue;
-                    try {
-                      const parsed = JSON.parse(json);
-                      if (parsed.usage?.output_tokens) outputTokens = parsed.usage.output_tokens;
-                      if (parsed.usage?.input_tokens) inputTokens = parsed.usage.input_tokens;
-                    } catch { /* skip malformed */ }
-                  }
+                  const { inputTokens, outputTokens } = parseStreamUsage(fullResponse);
                   if (outputTokens > 0) {
                     trackOutputTokens(finalModel, outputTokens);
                     const latencyMs = Date.now() - requestStartTime;

@@ -13195,3 +13195,15 @@ test('modalCreatePriceUsd bills a lifetime above 300 s hourly at any size, CPU i
   assert.deepEqual(modalCreatePricing('T4', 8, undefined, 10), { priceUsd: 0.05, model: 'flat', flatFloor: true });
   assert.deepEqual(modalCreatePricing('T4', 1, 1024, 300), { priceUsd: 0.05, model: 'flat' }, 'genuinely flat-eligible: no floor flag');
 });
+
+test('proxy streaming usage reads input_tokens from message_start', async () => {
+  const { parseStreamUsage } = await import('../dist/proxy/server.js');
+  const sse = [
+    'event: message_start',
+    'data: {"type":"message_start","message":{"id":"m","usage":{"input_tokens":1234,"output_tokens":1}}}',
+    'event: message_delta',
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":56}}',
+    'data: [DONE]',
+  ].join('\n');
+  assert.deepEqual(parseStreamUsage(sse), { inputTokens: 1234, outputTokens: 56 });
+});
