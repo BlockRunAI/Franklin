@@ -1,5 +1,34 @@
 # Changelog
 
+## Franklin Agent 3.49.30 — Complete MCP tool lists, real input tokens in proxy stats, fee-inclusive estimates
+
+Upgrade if you use MCP servers with many tools, or `franklin proxy` with streaming.
+
+- **MCP servers register every tool and resource.** Franklin read only the
+  first page of `tools/list` and `resources/list`, so tools behind the
+  server's `nextCursor` were silently missing: the model never saw them and
+  `/mcp` did not list them. Franklin now follows the cursor, stopping on a
+  repeated cursor or after 100 pages, within the existing connect timeout.
+  (#253, landed as #254)
+- **Streaming proxy requests record their input tokens.** Usage was read only
+  from the top-level `usage` of each SSE event, but Anthropic reports
+  `input_tokens` in `message_start` under `message.usage`. Every streamed
+  request through the proxy was recorded with 0 input tokens in stats and the
+  audit log, and its estimated cost (free or cached models, where nothing is
+  charged) covered output only. (#252)
+- **Cost estimates include the gateway's chat platform fee.** Per-token chat
+  estimates now apply the `platform_fee_percent` the gateway reports for paid
+  models (0 when an older gateway does not report one). Free, flat-rate and
+  media prices are already final. The savings-vs-Opus figures use the same
+  basis. Only estimates change; what the wallet pays is unchanged. (#250)
+- **Multi-byte text is no longer garbled at chunk boundaries.** A UTF-8
+  character split across two stream chunks became U+FFFD in proxied request
+  bodies, Bash tool output and MCP server stderr. Each stream now decodes
+  incrementally. (#247)
+
+Thanks to [@pcbeingused333](https://github.com/pcbeingused333) for #247, #252
+and #253.
+
 ## Franklin Agent 3.49.29 — Modal: no signing without a price, the real charge in the result, terminate refunds nothing
 
 Upgrade if you use Modal sandboxes. Follow-ups to 3.49.28.
