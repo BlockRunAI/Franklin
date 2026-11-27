@@ -13195,3 +13195,21 @@ test('modalCreatePriceUsd bills a lifetime above 300 s hourly at any size, CPU i
   assert.deepEqual(modalCreatePricing('T4', 8, undefined, 10), { priceUsd: 0.05, model: 'flat', flatFloor: true });
   assert.deepEqual(modalCreatePricing('T4', 1, 1024, 300), { priceUsd: 0.05, model: 'flat' }, 'genuinely flat-eligible: no floor flag');
 });
+
+test('MCP client follows nextCursor across tools/list and resources/list pages', async () => {
+  const { connectMcpServers, disconnectMcpServers, listMcpServers } = await import('../dist/mcp/client.js');
+  const script = fileURLToPath(new URL('./fixtures/mcp-paginated-server.mjs', import.meta.url));
+  try {
+    const caps = await connectMcpServers({
+      mcpServers: { paged: { transport: 'stdio', command: process.execPath, args: [script] } },
+    });
+    const names = caps.map(c => c.spec.name).join('\n');
+    assert.match(names, /first/);
+    assert.match(names, /second/, 'tool from the second page is registered');
+    assert.equal(listMcpServers().find(s => s.name === 'paged').filtered, 0);
+    assert.match(names, /read_alpha/);
+    assert.match(names, /read_beta/, 'resource from the second page is registered');
+  } finally {
+    await disconnectMcpServers();
+  }
+});
