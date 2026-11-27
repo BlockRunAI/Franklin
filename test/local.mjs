@@ -13207,3 +13207,21 @@ test('proxy streaming usage reads input_tokens from message_start', async () => 
   ].join('\n');
   assert.deepEqual(parseStreamUsage(sse), { inputTokens: 1234, outputTokens: 56 });
 });
+
+test('MCP client follows nextCursor across tools/list and resources/list pages', async () => {
+  const { connectMcpServers, disconnectMcpServers, listMcpServers } = await import('../dist/mcp/client.js');
+  const script = fileURLToPath(new URL('./fixtures/mcp-paginated-server.mjs', import.meta.url));
+  try {
+    const caps = await connectMcpServers({
+      mcpServers: { paged: { transport: 'stdio', command: process.execPath, args: [script] } },
+    });
+    const names = caps.map(c => c.spec.name).join('\n');
+    assert.match(names, /first/);
+    assert.match(names, /second/, 'tool from the second page is registered');
+    assert.equal(listMcpServers().find(s => s.name === 'paged').filtered, 0);
+    assert.match(names, /read_alpha/);
+    assert.match(names, /read_beta/, 'resource from the second page is registered');
+  } finally {
+    await disconnectMcpServers();
+  }
+});

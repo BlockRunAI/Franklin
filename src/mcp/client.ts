@@ -375,6 +375,30 @@ async function connectRemoteWithOAuth<T extends StreamableHTTPClientTransport | 
   }
 }
 
+/** Upper bound on pages read from one MCP list request. */
+const MCP_MAX_LIST_PAGES = 100;
+
+/**
+ * MCP list methods are cursor-paginated and the SDK returns one page per call,
+ * so follow `nextCursor` until the server stops sending it. A repeated cursor
+ * or the page cap ends the walk, so a misbehaving server can't loop forever.
+ */
+async function listAllPages<T>(
+  fetchPage: (params?: { cursor: string }) => Promise<{ items: T[]; nextCursor?: string }>,
+): Promise<T[]> {
+  const items: T[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < MCP_MAX_LIST_PAGES; page++) {
+    const result = await fetchPage(cursor === undefined ? undefined : { cursor });
+    items.push(...result.items);
+    cursor = result.nextCursor;
+    if (cursor === undefined || seen.has(cursor)) break;
+    seen.add(cursor);
+  }
+  return items;
+}
+
 async function finalizeConnection(
   name: string,
   client: Client,
@@ -384,7 +408,10 @@ async function finalizeConnection(
   stderrTail: string[],
   oauth?: FranklinOAuthProvider,
 ): Promise<ConnectedServer> {
-  const { tools: mcpTools } = await client.listTools();
+  const mcpTools = await listAllPages(async (params) => {
+    const { tools, nextCursor } = await client.listTools(params);
+    return { items: tools, nextCursor };
+  });
   const filtered = applyToolFilter(
     mcpTools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
     config,
@@ -400,7 +427,10 @@ async function finalizeConnection(
   const capabilities = buildToolCapabilities(name, client, filtered.kept);
 
   try {
-    const { resources: mcpResources } = await client.listResources();
+    const mcpResources = await listAllPages(async (params) => {
+      const { resources, nextCursor } = await client.listResources(params);
+      return { items: resources, nextCursor };
+    });
     capabilities.push(...buildResourceCapabilities(
       name,
       client,
