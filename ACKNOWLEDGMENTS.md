@@ -14,6 +14,7 @@ Merged pull requests from outside the core team.
 | [@samsamtrum](https://github.com/samsamtrum) | Reject Jupiter swap amounts below token precision (#89) |
 | [@BeneficialVast1048](https://github.com/BeneficialVast1048) | VoiceCall `interruption_threshold` + `model` controls (#66) |
 | [@TateLyman](https://github.com/TateLyman) | Test runner fix for file URL paths with spaces (#57) |
+| [@pcbeingused333](https://github.com/pcbeingused333) | MCP `tools/list` / `resources/list` pagination (#253), streaming proxy input-token usage (#252), incremental UTF-8 decoding in proxy, Bash and MCP stderr streams (#247) |
 
 ## Bug reports and design input
 
