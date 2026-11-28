@@ -81,7 +81,9 @@ Rules:
 export function getExecutorModel(_profile: RoutingProfile): string {
   // Auto is the only profile that runs planning (see shouldPlan above), so
   // there's only one executor branch to pick. 'free' never reaches here.
-  return 'google/gemini-2.5-flash';
+  // 3.5 Flash-Lite: 2.5 Flash's same-price successor (2.5 Flash retires
+  // 2026-12-01), tool-verified live — the executor runs tools.
+  return 'google/gemini-3.5-flash-lite';
 }
 
 // ─── Plan Parsing ────────────────────────────────────────────────────────

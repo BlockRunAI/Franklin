@@ -126,9 +126,10 @@ export async function startCommand(options: StartOptions) {
   } else if (configModel) {
     model = configModel;
   } else {
-    // Default: blockrun/auto — the LLM router (v3.8.16) picks a model per
-    // prompt. SIMPLE questions route to cheap/fast models (gemini-flash,
-    // kimi); COMPLEX / REASONING to Sonnet 4.6 / Opus 4.7. Cost fallback
+    // Default: blockrun/auto — the shared Router core (@blockrun/router-core,
+    // wired in src/router/index.ts) picks a model per prompt from its tier
+    // chains: cheap/fast models for SIMPLE, frontier models for COMPLEX /
+    // REASONING. The chains live in router-core's config. Cost fallback
     // to free models on 402 is handled in the agent loop, so an unfunded
     // wallet still works — it just degrades to the free tier mid-session
     // instead of starting there. Much better first-turn quality than the

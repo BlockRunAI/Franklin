@@ -37,7 +37,7 @@ The shortcut → canonical-model-id table at `src/ui/model-picker.ts` and `src/p
 _Avoid_: Model registry, model list.
 
 **Picker shortcut**:
-A short alias (e.g. `free`, `kimi`, `sonnet-4.6`) that resolves to a canonical gateway model id (e.g. `anthropic/claude-sonnet-4.6`).
+A short alias (e.g. `free`, `kimi`, `sonnet-5.5`) that resolves to a canonical gateway model id (e.g. `anthropic/claude-sonnet-5.5`).
 _Avoid_: Alias (used in code), nickname.
 
 **Tier**:

@@ -3,7 +3,9 @@ import { MessageSquare, ImageIcon, Clapperboard, Music, Globe, TrendingUp, BarCh
 import { useTryLang } from "../lib/i18n";
 import type { TryView } from "./HistorySidebar";
 
-const TOOL_MODEL = "google/gemini-2.5-flash";
+// Tool-using shortcut model: 3.5 Flash-Lite is 2.5 Flash's same-price
+// successor (2.5 Flash retires 2026-12-01) and is tool-verified live.
+const TOOL_MODEL = "google/gemini-3.5-flash-lite";
 
 // One "Try" tells FranklinChat what to do: switch mode/view, pick a model,
 // and/or prefill the composer with a starter prompt.

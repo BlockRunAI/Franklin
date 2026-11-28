@@ -19,7 +19,7 @@ import { FREE_DEFAULT_MODEL } from '../free-models.js';
 // default and verifiably serves itself.
 const EXTRACTION_MODELS = [
   'google/gemini-2.5-flash-lite',
-  'google/gemini-2.5-flash',
+  'google/gemini-3.5-flash-lite', // 2.5 Flash's successor (2.5 Flash retires 2026-12-01)
   FREE_DEFAULT_MODEL,
 ];
 

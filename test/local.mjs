@@ -3422,7 +3422,9 @@ test('agent context: chat-completions example uses real model names (no fictiona
     'openai/gpt-5.6-sol',
     'deepseek/deepseek-v4-pro',
     'zai/glm-5.3',
-    'xai/grok-4.5',
+    // grok-4.5 -> grok-4.7 (generation refresh 2026-11-27; both listed on
+    // Base and Solana that day).
+    'xai/grok-4.7',
     'qwen/qwen3.7-flash',
   ]) {
     assert.ok(src.includes(real), `chat-completions example list must include real model "${real}"`);
@@ -7669,18 +7671,25 @@ test('picker trim: shortcuts for hidden models still resolve (muscle-memory pres
   assert.equal(resolveModel('opus-4.6'), 'anthropic/claude-opus-4.6');
   assert.equal(resolveModel('gpt-5.4'), 'openai/gpt-5.4');
   assert.equal(resolveModel('gpt-5.4-pro'), 'openai/gpt-5.4-pro');
-  assert.equal(resolveModel('o1'), 'openai/o1');
-  assert.equal(resolveModel('o4'), 'openai/o4-mini');
+  // The o-series is retired; the gateway redirects every id to gpt-5.4-mini,
+  // so the pins name what answers (o1/o4-mini since 2026-10-23, o3 12-11).
+  assert.equal(resolveModel('o1'), 'openai/gpt-5.4-mini');
+  assert.equal(resolveModel('o4'), 'openai/gpt-5.4-mini');
+  assert.equal(resolveModel('o3'), 'openai/gpt-5.4-mini');
+  // gpt-5-nano is live and NOT redirected — `nano` keeps it.
   assert.equal(resolveModel('nano'), 'openai/gpt-5-nano');
-  // grok promoted to the public flagship grok-4.5 (2026-07-14) — same
-  // flagship-promotion pattern as kimi → k2.7. Explicit pins still resolve.
-  assert.equal(resolveModel('grok'), 'xai/grok-4.5');
+  // gpt-5-mini retires 2026-12-11 (gateway serves gpt-5.6-luna under it).
+  assert.equal(resolveModel('mini'), 'openai/gpt-5.6-luna');
+  // grok follows the public flagship: grok-4.5 from 2026-07-14, grok-4.7
+  // from 2026-11-27 (same $2/$6). Explicit pins still resolve.
+  assert.equal(resolveModel('grok'), 'xai/grok-4.7');
+  assert.equal(resolveModel('grok-4.5'), 'xai/grok-4.5');
   assert.equal(resolveModel('grok-4.3'), 'xai/grok-4.3');
   // grok-3 / grok-4-0709 / grok-4-1-fast are retired at xAI; the gateway
   // serves them all as grok-4.3 at grok-4.3's rate, so the pins name what
   // answers. `grok-4` is the generation alias and follows `grok`.
   assert.equal(resolveModel('grok-3'), 'xai/grok-4.3');
-  assert.equal(resolveModel('grok-4'), 'xai/grok-4.5');
+  assert.equal(resolveModel('grok-4'), 'xai/grok-4.7');
   assert.equal(resolveModel('grok-fast'), 'xai/grok-4.3');
   assert.equal(resolveModel('grok-4.1'), 'xai/grok-4.3');
   assert.equal(resolveModel('grok-build'), 'xai/grok-build-0.1');
@@ -7690,7 +7699,13 @@ test('catalog picker includes current flagship aliases without duplicate rows', 
   const { PICKER_MODELS_FLAT, resolveModel } = await import('../dist/ui/model-picker.js');
   const ids = new Set(PICKER_MODELS_FLAT.map(m => m.id));
   assert.equal(ids.size, PICKER_MODELS_FLAT.length);
-  for (const alias of ['opus', 'sonnet', 'gpt', 'gemini-3', 'grok']) assert.ok(ids.has(resolveModel(alias)), alias);
+  for (const alias of ['opus', 'sonnet', 'gpt', 'gemini-3']) assert.ok(ids.has(resolveModel(alias)), alias);
+  // `grok` moved to grok-4.7 on 2026-11-27, ahead of the shared picker
+  // policy (@blockrun/model-catalog), whose Recommended group still lists
+  // grok-4.5. The target must still be a live catalog model, reachable from
+  // the expanded (Ctrl+A) picker.
+  const { getModelCatalog } = await import('../dist/model-catalog.js');
+  assert.ok(getModelCatalog().models.some(m => m.id === resolveModel('grok')), 'grok');
 });
 
 // ─── picker ↔ gateway reconciliation ──────────────────────────────────────
@@ -12341,7 +12356,8 @@ test('catalog sync 2026-08-29: GLM-5.3 Flash is priced, sized, vision-tagged and
   const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
   assert.ok(ids.includes('zai/glm-5.3-flash'), 'GLM-5.3 Flash earns a budget row');
   assert.ok(!ids.includes('google/gemini-2.5-flash'), 'Gemini 2.5 Flash gave up its row (shortcut stays)');
-  assert.equal(resolveModel('gemini-2.5-flash'), 'google/gemini-2.5-flash');
+  // 2.5 Flash retires 2026-12-01; the shortcut names its same-price successor.
+  assert.equal(resolveModel('gemini-2.5-flash'), 'google/gemini-3.5-flash-lite');
 });
 
 test('catalog sync 2026-08-29: hidden-but-served ids stay priced, routable and pinnable', async () => {
@@ -12439,12 +12455,13 @@ test('2026-10 gateway models: explicit shortcuts, prices, context windows, visio
     // so every priced vision model must also be on the static allowlist.
     assert.equal(isVisionModel(id), true, `${id} is vision-capable`);
   }
-  // Bare aliases are not retargeted by this change.
+  // Bare aliases are not retargeted by this change — except `grok`, which
+  // moved to grok-4.7 in the 2026-11-27 generation refresh (same $2/$6).
   assert.equal(resolveModel('opus'), 'anthropic/claude-opus-5');
   assert.equal(resolveModel('sonnet'), 'anthropic/claude-sonnet-5');
   assert.equal(resolveModel('fable'), 'anthropic/claude-fable-5');
   assert.equal(resolveModel('gpt'), 'openai/gpt-5.6-sol');
-  assert.equal(resolveModel('grok'), 'xai/grok-4.5');
+  assert.equal(resolveModel('grok'), 'xai/grok-4.7');
   // GPT-5.6 Sol / Sol Pro were cut to $4/$20 on 2026-08-21.
   assert.equal(MODEL_PRICING['openai/gpt-5.6-sol'].input, 4);
   assert.equal(MODEL_PRICING['openai/gpt-5.6-sol-pro'].output, 20);

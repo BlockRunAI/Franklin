@@ -265,9 +265,9 @@ Three consequences fall out of this:
 3. **No overdraft.** The wallet balance IS the hard limit. When it's empty, Franklin stops. No surprise bills, no 3 a.m. rate-limit walls.
 
 Concretely — $1 in USDC buys roughly (input tokens at provider list price, before the $0.001 per-call fee):
-- ~330K Claude Sonnet 4.6 tokens
+- ~500K Claude Sonnet 5.5 tokens
 - ~750K DeepSeek V4 Pro tokens
-- ~3.3M Gemini 2.5 Flash tokens
+- ~3.3M Gemini 3.5 Flash-Lite tokens
 - Unlimited use of the free tier — no wallet needed
 
 ---
@@ -422,7 +422,7 @@ Every response shows which model was chosen, why, and how much you saved vs. alw
 
 ```text
 Session Cost: $0.0847 (23 requests)
-  gemini-2.5-flash       $0.0012   14 req   CHAT
+  gemini-3.5-flash-lite  $0.0012   14 req   CHAT
   deepseek-v4-pro        $0.0201    6 req   RESEARCH
   claude-opus-5          $0.0634    3 req   TRADING
 ```
@@ -554,9 +554,12 @@ Core is workflow-agnostic. Add new verticals without touching the loop. Discover
 
 `/model` takes a shortcut or any full gateway id. The newest models have
 explicit version shortcuts: `opus-5.5`, `sonnet-5.5`, `fable-5.1`,
-`gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.1`, `grok-4.7` and `grok-4.6`
-(e.g. `/model gpt-6-sol` or `/model anthropic/claude-opus-5.5`). Bare aliases
-like `opus`, `gpt` and `grok` keep their current targets.
+`gpt-6-astra`, `gpt-6-sol`, `gpt-6.2-sol`, `gpt-6-luna`, `gpt-5.1`, `grok-4.7`
+and `grok-4.6` (e.g. `/model gpt-6.2-sol` or `/model anthropic/claude-opus-5.5`).
+Bare `grok` follows Grok 4.7; `opus` and `gpt` keep their current targets.
+Shortcuts for retired models name the model the gateway now serves in their
+place: `o3` / `o4-mini` / `o1` resolve to GPT-5.4 Mini, `mini` to GPT-5.6 Luna,
+`gemini-2.5-flash` to Gemini 3.5 Flash-Lite and `gemini-2.5` to Gemini 3.8 Flash.
 
 ---
 

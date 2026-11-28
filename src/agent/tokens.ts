@@ -246,6 +246,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // advertised) take the same 128k baseline until verified end-to-end.
   'openai/gpt-6-astra': 128_000,
   'openai/gpt-6-sol': 128_000,
+  'openai/gpt-6.2-sol': 128_000,
   'openai/gpt-6-luna': 128_000,
   'openai/gpt-5.1': 128_000,
   'openai/gpt-5.6-sol': 128_000,
@@ -267,11 +268,15 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'openai/gpt-4.1-nano': 128_000,
   'openai/gpt-4o': 128_000,
   'openai/gpt-4o-mini': 128_000,
+  // o1 / o3-mini / o4-mini are retired (the gateway serves gpt-5.4-mini under
+  // their names since 2026-11-24) and o3 follows on 2026-12-11. Kept so a
+  // pinned id or a replayed session still resolves a window.
   'openai/o1': 200_000,
   'openai/o3': 200_000,
   'openai/o3-mini': 128_000,
   'openai/o4-mini': 200_000,
-  // Google
+  // Google. 2.5 Pro / 2.5 Flash retire 2026-12-01 and 3.5 Flash on 2026-11-24
+  // (the gateway redirects each); kept so a pinned id still resolves a window.
   'google/gemini-2.5-pro': 1_000_000,
   'google/gemini-2.5-flash': 1_000_000,
   'google/gemini-2.5-flash-lite': 1_000_000,
@@ -353,6 +358,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // 2026-08 gateway additions (windows from the live catalog).
   'google/gemini-3.6-flash': 1_048_576,
   'google/gemini-3.5-flash-lite': 1_048_576,
+  'google/gemini-3.8-flash': 1_048_576, // live 2026-10-20 — 2.5 Pro's successor
   'openai/gpt-5.6-luna-pro': 1_050_000,
   'openai/gpt-5.6-terra-pro': 1_050_000,
   'openai/gpt-5.6-sol-pro': 1_050_000,

@@ -59,7 +59,7 @@ test('resolveModelStrict: unknown bare alias is rejected with a helpful suggesti
   assert.equal(r.ok, false);
   if (!r.ok) {
     assert.match(r.suggestion, /Unknown model alias: "foo"/);
-    assert.match(r.suggestion, /anthropic\/claude-sonnet-4\.6/);
+    assert.match(r.suggestion, /anthropic\/claude-sonnet-5\.5/);
   }
 
   const r2 = resolveModelStrict('llama3');

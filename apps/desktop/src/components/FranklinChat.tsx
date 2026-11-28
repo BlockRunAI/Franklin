@@ -47,7 +47,11 @@ const MarketsPanel = lazy(() => import("./MarketsPanel").then((module) => ({ def
 
 // Composer "focus" modes — force a specific live-data tool (server tool_choice).
 type ToolFocus = "search_prediction_markets" | "web_search" | "get_market_price";
-const TOOL_FOCUS_MODEL = "google/gemini-2.5-flash";
+// Tool-using shortcut model: 3.5 Flash-Lite is 2.5 Flash's same-price
+// successor (2.5 Flash retires 2026-12-01) and is tool-verified live.
+// An attached image is still covered: the agent loop swaps a text-only model
+// for a vision sibling on image turns.
+const TOOL_FOCUS_MODEL = "google/gemini-3.5-flash-lite";
 
 // Tiny aspect-ratio glyph (a proportioned rectangle) for the ratio picker.
 function RatioGlyph({ ratio, className }: { ratio: string; className?: string }) {

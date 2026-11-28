@@ -77,7 +77,7 @@ program
   .description('Start the franklin agent')
   .option(
     '-m, --model <model>',
-    'Model to use (e.g. openai/gpt-5.5, anthropic/claude-sonnet-4.6). Default from config or claude-sonnet-4.6'
+    'Model to use (e.g. openai/gpt-6.2-sol, anthropic/claude-sonnet-5.5). Default from config or blockrun/auto'
   )
   .option('--debug', 'Enable debug logging')
   .option('--trust', 'Trust mode — skip permission prompts for all tools')
@@ -117,7 +117,7 @@ program
 program
   .command('predict')
   .description('Prediction mode — forecast one real-world event with a research-only toolset (web/markets), headless')
-  .requiredOption('-m, --model <model>', 'Model to use (e.g. anthropic/claude-opus-5, openai/gpt-5.5)')
+  .requiredOption('-m, --model <model>', 'Model to use (e.g. anthropic/claude-opus-5, openai/gpt-6.2-sol)')
   .requiredOption('-q, --question <text>', 'The event question to forecast (include the allowed options)')
   .option('--max-turns <n>', 'Max agent turns before forcing an answer', '8')
   .option('--max-tool-calls <n>', 'Max tool calls before forcing an answer', '6')

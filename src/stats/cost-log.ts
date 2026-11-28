@@ -36,7 +36,7 @@ export interface SettlementRow {
   ts: number;
   /** Wallet that signed (lowercased). Used for test-wallet filtering. */
   wallet?: string;
-  /** Model that was charged (e.g. `openai/gpt-5.5`). */
+  /** Model that was charged (e.g. `openai/gpt-6.2-sol`). */
   model?: string;
   /** Which client wrote the row (LLMClient / AgentClient / ProxyClient / AsyncLLMClient). */
   clientKind?: string;

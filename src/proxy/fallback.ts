@@ -21,7 +21,12 @@ export interface FallbackConfig {
 export const DEFAULT_FALLBACK_CONFIG: FallbackConfig = {
   chain: [
     'deepseek/deepseek-chat', // Direct fallback — cheap & reliable
-    'google/gemini-2.5-flash', // Fast & capable
+    // Fast & capable, and the chain's only vision rung (buildFallbackChain
+    // keeps just vision models for an image request). Was gemini-2.5-flash
+    // until its 2026-12-01 retirement; its price-matched successor 3.5
+    // Flash-Lite has no vision, so 3.6 Flash is the cheapest live successor
+    // that keeps an image request's fallback alive.
+    'google/gemini-3.6-flash',
     FREE_DEFAULT_MODEL, // Free model as ultimate fallback — see src/free-models.ts
   ],
   retryOn: [429, 500, 502, 503, 504, 529],

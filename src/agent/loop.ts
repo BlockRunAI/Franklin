@@ -1941,8 +1941,8 @@ async function runInteractiveSession(
             // Haiku already fills the cheap tool-use slot here.)
             const TOOL_USE_FALLBACK_MODELS = [
               'anthropic/claude-haiku-4.5',
-              'openai/gpt-5.4',
-              'anthropic/claude-sonnet-4.6',
+              'openai/gpt-6.2-sol',
+              'anthropic/claude-sonnet-5.5',
             ];
             const nextModel = TOOL_USE_FALLBACK_MODELS.find(
               m => m !== config.model && !turnFailedModels.has(m),
@@ -2300,7 +2300,7 @@ async function runInteractiveSession(
         // were the way out.
         let suggestion = classified.suggestion ? `\nTip: ${classified.suggestion}` : '';
         if (classified.category === 'rate_limit' && turnFailedModels.size > 0) {
-          suggestion = `\nTip: All free models tried this turn are rate-limited. Switch to a paid model with /model anthropic/claude-sonnet-4.6 (or any other paid model) and retry — your wallet handles it. Or wait ~60s and /retry the same turn.`;
+          suggestion = `\nTip: All free models tried this turn are rate-limited. Switch to a paid model with /model anthropic/claude-sonnet-5.5 (or any other paid model) and retry — your wallet handles it. Or wait ~60s and /retry the same turn.`;
         }
         onEvent({
           kind: 'turn_done',
@@ -2546,7 +2546,7 @@ async function runInteractiveSession(
         // Mirror the real-429 terminal path: if free models were exhausted this
         // turn, point a funded-wallet user at paid models as the escape hatch.
         const exhaustedHint = turnFailedModels.size > 0
-          ? `\nTip: All free models tried this turn are rate-limited. Switch to a paid model with /model anthropic/claude-sonnet-4.6 and retry — your wallet handles it.`
+          ? `\nTip: All free models tried this turn are rate-limited. Switch to a paid model with /model anthropic/claude-sonnet-5.5 and retry — your wallet handles it.`
           : '';
         onEvent({
           kind: 'turn_done',
