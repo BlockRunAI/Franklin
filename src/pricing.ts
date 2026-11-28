@@ -83,12 +83,13 @@ const LEGACY_PRICING: Record<string, TokenPricing> = {
   'openai/gpt-6-astra': { input: 10.0, output: 50.0 },
   'openai/gpt-6-sol': { input: 2.0, output: 10.0 },
   'openai/gpt-6.1-sol': { input: 2.0, output: 10.0 }, // refreshed Sol, live 2026-10-20 (same base rate as 6 Sol)
+  'openai/gpt-6.2-sol': { input: 2.0, output: 10.0 }, // live 2026-11-27 — gpt-5.5 / gpt-5.4's successor in the router
   'openai/gpt-6-luna': { input: 0.1, output: 0.5 },
   'openai/gpt-5.1': { input: 1.25, output: 10.0 },
   'openai/gpt-4.1-nano': { input: 0.1, output: 0.4 },
   'openai/gpt-4o-mini': { input: 0.15, output: 0.6 },
   'openai/gpt-5.4-nano': { input: 0.2, output: 1.25 },
-  'openai/gpt-5-mini': { input: 0.25, output: 2.0 },
+  'openai/gpt-5-mini': { input: 0.25, output: 2.0 }, // retires 2026-12-11 — the gateway then serves (and bills) gpt-5.6-luna
   'openai/gpt-4.1-mini': { input: 0.4, output: 1.6 },
   'openai/gpt-5.4-mini': { input: 0.75, output: 4.5 },
   // OpenAI's 2026-07-30 GPT-5.6 price cut, passed through by the gateway
@@ -98,13 +99,17 @@ const LEGACY_PRICING: Record<string, TokenPricing> = {
   'openai/gpt-5.3': { input: 1.75, output: 14.0 },
   'openai/gpt-5.3-codex': { input: 1.75, output: 14.0 },
   'openai/gpt-4.1': { input: 2.0, output: 8.0 },
-  'openai/o3': { input: 2.0, output: 8.0 },
+  'openai/o3': { input: 2.0, output: 8.0 }, // retires 2026-12-11 — the gateway then serves (and bills) gpt-5.4-mini
   'openai/gpt-4o': { input: 2.5, output: 10.0 },
   'openai/gpt-5.4': { input: 2.5, output: 15.0 },
   'openai/gpt-5.6-terra': { input: 2.0, output: 12.0 }, // balanced GPT-5.6 tier, 1M ctx (2026-07-30 cut)
-  'openai/o3-mini': { input: 1.1, output: 4.4 },
-  'openai/o4-mini': { input: 1.1, output: 4.4 },
-  'openai/o1': { input: 15.0, output: 60.0 },
+  // Retired by OpenAI 2026-10-23. The gateway redirects each to gpt-5.4-mini
+  // BEFORE pricing (blockrun model-redirects.ts, DEAD_PAID_REDIRECTS), so a
+  // pinned call is billed gpt-5.4-mini's rate — the same "served as" rule the
+  // retired Grok ids below follow. Kept so the id still prices.
+  'openai/o3-mini': { input: 0.75, output: 4.5 }, // served as gpt-5.4-mini (was $1.10/$4.40)
+  'openai/o4-mini': { input: 0.75, output: 4.5 }, // served as gpt-5.4-mini (was $1.10/$4.40)
+  'openai/o1': { input: 0.75, output: 4.5 }, // served as gpt-5.4-mini (was $15/$60)
   'openai/gpt-5.5': { input: 5.0, output: 30.0 },
   'openai/gpt-5.6-sol': { input: 4.0, output: 20.0 }, // GPT-5.6 flagship, 1M ctx — cut from $5/$30 on 2026-08-21
   // GPT-5.6 Pro tiers + 5.5 Pro + chat-latest, added upstream 2026-08-03
@@ -119,15 +124,16 @@ const LEGACY_PRICING: Record<string, TokenPricing> = {
   // Google
   'google/gemini-2.5-flash-lite': { input: 0.1, output: 0.4 },
   'google/gemini-3.1-flash-lite': { input: 0.25, output: 1.5 },
-  'google/gemini-2.5-flash': { input: 0.3, output: 2.5 },
+  'google/gemini-2.5-flash': { input: 0.3, output: 2.5 }, // retires 2026-12-01 — the gateway then serves gemini-3.5-flash-lite (same price)
   'google/gemini-3-flash-preview': { input: 0.5, output: 3.0 },
-  // 2026-08-12 sync: the gateway was billing gemini-3.5-flash at 1/3 of
-  // Google's rate and corrected upstream (base #304) — mirror the real price.
-  'google/gemini-3.5-flash': { input: 1.5, output: 9.0 }, // latest Flash w/ thinking, 1M ctx
+  // Retired 2026-11-24: Google has served 3.6 Flash under this name since
+  // ~2026-10-10, and the gateway now redirects the id to gemini-3.6-flash
+  // BEFORE pricing (DEAD_PAID_REDIRECTS) — a pinned call bills 3.6's rate.
+  'google/gemini-3.5-flash': { input: 0.75, output: 3.75 }, // served as gemini-3.6-flash (was $1.50/$9)
   'google/gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
   'google/gemini-3.6-flash': { input: 0.75, output: 3.75 }, // added upstream 2026-08-03 (base #329); live promo rate 2026-10-02
   'google/gemini-3.8-flash': { input: 0.75, output: 3.75 }, // live 2026-10-20
-  'google/gemini-2.5-pro': { input: 1.25, output: 10.0 },
+  'google/gemini-2.5-pro': { input: 1.25, output: 10.0 }, // retires 2026-12-01 — the gateway then serves (and bills) gemini-3.8-flash
   'google/gemini-3.1-pro': { input: 2.0, output: 12.0 },
   // Gemini 4 Argon — live 2026-10-20 on both chains. Google's intro rate;
   // it moves to $4/$20 on 2026-12-01, re-price it then.
@@ -193,7 +199,7 @@ const LEGACY_PRICING: Record<string, TokenPricing> = {
   // routing, and it fires on a real 400/404/410, never on catalog absence.
   'anthropic/claude-opus-4.6': { input: 5.0, output: 25.0 }, // (probed) superseded by 4.7 / 4.8 / 5 at the same price
   'openai/gpt-5-nano': { input: 0.05, output: 0.4 }, // (probed)
-  'openai/o1-mini': { input: 1.1, output: 4.4 },
+  'openai/o1-mini': { input: 0.75, output: 4.5 }, // served as gpt-5.4-mini (redirected, DEAD_PAID_REDIRECTS)
   'google/gemini-3-pro-preview': { input: 2.0, output: 12.0 }, // GA'd as gemini-3.1-pro
   // Retired at xAI. The gateway pins every retired Grok slug to grok-4.3 and
   // bills grok-4.3's $1.25/$2.50 (blockrun models.ts + model-maps.ts

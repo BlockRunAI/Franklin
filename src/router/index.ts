@@ -225,28 +225,36 @@ const AUTO_TIERS: Record<Tier, { primary: string; fallback: string[] }> = {
     // Cheap-tier fallbacks only. Kimi dropped here 2026-07: the K2.x line was
     // retired and its replacement K3 is premium-priced ($3/$15) — it doesn't
     // belong in a cost-saving fallback chain.
-    fallback: ['google/gemini-2.5-flash', 'deepseek/deepseek-chat'],
+    //
+    // gemini-2.5-flash ($0.30/$2.50) held the middle rung until Google's
+    // 2026-12-01 retirement. Its price-matched successor, 3.5 Flash-Lite, has
+    // no vision, and this was the chain's only vision rung — so a SIMPLE image
+    // turn would escalate to the COMPLEX Opus chain (pickVisionTierModel). 3.6
+    // Flash ($0.75/$3.75) is the cheapest live successor with vision + tools.
+    fallback: ['google/gemini-3.6-flash', 'deepseek/deepseek-chat'],
   },
   MEDIUM: {
     primary: 'deepseek/deepseek-v4-pro',
-    fallback: ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.5', 'google/gemini-3.1-pro'],
+    // Generation refresh 2026-11-27: sonnet-4.6 ($3/$15) -> sonnet-5.5 ($2/$10),
+    // gpt-5.5 ($5/$30) -> gpt-6.2-sol ($2/$10), in place.
+    fallback: ['anthropic/claude-sonnet-5.5', 'openai/gpt-6.2-sol', 'google/gemini-3.1-pro'],
   },
   COMPLEX: {
     // Hard tasks — multi-file refactors, ambiguous specs, dense reasoning
     // chains — still go to Opus. V4 Pro is great but not a Sonnet/Opus
     // replacement at the high end of difficulty per recent agent-bench runs.
     primary: 'anthropic/claude-opus-5',
-    fallback: ['anthropic/claude-opus-4.8', 'openai/gpt-5.5', 'anthropic/claude-sonnet-4.6', 'deepseek/deepseek-v4-pro'],
+    fallback: ['anthropic/claude-opus-5.5', 'openai/gpt-6.2-sol', 'anthropic/claude-sonnet-5.5', 'deepseek/deepseek-v4-pro'],
   },
   REASONING: {
     // Opus 5: latest flagship, most capable for agentic coding, same $5/$25 as
-    // the 4.x Opus line. 4.8 and 4.7 stay in the fallback chain in case of
-    // rollout delays.
+    // the 4.x Opus line. The 4.8 / 4.7 rungs moved to Opus 5.5 ($4/$20) on
+    // 2026-11-27 — one in-family hot swap instead of two. o3 retires
+    // 2026-12-11; the gateway serves gpt-5.4-mini under its name from then on.
     primary: 'anthropic/claude-opus-5',
     fallback: [
-      'anthropic/claude-opus-4.8',
-      'anthropic/claude-opus-4.7',
-      'openai/o3',
+      'anthropic/claude-opus-5.5',
+      'openai/gpt-5.4-mini',
       'deepseek/deepseek-v4-pro',
       // Hidden from /v1/models but still served (probed 2026-08-29).
       'xai/grok-4-1-fast-reasoning',

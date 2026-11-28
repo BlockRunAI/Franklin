@@ -3,7 +3,9 @@ import { useAgentSkills } from "../hooks/use-agent-skills";
 import { Plus, RefreshCw, PenLine, Languages, Code2, Search, TrendingUp, BarChart3 } from "lucide-react";
 import { useTryLang } from "../lib/i18n";
 
-const TOOL_MODEL = "google/gemini-2.5-flash";
+// Tool-using shortcut model: 3.5 Flash-Lite is 2.5 Flash's same-price
+// successor (2.5 Flash retires 2026-12-01) and is tool-verified live.
+const TOOL_MODEL = "google/gemini-3.5-flash-lite";
 
 interface Skill {
   icon: React.ReactNode;

@@ -37,11 +37,13 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   // 128k unlocks the full headroom — runaway generations are gated
   // separately by CAPPED_MAX_TOKENS / ESCALATED_MAX_TOKENS budgets.
   'anthropic/claude-fable-5': 128_000,
+  'anthropic/claude-opus-5.5': 128_000, // catalog max_output, 2026-11-27
   'anthropic/claude-opus-5': 128_000,
   'anthropic/claude-opus-4.8': 128_000,
   'anthropic/claude-opus-4.7': 128_000,
   'anthropic/claude-opus-4.6': 32_000,
   'anthropic/claude-opus-4.5': 32_000,
+  'anthropic/claude-sonnet-5.5': 128_000, // catalog max_output, 2026-11-27
   'anthropic/claude-sonnet-5': 128_000,
   'anthropic/claude-sonnet-4.6': 128_000, // Anthropic-documented; gateway corrected 2026-07-21
   'anthropic/claude-sonnet-4.5': 64_000,
@@ -51,6 +53,9 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   // stayed capped. blockrun#266 corrected the gateway and it is live, so the
   // real ceiling is now reachable.
   'anthropic/claude-haiku-4.5': 64_000,
+  // GPT-6.2 Sol / GPT-6 Luna: catalog max_output, 2026-11-27 (not probed).
+  'openai/gpt-6.2-sol': 128_000,
+  'openai/gpt-6-luna': 128_000,
   'openai/gpt-5.6-sol': 128_000,
   'openai/gpt-5.6-terra': 128_000,
   'openai/gpt-5.6-luna': 128_000,
@@ -72,16 +77,25 @@ const MODEL_MAX_OUTPUT: Record<string, number> = {
   // request, not a catalog reading. Note this is a FLOOR, not a proven
   // ceiling: 65536 also happens to be ESCALATED_MAX_TOKENS, so nothing here
   // could distinguish a higher true limit even if one exists.
-  'openai/gpt-5-mini': 65_536,
+  'openai/gpt-5-mini': 65_536, // retires 2026-12-11 (gateway redirects to gpt-5.6-luna)
+  // 2.5 Pro / 2.5 Flash retire 2026-12-01 and 3.5 Flash 2026-11-24 (the
+  // gateway redirects each); kept so a pinned id still gets its ceiling.
   'google/gemini-2.5-pro': 65_536,
   'google/gemini-2.5-flash': 65_536,
   'google/gemini-3.5-flash': 65_536,
+  // Successors — catalog max_output, 2026-11-27.
+  'google/gemini-3.5-flash-lite': 65_536,
+  'google/gemini-3.6-flash': 65_536,
+  'google/gemini-3.8-flash': 65_536,
   // DeepSeek V4 family — upstream max_output is 65K on V4 Flash + V4 Pro;
   // gateway re-aliased deepseek-chat/-reasoner to V4 Flash modes 2026-05-03.
   'deepseek/deepseek-chat': 65_536,
   'deepseek/deepseek-reasoner': 65_536,
   'deepseek/deepseek-v4-pro': 65_536,
   'deepseek/deepseek-v4.1-flash': 65_536,
+  // Grok 4.7 — catalog max_output 16384 (2026-11-27), pinned so a cold
+  // catalog cache cannot over-ask.
+  'xai/grok-4.7': 16_384,
   // Kimi K3 (flagship, 2026-07) supports 65K output per the BlockRun gateway
   // model entry (max_output: 65536). Without this entry the default 16K cap
   // left users with 4× headroom on the table for long-form coding outputs

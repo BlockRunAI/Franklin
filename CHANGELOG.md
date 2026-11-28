@@ -1,5 +1,39 @@
 # Changelog
 
+## Franklin Agent 3.49.32 — Franklin's own model picks follow the generation refresh
+
+3.49.31 moved Auto routing (router-core); this moves the model ids Franklin
+hardcodes itself.
+
+- **Retired models leave the defaults.** Gemini 2.5 Flash (retiring
+  2026-12-01) is replaced by Gemini 3.5 Flash-Lite, at the same price, for
+  compaction, the plan executor, memory extraction, MoA and the Desktop tool
+  shortcuts. Where 2.5 Flash was the only image-capable fallback (the legacy
+  SIMPLE tier and the proxy's retry chain) it becomes Gemini 3.6 Flash,
+  because 3.5 Flash-Lite cannot read images.
+- **Shortcuts name the model that answers.** `o3`, `o4`, `o4-mini`, `o3-mini`
+  and `o1` resolve to GPT-5.4 Mini; `mini` to GPT-5.6 Luna; `gemini-2.5` and
+  `gemini-2.5-pro` to Gemini 3.8 Flash; `gemini-2.5-flash` to Gemini 3.5
+  Flash-Lite; `gemini-3.5-flash` to Gemini 3.6 Flash. These are the models the
+  gateway serves under those names.
+- **Generic aliases follow the newest model, as in ClawRouter and the shared
+  model catalog.** `opus` and `claude` resolve to Claude Opus 5.5 ($4/$20,
+  was Opus 5 at $5/$25), `sonnet` to Claude Sonnet 5.5 (same $2/$10 as
+  Sonnet 5), and `grok` and `grok-4` to Grok 4.7 (same $2/$6 as 4.5).
+  `franklin init` writes Opus 5.5 and Sonnet 5.5 into Claude Code's Opus and
+  Sonnet slots. New explicit pin: `gpt-6.2-sol`. Version pins such as
+  `opus-5`, `sonnet-5`, `sonnet-4.6`, `opus-4.8`, `gpt-5.4` and `grok-4.5`
+  still resolve to the model you named.
+- **Newer fallbacks.** The legacy tier table, the tool-use stall fallback, the
+  compaction tier-down, the vision fallback and `franklin init`'s Sonnet slot
+  move from Sonnet 4.6, Opus 4.8/4.7, GPT-5.5/5.4 and o3 to Sonnet 5.5,
+  Opus 5.5, GPT-6.2 Sol and GPT-5.4 Mini. Each costs the same or less.
+- **Desktop opens on Claude Opus 5.5**, and its fallback picker lists Opus 5.5,
+  Sonnet 5.5, GPT-6.2 Sol, GPT-5.4 Mini and Gemini 3.5 Flash-Lite.
+- **GPT-6.2 Sol is priced, sized and vision-tagged**, and the new generation
+  has max-output rows. Ids the gateway already redirects (Gemini 3.5 Flash,
+  o1, o3-mini, o4-mini, o1-mini) are priced at the model that serves them.
+
 ## Franklin Agent 3.49.31 — router-core 53fe783 (generation refresh)
 
 Bump @blockrun/router-core to 53fe783 (root and Desktop pins). Auto routing

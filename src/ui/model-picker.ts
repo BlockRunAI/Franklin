@@ -23,17 +23,21 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   eco: 'blockrun/auto',
   premium: 'blockrun/auto',
   // Anthropic — `claude` follows Opus; `fable` is the Mythos-class tier above it.
+  // The generic `opus` / `claude` / `sonnet` aliases follow the newest model
+  // in each line — Opus 5.5 ($4/$20) and Sonnet 5.5 ($2/$10) since
+  // 2026-11-27, matching ClawRouter and the shared model-catalog policy.
+  // `fable` stays on Fable 5 (Fable 5.2 is Base-only). Explicit pins below
+  // (`opus-5`, `sonnet-5`, `opus-4.8`, ...) keep naming the model you type.
   fable: 'anthropic/claude-fable-5',
   'fable-5': 'anthropic/claude-fable-5',
-  sonnet: 'anthropic/claude-sonnet-5',
-  claude: 'anthropic/claude-opus-5',
+  sonnet: 'anthropic/claude-sonnet-5.5',
+  claude: 'anthropic/claude-opus-5.5',
   'sonnet-5': 'anthropic/claude-sonnet-5',
   'sonnet-4.6': 'anthropic/claude-sonnet-4.6',
   'sonnet-4.5': 'anthropic/claude-sonnet-4.5',
-  opus: 'anthropic/claude-opus-5',
+  opus: 'anthropic/claude-opus-5.5',
   'opus-5': 'anthropic/claude-opus-5',
-  // 2026-10 additions — explicit version pins only. The bare `opus` /
-  // `sonnet` / `fable` / `claude` aliases above are deliberately NOT moved.
+  // 2026-10 additions — explicit version pins.
   'opus-5.5': 'anthropic/claude-opus-5.5',
   'sonnet-5.5': 'anthropic/claude-sonnet-5.5',
   'fable-5.1': 'anthropic/claude-fable-5.1',
@@ -57,6 +61,8 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   // GPT-6.1 Sol (live /api/v1/models 2026-10-20, Base + Solana): same $2/$10
   // as GPT-6 Sol with a newer knowledge cutoff. Explicit pin only.
   'gpt-6.1-sol': 'openai/gpt-6.1-sol',
+  // GPT-6.2 Sol (live 2026-11-27, $2/$10, vision + tools) — explicit pin.
+  'gpt-6.2-sol': 'openai/gpt-6.2-sol',
   'gpt-5.1': 'openai/gpt-5.1',
   'gpt-5.6-sol': 'openai/gpt-5.6-sol',
   'gpt-5.6-terra': 'openai/gpt-5.6-terra',
@@ -95,33 +101,39 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'gpt-4o': 'openai/gpt-4o',
   'gpt-4o-mini': 'openai/gpt-4o-mini',
   codex: 'openai/gpt-5.3-codex',
-  // Hidden from /v1/models, still served (probed 2026-08-29).
+  // Hidden from /v1/models, still served (probed 2026-08-29). gpt-5-nano is
+  // NOT redirected — the gateway keeps serving it at its own price.
   nano: 'openai/gpt-5-nano',
-  mini: 'openai/gpt-5-mini',
-  o3: 'openai/o3',
-  'o3-mini': 'openai/o3-mini',
-  o4: 'openai/o4-mini',
-  'o4-mini': 'openai/o4-mini',
-  o1: 'openai/o1',
+  // gpt-5-mini retires 2026-12-11 and the gateway serves gpt-5.6-luna under
+  // its name from then on ($0.25/$2 -> $0.20/$1.20), so `mini` names it now.
+  mini: 'openai/gpt-5.6-luna',
+  // The o-series is retired: o1 / o3-mini / o4-mini since 2026-10-23, o3 on
+  // 2026-12-11. The gateway redirects every one to gpt-5.4-mini, so these
+  // pins name the model that actually answers.
+  o3: 'openai/gpt-5.4-mini',
+  'o3-mini': 'openai/gpt-5.4-mini',
+  o4: 'openai/gpt-5.4-mini',
+  'o4-mini': 'openai/gpt-5.4-mini',
+  o1: 'openai/gpt-5.4-mini',
   // Google
   // `gemini` follows the flagship Pro build (3.1 since 2026-08), matching the
-  // bare-alias-tracks-flagship rule `gpt`, `grok` and `glm` already use. 2.5
-  // Pro stays reachable as `gemini-2.5` — it is cheaper on input but a
-  // generation behind.
+  // bare-alias-tracks-flagship rule `gpt`, `grok` and `glm` already use.
+  // Google retires Gemini 2.5 on 2026-12-01 and the gateway serves 3.8 Flash
+  // under the 2.5 Pro name, so the 2.5 aliases name that model.
   gemini: 'google/gemini-3.1-pro',
-  'gemini-2.5': 'google/gemini-2.5-pro',
-  'gemini-2.5-pro': 'google/gemini-2.5-pro',
+  'gemini-2.5': 'google/gemini-3.8-flash',
+  'gemini-2.5-pro': 'google/gemini-3.8-flash',
   // `flash` follows the newest Flash generation — 3.8 since 2026-10-20, at
   // the same $0.75/$3.75 as 3.6 and live on both chains. 3.6 stays reachable
-  // as `gemini-3.6`. 3.5 stays reachable by its explicit id — it is dearer
-  // ($1.5/$9) with no capability edge, so nothing should be pinned to it
-  // deliberately.
+  // as `gemini-3.6`. 3.5 Flash was retired 2026-11-24 (Google serves 3.6 under
+  // its name), and 2.5 Flash retires 2026-12-01 (3.5 Flash-Lite, same price),
+  // so those two aliases name their successors.
   flash: 'google/gemini-3.8-flash',
   'gemini-flash': 'google/gemini-3.8-flash',
   'gemini-3.6': 'google/gemini-3.6-flash',
   'gemini-3.6-flash': 'google/gemini-3.6-flash',
-  'gemini-3.5-flash': 'google/gemini-3.5-flash',
-  'gemini-2.5-flash': 'google/gemini-2.5-flash',
+  'gemini-3.5-flash': 'google/gemini-3.6-flash',
+  'gemini-2.5-flash': 'google/gemini-3.5-flash-lite',
   'gemini-3-flash-preview': 'google/gemini-3-flash-preview',
   // Gemini 3.8 Flash (live 2026-10-20, both chains) — same $0.75/$3.75 as 3.6.
   'gemini-3.8': 'google/gemini-3.8-flash',
@@ -140,14 +152,15 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'gemini-4-argon': 'google/gemini-4-argon',
   'gemini-3': 'google/gemini-3.1-pro',
   'gemini-3.1': 'google/gemini-3.1-pro',
-  // xAI — grok-4.5 is the public flagship since 2026-07-14; `grok` follows it
-  // per the bare-alias-tracks-flagship convention. 4.3 stays pinned: it's
-  // cheaper ($1.5/$4 vs $2.5/$9) and carries 1M context to 4.5's 500K, so it's
-  // the better pick for long-context work. (grok-3 and the fast families are
-  // hidden on the gateway; explicit IDs still resolve.)
-  grok: 'xai/grok-4.5',
+  // xAI — `grok` follows the public flagship per the bare-alias-tracks-
+  // flagship convention: grok-4.5 from 2026-07-14, grok-4.7 from 2026-11-27
+  // (same $2/$6, same 500K window). 4.3 stays pinned: it's cheaper
+  // ($1.25/$2.50) and carries 1M context, so it's the better pick for
+  // long-context work. (grok-3 and the fast families are hidden on the
+  // gateway; explicit IDs still resolve.)
+  grok: 'xai/grok-4.7',
   'grok-4.5': 'xai/grok-4.5',
-  // Grok 4.7 / 4.6 (2026-10) — explicit pins; `grok` is NOT moved.
+  // Grok 4.7 / 4.6 (2026-10) — explicit pins.
   'grok-4.7': 'xai/grok-4.7',
   'grok-4.6': 'xai/grok-4.6',
   'grok-4.3': 'xai/grok-4.3',
@@ -157,7 +170,7 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   // (blockrun model-maps.ts, "Retired -> grok-4.3"), so these pins name what
   // actually answers. `grok-4` is the generation alias and follows `grok`.
   'grok-3': 'xai/grok-4.3',
-  'grok-4': 'xai/grok-4.5',
+  'grok-4': 'xai/grok-4.7',
   'grok-fast': 'xai/grok-4.3',
   'grok-4.1': 'xai/grok-4.3',
   // DeepSeek — paid SKUs route through deepseek/* (gateway aliases serve V4
@@ -344,7 +357,7 @@ export function resolveModel(input: string): string {
  *
  * Recognised:
  *   - Any entry in {@link MODEL_SHORTCUTS} (case-insensitive).
- *   - Any id of the form `provider/model` (e.g. `anthropic/claude-sonnet-4.6`).
+ *   - Any id of the form `provider/model` (e.g. `anthropic/claude-sonnet-5.5`).
  */
 export function resolveModelStrict(
   input: string,
@@ -366,7 +379,7 @@ export function resolveModelStrict(
     ok: false,
     suggestion:
       `Unknown model alias: "${trimmed}". Use a shortcut like ${head}, ` +
-      `or a full id like anthropic/claude-sonnet-4.6.`,
+      `or a full id like anthropic/claude-sonnet-5.5.`,
   };
 }
 

@@ -10,8 +10,8 @@ import assert from 'node:assert/strict';
 const { resolveModel, resolveModelStrict } = await import('../dist/ui/model-picker.js');
 
 test('resolveModel: shortcut maps to canonical id', () => {
-  assert.equal(resolveModel('sonnet'), 'anthropic/claude-sonnet-5');
-  assert.equal(resolveModel('  SONNET  '), 'anthropic/claude-sonnet-5');
+  assert.equal(resolveModel('sonnet'), 'anthropic/claude-sonnet-5.5');
+  assert.equal(resolveModel('  SONNET  '), 'anthropic/claude-sonnet-5.5');
   assert.equal(resolveModel('free'), 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
   // Maverick left the gateway catalog 2026-07-14 — its aliases now follow the
   // retired-free-id pattern and resolve to the current free default.
@@ -59,7 +59,7 @@ test('resolveModelStrict: unknown bare alias is rejected with a helpful suggesti
   assert.equal(r.ok, false);
   if (!r.ok) {
     assert.match(r.suggestion, /Unknown model alias: "foo"/);
-    assert.match(r.suggestion, /anthropic\/claude-sonnet-4\.6/);
+    assert.match(r.suggestion, /anthropic\/claude-sonnet-5\.5/);
   }
 
   const r2 = resolveModelStrict('llama3');

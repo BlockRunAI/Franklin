@@ -33,8 +33,8 @@ export async function initCommand(options: { port?: string }) {
     // The proxy refuses requests without its token (proxy/token.ts).
     ANTHROPIC_AUTH_TOKEN: getOrCreateProxyToken(),
     ANTHROPIC_MODEL: 'blockrun/auto',
-    ANTHROPIC_DEFAULT_SONNET_MODEL: 'anthropic/claude-sonnet-4.6',
-    ANTHROPIC_DEFAULT_OPUS_MODEL: 'anthropic/claude-opus-5',
+    ANTHROPIC_DEFAULT_SONNET_MODEL: 'anthropic/claude-sonnet-5.5',
+    ANTHROPIC_DEFAULT_OPUS_MODEL: 'anthropic/claude-opus-5.5',
     ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-haiku-4.5',
   };
 

@@ -18,7 +18,7 @@ import type { AgentSendPayload, AgentStep, ServerMsg } from "../lib/wire";
 export type ChatMode = "chat" | "image" | "video" | "music";
 
 // Model selected by default when the app opens.
-export const DEFAULT_CHAT_MODEL = "anthropic/claude-opus-4.8";
+export const DEFAULT_CHAT_MODEL = "anthropic/claude-opus-5.5";
 
 export interface ChatModel {
   id: string;
@@ -39,15 +39,15 @@ export const CHAT_MODELS: ChatModel[] = [
   { id: "nvidia/nemotron-nano-9b-v2", label: "Nemotron Nano 9B v2", free: true, group: "Free" },
   { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", label: "Nemotron 3 Nano Omni", free: true, group: "Free" },
   { id: "nvidia/mistral-nemotron", label: "Mistral Nemotron", free: true, group: "Free" },
-  { id: "anthropic/claude-opus-4.8", label: "Claude Opus 4.8", group: "Premium frontier" },
-  { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", group: "Premium frontier" },
+  { id: "anthropic/claude-opus-5.5", label: "Claude Opus 5.5", group: "Premium frontier" },
+  { id: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5", group: "Premium frontier" },
   { id: "qwen/qwen3.7-max", label: "Qwen3.7 Max", group: "Premium frontier", contextWindow: 1_000_000 },
-  { id: "openai/gpt-5.5", label: "GPT-5.5", group: "Premium frontier" },
+  { id: "openai/gpt-6.2-sol", label: "GPT-6.2 Sol", group: "Premium frontier" },
   { id: "google/gemini-3.1-pro", label: "Gemini 3.1 Pro", group: "Premium frontier" },
-  { id: "openai/o3", label: "OpenAI O3", group: "Reasoning" },
+  { id: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini", group: "Reasoning" },
   { id: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro", group: "Reasoning" },
   { id: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5", group: "Budget" },
-  { id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash", group: "Budget" },
+  { id: "google/gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", group: "Budget" },
   { id: "moonshot/kimi-k3", label: "Kimi K3", group: "Premium frontier", contextWindow: 1_048_576 },
 ];
 

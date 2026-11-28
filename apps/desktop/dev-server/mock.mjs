@@ -46,11 +46,11 @@ const models = [
   { id: "nvidia/nemotron-nano-9b-v2", label: "Nemotron Nano 9B v2", free: true, group: "Free" },
   { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", label: "Nemotron 3 Nano Omni", free: true, group: "Free" },
   { id: "nvidia/mistral-nemotron", label: "Mistral Nemotron", free: true, group: "Free" },
-  { id: "anthropic/claude-opus-4.8", label: "Claude Opus 4.8", free: false, group: "Premium frontier" },
-  { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", free: false, group: "Premium frontier" },
+  { id: "anthropic/claude-opus-5.5", label: "Claude Opus 5.5", free: false, group: "Premium frontier" },
+  { id: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5", free: false, group: "Premium frontier" },
   { id: "qwen/qwen3.7-max", label: "Qwen3.7 Max", free: false, group: "Premium frontier", contextWindow: 1000000 },
-  { id: "openai/gpt-5.5", label: "GPT-5.5", free: false, group: "Premium frontier" },
-  { id: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash", free: false, group: "Reasoning" },
+  { id: "openai/gpt-6.2-sol", label: "GPT-6.2 Sol", free: false, group: "Premium frontier" },
+  { id: "google/gemini-3.6-flash", label: "Gemini 3.6 Flash", free: false, group: "Reasoning" },
   { id: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5", free: false, group: "Budget" },
 ];
 
@@ -63,7 +63,7 @@ function mkSession(title, lastUser) {
     createdAt: now - Math.floor(Math.random() * 86_400_000),
     updatedAt: now - Math.floor(Math.random() * 3_600_000),
     messageCount: 2,
-    lastModel: "anthropic/claude-sonnet-4.6",
+    lastModel: "anthropic/claude-sonnet-5.5",
     messages: [
       { role: "user", content: lastUser, kind: "text" },
       { role: "assistant", content: "Mock CLI: this is what the real Franklin agent would have answered.", kind: "text" },
@@ -163,9 +163,9 @@ async function fakeAgentTurn(ws, id, payload) {
 
   let stepIdSeq = 0;
   const stepId = ++stepIdSeq;
-  send(ws, id, "agent.step", { sessionId, stepId, label: `${labelFor(payload.model || "anthropic/claude-sonnet-4.6")} · thinking`, state: "thinking" });
+  send(ws, id, "agent.step", { sessionId, stepId, label: `${labelFor(payload.model || "anthropic/claude-sonnet-5.5")} · thinking`, state: "thinking" });
   await sleep(400);
-  send(ws, id, "agent.step", { sessionId, stepId, label: `${labelFor(payload.model || "anthropic/claude-sonnet-4.6")} · thinking`, state: "done" });
+  send(ws, id, "agent.step", { sessionId, stepId, label: `${labelFor(payload.model || "anthropic/claude-sonnet-5.5")} · thinking`, state: "done" });
 
   // Media generation (image / video mode) — emit a tool_result artifact so the
   // chat renders a media bubble and the Gallery picks it up.
@@ -202,7 +202,7 @@ async function fakeAgentTurn(ws, id, payload) {
   }
 
   const reply = `This is a mock reply from the dev server. The real Franklin CLI would have:\n\n` +
-    `1. Routed your prompt to ${labelFor(payload.model || "anthropic/claude-sonnet-4.6")}\n` +
+    `1. Routed your prompt to ${labelFor(payload.model || "anthropic/claude-sonnet-5.5")}\n` +
     `2. Executed any tools the model called (Read / Write / Edit / Bash / WebSearch / MarketPrice / PredictionMarkets / MusicGen)\n` +
     `3. Signed any required x402 payments from your local wallet — no popup\n` +
     `4. Streamed the answer back through this same WebSocket\n\n` +

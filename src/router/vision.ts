@@ -73,6 +73,9 @@ const VISION_MODELS = new Set<string>([
   'openai/gpt-5.1',
   // 2026-10-20 catalog sync — every new id the live catalog tags vision.
   'openai/gpt-6.1-sol',
+  // GPT-6.2 Sol (vision + tools, probed 2026-11-27) — gpt-5.5 / gpt-5.4's
+  // successor in the generation refresh.
+  'openai/gpt-6.2-sol',
   'google/gemini-3.8-flash',
   'deepseek/deepseek-v4-flash-vision-exp',
   'qwen/qwen3.8-flash',
@@ -158,7 +161,7 @@ const VISION_MODELS_LIST = Array.from(VISION_MODELS);
  * Pick a vision-capable replacement closest to the user's chosen model.
  * Prefers same provider family (so the user's intent — "I want Claude" vs
  * "I want Gemini" — survives the swap), then falls back to a sensible
- * vision default (Sonnet 4.6 — agent-tuned, mid-tier price).
+ * vision default (Sonnet 5.5 — agent-tuned, mid-tier price).
  */
 export function pickVisionSibling(modelId: string): string {
   const family = modelId.split('/')[0]?.toLowerCase();
@@ -166,7 +169,7 @@ export function pickVisionSibling(modelId: string): string {
     const sibling = VISION_MODELS_LIST.find(m => m.startsWith(`${family}/`));
     if (sibling) return sibling;
   }
-  return 'anthropic/claude-sonnet-4.6';
+  return 'anthropic/claude-sonnet-5.5';
 }
 
 // Image file extensions Franklin's Read tool inlines as vision content. Keep

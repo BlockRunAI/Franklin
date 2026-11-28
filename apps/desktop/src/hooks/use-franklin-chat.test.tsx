@@ -75,9 +75,9 @@ describe("Desktop Auto model selection", () => {
   });
 
   it("selects Auto through the real dropdown and preserves it after a routed reply", () => {
-    transport.models = [{ id: DEFAULT_CHAT_MODEL, label: "Claude Opus 4.8", free: false, group: "Anthropic" }, liveModel];
+    transport.models = [{ id: DEFAULT_CHAT_MODEL, label: "Claude Opus 5.5", free: false, group: "Anthropic" }, liveModel];
     render(<Composer />);
-    fireEvent.click(screen.getByRole("button", { name: "Claude Opus 4.8" }));
+    fireEvent.click(screen.getByRole("button", { name: "Claude Opus 5.5" }));
     fireEvent.click(screen.getByRole("option", { name: /^Auto$/ }));
     fireEvent.click(screen.getByRole("button", { name: "Send test message" }));
     expect(transport.stream.mock.calls[0][1]).toMatchObject({ model: "blockrun/auto", mode: "chat" });

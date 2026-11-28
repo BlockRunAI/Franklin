@@ -257,7 +257,7 @@ Terse command-style prompts produce shallow, generic work.
         properties: {
           prompt: { type: 'string', description: 'The task for the sub-agent to perform. Must be self-contained — the agent has no memory of your conversation.' },
           description: { type: 'string', description: 'Short (3-5 word) description of the task (e.g. "Research auth patterns", "Fix import errors")' },
-          model: { type: 'string', description: 'Model for the sub-agent. Default: claude-sonnet-4.6' },
+          model: { type: 'string', description: 'Model for the sub-agent. Default: the parent agent\'s model (the free model if none)' },
         },
         required: ['prompt'],
       },

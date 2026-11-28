@@ -39,7 +39,7 @@ try {
         return;
       }
       const payload = message.kind === "wallet.info" ? { address: "0x0000000000000000000000000000000000000001", chain: "base", balanceUsd: 0 }
-        : message.kind === "models.list" ? { models: [{ id: "anthropic/claude-opus-4.8", label: "演示模式 · 未调用模型", free: true, group: "Preview" }] }
+        : message.kind === "models.list" ? { models: [{ id: "anthropic/claude-opus-5.5", label: "演示模式 · 未调用模型", free: true, group: "Preview" }] }
         : message.kind === "session.list" ? { sessions: [] } : { ok: true };
       socket.send(JSON.stringify({ id: message.id, kind: "response", payload }));
     });
