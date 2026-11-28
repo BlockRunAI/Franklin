@@ -1,5 +1,26 @@
 # Changelog
 
+## Franklin Agent 3.49.31 — router-core 53fe783 (generation refresh)
+
+Bump @blockrun/router-core to 53fe783 (root and Desktop pins). Auto routing
+changes:
+
+- **Newer models in the chains.** Claude Opus 5.5 replaces Opus 4.8 and 4.7
+  (Opus 5 stays as the in-family swap), Sonnet 5.5 replaces Sonnet 4.6,
+  Grok 4.7 replaces Grok 4.5, one GPT-6.2 Sol rung replaces GPT-5.5 and
+  GPT-5.4, and GPT-6 Luna replaces GPT-5.4 Nano. Each successor costs the
+  same or less and returned a well-formed tool call.
+- **Premium COMPLEX is led by Claude Opus 5.5** instead of Fable 5.
+- **Retired ids route to their successors.** Gemini 2.5 Flash rungs name
+  Gemini 3.5 Flash-Lite and Gemini 2.5 Pro rungs name Gemini 3.8 Flash;
+  o3 rungs are dropped behind GPT-5.4 Mini; the agentic MEDIUM primary
+  GPT-5 Mini becomes GPT-5.6 Luna; o4-mini becomes GPT-5.4 Mini and
+  Gemini 3.5 Flash becomes Gemini 3.6 Flash. GPT-5 Nano stays out of every
+  chain.
+- **The Kimi slot names Kimi K3.1 Pro.**
+- **More verified tool fallbacks**: Gemini 4 Carbon, Argon, Hydrogen and
+  Neon, GPT-6.2 Astra and Sol, GPT-5.6 Luna Pro.
+
 ## Franklin Agent 3.49.30 — Complete MCP tool lists, real input tokens in proxy stats, fee-inclusive estimates
 
 Upgrade if you use MCP servers with many tools, or `franklin proxy` with streaming.
