@@ -1,5 +1,20 @@
 # Changelog
 
+## Franklin Agent 3.49.34 — Gemini 4 Argon and Carbon at $4/$20 (2026-12-01)
+
+Google's introductory $2/$10 rate for Gemini 4 Argon and Carbon ended on
+2026-11-30. From 2026-12-01 the gateways bill both at $4/$20 per 1M tokens
+(cached input $0.20).
+
+- **Static fallback prices follow.** `src/pricing.ts` prices
+  `google/gemini-4-argon` at $4/$20 instead of $2/$10, and adds
+  `google/gemini-4-carbon` at $4/$20. Carbon is not in the bundled
+  model-catalog snapshot and had no static row, so before the live catalog
+  loaded its spend was estimated at $0.
+- A live session reads the gateway's own catalog price, which overrides this
+  table. The bundled model-catalog snapshot still lists Argon at $2/$10; it
+  moves when model-catalog is re-synced from the repriced gateways.
+
 ## Franklin Agent 3.49.32 — Franklin's own model picks follow the generation refresh
 
 3.49.31 moved Auto routing (router-core); this moves the model ids Franklin

@@ -135,9 +135,11 @@ const LEGACY_PRICING: Record<string, TokenPricing> = {
   'google/gemini-3.8-flash': { input: 0.75, output: 3.75 }, // live 2026-10-20
   'google/gemini-2.5-pro': { input: 1.25, output: 10.0 }, // retires 2026-12-01 — the gateway then serves (and bills) gemini-3.8-flash
   'google/gemini-3.1-pro': { input: 2.0, output: 12.0 },
-  // Gemini 4 Argon — live 2026-10-20 on both chains. Google's intro rate;
-  // it moves to $4/$20 on 2026-12-01, re-price it then.
-  'google/gemini-4-argon': { input: 2.0, output: 10.0 },
+  // Gemini 4 Argon (live 2026-10-20) and Carbon (live 2026-11-11), both
+  // chains. Google's $2/$10 intro rate ended 2026-11-30; both are $4/$20 from
+  // 2026-12-01, and the gateway reprices them that day.
+  'google/gemini-4-argon': { input: 4.0, output: 20.0 },
+  'google/gemini-4-carbon': { input: 4.0, output: 20.0 },
   // xAI
   'xai/grok-4.3': { input: 1.25, output: 2.5 },        // 1M ctx; demoted from flagship 2026-07-14
   'xai/grok-4.7': { input: 2.0, output: 6.0 },        // newest Grok, 500K ctx (2x at >=200K input)

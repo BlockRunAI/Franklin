@@ -13113,7 +13113,8 @@ test('catalog sync 2026-10-20: every live gateway id is priced and pinnable', as
   const live = {
     'openai/gpt-6.1-sol': [2, 10, 'gpt-6.1-sol'],
     'google/gemini-3.8-flash': [0.75, 3.75, 'gemini-3.8-flash'],
-    'google/gemini-4-argon': [2, 10, 'gemini-4-argon'],
+    // Google's $2/$10 intro rate ended 2026-11-30; $4/$20 from 2026-12-01.
+    'google/gemini-4-argon': [4, 20, 'gemini-4-argon'],
     'deepseek/deepseek-v4-flash-vision-exp': [0.3, 1.2, 'deepseek-vision'],
     'qwen/qwen3.8-max': [2, 6, 'qwen3.8-max'],
     'qwen/qwen3.8-flash': [0.15, 0.47, 'qwen3.8-flash'],
@@ -13137,6 +13138,23 @@ test('catalog sync 2026-10-20: every live gateway id is priced and pinnable', as
   assert.equal(isFreeModelId('nvidia/muse-glimmer-30b'), true);
   assert.equal(isFreeModelId('nvidia/nemotron-3-nano-30b'), true,
     'a delisted free id still prices old sessions at $0');
+});
+
+test('2026-12-01: Gemini 4 Argon and Carbon have a $4/$20 offline price, Google\'s rate after the intro ended', async () => {
+  // Both ran at Google's $2/$10 intro rate through 2026-11-30. Carbon was
+  // missing from the static table, so offline it estimated at the unknown-id
+  // $0. Read from source: MODEL_PRICING merges the bundled catalog snapshot
+  // over the static table, and that snapshot can lag the gateway.
+  const { readFileSync } = await import('node:fs');
+  const pricingSrc = readFileSync(new URL('../src/pricing.ts', import.meta.url), 'utf8');
+  const { hasHistoricalPrice } = await import('../dist/pricing.js');
+  for (const id of ['google/gemini-4-argon', 'google/gemini-4-carbon']) {
+    const esc = id.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    const m = pricingSrc.match(new RegExp(`'${esc}':\\s*\\{\\s*input:\\s*([\\d.]+),\\s*output:\\s*([\\d.]+)`));
+    assert.ok(m, `${id} needs an offline fallback price`);
+    assert.deepEqual({ input: Number(m[1]), output: Number(m[2]) }, { input: 4, output: 20 }, id);
+    assert.equal(hasHistoricalPrice(id), true, id);
+  }
 });
 
 test('2026-10-20: bare flash / glm follow their flagships, price-neutral and on both chains', async () => {
