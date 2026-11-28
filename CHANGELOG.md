@@ -16,9 +16,14 @@ hardcodes itself.
   `gemini-2.5-pro` to Gemini 3.8 Flash; `gemini-2.5-flash` to Gemini 3.5
   Flash-Lite; `gemini-3.5-flash` to Gemini 3.6 Flash. These are the models the
   gateway serves under those names.
-- **`grok` and `grok-4` follow Grok 4.7** (same $2/$6 as 4.5). New explicit
-  pin: `gpt-6.2-sol`. Version pins such as `sonnet-4.6`, `opus-4.8`,
-  `gpt-5.4` and `grok-4.5` still resolve to the model you named.
+- **Generic aliases follow the newest model, as in ClawRouter and the shared
+  model catalog.** `opus` and `claude` resolve to Claude Opus 5.5 ($4/$20,
+  was Opus 5 at $5/$25), `sonnet` to Claude Sonnet 5.5 (same $2/$10 as
+  Sonnet 5), and `grok` and `grok-4` to Grok 4.7 (same $2/$6 as 4.5).
+  `franklin init` writes Opus 5.5 and Sonnet 5.5 into Claude Code's Opus and
+  Sonnet slots. New explicit pin: `gpt-6.2-sol`. Version pins such as
+  `opus-5`, `sonnet-5`, `sonnet-4.6`, `opus-4.8`, `gpt-5.4` and `grok-4.5`
+  still resolve to the model you named.
 - **Newer fallbacks.** The legacy tier table, the tool-use stall fallback, the
   compaction tier-down, the vision fallback and `franklin init`'s Sonnet slot
   move from Sonnet 4.6, Opus 4.8/4.7, GPT-5.5/5.4 and o3 to Sonnet 5.5,

@@ -23,17 +23,21 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   eco: 'blockrun/auto',
   premium: 'blockrun/auto',
   // Anthropic — `claude` follows Opus; `fable` is the Mythos-class tier above it.
+  // The generic `opus` / `claude` / `sonnet` aliases follow the newest model
+  // in each line — Opus 5.5 ($4/$20) and Sonnet 5.5 ($2/$10) since
+  // 2026-11-27, matching ClawRouter and the shared model-catalog policy.
+  // `fable` stays on Fable 5 (Fable 5.2 is Base-only). Explicit pins below
+  // (`opus-5`, `sonnet-5`, `opus-4.8`, ...) keep naming the model you type.
   fable: 'anthropic/claude-fable-5',
   'fable-5': 'anthropic/claude-fable-5',
-  sonnet: 'anthropic/claude-sonnet-5',
-  claude: 'anthropic/claude-opus-5',
+  sonnet: 'anthropic/claude-sonnet-5.5',
+  claude: 'anthropic/claude-opus-5.5',
   'sonnet-5': 'anthropic/claude-sonnet-5',
   'sonnet-4.6': 'anthropic/claude-sonnet-4.6',
   'sonnet-4.5': 'anthropic/claude-sonnet-4.5',
-  opus: 'anthropic/claude-opus-5',
+  opus: 'anthropic/claude-opus-5.5',
   'opus-5': 'anthropic/claude-opus-5',
-  // 2026-10 additions — explicit version pins only. The bare `opus` /
-  // `sonnet` / `fable` / `claude` aliases above are deliberately NOT moved.
+  // 2026-10 additions — explicit version pins.
   'opus-5.5': 'anthropic/claude-opus-5.5',
   'sonnet-5.5': 'anthropic/claude-sonnet-5.5',
   'fable-5.1': 'anthropic/claude-fable-5.1',

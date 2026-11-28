@@ -464,9 +464,9 @@ test('proxy server handles OPTIONS and local model switching without backend cal
     });
     assert.equal(switchRes.status, 200, `Expected switch response 200, got ${switchRes.status}`);
     const payload = await switchRes.json();
-    assert.equal(payload.model, 'anthropic/claude-sonnet-5');
+    assert.equal(payload.model, 'anthropic/claude-sonnet-5.5');
     assert.ok(
-      payload.content?.[0]?.text?.includes('Switched to **anthropic/claude-sonnet-5**'),
+      payload.content?.[0]?.text?.includes('Switched to **anthropic/claude-sonnet-5.5**'),
       `Unexpected switch payload: ${JSON.stringify(payload)}`
     );
 
@@ -7655,8 +7655,11 @@ test('shared policy may add shortcuts but never retargets or un-frees a Franklin
   const { getModelCatalog } = await import('../dist/model-catalog.js');
   const { FREE_DEFAULT_MODEL } = await import('../dist/free-models.js');
   const remote = getModelCatalog().shortcuts;
-  assert.equal(remote.opus, 'anthropic/claude-opus-5.5', 'fixture: remote policy retargets opus');
-  assert.equal(resolveModel('opus'), 'anthropic/claude-opus-5');
+  // Franklin's `opus` now agrees with the shared policy (Opus 5.5, 2026-11-27),
+  // so `claude` carries the check: the policy points it at Sonnet 5.5, while
+  // Franklin keeps `claude` following Opus.
+  assert.equal(remote.claude, 'anthropic/claude-sonnet-5.5', 'fixture: remote policy retargets claude');
+  assert.equal(resolveModel('claude'), 'anthropic/claude-opus-5.5');
   assert.equal(resolveModel('free'), FREE_DEFAULT_MODEL);
   const added = Object.keys(remote).find(k => !k.includes('/') && MODEL_SHORTCUTS[k] === remote[k]);
   assert.ok(added, 'at least one remote-only alias is available');
@@ -7664,7 +7667,9 @@ test('shared policy may add shortcuts but never retargets or un-frees a Franklin
 
 test('picker trim: shortcuts for hidden models still resolve (muscle-memory preserved)', async () => {
   const { resolveModel } = await import('../dist/ui/model-picker.js');
-  assert.equal(resolveModel('claude'), 'anthropic/claude-opus-5');
+  assert.equal(resolveModel('claude'), 'anthropic/claude-opus-5.5');
+  // Opus 5 is an explicit pin since `opus` / `claude` moved to Opus 5.5.
+  assert.equal(resolveModel('opus-5'), 'anthropic/claude-opus-5');
   // Opus 4.8 left the visible picker when Opus 5 superseded it at the same
   // price — the explicit pin must keep resolving.
   assert.equal(resolveModel('opus-4.8'), 'anthropic/claude-opus-4.8');
@@ -7699,13 +7704,16 @@ test('catalog picker includes current flagship aliases without duplicate rows', 
   const { PICKER_MODELS_FLAT, resolveModel } = await import('../dist/ui/model-picker.js');
   const ids = new Set(PICKER_MODELS_FLAT.map(m => m.id));
   assert.equal(ids.size, PICKER_MODELS_FLAT.length);
-  for (const alias of ['opus', 'sonnet', 'gpt', 'gemini-3']) assert.ok(ids.has(resolveModel(alias)), alias);
-  // `grok` moved to grok-4.7 on 2026-11-27, ahead of the shared picker
-  // policy (@blockrun/model-catalog), whose Recommended group still lists
-  // grok-4.5. The target must still be a live catalog model, reachable from
-  // the expanded (Ctrl+A) picker.
+  for (const alias of ['gpt', 'gemini-3']) assert.ok(ids.has(resolveModel(alias)), alias);
+  // `opus`, `sonnet` and `grok` moved to Opus 5.5, Sonnet 5.5 and Grok 4.7 on
+  // 2026-11-27, ahead of the shared picker policy (@blockrun/model-catalog),
+  // whose Recommended group still lists Opus 5, Sonnet 5 and Grok 4.5. Each
+  // target must still be a live catalog model, reachable from the expanded
+  // (Ctrl+A) picker.
   const { getModelCatalog } = await import('../dist/model-catalog.js');
-  assert.ok(getModelCatalog().models.some(m => m.id === resolveModel('grok')), 'grok');
+  for (const alias of ['opus', 'sonnet', 'grok']) {
+    assert.ok(getModelCatalog().models.some(m => m.id === resolveModel(alias)), alias);
+  }
 });
 
 // ─── picker ↔ gateway reconciliation ──────────────────────────────────────
@@ -7766,7 +7774,9 @@ test('reconcilePicker: keeps synthetic routing profiles that are not gateway mod
 
 test('reconcilePicker: refreshes price from the gateway but keeps the curated label', async () => {
   const { reconcilePicker, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
-  const opus = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.shortcut === 'opus');
+  // `opus` moved to Opus 5.5 (not yet in the shared policy's Recommended
+  // group), so the Opus 5 row now carries its explicit `opus-5` pin.
+  const opus = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.shortcut === 'opus-5');
   // Gateway reports a price that disagrees with the hardcoded display string.
   const catalog = [gwModel(opus.id, { input: 99, output: 123 })];
   const { categories } = reconcilePicker(catalog);
@@ -12455,10 +12465,11 @@ test('2026-10 gateway models: explicit shortcuts, prices, context windows, visio
     // so every priced vision model must also be on the static allowlist.
     assert.equal(isVisionModel(id), true, `${id} is vision-capable`);
   }
-  // Bare aliases are not retargeted by this change — except `grok`, which
-  // moved to grok-4.7 in the 2026-11-27 generation refresh (same $2/$6).
-  assert.equal(resolveModel('opus'), 'anthropic/claude-opus-5');
-  assert.equal(resolveModel('sonnet'), 'anthropic/claude-sonnet-5');
+  // Bare aliases were not retargeted by the 2026-10 additions. The 2026-11-27
+  // generation refresh moved `opus` / `sonnet` to Opus 5.5 / Sonnet 5.5 and
+  // `grok` to grok-4.7 (each the same price or cheaper).
+  assert.equal(resolveModel('opus'), 'anthropic/claude-opus-5.5');
+  assert.equal(resolveModel('sonnet'), 'anthropic/claude-sonnet-5.5');
   assert.equal(resolveModel('fable'), 'anthropic/claude-fable-5');
   assert.equal(resolveModel('gpt'), 'openai/gpt-5.6-sol');
   assert.equal(resolveModel('grok'), 'xai/grok-4.7');
