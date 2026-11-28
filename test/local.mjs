@@ -7237,11 +7237,12 @@ test('collapseRepetitiveTools leaves image-bearing tool_results alone', async ()
   assert.match(trB.content, /\[xxxx.+\.\.\.\]/);
 });
 
-test('kimi: shortcuts resolve to the K3 flagship; retired K2.x pins follow it', async () => {
-  // K3 became the gateway Kimi flagship 2026-07 (replaced the whole K2.x
-  // line). `kimi`/`k3` and every retired K2.x pin resolve to the flagship.
+test('kimi: the bare alias follows the K3.1 Pro flagship; k3 and retired K2.x pins resolve to K3', async () => {
+  // K3 replaced the whole K2.x line in 2026-07, so `k3` and every retired K2.x
+  // pin resolve to K3. Since 2026-11-27 the bare `kimi` alias follows the
+  // current flagship, K3.1 Pro (router-core's Kimi slot, the catalog's `kimi`).
   const { resolveModel } = await import('../dist/ui/model-picker.js');
-  assert.equal(resolveModel('kimi'), 'moonshot/kimi-k3');
+  assert.equal(resolveModel('kimi'), 'moonshot/kimi-k3.1-pro');
   assert.equal(resolveModel('k3'), 'moonshot/kimi-k3');
   assert.equal(resolveModel('k2.7'), 'moonshot/kimi-k3');
   assert.equal(resolveModel('k2.6'), 'moonshot/kimi-k3');
@@ -7423,15 +7424,15 @@ test('getToolAnomalies: math is deterministic on synthetic on-disk fixture', asy
   }
 });
 
-test('kimi: picker lists the K3 flagship, not retired K2.x entries', async () => {
+test('kimi: picker lists the K3.1 Pro flagship, not retired K2.x entries', async () => {
   const { PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
   const ids = PICKER_CATEGORIES.flatMap((c) => c.models.map((m) => m.id));
   assert.ok(!ids.includes('moonshot/kimi-k2.7'),
     'moonshot/kimi-k2.7 should be gone from the picker (retired by the gateway)');
   assert.ok(!ids.includes('moonshot/kimi-k2.5'),
     'moonshot/kimi-k2.5 should be gone from the picker (retired by the gateway)');
-  assert.ok(ids.includes('moonshot/kimi-k3'),
-    'moonshot/kimi-k3 (the current flagship) must be in the picker');
+  assert.ok(ids.includes('moonshot/kimi-k3.1-pro'),
+    'moonshot/kimi-k3.1-pro (the current flagship) must be in the picker');
 });
 
 test('kimi: pricing keeps legacy entries for session-cost records', async () => {
@@ -7458,7 +7459,7 @@ test('qwen3.7-max: gateway rates, 1M context, and 65K output are pinned', async 
   const { getContextWindow } = await import('../dist/agent/tokens.js');
   const { getMaxOutputTokens } = await import('../dist/agent/optimize.js');
 
-  assert.deepEqual(MODEL_PRICING['qwen/qwen3.7-max'], { input: 1.475, output: 4.425 });
+  assert.deepEqual(MODEL_PRICING['qwen/qwen3.7-max'], { input: 1.475, output: 4.425, platformFeePercent: 5 });
   assert.equal(getContextWindow('qwen/qwen3.7-max'), 1_000_000,
     'must not fall through to the generic 128k `qwen` fallback');
   assert.equal(getMaxOutputTokens('qwen/qwen3.7-max'), 65_536,
@@ -7704,15 +7705,11 @@ test('catalog picker includes current flagship aliases without duplicate rows', 
   const { PICKER_MODELS_FLAT, resolveModel } = await import('../dist/ui/model-picker.js');
   const ids = new Set(PICKER_MODELS_FLAT.map(m => m.id));
   assert.equal(ids.size, PICKER_MODELS_FLAT.length);
-  for (const alias of ['gpt', 'gemini-3']) assert.ok(ids.has(resolveModel(alias)), alias);
-  // `opus`, `sonnet` and `grok` moved to Opus 5.5, Sonnet 5.5 and Grok 4.7 on
-  // 2026-11-27, ahead of the shared picker policy (@blockrun/model-catalog),
-  // whose Recommended group still lists Opus 5, Sonnet 5 and Grok 4.5. Each
-  // target must still be a live catalog model, reachable from the expanded
-  // (Ctrl+A) picker.
-  const { getModelCatalog } = await import('../dist/model-catalog.js');
-  for (const alias of ['opus', 'sonnet', 'grok']) {
-    assert.ok(getModelCatalog().models.some(m => m.id === resolveModel(alias)), alias);
+  // Catalog 2026.11.27.1 moved the shared picker's Recommended group to the
+  // new generation (Opus 5.5, Sonnet 5.5, GPT-6.2 Sol, Grok 4.7, Kimi K3.1
+  // Pro), so every bare flagship alias lands on a picker row again.
+  for (const alias of ['gpt', 'gemini-3', 'opus', 'sonnet', 'grok', 'kimi']) {
+    assert.ok(ids.has(resolveModel(alias)), alias);
   }
 });
 
@@ -7774,9 +7771,9 @@ test('reconcilePicker: keeps synthetic routing profiles that are not gateway mod
 
 test('reconcilePicker: refreshes price from the gateway but keeps the curated label', async () => {
   const { reconcilePicker, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
-  // `opus` moved to Opus 5.5 (not yet in the shared policy's Recommended
-  // group), so the Opus 5 row now carries its explicit `opus-5` pin.
-  const opus = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.shortcut === 'opus-5');
+  // Catalog 2026.11.27.1 swapped the Opus 5 row for Opus 5.5, which the bare
+  // `opus` alias names.
+  const opus = PICKER_CATEGORIES.flatMap((c) => c.models).find((m) => m.shortcut === 'opus');
   // Gateway reports a price that disagrees with the hardcoded display string.
   const catalog = [gwModel(opus.id, { input: 99, output: 123 })];
   const { categories } = reconcilePicker(catalog);
@@ -12357,7 +12354,7 @@ test('catalog sync 2026-08-29: GLM-5.3 Flash is priced, sized, vision-tagged and
   const { getContextWindow } = await import('../dist/agent/tokens.js');
   const { isVisionModel } = await import('../dist/router/vision.js');
   const { resolveModel, PICKER_CATEGORIES } = await import('../dist/ui/model-picker.js');
-  assert.deepEqual(MODEL_PRICING['zai/glm-5.3-flash'], { input: 0.15, output: 0.5 });
+  assert.deepEqual(MODEL_PRICING['zai/glm-5.3-flash'], { input: 0.15, output: 0.5, platformFeePercent: 5 });
   assert.equal(getContextWindow('zai/glm-5.3-flash'), 1_000_000);
   assert.equal(isVisionModel('zai/glm-5.3-flash'), true);
   assert.equal(isVisionModel('zai/glm-5.3'), false, 'only the Flash SKU is multimodal in the catalog');
@@ -12466,12 +12463,13 @@ test('2026-10 gateway models: explicit shortcuts, prices, context windows, visio
     assert.equal(isVisionModel(id), true, `${id} is vision-capable`);
   }
   // Bare aliases were not retargeted by the 2026-10 additions. The 2026-11-27
-  // generation refresh moved `opus` / `sonnet` to Opus 5.5 / Sonnet 5.5 and
-  // `grok` to grok-4.7 (each the same price or cheaper).
+  // generation refresh moved `opus` / `sonnet` to Opus 5.5 / Sonnet 5.5,
+  // `grok` to grok-4.7 and `gpt` to GPT-6.2 Sol (each the same price or
+  // cheaper).
   assert.equal(resolveModel('opus'), 'anthropic/claude-opus-5.5');
   assert.equal(resolveModel('sonnet'), 'anthropic/claude-sonnet-5.5');
   assert.equal(resolveModel('fable'), 'anthropic/claude-fable-5');
-  assert.equal(resolveModel('gpt'), 'openai/gpt-5.6-sol');
+  assert.equal(resolveModel('gpt'), 'openai/gpt-6.2-sol');
   assert.equal(resolveModel('grok'), 'xai/grok-4.7');
   // GPT-5.6 Sol / Sol Pro were cut to $4/$20 on 2026-08-21.
   assert.equal(MODEL_PRICING['openai/gpt-5.6-sol'].input, 4);
@@ -13169,7 +13167,7 @@ test('2026-10-20: bare flash / glm follow their flagships, price-neutral and on 
 test('2026-10-20: deepseek-v4.1-flash is priced and pinnable; the dead nvidia DeepSeek SKUs are not free', async () => {
   const { resolveModel } = await import('../dist/ui/model-picker.js');
   const { MODEL_PRICING } = await import('../dist/pricing.js');
-  assert.deepEqual(MODEL_PRICING['deepseek/deepseek-v4.1-flash'], { input: 0.14, output: 0.28 });
+  assert.deepEqual(MODEL_PRICING['deepseek/deepseek-v4.1-flash'], { input: 0.14, output: 0.28, platformFeePercent: 5 });
   assert.equal(resolveModel('deepseek-v4.1-flash'), 'deepseek/deepseek-v4.1-flash');
   assert.equal(resolveModel('v4.1-flash'), 'deepseek/deepseek-v4.1-flash');
   // Both chains list it (sol.blockrun.ai since 2026-10-20), so the bare alias

@@ -1,5 +1,30 @@
 # Changelog
 
+## Franklin Agent 3.49.33 — router-core 92f77ec (funded re-probe), model catalog 2026.11.27.1
+
+Bump @blockrun/router-core to 92f77ec and @blockrun/model-catalog to 3d1ed5f
+(root and Desktop pins).
+
+- **More tool-verified models.** A re-probe on a funded wallet confirmed tool
+  calls from Mistral Large 4, Qwen 3.8 Max, Qwen 3.8 Flash, HY4 Preview and
+  GPT-6.1 Terra, so a turn with tools can run on them when you pin them.
+  Laguna S 2.1 failed after payment twice and is marked unavailable, so it
+  fails closed for tools. No Auto routing decision changes: none of these
+  models is in a chain or in the verified tool fallbacks.
+- **The picker recommends the new generation.** Its Recommended group now
+  lists Claude Opus 5.5 and Sonnet 5.5, GPT-6.2 Astra and Sol, GPT-6 Luna,
+  Grok 4.7, Kimi K3.1 Pro and the Gemini 4 line. Retired ids are deprecated
+  rows that redirect to their successors. Opus 5, Sonnet 5, Grok 4.5 and
+  GPT-5.6 Sol stay pinnable and reachable from the expanded (Ctrl+A) picker.
+- **`gpt` follows GPT-6.2 Sol** ($2/$10, was GPT-5.6 Sol at $4/$20), and so
+  do `gpt5`, `gpt-5` and `gpt-5.6`. The shared catalog maps `gpt` to GPT-6.2
+  Astra ($8/$40); Franklin keeps it on Sol. `gpt-5.6-sol` still pins 5.6 Sol.
+- **`kimi` follows Kimi K3.1 Pro** ($2/$10, was K3 at $3/$15), the model
+  router-core's Kimi slot already names. `k3` still pins K3.
+- **Cost estimates for Qwen3.7 Max, GLM-5.3 Flash and DeepSeek V4.1 Flash
+  include the 5% chat platform fee**, now that the catalog publishes it for
+  those rows. Only estimates change.
+
 ## Franklin Agent 3.49.32 — Franklin's own model picks follow the generation refresh
 
 3.49.31 moved Auto routing (router-core); this moves the model ids Franklin

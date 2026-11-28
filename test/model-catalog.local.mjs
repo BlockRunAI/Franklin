@@ -76,7 +76,7 @@ test('Franklin refreshes central catalog, picker, aliases and pricing without a 
     assert.ok(!list.some(m => m.id === 'openai/gpt-6-astra'), 'uncurated models stay behind +more');
     assert.equal(picker.resolveModel('openai/gpt-6-astra'), 'openai/gpt-6-astra');
     assert.ok(!list.some(m => m.id === 'openai/o3'), 'Solana category overlay must apply');
-    assert.equal(picker.resolveModel('kimi'), 'moonshot/kimi-k3');
+    assert.equal(picker.resolveModel('kimi'), 'moonshot/kimi-k3.1-pro');
 
     // Only the centrally served data changes below. No code/package rebuild.
     const id = 'test/future-model';
