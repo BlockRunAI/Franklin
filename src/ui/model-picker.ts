@@ -49,12 +49,16 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   haiku: 'anthropic/claude-haiku-4.5',
   'haiku-4.5': 'anthropic/claude-haiku-4.5',
   // OpenAI
-  // `gpt` / `gpt5` / `gpt-5` follow the gateway's flagship — currently 5.6 Sol.
-  gpt: 'openai/gpt-5.6-sol',
-  gpt5: 'openai/gpt-5.6-sol',
-  'gpt-5': 'openai/gpt-5.6-sol',
-  'gpt-5.6': 'openai/gpt-5.6-sol',
-  // GPT-6 family + GPT-5.1 (2026-10) — explicit pins; `gpt` is NOT moved.
+  // `gpt` / `gpt5` / `gpt-5` / `gpt-5.6` follow the everyday flagship —
+  // GPT-6.2 Sol since 2026-11-27 ($2/$10, was GPT-5.6 Sol at $4/$20), the
+  // generation refresh's successor to GPT-5.5 and 5.4. The shared catalog maps
+  // `gpt` to GPT-6.2 Astra ($8/$40); Franklin's override keeps it on Sol so
+  // the bare alias does not quadruple in price. `gpt-5.6-sol` still pins 5.6.
+  gpt: 'openai/gpt-6.2-sol',
+  gpt5: 'openai/gpt-6.2-sol',
+  'gpt-5': 'openai/gpt-6.2-sol',
+  'gpt-5.6': 'openai/gpt-6.2-sol',
+  // GPT-6 family + GPT-5.1 (2026-10) — explicit pins.
   'gpt-6-astra': 'openai/gpt-6-astra',
   'gpt-6-sol': 'openai/gpt-6-sol',
   'gpt-6-luna': 'openai/gpt-6-luna',
@@ -311,11 +315,14 @@ const LEGACY_SHORTCUTS: Record<string, string> = {
   'mimo-v2.5': 'xiaomi/mimo-v2.5',
   'mimo-vision': 'xiaomi/mimo-v2.5',
   xiaomi: 'xiaomi/mimo-v2.5-pro',
-  kimi: 'moonshot/kimi-k3',
+  // `kimi` follows the Kimi flagship: K3.1 Pro since 2026-11-27 ($2/$10, was
+  // K3 at $3/$15), matching router-core's Kimi slot and the shared catalog.
+  // `k3` keeps naming K3.
+  kimi: 'moonshot/kimi-k3.1-pro',
   k3: 'moonshot/kimi-k3',
   // The K2.x line was retired by the gateway (2026-07, replaced by K3).
-  // These pins stay so muscle memory keeps working but resolve to the
-  // current Kimi flagship (K3).
+  // These pins stay so muscle memory keeps working but resolve to K3, the
+  // model that replaced them.
   'k2.7': 'moonshot/kimi-k3',
   'k2.6': 'moonshot/kimi-k3',
   'kimi-k2.5': 'moonshot/kimi-k3',

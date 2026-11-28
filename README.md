@@ -556,8 +556,9 @@ Core is workflow-agnostic. Add new verticals without touching the loop. Discover
 explicit version shortcuts: `opus-5.5`, `sonnet-5.5`, `fable-5.1`,
 `gpt-6-astra`, `gpt-6-sol`, `gpt-6.2-sol`, `gpt-6-luna`, `gpt-5.1`, `grok-4.7`
 and `grok-4.6` (e.g. `/model gpt-6.2-sol` or `/model anthropic/claude-opus-5.5`).
-Bare `opus` and `claude` follow Opus 5.5, `sonnet` follows Sonnet 5.5 and
-`grok` follows Grok 4.7; `gpt` keeps its current target.
+Bare `opus` and `claude` follow Opus 5.5, `sonnet` follows Sonnet 5.5,
+`grok` follows Grok 4.7, `gpt` follows GPT-6.2 Sol and `kimi` follows
+Kimi K3.1 Pro.
 Shortcuts for retired models name the model the gateway now serves in their
 place: `o3` / `o4-mini` / `o1` resolve to GPT-5.4 Mini, `mini` to GPT-5.6 Luna,
 `gemini-2.5-flash` to Gemini 3.5 Flash-Lite and `gemini-2.5` to Gemini 3.8 Flash.
